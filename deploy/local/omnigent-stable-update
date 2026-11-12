@@ -23,9 +23,13 @@ esac
 if [[ ! -L "$app/pending" ]]; then
     echo "No custom release staged; the running installation stays unchanged."
     as_agent "$tool_python" - <<'PY'
-from omnigent.version import installed_version
+from importlib.metadata import PackageNotFoundError, version
 
-print(f"Installed Triune package: {installed_version()}.")
+try:
+    installed = version("triune")
+except PackageNotFoundError:
+    installed = version("omnigent")
+print(f"Installed workspace package: {installed}.")
 print("Update the Triune main checkout, then run omni-custom build and stage.")
 PY
     exit 0
