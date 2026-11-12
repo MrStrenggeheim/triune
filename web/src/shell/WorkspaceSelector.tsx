@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { useRef, useState, type ButtonHTMLAttributes } from "react";
 import { ChevronDownIcon, MonitorIcon } from "lucide-react";
 import { DisabledActionTooltip } from "@/components/DisabledActionTooltip";
@@ -35,7 +36,7 @@ export function WorkspaceSelector({
       aria-label={accessibleLabel}
       disabled={disabled}
       className={cn(
-        "inline-flex min-h-11 min-w-0 max-w-full items-center gap-1.5 rounded-md border-0 bg-transparent px-1 outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 md:min-h-7",
+        "inline-flex min-h-11 min-w-0 max-w-full items-center gap-1.5 rounded-md border-0 bg-transparent px-2 outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 md:min-h-7",
         COMPOSER_CONTROL_TEXT_CLASS,
         className,
       )}

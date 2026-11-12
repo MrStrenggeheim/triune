@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { cleanup, createEvent, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
@@ -229,7 +230,8 @@ it("offers an explicit chat choice instead of a no-op comment for an unowned pre
   expect(screen.getByRole("menuitem", { name: "Send to…" })).toBeInTheDocument();
   fireEvent.click(screen.getByRole("menuitem", { name: "Choose chat" }));
   expect(choose).toHaveBeenCalledOnce();
-  expect(comment).not.toHaveBeenCalled();
+  expect(comment).toHaveBeenCalledOnce();
+  expect(comment.mock.invocationCallOrder[0]).toBeLessThan(choose.mock.invocationCallOrder[0]);
 });
 
 it("retains captured machine provenance through the code viewer's matching nested scope", () => {

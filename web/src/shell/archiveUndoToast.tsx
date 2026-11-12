@@ -1,8 +1,10 @@
+// Modified for Triune.
 import type { QueryClient } from "@tanstack/react-query";
 import { toast, updateNotification, hideNotification } from "@/lib/notifications";
 
 import type { useNavigate } from "@/lib/routing";
 import { undoArchiveConversations, type Conversation } from "@/hooks/useConversations";
+import { conversationDisplayLabel } from "./sidebarNav";
 
 type NavigateFn = ReturnType<typeof useNavigate>;
 
@@ -117,8 +119,15 @@ export function showArchiveUndoToast(
     toast.dismiss(id);
     navigateTo("/settings/archived");
   };
-  toast(`Archived ${count} ${count === 1 ? "session" : "sessions"}`, {
+  const names = members.slice(0, 2).map(conversationDisplayLabel);
+  const title = count === 1 ? `Archived “${names[0]}”` : `Archived ${count} chats`;
+  const summary =
+    count === 1
+      ? undefined
+      : `${names.map((name) => `“${name}”`).join(", ")}${count > 2 ? ` and ${count - 2} more` : ""}`;
+  toast(title, {
     id,
+    description: summary,
     duration: remaining,
     action: { label: "Undo", onClick: restore },
     cancel: { label: "View archived", onClick: view },
@@ -127,7 +136,9 @@ export function showArchiveUndoToast(
       clearActiveBatch();
       // The brief Undo window protects a live runner; history offers an explicit restore afterward.
       updateNotification(id, {
-        description: "Restore these sessions to the sidebar.",
+        description: summary
+          ? `${summary}. Restore these chats to the sidebar.`
+          : "Restore this chat to the sidebar.",
         action: { label: "Restore", onClick: restore },
       });
     },

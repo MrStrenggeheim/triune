@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -44,9 +45,17 @@ function mount(
   previewContext: ComponentProps<typeof AttachmentPreviewContext.Provider>["value"] = {},
 ) {
   mocks.fetch.mockImplementation(async (url: string) =>
-    url.endsWith("/content") || url.includes("/attachments/references/")
-      ? new Response(content, { headers: { "Content-Type": mime } })
-      : new Response(JSON.stringify({ metadata: { bytes: content.length, content_type: mime } })),
+    url.includes("/metadata?")
+      ? new Response(
+          JSON.stringify({
+            kind: "file",
+            path: filename,
+            workspace: { id: "source-workspace", root: "/original/workspace" },
+          }),
+        )
+      : url.endsWith("/content") || url.includes("/attachments/references/")
+        ? new Response(content, { headers: { "Content-Type": mime } })
+        : new Response(JSON.stringify({ metadata: { bytes: content.length, content_type: mime } })),
   );
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const wrap = (children: ReactNode) => (
@@ -99,12 +108,12 @@ it("keeps local references filename-only and fetches their captured message only
     reference,
     itemId: "source/item",
   });
-  const chip = screen.getByRole("button", { name: "My notes.md" });
+  const chip = await screen.findByRole("button", { name: "My notes.md" });
   expect(chip).toHaveClass("inline-flex", "align-baseline", "items-baseline");
   expect(chip).not.toHaveAttribute("title");
   expect(chip.querySelectorAll("svg")).toHaveLength(1);
   expect(chip.querySelector("svg")).toHaveAttribute("data-file-type", "document");
-  expect(mocks.fetch).not.toHaveBeenCalled();
+  expect(mocks.fetch.mock.calls.every(([url]) => url.includes("/metadata?"))).toBe(true);
   fireEvent.focus(chip);
   expect(await screen.findByRole("tooltip")).toHaveTextContent(reference);
   fireEvent.click(chip);
@@ -134,7 +143,7 @@ it("routes compact file activation beside its chat with immutable identity", asy
   await waitFor(() => expect(mocks.fetch).toHaveBeenCalledOnce());
   fireEvent.click(screen.getByRole("button", { name: "report.txt" }));
   expect(openAttachment).toHaveBeenCalledOnce();
-  expect(openAttachment.mock.calls[0][1]).toEqual({ placement: "beside" });
+  expect(openAttachment.mock.calls[0][1]).toEqual({ placement: "default" });
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(mocks.fetch.mock.calls.every(([url]) => !url.endsWith("/content"))).toBe(true);
   const request = openAttachment.mock.calls[0][0];
@@ -191,11 +200,12 @@ it("keeps captured reference bytes and the origin message when moving from chat 
   fireEvent.click(chip);
   const request = JSON.parse(JSON.stringify(openAttachment.mock.calls[0][0]));
   expect(request).toMatchObject({ sessionId: "original-chat", itemId: "source/item", reference });
-  mocks.fetch.mockResolvedValue(new Response("Source removed", { status: 404 }));
   showPreview(request);
   await waitFor(() => expect(screen.getByRole("region")).toHaveTextContent("Historical bytes"));
+  mocks.fetch.mockResolvedValue(new Response("Source removed", { status: 404 }));
+  showPreview(request);
   expect(screen.queryByRole("dialog")).toBeNull();
-  expect(mocks.fetch).toHaveBeenCalledOnce();
+  expect(mocks.fetch).toHaveBeenCalledTimes(2);
   fireEvent.click(screen.getByRole("button", { name: "Download notes.txt" }));
   await waitFor(() => expect(mocks.download).toHaveBeenCalledOnce());
   expect(await mocks.download.mock.calls[0][0].text()).toBe("Historical bytes");

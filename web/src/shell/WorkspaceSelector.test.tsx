@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
@@ -16,7 +17,7 @@ it("keeps the full Host:path accessible with the existing trigger geometry", asy
   expect(trigger.querySelector(".lucide-monitor")).not.toBeNull();
   expect(trigger.querySelectorAll("svg")).toHaveLength(2);
   expect(trigger.querySelector(".lucide-folder")).toBeNull();
-  expect(trigger).toHaveClass("min-h-11", "md:min-h-7", "gap-1.5", "px-1", "border-0");
+  expect(trigger).toHaveClass("min-h-11", "md:min-h-7", "gap-1.5", "px-2", "border-0");
   expect(trigger).not.toHaveAttribute("title");
   await userEvent.tab();
   expect(trigger).toHaveFocus();

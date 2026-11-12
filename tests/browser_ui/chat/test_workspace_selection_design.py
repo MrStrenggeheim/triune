@@ -1,3 +1,4 @@
+# Modified for Triune.
 """Approved workspace surfaces through the built SPA with sealed API contracts."""
 
 from __future__ import annotations
@@ -249,7 +250,7 @@ def test_combined_workspace_picker_changes_explorer_requests_and_cancel_retains_
         dialog.get_by_role("button", name="Add host…", exact=True).click()
         setup = page.get_by_role("dialog", name="Connect a host", exact=True)
         expect(setup).to_be_visible()
-        expect(setup).to_contain_text("omni host --server")
+        expect(setup).to_contain_text("triune host --server")
         expect(setup).to_contain_text(journey.chats[0].contract.base_url)
         _capture(page, output_path, f"{name}-add-host-instructions")
         setup.get_by_role("button", name="Close", exact=True).click()

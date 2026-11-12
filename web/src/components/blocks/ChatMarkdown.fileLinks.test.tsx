@@ -1,3 +1,4 @@
+// Modified for Triune; inherited notices remain applicable.
 // End-to-end rendering of a markdown link whose href is a workspace file.
 //
 // Agents link files they just wrote (`[foo.md](/abs/ws/foo.md)`). Two ways this
@@ -19,6 +20,7 @@ import { ConversationScopeContext } from "@/components/chat/conversationScope";
 import { FilePathAwareMessageResponse } from "./ChatMarkdown";
 import { AttachmentPreviewContext } from "@/components/ChatAttachment";
 import type { ComponentProps } from "react";
+import type { ChatFileLocation } from "@/lib/chatFileReferences";
 
 vi.mock("@/components/ui/toast", () => ({ showToast: vi.fn() }));
 import { showToast } from "@/components/ui/toast";
@@ -78,6 +80,46 @@ function dirListing(paths: string[]): Response {
 }
 
 const WORKSPACE = "/home/u/ws";
+const SOURCE_WORKSPACE: NonNullable<ChatFileLocation["workspace"]> = {
+  id: "original-workspace",
+  host_id: "original-host",
+  target_kind: "host",
+  root: "/original/workspace",
+  capabilities: ["files"],
+};
+
+function referenceMetadata(path: string, kind: ChatFileLocation["kind"] = "file"): Response {
+  const value: ChatFileLocation =
+    kind === "captured"
+      ? { kind, path, workspace: SOURCE_WORKSPACE }
+      : { kind, path, workspace: SOURCE_WORKSPACE };
+  return jsonResponse(value);
+}
+
+/** Keep classification and authenticated preview bytes on distinct routes. */
+function mockCapturedReference({
+  path,
+  content,
+  contentType = "text/plain",
+  kind = "file",
+}: {
+  path: string;
+  content: string;
+  contentType?: string;
+  kind?: ChatFileLocation["kind"];
+}) {
+  const base = "/v1/sessions/conv_1/attachments/references/original-item";
+  const query = new URLSearchParams({ path });
+  const metadataUrl = `${base}/metadata?${query}`;
+  const contentUrl = `${base}?${query}`;
+  fetchMock.mockImplementation(async (url: string) => {
+    if (url === metadataUrl) return referenceMetadata(path, kind);
+    if (url === contentUrl)
+      return new Response(content, { headers: { "Content-Type": contentType } });
+    throw new Error(`Unexpected reference request: ${url}`);
+  });
+  return { metadataUrl, contentUrl };
+}
 
 // Module scope so the provider value is a constant (jsx-no-constructed-context-values);
 // `renderMarkdown` swaps the changed-file list and resets the spy per test.
@@ -133,9 +175,10 @@ function renderMarkdown(
 describe("implicit captured file references", () => {
   it("keeps menu placement and copied paths scoped to the message's originating chat", async () => {
     const openAttachment = vi.fn();
-    fetchMock.mockImplementation(
-      async () => new Response("Historical content", { headers: { "Content-Type": "text/plain" } }),
-    );
+    const { metadataUrl, contentUrl } = mockCapturedReference({
+      path: "/original/workspace/guide.txt",
+      content: "Historical content",
+    });
     renderMarkdown(
       "Read [the file](/original/workspace/guide.txt).",
       [],
@@ -147,7 +190,12 @@ describe("implicit captured file references", () => {
       "original-item",
       { openAttachment },
     );
-    const chip = screen.getByRole("button", { name: "guide.txt" });
+    const chip = await screen.findByRole("button", { name: "guide.txt" });
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock).toHaveBeenCalledWith(
+      metadataUrl,
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
     fireEvent.contextMenu(chip);
     fireEvent.click(await screen.findByRole("menuitem", { name: "Copy path" }));
     await waitFor(() => expect(copyTextMock).toHaveBeenCalledWith("/original/workspace/guide.txt"));
@@ -161,12 +209,20 @@ describe("implicit captured file references", () => {
       }),
       { placement: "tab" },
     );
+    fireEvent.contextMenu(chip);
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Open beside chat" }));
+    expect(openAttachment).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        sessionId: "conv_1",
+        itemId: "original-item",
+        reference: "/original/workspace/guide.txt",
+      }),
+      { placement: "beside" },
+    );
     expect(openFile).not.toHaveBeenCalled();
-    expect(
-      fetchMock.mock.calls.every(([url]) =>
-        url.includes("/sessions/conv_1/attachments/references/original-item?"),
-      ),
-    ).toBe(true);
+    expect(fetchMock.mock.calls.every(([url]) => [metadataUrl, contentUrl].includes(url))).toBe(
+      true,
+    );
   });
 
   it.each([
@@ -176,9 +232,10 @@ describe("implicit captured file references", () => {
     "routes the source message into a dock preview after the active workspace changes: %s",
     async (markdown) => {
       const openAttachment = vi.fn();
-      fetchMock.mockResolvedValue(
-        new Response("Historical content", { headers: { "Content-Type": "text/plain" } }),
-      );
+      const { metadataUrl } = mockCapturedReference({
+        path: "/original/workspace/guide.txt",
+        content: "Historical content",
+      });
       renderMarkdown(
         markdown,
         [],
@@ -197,15 +254,15 @@ describe("implicit captured file references", () => {
           itemId: "original-item",
           reference: "/original/workspace/guide.txt",
         }),
-        { placement: "beside" },
+        { placement: "default" },
       );
       expect(screen.queryByRole("dialog")).toBeNull();
       expect(openFile).not.toHaveBeenCalled();
-      if (markdown.includes("`"))
-        expect(fetchMock.mock.calls[0][0]).toContain(
-          "/sessions/conv_1/attachments/references/original-item?",
-        );
-      else expect(fetchMock).not.toHaveBeenCalled();
+      expect(fetchMock).toHaveBeenCalledOnce();
+      expect(fetchMock).toHaveBeenCalledWith(
+        metadataUrl,
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
     },
   );
 
@@ -235,60 +292,108 @@ describe("implicit captured file references", () => {
     expect(screen.queryByTestId("chat-attachment")).toBeNull();
     expect(screen.queryByRole("alert")).toBeNull();
     expect(openFile).not.toHaveBeenCalled();
+    expect(toastMock).not.toHaveBeenCalled();
+    expect(toast.error).not.toHaveBeenCalled();
     expect(fetchMock).toHaveBeenCalledWith(
-      "/v1/sessions/conv_1/attachments/references/captured-item?path=%2Fprojects%2Ffrontend",
+      "/v1/sessions/conv_1/attachments/references/captured-item/metadata?path=%2Fprojects%2Ffrontend",
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
   });
 
-  it("waits for a captured real file and never substitutes the currently viewed workspace", async () => {
-    let resolve!: (response: Response) => void;
-    fetchMock.mockReturnValue(
-      new Promise<Response>((done) => {
-        resolve = done;
-      }),
-    );
-    renderMarkdown(
-      "Read `/original/workspace/guide.txt:12`.",
-      [],
-      {
-        ...FILE_VIEWER_WITH_SESSION,
-        conversationId: "different-chat",
-        workspaceRoot: "/different/workspace",
-      },
-      "original-item",
-    );
-    expect(screen.getByText("/original/workspace/guide.txt:12").tagName).toBe("CODE");
-    expect(screen.queryByRole("button")).toBeNull();
+  it.each(["file", "captured"] as const)(
+    "waits for a %s reference and never substitutes the currently viewed workspace",
+    async (kind) => {
+      const { metadataUrl, contentUrl } = mockCapturedReference({
+        path: "/original/workspace/guide.txt",
+        content: "Original file contents",
+        kind,
+      });
+      let resolve!: (response: Response) => void;
+      fetchMock.mockReturnValueOnce(
+        new Promise<Response>((done) => {
+          resolve = done;
+        }),
+      );
+      renderMarkdown(
+        "Read `/original/workspace/guide.txt:12`.",
+        [],
+        {
+          ...FILE_VIEWER_WITH_SESSION,
+          conversationId: "different-chat",
+          workspaceRoot: "/different/workspace",
+        },
+        "original-item",
+      );
+      expect(screen.getByText("/original/workspace/guide.txt:12").tagName).toBe("CODE");
+      expect(screen.queryByRole("button")).toBeNull();
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+      resolve(referenceMetadata("/original/workspace/guide.txt", kind));
+      const chip = await screen.findByRole("button", { name: "guide.txt" });
+      expect(fetchMock).toHaveBeenCalledOnce();
+      expect(fetchMock).toHaveBeenCalledWith(
+        metadataUrl,
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
+      fireEvent.click(chip);
+      await waitFor(() =>
+        expect(screen.getByRole("dialog")).toHaveTextContent("Original file contents"),
+      );
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock).toHaveBeenCalledWith(
+        contentUrl,
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
+      expect(openFile).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    { kind: "directory", markdown: "Read `/projects/frontend`." },
+    { kind: "directory", markdown: "Read [the folder](/projects/frontend)." },
+    { kind: "missing", markdown: "Read `/projects/frontend`." },
+    { kind: "missing", markdown: "Read [the file](/projects/frontend)." },
+  ] as const)("keeps $kind metadata as quiet code: $markdown", async ({ kind, markdown }) => {
+    fetchMock.mockImplementation(async (url: string) => {
+      if (
+        url !==
+        "/v1/sessions/conv_1/attachments/references/captured-item/metadata?path=%2Fprojects%2Ffrontend"
+      )
+        throw new Error(`Unexpected reference request: ${url}`);
+      return referenceMetadata("/projects/frontend", kind);
+    });
+    const client = renderMarkdown(markdown, [], FILE_VIEWER_WITH_SESSION, "captured-item");
     await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
-    resolve(new Response("Original file contents", { headers: { "Content-Type": "text/plain" } }));
-    const chip = await screen.findByRole("button", { name: "guide.txt" });
-    fireEvent.click(chip);
-    expect(await screen.findByRole("dialog")).toHaveTextContent("Original file contents");
-    expect(fetchMock).toHaveBeenCalledOnce();
-    expect(fetchMock).toHaveBeenCalledWith(
-      "/v1/sessions/conv_1/attachments/references/original-item?path=%2Foriginal%2Fworkspace%2Fguide.txt",
-      expect.objectContaining({ signal: expect.any(AbortSignal) }),
-    );
+    await waitFor(() => expect(client.isFetching()).toBe(0));
+    expect(screen.getByText("/projects/frontend").tagName).toBe("CODE");
+    expect(screen.queryByRole("button")).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(toast.error).not.toHaveBeenCalled();
+    expect(toastMock).not.toHaveBeenCalled();
     expect(openFile).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledOnce();
   });
 
-  it("retains actionable errors for an explicit captured Markdown link", async () => {
+  it("keeps an inaccessible explicit captured Markdown link as quiet code", async () => {
     fetchMock.mockResolvedValue(
       new Response(JSON.stringify({ detail: "Owner access required" }), {
         status: 403,
         headers: { "Content-Type": "application/json" },
       }),
     );
-    renderMarkdown(
+    const client = renderMarkdown(
       "[Open file](/projects/frontend)",
       [],
       FILE_VIEWER_WITH_SESSION,
       "captured-item",
     );
-    expect(fetchMock).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "frontend" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Owner access required");
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    await waitFor(() => expect(client.isFetching()).toBe(0));
+    expect(screen.getByText("/projects/frontend").tagName).toBe("CODE");
+    expect(screen.queryByRole("button")).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(toastMock).not.toHaveBeenCalled();
+    expect(toast.error).not.toHaveBeenCalled();
+    expect(openFile).not.toHaveBeenCalled();
   });
 });
 
@@ -299,20 +404,26 @@ describe("markdown links to workspace files", () => {
   ])(
     "renders captured references inline and opens their original message scope: %s",
     async (markdown) => {
-      fetchMock.mockResolvedValue(
-        new Response("# Captured instructions", { headers: { "Content-Type": "text/markdown" } }),
-      );
+      const { metadataUrl, contentUrl } = mockCapturedReference({
+        path: "/original/workspace/AGENTS.md",
+        content: "# Captured instructions",
+        contentType: "text/markdown",
+      });
       renderMarkdown(markdown, [], FILE_VIEWER_WITH_SESSION, "original-item");
       const chip = await screen.findByRole("button", { name: "AGENTS.md" });
       expect(chip).toHaveTextContent(/^AGENTS\.md$/);
       expect(chip.querySelectorAll("svg")).toHaveLength(1);
-      if (!markdown.includes("`")) expect(fetchMock).not.toHaveBeenCalled();
+      expect(fetchMock).toHaveBeenCalledOnce();
+      expect(fetchMock).toHaveBeenCalledWith(
+        metadataUrl,
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
       fireEvent.focus(chip);
       expect(await screen.findByRole("tooltip")).toHaveTextContent("/original/workspace/AGENTS.md");
       fireEvent.click(chip);
       await waitFor(() =>
         expect(fetchMock).toHaveBeenCalledWith(
-          "/v1/sessions/conv_1/attachments/references/original-item?path=%2Foriginal%2Fworkspace%2FAGENTS.md",
+          contentUrl,
           expect.objectContaining({ signal: expect.any(AbortSignal) }),
         ),
       );
@@ -340,6 +451,11 @@ describe("markdown links to workspace files", () => {
     const chip = await screen.findByRole("button", { name: "stored.pdf" });
     expect(chip).toHaveClass("inline-flex", "align-baseline");
     expect(screen.queryByRole("button", { name: "Download stored.pdf" })).toBeNull();
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/v1/sessions/conv_1/resources/files/original-file",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
     fireEvent.click(chip);
     expect(openAttachment).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -348,10 +464,13 @@ describe("markdown links to workspace files", () => {
         filename: "stored.pdf",
         attachment: { file_id: "original-file", filename: "the report" },
       }),
-      { placement: "beside" },
+      { placement: "default" },
     );
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(fetchMock.mock.calls.some(([url]) => url.endsWith("/content"))).toBe(false);
+    expect(fetchMock.mock.calls.some(([url]) => url.includes("/attachments/references/"))).toBe(
+      false,
+    );
   });
   it("plays an existing root-level recording outside the changed-file list", async () => {
     fetchMock.mockResolvedValue(dirListing(["demo.webm"]));
@@ -679,9 +798,10 @@ describe("cited line ranges", () => {
 describe("file link labels", () => {
   it("labels an inline-code file link by its filename and exposes its full path on focus", async () => {
     const citation = `${WORKSPACE}/sql/core/SQLFunctionExpression.scala:68-72`;
-    fetchMock.mockResolvedValue(
-      new Response("class Example", { headers: { "Content-Type": "text/plain" } }),
-    );
+    const { metadataUrl } = mockCapturedReference({
+      path: `${WORKSPACE}/sql/core/SQLFunctionExpression.scala`,
+      content: "class Example",
+    });
     renderMarkdown(
       `see \`${citation}\``,
       ["sql/core/SQLFunctionExpression.scala"],
@@ -691,6 +811,11 @@ describe("file link labels", () => {
 
     const link = await screen.findByRole("button", { name: "SQLFunctionExpression.scala" });
     expect(link).toHaveTextContent(/^SQLFunctionExpression\.scala$/);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock).toHaveBeenCalledWith(
+      metadataUrl,
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
     expect(link).not.toHaveAttribute("title");
     fireEvent.focus(link);
     expect(await screen.findByRole("tooltip")).toHaveTextContent(

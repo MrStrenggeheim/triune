@@ -1,3 +1,4 @@
+/* Modified for Triune. */
 .dock-workspace {
   --dock-header-height: var(--workbench-header-height, 48px);
   position: relative;
@@ -317,4 +318,19 @@
 .dock-tab-close:focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: -2px;
+}
+
+.dock-tab-add {
+  position: sticky;
+  right: 0;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 0 6px;
+  background: var(--workspace-content);
+  z-index: 4;
+}
+.dock-tabs:has(.dock-tab-add) .dock-tab-end {
+  flex: 0 0 8px;
+  min-width: 8px;
 }

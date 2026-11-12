@@ -1,3 +1,4 @@
+// Modified for Triune.
 // Tests for the post-archive Undo toast. Contract: archives in quick succession
 // merge into ONE toast whose count updates live, Undo unarchives the whole merged
 // batch via undoArchiveConversations, and "View archived" navigates to Settings.
@@ -11,6 +12,7 @@ import { QueryClient } from "@tanstack/react-query";
 import { toast, setNotificationCenterOpen } from "@/lib/notifications";
 import { NotificationBell } from "@/components/NotificationCenter";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { clearOptimisticTitles, recordOptimisticTitle } from "@/lib/optimisticTitles";
 import type * as SonnerModule from "@/lib/notifications";
 import type { Conversation } from "@/hooks/useConversations";
 
@@ -46,13 +48,21 @@ import { Toaster } from "@/components/ui/sonner";
 
 const queryClient = new QueryClient();
 
-/** Minimal Conversation rows keyed by id — the toast only needs id + count. */
-const conv = (id: string): Conversation =>
-  ({ id, object: "conversation", title: id, created_at: 0, updated_at: 0 }) as Conversation;
+/** Minimal chat rows with readable titles matching their ids. */
+const conv = (id: string): Conversation => ({
+  id,
+  object: "conversation",
+  title: id,
+  created_at: 0,
+  updated_at: 0,
+  labels: {},
+  permission_level: null,
+});
 
 const convs = (...ids: string[]) => ids.map(conv);
 
-let navigate: ReturnType<typeof vi.fn>;
+type NavigateFn = Parameters<typeof showArchiveUndoToast>[2];
+let navigate: NavigateFn;
 
 function mountToaster() {
   render(
@@ -66,13 +76,7 @@ function mountToaster() {
 }
 
 const show = (ids: string[]) =>
-  act(() =>
-    showArchiveUndoToast(
-      queryClient,
-      convs(...ids),
-      navigate as unknown as Parameters<typeof showArchiveUndoToast>[2],
-    ),
-  );
+  act(() => showArchiveUndoToast(queryClient, convs(...ids), navigate));
 
 beforeEach(() => {
   // Start every test on REAL timers so a fake clock left installed (or
@@ -83,7 +87,8 @@ beforeEach(() => {
   mocks.undoArchiveConversations.mockReset().mockResolvedValue(undefined);
   mocks.toastDurations.length = 0;
   resetArchiveUndoBatchForTests();
-  navigate = vi.fn();
+  clearOptimisticTitles();
+  navigate = vi.fn() as unknown as NavigateFn;
   toast.dismiss();
   setNotificationCenterOpen(false);
 });
@@ -123,13 +128,72 @@ describe("showArchiveUndoToast", () => {
     expect(mocks.undoArchiveConversations).toHaveBeenLastCalledWith(queryClient, convs("new"));
   });
 
-  it("uses singular copy for a single session", async () => {
+  it("names the single archived chat", async () => {
     mountToaster();
     await show(["a"]);
 
-    expect(await screen.findByText("Archived 1 session")).toBeInTheDocument();
+    expect(await screen.findByText("Archived “a”")).toBeInTheDocument();
     // Never the literal "session(s)".
     expect(screen.queryByText(/session\(s\)/)).not.toBeInTheDocument();
+  });
+
+  it("retains the actual chat name in history after expiry and restores its captured target", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    mountToaster();
+    const original = { ...conv("named-chat-id"), title: "Investigate login retries" };
+    act(() => showArchiveUndoToast(queryClient, [original], navigate));
+    expect(screen.getByText("Archived “Investigate login retries”")).toBeInTheDocument();
+    await act(() => vi.advanceTimersByTimeAsync(3100));
+    await show(["a-later-chat"]);
+    fireEvent.click(screen.getByRole("button", { name: "Notifications" }));
+    expect(screen.getByText("Archived “Investigate login retries”")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Restore" }));
+    expect(mocks.undoArchiveConversations).toHaveBeenLastCalledWith(queryClient, [original]);
+  });
+
+  it.each([
+    { title: null, labels: undefined, prompt: undefined, expected: "New session" },
+    {
+      title: null,
+      labels: { "omnigent.wrapper": "codex-native-ui" },
+      prompt: undefined,
+      expected: "Codex",
+    },
+    {
+      title: null,
+      labels: undefined,
+      prompt: "Prepare the rollout",
+      expected: "Prepare the rollout",
+    },
+  ])(
+    "uses the canonical title fallback: $expected",
+    async ({ title, labels, prompt, expected }) => {
+      mountToaster();
+      const conversation: Conversation = { ...conv("untitled-chat"), title, labels: labels ?? {} };
+      if (prompt) recordOptimisticTitle(conversation.id, prompt);
+      act(() => showArchiveUndoToast(queryClient, [conversation], navigate));
+      expect(screen.getByText(`Archived “${expected}”`)).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+      expect(mocks.undoArchiveConversations).toHaveBeenLastCalledWith(queryClient, [conversation]);
+    },
+  );
+
+  it("keeps the named batch summary after the Undo window expires", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    mountToaster();
+    await show(["Plan", "Review", "Ship", "Monitor"]);
+    expect(screen.getByText("“Plan”, “Review” and 2 more")).toBeInTheDocument();
+    await act(() => vi.advanceTimersByTimeAsync(3100));
+    fireEvent.click(screen.getByRole("button", { name: "Notifications" }));
+    expect(screen.getByText("Archived 4 chats")).toBeInTheDocument();
+    expect(
+      screen.getByText("“Plan”, “Review” and 2 more. Restore these chats to the sidebar."),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Restore" }));
+    expect(mocks.undoArchiveConversations).toHaveBeenLastCalledWith(
+      queryClient,
+      convs("Plan", "Review", "Ship", "Monitor"),
+    );
   });
 
   it("uses plural copy and keeps one toast when archives merge", async () => {
@@ -138,9 +202,10 @@ describe("showArchiveUndoToast", () => {
     await show(["b", "c"]);
 
     // Still a single toast, now covering all three.
-    const titles = await screen.findAllByText(/^Archived \d+ sessions?$/);
+    const titles = await screen.findAllByText(/^Archived \d+ chats$/);
     expect(titles).toHaveLength(1);
-    expect(titles[0]).toHaveTextContent("Archived 3 sessions");
+    expect(titles[0]).toHaveTextContent("Archived 3 chats");
+    expect(screen.getByText("“a”, “b” and 1 more")).toBeInTheDocument();
   });
 
   it("de-dupes ids already in the batch", async () => {
@@ -148,7 +213,8 @@ describe("showArchiveUndoToast", () => {
     await show(["a"]);
     await show(["a", "b"]);
 
-    expect(await screen.findByText("Archived 2 sessions")).toBeInTheDocument();
+    expect(await screen.findByText("Archived 2 chats")).toBeInTheDocument();
+    expect(screen.getByText("“a”, “b”")).toBeInTheDocument();
   });
 
   it("undoes the whole merged batch and dismisses the toast", async () => {
@@ -156,7 +222,7 @@ describe("showArchiveUndoToast", () => {
     await show(["a"]);
     await show(["b", "c"]);
 
-    await screen.findByText("Archived 3 sessions");
+    await screen.findByText("Archived 3 chats");
     act(() => {
       fireEvent.click(screen.getByRole("button", { name: "Undo" }));
     });
@@ -170,7 +236,7 @@ describe("showArchiveUndoToast", () => {
   it("starts a fresh batch after an Undo", async () => {
     mountToaster();
     await show(["a", "b"]);
-    await screen.findByText("Archived 2 sessions");
+    await screen.findByText("Archived 2 chats");
     act(() => {
       fireEvent.click(screen.getByRole("button", { name: "Undo" }));
     });
@@ -181,7 +247,7 @@ describe("showArchiveUndoToast", () => {
     // A later archive is its own batch, not appended to the undone one: it reads
     // "1 session" and undoing again restores only the new id.
     await show(["x"]);
-    await screen.findByText("Archived 1 session");
+    await screen.findByText("Archived “x”");
     act(() => {
       fireEvent.click(screen.getByRole("button", { name: "Undo" }));
     });
@@ -192,7 +258,7 @@ describe("showArchiveUndoToast", () => {
     mountToaster();
     await show(["a"]);
 
-    await screen.findByText("Archived 1 session");
+    await screen.findByText("Archived “a”");
     act(() => {
       fireEvent.click(screen.getByRole("button", { name: "View archived" }));
     });
@@ -254,7 +320,7 @@ describe("showArchiveUndoToast", () => {
       await act(async () => {
         await vi.advanceTimersByTimeAsync(0);
       });
-      expect(screen.getByText("Archived 1 session")).toBeInTheDocument();
+      expect(screen.getByText("Archived “new”")).toBeInTheDocument();
       act(() => {
         fireEvent.click(screen.getByRole("button", { name: "Undo" }));
       });

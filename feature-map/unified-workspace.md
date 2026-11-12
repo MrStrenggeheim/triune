@@ -17,7 +17,7 @@ Conversation and tool views share resizable, dockable panes while keeping their 
 
 ## How to get to it (user POV)
 
-- Use + Open in the application bar to add Explorer, Changes, Search, a manual terminal, Agent CLI, Activity or Automations.
+- Use + Open view in the application bar, or the subtle plus after the last tab, to add Explorer, Changes, Search, a manual terminal, Agent CLI, Activity or Automations.
 - Drag a tab to a pane edge to split; use its own close button to close it, use the tab pin before its close control to keep a view across chats.
 - Click a chat to restore its layout; choose Open to side or drag a sidebar chat into a tab group or split edge to add it to the current layout.
 - The app bar has no Layout control; a new chat starts in its own arrangement.
@@ -80,7 +80,8 @@ Preconditions: follow the [verification skill](skills/verify-omnigent/SKILL.md),
 - Select chat text: Reply has one icon; Ask subchat… creates a durable child with an unsent quote; Send to… preserves the chosen chat's draft.
 - In an existing or new composer, microphone follows Add; control labels share typography and foreground, with effort secondary.
 - The workspace control reads computer icon and Host:/path; narrow composers still collapse its text.
-- Open an inline attachment into a preview tab, download its original, reload, and Reveal in Explorer; captured content and source workspace remain independent of current chat selection.
+- Open a live workspace-file chip into the File Editor, edit/comment normally, and download its captured original from the three-dot menu.
+- Open rendered previews and stored attachments in the existing preview/lightbox; their bytes remain independent of the current chat and temporary source.
 - Change Appearance density on desktop and mobile; headers and sidebar spacing update consistently, and scrollbar treatment remains slim.
 - Views use the content surface and primary active-tab bottom strip; colored surface boundaries have no redundant border.
 - The mobile bottom gesture area blends into the content surface without a pane-bottom divider.
@@ -93,7 +94,7 @@ Layout miniatures and Inbox consolidation remain deferred.
 
 - Host/path follows approved B: computer icon, secondary Host, middle dot, primary path and chevron.
 - Add host is directly reachable in every workspace dialog; it reuses server-specific instructions without losing the path draft.
-- Inline chips open beside their originating chat; right-click or touch overflow exposes tab/modal/reveal/copy/download destinations.
+- Live-file chips use the File Editor and the Appearance file-opening preference; right-click or touch overflow exposes explicit destinations and file actions.
 - Rendered previews retain the existing large modal/image lightbox with supported zoom and pan.
 - A pinned tab always has a filled pin; pinning and unpinning do not move or narrow its pane.
 - Nested pinned reservations can leave empty, usable drop regions when another chat has fewer panes.
@@ -104,6 +105,20 @@ Layout miniatures and Inbox consolidation remain deferred.
 - Appearance density choices include shared preview cards; buttons do not shift vertically when pressed.
 - Search control and popup center on the whole application, independently of adjacent actions.
 
-Acceptance and evidence: "'`tests/browser_ui/chat/test_workspace_cycle.py`, `test_workspace_iteration.py` and `test_workspace_selection_design.py` in the same folder.
+Acceptance and evidence: `tests/browser_ui/chat/test_workspace_cycle.py`, `test_workspace_iteration.py` and `test_workspace_selection_design.py` in the same folder.
 Use desktop/mobile and both color modes; verify drafts, original file bytes and per-chat arrangements survive reload.
-'"
+
+### File editing and stable navigation
+
+- Appearance → Open files from chat selects Same pane, Beside, Always split or Reuse pane; Beside reuses an existing neighboring pane before splitting.
+- Authorized reference metadata identifies files and folders without downloading contents; source workspace/generation and chat grants remain enforced.
+- Opening a live chip captures its original before editing; passive classification neither captures bytes nor grants new filesystem access.
+- The File Editor header has one copyable Host/path, Comments, Diff and a three-dot menu; choose the comments chat inside the comments sidebar.
+- Notifications follow Comfortable/Compact density, preserve Undo, offer Show read and name archived chats.
+- Hidden Explorer/transcript geometry is retained across chat changes; visible remeasurement restores real dimensions without zero-height cache writes.
+- Sidebar hierarchy omits a chat from Sessions when its loaded ancestor already presents it under a project, while retaining explicit project/pin placement and unknown orphans.
+- Modified Git entries use the inherited amber indicator; other status precedence is unchanged.
+
+Verification: `tests/browser_ui/chat/test_triune_next_iteration.py`, `test_workspace_iteration.py`, `web/src/workbench/filePlacement.test.ts`, `web/src/components/ChatAttachment.test.tsx`, `web/src/components/chat/QuoteDestinationMenu.test.tsx`, `web/src/shell/useScrollRestore.geometry.test.ts` and the owning notification, sidebar, picker and transcript suites.
+Backend boundaries: `tests/server/routes/test_chat_attachments.py` and `tests/stores/test_context_references.py`.
+Hidden-measurement and scrollbar tests count avoided work; they do not establish frame-rate improvements or physical-device behavior.

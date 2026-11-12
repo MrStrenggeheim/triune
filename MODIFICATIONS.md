@@ -19,6 +19,9 @@ Those previously Apache-licensed features retain their original permissions.
 - Add the primary `triune` command while preserving legacy command aliases, Python imports, environment variables and saved state compatibility.
 - Install the backend and both SDKs from the Triune repository at the same ref.
 - Keep the upstream Apache license and notices, and apply PolyForm Noncommercial 1.0.0 to new own material with required Triune attribution.
+- Route live workspace-file references to the File Editor with configurable pane reuse, captured-original downloads and compact comment controls.
+- Retain Explorer and transcript geometry through layout changes, reduce scrollbar rescans, and restore sidebar hierarchy and Git indicator consistency.
+- Reuse shared density, notifications, workspace pickers and view-opening controls, and recover subchat quote creation without duplicating a failed child.
 
 [LICENSING.md](LICENSING.md) defines scope and the required notice.
 Git diffs against the imported baseline identify exact modified paths and lines.

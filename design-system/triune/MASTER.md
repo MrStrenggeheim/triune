@@ -127,8 +127,14 @@ Every implementation report includes action/expected-result acceptance steps and
 - Composer and tab strips show no scrollbars; overflowing tabs scroll behind a right-side fade.
 - Sidebar counts represent all unique descendants; guides and expander hover/cursor follow shared tree styles.
 - Add host is directly reachable in every workspace picker and reuses the existing server-specific CLI instructions.
-- Inline chip clicks open beside the originating chat; context menus expose other valid destinations and file actions.
+- Live workspace-file chips open the normal File Editor; folder references remain inline code.
+- Rendered previews and attachments without a live file retain preview/lightbox behavior.
+- File opening defaults to reusing a neighboring pane, splitting once when none exists; Appearance also offers Same pane, Always split and Reuse pane.
 - Rendered in-chat previews keep their large modal/lightbox behavior and supported zoom/pan/close controls.
 - Shared buttons do not move vertically when pressed; modal close glyphs do not get redundant Close tooltips.
 - Search trigger and popup center on the full application width independently of adjacent controls.
 - Comfortable/Compact use the existing visual preference-card pattern, illustrating 48px and 36px header/list density.
+- File Editor headers show one copyable Host/path, Comments, Diff and the shared three-dot menu; the comments conversation selector belongs inside the comments sidebar.
+- Notifications and workspace-picker headers and entries follow the same density tokens; read-notification visibility is an explicit saved filter.
+- Keep mobile search centered on the app and expand its text within the measured space between controls.
+- The tab add control is a subtle shared icon button after the last tab; empty content centers larger muted guidance and a primary Open view button.

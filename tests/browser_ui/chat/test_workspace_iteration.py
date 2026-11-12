@@ -1,7 +1,9 @@
+# Modified for Triune.
 """Approved chat-owned layouts and captured attachment tabs through the built SPA."""
 
 import re
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 from playwright.sync_api import Page, expect
 
@@ -77,71 +79,86 @@ def test_inline_attachment_opens_captured_tab_downloads_and_reveals_original_wor
             message_item(
                 item_id,
                 "assistant",
-                "Here is [guide.md](/workspace/guide.md).",
+                "Files: [first](/workspace/guide.csv), [next](/workspace/next.csv). "
+                "Folder: [root](/workspace/docs).",
                 response_id="artifact-turn",
             )
         ]
     )
     route = f"/v1/sessions/{first.session_id}/attachments/references/{item_id}"
-    content = "# Original captured guide\n\nThis is the originating message's file.\n"
+    captured = "name,value\noriginal,1\n"
     browser_contract.route(
         browser_contract._matcher(route),
-        lambda request: request.fulfill(body=content, content_type="text/markdown"),
+        lambda request: request.fulfill(body=captured, content_type="text/csv"),
     )
+
+    def metadata(request):
+        name = parse_qs(urlparse(request.url).query)["path"][0].rsplit("/", 1)[-1]
+        return {
+            "workspace": workspace_journey.workspace,
+            "path": name,
+            "kind": "directory" if name == "docs" else "file",
+        }
+
+    browser_contract.json(route + "/metadata", metadata)
     browser_contract.json(
-        route + "/location", {"workspace": workspace_journey.workspace, "path": "guide.md"}
+        route + "/location", {"workspace": workspace_journey.workspace, "path": "guide.csv"}
     )
     base = "/v1/workbench-workspaces/workspace-files/resources/environments/default/filesystem"
     for suffix in ("", "/", "/workspace"):
         browser_contract.json(
             base + suffix,
             list_payload(
-                [{"path": "guide.md", "name": "guide.md", "type": "file", "bytes": len(content)}]
+                [
+                    {"path": name, "name": name, "type": "file", "bytes": 30}
+                    for name in ("guide.csv", "next.csv")
+                ]
             ),
+        )
+    for name in ("guide.csv", "next.csv"):
+        browser_contract.json(
+            base + "/" + name,
+            {
+                "object": "session.environment.filesystem.file_content",
+                "path": name,
+                "content": "name,value\nlive,2\n",
+                "encoding": "utf-8",
+                "content_type": "text/csv",
+                "bytes": 18,
+            },
         )
     page.set_viewport_size({"width": 1440, "height": 1000})
     page.goto(first.url)
     chat = _view(page, "Chat A")
-    reference = chat.get_by_role("button", name="guide.md", exact=True)
-    expect(reference).to_be_visible()
-    reference.click()
-    preview = _view(page, "guide.md")
-    expect(preview.get_by_text("Original captured guide", exact=True)).to_be_visible()
+    expect(chat.get_by_role("button", name="guide.csv", exact=True)).to_be_visible()
+    expect(chat.locator("code").filter(has_text="/workspace/docs")).to_be_visible()
+    chat.get_by_role("button", name="guide.csv", exact=True).click()
+    preview = _view(page, "guide.csv")
+    expect(preview.locator(".view-lines")).to_contain_text("live", timeout=30000)
     expect(chat.get_by_label("Message the agent")).to_be_visible()
-    chat_bounds = chat.bounding_box()
-    preview_bounds = preview.bounding_box()
-    assert chat_bounds and preview_bounds
-    assert preview_bounds["x"] >= chat_bounds["x"] + chat_bounds["width"] - 1
-    expect(page.get_by_role("dialog")).to_have_count(0)
+    panes = page.locator(".dock-pane:not([hidden])").count()
+    chat.get_by_role("button", name="next.csv", exact=True).click()
+    expect(_view(page, "next.csv").locator(".view-lines")).to_contain_text("live", timeout=30000)
+    assert page.locator(".dock-pane:not([hidden])").count() == panes
+    chat.get_by_role("button", name="guide.csv", exact=True).click()
+    expect(preview).to_be_visible()
+    assert page.locator(".dock-pane:not([hidden])").count() == panes
+    preview.get_by_role("button", name="View settings", exact=True).click()
     with page.expect_download() as download:
-        preview.get_by_role("button", name="Download guide.md", exact=True).click()
-    assert Path(download.value.path()).read_text() == content
-    reference.click(button="right")
-    page.get_by_role("menuitem", name="Open in modal", exact=True).click()
-    modal = page.get_by_role("dialog", name="guide.md", exact=True)
-    expect(modal).to_be_visible()
-    modal_bounds = modal.bounding_box()
-    assert modal_bounds and modal_bounds["width"] > 700
-    modal.get_by_role("button", name="Close", exact=True).click()
-    reference.click(button="right")
-    page.get_by_role("menuitem", name="Open as tab", exact=True).click()
-    expect(preview.get_by_text("Original captured guide", exact=True)).to_be_visible()
-    expect(chat).to_be_hidden()
+        page.get_by_role("menuitem", name="Download captured original", exact=True).click()
+    assert Path(download.value.path()).read_text() == captured
+    expect(preview.get_by_role("button", name="Location", exact=True)).to_have_count(0)
+    preview.get_by_role("button", name="Show comments", exact=True).click()
+    expect(
+        preview.get_by_role("button", name="Choose comments conversation", exact=True)
+    ).to_be_visible()
+    _capture(page, output_path, "live-file-editor-with-comment-owner")
     _navigate_chat(page, second)
     expect(preview).to_be_hidden()
     _navigate_chat(page, first)
-    page.get_by_role("tab", name="guide.md", exact=True).click()
+    page.get_by_role("tab", name="guide.csv", exact=True).click()
     page.reload()
-    expect(preview.get_by_text("Original captured guide", exact=True)).to_be_visible()
-    preview.get_by_role("button", name="Reveal in Explorer", exact=True).click()
-    explorer = _view(page, "Explorer")
-    expect(explorer.get_by_text("guide.md", exact=True)).to_be_visible()
-    assert any(
-        view["kind"] == "attachment-preview"
-        for saved in _saved_dock(page)["chats"]
-        for view in saved["layout"]["views"]
-    )
-    _capture(page, output_path, "attachment-tab-and-original-explorer")
+    expect(preview.locator(".view-lines")).to_contain_text("live", timeout=30000)
     assert browser_errors == []
 
 

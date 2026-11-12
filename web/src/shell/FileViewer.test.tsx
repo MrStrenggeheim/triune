@@ -1,3 +1,4 @@
+// Modified for Triune; inherited notices remain applicable.
 import { useFileContentReader } from "./FileContentReader";
 // Tests for FileViewer's comments-panel open/close semantics and URL sync:
 //
@@ -17,7 +18,8 @@ import { useFileContentReader } from "./FileContentReader";
 
 import type * as CommentSenderModule from "@/hooks/CommentSenderContext";
 import type * as TerminalsModule from "@/hooks/useTerminals";
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
+import type { CommentsPanelProps } from "./CommentsPanel";
 import { WorkbenchWorkspaceProvider } from "@/lib/workbenchWorkspace";
 import userEvent from "@testing-library/user-event";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
@@ -60,6 +62,7 @@ vi.mock("./CodeViewer", () => ({
     markdownSourceFallback,
     searchOpen,
     onDirtyChange,
+    onSetActiveSelection,
   }: {
     path: string;
     position?: { line: number };
@@ -67,6 +70,11 @@ vi.mock("./CodeViewer", () => ({
     markdownSourceFallback?: boolean;
     searchOpen?: boolean;
     onDirtyChange?: (dirty: boolean) => void;
+    onSetActiveSelection?: (selection: {
+      start_index: number;
+      end_index: number;
+      anchor_content: string;
+    }) => void;
   }) => {
     useFileContentReader(useCallback(() => `current buffer for ${path}`, [path]));
     codeViewerRenders({ path, position });
@@ -78,6 +86,17 @@ vi.mock("./CodeViewer", () => ({
         data-search-open={String(!!searchOpen)}
       >
         <button type="button" aria-label="make dirty" onClick={() => onDirtyChange?.(true)} />
+        <button
+          type="button"
+          aria-label="Select comment range"
+          onClick={() =>
+            onSetActiveSelection?.({
+              start_index: 10,
+              end_index: 20,
+              anchor_content: "selected text",
+            })
+          }
+        />
         {viewMode === "editor" && (
           <textarea aria-label="Draft text" onChange={() => onDirtyChange?.(true)} />
         )}
@@ -96,18 +115,18 @@ vi.mock("./CommentsPanel", () => ({
     comments,
     addressedComments,
     activeSelection,
-  }: {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    onClickComment?: (comment: any) => void;
-    onAddressAll?: () => void;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    comments?: any[];
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    addressedComments?: any[];
-    activeSelection?: { comment_id?: string } | null;
-  }) => (
-    <div data-testid="comments-panel" data-active-comment-id={activeSelection?.comment_id ?? ""}>
-      {[...(comments ?? []), ...(addressedComments ?? [])].map((c: { id: string }) => (
+    annotationControl,
+    recipientValid,
+    onAddComment,
+  }: CommentsPanelProps) => (
+    <div
+      data-testid="comments-panel"
+      data-active-comment-id={activeSelection?.comment_id ?? ""}
+      data-selection-start={activeSelection?.start_index}
+      data-recipient-valid={String(recipientValid)}
+    >
+      {annotationControl}
+      {[...(comments ?? []), ...(addressedComments ?? [])].map((c) => (
         <button
           key={c.id}
           type="button"
@@ -116,6 +135,11 @@ vi.mock("./CommentsPanel", () => ({
         />
       ))}
       <button type="button" aria-label="address all comments" onClick={onAddressAll} />
+      <button
+        type="button"
+        aria-label="Add selected comment"
+        onClick={() => onAddComment("Draft comment")}
+      />
     </div>
   ),
 }));
@@ -170,6 +194,7 @@ vi.mock("@/hooks/useComments", () => ({
 
 vi.mock("@/hooks/useFileContent", () => ({
   useFileContent: vi.fn(() => ({ data: { content: "", path: "file1.py" } })),
+  downloadWorkspaceFile: vi.fn(() => Promise.resolve()),
 }));
 
 vi.mock("@/hooks/useFileDiff", () => ({
@@ -236,13 +261,13 @@ vi.mock("@/store/chatStore", () => ({
 
 // ── Test helpers ──────────────────────────────────────────────────────────────
 
-import { useComments } from "@/hooks/useComments";
+import { useComments, useAddComment } from "@/hooks/useComments";
 import { useIsMobileViewport } from "@/hooks/useIsMobileViewport";
 import { useOptionalCommentSender } from "@/hooks/CommentSenderContext";
 import { useGitFileDiff } from "@/hooks/useFileDiff";
 import { prepareDiffEditor } from "./MonacoDiffViewer";
 import { MAX_RICH_MARKDOWN_BYTES } from "./codeViewerHelpers";
-import { useFileContent } from "@/hooks/useFileContent";
+import { useFileContent, downloadWorkspaceFile } from "@/hooks/useFileContent";
 import { getSeenCommentIds } from "@/hooks/useSeenComments";
 import { useWorkspaceGitChanges } from "@/hooks/useWorkspaceChangedFiles";
 import {
@@ -297,6 +322,10 @@ function LocationDisplay() {
 }
 
 interface RenderProps {
+  annotationControl?: ReactNode;
+  hostLabel?: string;
+  originalDownload?: () => void;
+  permissionLevel?: number | null;
   commentId?: string;
   initialDiff?: boolean;
   linkRequestId?: string;
@@ -334,6 +363,10 @@ interface RenderProps {
  * the current params after state changes.
  */
 function viewerTree({
+  annotationControl,
+  hostLabel,
+  originalDownload,
+  permissionLevel,
   commentId,
   initialDiff,
   linkRequestId,
@@ -361,6 +394,10 @@ function viewerTree({
       <MemoryRouter initialEntries={[url]}>
         <LocationDisplay />
         <FileViewer
+          annotationControl={annotationControl}
+          hostLabel={hostLabel}
+          originalDownload={originalDownload}
+          permissionLevel={permissionLevel}
           commentId={commentId}
           initialDiff={initialDiff}
           linkRequestId={linkRequestId}
@@ -1656,7 +1693,7 @@ describe("FileViewer clickable file path", () => {
       </FileViewerContext.Provider>,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Copy file path: src/second.py" }));
+    fireEvent.click(screen.getByRole("button", { name: "Copy file path: /repo/src/second.py" }));
 
     expect(copyText).toHaveBeenCalledWith("/repo/src/second.py");
   });
@@ -1674,7 +1711,9 @@ describe("FileViewer clickable file path", () => {
       </FileViewerContext.Provider>,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: `Copy file path: ${path}` }));
+    const copyButton = screen.getByRole("button", { name: `Copy file path: ${expectedPath}` });
+    expect(copyButton).toHaveTextContent(expectedPath);
+    fireEvent.click(copyButton);
 
     expect(copyText).toHaveBeenCalledWith(expectedPath);
   });
@@ -1699,7 +1738,7 @@ describe("FileViewer clickable file path", () => {
     );
     expect(screen.getByRole("button", { name: "More actions" })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Copy file path: notes.md" }));
+    fireEvent.click(screen.getByRole("button", { name: "Copy file path: /repo/notes.md" }));
 
     expect(copyText).toHaveBeenCalledWith("/repo/notes.md");
   });
@@ -3188,3 +3227,122 @@ it("applies captured comment/diff links without reading another pane's URL", asy
   );
   expect(screen.queryByTestId("diff-viewer")).not.toBeInTheDocument();
 });
+
+it.each([false, true])("opens unowned Comments from the toolbar (collapsed: %s)", (collapsed) => {
+  useCommentsMock.mockReturnValue(makeCommentsQuery([]));
+  if (collapsed) installCollapsedToolbar();
+  renderViewer({
+    open: true,
+    recipientValid: false,
+    conversationId: "",
+    annotationControl: <button type="button">Choose comments chat</button>,
+  });
+  expect(screen.queryByRole("button", { name: "Choose comments chat" })).toBeNull();
+  if (collapsed) {
+    fireEvent.pointerDown(screen.getByRole("button", { name: "More actions" }), { button: 0 });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Show comments" }));
+  } else fireEvent.click(screen.getByRole("button", { name: "Show comments" }));
+  const sidebar = screen.getByTestId("comments-panel");
+  expect(within(sidebar).getByRole("button", { name: "Choose comments chat" })).toBeInTheDocument();
+  expect(sidebar).toHaveAttribute("data-recipient-valid", "false");
+  expect(useComments).toHaveBeenLastCalledWith(undefined, "file1.py");
+});
+
+it("keeps the editor and selection while choosing a comment owner and gates mutation", () => {
+  useCommentsMock.mockReturnValue(makeCommentsQuery([]));
+  const mutate = vi.fn();
+  vi.mocked(useAddComment).mockReturnValue({ mutate } as unknown as ReturnType<
+    typeof useAddComment
+  >);
+  const workspace = {
+    id: "choose-owner",
+    root: "/repo",
+    host_id: "host-a",
+    target_kind: "host" as const,
+    capabilities: [],
+  };
+  function Harness() {
+    const [owner, setOwner] = useState("");
+    return (
+      <WorkbenchWorkspaceProvider value={{ ...workspace, chatSessionId: owner || null }}>
+        {viewerTree({
+          open: true,
+          frameless: true,
+          path: "notes.md",
+          conversationId: owner,
+          recipientValid: !!owner,
+          annotationControl: (
+            <button type="button" onClick={() => setOwner("chat-b")}>
+              Choose comments chat
+            </button>
+          ),
+        })}
+      </WorkbenchWorkspaceProvider>
+    );
+  }
+  render(<Harness />);
+  const draft = screen.getByRole("textbox", { name: "Draft text" });
+  fireEvent.change(draft, { target: { value: "Unsaved editor draft" } });
+  fireEvent.click(screen.getByRole("button", { name: "Select comment range" }));
+  expect(screen.getByTestId("comments-panel")).toHaveAttribute("data-selection-start", "10");
+  fireEvent.click(screen.getByRole("button", { name: "Add selected comment" }));
+  expect(mutate).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Choose comments chat" }));
+  expect(screen.getByTestId("comments-panel")).toHaveAttribute("data-selection-start", "10");
+  expect(screen.getByTestId("comments-panel")).toHaveAttribute("data-recipient-valid", "true");
+  expect(screen.getByRole("textbox", { name: "Draft text" })).toBe(draft);
+  expect(draft).toHaveValue("Unsaved editor draft");
+  fireEvent.click(screen.getByRole("button", { name: "Add selected comment" }));
+  expect(mutate).toHaveBeenCalledWith(
+    expect.objectContaining({ path: "notes.md", start_index: 10, end_index: 20 }),
+    expect.any(Object),
+  );
+  expect(screen.queryByRole("dialog")).toBeNull();
+});
+
+it("shows one Host and absolute file path as the first header control", () => {
+  useCommentsMock.mockReturnValue(makeCommentsQuery([]));
+  const context = localDesktopContext();
+  render(
+    <FileViewerContext.Provider value={context}>
+      {viewerTree({ open: true, frameless: true, path: "src/notes.py", hostLabel: "My Host" })}
+    </FileViewerContext.Provider>,
+  );
+  const pathButton = screen.getByRole("button", { name: "Copy file path: /repo/src/notes.py" });
+  expect(pathButton).toHaveTextContent("My Host · /repo/src/notes.py");
+  expect(screen.getAllByRole("button", { name: /Copy file path/ })).toHaveLength(1);
+  expect(screen.getAllByRole("button")[0]).toBe(pathButton);
+  expect(
+    screen.queryByRole("button", { name: /Location|Up one folder|Select workspace:/ }),
+  ).toBeNull();
+  const settings = screen.getByRole("button", { name: "View settings" });
+  expect(settings).toHaveAttribute("data-header-action-button");
+  expect(settings.querySelector("svg")).toHaveClass("lucide-ellipsis");
+});
+
+it.each([false, true])(
+  "keeps captured original download separate from live download (collapsed: %s)",
+  (collapsed) => {
+    useCommentsMock.mockReturnValue(makeCommentsQuery([]));
+    if (collapsed) installCollapsedToolbar();
+    const originalDownload = vi.fn();
+    renderViewer({ open: true, path: "notes.md", originalDownload });
+    fireEvent.change(screen.getByRole("textbox", { name: "Draft text" }), {
+      target: { value: "Edited live content" },
+    });
+    const openMenu = () =>
+      fireEvent.pointerDown(
+        screen.getByRole("button", { name: collapsed ? "More actions" : "View settings" }),
+        { button: 0 },
+      );
+    openMenu();
+    expect(screen.getByRole("menuitem", { name: "Download file" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Download captured original" }));
+    expect(originalDownload).toHaveBeenCalledOnce();
+    expect(downloadWorkspaceFile).not.toHaveBeenCalled();
+    openMenu();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Download file" }));
+    expect(downloadWorkspaceFile).toHaveBeenCalledWith("conv_1", "notes.md", undefined);
+    expect(originalDownload).toHaveBeenCalledOnce();
+  },
+);

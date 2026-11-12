@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { QuoteDestinationMenu } from "@/components/chat/QuoteDestinationMenu";
 import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
 import { MessageSquarePlusIcon, CornerDownLeftIcon } from "lucide-react";
@@ -53,7 +54,14 @@ export function FileSelectionMenu({
   if (!source || source.conversationId) {
     actions.push({ label: "Add comment", icon: <MessageSquarePlusIcon />, onSelect: onComment });
   } else if (chooseChat) {
-    actions.push({ label: "Choose chat", icon: <MessageSquarePlusIcon />, onSelect: chooseChat });
+    actions.push({
+      label: "Choose chat",
+      icon: <MessageSquarePlusIcon />,
+      onSelect: () => {
+        onComment();
+        chooseChat();
+      },
+    });
   }
   if (source?.conversationId)
     actions.push({

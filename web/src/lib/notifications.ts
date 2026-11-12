@@ -1,3 +1,4 @@
+// Modified for Triune.
 import type { MouseEvent, ReactNode } from "react";
 import type { Action, ExternalToast, ToastT } from "sonner";
 
@@ -8,6 +9,8 @@ export interface NotificationEntry extends ToastT {
   updatedAt: number;
   visible: boolean;
   unread: boolean;
+  /** Newly seen entries stay visible until this center visit ends. */
+  seenInCurrentVisit?: boolean;
   progress?: { value?: number; label?: string; active: boolean };
   actionPending?: boolean;
 }
@@ -18,6 +21,7 @@ type PauseReason = "pointer" | "focus";
 interface NotificationSnapshot {
   entries: NotificationEntry[];
   centerOpen: boolean;
+  showRead: boolean;
 }
 interface Countdown {
   remaining: number;
@@ -26,12 +30,25 @@ interface Countdown {
   paused: Set<PauseReason>;
 }
 
+export const SHOW_READ_NOTIFICATIONS_STORAGE_KEY = "omnigent:notifications:show-read";
+
+function readShowReadNotifications(): boolean {
+  if (typeof window === "undefined") return true;
+  try {
+    return window.localStorage.getItem(SHOW_READ_NOTIFICATIONS_STORAGE_KEY) !== "false";
+  } catch {
+    // Unavailable storage preserves the existing unfiltered history.
+    return true;
+  }
+}
+
 let nextId = 0;
 const initialEntries: NotificationEntry[] = [];
 Object.freeze(initialEntries);
 let snapshot: NotificationSnapshot = Object.freeze({
   entries: initialEntries,
   centerOpen: false,
+  showRead: readShowReadNotifications(),
 });
 const listeners = new Set<() => void>();
 const countdowns = new Map<NotificationId, Countdown>();
@@ -115,7 +132,11 @@ function discardCountdown(id: NotificationId): void {
   countdowns.delete(id);
 }
 
-function publish(entries: NotificationEntry[], centerOpen = snapshot.centerOpen): void {
+function publish(
+  entries: NotificationEntry[],
+  centerOpen = snapshot.centerOpen,
+  showRead = snapshot.showRead,
+): void {
   let settled = entries.filter((entry) => !protectedEntry(entry)).length;
   const retained = entries.filter((entry) => {
     if (settled <= 100 || protectedEntry(entry)) return true;
@@ -124,7 +145,7 @@ function publish(entries: NotificationEntry[], centerOpen = snapshot.centerOpen)
     return false;
   });
   Object.freeze(retained);
-  snapshot = Object.freeze({ entries: retained, centerOpen });
+  snapshot = Object.freeze({ entries: retained, centerOpen, showRead });
   for (const listener of listeners) listener();
 }
 
@@ -174,10 +195,24 @@ export function setNotificationCenterOpen(centerOpen: boolean): void {
   if (snapshot.centerOpen === centerOpen) return;
   publish(
     snapshot.entries.map((entry) =>
-      centerOpen && entry.unread ? freezeEntry({ ...entry, unread: false }) : entry,
+      freezeEntry({
+        ...entry,
+        unread: centerOpen ? false : entry.unread,
+        seenInCurrentVisit: centerOpen && entry.unread,
+      }),
     ),
     centerOpen,
   );
+}
+
+export function setShowReadNotifications(showRead: boolean): void {
+  try {
+    if (showRead) window.localStorage.removeItem(SHOW_READ_NOTIFICATIONS_STORAGE_KEY);
+    else window.localStorage.setItem(SHOW_READ_NOTIFICATIONS_STORAGE_KEY, "false");
+  } catch {
+    // The live filter still works if this device cannot save preferences.
+  }
+  if (snapshot.showRead !== showRead) publish(snapshot.entries, snapshot.centerOpen, showRead);
 }
 
 export function notify(input: NotifyInput): NotificationId {
@@ -195,6 +230,7 @@ export function notify(input: NotifyInput): NotificationId {
     updatedAt: now,
     visible: input.visible ?? true,
     unread: !snapshot.centerOpen,
+    seenInCurrentVisit: snapshot.centerOpen,
     actionPending: false,
   });
   publish([...snapshot.entries, entry]);
@@ -219,6 +255,7 @@ export function updateNotification(
     updatedAt: Date.now(),
     visible: reveal ? true : previous.visible,
     unread: reveal ? !snapshot.centerOpen : previous.unread,
+    seenInCurrentVisit: reveal ? snapshot.centerOpen : previous.seenInCurrentVisit,
     actionPending: previous.actionPending,
   });
   const reset = reveal || durationFor(previous) !== durationFor(entry);

@@ -1,3 +1,4 @@
+# Modified for Triune.
 """Docked workspace journeys through the built SPA and sealed backend contracts."""
 
 from __future__ import annotations
@@ -45,6 +46,9 @@ class WorkspaceJourney:
 def workspace_journey(page: Page, browser_contract: BrowserContract) -> Iterator[WorkspaceJourney]:
     """Two real SPA conversations with explicit filesystem and shell wire contracts."""
     contract = browser_contract
+    contract.json(
+        "/v1/preferences/session-orchestration", {"enabled": True, "server_enabled": True}
+    )
     with ExitStack() as stack:
         chats = [
             stack.enter_context(

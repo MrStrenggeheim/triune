@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { createElement, type MouseEvent } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -8,6 +9,8 @@ import {
   removeNotification,
   runNotificationAction,
   setNotificationCenterOpen,
+  setShowReadNotifications,
+  SHOW_READ_NOTIFICATIONS_STORAGE_KEY,
   setNotificationPaused,
   subscribeNotifications,
   toast,
@@ -23,6 +26,7 @@ beforeEach(() => {
   vi.setSystemTime(new Date("2026-11-07T12:00:00Z"));
   toast.dismiss();
   setNotificationCenterOpen(false);
+  setShowReadNotifications(true);
 });
 afterEach(() => {
   toast.dismiss();
@@ -32,6 +36,57 @@ afterEach(() => {
 });
 
 describe("notification snapshots", () => {
+  it("persists the history filter without changing unread counts or popup visibility", () => {
+    const id = toast("Saved");
+    const before = entry(id);
+    setShowReadNotifications(false);
+    expect(getNotificationSnapshot().showRead).toBe(false);
+    expect(entry(id)).toBe(before);
+    expect(localStorage.getItem(SHOW_READ_NOTIFICATIONS_STORAGE_KEY)).toBe("false");
+    setShowReadNotifications(true);
+    expect(getNotificationSnapshot().showRead).toBe(true);
+    expect(localStorage.getItem(SHOW_READ_NOTIFICATIONS_STORAGE_KEY)).toBeNull();
+  });
+
+  it("keeps the live history filter working when storage is denied", () => {
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("Storage denied");
+    });
+    expect(() => setShowReadNotifications(false)).not.toThrow();
+    expect(getNotificationSnapshot().showRead).toBe(false);
+  });
+
+  it.each([
+    [null, true],
+    ["invalid", true],
+    ["false", false],
+  ])(
+    "restores the saved history preference %s when the module reloads",
+    async (stored, expected) => {
+      if (stored !== null) localStorage.setItem(SHOW_READ_NOTIFICATIONS_STORAGE_KEY, stored);
+      vi.resetModules();
+      const reloaded = await import("./notifications");
+      expect(reloaded.getNotificationSnapshot().showRead).toBe(expected);
+    },
+  );
+
+  it("retains newly seen entries for one visit without marking old entries unread again", () => {
+    const old = toast("Old");
+    setNotificationCenterOpen(true);
+    expect(entry(old)).toMatchObject({ unread: false, seenInCurrentVisit: true });
+    setNotificationCenterOpen(false);
+    const fresh = toast("Fresh");
+    setNotificationCenterOpen(true);
+    expect(entry(old)).toMatchObject({ unread: false, seenInCurrentVisit: false });
+    expect(entry(fresh)).toMatchObject({ unread: false, seenInCurrentVisit: true });
+    const arriving = toast("While open");
+    expect(entry(arriving)).toMatchObject({ unread: false, seenInCurrentVisit: true });
+    updateNotification(old, { title: "Revealed again" }, { reveal: true });
+    expect(entry(old)).toMatchObject({ unread: false, seenInCurrentVisit: true });
+    setNotificationCenterOpen(false);
+    expect(getNotificationSnapshot().entries.every((item) => !item.seenInCurrentVisit)).toBe(true);
+  });
+
   it("publishes stable immutable snapshots and unsubscribes listeners", () => {
     const initial = getNotificationSnapshot();
     const listener = vi.fn();

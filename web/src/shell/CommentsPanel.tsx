@@ -1,4 +1,12 @@
-import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
+// Modified for Triune; inherited notices remain applicable.
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from "react";
 import { CheckIcon, Link2Icon, WandSparklesIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -40,6 +48,10 @@ function formatCommentTime(createdAt: number, now: Date): string {
 export type { ActiveSelection };
 
 export interface CommentsPanelProps {
+  /** Owner picker supplied by the workspace shell, including its unselected state. */
+  annotationControl?: ReactNode;
+  /** False until an authorized comment owner is selected. */
+  recipientValid?: boolean;
   comments: Comment[];
   addressedComments: Comment[];
   activeSelection: ActiveSelection | null;
@@ -78,6 +90,8 @@ type Tab = "open" | "addressed";
 const TABS: Tab[] = ["open", "addressed"];
 
 export function CommentsPanel({
+  annotationControl,
+  recipientValid = true,
   comments,
   addressedComments,
   activeSelection,
@@ -108,7 +122,7 @@ export function CommentsPanel({
   // fallback.
   const currentAuthorId = getCurrentAuthorId();
   const canModify = (c: Comment): boolean =>
-    canEdit && (c.created_by == null || c.created_by === currentAuthorId);
+    recipientValid && canEdit && (c.created_by == null || c.created_by === currentAuthorId);
   const activeSelectionStart = activeSelection?.start_index;
   const activeSelectionEnd = activeSelection?.end_index;
   const activeCommentId = activeSelection?.comment_id;
@@ -170,6 +184,8 @@ export function CommentsPanel({
 
   return (
     <div
+      role="complementary"
+      aria-label="Comments"
       ref={containerRef}
       style={isDesktop && width != null ? { width } : undefined}
       className="relative flex shrink-0 flex-col overflow-hidden border-border w-full h-64 border-t md:h-auto md:border-t-0 md:border-l"
@@ -190,7 +206,9 @@ export function CommentsPanel({
             variant="outline"
             size="xs"
             className="rounded-full px-3 gap-1.5"
-            disabled={!canAddress || comments.length === 0 || addressPending}
+            disabled={
+              !recipientValid || !canEdit || !canAddress || comments.length === 0 || addressPending
+            }
             onClick={onAddressAll}
           >
             <WandSparklesIcon className="size-3.5" />
@@ -198,6 +216,12 @@ export function CommentsPanel({
           </Button>
         )}
       </div>
+
+      {annotationControl && (
+        <div className="workspace-control-header flex min-w-0 items-center border-b border-border px-3">
+          {annotationControl}
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="flex shrink-0 border-b border-border">
@@ -226,15 +250,22 @@ export function CommentsPanel({
         })}
       </div>
 
-      {!canEdit && (
+      {!recipientValid ? (
         <div className="shrink-0 border-b border-border px-3 py-2 text-sm text-muted-foreground">
-          You have read-only access to this session.
+          Choose a chat to view and add comments.
         </div>
+      ) : (
+        !canEdit && (
+          <div className="shrink-0 border-b border-border px-3 py-2 text-sm text-muted-foreground">
+            You have read-only access to this session.
+          </div>
+        )
       )}
 
       <div className="flex-1 overflow-y-auto">
         {/* Input section — shown for a pending selection with no open comment at the same range */}
-        {tab === "open" &&
+        {recipientValid &&
+          tab === "open" &&
           activeSelection != null &&
           activeCommentId == null &&
           !comments.some(
@@ -286,7 +317,7 @@ export function CommentsPanel({
           ) : null)}
 
         {/* Comment list */}
-        {tab === "open" ? (
+        {!recipientValid ? null : tab === "open" ? (
           comments.length === 0 ? (
             <div className="flex items-center justify-center p-8 text-sm text-muted-foreground">
               No open comments.

@@ -1,3 +1,4 @@
+# Modified for Triune.
 """Durable attachment bytes and message-captured workspace references."""
 
 from dataclasses import replace
@@ -18,6 +19,44 @@ from tests.server.routes.test_workbench_workspaces import ALICE, BOB, HOST, OTHE
 from tests.server.routes.test_workbench_workspaces import workspace_stack as workspace_stack
 
 SESSION = "79b22ebd2309e48fdeb450c65611d51b"
+
+
+async def test_reference_metadata_classifies_without_reading_file_bytes(workspace_stack):
+    make_app, root, conversations, permissions, _, frames, _ = workspace_stack
+    (root / "folder ü").mkdir()
+    (root / "document ü.csv").write_text("a,b\n1,2")
+    app, service = make_app()
+    app.include_router(create_chat_attachments_router(service), prefix="/v1")
+    chat = conversations.create_conversation(host_id=HOST, workspace=str(root))
+    permissions.grant("alice", chat.id, LEVEL_OWNER)
+    message = conversations.append(
+        chat.id,
+        [
+            NewConversationItem(
+                type="message",
+                response_id="turn",
+                data=MessageData(role="assistant", agent="agent", content=[]),
+            )
+        ],
+    )[0]
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test", headers=ALICE
+    ) as client:
+        base = f"/v1/sessions/{chat.id}/attachments/references/{message.id}/metadata"
+        for path, expected in [
+            ("document ü.csv", "file"),
+            ("folder ü", "directory"),
+            ("missing.txt", "missing"),
+            (str(root), "directory"),
+        ]:
+            response = await client.get(base, params={"path": path})
+            assert response.status_code == 200, response.text
+            assert response.json()["kind"] == expected
+        denied = await client.get(base, params={"path": "../private.txt"})
+        assert denied.status_code in {400, 403}
+    reads = [frame for _, frame in frames if getattr(frame, "op", None) == "list_or_read"]
+    assert reads
+    assert all(frame.params["path"] == "" for frame in reads)
 
 
 @pytest.mark.parametrize(
@@ -217,7 +256,12 @@ async def test_authorized_markdown_reference_snapshot_survives_source_and_host_l
         unavailable = await client.get(url + "/location", params={"path": source.name})
         assert unavailable.status_code == 400
         assert "does not exist" in unavailable.json()["detail"]
+        captured_metadata = await client.get(url + "/metadata", params={"path": source.name})
+        assert captured_metadata.json()["kind"] == "captured"
         registry.deregister(HOST)
+        assert (await client.get(url + "/metadata", params={"path": source.name})).json()[
+            "kind"
+        ] == "captured"
         offline = await client.get(url + "/location", params={"path": source.name})
         assert offline.status_code == 400
         assert "offline" in offline.json()["detail"]

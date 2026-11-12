@@ -1,6 +1,12 @@
 // Modified for Triune.
 import { SidebarServerPicker as ServerConnectionPicker } from "@/shell/SidebarServerPicker";
 import {
+  fileOpeningModes,
+  fileOpeningLabels,
+  useFileOpening,
+  writeFileOpening,
+} from "@/lib/fileOpeningPreferences";
+import {
   DEFAULT_LIST_DENSITY,
   LIST_DENSITY_STORAGE_KEY,
   listDensities,
@@ -974,6 +980,30 @@ function FoldAssistantNarrationControl() {
   );
 }
 
+function FileOpeningControl() {
+  const value = useFileOpening();
+  const id = useId();
+  return (
+    <ThemeSubsection
+      title="Open files from chat"
+      labelId={id}
+      helper="Choose where file links open. Existing matching file tabs are reused."
+    >
+      <CardRadioGroup
+        labelledBy={id}
+        value={value}
+        onSelect={writeFileOpening}
+        items={fileOpeningModes.map((mode) => ({
+          value: mode,
+          testId: `file-opening-${mode}`,
+          body: fileOpeningLabels[mode],
+        }))}
+        className="grid grid-cols-2 gap-2"
+      />
+    </ThemeSubsection>
+  );
+}
+
 function ListDensityControl() {
   const density = useListDensity();
   const labelId = useId();
@@ -1052,6 +1082,7 @@ function AppearanceSection() {
 
     writeTerminalThemeMode(TERMINAL_THEME_DEFAULT);
     writeListDensity(DEFAULT_LIST_DENSITY);
+    writeFileOpening("beside");
 
     writeThemePalette(DEFAULT_PALETTE);
     applyThemePalette(DEFAULT_PALETTE);
@@ -1217,6 +1248,9 @@ function AppearanceSection() {
 
           <SettingsGroup title="List spacing" testId="settings-group-density">
             <ListDensityControl />
+            <div className="mt-4 border-t border-border pt-4">
+              <FileOpeningControl />
+            </div>
           </SettingsGroup>
 
           <SettingsGroup title="Interface typography" testId="settings-group-interface-type">

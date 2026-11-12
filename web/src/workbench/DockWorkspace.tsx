@@ -1,3 +1,4 @@
+// Modified for Triune.
 import {
   Fragment,
   useCallback,
@@ -30,8 +31,11 @@ import {
   sortableKeyboardCoordinates,
   useSortable,
 } from "@dnd-kit/sortable";
-import { Pin, X } from "lucide-react";
+import { Pin, X, PlusIcon } from "lucide-react";
 import { TooltipButton } from "@/components/ui/tooltip";
+import { OpenViewMenu } from "./OpenViewMenu";
+import type { WorkbenchOpenAction } from "./WorkbenchAppBar";
+import { Button } from "@/components/ui/button";
 import { FileDropSurface } from "@/components/FileDropOverlay";
 import {
   ContextMenu,
@@ -74,6 +78,8 @@ export interface DockViewVisibility {
 }
 
 export interface DockWorkspaceProps {
+  openActions?: WorkbenchOpenAction[];
+  onOpenAction?: (paneId: string, action: WorkbenchOpenAction) => void;
   layout: DockLayout;
   onLayoutChange: (update: DockLayoutUpdate) => void;
   renderView: (view: DockView, state: DockViewVisibility) => ReactNode;
@@ -425,6 +431,8 @@ function DockSurface(props: DockWorkspaceProps) {
                 onFocus={() => focus(pane.id)}
                 onClose={(id) => void close(id)}
                 onLayoutChange={onLayoutChange}
+                openActions={props.openActions}
+                onOpenAction={props.onOpenAction}
                 onPinView={props.onPinView}
                 onUnpinView={props.onUnpinView}
               />
@@ -563,7 +571,11 @@ function DockPaneChrome({
   onLayoutChange,
   onPinView,
   onUnpinView,
+  openActions,
+  onOpenAction,
 }: {
+  openActions?: WorkbenchOpenAction[];
+  onOpenAction?: (paneId: string, action: WorkbenchOpenAction) => void;
   prefix: string;
   pane: DockPane;
   layout: DockLayout;
@@ -697,6 +709,24 @@ function DockPaneChrome({
                 />
               ))}
           </SortableContext>
+          {openActions && (
+            <div className="dock-tab-add">
+              <OpenViewMenu
+                actions={openActions}
+                onSelect={(action) => (onOpenAction ? onOpenAction(pane.id, action) : action.run())}
+              >
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label="Add view to pane"
+                  className="text-muted-foreground"
+                >
+                  <PlusIcon className="size-3.5" />
+                </Button>
+              </OpenViewMenu>
+            </div>
+          )}
         </div>
       </div>
       {dragging && (

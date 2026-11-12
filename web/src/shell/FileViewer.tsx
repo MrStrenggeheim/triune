@@ -1,3 +1,4 @@
+// Modified for Triune; inherited notices remain applicable.
 import {
   ResourceViewIdContext,
   panelFolderKey,
@@ -19,7 +20,12 @@ import { createPortal } from "react-dom";
 //   │  - gutter icon → add comment    │                  │
 //   └──────────────────────────────────┴──────────────────┘
 
-import { FileViewerContext, useWorkspacePaths, type FilePosition } from "./FileViewerContext";
+import {
+  FileViewerContext,
+  useWorkspacePaths,
+  useSessionHostIdentity,
+  type FilePosition,
+} from "./FileViewerContext";
 import { revealInFileManager, revealLabel, useRevealTarget } from "./RevealInFileManager";
 import {
   dismissFilePosition,
@@ -63,7 +69,7 @@ import {
   ListIcon,
   Loader2Icon,
   MessageSquareTextIcon,
-  SlidersHorizontalIcon,
+  MoreHorizontalIcon,
   PencilLineIcon,
   RowsIcon,
   SearchIcon,
@@ -73,6 +79,7 @@ import {
 } from "lucide-react";
 import { useSearchParams, useRebasePath } from "@/lib/routing";
 import { Button } from "@/components/ui/button";
+import { HeaderActionButton } from "@/components/HeaderActionButton";
 import { FileExplorerToggle, useFileExplorerHeader } from "./AdaptiveFileWorkspace";
 import {
   Dialog,
@@ -368,10 +375,13 @@ function useToolbarOverflow(actionsKey: string): {
 // FileViewer
 // ---------------------------------------------------------------------------
 
-interface FileViewerProps {
+export interface FileViewerProps {
   viewId?: string;
-  locationControls?: React.ReactNode;
-  onChooseAnnotationChat?: () => void;
+  hostLabel?: string;
+  /** Owner picker rendered inside Comments, reachable before selecting a chat. */
+  annotationControl?: ReactNode;
+  /** Download the captured attachment independently of this live file. */
+  originalDownload?: () => void;
   syncUrl?: boolean;
   commentId?: string;
   initialDiff?: boolean;
@@ -445,23 +455,11 @@ export function FileViewer(props: FileViewerProps) {
     : props.agentId === undefined
       ? boundAgentId
       : props.agentId;
-  const selectionSource = useMemo(
-    () => ({
-      conversationId: props.conversationId,
-      path: props.path,
-      workspaceRoot: workspace?.root ?? null,
-      workspaceId: workspace?.id,
-      hostId: workspace?.host_id ?? null,
-    }),
-    [props.conversationId, props.path, workspace?.root, workspace?.id, workspace?.host_id],
-  );
   return (
     <ResourceViewIdContext.Provider value={viewId}>
-      <FileSelectionScope value={selectionSource} onChooseChat={props.onChooseAnnotationChat}>
-        <CommentSenderProvider sessionId={props.conversationId} agentId={agentId}>
-          <FileViewerBody {...props} agentId={agentId} recipientValid={recipientValid} />
-        </CommentSenderProvider>
-      </FileSelectionScope>
+      <CommentSenderProvider sessionId={props.conversationId} agentId={agentId}>
+        <FileViewerBody {...props} agentId={agentId} recipientValid={recipientValid} />
+      </CommentSenderProvider>
     </ResourceViewIdContext.Provider>
   );
 }
@@ -471,7 +469,9 @@ function FileViewerBody({
   initialDiff,
   linkRequestId,
   viewId: explicitViewId,
-  locationControls,
+  hostLabel,
+  annotationControl,
+  originalDownload,
   syncUrl = true,
   workspaceId: explicitWorkspaceId,
   recipientValid = true,
@@ -508,6 +508,20 @@ function FileViewerBody({
   const rebasePath = useRebasePath();
   const isMobile = useIsMobileViewport();
   const { root: workspaceRoot } = useWorkspacePaths();
+  const hostId = useSessionHostIdentity();
+  const fileHostLabel = hostLabel ?? hostId ?? "Host";
+  const absolutePath = absoluteWorkspacePath(path, workspaceRoot);
+  const displayPath = absolutePath ?? path;
+  const selectionSource = useMemo(
+    () => ({
+      conversationId: recipientValid ? conversationId : "",
+      path,
+      workspaceRoot,
+      workspaceId,
+      hostId,
+    }),
+    [recipientValid, conversationId, path, workspaceRoot, workspaceId, hostId],
+  );
   const isActiveViewport = viewport === undefined || (viewport === "mobile") === isMobile;
   // Capture URL params once on open — we don't want re-renders caused by our own
   // param writes to re-run the initialization logic.
@@ -1124,7 +1138,8 @@ function FileViewerBody({
   const diffViewActive = viewMode === "diff";
   const currentFileComparison =
     diffComparison.source === "git" || diffComparison.source === "since";
-  const commentsSupported = recipientValid && (!diffViewActive || currentFileComparison);
+  const commentsSupported =
+    (recipientValid || !!annotationControl) && (!diffViewActive || currentFileComparison);
   useEffect(() => {
     if (!commentsSupported) setCommentsOpen(false);
   }, [commentsSupported]);
@@ -1568,6 +1583,15 @@ function FileViewerBody({
       onSelect: downloadFile,
     });
   }
+  if (originalDownload) {
+    settingsMenu.push({
+      key: "download-original",
+      label: "Download captured original",
+      icon: <DownloadIcon className="size-4" />,
+      active: false,
+      onSelect: originalDownload,
+    });
+  }
   if (viewMode === "diff") {
     settingsMenu.push({
       key: "wrap-lines",
@@ -1615,7 +1639,7 @@ function FileViewerBody({
     key: "view-settings",
     label: "View settings",
     tooltip: "View settings",
-    icon: <SlidersHorizontalIcon className="size-4" />,
+    icon: <MoreHorizontalIcon className="size-4" />,
     menu: settingsMenu,
   });
 
@@ -1639,7 +1663,7 @@ function FileViewerBody({
       `back:${!frameless || mobileOverlay}`,
       `chip:${saveStatus !== "idle"}`,
       `nav:${showNavButtons}`,
-      `path:${path}`,
+      `path:${fileHostLabel}:${displayPath}`,
     ].join("|"),
   );
 
@@ -1657,15 +1681,13 @@ function FileViewerBody({
             <Tooltip>
               <TooltipTrigger asChild>
                 <DropdownMenuTrigger asChild>
-                  <Button
+                  <HeaderActionButton
                     type="button"
-                    variant="ghost"
-                    size="icon-sm"
                     aria-label={action.label}
                     tabIndex={interactive ? undefined : -1}
                   >
                     {action.icon}
-                  </Button>
+                  </HeaderActionButton>
                 </DropdownMenuTrigger>
               </TooltipTrigger>
               <TooltipContent>{action.tooltip ?? action.label}</TooltipContent>
@@ -1752,7 +1774,10 @@ function FileViewerBody({
     );
 
   const innerContent = (
-    <>
+    <FileSelectionScope
+      value={selectionSource}
+      onChooseChat={annotationControl ? () => setCommentsOpen(true) : undefined}
+    >
       {mobileOverlay &&
         (mobileEmbedded ? (
           explorerHeaderTarget &&
@@ -1765,7 +1790,33 @@ function FileViewerBody({
         className="workspace-control-header flex min-w-0 items-center justify-between gap-2 border-b border-border px-3"
       >
         <div className="flex min-w-0 flex-1 items-center gap-2">
-          {locationControls}
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <TooltipButton
+                  type="button"
+                  aria-label={`Copy file path: ${displayPath}`}
+                  className="inline-flex min-h-7 min-w-0 flex-1 cursor-pointer items-center rounded px-1 text-left text-sm hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  onClick={() => {
+                    if (absolutePath === null) {
+                      toast.error("Workspace path unavailable");
+                      return;
+                    }
+                    void copyText(absolutePath).then(
+                      () => toast.success("File path copied"),
+                      () => toast.error("Failed to copy file path"),
+                    );
+                  }}
+                >
+                  <span className="min-w-0 truncate">
+                    <span className="text-muted-foreground">{fileHostLabel} · </span>
+                    <span className="text-foreground">{displayPath}</span>
+                  </span>
+                </TooltipButton>
+              </TooltipTrigger>
+              <TooltipContent>Copy file path: {displayPath}</TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
           {/* Back button is the dismiss affordance for the mobile full-screen
               overlay only. On desktop the viewer is embedded in the tabbed
               Files rail, where tabs (and their x buttons) own open/close, so
@@ -1817,33 +1868,7 @@ function FileViewerBody({
               </Button>
             </div>
           )}
-          {/* Always show the file path/name in the toolbar, in every view. */}
           <FileExplorerToggle buttonRef={toolbarExplorerRef} />
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <TooltipButton
-                  type="button"
-                  aria-label={`Copy file path: ${path}`}
-                  className="min-w-0 cursor-pointer truncate rounded text-left font-mono text-sm text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  onClick={() => {
-                    const absolutePath = absoluteWorkspacePath(path, workspaceRoot);
-                    if (absolutePath === null) {
-                      toast.error("Workspace path unavailable");
-                      return;
-                    }
-                    void copyText(absolutePath).then(
-                      () => toast.success("File path copied"),
-                      () => toast.error("Failed to copy file path"),
-                    );
-                  }}
-                >
-                  {path}
-                </TooltipButton>
-              </TooltipTrigger>
-              <TooltipContent>Copy file path</TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
         </div>
         <div
           className="relative flex min-w-0 items-center justify-end gap-1"
@@ -1907,9 +1932,9 @@ function FileViewerBody({
             {toolbarCollapsed ? (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button type="button" variant="ghost" size="icon-sm" aria-label="More actions">
-                    <SlidersHorizontalIcon className="size-4" />
-                  </Button>
+                  <HeaderActionButton aria-label="More actions">
+                    <MoreHorizontalIcon className="size-4" />
+                  </HeaderActionButton>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-auto min-w-40">
                   {toolbarActions.map((action) =>
@@ -1997,9 +2022,9 @@ function FileViewerBody({
           <span
             ref={toolbarPathMeasureRef}
             aria-hidden
-            className="pointer-events-none absolute left-[-9999px] top-0 font-mono text-sm whitespace-nowrap"
+            className="pointer-events-none absolute left-[-9999px] top-0 text-sm whitespace-nowrap"
           >
-            {path}
+            {fileHostLabel} · {displayPath}
           </span>
         </div>
       </div>
@@ -2137,13 +2162,15 @@ function FileViewerBody({
         </div>
         {commentsSupported && commentsOpen && (
           <CommentsPanel
+            annotationControl={annotationControl}
+            recipientValid={recipientValid}
             comments={openComments}
             addressedComments={addressedComments}
             activeSelection={activeSelection}
             pendingBodyRef={pendingBodyRef}
             onCopyCommentLink={copyCommentLink}
             onAddComment={(body) => {
-              if (activeSelection == null) return;
+              if (!recipientValid || !canEdit || activeSelection == null) return;
               addComment.mutate(
                 {
                   path,
@@ -2155,9 +2182,9 @@ function FileViewerBody({
                 { onSuccess: () => setActiveSelection(null) },
               );
             }}
-            canAddress={canEdit && sender !== null}
+            canAddress={recipientValid && canEdit && sender !== null}
             onAddressAll={() => {
-              if (!sender) return;
+              if (!recipientValid || !canEdit || !sender) return;
               const ids = openComments.map((c) => c.id);
               sender.mutate({ comment_ids: ids });
             }}
@@ -2181,8 +2208,11 @@ function FileViewerBody({
                   { replace: true },
                 );
             }}
-            onEditComment={(id, body) => updateComment.mutate({ commentId: id, body })}
+            onEditComment={(id, body) => {
+              if (recipientValid && canEdit) updateComment.mutate({ commentId: id, body });
+            }}
             onDeleteComment={(id) => {
+              if (!recipientValid || !canEdit) return;
               deleteComment.mutate(id);
               const deleted = [...openComments, ...addressedComments].find((c) => c.id === id);
               if (
@@ -2238,7 +2268,7 @@ function FileViewerBody({
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </>
+    </FileSelectionScope>
   );
 
   if (frameless) {

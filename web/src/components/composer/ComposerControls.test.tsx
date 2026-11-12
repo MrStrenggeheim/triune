@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -38,6 +39,13 @@ describe("shared composer controls", () => {
         "font-medium",
         "text-muted-foreground",
       );
+    }
+    for (const name of [
+      "Select workspace: Host:/repo",
+      "Permission mode: Plan",
+      "Configure model",
+    ]) {
+      expect(screen.getByRole("button", { name })).toHaveClass("px-2");
     }
     expect(screen.getByTestId("composer-agent-model-value")).toHaveClass(
       ...COMPOSER_CONTROL_TEXT_CLASS.split(" "),

@@ -1,3 +1,4 @@
+// Modified for Triune.
 import {
   createContext,
   useCallback,
@@ -11,7 +12,7 @@ import {
   type ReactNode,
   type CSSProperties,
 } from "react";
-import { BellIcon, CheckCheckIcon, Loader2Icon, XIcon } from "lucide-react";
+import { BellIcon, CheckCheckIcon, EyeIcon, EyeOffIcon, Loader2Icon, XIcon } from "lucide-react";
 import type { ToasterProps } from "sonner";
 import { Button } from "@/components/ui/button";
 import { HeaderActionButton } from "./HeaderActionButton";
@@ -23,6 +24,7 @@ import {
   getNotificationSnapshot,
   hideNotification,
   setNotificationCenterOpen,
+  setShowReadNotifications,
   subscribeNotifications,
 } from "@/lib/notifications";
 
@@ -84,7 +86,7 @@ export function NotificationBell() {
   const id = useId();
   const { ownerId, openFor, closeFor } = useContext(NotificationLayout);
   useEffect(() => () => closeFor(id), [id, closeFor]);
-  const { entries, centerOpen } = useSyncExternalStore(
+  const { entries, centerOpen, showRead } = useSyncExternalStore(
     subscribeNotifications,
     getNotificationSnapshot,
     getNotificationSnapshot,
@@ -96,9 +98,20 @@ export function NotificationBell() {
   const running = newest.filter(
     (entry) => entry.dismissible !== false && (entry.progress?.active || entry.type === "loading"),
   );
-  const recent = newest.filter(
+  const completed = newest.filter(
     (entry) => entry.dismissible !== false && !entry.progress?.active && entry.type !== "loading",
   );
+  const recent = completed.filter(
+    (entry) =>
+      showRead ||
+      entry.unread ||
+      entry.seenInCurrentVisit ||
+      entry.actionPending ||
+      entry.action ||
+      entry.cancel ||
+      entry.jsx,
+  );
+  const hasHistory = required.length > 0 || running.length > 0 || recent.length > 0;
   const onOpenChange = (open: boolean) => {
     if (open) openFor(id);
     else closeFor(id);
@@ -157,8 +170,20 @@ export function NotificationBell() {
           role="dialog"
           aria-label="Notifications"
         >
-          <header className="flex h-11 shrink-0 items-center gap-1 border-b border-border px-3">
+          <header className="flex h-[var(--density-header-height)] shrink-0 items-center gap-[var(--list-gap)] border-b border-border px-[var(--list-row-padding-inline)]">
             <h2 className="mr-auto font-medium">Notifications</h2>
+            <Button
+              type="button"
+              size="icon-xs"
+              variant="ghost"
+              aria-label="Show read notifications"
+              aria-pressed={showRead}
+              tooltip={showRead ? "Hide read notifications" : "Show read notifications"}
+              tooltipDescription="Activities and available actions stay visible."
+              onClick={() => setShowReadNotifications(!showRead)}
+            >
+              {showRead ? <EyeIcon className="size-4" /> : <EyeOffIcon className="size-4" />}
+            </Button>
             <Button
               type="button"
               size="icon-xs"
@@ -166,7 +191,7 @@ export function NotificationBell() {
               aria-label="Clear completed notifications"
               title="Clear completed notifications"
               onClick={clearCompletedNotifications}
-              disabled={!recent.some((entry) => entry.dismissible !== false)}
+              disabled={!completed.length}
             >
               <CheckCheckIcon className="size-4" />
             </Button>
@@ -184,14 +209,14 @@ export function NotificationBell() {
             className="max-h-[60vh] overflow-y-auto overscroll-contain"
             aria-label="Notification history"
           >
-            {!entries.length && (
-              <p className="px-4 py-6 text-center text-sm text-muted-foreground">
-                No notifications yet
+            {!hasHistory && (
+              <p className="px-[var(--list-row-padding-inline)] py-6 text-center text-sm text-muted-foreground">
+                {entries.length ? "No unread notifications" : "No notifications yet"}
               </p>
             )}
             {required.length > 0 && (
               <div>
-                <h3 className="px-3 pt-3 pb-1 text-10 font-medium uppercase tracking-wide text-muted-foreground">
+                <h3 className="px-[var(--list-row-padding-inline)] pt-[var(--list-row-padding-block)] pb-[var(--list-gap)] text-10 font-medium uppercase tracking-wide text-muted-foreground">
                   Needs attention
                 </h3>
                 <div className="divide-y divide-border">
@@ -203,7 +228,7 @@ export function NotificationBell() {
             )}
             {running.length > 0 && (
               <div>
-                <h3 className="px-3 pt-3 pb-1 text-10 font-medium uppercase tracking-wide text-muted-foreground">
+                <h3 className="px-[var(--list-row-padding-inline)] pt-[var(--list-row-padding-block)] pb-[var(--list-gap)] text-10 font-medium uppercase tracking-wide text-muted-foreground">
                   In progress
                 </h3>
                 <div className="divide-y divide-border">
@@ -216,7 +241,7 @@ export function NotificationBell() {
             {recent.length > 0 && (
               <div>
                 {running.length > 0 && (
-                  <h3 className="px-3 pt-3 pb-1 text-10 font-medium uppercase tracking-wide text-muted-foreground">
+                  <h3 className="px-[var(--list-row-padding-inline)] pt-[var(--list-row-padding-block)] pb-[var(--list-gap)] text-10 font-medium uppercase tracking-wide text-muted-foreground">
                     Recent
                   </h3>
                 )}
@@ -252,7 +277,7 @@ export function NotificationToasts(_props: ToasterProps) {
     <aside
       aria-label="Notifications"
       aria-live="polite"
-      className="pointer-events-auto fixed right-4 z-[70] flex max-h-[calc(var(--omnigent-viewport-height,100dvh)-5rem)] flex-col gap-2 overflow-y-auto overscroll-contain p-px"
+      className="pointer-events-auto fixed right-4 z-[70] flex max-h-[calc(var(--omnigent-viewport-height,100dvh)-5rem)] flex-col gap-[var(--list-row-gap)] overflow-y-auto overscroll-contain p-px"
       style={{
         ...style,
         display: centerOpen || (!required.length && !ordinary.length) ? "none" : undefined,

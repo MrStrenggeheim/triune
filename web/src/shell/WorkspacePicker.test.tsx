@@ -1,3 +1,4 @@
+// Modified for Triune.
 // Tests for WorkspacePicker.
 //
 // Two layers:
@@ -783,7 +784,11 @@ describe("WorkspacePicker modal actions", () => {
     expect(screen.getByRole("button", { name: "Confirm" })).toBeTruthy();
     expect(screen.getByTestId("workspace-picker-entry-src")).toHaveClass("h-7", "px-2", "py-[3px]");
     expect(screen.getByTestId("workspace-picker-listing")).toHaveClass("space-y-px", "px-2");
-    expect(screen.getByTestId("workspace-picker-header")).toHaveClass("h-12", "px-3", "py-0");
+    expect(screen.getByTestId("workspace-picker-header")).toHaveClass(
+      "h-[var(--density-header-height)]",
+      "px-3",
+      "py-0",
+    );
     expect(screen.getByTestId("workspace-picker-breadcrumbs")).not.toHaveClass("px-1");
     expect(screen.getByTestId("workspace-picker-search-row")).toHaveClass("border-b-0");
     expect(screen.getByTestId("workspace-picker-search-field")).toHaveClass(
@@ -808,7 +813,8 @@ describe("WorkspacePicker modal actions", () => {
       "workspace-picker-close",
     ]) {
       expect(screen.getByTestId(testId)).toHaveAttribute("data-variant", "ghost");
-      expect(screen.getByTestId(testId)).toHaveAttribute("data-size", "icon");
+      expect(screen.getByTestId(testId)).toHaveAttribute("data-header-action-button");
+      expect(screen.getByTestId(testId)).toHaveAttribute("data-size", "icon-xs");
     }
     fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
     expect(onSelect).toHaveBeenCalledWith("/Users/corey/repo");
@@ -1042,7 +1048,7 @@ describe("WorkspacePicker modal actions", () => {
     const expectFixedFrame = (expectedClassName: string) => {
       expect(fullPicker().className).toBe(expectedClassName);
       for (const className of frameClasses) expect(fullPicker().className).toContain(className);
-      expect(header().className).toContain("min-h-12");
+      expect(header().className).toContain("h-[var(--density-header-height)]");
       expect(footer().className).toContain("min-h-16");
     };
 

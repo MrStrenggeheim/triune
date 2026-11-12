@@ -1,5 +1,5 @@
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { MapPinIcon, ArrowUpIcon } from "lucide-react";
+// Modified for Triune; inherited notices remain applicable.
+import { ArrowUpIcon } from "lucide-react";
 import {
   useCallback,
   useContext,
@@ -28,7 +28,6 @@ import {
   type WorkspaceComparison,
 } from "@/lib/workspaceComparison";
 import { getExplorerGitScope, setExplorerGitScope } from "@/lib/explorerGitScope";
-import { Button } from "@/components/ui/button";
 import { TooltipButton } from "@/components/ui/tooltip";
 import { FilesPanel } from "@/shell/FilesPanel";
 import { ContentSearchPanel } from "@/shell/ContentSearchPanel";
@@ -55,12 +54,14 @@ export interface ResourceViewProps {
   viewId: string;
   active?: boolean;
   annotationControl?: ReactNode;
+  /** Download the captured attachment independently of this live file. */
+  originalDownload?: () => void;
   initialQuery?: string;
   replaceOpen?: boolean;
   autoFocus?: boolean;
   kind: "files" | "changes" | "search" | "preview" | "pr";
   workspace?: WorkbenchWorkspace;
-  /** Explicit comment/captured-change owner; absence disables chat actions. */
+  /** Explicit comment/captured-change owner; the sidebar can choose one when absent. */
   conversationId?: string;
   path?: string;
   commentId?: string;
@@ -101,6 +102,7 @@ function ResourceViewBody({
   viewId,
   active = true,
   annotationControl,
+  originalDownload,
   initialQuery,
   replaceOpen = false,
   autoFocus = false,
@@ -119,8 +121,9 @@ function ResourceViewBody({
   onClose,
 }: ResourceViewProps) {
   const inheritedContext = useContext(FileViewerContext);
-  const hosts = useHosts({ enabled: !!workspace });
   const { session } = useSession(conversationId);
+  const owningHostId = workspace?.host_id ?? session?.hostId;
+  const hosts = useHosts({ enabled: !!owningHostId, includeSandbox: true });
   const owner = workspace?.id ?? conversationId;
   const root = workspace?.root ?? session?.workspace ?? null;
   const folder = usePanelFolder(owner, root, viewId);
@@ -130,10 +133,6 @@ function ResourceViewBody({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const guardRef = useRef<FileNavigationGuard | undefined>(undefined);
-  const annotationControlRef = useRef<HTMLDivElement>(null);
-  const chooseAnnotationChat = useCallback(() => {
-    annotationControlRef.current?.querySelector<HTMLButtonElement>("button")?.click();
-  }, []);
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
@@ -245,7 +244,8 @@ function ResourceViewBody({
     }
   }
 
-  const selectedHost = hosts.data?.find((host) => host.host_id === workspace?.host_id);
+  const selectedHost = hosts.data?.find((host) => host.host_id === owningHostId);
+  const hostLabel = selectedHost?.name ?? owningHostId ?? workspace?.target_kind ?? "Host";
   const unavailable = workspace?.available === false || selectedHost?.status === "offline";
   const selectedPath = workspace ? joinBrowseLocation(workspace.root, folder) : (root ?? "");
   const parentPath = parentOf(selectedPath);
@@ -273,18 +273,6 @@ function ResourceViewBody({
         onClick={() => setPickerOpen(true)}
       />
     </div>
-  ) : null;
-  const previewLocationControls = locationControls ? (
-    <Popover>
-      <PopoverTrigger asChild>
-        <Button variant="ghost" size="icon-sm" aria-label="Location">
-          <MapPinIcon className="size-4" />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent align="start" className="w-auto max-w-sm p-2">
-        {locationControls}
-      </PopoverContent>
-    </Popover>
   ) : null;
   return (
     <FileViewerContext.Provider value={context}>
@@ -348,17 +336,9 @@ function ResourceViewBody({
           {kind === "preview" &&
             (path ? (
               <FileViewer
-                locationControls={
-                  <>
-                    {previewLocationControls}
-                    {annotationControl && (
-                      <div ref={annotationControlRef} className="min-w-0">
-                        {annotationControl}
-                      </div>
-                    )}
-                  </>
-                }
-                onChooseAnnotationChat={annotationControl ? chooseAnnotationChat : undefined}
+                hostLabel={hostLabel}
+                annotationControl={annotationControl}
+                originalDownload={originalDownload}
                 viewId={viewId}
                 conversationId={conversationId ?? ""}
                 agentId={session?.agentId ?? null}

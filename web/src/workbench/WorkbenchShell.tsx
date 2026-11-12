@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { useSettingsNavigationVisibility } from "@/hooks/useSettingsNavigationVisibility";
 import { useSettingsRoute } from "@/shell/settingsNav";
 import { parseWorkbenchFileLink, resolveWorkbenchFileLink } from "./fileLinks";
@@ -5,7 +6,13 @@ import { WorkbenchBindings } from "./WorkbenchBindings";
 import { createWorkbenchResourceShortcuts } from "./resourceShortcuts";
 import { useAcceptedConversationRoute } from "./useAcceptedConversationRoute";
 import { focusedResourceTarget } from "./resourceTarget";
+import { OpenViewMenu } from "./OpenViewMenu";
+import { Button } from "@/components/ui/button";
 import { CapturedFileActions } from "./CapturedFileActions";
+import { fetchChatFileLocation } from "@/lib/chatFileReferences";
+import { readFileOpening } from "@/lib/fileOpeningPreferences";
+import { downloadBlob } from "@/lib/explorerOperations";
+import { filePlacement } from "./filePlacement";
 import { OverlayScrollbars } from "@/components/OverlayScrollbars";
 import {
   AttachmentPreviewContext,
@@ -26,6 +33,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Undo2Icon,
+  PlusIcon,
   XIcon,
   ActivityIcon,
   CalendarClockIcon,
@@ -273,6 +281,15 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
   });
   const dockRef = useRef(dock);
   dockRef.current = dock;
+  const attachmentOpenGeneration = useRef(0);
+  const attachmentOpenScope = useRef({ key: dock.scopeKey, owner: dock.activeConversationId });
+  if (
+    attachmentOpenScope.current.key !== dock.scopeKey ||
+    attachmentOpenScope.current.owner !== dock.activeConversationId
+  ) {
+    attachmentOpenScope.current = { key: dock.scopeKey, owner: dock.activeConversationId };
+    attachmentOpenGeneration.current++;
+  }
 
   const focusedPane = dock.layout.panes.find((pane) => pane.id === dock.layout.focusedPaneId);
   const focusedView = dock.layout.views.find((view) => view.id === focusedPane?.selectedViewId);
@@ -512,6 +529,7 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
     if (!showDockRef.current) navigate("/?view=workbench");
     if (isMobileViewport()) setSidebarOpen(false);
   }, [navigate]);
+  const openPaneOverride = useRef<string | undefined>(undefined);
   const openView = useCallback(
     (request: OpenWorkbenchView, options?: { beside?: boolean; paneId?: string }) => {
       if (request.kind === "conversation" && request.conversationId) {
@@ -519,7 +537,9 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
         return;
       }
       const captured = { ...request };
-      const targetPane = options?.paneId ?? dockRef.current.layout.focusedPaneId ?? undefined;
+      const overridePane = openPaneOverride.current;
+      const targetPane =
+        options?.paneId ?? overridePane ?? dockRef.current.layout.focusedPaneId ?? undefined;
       const needsFiles =
         captured.terminalOwner !== "conversation" &&
         ["files", "preview", "changes", "search", "terminal", "shells", "pr"].includes(
@@ -583,7 +603,10 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
             title,
             resource: JSON.parse(JSON.stringify(resource)) as Record<string, unknown>,
           },
-          { paneId: targetPane, edge: options?.beside === false ? undefined : "right" },
+          {
+            paneId: targetPane,
+            edge: overridePane || options?.beside === false ? undefined : "right",
+          },
         );
         ensureVisible();
       };
@@ -918,6 +941,24 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
               ? { path: resource.revealPath, token: resource.revealToken }
               : undefined
           }
+          originalDownload={
+            resource.originalAttachment
+              ? () => {
+                  const original = resource.originalAttachment as AttachmentPreviewRequest;
+                  const url = `/v1/sessions/${encodeURIComponent(original.sessionId)}/attachments/references/${encodeURIComponent(original.itemId ?? "")}?${new URLSearchParams({ path: original.reference ?? "" })}`;
+                  void authenticatedFetch(url)
+                    .then(async (response) => {
+                      if (!response.ok) throw await apiErrorFromResponse(response);
+                      downloadBlob(await response.blob(), original.filename ?? "Attachment");
+                    })
+                    .catch((error) =>
+                      toast.error("Could not download captured original", {
+                        description: String(error),
+                      }),
+                    );
+                }
+              : undefined
+          }
           viewId={view.id}
           kind={view.kind as "files" | "changes" | "preview" | "search" | "pr"}
           workspace={workspace}
@@ -1139,11 +1180,84 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
           (view) =>
             view.kind === "conversation" && view.resource.conversationId === request.sessionId,
         ),
-      openAttachment: (
+      openAttachment: async (
         request: AttachmentPreviewRequest,
         options?: { placement: AttachmentPreviewPlacement },
       ) => {
+        const capturedScope = dockRef.current.scopeKey;
+        const capturedOwner = dockRef.current.activeConversationId;
+        const openingGeneration = ++attachmentOpenGeneration.current;
+        const stillCurrent = () =>
+          mounted.current &&
+          attachmentOpenGeneration.current === openingGeneration &&
+          dockRef.current.scopeKey === capturedScope &&
+          dockRef.current.activeConversationId === capturedOwner;
+        let live: { workspace: WorkbenchWorkspace; path: string } | undefined;
+        let originalCaptured = false;
+        try {
+          if (
+            request.reference &&
+            request.itemId &&
+            !request.attachment?.file_id &&
+            !request.reference.startsWith("/v1/sessions/")
+          ) {
+            const resolved = await queryClient.fetchQuery({
+              queryKey: [
+                "chat-file-location",
+                request.sessionId,
+                request.itemId,
+                request.reference,
+              ],
+              queryFn: ({ signal }) =>
+                fetchChatFileLocation(
+                  request.sessionId,
+                  request.itemId!,
+                  request.reference!,
+                  signal,
+                ),
+              staleTime: 30_000,
+            });
+            if (resolved.kind === "file") live = resolved;
+            else if (resolved.kind !== "captured")
+              throw new Error("This reference is not an available regular file");
+            if (live) {
+              // Capture before the editor can change the live file; metadata inspection stays byte-free.
+              const originalUrl = `/v1/sessions/${encodeURIComponent(request.sessionId)}/attachments/references/${encodeURIComponent(request.itemId)}?${new URLSearchParams({ path: request.reference })}`;
+              try {
+                await queryClient.fetchQuery({
+                  queryKey: [
+                    "chat-attachment-bytes",
+                    request.sessionId,
+                    request.itemId,
+                    request.reference,
+                    undefined,
+                  ],
+                  queryFn: async ({ signal }) => {
+                    const response = await authenticatedFetch(originalUrl, { signal });
+                    if (!response.ok) throw await apiErrorFromResponse(response);
+                    return response.blob();
+                  },
+                  staleTime: Infinity,
+                  gcTime: 30_000,
+                });
+                originalCaptured = true;
+              } catch (error) {
+                if (stillCurrent())
+                  toast.error("Could not retain the original file", { description: String(error) });
+              }
+            }
+          }
+        } catch (error) {
+          if (stillCurrent())
+            toast.error(`Could not open ${request.filename ?? "file"}`, {
+              description: error instanceof Error ? error.message : String(error),
+            });
+          return;
+        }
+        if (!stillCurrent()) return;
         const current = dockRef.current;
+        if (current.scopeKey !== capturedScope || current.activeConversationId !== capturedOwner)
+          return;
         const origin = current.layout.views.find(
           (view) =>
             view.kind === "conversation" && view.resource.conversationId === request.sessionId,
@@ -1153,50 +1267,61 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
           toast.error("The originating chat is no longer open");
           return;
         }
-        const placement = options?.placement ?? "beside";
+        const mode =
+          options?.placement === "tab"
+            ? "same"
+            : options?.placement === "beside"
+              ? "beside"
+              : readFileOpening();
+        const placement = filePlacement(current.layout, originPane.id, mode, current.pinnedViewIds);
         const identity = JSON.stringify([
           request.sessionId,
           request.itemId,
           request.reference,
           request.attachment,
         ]);
-        const existing = current.layout.views.find(
-          (view) => view.kind === "attachment-preview" && view.resource.identity === identity,
+        const existing = current.layout.views.find((view) =>
+          live
+            ? view.kind === "preview" &&
+              viewWorkspace(view)?.id === live.workspace.id &&
+              view.resource.path === live.path
+            : view.kind === "attachment-preview" && view.resource.identity === identity,
         );
         if (existing) {
           const pane = dockPaneForView(current.layout, existing.id);
           if (
-            (placement === "tab" && pane?.id !== originPane.id) ||
-            (placement === "beside" && pane?.id === originPane.id)
+            (options?.placement === "tab" || options?.placement === "beside") &&
+            (pane?.id !== placement.paneId || placement.edge)
           )
-            current.setLayout((layout) =>
-              moveDockView(layout, existing.id, {
-                paneId: originPane.id,
-                ...(placement === "beside" ? { edge: "right" as const } : {}),
-              }),
-            );
+            current.setLayout((layout) => moveDockView(layout, existing.id, placement));
           else current.focusView(existing.id);
         } else
           current.addView(
             {
               id: randomUUID(),
-              kind: "attachment-preview",
+              kind: live ? "preview" : "attachment-preview",
               title:
                 request.filename ||
                 request.attachment?.filename ||
                 request.reference?.split("/").at(-1) ||
                 "Attachment",
-              resource: { request: JSON.parse(JSON.stringify(request)), identity },
+              resource: live
+                ? {
+                    workspace: live.workspace,
+                    path: live.path,
+                    conversationId: request.sessionId,
+                    ...(originalCaptured
+                      ? { originalAttachment: JSON.parse(JSON.stringify(request)) }
+                      : {}),
+                  }
+                : { request: JSON.parse(JSON.stringify(request)), identity },
             },
-            {
-              paneId: originPane.id,
-              ...(placement === "beside" ? { edge: "right" as const } : {}),
-            },
+            placement,
           );
         ensureVisible();
       },
     }),
-    [ensureVisible],
+    [ensureVisible, queryClient],
   );
   const openConversationIds = useMemo(
     () =>
@@ -1284,6 +1409,15 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
                       inert={!showDock}
                     >
                       <DockWorkspace
+                        openActions={openActions}
+                        onOpenAction={(paneId, action) => {
+                          openPaneOverride.current = paneId;
+                          try {
+                            action.run();
+                          } finally {
+                            openPaneOverride.current = undefined;
+                          }
+                        }}
                         scopeKey={dock.scopeKey}
                         layout={dock.layout}
                         retainedViews={dock.retainedViews}
@@ -1297,8 +1431,16 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
                         onUnpinView={(id) => dock.unpinView(id)}
                       />
                       {!dock.layout.views.length && (
-                        <div className="absolute inset-0 flex items-center justify-center p-6 text-center text-sm text-muted-foreground">
-                          Use Open to add a conversation or tool.
+                        <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 p-6 text-center">
+                          <p className="text-xl text-muted-foreground">
+                            Open a chat or tool to get started.
+                          </p>
+                          <OpenViewMenu actions={openActions}>
+                            <Button variant="default">
+                              <PlusIcon className="size-4" />
+                              Open view
+                            </Button>
+                          </OpenViewMenu>
                         </div>
                       )}
                     </div>

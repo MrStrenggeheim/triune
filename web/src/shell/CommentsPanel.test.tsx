@@ -1,3 +1,4 @@
+// Modified for Triune; inherited notices remain applicable.
 // Tests for CommentsPanel copy-comment-link affordance.
 //
 // Coverage:
@@ -6,12 +7,12 @@
 //   3. Link button appears for addressed comments too (after switching the tab).
 //   4. No link button is rendered when onCopyCommentLink is omitted.
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Comment } from "@/hooks/useComments";
 import { getCurrentAuthorId } from "@/lib/identity";
 import type { ActiveSelection } from "./codeViewerHelpers";
-import { CommentsPanel } from "./CommentsPanel";
+import { CommentsPanel, type CommentsPanelProps } from "./CommentsPanel";
 
 // CommentsPanel reads the current user's identity (getCurrentAuthorId) to
 // decide whose comments expose Edit/Delete. Mock it so author-ownership tests
@@ -447,6 +448,7 @@ function panelWithSelection(
   addressedComments: Comment[],
   activeSelection: ActiveSelection | null,
   onClickComment = vi.fn(),
+  overrides: Partial<CommentsPanelProps> = {},
 ) {
   return (
     <CommentsPanel
@@ -460,6 +462,7 @@ function panelWithSelection(
       onClickComment={onClickComment}
       canAddress={false}
       addressPending={false}
+      {...overrides}
     />
   );
 }
@@ -556,5 +559,63 @@ describe("CommentsPanel active-comment reveal", () => {
     fireEvent.click(screen.getByText("Comment c2"));
 
     expect(onClickComment).toHaveBeenCalledWith(addressed);
+  });
+});
+
+describe("CommentsPanel owner selection", () => {
+  it.each([true, false])(
+    "keeps the picker reachable without an owner with edit access %s",
+    (canEdit) => {
+      const choose = vi.fn();
+      render(
+        panelWithSelection([makeComment("stale")], [], FRESH_SELECTION, vi.fn(), {
+          canEdit,
+          canAddress: true,
+          recipientValid: false,
+          annotationControl: (
+            <button type="button" onClick={choose}>
+              Choose comments chat
+            </button>
+          ),
+        }),
+      );
+      const sidebar = within(screen.getByRole("complementary", { name: "Comments" }));
+      fireEvent.click(sidebar.getByRole("button", { name: "Choose comments chat" }));
+      expect(choose).toHaveBeenCalledOnce();
+      expect(sidebar.getByText("Choose a chat to view and add comments.")).toBeInTheDocument();
+      expect(sidebar.queryByText("You have read-only access to this session.")).toBeNull();
+      expect(sidebar.queryByText("Comment stale")).toBeNull();
+      expect(sidebar.queryByPlaceholderText("Add a comment…")).toBeNull();
+      expect(sidebar.getByRole("button", { name: "Address All" })).toBeDisabled();
+    },
+  );
+
+  it("preserves the selected range and draft while changing owners or access", () => {
+    const pendingBodyRef = { current: "" };
+    const onAddComment = vi.fn();
+    const tree = (recipientValid: boolean, canEdit = true) =>
+      panelWithSelection([], [], FRESH_SELECTION, vi.fn(), {
+        recipientValid,
+        canEdit,
+        pendingBodyRef,
+        onAddComment,
+        annotationControl: <button type="button">Choose comments chat</button>,
+      });
+    const { rerender } = render(tree(false));
+    rerender(tree(true));
+    fireEvent.change(screen.getByPlaceholderText("Add a comment…"), {
+      target: { value: "Keep this draft" },
+    });
+    expect(pendingBodyRef.current).toBe("Keep this draft");
+    rerender(tree(false));
+    expect(screen.queryByPlaceholderText("Add a comment…")).toBeNull();
+    rerender(tree(true, false));
+    expect(screen.getByText("You have read-only access to this session.")).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("Add a comment…")).toBeNull();
+    rerender(tree(true));
+    expect(screen.getByText("selected text")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Add a comment…")).toHaveValue("Keep this draft");
+    fireEvent.click(screen.getByRole("button", { name: "Add Comment" }));
+    expect(onAddComment).toHaveBeenCalledWith("Keep this draft");
   });
 });

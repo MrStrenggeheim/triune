@@ -50,6 +50,14 @@ Keep feature behavior, shared UI rules and setup instructions in this repository
 Record tasks in the fork's issues or the operator's supplied checklist; personal agent instructions and private KBs are optional.
 Before submitting a change, run the relevant existing checks and the required Git hooks.
 
+## File editing and navigation
+
+Live workspace-file chips open the normal editable File Editor; rendered embeds and attachments without a live path retain their preview/lightbox.
+Appearance → Open files from chat controls pane reuse and splitting, defaulting to a neighboring pane with one split when needed.
+File headers keep one copyable Host/path, Comments, Diff and the three-dot menu; comments ownership is chosen inside the comments sidebar.
+Notification and workspace-picker density follows Appearance, and notifications can hide read entries while preserving active Undo actions.
+See the unified-workspace feature map for source mappings and desktop/mobile acceptance checks.
+
 ## Agent communication
 
 Cross-chat agent communication and independent workers are enabled by default.

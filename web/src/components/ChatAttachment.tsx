@@ -6,6 +6,7 @@ import {
   Suspense,
   useContext,
   useEffect,
+  useRef,
   useState,
   type ComponentPropsWithoutRef,
   type ContextType,
@@ -13,6 +14,7 @@ import {
   type ReactNode,
 } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { fetchChatFileLocation } from "@/lib/chatFileReferences";
 import {
   CopyIcon,
   DownloadIcon,
@@ -77,7 +79,7 @@ export interface AttachmentPreviewRequest {
   filename?: string;
 }
 
-export type AttachmentPreviewPlacement = "beside" | "tab";
+export type AttachmentPreviewPlacement = "beside" | "tab" | "default";
 
 export const AttachmentPreviewContext = createContext<{
   /** Place relative to the originating chat (request.sessionId), defaulting to beside. */
@@ -392,10 +394,25 @@ export function ChatAttachment({
   const [open, setOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [failedImage, setFailedImage] = useState<string>();
+  const storedReference = reference?.startsWith("/v1/sessions/");
+  const liveReference =
+    compact &&
+    !!reference &&
+    !!itemId &&
+    !!sessionId &&
+    !storedReference &&
+    !rawAttachment?.file_id;
+  const location = useQuery({
+    queryKey: ["chat-file-location", sessionId, itemId, reference],
+    enabled: liveReference,
+    queryFn: ({ signal }) => fetchChatFileLocation(sessionId!, itemId!, reference!, signal),
+    staleTime: 30_000,
+    retry: false,
+  });
   const previewContext = useContext(AttachmentPreviewContext);
   const resource = useAttachmentResource(
     { sessionId, attachment: rawAttachment, reference, itemId },
-    { preview: open || menuOpen, loadImages: !compact, eager: unresolvedFallback !== undefined },
+    { preview: open || menuOpen, loadImages: !compact, eager: false },
   );
   const {
     attachment,
@@ -444,10 +461,24 @@ export function ChatAttachment({
     downloading: content.isFetching,
   };
   const openPreview = () => {
-    if (compact && canOpen("beside")) openDock("beside");
+    if (compact && canOpen("default")) openDock("default");
     else openModal();
   };
-  if (unresolvedFallback !== undefined && (!content.data || error)) return unresolvedFallback;
+  const lastError = useRef<unknown>(null);
+  useEffect(() => {
+    if (compact && error && (open || menuOpen) && lastError.current !== error) {
+      lastError.current = error;
+      toast.error(`Could not open ${filename}`, { description: error.message });
+    }
+  }, [compact, error, open, menuOpen, filename]);
+  if (liveReference && location.data?.kind !== "file" && location.data?.kind !== "captured")
+    return (
+      unresolvedFallback ?? (
+        <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-ui">{reference}</code>
+      )
+    );
+  if (unresolvedFallback !== undefined && !location.data && !content.data)
+    return unresolvedFallback;
   return (
     <>
       <FilePreviewMenu actions={menuActions} onOpenChange={setMenuOpen}>
@@ -543,7 +574,7 @@ export function ChatAttachment({
               This image could not be decoded. Download the original to open it.
             </span>
           )}
-          {error && (
+          {error && !compact && (
             <span role="alert" className="text-xs text-destructive">
               {error.message}{" "}
               <TooltipButton

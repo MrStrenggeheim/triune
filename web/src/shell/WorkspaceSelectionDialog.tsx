@@ -1,6 +1,9 @@
+// Modified for Triune.
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { CheckIcon, ClockIcon, MonitorIcon, PlusIcon, XIcon } from "lucide-react";
+import { HeaderActionButton } from "@/components/HeaderActionButton";
 import { Button } from "@/components/ui/button";
+import { MenuItem } from "@/components/ui/menu-item";
 import {
   Dialog,
   DialogContent,
@@ -139,22 +142,21 @@ function WorkspaceSelectionContent({
         );
       }}
     >
-      <DialogHeader className="relative shrink-0 border-b bg-[var(--workspace-appbar)] px-5 py-4 pr-14 text-left">
-        <DialogTitle className="text-base">{title}</DialogTitle>
+      <DialogHeader className="h-[var(--density-header-height)] shrink-0 flex-row items-center justify-between gap-2 bg-[var(--workspace-appbar)] pl-[calc(0.75rem+var(--list-row-padding-inline))] pr-0.5 text-left [&_[data-header-action-button]]:size-[calc(var(--density-header-height)-4px)]">
+        <DialogTitle className="min-h-0 min-w-0 truncate pr-0 text-base font-semibold leading-none">
+          {title}
+        </DialogTitle>
         <DialogDescription className="sr-only">{description}</DialogDescription>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
+        <HeaderActionButton
           aria-label="Close"
-          className="absolute right-3 top-2 min-h-11 min-w-11"
+          tooltip={false}
           onClick={() => {
             onCancel?.();
             onOpenChange(false);
           }}
         >
           <XIcon className="size-4" />
-        </Button>
+        </HeaderActionButton>
       </DialogHeader>
       <div
         className="grid min-h-0 flex-1 grid-cols-1 overflow-y-auto md:grid-cols-[15rem_minmax(0,1fr)]"
@@ -162,70 +164,84 @@ function WorkspaceSelectionContent({
       >
         <section
           aria-label="Host"
-          className="border-b bg-[var(--workspace-chrome)] px-3 py-4 md:border-r md:border-b-0"
+          className="border-b bg-[var(--workspace-chrome)] px-3 pb-4 md:border-r md:border-b-0"
         >
-          <h3 className="mb-3 px-2 text-sm font-medium text-muted-foreground">Host</h3>
-          {missingSelected && selectedHostId !== null && (
-            <button
-              type="button"
-              aria-pressed="true"
-              className="flex min-h-11 w-full items-center gap-2 rounded-md bg-[var(--workspace-selected)] px-3 py-2 text-left text-sm"
-            >
-              <MonitorIcon className="size-4 shrink-0" aria-hidden />
-              <span className="min-w-0 flex-1 truncate">{hostLabel ?? selectedHostId}</span>
-              <CheckIcon className="size-4 text-primary" aria-hidden />
-            </button>
-          )}
-          {choices.map((host) => (
-            <button
-              type="button"
-              key={host.host_id}
-              disabled={busy || confirming || host.status !== "online"}
-              aria-pressed={host.host_id === selectedHostId}
-              onClick={() => {
-                setSelectedHostId(host.host_id);
-                setError(null);
-              }}
-              className={cn(
-                "my-0.5 flex min-h-11 w-full items-center gap-2.5 rounded-md px-3 py-2 text-left outline-none hover:bg-[var(--workspace-content)] focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default",
-                host.host_id === selectedHostId &&
-                  "bg-[var(--workspace-selected)] hover:bg-[var(--workspace-selected)]",
-              )}
-              data-testid={`workspace-selection-host-${host.host_id}`}
-            >
-              <MonitorIcon className="size-4 shrink-0" aria-hidden />
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm font-medium">{host.name}</span>
-                <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                  <span
-                    className={cn(
-                      "size-1.5 rounded-full",
-                      host.status === "online" ? "bg-green-600" : "bg-muted-foreground",
-                    )}
-                  />
-                  {host.status === "online" ? "Connected" : "Offline"}
-                </span>
-              </span>
-              {host.host_id === selectedHostId && (
-                <CheckIcon className="size-4 shrink-0 text-primary" aria-hidden />
-              )}
-            </button>
-          ))}
-          {selectedHostId === null && (
-            <p className="px-2 py-2 text-sm text-muted-foreground">
-              {hostLabel ?? "Choose a host"}
-            </p>
-          )}
-          {hostsQuery.error && !suppliedHosts && (
-            <p role="alert" className="px-2 text-sm text-destructive">
-              {hostsQuery.error.message}
-            </p>
-          )}
+          <h3 className="flex h-[var(--density-header-height)] items-center px-[var(--list-row-padding-inline)] text-sm font-semibold text-foreground">
+            Host
+          </h3>
+          <div className="density-list flex flex-col">
+            {missingSelected && selectedHostId !== null && (
+              <MenuItem
+                asChild
+                density="none"
+                active
+                className="density-row bg-[var(--workspace-selected)] text-sm hover:bg-[var(--workspace-selected)]"
+              >
+                <button type="button" aria-pressed="true" className="w-full text-left">
+                  <MonitorIcon className="size-4 shrink-0" aria-hidden />
+                  <span className="min-w-0 flex-1 truncate">{hostLabel ?? selectedHostId}</span>
+                  <CheckIcon className="size-4 text-primary" aria-hidden />
+                </button>
+              </MenuItem>
+            )}
+            {choices.map((host) => (
+              <MenuItem
+                asChild
+                density="none"
+                active={host.host_id === selectedHostId}
+                key={host.host_id}
+                className={cn(
+                  "density-row hover:bg-[var(--workspace-content)] focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default",
+                  host.host_id === selectedHostId &&
+                    "bg-[var(--workspace-selected)] hover:bg-[var(--workspace-selected)]",
+                )}
+              >
+                <button
+                  type="button"
+                  disabled={busy || confirming || host.status !== "online"}
+                  aria-pressed={host.host_id === selectedHostId}
+                  onClick={() => {
+                    setSelectedHostId(host.host_id);
+                    setError(null);
+                  }}
+                  className="w-full text-left outline-none"
+                  data-testid={`workspace-selection-host-${host.host_id}`}
+                >
+                  <MonitorIcon className="size-4 shrink-0" aria-hidden />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-medium">{host.name}</span>
+                    <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                      <span
+                        className={cn(
+                          "size-1.5 rounded-full",
+                          host.status === "online" ? "bg-green-600" : "bg-muted-foreground",
+                        )}
+                      />
+                      {host.status === "online" ? "Connected" : "Offline"}
+                    </span>
+                  </span>
+                  {host.host_id === selectedHostId && (
+                    <CheckIcon className="size-4 shrink-0 text-primary" aria-hidden />
+                  )}
+                </button>
+              </MenuItem>
+            ))}
+            {selectedHostId === null && (
+              <p className="px-2 py-2 text-sm text-muted-foreground">
+                {hostLabel ?? "Choose a host"}
+              </p>
+            )}
+            {hostsQuery.error && !suppliedHosts && (
+              <p role="alert" className="px-2 text-sm text-destructive">
+                {hostsQuery.error.message}
+              </p>
+            )}
+          </div>
           <ConnectHostDialog open={connectOpen} onOpenChange={setConnectOpen}>
             <Button
               type="button"
               variant="ghost"
-              className="mt-3 min-h-11 w-full justify-start text-sm text-muted-foreground"
+              className="density-row mt-3 h-auto w-full justify-start text-sm text-muted-foreground"
             >
               <PlusIcon className="size-4" aria-hidden />
               Add host…
@@ -235,9 +251,11 @@ function WorkspaceSelectionContent({
         </section>
         <section
           aria-label="Path"
-          className="flex min-h-0 min-w-0 flex-col bg-[var(--workspace-content)] px-4 py-4 md:px-5"
+          className="flex min-h-0 min-w-0 flex-col bg-[var(--workspace-content)] px-3 pb-4"
         >
-          <h3 className="mb-3 text-sm font-medium text-muted-foreground">Path</h3>
+          <h3 className="flex h-[var(--density-header-height)] shrink-0 items-center px-[var(--list-row-padding-inline)] text-sm font-semibold text-foreground">
+            Path
+          </h3>
           {pathUnavailableReason && selectedHostId === null ? (
             <p className="text-sm text-muted-foreground">{pathUnavailableReason}</p>
           ) : (
@@ -268,18 +286,23 @@ function WorkspaceSelectionContent({
               />
               {recent.length > 0 && (
                 <div className="mt-3">
-                  <p className="mb-1 text-xs text-muted-foreground">Recent paths on this host</p>
-                  {recent.map((path) => (
-                    <button
-                      type="button"
-                      key={path}
-                      onClick={() => picker.current?.navigate(path)}
-                      className="flex min-h-11 w-full items-center gap-2 rounded px-2 text-left text-xs text-muted-foreground hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring md:min-h-8"
-                    >
-                      <ClockIcon className="size-4 shrink-0" aria-hidden />
-                      <span className="truncate">{path}</span>
-                    </button>
-                  ))}
+                  <p className="mb-1 px-[var(--list-row-padding-inline)] text-xs text-muted-foreground">
+                    Recent paths on this host
+                  </p>
+                  <div className="density-list flex flex-col">
+                    {recent.map((path) => (
+                      <MenuItem asChild density="none" key={path} className="density-row text-xs">
+                        <button
+                          type="button"
+                          onClick={() => picker.current?.navigate(path)}
+                          className="w-full text-left text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                        >
+                          <ClockIcon className="size-4 shrink-0" aria-hidden />
+                          <span className="truncate">{path}</span>
+                        </button>
+                      </MenuItem>
+                    ))}
+                  </div>
                 </div>
               )}
             </fieldset>

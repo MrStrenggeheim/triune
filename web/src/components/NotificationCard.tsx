@@ -1,3 +1,4 @@
+// Modified for Triune.
 import type { ReactNode } from "react";
 import { CheckIcon, CircleAlertIcon, InfoIcon, Loader2Icon, XIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -63,7 +64,7 @@ export function NotificationCard({
       role={history ? undefined : entry.type === "error" ? "alert" : "status"}
       aria-busy={active || entry.actionPending || undefined}
       className={cn(
-        "grid grid-cols-[1rem_minmax(0,1fr)_1.5rem] items-start gap-x-2 gap-y-2 p-3 text-ui",
+        "density-row grid grid-cols-[1rem_minmax(0,1fr)_1.5rem] items-start text-ui",
         !history &&
           "rounded-xl bg-popover text-popover-foreground shadow-menu ring-1 ring-foreground/10",
       )}
@@ -85,7 +86,7 @@ export function NotificationCard({
           entry.type === "success" && "text-success",
         )}
       />
-      <div className="min-w-0 space-y-1 break-words [overflow-wrap:anywhere]">
+      <div className="min-w-0 space-y-[var(--list-gap)] break-words [overflow-wrap:anywhere]">
         {entry.title && <div className="font-medium leading-5">{content(entry.title)}</div>}
         {entry.description && (
           <div className="text-sm leading-5 text-muted-foreground">
@@ -109,7 +110,7 @@ export function NotificationCard({
         </Button>
       )}
       {entry.progress && (
-        <div className="col-start-2 col-end-4 space-y-1.5" data-notification-progress>
+        <div className="col-start-2 col-end-4 space-y-[var(--list-gap)]" data-notification-progress>
           <div
             role="progressbar"
             aria-label={entry.progress.label || "Activity progress"}
@@ -140,7 +141,7 @@ export function NotificationCard({
         </div>
       )}
       {(entry.action || entry.cancel || history) && (
-        <div className="col-start-2 col-end-4 flex flex-wrap items-center justify-end gap-2">
+        <div className="col-start-2 col-end-4 flex flex-wrap items-center justify-end gap-[var(--list-row-gap)]">
           {history && (
             <time
               className="mr-auto text-10 text-muted-foreground"

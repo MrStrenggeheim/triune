@@ -1,3 +1,4 @@
+// Modified for Triune.
 import {
   FolderDotIcon,
   FolderPlusIcon,
@@ -13,6 +14,7 @@ import {
 import { type ReactNode, type Ref, useEffect, useImperativeHandle, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { HeaderActionButton } from "@/components/HeaderActionButton";
 import { Spinner } from "@/components/ui/spinner";
 import {
   TooltipButton,
@@ -322,6 +324,18 @@ function PickerIconButton({
   disabled?: boolean;
   testId: string;
 }) {
+  const button = (
+    <HeaderActionButton
+      tooltip={false}
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={label}
+      data-testid={testId}
+    >
+      {icon}
+    </HeaderActionButton>
+  );
+  if (label === "Close") return button;
   return (
     <TooltipProvider>
       <Tooltip>
@@ -333,20 +347,7 @@ function PickerIconButton({
             }
           }}
         >
-          <span className="shrink-0">
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              onClick={onClick}
-              disabled={disabled}
-              aria-label={label}
-              className="text-muted-foreground"
-              data-testid={testId}
-            >
-              {icon}
-            </Button>
-          </span>
+          <span className="shrink-0">{button}</span>
         </TooltipTrigger>
         <TooltipContent side="bottom">{label}</TooltipContent>
       </Tooltip>
@@ -774,11 +775,12 @@ export function WorkspacePicker({
       data-testid="workspace-picker"
     >
       <div
-        className={
+        className={cn(
+          "flex h-[var(--density-header-height)] shrink-0 items-center gap-1 [&_[data-header-action-button]]:size-[calc(var(--density-header-height)-4px)]",
           embedded
-            ? "flex min-h-11 shrink-0 items-center gap-1 rounded-md border border-input px-1 focus-within:ring-2 focus-within:ring-ring"
-            : "flex h-12 min-h-12 shrink-0 items-center gap-1 border-b px-3 py-0"
-        }
+            ? "rounded-md border border-input px-0.5 focus-within:ring-2 focus-within:ring-ring"
+            : "border-b px-3 py-0",
+        )}
         data-testid="workspace-picker-header"
       >
         <PickerIconButton
@@ -1053,7 +1055,10 @@ export function WorkspacePicker({
           )}
           <div
             className={cn(
-              "min-h-0 flex-1 space-y-px overflow-y-auto px-2 py-2",
+              "min-h-0 flex-1 overflow-y-auto py-2",
+              embedded
+                ? "density-list flex flex-col px-0 [&>[data-slot=menu-item]]:min-h-[var(--list-row-min-height)] [&>[data-slot=menu-item]]:gap-[var(--list-row-gap)] [&>[data-slot=menu-item]]:px-[var(--list-row-padding-inline)] [&>[data-slot=menu-item]]:py-[var(--list-row-padding-block)]"
+                : "space-y-px px-2",
               showGitDialog && "pt-0 pb-3",
             )}
             aria-busy={navigationPending || undefined}

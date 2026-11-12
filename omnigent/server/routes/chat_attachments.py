@@ -1,3 +1,4 @@
+# Modified for Triune.
 """Read local Markdown references through the message's captured filesystem scope."""
 
 from __future__ import annotations
@@ -7,8 +8,9 @@ import base64
 import hashlib
 import json
 import mimetypes
+import posixpath
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 from fastapi import APIRouter, HTTPException, Request, Response
 
@@ -55,6 +57,79 @@ def create_chat_attachments_router(
         if not path:
             raise HTTPException(400, "A file path is required")
         return workspace, path
+
+    @router.get("/references/{item_id}/metadata")
+    async def reference_metadata(
+        request: Request, session_id: str, item_id: str, path: str
+    ) -> dict[str, Any]:
+        """Classify an authorized reference without transferring its file contents."""
+        user, scope = await reference_scope(request, session_id, item_id)
+        snapshot_id = (
+            "chat-reference-"
+            + hashlib.sha256(
+                json.dumps([current_workspace_id(), user, session_id, item_id, path]).encode()
+            ).hexdigest()
+        )
+        captured = artifact_store is not None and await asyncio.to_thread(
+            artifact_store.exists, snapshot_id
+        )
+        try:
+            workspace = await service.resolve_session(request, session_id, captured=scope)
+            if scope.get("generation") and workspace.generation != scope["generation"]:
+                raise HTTPException(
+                    409, "The original workspace generation is no longer available"
+                )
+            resolved = relative_path(workspace, path)
+            result = {"workspace": await service.metadata(workspace), "path": resolved}
+            if not resolved:
+                return {**result, "kind": "directory"}
+            directory, name = posixpath.split(resolved.replace("\\", "/"))
+            cursor = None
+            for _ in range(8):
+                params = {"limit": "1000", "order": "asc"}
+                if cursor:
+                    params["after"] = cursor
+                if workspace.target_kind == "runneronly":
+                    from starlette.requests import Request as StarletteRequest
+
+                    from omnigent.server.workbench_resources import RunnerWorkspaceResources
+
+                    delegated = StarletteRequest(
+                        dict(request.scope, query_string=urlencode(params).encode())
+                    )
+                    response = await RunnerWorkspaceResources(service, workspace).dispatch(
+                        delegated, "environments/default/filesystem/" + directory, {}
+                    )
+                    if response.status_code >= 400:
+                        raise HTTPException(
+                            response.status_code, "Original file location unavailable"
+                        )
+                    listing = json.loads(bytes(response.body))
+                else:
+                    listing = await HostWorkspaceResources(service, workspace).call(
+                        "list_or_read", {**params, "path": directory}
+                    )
+                for entry in listing.get("data", []):
+                    if (
+                        entry.get("name") == name
+                        or posixpath.basename(entry.get("path", "")) == name
+                    ):
+                        kind = entry.get("type")
+                        return {
+                            **result,
+                            "kind": kind if kind in {"file", "directory"} else "unknown",
+                        }
+                if not listing.get("has_more"):
+                    return {**result, "kind": "captured" if captured else "missing"}
+                next_cursor = listing.get("last_id")
+                if not next_cursor or next_cursor == cursor:
+                    break
+                cursor = next_cursor
+            return {**result, "kind": "unknown"}
+        except HTTPException as error:
+            if captured and error.status_code in {400, 404, 409, 502, 503}:
+                return {"kind": "captured", "path": path, "workspace": None}
+            raise
 
     @router.get("/references/{item_id}/location")
     async def reference_location(

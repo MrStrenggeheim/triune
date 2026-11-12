@@ -1,3 +1,4 @@
+// Modified for Triune; inherited notices remain applicable.
 import { useContext, useLayoutEffect, useState, type ReactNode } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -11,6 +12,7 @@ import { useWriteFileContent } from "@/hooks/useWriteFileContent";
 import { authenticatedFetch } from "@/lib/identity";
 import { panelFolderKey, readPanelFolder, setPanelFolder } from "@/lib/panelFolder";
 import type { WorkspaceSelectionDialogProps } from "@/shell/WorkspaceSelectionDialog";
+import type { FileViewerProps } from "@/shell/FileViewer";
 
 const state = vi.hoisted(() => ({
   openContentSearch: undefined as ((path: string, replace?: boolean) => void) | undefined,
@@ -19,6 +21,7 @@ const state = vi.hoisted(() => ({
   guard: undefined as FileNavigationGuard | undefined,
   confirmation: undefined as boolean | void,
   confirmError: undefined as unknown,
+  viewerProps: undefined as FileViewerProps | undefined,
 }));
 vi.mock("@/hooks/useHosts", () => ({
   useHosts: () => ({ data: [{ host_id: "host-a", name: "Host A", status: "online" }] }),
@@ -67,17 +70,9 @@ vi.mock("@/shell/FilesPanel", () => ({
 vi.mock("@/shell/ContentSearchPanel", () => ({ ContentSearchPanel: () => null }));
 vi.mock("@/shell/PullRequestPanel", () => ({ PullRequestPanel: () => null }));
 vi.mock("@/shell/FileViewer", () => ({
-  FileViewer: ({
-    conversationId,
-    path,
-    recipientValid,
-    locationControls,
-  }: {
-    conversationId: string;
-    path: string;
-    recipientValid: boolean;
-    locationControls?: ReactNode;
-  }) => {
+  FileViewer: (props: FileViewerProps) => {
+    const { conversationId, path, recipientValid, onClose } = props;
+    state.viewerProps = props;
     const context = useContext(FileViewerContext)!;
     state.openContentSearch = context.openContentSearch;
     const workspace = useWorkbenchWorkspace();
@@ -92,9 +87,11 @@ vi.mock("@/shell/FileViewer", () => ({
     );
     return (
       <>
-        {locationControls}
         <button type="button" onClick={() => save.mutate({ path, content: "captured", workspace })}>
           Save {workspace?.id ?? "legacy"} {recipientValid ? conversationId : "no recipient"}
+        </button>
+        <button type="button" onClick={onClose}>
+          Close file
         </button>
       </>
     );
@@ -108,6 +105,7 @@ afterEach(() => {
   state.guard = undefined;
   state.confirmation = undefined;
   state.confirmError = undefined;
+  state.viewerProps = undefined;
   setPanelFolder(panelFolderKey(original.id, "explorer")!, null);
   setPanelFolder(panelFolderKey(next.id, "explorer")!, null);
   setPanelFolder(panelFolderKey(original.id, "editor")!, null);
@@ -214,41 +212,32 @@ it.each([
     );
   },
 );
-it.each(["picker", "up"])(
-  "guards a %s location switch and close while a started save retains its captured target",
-  async (entry) => {
-    const target = { ...next, root: entry === "up" ? "/old" : "/new" };
-    setPanelFolder(panelFolderKey(original.id, "editor")!, "nested");
-    setPanelFolder(panelFolderKey(next.id, "editor")!, "retained");
-    let finishSave!: (response: Response) => void;
-    vi.mocked(authenticatedFetch).mockImplementation((url, options) => {
-      if (options?.method === "PUT")
-        return new Promise((resolve) => {
-          finishSave = resolve;
-        });
-      expect(url).toBe("/v1/workbench-workspaces");
-      expect(JSON.parse(String(options?.body))).toEqual({ host_id: "host-a", root: target.root });
-      return Promise.resolve(new Response(JSON.stringify(target)));
-    });
-    const changed = vi.fn();
-    function Harness() {
-      const [workspace, setWorkspace] = useState(original);
-      return (
+it("guards external navigation and close while a save retains its captured target", async () => {
+  let finishSave!: (response: Response) => void;
+  vi.mocked(authenticatedFetch).mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        finishSave = resolve;
+      }),
+  );
+  const closed = vi.fn();
+  function Harness() {
+    const [workspace, setWorkspace] = useState(original);
+    return (
+      <>
+        <button
+          type="button"
+          onClick={() => state.guard!("", { workspaceId: next.id }, () => setWorkspace(next))}
+        >
+          Navigate externally
+        </button>
         <ResourceView
           viewId="editor"
           kind="preview"
           workspace={workspace}
           path="file.txt"
           onOpenFile={vi.fn()}
-          onWorkspaceChange={(value) =>
-            new Promise<boolean>((resolve) => {
-              state.guard!("", { workspaceId: value.id }, () => {
-                changed(value);
-                setWorkspace(value);
-                resolve(true);
-              });
-            })
-          }
+          onClose={closed}
           registerNavigationGuard={(guard) => {
             state.guard = guard;
             return () => {
@@ -256,42 +245,67 @@ it.each(["picker", "up"])(
             };
           }}
         />
-      );
-    }
-    render(<Harness />, { wrapper });
-    fireEvent.click(screen.getByText("Save original no recipient"));
-    await waitFor(() => expect(finishSave).toBeDefined());
-    fireEvent.click(screen.getByRole("button", { name: "Location" }));
-    if (entry === "picker") {
-      fireEvent.click(screen.getByRole("button", { name: "Select workspace: Host A:/old/nested" }));
-      fireEvent.click(screen.getByText("Choose new folder"));
-    } else fireEvent.click(screen.getByRole("button", { name: "Up one folder" }));
-    await waitFor(() => expect(state.accept).toBeDefined());
-    expect(changed).not.toHaveBeenCalled();
-    expect(state.prompts).toBe(1);
-    expect(screen.getByText("Save original no recipient")).toBeInTheDocument();
-    expect(readPanelFolder(panelFolderKey(next.id, "editor"))).toBe("retained");
-    expect(state.confirmation).toBeUndefined();
-    await act(async () => state.accept!());
-    expect(screen.getByText("Save next no recipient")).toBeInTheDocument();
-    expect(readPanelFolder(panelFolderKey(next.id, "editor"))).toBeNull();
-    if (entry === "picker") expect(state.confirmation).toBe(true);
-    expect(state.prompts).toBe(1);
-    await act(async () => finishSave(new Response("{}")));
-    const writes = vi
-      .mocked(authenticatedFetch)
-      .mock.calls.filter(([, options]) => options?.method === "PUT");
-    expect(writes).toHaveLength(1);
-    expect(writes[0][0]).toBe(
-      "/v1/workbench-workspaces/original/resources/environments/default/filesystem/file.txt",
+      </>
     );
-    const close = vi.fn();
-    act(() => state.guard!("", undefined, close));
-    expect(close).not.toHaveBeenCalled();
-    act(() => state.accept!());
-    expect(close).toHaveBeenCalledOnce();
-  },
-);
+  }
+  render(<Harness />, { wrapper });
+  fireEvent.click(screen.getByText("Save original no recipient"));
+  await waitFor(() => expect(finishSave).toBeDefined());
+  fireEvent.click(screen.getByText("Navigate externally"));
+  expect(state.prompts).toBe(1);
+  expect(screen.getByText("Save original no recipient")).toBeInTheDocument();
+  act(() => state.accept!());
+  expect(screen.getByText("Save next no recipient")).toBeInTheDocument();
+  await act(async () => finishSave(new Response("{}")));
+  expect(authenticatedFetch).toHaveBeenCalledTimes(1);
+  expect(authenticatedFetch).toHaveBeenCalledWith(
+    "/v1/workbench-workspaces/original/resources/environments/default/filesystem/file.txt",
+    expect.objectContaining({ method: "PUT" }),
+  );
+  fireEvent.click(screen.getByText("Close file"));
+  expect(closed).not.toHaveBeenCalled();
+  act(() => state.accept!());
+  expect(closed).toHaveBeenCalledOnce();
+});
+
+it("passes the comment picker and captured original download without preview location controls", () => {
+  const annotationControl = <button type="button">Comments: Choose chat</button>;
+  const originalDownload = vi.fn();
+  const { rerender } = render(
+    <ResourceView
+      viewId="editor"
+      kind="preview"
+      workspace={original}
+      path="file.txt"
+      annotationControl={annotationControl}
+      originalDownload={originalDownload}
+      onOpenFile={vi.fn()}
+      onWorkspaceChange={vi.fn()}
+    />,
+    { wrapper },
+  );
+  expect(state.viewerProps).toMatchObject({ hostLabel: "Host A", recipientValid: false });
+  expect(state.viewerProps?.annotationControl).toBe(annotationControl);
+  expect(state.viewerProps?.originalDownload).toBe(originalDownload);
+  expect(
+    screen.queryByRole("button", { name: /Location|Up one folder|Select workspace:/ }),
+  ).toBeNull();
+  rerender(
+    <ResourceView
+      viewId="editor"
+      kind="preview"
+      workspace={original}
+      path="file.txt"
+      conversationId="selected-owner"
+      annotationControl={annotationControl}
+      onOpenFile={vi.fn()}
+    />,
+  );
+  expect(state.viewerProps).toMatchObject({
+    conversationId: "selected-owner",
+    recipientValid: true,
+  });
+});
 it("retains an unavailable target instead of selecting an online host", () => {
   const open = vi.fn();
   render(
