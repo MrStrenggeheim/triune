@@ -105,20 +105,22 @@ def test_upgrade_branding_never_queries_or_installs_upstream(
 @pytest.mark.parametrize(
     "legacy_source", [None, "git+https://github.com/omnigent-ai/omnigent.git"]
 )
+@pytest.mark.parametrize("installer", ["tool", "uv", "pip"])
 def test_extra_install_branding_uses_triune_source(
-    monkeypatch: pytest.MonkeyPatch, legacy_source: str | None
+    monkeypatch: pytest.MonkeyPatch, legacy_source: str | None, installer: str
 ) -> None:
     monkeypatch.setattr(update_check, "_find_repo_root", lambda: None)
     monkeypatch.setattr(extra_install, "_installed_vcs_url", lambda: legacy_source)
-    monkeypatch.setattr(extra_install, "_is_uv_tool_install", lambda: True)
+    monkeypatch.setattr(extra_install, "_is_uv_tool_install", lambda: installer == "tool")
+    monkeypatch.setattr(
+        extra_install.shutil, "which", lambda _: "/usr/bin/uv" if installer == "uv" else None
+    )
     command = extra_install.extra_install_command("cursor")
-    assert command == [
-        "uv",
-        "tool",
-        "install",
-        "--force",
-        "triune[cursor] @ git+https://github.com/MrStrenggeheim/triune@main",
-    ]
+    source = "git+https://github.com/MrStrenggeheim/triune@main"
+    assert command[-1] == f"triune[cursor] @ {source}"
+    assert f"omnigent-client @ {source}#subdirectory=sdks/python-client" in command
+    assert f"omnigent-ui-sdk @ {source}#subdirectory=sdks/ui" in command
+    assert command.count("--with") == (2 if installer == "tool" else 0)
 
 
 def test_extra_install_branding_preserves_local_checkout(
@@ -128,3 +130,5 @@ def test_extra_install_branding_preserves_local_checkout(
     monkeypatch.setattr(extra_install, "_installed_vcs_url", lambda: None)
     command = extra_install.extra_install_command("cursor")
     assert command[-1] == f"triune[cursor] @ {tmp_path.as_uri()}"
+    assert f"omnigent-client @ {(tmp_path / 'sdks/python-client').as_uri()}" in command
+    assert f"omnigent-ui-sdk @ {(tmp_path / 'sdks/ui').as_uri()}" in command

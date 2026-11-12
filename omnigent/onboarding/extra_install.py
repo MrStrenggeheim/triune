@@ -50,18 +50,39 @@ def extra_install_command(extra: str) -> list[str]:
     else:
         source = f"git+{TRIUNE_SOURCE_URL}@main"
     target = f"triune[{extra}] @ {source}"
+    # uv/pip do not apply tool.uv.sources when reinstalling a direct reference.
+    # Resolve both SDKs from the same checkout/ref, including optional installs.
+    sdk_targets = [
+        f"{name} @ "
+        + (
+            (repo_root / directory).as_uri()
+            if repo_root is not None
+            else f"{source.split('#', 1)[0]}#subdirectory={directory}"
+        )
+        for name, directory in (
+            ("omnigent-client", "sdks/python-client"),
+            ("omnigent-ui-sdk", "sdks/ui"),
+        )
+    ]
 
     if _is_uv_tool_install():
-        return ["uv", "tool", "install", "--force", target]
+        return [
+            "uv",
+            "tool",
+            "install",
+            "--force",
+            *(argument for sdk in sdk_targets for argument in ("--with", sdk)),
+            target,
+        ]
 
     if shutil.which("uv") is not None:
         # ``--python`` pins the install to the interpreter that will import the
         # extra.  Without it ``uv pip install`` requires an active virtualenv
         # and errors out on Homebrew/pipx/system installs that merely have uv
         # on PATH.
-        return ["uv", "pip", "install", "--python", sys.executable, target]
+        return ["uv", "pip", "install", "--python", sys.executable, *sdk_targets, target]
 
-    return [sys.executable, "-P", "-m", "pip", "install", target]
+    return [sys.executable, "-P", "-m", "pip", "install", *sdk_targets, target]
 
 
 def extra_install_display(extra: str) -> str:
