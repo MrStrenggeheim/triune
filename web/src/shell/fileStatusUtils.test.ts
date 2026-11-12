@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { describe, expect, it } from "vitest";
 import type { WorkspaceChangedFile } from "@/hooks/useWorkspaceChangedFiles";
 import { folderStatuses, gitStatusColor, statusDescription } from "./fileStatusUtils";
@@ -89,8 +90,14 @@ describe("statusDescription", () => {
     expect(statusDescription("a.ts", undefined, undefined, true)).toBe("a.ts\nIgnored by Git");
   });
 
-  it("uses orange for modifications and green/red for additions/deletions", () => {
-    expect(gitStatusColor("modified")).toContain("text-orange-500");
+  it("uses upstream theme-aware amber for modified letters, dots and folder propagation", () => {
+    expect(gitStatusColor("modified")).toBe("text-amber-500 dark:text-amber-400");
+    const folder = folderStatuses([
+      change("src/edit.ts", "modified"),
+      change("src/new.ts", "created"),
+      change("src/gone.ts", "deleted"),
+    ]).get("src")!;
+    expect(gitStatusColor(folder.descendant)).toBe(gitStatusColor("modified"));
     expect(gitStatusColor("created")).toContain("text-green-500");
     expect(gitStatusColor("deleted")).toBe("text-destructive");
     expect(gitStatusColor(undefined)).toBeUndefined();

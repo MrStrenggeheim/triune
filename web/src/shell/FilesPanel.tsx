@@ -1,3 +1,4 @@
+// Modified for Triune.
 import type { ReactNode } from "react";
 import {
   ResourceViewIdContext,
@@ -554,7 +555,7 @@ function FilesPanelContent({
   const scrollRef = useRef<HTMLElement>(null);
   const scrollKey = browseOwner ? `files:${browseOwner}:${flatView ? "changed" : "all"}` : null;
   const dataReady = flatView ? changedQuery.data !== undefined : allFilesQuery.data !== undefined;
-  const handleScroll = useScrollRestore(scrollRef, scrollKey, dataReady);
+  const handleScroll = useScrollRestore(scrollRef, scrollKey, dataReady, true, active);
   // An idle-stopped managed sandbox is asleep, not failed: its status stays
   // idle, and with neither a runner nor a host to read the workspace from, the
   // lists can't load. Say so rather than "No files in workspace"; a list
@@ -862,6 +863,7 @@ function FilesPanelContent({
           )}
           {!showAsleepHint && !flatView && (
             <FolderTree
+              active={active}
               viewId={viewId}
               files={allFilesQuery.data?.data}
               isLoading={allFilesQuery.isLoading}

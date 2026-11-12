@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ScrollbarThumb, scrollbarGeometry } from "@/components/ui/overlay-scrollbar";
@@ -28,6 +29,38 @@ function isScrollSurface(element: HTMLElement) {
   );
 }
 
+const GEOMETRY_STYLES = new Set([
+  "width",
+  "height",
+  "min-width",
+  "max-width",
+  "min-height",
+  "max-height",
+  "left",
+  "right",
+  "top",
+  "bottom",
+  "flex-basis",
+  "transform",
+]);
+
+function onlyGeometryChanged(element: HTMLElement, oldStyle: string | null) {
+  const previous = document.createElement("div").style;
+  previous.cssText = oldStyle ?? "";
+  const properties = new Set([...Array.from(previous), ...Array.from(element.style)]);
+  for (const property of properties) {
+    if (
+      previous.getPropertyValue(property) === element.style.getPropertyValue(property) &&
+      previous.getPropertyPriority(property) === element.style.getPropertyPriority(property)
+    )
+      continue;
+    if (!GEOMETRY_STYLES.has(property)) return false;
+  }
+  // A container's dimensions can change descendant overflow rules via @container.
+  const containerType = getComputedStyle(element).containerType;
+  return !containerType || containerType === "normal";
+}
+
 /**
  * Mount <OverlayScrollbars /> once inside WorkbenchShell, beside its content.
  * Discovers native overflow surfaces and portaled menus/dialogs in the theme root.
@@ -39,16 +72,30 @@ export function OverlayScrollbars() {
     const root = getEmbedRoot() ?? document.body;
     const candidates = new Set<HTMLElement>();
     const dirty = new Set<HTMLElement>([root]);
+    const dirtyElements = new Set<HTMLElement>();
     let frame = 0;
     const discover = () => {
       frame = 0;
       for (const subtree of dirty) {
         if (!root.contains(subtree)) continue;
+        if (subtree.closest(EXCLUDED)) continue;
+        let covered = false;
+        for (let ancestor = subtree.parentElement; ancestor; ancestor = ancestor.parentElement) {
+          if (dirty.has(ancestor)) {
+            covered = true;
+            break;
+          }
+        }
+        if (covered) continue;
         for (const element of [subtree, ...subtree.querySelectorAll<HTMLElement>("*")]) {
           if (element instanceof HTMLElement && isScrollSurface(element)) candidates.add(element);
         }
       }
       dirty.clear();
+      for (const element of dirtyElements) {
+        if (root.contains(element) && isScrollSurface(element)) candidates.add(element);
+      }
+      dirtyElements.clear();
       for (const element of candidates) {
         if (!root.contains(element) || !isScrollSurface(element)) candidates.delete(element);
       }
@@ -70,7 +117,12 @@ export function OverlayScrollbars() {
         )
           continue;
         if (record.type === "attributes") {
-          dirty.add(record.target);
+          if (
+            record.attributeName === "style" &&
+            onlyGeometryChanged(record.target, record.oldValue)
+          )
+            dirtyElements.add(record.target);
+          else dirty.add(record.target);
           changed = true;
         } else {
           for (const node of [...record.addedNodes, ...record.removedNodes]) {
@@ -87,6 +139,7 @@ export function OverlayScrollbars() {
       childList: true,
       subtree: true,
       attributes: true,
+      attributeOldValue: true,
       attributeFilter: ["class", "style", "hidden", "data-state", "data-scrollbar"],
     });
     const rediscover = () => {

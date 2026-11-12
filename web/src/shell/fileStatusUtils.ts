@@ -1,3 +1,4 @@
+// Modified for Triune.
 import type { WorkspaceChangedFile } from "@/hooks/useWorkspaceChangedFiles";
 import { isExplorerInternalPath } from "@/lib/explorerOperations";
 
@@ -50,7 +51,7 @@ export function gitStatusColor(status: ChangeStatus | undefined): string | undef
     case "created":
       return "text-green-500 dark:text-green-400";
     case "modified":
-      return "text-orange-500 dark:text-orange-400";
+      return "text-amber-500 dark:text-amber-400";
     case "deleted":
       return "text-destructive";
   }

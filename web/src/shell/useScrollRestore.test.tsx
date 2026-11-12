@@ -1,3 +1,4 @@
+// Modified for Triune.
 // Tests for useScrollRestore — the shared scroll-position cache behind the
 // Files panel and the file viewer:
 //
@@ -26,13 +27,15 @@ function Scroller({
   scrollKey,
   ready,
   restore = true,
+  active = true,
 }: {
   scrollKey: string | null;
   ready: boolean;
   restore?: boolean;
+  active?: boolean;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
-  const onScroll = useScrollRestore(ref, scrollKey, ready, restore);
+  const onScroll = useScrollRestore(ref, scrollKey, ready, restore, active);
   return <div ref={ref} data-testid="scroller" onScroll={onScroll} />;
 }
 
@@ -73,6 +76,41 @@ afterEach(() => {
 });
 
 describe("useScrollRestore", () => {
+  it("preserves the saved offset while hidden and resumes after a long absence", async () => {
+    const key = "view:hidden-resume";
+    const { view, el } = mount(key);
+    el.scrollTop = 1200;
+    fireEvent.scroll(el);
+    view.rerender(<Scroller scrollKey={key} ready active={false} />);
+    el.scrollTop = 0;
+    fireEvent.scroll(el);
+    await settleRestore();
+    expect(getSavedScrollTop(key)).toBe(1200);
+
+    view.rerender(<Scroller scrollKey={key} ready />);
+    expect(el.scrollTop).toBe(1200);
+    el.scrollTop = 0;
+    fireEvent.scroll(el);
+    await nextFrame();
+    expect(el.scrollTop).toBe(1200);
+    fireEvent.wheel(el);
+    el.scrollTop = 1000;
+    fireEvent.scroll(el);
+    expect(getSavedScrollTop(key)).toBe(1000);
+  });
+
+  it("starts the restore budget when content is ready", async () => {
+    const key = "view:long-loading";
+    saveScrollTop(key, 700);
+    const { view, el } = mount(key, false);
+    await settleRestore();
+    view.rerender(<Scroller scrollKey={key} ready />);
+    expect(el.scrollTop).toBe(700);
+    el.scrollTop = 0;
+    await nextFrame();
+    expect(el.scrollTop).toBe(700);
+  });
+
   it("restores the saved offset when a key is revisited", async () => {
     const first = mount("view:a");
     await settleRestore();

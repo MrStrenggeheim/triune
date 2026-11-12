@@ -1,7 +1,12 @@
-import { useConversationChatStore, useConversationChatFocused } from "@/workbench/ScopedChatStore";
+// Modified for Triune.
+import {
+  useConversationChatStore,
+  useConversationChatFocused,
+  useConversationChatVisible,
+} from "@/workbench/ScopedChatStore";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { measureElement, useVirtualizer } from "@tanstack/react-virtual";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { useStickToBottomContext } from "use-stick-to-bottom";
 import {
   Conversation,
@@ -65,7 +70,12 @@ import {
   stripGatedSubagentRoutingChips,
   stripPendingElicitations,
 } from "@/components/chat/chatBubbleParts";
-import { SCROLL_RESTORE_BUDGET_MS } from "@/shell/useScrollRestore";
+import {
+  SCROLL_RESTORE_BUDGET_MS,
+  measureRetainedElement,
+  observeRetainedElementRect,
+  remeasureRetainedElements,
+} from "@/shell/useScrollRestore";
 
 export interface TranscriptProps {
   hostId: string | null | undefined;
@@ -618,6 +628,7 @@ export function VirtualBubbleList({
     stopScroll: () => void;
     state: { isAtBottom: boolean; escapedFromLock: boolean; scrollTop: number };
   };
+  const visible = useConversationChatVisible();
   const ctxRef = useRef(ctx);
   ctxRef.current = ctx;
   const storeConvId = useChatStore((s) => s.conversationId);
@@ -653,8 +664,9 @@ export function VirtualBubbleList({
   );
   useLayoutEffect(() => {
     const wrapper = wrapperRef.current;
-    if (!wrapper || !scrollEl) return;
+    if (!wrapper || !scrollEl || !visible) return;
     const measure = (observed: boolean) => {
+      if (scrollEl.clientHeight === 0) return;
       const offset =
         wrapper.getBoundingClientRect().top -
         scrollEl.getBoundingClientRect().top +
@@ -682,6 +694,7 @@ export function VirtualBubbleList({
         // on and handles this; writing too would double it.
         if (
           !disableVirtualization &&
+          !restoringRef.current &&
           previous?.el === scrollEl &&
           previous.scrollable &&
           scrollable &&
@@ -710,7 +723,7 @@ export function VirtualBubbleList({
     observer.observe(scrollEl); // viewport height changes
     if (wrapper.parentElement) observer.observe(wrapper.parentElement); // content reflow above
     return () => observer.disconnect();
-  }, [scrollEl, bubbles.length, hasTasks, disableVirtualization]);
+  }, [scrollEl, bubbles.length, hasTasks, disableVirtualization, visible]);
 
   // Marks the scroller as virtualized so the stylesheet turns native scroll
   // anchoring off: the transcript holds its own position (see the prepend and
@@ -772,16 +785,13 @@ export function VirtualBubbleList({
     scrollMargin,
     // Unrounded, unlike the library default: in-flow rows sit at their exact
     // heights, so rounded sizes would drift each row off its virtual offset.
-    measureElement: (element, entry, instance) => {
-      const observed = entry?.borderBoxSize?.[0]?.blockSize;
-      if (observed !== undefined) return observed;
-      // On mount the library falls back to a cached size, else the rounded offsetHeight.
-      const key = instance.options.getItemKey(instance.indexFromElement(element));
-      return instance.itemSizeCache.has(key)
-        ? measureElement(element, entry, instance)
-        : element.getBoundingClientRect().height;
-    },
+    measureElement: measureRetainedElement,
+    observeElementRect: observeRetainedElementRect,
+    useCachedMeasurements: !visible,
   });
+  useLayoutEffect(() => {
+    if (visible && !disableVirtualization) remeasureRetainedElements(virtualizer);
+  }, [visible, disableVirtualization, virtualizer]);
 
   // An assistant bubble is keyed by its first item, so a history page that
   // continues the top turn renames it. Keep rendering it under the key its row
@@ -846,7 +856,14 @@ export function VirtualBubbleList({
   useEffect(() => {
     if (!scrollEl || !conversationId) return;
     const save = () => {
-      if (storeConvId !== conversationId || restoringRef.current === conversationId) return;
+      if (
+        !visible ||
+        scrollEl.clientHeight === 0 ||
+        scrollEl.closest("[hidden], [inert]") ||
+        storeConvId !== conversationId ||
+        restoringRef.current === conversationId
+      )
+        return;
       if (isElAtBottom(scrollEl)) {
         const snapshot = { atBottom: true } as const;
         latestSnapshotRef.current = { conversationId, snapshot };
@@ -873,13 +890,17 @@ export function VirtualBubbleList({
       }
       scrollEl.removeEventListener("scroll", save);
     };
-  }, [conversationId, scrollEl, storeConvId]);
+  }, [conversationId, scrollEl, storeConvId, visible]);
 
   // Restore only when the coherent deferred snapshot changes conversation.
   // Bottom mode is written synchronously before StickToBottom takes over.
   // Mid-scroll mode resolves the saved bubble through the virtualizer on every
   // frame, so estimate-to-measure corrections preserve its viewport position.
   useLayoutEffect(() => {
+    if (!visible) {
+      restoredSurfaceRef.current = null;
+      return;
+    }
     if (!scrollEl || !conversationId) return;
     const previous = restoredSurfaceRef.current;
     restoredSurfaceRef.current = { conversationId, scrollEl };
@@ -903,9 +924,13 @@ export function VirtualBubbleList({
         scrollEl.removeEventListener(type, finish);
       }
     };
+    for (const type of RESTORE_CANCEL_EVENTS) {
+      scrollEl.addEventListener(type, finish, { passive: true });
+    }
 
     if (!saved || saved.atBottom) {
       const pinBottom = () => {
+        if (done) return;
         c.state.isAtBottom = true;
         c.state.escapedFromLock = false;
         scrollEl.scrollTop = Math.max(0, scrollEl.scrollHeight - scrollEl.clientHeight - 1);
@@ -929,9 +954,7 @@ export function VirtualBubbleList({
     const pinAnchor = () => {
       scrollEl.scrollTop = resolveTranscriptViewOffset(saved, (key) => {
         const index = bubblesRef.current.findIndex((bubble) => bubbleKey(bubble) === key);
-        return index < 0
-          ? undefined
-          : virtualizerRef.current.getOffsetForIndex(index, "start")?.[0];
+        return index < 0 ? undefined : virtualizerRef.current.measurementsCache[index]?.start;
       });
     };
     const tick = () => {
@@ -943,13 +966,10 @@ export function VirtualBubbleList({
       pinAnchor();
       frame = requestAnimationFrame(tick);
     };
-    for (const type of RESTORE_CANCEL_EVENTS) {
-      scrollEl.addEventListener(type, finish, { passive: true });
-    }
     pinAnchor();
     frame = requestAnimationFrame(tick);
     return finish;
-  }, [conversationId, scrollEl, messageId]);
+  }, [conversationId, scrollEl, messageId, visible]);
 
   const scrollToItem = useCallback((itemId: string): boolean => {
     const index = bubblesRef.current.findIndex(
@@ -1011,12 +1031,13 @@ export function VirtualBubbleList({
     // library adjusts nothing, the hold below works from real sizes, and the
     // re-render this queues lands before paint.
     const wrapper = wrapperRef.current;
-    if (wrapper && prependCommitRef.current) {
+    if (visible && wrapper && prependCommitRef.current) {
       for (const node of wrapper.querySelectorAll<HTMLElement>("[data-index]")) {
         const key = node.dataset.bubbleKey;
         if (key === undefined) continue;
         if (virtualizer.itemSizeCache.has(key) && !renamedRowKeysRef.current.has(key)) continue;
-        virtualizer.resizeItem(Number(node.dataset.index), node.getBoundingClientRect().height);
+        if (node.getClientRects().length > 0)
+          virtualizer.resizeItem(Number(node.dataset.index), node.getBoundingClientRect().height);
       }
     }
     prependCommitRef.current = false;
@@ -1030,7 +1051,7 @@ export function VirtualBubbleList({
     // Only a prepend (grew or was renamed at the top, some earlier row still
     // present). A switch replaces the list (no row survives) — handled by the
     // mount scroll-to-bottom. Streaming appends leave the first key unchanged.
-    if (!scrollEl || prevFirstKey === undefined || firstKey === prevFirstKey) return;
+    if (!visible || !scrollEl || prevFirstKey === undefined || firstKey === prevFirstKey) return;
     const indexByKey = new Map(bubbles.map((bubble, index) => [rowKey(bubble), index]));
     const survivors = prevSnapshot.filter((row) => indexByKey.has(row.key));
     const unrenamed = survivors.find((row) => !renamedRowKeysRef.current.has(row.key));
@@ -1062,7 +1083,7 @@ export function VirtualBubbleList({
     // write as a reader scroll.
     c.state.scrollTop = scrollEl.scrollTop + delta;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bubbles, scrollEl, virtualizer]);
+  }, [bubbles, scrollEl, virtualizer, visible]);
 
   // Publish geometry (scroll handle, active turn, range nonce) up to the rail
   // and spacer. rangeNonce bumps on any mounted-range change so a windowed-out

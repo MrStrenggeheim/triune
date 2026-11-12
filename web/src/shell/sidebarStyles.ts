@@ -1,3 +1,4 @@
+// Modified for Triune.
 /** Shared row geometry for the home and Settings sidebars. */
 export const SIDEBAR_ROW =
   "sidebar-row sidebar-compact-text h-auto min-h-0 gap-2 rounded-[var(--radius-otto-button)] px-2 py-1.5 md:py-1";
@@ -8,8 +9,12 @@ export const SIDEBAR_HEADING = "text-base font-bold";
 /** A root starts at the label edge; only descendants add an indentation step. */
 export const SIDEBAR_TREE_INDENT = "var(--sidebar-tree-indent, 10px)";
 
-/** Explorer's one-pixel hierarchy strokes, using its shared light/dark border token. */
-export const SIDEBAR_TREE_GUIDE = "pointer-events-none absolute top-0 bottom-0 w-px bg-border";
+/** Theme-aware secondary strokes stay visible over chrome and row highlights. */
+export const SIDEBAR_TREE_GUIDE =
+  "pointer-events-none absolute top-0 bottom-0 w-px bg-muted-foreground/50";
+
+/** Share the list density's gaps within and around persistent row indicators. */
+export const SIDEBAR_INDICATOR_GAP = "gap-[var(--list-row-gap)]";
 
 /** A disclosure needs feedback above the row's chrome-hover surface. */
 export const SIDEBAR_DISCLOSURE_HOVER =

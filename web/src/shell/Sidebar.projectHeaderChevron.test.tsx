@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { renderSidebar as renderSidebarAt } from "@/test/sidebarTestHelpers";
 import { conversationPage } from "@/test/sidebarMockHelpers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -146,7 +147,10 @@ describe("project folder header icon/chevron", () => {
     const empty = action.closest(".sidebar-row")!;
     const sectionBody = empty.parentElement!.parentElement!;
     expect(sectionBody.style.paddingInlineStart).toBe("var(--sidebar-tree-indent, 10px)");
-    expect(sectionBody.querySelector("[data-sidebar-tree-guide]")).toHaveClass("w-px", "bg-border");
+    expect(sectionBody.querySelector("[data-sidebar-tree-guide]")).toHaveClass(
+      "w-px",
+      "bg-muted-foreground/50",
+    );
     expect(empty).toHaveClass(
       "sidebar-row",
       "sidebar-compact-text",

@@ -1,12 +1,18 @@
+// Modified for Triune.
 import { measureElement, useVirtualizer } from "@tanstack/react-virtual";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { Bubble } from "@/lib/renderItems";
 import { useChatStore } from "@/store/chatStore";
+import * as scopedChat from "@/workbench/ScopedChatStore";
 import { Conversation, ConversationContent } from "@/components/ai-elements/conversation";
 import { isNativeFindShortcut, type TranscriptGeometry, VirtualBubbleList } from "./Transcript";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+  vi.useRealTimers();
+});
 
 const bubble: Extract<Bubble, { kind: "user" }> = {
   kind: "user",
@@ -29,6 +35,7 @@ function list(
   onGeometryChange: (geometry: TranscriptGeometry) => void = vi.fn(),
   disableVirtualization = false,
   bubbles: Bubble[] = [bubble],
+  conversationId?: string,
 ) {
   return (
     <Conversation>
@@ -39,7 +46,7 @@ function list(
           lastAssistantIndex={-1}
           showsWorking={false}
           sessionIdle
-          conversationId={undefined}
+          conversationId={conversationId}
           hasTasks={hasTasks}
           disableVirtualization={disableVirtualization}
           onGeometryChange={onGeometryChange}
@@ -125,7 +132,7 @@ it("measures rows at their unrounded border-box height", () => {
   const measure = vi.mocked(useVirtualizer).mock.lastCall![0].measureElement!;
   const entry = { borderBoxSize: [{ blockSize: 58.796875, inlineSize: 600 }] };
   const instance = {
-    options: { getItemKey: () => "user:user-1", horizontal: false },
+    options: { getItemKey: () => "user:user-1", estimateSize: () => 280, horizontal: false },
     indexFromElement: () => 0,
     itemSizeCache: new Map([["user:user-1", 340.625]]),
   };
@@ -139,6 +146,52 @@ it("measures rows at their unrounded border-box height", () => {
   instance.itemSizeCache.clear();
   row.getBoundingClientRect = () => ({ height: 58.796875 }) as DOMRect;
   expect(measure(row, undefined, instance as never)).toBe(58.796875);
+  expect(
+    measure(
+      row,
+      { borderBoxSize: [{ blockSize: 0 }] } as unknown as ResizeObserverEntry,
+      instance as never,
+    ),
+  ).toBe(280);
+});
+
+it("restores a retained reader anchor after hidden clamping, without accepting hidden scrolls", async () => {
+  vi.useFakeTimers();
+  const visible = vi.spyOn(scopedChat, "useConversationChatVisible").mockReturnValue(true);
+  const id = "hidden-reader-anchor";
+  useChatStore.setState({ conversationId: id });
+  const scrollEl = document.createElement("div");
+  Object.defineProperties(scrollEl, {
+    scrollTop: { configurable: true, writable: true, value: 0 },
+    clientHeight: { configurable: true, value: 500 },
+    scrollHeight: { configurable: true, value: 2000 },
+  });
+  const bubbles = Array.from({ length: 8 }, (_, index) => ({
+    ...bubble,
+    itemId: `retained-${index}`,
+  }));
+  const tree = () => list(false, scrollEl, vi.fn(), false, bubbles, id);
+  const view = render(tree());
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(64);
+  });
+  scrollEl.scrollTop = 333;
+  fireEvent.scroll(scrollEl);
+  visible.mockReturnValue(false);
+  view.rerender(tree());
+  expect(vi.mocked(useVirtualizer).mock.lastCall![0].useCachedMeasurements).toBe(true);
+  scrollEl.scrollTop = 0;
+  fireEvent.scroll(scrollEl);
+  visible.mockReturnValue(true);
+  view.rerender(tree());
+  expect(scrollEl.scrollTop).toBe(333);
+  fireEvent.wheel(scrollEl);
+  scrollEl.scrollTop = 420;
+  fireEvent.scroll(scrollEl);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(64);
+  });
+  expect(scrollEl.scrollTop).toBe(420);
 });
 
 it("publishes navigation that distinguishes loaded and missing turns", async () => {

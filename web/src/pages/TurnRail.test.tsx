@@ -1,3 +1,4 @@
+// Modified for Triune.
 // Render + interaction invariants for the TurnRail minimap. The rail's
 // scroll-positioning uses IntersectionObserver geometry so its correction and
 // interaction retry can be covered here without relying on jsdom layout.
@@ -122,6 +123,18 @@ afterEach(() => {
 });
 
 describe("TurnRail", () => {
+  it("keeps the rail vertical while allowing long prompt previews", () => {
+    const turns = makeTurns(3);
+    turns[0]!.userText = "/workspace/" + "long-path-segment".repeat(30);
+    const { container } = renderRail(turns);
+    expect(container.querySelector(".turn-rail-fade")).toHaveClass(
+      "overflow-x-hidden",
+      "overflow-y-auto",
+    );
+    fireEvent.focus(screen.getAllByRole("button")[0]!);
+    expect(screen.getByText(turns[0]!.userText)).toHaveClass("break-words");
+  });
+
   it("does not fetch history while automatically aligning the active tick", () => {
     const loadOlder = vi.spyOn(useChatStore.getState(), "loadMoreHistory").mockResolvedValue();
     const { container } = render(

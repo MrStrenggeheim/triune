@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { useState } from "react";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
@@ -22,7 +23,7 @@ const actions = vi.hoisted(() => ({
   move: vi.fn(),
   reorder: vi.fn(),
   pin: vi.fn(() => Promise.resolve({})),
-  projects: [] as { id: string; name: string }[],
+  projects: [] as { id: string; name: string; archived?: boolean }[],
   pinned: [] as ReturnType<typeof conversation>[],
 }));
 
@@ -155,7 +156,8 @@ it("uses trailing parent-only count/disclosure without reserving a leading root 
   expect(screen.queryByRole("link", { name: "two" })).toBeNull();
   expect(screen.getByRole("button", { name: "Expand subchats of one" })).toHaveTextContent("3");
   const guide = child.closest("li")!.querySelector("[data-sidebar-tree-guide]")!;
-  expect(guide).toHaveClass("w-px", "bg-border", "pointer-events-none");
+  expect(guide).toHaveClass("w-px", "bg-muted-foreground/50", "pointer-events-none");
+  expect(guide.className).not.toMatch(/opacity-0/);
   for (const id of ["one", "two", "three"]) {
     // oxlint-disable-next-line no-await-in-loop
     fireEvent.click(await screen.findByRole("button", { name: `Expand subchats of ${id}` }));
@@ -180,6 +182,9 @@ it.each([
     renderTree("two");
     const row = (await screen.findByRole("link", { name: /root/ })).closest("li")!;
     const indicators = within(row).getByTestId("conversation-indicators");
+    expect(indicators).toHaveClass("gap-[var(--list-row-gap)]", "shrink-0", "items-center");
+    expect(row).toHaveClass("gap-[var(--list-gap)]", "min-w-0");
+    expect(within(row).getByRole("link")).toHaveClass("min-w-0", "flex-1");
     expect(
       within(indicators).getByRole("img", { name: "Draft" }).querySelector(".lucide-pencil"),
     ).not.toBeNull();
@@ -340,4 +345,86 @@ it("never renders inaccessible ancestor titles and keeps an authorized orphan us
     "page",
   );
   expect(screen.queryByText("private-ancestor")).not.toBeInTheDocument();
+});
+
+it("shows an unfiled child only beneath its project parent without moving membership", async () => {
+  actions.projects = [{ id: "alpha", name: "Alpha" }];
+  const parent = { ...rows[0], project_id: "alpha" };
+  vi.mocked(useConversations).mockReturnValue(conversationPage([parent, ...rows.slice(1)]));
+  renderTree();
+  fireEvent.click(await screen.findByRole("button", { name: "Alpha" }));
+  const expand = await screen.findByRole("button", { name: "Expand subchats of root" });
+  expect(screen.queryByRole("link", { name: "one" })).toBeNull();
+  fireEvent.click(expand);
+  const child = await screen.findByRole("link", { name: "one" });
+  expect(screen.getAllByRole("link", { name: "one" })).toHaveLength(1);
+  expect(screen.getByRole("button", { name: "Alpha" }).closest("section")).toContainElement(child);
+  expect(rows[1].project_id).toBeUndefined();
+  expect(actions.move).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Alpha" }));
+  expect(screen.queryByRole("link", { name: "one" })).toBeNull();
+});
+
+it.each(["pinned", "project"])(
+  "retains explicit %s placement rather than nesting the child in another project",
+  async (destination) => {
+    actions.projects = [
+      { id: "alpha", name: "Alpha" },
+      { id: "beta", name: "Beta" },
+    ];
+    const child = {
+      ...rows[1],
+      ...(destination === "project"
+        ? { project_id: "beta" }
+        : { labels: { "omnigent.pinned": "1000" } }),
+    };
+    if (destination === "pinned") actions.pinned = [child];
+    vi.mocked(useConversations).mockReturnValue(
+      conversationPage([{ ...rows[0], project_id: "alpha" }, child, ...rows.slice(2)]),
+    );
+    renderTree();
+    fireEvent.click(await screen.findByRole("button", { name: "Alpha" }));
+    await screen.findByRole("link", { name: "root" });
+    expect(screen.queryByRole("button", { name: "Expand subchats of root" })).toBeNull();
+    if (destination === "project") fireEvent.click(screen.getByRole("button", { name: "Beta" }));
+    const expand = await screen.findByRole("button", { name: "Expand subchats of one" });
+    expect(expand).toHaveTextContent("3");
+    fireEvent.click(expand);
+    expect(await screen.findByRole("link", { name: "two" })).toBeInTheDocument();
+    expect(screen.getAllByRole("link", { name: "one" })).toHaveLength(1);
+    expect(screen.getAllByRole("link", { name: "two" })).toHaveLength(1);
+    expect(actions.move).not.toHaveBeenCalled();
+  },
+);
+
+it("keeps an unfiled child reachable when its parent's archived project is hidden", async () => {
+  actions.projects = [{ id: "alpha", name: "Alpha", archived: true }];
+  vi.mocked(useConversations).mockReturnValue(
+    conversationPage([{ ...rows[0], project_id: "alpha" }, ...rows.slice(1)]),
+  );
+  renderTree();
+  expect(await screen.findByRole("link", { name: "one" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Alpha" })).toBeNull();
+  expect(screen.queryByRole("link", { name: "root" })).toBeNull();
+});
+
+it("respects a hidden child project without hiding its individually unfiled descendants", async () => {
+  actions.projects = [
+    { id: "alpha", name: "Alpha" },
+    { id: "beta", name: "Beta", archived: true },
+  ];
+  vi.mocked(useConversations).mockReturnValue(
+    conversationPage([
+      { ...rows[0], project_id: "alpha" },
+      { ...rows[1], project_id: "beta" },
+      ...rows.slice(2),
+    ]),
+  );
+  renderTree();
+  fireEvent.click(await screen.findByRole("button", { name: "Alpha" }));
+  await screen.findByRole("link", { name: "root" });
+  expect(screen.queryByRole("button", { name: "Expand subchats of root" })).toBeNull();
+  expect(screen.queryByRole("link", { name: "one" })).toBeNull();
+  expect(await screen.findByRole("link", { name: "two" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Beta" })).toBeNull();
 });

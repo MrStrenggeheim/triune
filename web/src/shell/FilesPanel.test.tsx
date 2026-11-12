@@ -1,3 +1,4 @@
+// Modified for Triune.
 import {
   act,
   cleanup,
@@ -705,7 +706,7 @@ describe("Explorer shared comparisons", () => {
     }
     const first = render(<Harness />);
     expect(screen.getByRole("button", { name: "Diff comparison" })).toHaveTextContent("Git");
-    expect(screen.getByText("live.ts")).toHaveClass("text-orange-500", "dark:text-orange-400");
+    expect(screen.getByText("live.ts")).toHaveClass("text-amber-500", "dark:text-amber-400");
     fireEvent.click(screen.getByRole("button", { name: "Switch view" }));
     expect(screen.getByRole("button", { name: "Diff comparison" })).toHaveTextContent("Chat");
     expect(document.querySelector('[data-file-status="created"]')).toHaveTextContent("A");
@@ -958,10 +959,7 @@ describe("Explorer shared comparisons", () => {
       (_id, paths) => new Map(paths.map((path) => [path, directoryResult([file("repo/live.ts")])])),
     );
     fireEvent.click(screen.getByRole("button", { name: "repo/" }));
-    expect(await screen.findByText("live.ts")).toHaveClass(
-      "text-orange-500",
-      "dark:text-orange-400",
-    );
+    expect(await screen.findByText("live.ts")).toHaveClass("text-amber-500", "dark:text-amber-400");
     expect(screen.queryByText("gone.ts")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "absent/" })).not.toBeInTheDocument();
     expect(useComparisonChangesMock).toHaveBeenLastCalledWith("git_actual_tree", {

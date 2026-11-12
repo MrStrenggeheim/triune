@@ -1,5 +1,11 @@
 // Modified for Triune.
-import { branchRoots, branchChildren, visibleBranchRows } from "@/lib/conversationBranches";
+import {
+  branchRoots,
+  branchChildren,
+  branchDescendantCounts,
+  branchSectionAssignments,
+  visibleBranchRows,
+} from "@/lib/conversationBranches";
 import {
   SidebarBranchContext,
   useConversationBranches,
@@ -298,6 +304,7 @@ import {
   SIDEBAR_OPEN_MENU_HIGHLIGHT,
   SIDEBAR_TREE_INDENT,
   SIDEBAR_TREE_GUIDE,
+  SIDEBAR_INDICATOR_GAP,
   SIDEBAR_DISCLOSURE_HOVER,
 } from "./sidebarStyles";
 import { MAIN_CANVAS_ID } from "@/canvas/canvasLayout";
@@ -348,6 +355,7 @@ const SidebarShowContext = createContext<readonly SidebarShowField[]>([]);
 // `useViewerId` (an identity-resolve effect) per instance.
 const IsMobileContext = createContext<boolean>(false);
 const ViewerIdContext = createContext<string | null>(null);
+const SidebarBranchSectionsContext = createContext<ReadonlyMap<string, string>>(new Map());
 const ServerInfoContext = createContext<ReturnType<typeof useServerInfo>>("loading");
 const RowActivationContext = createContext<
   (id: string, event: MouseEvent<HTMLAnchorElement>) => void
@@ -382,6 +390,7 @@ function useStableCallback<A extends unknown[], R>(fn: (...args: A) => R): (...a
 
 function SidebarRowDataProvider({
   branches,
+  branchSections,
   projectNamesById,
   projectIconsById,
   hostsById,
@@ -393,6 +402,7 @@ function SidebarRowDataProvider({
   children,
 }: {
   branches: SidebarBranchState | null;
+  branchSections: ReadonlyMap<string, string>;
   projectNamesById: Map<string, string>;
   projectIconsById: Map<string, string>;
   hostsById: ReadonlyMap<string, Host>;
@@ -413,7 +423,9 @@ function SidebarRowDataProvider({
                 <ServerInfoContext.Provider value={serverInfo}>
                   <RowActivationContext.Provider value={onActivate}>
                     <SidebarBranchContext.Provider value={branches}>
-                      {children}
+                      <SidebarBranchSectionsContext.Provider value={branchSections}>
+                        {children}
+                      </SidebarBranchSectionsContext.Provider>
                     </SidebarBranchContext.Provider>
                   </RowActivationContext.Provider>
                 </ServerInfoContext.Provider>
@@ -2070,8 +2082,27 @@ function ConversationList({
 
     // The remainder — not pinned, not filed — splits into Shared (other owners')
     // and Sessions (the viewer's own).
+    const visibleFiledIds = new Set(
+      projectGroups.flatMap((project) => project.conversations.map((row) => row.id)),
+    );
+    const hiddenFiledIds = new Set([...filedIds].filter((id) => !visibleFiledIds.has(id)));
+    const branchSections = workbench
+      ? branchSectionAssignments(
+          // A hidden project's member is a boundary, not a visible ancestor.
+          notArchived.filter((row) => !hiddenFiledIds.has(row.id)),
+          new Map([
+            ...pinned.map((row) => [row.id, "pinned"] as const),
+            ...projectGroups.flatMap((project) =>
+              project.conversations.map((row) => [row.id, `project:${project.name}`] as const),
+            ),
+            ...[...hiddenFiledIds].map((id) => [id, "hidden-project"] as const),
+          ]),
+        )
+      : new Map<string, string>();
     const allOrdered = sortConversations(
-      tabScoped.filter((c) => !pinnedIdSet.has(c.id) && !filedIds.has(c.id)),
+      tabScoped.filter(
+        (c) => !pinnedIdSet.has(c.id) && !filedIds.has(c.id) && !branchSections.has(c.id),
+      ),
       activeOverride,
       frozenKeys,
       sortBy,
@@ -2095,7 +2126,15 @@ function ConversationList({
     const ordered = splitShared
       ? allOrdered.filter((c) => isOwnedByViewer(c, viewerId))
       : allOrdered;
-    if (!grouped) return { pinned, shared, sessions: ordered, projectGroups, groupTitles: null };
+    if (!grouped)
+      return {
+        pinned,
+        shared,
+        sessions: ordered,
+        projectGroups,
+        branchSections,
+        groupTitles: null,
+      };
     // Buckets use render-time "now", so a day rollover shows on the next list update.
     const now = new Date();
     const groupTitles = new Map<string, string>(
@@ -2122,6 +2161,7 @@ function ConversationList({
       shared,
       sessions,
       projectGroups,
+      branchSections,
       groupTitles,
     };
     // `unseenTick` / `draftIds` aren't read here: they version the stores status buckets read.
@@ -2147,7 +2187,16 @@ function ConversationList({
     draftIds,
     startingId,
     workingIds,
+    workbench,
   ]);
+
+  const sectionDescendantCounts = useMemo(
+    () =>
+      branches.descendantCounts
+        ? branchDescendantCounts(branches.rows, loadedSections.branchSections)
+        : null,
+    [branches.descendantCounts, branches.rows, loadedSections.branchSections],
+  );
 
   const config = useContext(SidebarConfigContext);
   // Shared renders above Sessions, so the display window pages through both in that order.
@@ -2501,8 +2550,17 @@ function ConversationList({
       for (const c of rows) byId.set(c.id, c);
     }
     const pool = [...byId.values()];
-    return workbench ? visibleBranchRows(pool, branches.rows, branches.expanded) : pool;
-  }, [sections.projectGroups, folderConversations, workbench, branches.rows, branches.expanded]);
+    return workbench
+      ? visibleBranchRows(pool, branches.rows, branches.expanded, sections.branchSections)
+      : pool;
+  }, [
+    sections.projectGroups,
+    folderConversations,
+    workbench,
+    branches.rows,
+    branches.expanded,
+    sections.branchSections,
+  ]);
 
   // The bulk-action bar lives under the header of the section it targets, so it
   // unmounts when that section empties (e.g. every selected session
@@ -2557,7 +2615,7 @@ function ConversationList({
       effectiveCollapsedSections.includes(title)
         ? []
         : workbench
-          ? visibleBranchRows(list, branches.rows, branches.expanded)
+          ? visibleBranchRows(list, branches.rows, branches.expanded, sections.branchSections)
           : list;
     // A project's chats are navigable only when the "Projects" group is
     // expanded AND that individual project folder is expanded (folders are
@@ -2566,7 +2624,7 @@ function ConversationList({
     const projectVisible = (name: string, list: readonly Conversation[]) =>
       !projectsCollapsed && expandedProjects.includes(name)
         ? workbench
-          ? visibleBranchRows(list, branches.rows, branches.expanded)
+          ? visibleBranchRows(list, branches.rows, branches.expanded, sections.branchSections)
           : list
         : [];
     // `sections` is already scoped to the active tab, so the same Pinned /
@@ -2600,18 +2658,21 @@ function ConversationList({
       return sections.projectGroups.flatMap((g) => {
         if (!expandedProjects.includes(g.name)) return [];
         const rows = folderConversations.get(g.name) ?? g.conversations;
-        return (workbench ? visibleBranchRows(rows, branches.rows, branches.expanded) : rows).map(
-          (c) => c.id,
-        );
+        return (
+          workbench
+            ? visibleBranchRows(rows, branches.rows, branches.expanded, sections.branchSections)
+            : rows
+        ).map((c) => c.id);
       });
     };
     if (selectionScope === "projects") return projectIds();
     const visibleIds = (title: string, list: readonly Conversation[]) =>
       effectiveCollapsedSections.includes(title)
         ? []
-        : (workbench ? visibleBranchRows(list, branches.rows, branches.expanded) : list).map(
-            (c) => c.id,
-          );
+        : (workbench
+            ? visibleBranchRows(list, branches.rows, branches.expanded, sections.branchSections)
+            : list
+          ).map((c) => c.id);
     return [
       ...(unifiedSelection ? projectIds() : []),
       ...visibleIds("Shared", sections.shared),
@@ -2694,7 +2755,12 @@ function ConversationList({
         selectedIds={selectedIds}
         allConversations={
           workbench
-            ? visibleBranchRows(displayPagination.rows, branches.rows, branches.expanded)
+            ? visibleBranchRows(
+                displayPagination.rows,
+                branches.rows,
+                branches.expanded,
+                sections.branchSections,
+              )
             : displayPagination.rows
         }
         onDeselectAll={onDeselectAll}
@@ -2784,7 +2850,8 @@ function ConversationList({
   // rules between groups.
   return (
     <SidebarRowDataProvider
-      branches={workbench ? branches : null}
+      branches={workbench ? { ...branches, descendantCounts: sectionDescendantCounts } : null}
+      branchSections={sections.branchSections}
       projectNamesById={projectNamesById}
       projectIconsById={projectIconsById}
       hostsById={hostsById}
@@ -3977,7 +4044,8 @@ function ConversationSection({
 }) {
   const groupingEmptyState = isFeatureEnabled(useContext(ServerInfoContext), "sidebar_grouping_ui");
   const branches = useContext(SidebarBranchContext);
-  const roots = branches ? branchRoots(conversations) : conversations;
+  const branchSections = useContext(SidebarBranchSectionsContext);
+  const roots = branches ? branchRoots(conversations, branchSections) : conversations;
   const grids = useGridSessions();
   const gridMembers = new Set(grids?.activeGrid ? gridSessionIds(grids.activeGrid.layout) : []);
   // An untitled section is always open — there's no header to collapse it.
@@ -4657,7 +4725,7 @@ function SidebarTreeGuides({ depth }: { depth: number }) {
       key={level}
       aria-hidden
       data-sidebar-tree-guide
-      className={cn(SIDEBAR_TREE_GUIDE, "group-hover/conversation:opacity-0")}
+      className={SIDEBAR_TREE_GUIDE}
       style={{ insetInlineStart: `calc((${level} + 0.5) * ${SIDEBAR_TREE_INDENT})` }}
     />
   ));
@@ -4675,6 +4743,7 @@ function ConversationBranchRow({
   pinnedIds: readonly string[];
 }) {
   const branches = useContext(SidebarBranchContext);
+  const branchSections = useContext(SidebarBranchSectionsContext);
   const grids = useGridSessions();
   const groupId = useId();
   if (!branches) return <ConversationRow {...props} />;
@@ -4683,7 +4752,7 @@ function ConversationBranchRow({
   const expanded = branches.expanded.has(id);
   const children =
     path.length < 64
-      ? branchChildren(branches.rows, id).filter((row) => !path.includes(row.id))
+      ? branchChildren(branches.rows, id, branchSections).filter((row) => !path.includes(row.id))
       : [];
   const gridMembers = new Set(grids?.activeGrid ? gridSessionIds(grids.activeGrid.layout) : []);
   const label = props.conversation.title ?? id;
@@ -5306,7 +5375,8 @@ function ConversationRowImpl({
         }
       }}
       className={cn(
-        "group/conversation relative flex items-center rounded-[var(--radius-otto-button)] pr-1",
+        "group/conversation relative flex min-w-0 items-center rounded-[var(--radius-otto-button)] pr-1",
+        "gap-[var(--list-gap)]",
         SIDEBAR_HOVER_HIGHLIGHT,
         !selectionMode && isActive && SIDEBAR_ACTIVE_HIGHLIGHT,
         !selectionMode && !isActive && inActiveGrid && SIDEBAR_GRID_MEMBER_HIGHLIGHT,
@@ -5498,7 +5568,8 @@ function ConversationRowImpl({
         <span
           data-testid="conversation-indicators"
           className={cn(
-            "flex shrink-0 items-center gap-1",
+            "flex shrink-0 items-center",
+            SIDEBAR_INDICATOR_GAP,
             (metaEnvironment !== null || metaRepo !== null || metaBranch !== null) &&
               "self-start mt-[var(--list-row-padding-block)]",
           )}

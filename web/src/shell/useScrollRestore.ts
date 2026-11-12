@@ -1,4 +1,6 @@
+// Modified for Triune.
 import { readResourceViewState, writeResourceViewState } from "@/lib/resourceViewStorage";
+import { measureElement, observeElementRect, type Virtualizer } from "@tanstack/react-virtual";
 import { useCallback, useLayoutEffect, useRef } from "react";
 import type { RefObject, UIEvent } from "react";
 
@@ -41,6 +43,47 @@ export const SCROLL_RESTORE_BUDGET_MS = 1500;
  * budget would be snapped back each frame.
  */
 const USER_SCROLL_EVENTS = ["wheel", "touchstart", "pointerdown", "keydown"] as const;
+
+/** Hidden retained panes have no layout; keep their last usable row geometry. */
+export function measureRetainedElement(
+  element: HTMLElement,
+  entry: ResizeObserverEntry | undefined,
+  instance: Virtualizer<HTMLElement, HTMLElement>,
+): number {
+  const index = instance.indexFromElement(element);
+  const key = instance.options.getItemKey(index);
+  const cached = instance.itemSizeCache.get(key);
+  const fallback = cached ?? instance.options.estimateSize(index);
+  if (instance.options.useCachedMeasurements) return fallback;
+  const observed = entry?.borderBoxSize?.[0]?.blockSize ?? entry?.contentRect?.height;
+  if (observed === 0 && element.getClientRects().length === 0) return fallback;
+  if (observed !== undefined) return observed;
+  if (cached !== undefined) return measureElement(element, entry, instance);
+  const height = element.getBoundingClientRect().height;
+  return height === 0 && element.getClientRects().length === 0 ? fallback : height;
+}
+
+/** Keep the virtual range while hidden, and refresh it when a viewport returns. */
+export const observeRetainedElementRect: typeof observeElementRect<HTMLElement> = (
+  instance,
+  callback,
+) =>
+  observeElementRect(instance, (rect) => {
+    if (rect.width > 0 && rect.height > 0) callback(rect);
+  });
+
+/** Refresh mounted rows after a hidden pane may have changed width or content. */
+export function remeasureRetainedElements(instance: Virtualizer<HTMLElement, HTMLElement>): void {
+  for (const element of instance.elementsCache?.values() ?? []) {
+    if (element.isConnected && element.getClientRects().length > 0) {
+      instance.resizeItem(
+        instance.indexFromElement(element),
+        element.getBoundingClientRect().height,
+      );
+    }
+  }
+  instance.scrollElement?.dispatchEvent(new Event("scroll"));
+}
 
 /** The slice of a Monaco code editor the scroll restore needs. */
 interface ScrollableEditor {
@@ -119,6 +162,7 @@ export function attachEditorScrollRestore(
  * @param key Cache key for the current content (null disables persistence).
  * @param ready True once the content backing the container is present.
  * @param restore False when explicit navigation overrides restoration; scrolling still saves.
+ * @param active False while a retained pane is hidden; resume with a fresh restore budget.
  * @returns An onScroll handler to attach to the container.
  */
 export function useScrollRestore(
@@ -126,30 +170,34 @@ export function useScrollRestore(
   key: string | null,
   ready: boolean,
   restore = true,
+  active = true,
 ): (event: UIEvent<HTMLElement>) => void {
-  const pendingRef = useRef<{ target: number; deadline: number } | null>(null);
+  const pendingRef = useRef<{ target: number; deadline: number | null } | null>(null);
   const keyRef = useRef<string | null>(null);
+  const activeRef = useRef(false);
 
   // Arm a restore once per content identity / readiness change — NOT every
   // render. A virtualized tree re-renders on every scroll frame; re-running the
   // restore then would fight the user and re-read layout each frame.
   useLayoutEffect(() => {
     // Only committed navigation may replace or cancel the active restore.
-    if (key !== keyRef.current) {
+    if (key !== keyRef.current || (active && !activeRef.current)) {
       keyRef.current = key;
       // Keep the deadline stable across readiness changes and StrictMode replay.
       pendingRef.current = key
         ? {
             target: getSavedScrollTop(key) ?? 0,
-            deadline: performance.now() + SCROLL_RESTORE_BUDGET_MS,
+            deadline: null,
           }
         : null;
     }
+    activeRef.current = active;
     if (!restore) pendingRef.current = null;
 
     const el = ref.current;
     const pending = pendingRef.current;
-    if (!el || !pending || !ready) return;
+    if (!el || !pending || !ready || !active) return;
+    pending.deadline ??= performance.now() + SCROLL_RESTORE_BUDGET_MS;
 
     let frame = 0;
     let done = false;
@@ -188,7 +236,7 @@ export function useScrollRestore(
     // so growth-driven scroll events can't overwrite the saved offset.
     const tick = () => {
       if (done) return;
-      if (pendingRef.current !== pending || performance.now() >= pending.deadline) {
+      if (pendingRef.current !== pending || performance.now() >= pending.deadline!) {
         finish();
         return;
       }
@@ -201,10 +249,15 @@ export function useScrollRestore(
     el.scrollTop = pending.target;
     frame = requestAnimationFrame(tick);
     return teardown;
-  }, [key, ready, ref, restore]);
+  }, [key, ready, ref, restore, active]);
 
   return useCallback((event: UIEvent<HTMLElement>) => {
-    if (keyRef.current && pendingRef.current === null) {
+    if (
+      activeRef.current &&
+      !event.currentTarget.closest("[hidden], [inert]") &&
+      keyRef.current &&
+      pendingRef.current === null
+    ) {
       saveScrollTop(keyRef.current, event.currentTarget.scrollTop);
     }
   }, []);

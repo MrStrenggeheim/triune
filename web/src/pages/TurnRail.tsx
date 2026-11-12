@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { useConversationChatStore, useConversationChatRoot } from "@/workbench/ScopedChatStore";
 import { TooltipButton } from "@/components/ui/tooltip";
 // A vertical minimap of the conversation: one tick per turn (a user message
@@ -282,7 +283,7 @@ export function TurnRail({
         // extends rightward from a fixed left edge instead of re-centering the
         // column; pl-2 insets the dashes from the screen edge; scrollbar hidden
         // — this is chrome.
-        className="turn-rail-fade pointer-events-auto flex max-h-72 flex-col items-start overflow-y-auto py-6 pl-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        className="turn-rail-fade pointer-events-auto flex max-h-72 flex-col items-start overflow-x-hidden overflow-y-auto py-6 pl-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
       >
         {turns.map((turn) => {
           const isHovered = turn.itemId === hoveredId;
@@ -350,11 +351,11 @@ export function TurnRail({
       >
         {hovered && (
           <>
-            <p className="line-clamp-2 text-sm font-medium text-foreground">
+            <p className="line-clamp-2 break-words text-sm font-medium text-foreground">
               {hovered.userText || "(no text)"}
             </p>
             {hovered.responsePreview && (
-              <p className="mt-1 line-clamp-3 text-sm text-muted-foreground">
+              <p className="mt-1 line-clamp-3 break-words text-sm text-muted-foreground">
                 {hovered.responsePreview}
               </p>
             )}

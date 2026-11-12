@@ -1,4 +1,5 @@
-import { useConversationChatStore } from "@/workbench/ScopedChatStore";
+// Modified for Triune.
+import { useConversationChatStore, useConversationChatVisible } from "@/workbench/ScopedChatStore";
 import { ChatAttachment } from "@/components/ChatAttachment";
 // Bubble rendering, scroll helpers, and the working-indicator cluster for the
 // chat transcript. Extracted from ChatPage.tsx so <Transcript> can import them
@@ -1243,19 +1244,24 @@ function AssistantBubble({
  * message.
  */
 export function ScrollToBottomOnSend({ nonce }: { nonce: number }) {
-  const { scrollToBottom } = useStickToBottomContext();
+  const { scrollToBottom, state } = useStickToBottomContext();
 
   useLayoutEffect(() => {
     if (nonce === 0) return;
+    state.escapedFromLock = false;
     scrollToBottom("instant");
-    requestAnimationFrame(() => scrollToBottom("instant"));
-  }, [nonce, scrollToBottom]);
+    const frame = requestAnimationFrame(() => {
+      if (state.isAtBottom && !state.escapedFromLock) scrollToBottom("instant");
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [nonce, scrollToBottom, state]);
 
   return null;
 }
 
 /** Keep bottom-locked readers pinned when the composer changes viewport height. */
 export function KeepBottomOnViewportResize() {
+  const visible = useConversationChatVisible();
   const ctx = useStickToBottomContext() as ReturnType<typeof useStickToBottomContext> & {
     scrollRef?: React.RefObject<HTMLElement>;
   };
@@ -1265,19 +1271,21 @@ export function KeepBottomOnViewportResize() {
 
   useEffect(() => {
     const el = scrollRef?.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
+    if (!el || !visible || typeof ResizeObserver === "undefined") return;
     const isPhysicallyAtBottom = () => el.scrollHeight - el.clientHeight - el.scrollTop <= 1;
     let wasBottomLocked = state.isAtBottom && !state.escapedFromLock && isPhysicallyAtBottom();
     let clientHeight = el.clientHeight;
     let frame: number | null = null;
+    const isLocked = () => state.isAtBottom && !state.escapedFromLock;
     const onScroll = () => {
-      wasBottomLocked = isPhysicallyAtBottom();
+      wasBottomLocked = isLocked() && isPhysicallyAtBottom();
     };
     const observer = new ResizeObserver(() => {
       const nextHeight = el.clientHeight;
+      if (nextHeight === 0) return;
       if (nextHeight === clientHeight) return;
       clientHeight = nextHeight;
-      if (!wasBottomLocked) return;
+      if (!wasBottomLocked || !isLocked()) return;
       // Gecko delivers this callback before the frame paints, but the
       // library's scrollToBottom always lands a frame later (it defers
       // through a rAF promise), so the shrink paints with the transcript
@@ -1292,6 +1300,7 @@ export function KeepBottomOnViewportResize() {
       if (frame !== null) cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => {
         frame = null;
+        if (!wasBottomLocked || !isLocked()) return;
         el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight - 1);
         scrollToBottom("instant");
       });
@@ -1303,7 +1312,7 @@ export function KeepBottomOnViewportResize() {
       observer.disconnect();
       if (frame !== null) cancelAnimationFrame(frame);
     };
-  }, [scrollRef, scrollToBottom, state]);
+  }, [scrollRef, scrollToBottom, state, visible]);
 
   return null;
 }

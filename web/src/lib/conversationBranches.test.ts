@@ -1,7 +1,9 @@
+// Modified for Triune.
 import { expect, it } from "vitest";
 import {
   branchRoots,
   branchDescendantCounts,
+  branchSectionAssignments,
   branchSource,
   visibleBranchRows,
   type BranchConversation,
@@ -104,4 +106,65 @@ it("counts deep graphs without recursive stack limits", () => {
   const counts = branchDescendantCounts(rows);
   expect(counts.get("0")).toBe(9999);
   expect(counts.get("9999")).toBe(0);
+  const sections = branchSectionAssignments(rows, new Map([["0", "project:alpha"]]));
+  expect(sections.get("9999")).toBe("project:alpha");
+});
+
+it("inherits presentation through a project parent without changing child membership", () => {
+  const rows = [
+    { ...branch("root"), project_id: "alpha" },
+    branch("child", "root"),
+    branch("grandchild", "child"),
+    branch("orphan", "inaccessible"),
+  ];
+  const before = structuredClone(rows);
+  const sections = branchSectionAssignments(rows, new Map([["root", "project:alpha"]]));
+  expect(Object.fromEntries(sections)).toEqual({
+    root: "project:alpha",
+    child: "project:alpha",
+    grandchild: "project:alpha",
+  });
+  const sessions = rows.filter((row) => !sections.has(row.id));
+  expect(branchRoots(sessions).map((row) => row.id)).toEqual(["orphan"]);
+  expect(visibleBranchRows([rows[0]], rows, new Set(["root", "child"]), sections)).toEqual(
+    rows.slice(0, 3),
+  );
+  expect(rows).toEqual(before);
+});
+
+it.each(["pinned", "project:beta"])(
+  "keeps an explicit %s child and its descendants out of the parent's section",
+  (destination) => {
+    const rows = [branch("root"), branch("child", "root"), branch("grandchild", "child")];
+    const sections = branchSectionAssignments(
+      rows,
+      new Map([
+        ["root", "project:alpha"],
+        ["child", destination],
+      ]),
+    );
+    expect(sections.get("grandchild")).toBe(destination);
+    expect(visibleBranchRows([rows[0]], rows, new Set(["root", "child"]), sections)).toEqual([
+      rows[0],
+    ]);
+    expect(visibleBranchRows(rows.slice(1), rows, new Set(["child"]), sections)).toEqual(
+      rows.slice(1),
+    );
+    expect(Object.fromEntries(branchDescendantCounts(rows, sections))).toEqual({
+      root: 0,
+      child: 1,
+      grandchild: 0,
+    });
+  },
+);
+
+it("retains orphans when filters remove their source and bounds cycles in section assignment", () => {
+  const child = branch("child", "filtered-parent");
+  const cycle = [branch("a", "b"), branch("b", "a"), branch("c", "a")];
+  const rows = [child, ...cycle];
+  expect(branchSectionAssignments(rows, new Map()).size).toBe(0);
+  expect(visibleBranchRows([child], rows, new Set())).toEqual([child]);
+  expect(
+    Object.fromEntries(branchSectionAssignments(rows, new Map([["b", "project:alpha"]]))),
+  ).toEqual({ b: "project:alpha", a: "project:alpha", c: "project:alpha" });
 });

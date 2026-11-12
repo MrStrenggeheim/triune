@@ -1,9 +1,15 @@
+// Modified for Triune.
 import { panelFolderKey, useResourceViewId } from "@/lib/panelFolder";
 import { useWorkbenchWorkspace } from "@/lib/workbenchWorkspace";
 import { ChevronRightIcon, FolderIcon, FolderOpenIcon } from "lucide-react";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { RefObject } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import {
+  measureRetainedElement,
+  observeRetainedElementRect,
+  remeasureRetainedElements,
+} from "./useScrollRestore";
 import {
   type DirectoryResult,
   RunnerOfflineError,
@@ -429,6 +435,7 @@ export function FolderTree(props: Parameters<typeof FolderTreeInner>[0]) {
 }
 
 function FolderTreeInner({
+  active = true,
   viewId: explicitViewId,
   files,
   isLoading,
@@ -457,6 +464,7 @@ function FolderTreeInner({
   revealPath,
   revealToken = 0,
 }: {
+  active?: boolean;
   files: WorkspaceFile[] | undefined;
   isLoading: boolean;
   isError: boolean;
@@ -782,7 +790,13 @@ function FolderTreeInner({
     estimateSize: () => 25,
     overscan: 12,
     getItemKey: (index) => flatRows[index]?.key ?? index,
+    useCachedMeasurements: !active,
+    measureElement: measureRetainedElement,
+    observeElementRect: observeRetainedElementRect,
   });
+  useLayoutEffect(() => {
+    if (active) remeasureRetainedElements(rowVirtualizer);
+  }, [active, rowVirtualizer]);
 
   const explorerControls = useMemo(
     () => ({

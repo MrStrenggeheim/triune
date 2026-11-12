@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { OverlayScrollbars } from "./OverlayScrollbars";
@@ -72,6 +73,23 @@ function renderSurface(attributes = {}) {
 }
 
 describe("OverlayScrollbars", () => {
+  it("bounds discovery work while resizing a retained subtree", async () => {
+    const { element } = renderSurface();
+    const retained = element.parentElement!;
+    for (let index = 0; index < 240; index++) retained.append(document.createElement("span"));
+    await flush();
+    const styles = vi.spyOn(window, "getComputedStyle");
+    retained.style.width = "600px";
+    await flush();
+    const descendants = styles.mock.calls.filter(
+      ([node]) => node !== retained && retained.contains(node),
+    );
+    process.stdout.write(
+      `overlay resize discovery descendant style reads: ${descendants.length}\n`,
+    );
+    expect(descendants).toHaveLength(1);
+  });
+
   it("uses the original scroll node, adds no wrappers and restores native styling on unmount", () => {
     const { container, element, thumb, unmount } = renderSurface();
     expect(element.parentElement?.tagName).toBe("SECTION");

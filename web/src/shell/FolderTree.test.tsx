@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
@@ -286,7 +287,7 @@ describe("FolderTree folder comparison evidence", () => {
       });
       const label = screen.getByText("src/");
       const button = screen.getByRole("button", { name: "src/" });
-      expect(label.closest("span")).toHaveClass("text-orange-500");
+      expect(label.closest("span")).toHaveClass("text-amber-500");
       expect(button).toHaveAttribute(
         "aria-description",
         "src\nDescendants: 1 modified, 1 added, 1 deleted",
@@ -325,7 +326,7 @@ describe("FolderTree folder comparison evidence", () => {
         changedFiles: [{ ...change("src", status), type: "directory" }, change("src/edited.ts")],
         includeMissingChanges: false,
       });
-      expect(screen.getByText("src/")).toHaveClass("text-orange-500");
+      expect(screen.getByText("src/")).toHaveClass("text-amber-500");
       const letter = { created: "A", modified: "M", deleted: "D" }[status];
       expect(screen.getByText(letter)).toBeInTheDocument();
       expect(screen.queryByText("●")).toBeNull();
@@ -635,7 +636,7 @@ describe("FolderTree change-status overlay", () => {
       workspaceRoot,
       includeMissingChanges: false,
     });
-    expect(screen.getByText("app.ts")).toHaveClass("text-orange-500");
+    expect(screen.getByText("app.ts")).toHaveClass("text-amber-500");
     expect(screen.getByText("M")).toHaveTextContent("M");
     expect(screen.queryByText("unrelated.ts")).not.toBeInTheDocument();
   });
@@ -654,7 +655,7 @@ describe("FolderTree change-status overlay", () => {
       includeMissingChanges: false,
     });
     fireEvent.click(screen.getByRole("button", { name: "repo/" }));
-    expect(await screen.findByText("live.ts")).toHaveClass("text-orange-500");
+    expect(await screen.findByText("live.ts")).toHaveClass("text-amber-500");
     expect(screen.queryByText("gone.ts")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "old/" })).not.toBeInTheDocument();
   });
@@ -716,7 +717,7 @@ describe("FolderTree change-status overlay", () => {
       ],
     });
 
-    expect(screen.getByText("app.ts")).toHaveClass("text-orange-500");
+    expect(screen.getByText("app.ts")).toHaveClass("text-amber-500");
     expect(screen.getByText("M")).toHaveTextContent("M");
   });
 });
