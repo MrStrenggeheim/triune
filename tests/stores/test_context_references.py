@@ -2,6 +2,7 @@
 
 import json
 
+# Modified for Triune.
 import pytest
 from fastapi import HTTPException
 
@@ -248,3 +249,96 @@ def test_reference_does_not_claim_to_deliver_media_as_whole_chat(conversation_st
     )
     assert quoted[0]["id"] == item.id
     assert "content" not in quoted[0]
+
+
+def test_selected_context_seeks_old_boundaries_and_stops_in_long_history(
+    conversation_store, monkeypatch
+):
+    store = conversation_store
+    source = store.create_conversation()
+    items = store.append(
+        source.id, [message(str(index), response=str(index)) for index in range(10_050)]
+    )
+    from unittest.mock import Mock
+
+    list_items = Mock(wraps=store.list_items)
+    monkeypatch.setattr(store, "list_items", list_items)
+    # Both ends of a history larger than the scan budget use scoped point lookups.
+    for selected in (items[-1], items[0]):
+        for scope in ("quote", "messages"):
+            result = capture_items(
+                store,
+                source.id,
+                CaptureReference(
+                    scope=scope,
+                    boundary_id=selected.id,
+                    message_ids=[selected.id],
+                    quote="exact selected text",
+                ),
+            )
+            assert [entry["id"] for entry in result] == [selected.id]
+            if scope == "quote":
+                assert "content" not in result[0]
+            assert result[0]["created_at"] == selected.created_at
+    assert list_items.call_count == 0
+    assert capture_items(
+        store, source.id, CaptureReference(scope="messages", message_ids=[items[0].id])
+    ) == [items[0].to_api_dict()]
+    assert list_items.call_count == 0
+
+    # A multi-item selection stops on its oldest requested item, not at history end.
+    result = capture_items(
+        store,
+        source.id,
+        CaptureReference(
+            scope="quote",
+            boundary_id=items[-1].id,
+            message_ids=[items[-3].id, items[-1].id],
+            quote="two selected messages",
+        ),
+    )
+    assert [entry["id"] for entry in result] == [items[-3].id, items[-1].id]
+    assert list_items.call_count == 1
+
+
+def test_selected_context_rejects_messages_outside_the_boundary_or_conversation(
+    conversation_store,
+):
+    store = conversation_store
+    source, other = store.create_conversation(), store.create_conversation()
+    old, new = store.append(source.id, [message("old"), message("new")])
+    foreign = store.append(other.id, [message("private")])[0]
+    for request in (
+        CaptureReference(scope="quote", boundary_id=old.id, message_ids=[new.id], quote="later"),
+        CaptureReference(
+            scope="quote", boundary_id=new.id, message_ids=[foreign.id], quote="foreign"
+        ),
+        CaptureReference(
+            scope="quote", boundary_id=foreign.id, message_ids=[old.id], quote="foreign boundary"
+        ),
+    ):
+        with pytest.raises(HTTPException) as error:
+            capture_items(store, source.id, request)
+        assert error.value.status_code == 409
+
+
+def test_response_selection_keeps_all_items_across_pages_before_stopping(
+    conversation_store, monkeypatch
+):
+    from unittest.mock import Mock
+
+    store = conversation_store
+    source = store.create_conversation()
+    store.append(source.id, [message("older", response=f"old-{index}") for index in range(150)])
+    items = store.append(
+        source.id, [message(str(index), response="selected-response") for index in range(105)]
+    )
+    list_items = Mock(wraps=store.list_items)
+    monkeypatch.setattr(store, "list_items", list_items)
+    result = capture_items(
+        store,
+        source.id,
+        CaptureReference(scope="quote", boundary_id="selected-response", quote="exact selection"),
+    )
+    assert [entry["id"] for entry in result] == [entry.id for entry in items]
+    assert list_items.call_count == 2

@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { WorkbenchProvider } from "@/workbench/WorkbenchContext";
 import { ScopedChatStoreProvider, useConversationChatStore } from "@/workbench/ScopedChatStore";
 import { conversationRegistry } from "@/store/conversationRegistry";
@@ -7957,7 +7958,7 @@ describe("Workbench durable composer subchats", () => {
     clearSessionDrafts();
     vi.restoreAllMocks();
   });
-  function response(id = "durable-child") {
+  function response(id = "durable-child", fields: Record<string, unknown> = {}) {
     return new Response(
       JSON.stringify({
         id,
@@ -7967,8 +7968,16 @@ describe("Workbench durable composer subchats", () => {
         title: "Subchat",
         labels: {},
         items: [],
+        ...fields,
       }),
     );
+  }
+  function sourceResponse() {
+    return response("durable-source", {
+      host_id: "durable-host",
+      workspace: "/repo",
+      harness: "codex-native",
+    });
   }
   function workbenchComposer(
     openConversation: (id: string, options?: { beside?: boolean }) => void,
@@ -7986,14 +7995,24 @@ describe("Workbench durable composer subchats", () => {
       </WorkbenchProvider>,
     );
   }
-  it("routes native /side to one immediate durable fork without sending or creating an invisible rail tab", async () => {
+  it("routes native /side through one durable fork and initializes it before opening", async () => {
     let finish!: (value: Response) => void;
-    const fetch = vi.spyOn(identity, "authenticatedFetch").mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          finish = resolve;
-        }),
-    );
+    let connect!: (value: Response) => void;
+    const fetch = vi
+      .spyOn(identity, "authenticatedFetch")
+      .mockResolvedValueOnce(sourceResponse())
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            connect = resolve;
+          }),
+      );
     const props = composerProps();
     const open = vi.fn();
     workbenchComposer(open, props);
@@ -8001,14 +8020,30 @@ describe("Workbench durable composer subchats", () => {
     fireEvent.keyDown(textarea(), { key: "Enter" });
     fireEvent.keyDown(textarea(), { key: "Enter" });
     expect(fetch).toHaveBeenCalledTimes(1);
-    expect(fetch.mock.calls[0][0]).toBe("/v1/sessions/durable-source/fork");
-    expect(JSON.parse(String(fetch.mock.calls[0][1]?.body))).toEqual({
+    expect(fetch.mock.calls[0][0]).toBe(
+      "/v1/sessions/durable-source?include_items=false&include_liveness=false&include_usage=false",
+    );
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+    expect(fetch.mock.calls[1][0]).toBe("/v1/sessions/durable-source/fork");
+    expect(fetch.mock.calls[1][1]?.method).toBe("POST");
+    expect(JSON.parse(String(fetch.mock.calls[1][1]?.body))).toEqual({
       title: "Subchat",
       up_to_item_id: "captured-source-item",
     });
     expect(textarea()).toHaveValue("/side investigate this");
     expect(props.onSend).not.toHaveBeenCalled();
     await act(async () => finish(response()));
+    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(fetch.mock.calls[2][0]).toBe("/v1/hosts/durable-host/runners");
+    expect(fetch.mock.calls[2][1]?.method).toBe("POST");
+    expect(JSON.parse(String(fetch.mock.calls[2][1]?.body))).toEqual({
+      session_id: "durable-child",
+      workspace: "/repo",
+    });
+    expect(getSessionDraft("durable-child")?.text).toBe("investigate this");
+    expect(textarea()).toHaveValue("/side investigate this");
+    expect(open).not.toHaveBeenCalled();
+    await act(async () => connect(new Response(JSON.stringify({ runner_id: "child-runner" }))));
     await waitFor(() => expect(open).toHaveBeenCalledWith("durable-child", { beside: true }));
     expect(getSessionDraft("durable-child")?.text).toBe("investigate this");
     expect(textarea()).toHaveValue("");
@@ -8018,11 +8053,21 @@ describe("Workbench durable composer subchats", () => {
   });
   it("keeps the source draft on failure, and preserves edits made while a later fork is pending", async () => {
     const errorToast = vi.spyOn(toast, "error");
+    let finish!: (value: Response) => void;
     const fetch = vi
       .spyOn(identity, "authenticatedFetch")
+      .mockResolvedValueOnce(sourceResponse())
       .mockResolvedValueOnce(
         new Response(JSON.stringify({ detail: "fork unavailable" }), { status: 409 }),
-      );
+      )
+      .mockResolvedValueOnce(sourceResponse())
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ runner_id: "child-runner" })));
     const open = vi.fn();
     workbenchComposer(open);
     fireEvent.change(textarea(), { target: { value: "/side keep this question" } });
@@ -8031,23 +8076,28 @@ describe("Workbench durable composer subchats", () => {
     expect(textarea()).toHaveValue("/side keep this question");
     expect(getSessionDraft("durable-source")?.text).toBe("/side keep this question");
     expect(open).not.toHaveBeenCalled();
-    let finish!: (value: Response) => void;
-    fetch.mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          finish = resolve;
-        }),
-    );
+    expect(fetch).toHaveBeenCalledTimes(2);
     fireEvent.keyDown(textarea(), { key: "Enter" });
     fireEvent.change(textarea(), { target: { value: "new source draft" } });
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(4));
     await act(async () => finish(response()));
+    await waitFor(() => expect(open).toHaveBeenCalledWith("durable-child", { beside: true }));
+    expect(fetch.mock.calls.map(([url]) => url)).toEqual([
+      "/v1/sessions/durable-source?include_items=false&include_liveness=false&include_usage=false",
+      "/v1/sessions/durable-source/fork",
+      "/v1/sessions/durable-source?include_items=false&include_liveness=false&include_usage=false",
+      "/v1/sessions/durable-source/fork",
+      "/v1/hosts/durable-host/runners",
+    ]);
     expect(getSessionDraft("durable-child")?.text).toBe("keep this question");
     expect(textarea()).toHaveValue("new source draft");
   });
   it("opens New subchat from Add immediately and seeds the existing draft without sending", async () => {
     const fetch = vi
       .spyOn(identity, "authenticatedFetch")
-      .mockResolvedValue(response("menu-child"));
+      .mockResolvedValueOnce(sourceResponse())
+      .mockResolvedValueOnce(response("menu-child"))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ runner_id: "child-runner" })));
     const open = vi.fn();
     const props = composerProps();
     workbenchComposer(open, props);
@@ -8058,16 +8108,26 @@ describe("Workbench durable composer subchats", () => {
     });
     fireEvent.click(await screen.findByRole("menuitem", { name: /New subchat/ }));
     await waitFor(() => expect(open).toHaveBeenCalledWith("menu-child", { beside: true }));
-    expect(fetch.mock.calls[0][0]).toBe("/v1/sessions/durable-source/fork");
+    expect(fetch.mock.calls.map(([url]) => url)).toEqual([
+      "/v1/sessions/durable-source?include_items=false&include_liveness=false&include_usage=false",
+      "/v1/sessions/durable-source/fork",
+      "/v1/hosts/durable-host/runners",
+    ]);
+    expect(JSON.parse(String(fetch.mock.calls[2][1]?.body))).toEqual({
+      session_id: "menu-child",
+      workspace: "/repo",
+    });
     expect(getSessionDraft("menu-child")?.text).toBe("unsent source draft");
     expect(textarea()).toHaveValue("unsent source draft");
     expect(useChatStore.getState().sideChatToOpen).toBeNull();
     expect(props.onSend).not.toHaveBeenCalled();
   });
-  it("selection actions create the snapshot immediately and seed an unsent quote", async () => {
+  it("selection actions capture the boundary and initialize a child with an unsent quote", async () => {
     const fetch = vi
       .spyOn(identity, "authenticatedFetch")
-      .mockResolvedValue(response("quote-child"));
+      .mockResolvedValueOnce(sourceResponse())
+      .mockResolvedValueOnce(response("quote-child"))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ runner_id: "child-runner" })));
     const open = vi.fn();
     const props = composerProps();
     const ref = createRef<ComponentRef<typeof Composer>>();
@@ -8075,6 +8135,19 @@ describe("Workbench durable composer subchats", () => {
     act(() => ref.current?.startSideChat("quoted selection"));
     expect(fetch).toHaveBeenCalledTimes(1);
     await waitFor(() => expect(open).toHaveBeenCalledWith("quote-child", { beside: true }));
+    expect(fetch.mock.calls.map(([url]) => url)).toEqual([
+      "/v1/sessions/durable-source?include_items=false&include_liveness=false&include_usage=false",
+      "/v1/sessions/durable-source/fork",
+      "/v1/hosts/durable-host/runners",
+    ]);
+    expect(JSON.parse(String(fetch.mock.calls[1][1]?.body))).toEqual({
+      title: "Subchat",
+      up_to_item_id: "captured-source-item",
+    });
+    expect(JSON.parse(String(fetch.mock.calls[2][1]?.body))).toEqual({
+      session_id: "quote-child",
+      workspace: "/repo",
+    });
     expect(getSessionDraft("quote-child")?.replyDraft?.quotes).toEqual([
       { before: "", text: "quoted selection" },
     ]);

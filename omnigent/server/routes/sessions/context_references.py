@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+# Modified for Triune.
 import asyncio
 import hashlib
 import json
@@ -14,6 +15,8 @@ from pydantic import BaseModel, Field
 from omnigent.errors import OmnigentError
 from omnigent.server.auth import LEVEL_EDIT, LEVEL_READ
 from omnigent.server.routes._auth_helpers import require_access_and_level, require_user
+from omnigent.stores.conversation_store import PENDING_INPUT_RESPONSE_ID
+from omnigent.util.uuid import InvalidUuidError, normalize_uuid, uuid_to_bytes
 
 MAX_REFERENCE_ITEMS = 500
 MAX_REFERENCE_BYTES = 128_000
@@ -35,24 +38,73 @@ def capture_items(
     store: Any, source_id: str, capture: CaptureReference, *, active_response_id: str | None = None
 ) -> list[dict[str, Any]]:
     """Freeze a concrete boundary and reject incomplete/oversized projections."""
-    # Descending pagination bounds memory and permits a recent answer in a long chat.
     items: list[dict[str, Any]] = []
-    cursor = None
-    boundary_found = capture.boundary_id is None
+    boundary_id = normalize_uuid(capture.boundary_id)
+    boundary_found = boundary_id is None
     last_response = None
     incomplete_responses: set[str] = {active_response_id} if active_response_id else set()
-    selected = set(capture.message_ids)
+    selected = {normalize_uuid(item_id) or item_id for item_id in capture.message_ids}
     if capture.scope == "messages" and not selected:
         raise HTTPException(400, "Choose at least one message")
+    if capture.scope == "quote" and (not capture.quote or not capture.quote.strip()):
+        raise HTTPException(400, "Select text to quote")
+    targets = selected or ({boundary_id} if boundary_id else set())
+    if capture.scope == "quote" and not targets:
+        raise HTTPException(400, "Choose a source message")
+    # Point lookups and cursors are scoped to the authorized conversation.
+    # Seek old item boundaries directly instead of scanning newer history.
+    anchor_id = boundary_id
+    if anchor_id is None and capture.scope in ("messages", "quote") and len(targets) == 1:
+        anchor_id = next(iter(targets))
+
+    def lookup_item(item_id: str):
+        try:
+            uuid_to_bytes(item_id)
+        except InvalidUuidError:
+            # Response ids can be arbitrary strings; item ids are UUIDs.
+            return None
+        stored = store.get_item(source_id, item_id)
+        return (
+            stored
+            if stored is not None and stored.response_id != PENDING_INPUT_RESPONSE_ID
+            else None
+        )
+
+    anchor = lookup_item(anchor_id) if anchor_id else None
+    response_targets = {target for target in targets if lookup_item(target) is None}
+    found: set[str] = set()
+
+    def history():
+        cursor = None
+        if anchor is not None:
+            yield [anchor]
+            cursor = anchor.id
+        for _ in range(100):
+            page = store.list_items(source_id, limit=100, after=cursor, order="desc")
+            yield page.data
+            if not page.has_more:
+                return
+            cursor = page.last_id
+        raise HTTPException(
+            413, "History scan limit reached. Choose a more recent source boundary."
+        )
+
+    complete = False
     size = 0
-    for _ in range(100):
-        page = store.list_items(source_id, limit=100, after=cursor, order="desc")
-        for stored in page.data:
+    for batch in history():
+        for stored in batch:
             item = stored.to_api_dict()
             if not boundary_found:
-                boundary_found = capture.boundary_id in (item["id"], item["response_id"])
+                boundary_found = boundary_id in (item["id"], item["response_id"])
                 if not boundary_found:
                     continue
+            if (
+                capture.scope in ("messages", "quote")
+                and targets <= found
+                and item["response_id"] not in response_targets
+            ):
+                complete = True
+                break
             if capture.scope == "last_answer":
                 if item.get("interrupted") or item["status"] in (
                     "in_progress",
@@ -76,8 +128,7 @@ def capture_items(
                 if not completed:
                     continue
             elif capture.scope in ("messages", "quote"):
-                ids = selected or ({capture.boundary_id} if capture.boundary_id else set())
-                if not ids.intersection((item["id"], item["response_id"])):
+                if not targets.intersection((item["id"], item["response_id"])):
                     continue
             if capture.scope != "quote" and any(
                 not isinstance(block.get("text", block.get("refusal")), str)
@@ -93,18 +144,21 @@ def capture_items(
             encoded = json.dumps(item, ensure_ascii=False)
             size += len(encoded.encode())
             items.append(item)
+            found.update((item["id"], item["response_id"]))
             if len(items) > MAX_REFERENCE_ITEMS or size > MAX_REFERENCE_BYTES:
                 raise HTTPException(
                     413,
                     "Context is too large. Choose messages or Last completed answer; nothing was summarized.",
                 )
-        if not page.has_more:
+            if (
+                capture.scope in ("messages", "quote")
+                and targets <= found
+                and not response_targets
+            ):
+                complete = True
+                break
+        if complete:
             break
-        cursor = page.last_id
-    else:
-        raise HTTPException(
-            413, "History scan limit reached. Choose a more recent source boundary."
-        )
     if not boundary_found:
         raise HTTPException(409, "Source boundary is no longer available")
     found = {key for item in items for key in (item["id"], item["response_id"])}
@@ -112,12 +166,6 @@ def capture_items(
         raise HTTPException(409, "A selected message is no longer available")
     if not items:
         raise HTTPException(409, "No completed content is available for this scope")
-    if capture.scope == "quote":
-        if not capture.quote or not capture.quote.strip():
-            raise HTTPException(400, "Select text to quote")
-        # The snapshot retains the exact selected text and original item metadata.
-        # Rendered Markdown may differ from stored source, so do not claim byte offsets.
-        items = [{key: value for key, value in item.items() if key != "content"} for item in items]
     return list(reversed(items))
 
 

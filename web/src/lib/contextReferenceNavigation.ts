@@ -1,4 +1,5 @@
-import { forkSession } from "./sessionsApi";
+// Modified for Triune.
+import { createDurableSubchat } from "@/workbench/durableSubchat";
 import { createContext } from "react";
 import type { QuoteSource } from "./contextReferences";
 
@@ -15,9 +16,15 @@ export const ContextReferenceNavigationContext = createContext<ContextReferenceN
 export async function createQuoteSubchat(source: QuoteSource): Promise<string> {
   if (!source.boundaryId || source.file)
     throw new Error("A captured conversation item is required");
-  const session = await forkSession(source.conversationId, {
-    title: "Subchat",
-    upToItemId: source.boundaryId,
-  });
-  return session.id;
+  return createDurableSubchat(
+    source.conversationId,
+    source.boundaryId,
+    JSON.stringify([
+      "quote",
+      source.conversationId,
+      source.boundaryId,
+      source.messageIds,
+      source.text,
+    ]),
+  );
 }

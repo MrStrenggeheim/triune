@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { useWorkbench } from "@/workbench/WorkbenchContext";
 import { openDurableSubchat, subchatBoundary } from "@/workbench/durableSubchat";
 import { useScopedInitialPrompt } from "@/workbench/useScopedInitialPrompt";
@@ -3585,7 +3586,16 @@ function ComposerImpl(
     setSubchatBusy(true);
     setCommandError(null);
     void request
-      .then(() => {
+      .then((childId) => {
+        const retained = getSessionDraft(childId);
+        // Recovery may reopen a child's older draft; keep newer parent input.
+        if (
+          retained?.text !== childDraft.text ||
+          JSON.stringify(retained?.replyDraft) !== JSON.stringify(childDraft.replyDraft) ||
+          retained?.files.length !== childDraft.files.length ||
+          !retained.files.every((file, index) => file === childDraft.files[index])
+        )
+          return;
         // A pending fork must never clear newer edits or another conversation's draft.
         if (
           !moveCommand ||
