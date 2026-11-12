@@ -59,6 +59,19 @@ def test_pinned_view_keeps_its_rectangle_and_resizes_across_chat_layouts(
     page.reload()
     assert _bounds(page, "Explorer") == after
     _capture(page, output_path, "pinned-explorer-resized-and-restored")
+    divider = page.get_by_role("separator", name="Resize panes", exact=True)
+    expect(divider).to_have_attribute("aria-valuemin", "20")
+    expect(divider).to_have_attribute("aria-valuemax", "80")
+    for _ in range(12):
+        divider.press("ArrowRight")
+    expect(divider).to_have_attribute("aria-valuenow", "80")
+    narrow = _bounds(page, "Explorer")
+    workspace_bounds = page.locator(".dock-workspace").bounding_box()
+    assert workspace_bounds
+    assert abs(narrow["width"] - workspace_bounds["width"] * 0.2) <= 2
+    page.reload()
+    assert _bounds(page, "Explorer") == narrow
+    _capture(page, output_path, "pinned-explorer-twenty-percent-minimum")
     assert browser_errors == []
 
 

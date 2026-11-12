@@ -121,6 +121,7 @@ Every implementation report includes action/expected-result acceptance steps and
 - Pin changes persistence only: retain pane geometry, support resizing and interpolate other chat layouts into the free areas.
 - Pinned tabs show a filled primary pin permanently; active state remains the primary bottom strip.
 - Dock resize indicators reuse the sidebar handle's thin paint and hover/active tones while retaining practical hit areas.
+- Shared dock and terminal splits allow 20–80% resizing; retain existing saved positions within those bounds.
 - Tab insertion uses a vertical primary marker; split preview uses the actual resulting half-pane footprint and shared file-drop surfaces.
 - Detection zones stay invisible; context-clicking a tab opens the shared view controls menu.
 - Overflowing surfaces reuse the transcript-style overlay scrollbar; content that fits has no track.

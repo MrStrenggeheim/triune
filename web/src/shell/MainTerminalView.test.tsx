@@ -1,3 +1,4 @@
+// Modified for Triune.
 import type * as UseTerminalsModule from "@/hooks/useTerminals";
 
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -754,16 +755,16 @@ describe("MainTerminalView — split panes", () => {
     expect(readSessionWorkspaceState("conv_split_reset").terminalSplit).toEqual(savedSplit);
   });
 
-  it("persists keyboard resizes within the 25-75% bounds", async () => {
+  it("persists keyboard resizes within the 20–80% bounds", async () => {
     writeSessionWorkspaceState("conv_split_resize", { terminalSplit: savedSplit });
     render(splitTree("conv_split_resize", [REPL_TERMINAL, BASH_SHELL]));
     const divider = await screen.findByRole("separator", { name: "Resize terminal panes" });
 
     for (let step = 0; step < 10; step++) fireEvent.keyDown(divider, { key: "ArrowRight" });
 
-    expect(divider).toHaveAttribute("aria-valuenow", "75");
+    expect(divider).toHaveAttribute("aria-valuenow", "80");
     expect(readSessionWorkspaceState("conv_split_resize").terminalSplit?.layout).toMatchObject({
-      ratio: 0.75,
+      ratio: 0.8,
     });
   });
 

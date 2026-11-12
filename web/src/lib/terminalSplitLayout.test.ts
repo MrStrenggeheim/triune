@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { describe, expect, it } from "vitest";
 import {
   parseTerminalSplitState,
@@ -40,11 +41,11 @@ describe("terminalSplitLayout", () => {
     expect(removeTerminalLayoutKey(twoByOne, "missing")).toBe(twoByOne);
   });
 
-  it("clamps resized splits to a quarter..three quarters of the parent", () => {
+  it("clamps resized splits to 20–80% of the parent", () => {
     const wide = resizeTerminalSplit(twoByOne, [], 0.95) as Exclude<TerminalLayout, string>;
-    expect(wide.ratio).toBe(0.75);
+    expect(wide.ratio).toBe(0.8);
     const tall = resizeTerminalSplit(twoByOne, [1], 0.1) as Exclude<TerminalLayout, string>;
-    expect((tall.children[1] as Exclude<TerminalLayout, string>).ratio).toBe(0.25);
+    expect((tall.children[1] as Exclude<TerminalLayout, string>).ratio).toBe(0.2);
     expect(clampSplitRatio(Number.NaN)).toBe(0.5);
   });
 
@@ -94,6 +95,14 @@ describe("terminalSplitLayout", () => {
   });
 
   it("restores only valid, split, duplicate-free layouts", () => {
+    for (const ratio of [0.2, 0.25, 0.75, 0.8]) {
+      expect(
+        parseTerminalSplitState({
+          layout: { axis: "columns", ratio, children: ["a", "b"] },
+          focusedKey: "a",
+        }),
+      ).toBeDefined();
+    }
     expect(parseTerminalSplitState({ layout: twoByOne, focusedKey: "a" })).toEqual({
       layout: twoByOne,
       focusedKey: "a",

@@ -68,6 +68,7 @@ Preconditions: follow the [verification skill](skills/verify-omnigent/SKILL.md),
 - Chat workspace changes retain execution confirmation/recovery; browsing-view root changes only retarget that view.
 - Conversation hover cards and per-row loading/empty-child labels are removed; hierarchy metadata preloads without transcript downloads.
 - Global pins retain their exact pane size and position across chats; resizing updates the global reservation, while other layouts fill the remaining regions.
+- Shared split limits allow 20–80% resizing, including nested panes; existing 25–75% saved layouts remain valid.
 - Shared-chat file access can retain its session-authorized route; a chat grant does not grant general host access.
 - Unknown delivery or process state is not successful consumption or a confirmed exit.
 - Legacy branches with missing provenance stay unknown; unsupported native recovery fails visibly without deleting readable history.

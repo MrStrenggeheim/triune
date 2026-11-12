@@ -1,3 +1,4 @@
+// Modified for Triune.
 // Split tree for the main terminal view: leaves are terminal tab keys
 // (``terminalTabKey`` values), splits divide their area by ``ratio``.
 
@@ -28,9 +29,9 @@ export interface TerminalDivider {
   area: TerminalRect;
 }
 
-// Neither side of a split may shrink below a quarter of its parent.
-export const MIN_SPLIT_RATIO = 0.25;
-export const MAX_SPLIT_RATIO = 0.75;
+// Each side keeps at least a fifth of its parent in shared dock and terminal splits.
+export const MIN_SPLIT_RATIO = 0.2;
+export const MAX_SPLIT_RATIO = 0.8;
 
 export function clampSplitRatio(ratio: number): number {
   // A zero-size container yields NaN; never persist a ratio the parser would reject.

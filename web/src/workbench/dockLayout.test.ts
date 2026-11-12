@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { describe, expect, it } from "vitest";
 import { terminalLayoutGeometry, terminalLayoutKeys } from "@/lib/terminalSplitLayout";
 import {
@@ -99,13 +100,10 @@ describe("dock layout operations", () => {
     layout = addDockView(layout, view("c"), { edge: "bottom" });
     layout = resizeDockSplit(layout, [], 0.6);
     layout = resizeDockSplit(layout, [1], 0.95);
-    expect(
-      terminalLayoutGeometry(layout.tree!).panes.map(({ width, height }) => [width, height]),
-    ).toEqual([
-      [60, 100],
-      [40, 75],
-      [40, 25],
-    ]);
+    const panes = terminalLayoutGeometry(layout.tree!).panes;
+    expect(panes.map(({ width }) => width)).toEqual([60, 40, 40]);
+    for (const [index, height] of [100, 80, 20].entries())
+      expect(panes[index].height).toBeCloseTo(height);
     for (const path of [[4], [-1], [1, 0, 1]])
       expect(resizeDockSplit(layout, path, 0.3)).toBe(layout);
     expect(parseDockLayout(resizeDockSplit(layout, [], Number.NaN))).toBeDefined();
