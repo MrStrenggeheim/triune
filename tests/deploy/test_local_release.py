@@ -1,3 +1,4 @@
+# Modified for Triune: preserve verified deployment and rollback.
 """Custom release validation and deployment failure recovery."""
 
 from __future__ import annotations
@@ -27,13 +28,13 @@ def manager(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     return module
 
 
-@pytest.fixture
-def release(manager):
+@pytest.fixture(params=["triune", "omnigent"])
+def release(manager, request):
     path = manager.RELEASES / "0.20.0-test"
     (path / "wheels").mkdir(parents=True)
     (path / "runtime.txt").write_text("starlette==1.10.0\n")
     artifacts = {}
-    for package in ("omnigent", "omnigent_client", "omnigent_ui_sdk"):
+    for package in (request.param, "omnigent_client", "omnigent_ui_sdk"):
         wheel = path / "wheels" / f"{package}-0.20.0-py3-none-any.whl"
         wheel.write_bytes(package.encode())
         artifacts[str(wheel.relative_to(path))] = manager.digest(wheel)

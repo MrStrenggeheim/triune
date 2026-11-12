@@ -2,10 +2,14 @@
 
 An agent in a private session can send work to another session owned by the
 same user, then read its status/history. It can also create private top-level
-workers on its host or a new managed sandbox. This is behind the disabled-by-default
-`session_orchestration` deployment flag.
+workers on its host or a new managed sandbox. Triune enables the
+`session_orchestration` deployment feature by default; administrators can explicitly disable it.
+A persistent personal Agent communication setting takes effect on new actions immediately,
+without restarting the server. Ordinary native/child subagents are unchanged.
 
 ## Sub-features
+
+- `personal-setting`: Settings → General → Agent communication controls new peer messages and independent worker creation for the signed-in user. It defaults on; an administrator disable remains authoritative.
 
 - `message`: private sender, same owner and workspace; shared destinations are
   allowed and their readers see the message. Normal queue/steering applies.
@@ -29,6 +33,8 @@ workers on its host or a new managed sandbox. This is behind the disabled-by-def
 
 ## How to get to it (user POV)
 
+- Open Settings → General and change Agent communication. It persists on the server for your account and applies without reload or restart. Accepted work is not cancelled.
+
 - In an SDK session's Chat, ask the agent to send a task using
   `sys_session_message`, then inspect the destination's history.
 - In a native session's Chat or agent terminal, ask for the same operation;
@@ -39,8 +45,9 @@ workers on its host or a new managed sandbox. This is behind the disabled-by-def
 
 ## Driving it with the repro environment
 
-Preconditions: enable `OMNIGENT_FEATURES=session_orchestration` only on the
-isolated test server. Own both sessions. Same-host creation requires a connected
+Preconditions: use an isolated test server with the default-enabled feature and personal preference.
+Use `OMNIGENT_FEATURES=-session_orchestration` to exercise the administrator override.
+Own both sessions. Same-host creation requires a connected
 owned host/workspace. Managed creation requires a launch-capable provider in the
 server's sandbox configuration (for example, Modal or Daytona). Internal deployments
 can supply their own provider through the existing launcher interface.
@@ -74,7 +81,13 @@ can supply their own provider through the existing launcher interface.
 - Live sandbox provisioning and native terminal-entered prompts require separate
   verification; local process checks do not cover them.
 
+- Personal setting browser checks: `tests/e2e_ui/sessions/test_background_session_titles_setting.py::test_agent_communication_defaults_on_and_persists_without_restart` covers desktop/mobile server saves and reload persistence.
+- Personal setting API/store checks: `tests/server/routes/test_preferences.py`, `tests/stores/test_preference_store.py` and `tests/server/integration/test_session_orchestration.py` cover strict input, identity isolation and immediate admission changes.
+
 ## Gotchas
+
+- The administrator feature is a startup snapshot; changing its environment override needs a restart. Personal preference changes are checked on each new agent action.
+- Turning the personal switch off does not stop or delete existing chats, cancel accepted work, or disable ordinary child/native subagents.
 
 - Same host also means the same workspace, inherited together from the host-bound
   ancestor for child managers. Separate sessions do not isolate filesystem edits.
@@ -109,11 +122,10 @@ can supply their own provider through the existing launcher interface.
   inherit this restriction. Missing or cyclic source chains are refused. Ordinary
   reads and incoming work remain available; making the source private restores
   eligibility without erasing copied history.
-- Peer messages carry only task text and owner attribution. They do not forward
-  per-event model/tool overrides or a caller-supplied delivery ID.
-  The textual source prefix is a display hint, not an authorization credential
-  or authenticated provenance. Other users can copy it into ordinary messages.
-  V1 deliberately keeps this advisory text instead of adding structured provenance.
+- Peer messages retain task text, authenticated source/correlation metadata and durable receipt state.
+  They do not forward per-event model/tool overrides. Stable message UUIDs support deduplication.
+  Typed communication metadata records trusted source/correlation and renders as agent activity even when a model transport uses a user input role.
+  A textual source prefix alone is not trusted provenance; ordinary users cannot forge the protected metadata.
 - Admission is the final source check before delivery or saving a startup task.
   A queued result means acceptance, not execution; destination policy may still
   deny the task during startup replay. Successfully queued tasks can finish after

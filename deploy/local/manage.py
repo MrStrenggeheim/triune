@@ -1,4 +1,4 @@
-"""Build and stage this host's custom Omnigent releases.
+"""Modified for Triune: build and stage this host's custom releases.
 
 The change register and operating instructions live in the shared KB:
 infrastructure/omnigent/custom-builds.md.
@@ -49,7 +49,10 @@ def read_release(path: Path) -> dict:
     if wheels.resolve().parent != path:
         raise ValueError("wheel directory escapes the release")
     names = {Path(filename).name.split("-")[0] for filename in manifest["artifacts"]}
-    if names != {"omnigent", "omnigent_client", "omnigent_ui_sdk"}:
+    if names not in (
+        {"triune", "omnigent_client", "omnigent_ui_sdk"},
+        {"omnigent", "omnigent_client", "omnigent_ui_sdk"},
+    ):
         raise ValueError("release must contain all three application wheels")
     for filename, expected in manifest["artifacts"].items():
         artifact = path / filename

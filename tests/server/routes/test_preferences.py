@@ -1,5 +1,7 @@
 """Request authentication and validation at the shared-preference HTTP boundary."""
 
+# Modified for Triune.
+
 from uuid import uuid4
 
 import httpx
@@ -13,6 +15,9 @@ from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.artifact_store.local import LocalArtifactStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
 from omnigent.stores.file_store.sqlalchemy_store import SqlAlchemyFileStore
+from omnigent.stores.orchestration_preference_store.sqlalchemy_store import (
+    SqlAlchemyOrchestrationPreferenceStore,
+)
 from omnigent.stores.preference_store.sqlalchemy_store import SqlAlchemyPreferenceStore
 
 
@@ -20,6 +25,7 @@ from omnigent.stores.preference_store.sqlalchemy_store import SqlAlchemyPreferen
 async def test_authenticated_preference_operations(db_uri, tmp_path, monkeypatch, auth_mode):
     monkeypatch.setenv("OMNIGENT_LOCAL_SINGLE_USER", "0")
     store = SqlAlchemyPreferenceStore(db_uri, authority_id="test-authority")
+    orchestration_store = SqlAlchemyOrchestrationPreferenceStore(db_uri)
     artifacts = LocalArtifactStore(str(tmp_path / "artifacts"))
     stores = [
         SqlAlchemyAgentStore(db_uri),
@@ -34,16 +40,89 @@ async def test_authenticated_preference_operations(db_uri, tmp_path, monkeypatch
     # Exercise positional auth while keeping preference_store keyword-only.
     app = (
         create_app(
-            *stores, *([None] * 6), provider, preference_store=store, preference_policy=policy
+            *stores,
+            *([None] * 6),
+            provider,
+            preference_store=store,
+            preference_policy=policy,
+            orchestration_preference_store=orchestration_store,
         )
         if auth_mode == "positional"
         else create_app(
-            *stores, auth_provider=provider, preference_store=store, preference_policy=policy
+            *stores,
+            auth_provider=provider,
+            preference_store=store,
+            preference_policy=policy,
+            orchestration_preference_store=orchestration_store,
         )
     )
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
+        from omnigent.db.db_models import workspace_scope
+        from omnigent.server.feature_flags import Feature, FeatureFlags
+
+        orchestration_path = "/v1/preferences/session-orchestration"
+        alice_headers = {} if auth_mode == "disabled" else {"X-Forwarded-Email": "alice"}
+        app.state.feature_flags = FeatureFlags(frozenset({Feature.SESSION_ORCHESTRATION}))
+        if auth_mode != "disabled":
+            assert (await client.get(orchestration_path)).status_code == 401
+            assert (
+                await client.put(orchestration_path, json={"enabled": False})
+            ).status_code == 401
+        assert (await client.get(orchestration_path, headers=alice_headers)).json() == {
+            "enabled": True,
+            "server_enabled": True,
+        }
+        for enabled_value in (False, True, False):
+            expected = {"enabled": enabled_value, "server_enabled": True}
+            assert (
+                await client.put(
+                    orchestration_path, headers=alice_headers, json={"enabled": enabled_value}
+                )
+            ).json() == expected
+            assert (await client.get(orchestration_path, headers=alice_headers)).json() == expected
+        if auth_mode != "disabled":
+            assert (
+                await client.get(orchestration_path, headers={"X-Forwarded-Email": "bob"})
+            ).json()["enabled"] is True
+        with workspace_scope(17):
+            assert (await client.get(orchestration_path, headers=alice_headers)).json()[
+                "enabled"
+            ] is True
+        assert (await client.get(orchestration_path, headers=alice_headers)).json()[
+            "enabled"
+        ] is False
+        for invalid in (
+            {},
+            {"enabled": "false"},
+            {"enabled": 0},
+            {"enabled": None},
+            {"enabled": True, "user_id": "bob"},
+        ):
+            assert (
+                await client.put(orchestration_path, headers=alice_headers, json=invalid)
+            ).status_code == 422
+        for content, content_type, status in (
+            ("{bad", "application/json", 422),
+            ('{"enabled": false}', "text/plain", 415),
+            (" " * 1025, "application/json", 413),
+        ):
+            assert (
+                await client.put(
+                    orchestration_path,
+                    headers={**alice_headers, "Content-Type": content_type},
+                    content=content,
+                )
+            ).status_code == status
+        app.state.feature_flags = FeatureFlags()
+        assert (
+            await client.put(orchestration_path, headers=alice_headers, json={"enabled": True})
+        ).json() == {"enabled": True, "server_enabled": False}
+        assert (await client.get(orchestration_path, headers=alice_headers)).json() == {
+            "enabled": True,
+            "server_enabled": False,
+        }
         profile_path = "/v1/preferences/configuration"
         if auth_mode != "disabled":
             assert (await client.get(profile_path)).status_code == 401
@@ -180,6 +259,10 @@ async def test_authenticated_preference_operations(db_uri, tmp_path, monkeypatch
 
 
 async def test_preferences_not_mounted_by_default(client):
+    assert (await client.get("/v1/preferences/session-orchestration")).status_code == 404
+    assert (
+        await client.put("/v1/preferences/session-orchestration", json={"enabled": False})
+    ).status_code == 404
     assert (await client.get("/v1/preferences/configuration")).status_code == 404
     assert (await client.get("/v1/preferences/shared")).status_code == 404
 

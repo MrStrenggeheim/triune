@@ -1,5 +1,7 @@
 """Shared-preference transactions against the suite's real database backend."""
 
+# Modified for Triune.
+
 import json
 from concurrent.futures import ThreadPoolExecutor
 from uuid import UUID, uuid4
@@ -337,6 +339,35 @@ def test_account_deletion_cleans_preferences_and_revokes_stale_write(store, db_u
             store.apply(operation, user_id="alice")
     with store._engine.connect() as connection:
         assert connection.scalar(select(func.count()).select_from(SqlPreference)) == 0
+
+
+def test_personal_orchestration_persistence_and_revoked_writes(db_uri):
+    from omnigent.db.account_authority import account_authority_scope
+    from omnigent.server.accounts_store import SqlAlchemyAccountStore
+    from omnigent.stores.orchestration_preference_store.sqlalchemy_store import (
+        SqlAlchemyOrchestrationPreferenceStore,
+    )
+
+    accounts = SqlAlchemyAccountStore(db_uri)
+    accounts.create_user_with_password("alice", "test-hash", is_admin=False)
+    personal = SqlAlchemyOrchestrationPreferenceStore(db_uri)
+    assert personal.get_enabled(user_id="alice") is True
+    assert personal.set_enabled(False, user_id="alice") is False
+    assert SqlAlchemyOrchestrationPreferenceStore(db_uri).get_enabled(user_id="alice") is False
+    assert personal.get_enabled(user_id="bob") is True
+    with workspace_scope(17):
+        assert personal.get_enabled(user_id="alice") is True
+        personal.set_enabled(False, user_id="bob")
+    assert personal.get_enabled(user_id="bob") is True
+    generation = accounts.login_snapshot("alice")[1]
+    assert generation is not None
+    assert accounts.delete_user("alice") is True
+    assert personal.get_enabled(user_id="alice") is True
+    with account_authority_scope("alice", generation):
+        with pytest.raises(OmnigentError, match="revoked") as error:
+            personal.set_enabled(False, user_id="alice")
+        assert error.value.code == ErrorCode.UNAUTHORIZED
+    assert personal.get_enabled(user_id="alice") is True
 
 
 @pytest.mark.parametrize("limit", [1, 3, 100])

@@ -10,6 +10,7 @@ import {
 import { TooltipButton } from "@/components/ui/tooltip";
 import { toast } from "@/lib/notifications";
 import { DefaultModelSettings } from "./settings/DefaultModelSettings";
+import { SessionOrchestrationSettings } from "./settings/SessionOrchestrationSettings";
 /**
  * Settings page (``/settings``).
  *
@@ -2003,6 +2004,7 @@ function GeneralSection() {
             <BackgroundSessionTitlesControl />
           </div>
         </SettingsGroup>
+        <SessionOrchestrationSettings />
         <SettingsGroup title="Terminal" testId="settings-group-terminal">
           <TerminalClipboardControl />
         </SettingsGroup>

@@ -1,3 +1,4 @@
+# Modified for Triune: cover the enabled orchestration default.
 """Tests for deployment-wide release feature resolution."""
 
 from __future__ import annotations
@@ -20,7 +21,11 @@ def test_unset_or_empty_uses_feature_defaults(environ: dict[str, str]) -> None:
     flags = resolve_feature_flags(environ)
 
     assert flags.enabled_features == frozenset(
-        {Feature.CLAUDE_OSC_STATUS, Feature.WORKSPACE_CONTENT_SEARCH}
+        {
+            Feature.CLAUDE_OSC_STATUS,
+            Feature.SESSION_ORCHESTRATION,
+            Feature.WORKSPACE_CONTENT_SEARCH,
+        }
     )
     assert flags.frontend_dict() == {
         "usage_page": False,
@@ -45,6 +50,7 @@ def test_resolves_comma_separated_enabled_set() -> None:
     assert flags.enabled_names() == (
         "claude_osc_status",
         "harness_install",
+        "session_orchestration",
         "usage_page",
         "workspace_content_search",
     )
@@ -61,13 +67,21 @@ def test_resolves_comma_separated_enabled_set() -> None:
 def test_explicit_disable_wins_and_preserves_other_features(features: str) -> None:
     flags = resolve_feature_flags({FEATURES_ENV_VAR: f"usage_page,{features}"})
 
-    assert flags.enabled_names() == ("usage_page", "workspace_content_search")
+    assert flags.enabled_names() == (
+        "session_orchestration",
+        "usage_page",
+        "workspace_content_search",
+    )
 
 
 def test_default_off_features_can_also_be_explicitly_disabled() -> None:
     flags = resolve_feature_flags({FEATURES_ENV_VAR: "usage_page,-usage_page"})
 
-    assert flags.enabled_names() == ("claude_osc_status", "workspace_content_search")
+    assert flags.enabled_names() == (
+        "claude_osc_status",
+        "session_orchestration",
+        "workspace_content_search",
+    )
 
 
 def test_removed_harness_install_variable_fails_with_migration_hint() -> None:
@@ -86,7 +100,12 @@ def test_canvas_is_a_frontend_visible_feature() -> None:
 
     assert flags.enabled(Feature.CANVAS)
     assert flags.frontend_dict()["canvas"] is True
-    assert flags.enabled_names() == ("canvas", "claude_osc_status", "workspace_content_search")
+    assert flags.enabled_names() == (
+        "canvas",
+        "claude_osc_status",
+        "session_orchestration",
+        "workspace_content_search",
+    )
 
 
 def test_arca_shutdown_warnings_are_frontend_visible() -> None:
@@ -134,3 +153,13 @@ def test_release_flags_have_lifecycle_metadata_and_expected_defaults() -> None:
         assert definition.review_by_release
         assert defaults.enabled(definition.feature) == definition.default_enabled
     assert FeatureFlags().enabled_features == frozenset()
+
+
+@pytest.mark.parametrize(
+    "override", ["-session_orchestration", "session_orchestration,-session_orchestration"]
+)
+def test_orchestration_defaults_on_but_administrator_can_disable(override: str) -> None:
+    assert resolve_feature_flags({}).enabled(Feature.SESSION_ORCHESTRATION)
+    flags = resolve_feature_flags({FEATURES_ENV_VAR: override})
+    assert not flags.enabled(Feature.SESSION_ORCHESTRATION)
+    assert flags.enabled(Feature.WORKSPACE_CONTENT_SEARCH)

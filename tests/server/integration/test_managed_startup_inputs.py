@@ -1,5 +1,7 @@
 """Accepted managed input uses normal dispatch after the creating request is gone."""
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import asyncio
@@ -38,6 +40,9 @@ from omnigent.stores.artifact_store.local import LocalArtifactStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
 from omnigent.stores.file_store.sqlalchemy_store import SqlAlchemyFileStore
 from omnigent.stores.host_store import HostStore
+from omnigent.stores.orchestration_preference_store.sqlalchemy_store import (
+    SqlAlchemyOrchestrationPreferenceStore,
+)
 from omnigent.stores.permission_store.sqlalchemy_store import SqlAlchemyPermissionStore
 from tests.server.helpers import build_agent_bundle, create_test_agent
 from tests.server.integration.test_managed_launch_failure_teardown import (
@@ -83,6 +88,7 @@ def auth_app(
         artifact_store=artifact_store,
         agent_cache=AgentCache(artifact_store=artifact_store, cache_dir=tmp_path / "cache"),
         permission_store=startup_permissions,
+        orchestration_preference_store=SqlAlchemyOrchestrationPreferenceStore(db_uri),
         auth_provider=UnifiedAuthProvider(
             source="header", local_single_user=getattr(request, "param", False)
         ),

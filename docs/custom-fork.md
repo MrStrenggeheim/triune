@@ -49,3 +49,10 @@ Portable release automation, additional platform certification and the wider pro
 Keep feature behavior, shared UI rules and setup instructions in this repository.
 Record tasks in the fork's issues or the operator's supplied checklist; personal agent instructions and private KBs are optional.
 Before submitting a change, run the relevant existing checks and the required Git hooks.
+
+## Agent communication
+
+Cross-chat agent communication and independent workers are enabled by default.
+Settings → General → Agent communication stores a personal choice on the server and applies it to new actions immediately.
+It does not disable ordinary subagents or cancel accepted work.
+Administrators can set `OMNIGENT_FEATURES=-session_orchestration` to disable the capability for the deployment; that startup override requires a restart.

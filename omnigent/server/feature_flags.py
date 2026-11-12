@@ -1,3 +1,4 @@
+# Modified for Triune: orchestration is available by default.
 """Deployment-wide release feature management.
 
 Release feature defaults can be overridden by comma-separated names in
@@ -54,6 +55,7 @@ FEATURE_DEFINITIONS: tuple[FeatureDefinition, ...] = (
         owner="server",
         review_by_release="0.22.0",
         frontend_visible=False,
+        default_enabled=True,
     ),
     FeatureDefinition(
         feature=Feature.AUTOMATIONS_V2,

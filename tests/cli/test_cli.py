@@ -1,5 +1,7 @@
 """Tests for omnigent.cli — bundle env var resolution."""
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import contextlib
@@ -2410,6 +2412,9 @@ def test_server_command_reads_tunnel_token_and_does_not_spawn_runner(
     assert captured["create_app_kwargs"]["server_config"] == {
         "session_title_instructions": "Prefix titles with the current date."
     }
+    personal = captured["create_app_kwargs"]["orchestration_preference_store"]
+    assert personal.get_enabled(user_id="local") is True
+    assert captured["create_app_kwargs"]["preference_store"] is None
 
 
 def test_server_preserves_explicit_builtin_agent_through_startup(

@@ -1,5 +1,7 @@
 """Runner dispatch through authenticated routes and real ownership/sharing stores."""
 
+# Modified for Triune.
+
 import json
 from uuid import uuid4
 
@@ -49,6 +51,51 @@ async def _send(client, source, target, message="Please inspect the PR"):
             conversation_id=source["id"],
         )
     )
+
+
+async def test_personal_toggle_immediately_controls_new_messages(auth_client, peers):
+    source, target, captured = peers
+    path = "/v1/preferences/session-orchestration"
+    assert (await auth_client.get(path)).json() == {"enabled": True, "server_enabled": True}
+    assert (await _send(auth_client, source, target)).get("queued") is True
+    assert (await auth_client.put(path, json={"enabled": False})).json()["enabled"] is False
+    captured.clear()
+    denied = await auth_client.post(
+        f"/v1/sessions/{target['id']}/events",
+        headers={ORCHESTRATION_SOURCE_HEADER: source["id"]},
+        json={"type": "session_message", "data": {"message": "Do not deliver"}},
+    )
+    assert denied.status_code == 403, denied.text
+    assert "disabled for this user" in denied.json()["error"]["message"]
+    assert not captured.get("posts")
+    child = await auth_client.post(
+        "/v1/sessions",
+        json={"agent_id": source["agent_id"], "parent_session_id": source["id"]},
+    )
+    assert child.status_code == 201, child.text
+    assert child.json()["parent_session_id"] == source["id"]
+    human = await auth_client.post(
+        f"/v1/sessions/{target['id']}/events",
+        json={
+            "type": "message",
+            "data": {"role": "user", "content": [{"type": "input_text", "text": "Human message"}]},
+        },
+    )
+    assert human.status_code == 202, human.text
+    assert (await auth_client.put(path, json={"enabled": True})).json()["enabled"] is True
+    assert (await _send(auth_client, source, target, "Resume")).get("queued") is True
+
+
+async def test_personal_preference_cannot_bypass_server_off(auth_client, auth_app, peers):
+    source, target, captured = peers
+    auth_app.state.feature_flags = FeatureFlags()
+    response = await auth_client.put(
+        "/v1/preferences/session-orchestration", json={"enabled": True}
+    )
+    assert response.json() == {"enabled": True, "server_enabled": False}
+    result = await _send(auth_client, source, target)
+    assert "Session orchestration is disabled" in result["detail"]
+    assert not captured.get("posts")
 
 
 @pytest.mark.parametrize("policy_denied", [False, True])
@@ -414,7 +461,7 @@ async def test_scheduled_origin_blocks_new_controls_but_preserves_children_and_r
 
 
 @pytest.mark.parametrize("placement", ["same_host", "managed"])
-@pytest.mark.parametrize("condition", ["flag_off", "shared", "binding"])
+@pytest.mark.parametrize("condition", ["flag_off", "preference_off", "shared", "binding"])
 async def test_creation_refuses_before_launch(
     auth_client, auth_app, peers, db_uri, placement, condition
 ):
@@ -427,6 +474,11 @@ async def test_creation_refuses_before_launch(
     assert auth_app.state.sandbox_config.managed_launch_supported
     if condition == "flag_off":
         auth_app.state.feature_flags = FeatureFlags()
+    elif condition == "preference_off":
+        response = await auth_client.put(
+            "/v1/preferences/session-orchestration", json={"enabled": False}
+        )
+        assert response.status_code == 200, response.text
     elif condition == "shared":
         permissions = SqlAlchemyPermissionStore(db_uri)
         permissions.ensure_user("bob")
@@ -447,6 +499,7 @@ async def test_creation_refuses_before_launch(
     )
     expected = {
         "flag_off": "Session orchestration is disabled",
+        "preference_off": "Session orchestration is disabled for this user",
         "shared": "Shared sessions cannot",
         "binding": "requires the sender's bound runner",
     }[condition]

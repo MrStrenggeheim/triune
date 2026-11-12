@@ -1,5 +1,7 @@
 """Owner-authorized orchestration from private sessions using existing delivery."""
 
+# Modified for Triune.
+
 from typing import Any
 
 from fastapi import Request
@@ -21,6 +23,7 @@ from omnigent.stores.conversation_store import (
     SIDE_CHAT_SOURCE_LABEL_KEY,
     ConversationStore,
 )
+from omnigent.stores.orchestration_preference_store import OrchestrationPreferenceStore
 from omnigent.stores.permission_store import PermissionStore
 from omnigent.util.session_lifecycle import is_session_closed
 
@@ -85,6 +88,13 @@ def require_orchestration_source(
         raise OmnigentError("Session orchestration is disabled", code=ErrorCode.FORBIDDEN)
     if not user_id or permissions is None:
         raise OmnigentError("Session orchestration requires ownership", code=ErrorCode.FORBIDDEN)
+    preference_store: OrchestrationPreferenceStore | None = getattr(
+        request.app.state, "orchestration_preference_store", None
+    )
+    if preference_store is not None and not preference_store.get_enabled(user_id=user_id):
+        raise OmnigentError(
+            "Session orchestration is disabled for this user", code=ErrorCode.FORBIDDEN
+        )
     source = require_owned_session(
         request.headers.get(ORCHESTRATION_SOURCE_HEADER, ""),
         user_id,

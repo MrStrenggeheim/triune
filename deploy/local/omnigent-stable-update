@@ -1,11 +1,12 @@
 #!/bin/bash
+# Modified for Triune: preserve verified deployment and rollback.
 # Deploy only prepared custom builds. Keep the existing systemd lock and idle guard.
 set -euo pipefail
 export PATH=/home/agent/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 app=/home/agent/apps/omnigent
 legacy_python=/home/agent/.local/share/uv/tools/omnigent/bin/python
-source=/home/agent/projects/omnigent
+source=/home/agent/projects/triune
 tool_python="$app/current/venv/bin/python"
 [[ -x "$tool_python" ]] || tool_python="$legacy_python"
 
@@ -22,14 +23,10 @@ esac
 if [[ ! -L "$app/pending" ]]; then
     echo "No custom release staged; the running installation stays unchanged."
     as_agent "$tool_python" - <<'PY'
-from importlib.metadata import version
-from omnigent.update_check import fetch_latest_version
+from omnigent.version import installed_version
 
-latest = fetch_latest_version(include_prereleases=False, timeout=30, attempts=2)
-if latest is None:
-    raise SystemExit("Could not check official releases.")
-print(f"Installed package: {version('omnigent')}; latest official stable: {latest}.")
-print("Integrate the chosen upstream tag, then run omni-custom build and stage.")
+print(f"Installed Triune package: {installed_version()}.")
+print("Update the Triune main checkout, then run omni-custom build and stage.")
 PY
     exit 0
 fi
@@ -108,7 +105,7 @@ for name, target in (("previous", previous), ("current", candidate)):
     temporary = app / (name + ".new")
     temporary.symlink_to(target)
     temporary.replace(app / name)
-for command in ("omnigent", "omni"):
+for command in ("triune", "omnigent", "omni"):
     target = Path.home() / ".local/bin" / command
     temporary = target.with_name(command + ".new")
     temporary.symlink_to(app / "current/venv/bin" / command)

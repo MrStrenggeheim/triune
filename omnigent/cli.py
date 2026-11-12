@@ -4782,6 +4782,9 @@ def server(
     # with "unable to open database file".
     _ensure_sqlite_parent_dir(db_uri)
 
+    from omnigent.stores.orchestration_preference_store.sqlalchemy_store import (
+        SqlAlchemyOrchestrationPreferenceStore,
+    )
     from omnigent.stores.permission_store.sqlalchemy_store import SqlAlchemyPermissionStore
     from omnigent.stores.project_store.sqlalchemy_store import SqlAlchemyProjectStore
     from omnigent.stores.scheduled_task_store.sqlalchemy_store import (
@@ -4796,6 +4799,7 @@ def server(
     permission_store = SqlAlchemyPermissionStore(db_uri)
     scheduled_task_store = SqlAlchemyScheduledTaskStore(db_uri)
     project_store = SqlAlchemyProjectStore(db_uri)
+    orchestration_preference_store = SqlAlchemyOrchestrationPreferenceStore(db_uri)
     preference_store = None
     if authority_id is not None:
         from omnigent.stores.preference_store.sqlalchemy_store import SqlAlchemyPreferenceStore
@@ -5005,6 +5009,7 @@ def server(
         scheduled_task_store=scheduled_task_store,
         project_store=project_store,
         preference_store=preference_store,
+        orchestration_preference_store=orchestration_preference_store,
         auth_provider=auth_provider,
         host_store=host_store,
         account_store=account_store,

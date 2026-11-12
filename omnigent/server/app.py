@@ -114,6 +114,9 @@ from omnigent.server.routes.extension_assets import create_extension_assets_rout
 from omnigent.server.routes.extensions import create_extensions_router
 from omnigent.server.routes.harnesses import create_harnesses_router
 from omnigent.server.routes.imports import create_imports_router
+from omnigent.server.routes.orchestration_preferences import (
+    create_orchestration_preferences_router,
+)
 from omnigent.server.routes.policy_registry import create_policy_registry_router
 from omnigent.server.routes.preferences import create_preferences_router
 from omnigent.server.routes.projects import create_projects_router
@@ -158,6 +161,7 @@ from omnigent.stores.conversation_store import (
     runner_seen_is_fresh,
 )
 from omnigent.stores.host_store import HostStore
+from omnigent.stores.orchestration_preference_store import OrchestrationPreferenceStore
 from omnigent.stores.permission_store import PermissionStore
 from omnigent.stores.policy_store import PolicyStore
 from omnigent.stores.preference_store import PreferenceStore
@@ -1391,6 +1395,7 @@ def create_app(
     *,
     default_agents_seeded: bool = False,
     preference_store: PreferenceStore | None = None,
+    orchestration_preference_store: OrchestrationPreferenceStore | None = None,
     preference_policy: PreferencePolicy = DEFAULT_PREFERENCE_POLICY,
     scheduled_task_dispatch: ScheduledTaskDispatchHooks | None = None,
     scheduled_task_scheduler_config: ScheduledTaskSchedulerConfig | None = None,
@@ -1430,6 +1435,8 @@ def create_app(
         active task and fires the injected ``on_fire`` callback on
         schedule. ``None`` disables the scheduler entirely.
     :param preference_store: Optional shared-preference API; no launcher adoption.
+    :param orchestration_preference_store: Optional personal orchestration preference API
+        and live admission control, independent of shared preferences.
     :param scheduled_task_dispatch: Claimed-run execution and recovery callbacks;
         required only when automations_v2 is enabled.
     :param scheduled_task_scheduler_config: Overrides the server config's
@@ -2079,6 +2086,7 @@ def create_app(
     app.state.sandbox_config = sandbox_config
     app.state.branding_snapshot = branding_snapshot
     app.state.feature_flags = resolved_feature_flags
+    app.state.orchestration_preference_store = orchestration_preference_store
     app.state.scheduled_task_dispatch_enabled = automations_v2_enabled
     # Deployment base path (e.g. "/proxy/6767"), so route handlers that build
     # a full-page redirect (not covered by BasePathMiddleware's inbound-only
@@ -3683,6 +3691,13 @@ def create_app(
             ),
             prefix="/v1",
             tags=["projects"],
+        )
+
+    if orchestration_preference_store is not None:
+        app.include_router(
+            create_orchestration_preferences_router(orchestration_preference_store, auth_provider),
+            prefix="/v1",
+            tags=["preferences"],
         )
 
     if preference_store is not None:

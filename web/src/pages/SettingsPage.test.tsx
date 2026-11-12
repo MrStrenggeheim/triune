@@ -70,6 +70,18 @@ vi.mock("@/hooks/useAvailableAgents", async (original) => ({
 }));
 vi.mock("@/lib/embedded", () => ({ useIsEmbedded: () => mocks.isEmbedded }));
 vi.mock("@/hooks/useIsMobileViewport", () => ({ useIsMobileViewport: () => mocks.isMobile }));
+vi.mock("@/hooks/useSessionOrchestrationPreference", () => ({
+  useSessionOrchestrationPreference: () => ({
+    data: { enabled: true, server_enabled: true },
+    isFetching: false,
+    isPending: false,
+    isSaving: false,
+    isError: false,
+    error: null,
+    saveError: null,
+    save: vi.fn(),
+  }),
+}));
 vi.mock("@/lib/CapabilitiesContext", () => ({
   useServerInfo: () => ({
     accounts_enabled: mocks.accountsEnabled,
@@ -459,6 +471,7 @@ describe("SettingsPage", () => {
     for (const testId of [
       "settings-group-composer",
       "settings-group-sessions",
+      "settings-group-agents",
       "settings-group-terminal",
     ]) {
       const group = screen.getByTestId(testId);
@@ -469,6 +482,11 @@ describe("SettingsPage", () => {
         "bg-card",
       );
     }
+    expect(
+      within(screen.getByTestId("settings-group-agents")).getByRole("switch", {
+        name: "Agent communication",
+      }),
+    ).toBeChecked();
   });
 
   it("renders session auto-rename enabled by default", async () => {
