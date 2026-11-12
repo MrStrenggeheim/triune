@@ -133,6 +133,7 @@ Every implementation report includes action/expected-result acceptance steps and
 - Rendered in-chat previews keep their large modal/lightbox behavior and supported zoom/pan/close controls.
 - Shared buttons do not move vertically when pressed; modal close glyphs do not get redundant Close tooltips.
 - Search trigger and popup center on the full application width independently of adjacent controls.
+- On desktop, the primary + Open button sits immediately right of centered Search; preserve the existing mobile arrangement and shared menu.
 - Comfortable/Compact use the existing visual preference-card pattern, illustrating 48px and 36px header/list density.
 - File Editor headers show one copyable Host/path, Comments, Diff and the shared three-dot menu; the comments conversation selector belongs inside the comments sidebar.
 - Notifications and workspace-picker headers and entries follow the same density tokens; read-notification visibility is an explicit saved filter.

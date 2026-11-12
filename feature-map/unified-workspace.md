@@ -17,7 +17,7 @@ Conversation and tool views share resizable, dockable panes while keeping their 
 
 ## How to get to it (user POV)
 
-- Use + Open view in the application bar, or the subtle plus after the last tab, to add Explorer, Changes, Search, a manual terminal, Agent CLI, Activity or Automations.
+- Use + Open beside desktop application Search, or the subtle plus after the last tab, to add Explorer, Changes, Search, a manual terminal, Agent CLI, Activity or Automations.
 - Drag a tab to a pane edge to split; use its own close button to close it, use the tab pin before its close control to keep a view across chats.
 - Click a chat to restore its layout; choose Open to side or drag a sidebar chat into a tab group or split edge to add it to the current layout.
 - The app bar has no Layout control; a new chat starts in its own arrangement.
@@ -104,6 +104,7 @@ Layout miniatures and Inbox consolidation remain deferred.
 - Shared overflow surfaces use transcript-style overlay thumbs; fitting content, composers and tab bars have no visible scrollbar.
 - Appearance density choices include shared preview cards; buttons do not shift vertically when pressed.
 - Search control and popup center on the whole application, independently of adjacent actions.
+- On desktop, + Open follows centered Search with an 8px gap; phones retain their existing plus, bell and Settings arrangement.
 
 Acceptance and evidence: `tests/browser_ui/chat/test_workspace_cycle.py`, `test_workspace_iteration.py` and `test_workspace_selection_design.py` in the same folder.
 Use desktop/mobile and both color modes; verify drafts, original file bytes and per-chat arrangements survive reload.

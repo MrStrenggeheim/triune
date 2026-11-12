@@ -1,3 +1,4 @@
+# Modified for Triune.
 """Current cycle: geometry, shared chrome and captured-file destinations."""
 
 from urllib.parse import parse_qs, urlparse
@@ -114,10 +115,17 @@ def test_search_trigger_and_popup_share_the_application_center(
     page: Page, workspace_journey: WorkspaceJourney, output_path: str, browser_errors: list[str]
 ) -> None:
     page.goto(workspace_journey.chats[0].url)
-    for name, width, height in (("desktop", 1440, 1000), ("phone", 390, 844)):
+    for name, width, height, density in (
+        ("desktop", 1440, 1000, "comfortable"),
+        ("narrow-desktop", 860, 900, "comfortable"),
+        ("phone-comfortable", 390, 844, "comfortable"),
+        ("phone", 390, 844, "compact"),
+        ("small-phone", 320, 720, "compact"),
+    ):
         page.set_viewport_size({"width": width, "height": height})
+        page.evaluate("value => document.documentElement.dataset.listDensity = value", density)
         scrim = page.get_by_test_id("sidebar-scrim")
-        if scrim.is_visible() and scrim.get_attribute("aria-hidden") == "false":
+        if scrim.is_visible() and scrim.get_attribute("tabindex") == "0":
             scrim.click(position={"x": width - 4, "y": 180})
         search = page.get_by_role("button", name="Search or run a command", exact=True)
         app = page.get_by_role("banner", name="Application")
@@ -126,6 +134,25 @@ def test_search_trigger_and_popup_share_the_application_center(
         assert app_bounds and trigger_bounds
         center = app_bounds["x"] + app_bounds["width"] / 2
         assert abs(trigger_bounds["x"] + trigger_bounds["width"] / 2 - center) < 1
+        open_button = app.get_by_role("button", name="Open view", exact=True)
+        open_bounds = open_button.bounding_box()
+        settings_bounds = app.get_by_role("button", name="Settings", exact=True).bounding_box()
+        bell_bounds = app.get_by_role("button", name="Notifications", exact=True).bounding_box()
+        assert open_bounds and settings_bounds and bell_bounds
+        if width >= 768:
+            assert abs(open_bounds["x"] - trigger_bounds["x"] - trigger_bounds["width"] - 8) < 1
+        assert open_bounds["x"] + open_bounds["width"] < settings_bounds["x"]
+        assert open_bounds["x"] + open_bounds["width"] <= bell_bounds["x"] - 4
+        assert trigger_bounds["width"] >= 28
+        if width == 390 and density == "compact":
+            assert trigger_bounds["width"] >= 110
+        if width >= 768:
+            expect(open_button).to_have_text("Open")
+        expect(open_button.locator("svg")).to_have_count(1)
+        _capture(page, output_path, name + "-search-and-open")
+        open_button.click()
+        expect(page.get_by_role("menuitem", name="Explorer", exact=True)).to_be_visible()
+        page.keyboard.press("Escape")
         search.click()
         popup = page.get_by_role("dialog", name="Command palette", exact=True)
         expect(popup).to_be_visible()

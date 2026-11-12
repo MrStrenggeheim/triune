@@ -35,19 +35,23 @@ export function WorkbenchAppBar({
   const bar = useRef<HTMLElement>(null);
   const left = useRef<HTMLDivElement>(null);
   const right = useRef<HTMLDivElement>(null);
+  const openButton = useRef<HTMLButtonElement>(null);
   const [searchWidth, setSearchWidth] = useState(160);
   useLayoutEffect(() => {
     const measure = () => {
       const bounds = bar.current?.getBoundingClientRect();
       const a = left.current?.getBoundingClientRect();
       const b = right.current?.getBoundingClientRect();
-      if (!bounds || !a || !b) return;
-      const reservation = Math.max(a.right - bounds.left, bounds.right - b.left) + 12;
+      const open = openButton.current?.getBoundingClientRect();
+      if (!bounds || !a || !b || !open) return;
+      const openReservation = window.matchMedia("(min-width: 768px)").matches ? open.width + 8 : 0;
+      const reservation =
+        Math.max(a.right - bounds.left, bounds.right - b.left + openReservation) + 12;
       setSearchWidth(Math.max(28, Math.min(480, bounds.width - reservation * 2)));
     };
     measure();
     const observer = new ResizeObserver(measure);
-    for (const element of [bar.current, left.current, right.current])
+    for (const element of [bar.current, left.current, right.current, openButton.current])
       if (element) observer.observe(element);
     return () => observer.disconnect();
   }, []);
@@ -68,31 +72,40 @@ export function WorkbenchAppBar({
         <BrandLogo className="size-7 shrink-0" />
         <span className="hidden text-base font-bold sm:block">{appName}</span>
       </div>
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={onSearch}
-        className="absolute left-1/2 h-7 min-w-0 -translate-x-1/2 justify-start gap-2 px-2 text-muted-foreground"
+      <div
+        className="absolute left-1/2 flex -translate-x-1/2 items-center"
         style={{ width: searchWidth }}
-        aria-label="Search or run a command"
-        data-workbench-search
       >
-        <SearchIcon className="size-3.5" />
-        <span className="min-w-0 truncate">Search or run a command…</span>
-      </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onSearch}
+          className="h-7 w-full min-w-0 justify-start gap-2 px-2 text-muted-foreground"
+          aria-label="Search or run a command"
+          data-workbench-search
+        >
+          <SearchIcon className="size-3.5" />
+          <span className="min-w-0 truncate">Search or run a command…</span>
+        </Button>
+      </div>
       <div ref={right} className="ml-auto flex shrink-0 items-center gap-2 max-md:gap-1">
-        <OpenViewMenu actions={openActions}>
-          <Button
-            variant="default"
-            size="sm"
-            className="h-8 gap-1.5 px-4 text-primary-foreground max-md:px-2"
-            aria-label="Open view"
-          >
-            <PlusIcon className="size-4" />
-            <span className="hidden md:inline">Open view</span>
-          </Button>
-        </OpenViewMenu>
-        <span className="hidden w-2 md:block" aria-hidden />
+        <div
+          className="flex items-center md:absolute"
+          style={{ left: `calc(50% + ${searchWidth / 2 + 8}px)` }}
+        >
+          <OpenViewMenu actions={openActions}>
+            <Button
+              ref={openButton}
+              variant="default"
+              size="sm"
+              className="h-8 gap-1.5 px-4 text-primary-foreground max-md:px-2"
+              aria-label="Open view"
+            >
+              <PlusIcon className="size-4" />
+              <span className="hidden md:inline">Open</span>
+            </Button>
+          </OpenViewMenu>
+        </div>
         <NotificationBell />
         <HeaderActionButton aria-label="Settings" onClick={onSettings}>
           <SettingsIcon className="size-4" />
