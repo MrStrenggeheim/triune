@@ -1,9 +1,9 @@
 ---
 name: verify-omnigent
-description: Drive Omnigent the way a user does and prove a behavior with recorded evidence, using an isolated server, runner, and mock model plus a feature map of every user entry point. Load before reproducing a user-facing bug, before claiming a fix works, or when reviewing whether a change covered every surface (session vs. new-session composer, terminal strip vs. agent terminal, all twelve native harnesses). Covers the web UI, native harness terminals, and the CLI.
+description: Drive Triune the way a user does and prove a behavior with recorded evidence, using an isolated server, runner, and mock model plus a feature map of every user entry point. Load before reproducing a user-facing bug, before claiming a fix works, or when reviewing whether a change covered every surface (session vs. new-session composer, terminal strip vs. agent terminal, all twelve native harnesses). Covers the web UI, native harness terminals, and the CLI.
 ---
 
-# Verify Omnigent
+# Verify Triune
 
 Use this skill to see a behavior happen in the real app and to prove a change,
 not to reason about it from code. It has two parts:
@@ -108,7 +108,7 @@ review, component tests, real process checks, browser drives, and live provider
 checks distinct. A map contract pass verifies references and structure; it is
 not evidence that the journeys ran. The proof standards are in the
 [feature map README](../../README.md#proof-and-coverage). Mock runs prove
-Omnigent's integration with Claude and Codex, not a live vendor model.
+Triune's integration with Claude and Codex, not a live vendor model.
 
 For PR evidence, follow the [demo standard](../../README.md#pr-demo-standard):
 use a short real-app recording for interactive workflows, screenshots for
@@ -123,7 +123,7 @@ files; state recording/upload limitations and manual steps when unavailable.
 server, runner, and model processes and saves the model's request log. It never
 deletes `$VERIFY_ROOT`, so the evidence survives; remove old roots under
 `.omnigent/verify/` or `/tmp/verify-omnigent.*` yourself once the evidence is
-attached. Never kill Omnigent processes by name: a developer's own server and
+attached. Never kill Triune processes by name: a developer's own server and
 host daemon may be running on the same machine.
 
 ## Helpers

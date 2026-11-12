@@ -25,6 +25,8 @@ user's settings survive, the repo stays clean, and the hooks die with the
 session.
 """
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import contextlib
@@ -1542,8 +1544,7 @@ def _reject_reserved_passthrough(passthrough: Sequence[str]) -> None:
     reserved = sorted(named & _RESERVED_PASSTHROUGH_FLAGS)
     if reserved:
         raise RuntimeError(
-            "devin-native launch args may not override Omnigent-owned flags: "
-            f"{', '.join(reserved)}"
+            f"devin-native launch args may not override Triune-owned flags: {', '.join(reserved)}"
         )
 
 

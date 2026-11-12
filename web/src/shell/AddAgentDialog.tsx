@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { useState } from "react";
 import { useNavigate } from "@/lib/routing";
 import { useQueryClient } from "@tanstack/react-query";
@@ -122,7 +123,7 @@ export function AddAgentDialog({
             {agentList.length === 0 ? (
               <p data-testid="add-agent-empty" className="text-sm text-muted-foreground">
                 No agents available on this server. Register one with{" "}
-                <code className="font-mono">omnigent server --agent</code>.
+                <code className="font-mono">triune server --agent</code>.
               </p>
             ) : (
               agentList.map((agent) => (

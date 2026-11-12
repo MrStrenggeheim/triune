@@ -1,5 +1,8 @@
 # Omnigent Uninstaller Design
 
+> Historical upstream Omnigent design discussion; names, commands and release assumptions are retained as context.
+> For current Triune setup and compatibility, see the [fork guide](custom-fork.md).
+
 Status: Implemented in PR #2550
 Owner: Pat Sukprasert (@PattaraS)
 Related discussion: brainstormed and debated via Debby (claude + gpt partners)

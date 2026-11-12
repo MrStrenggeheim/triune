@@ -1,5 +1,8 @@
 # Antigravity-native harness: RPC core rework
 
+> Historical upstream Omnigent design discussion; names, commands and release assumptions are retained as context.
+> For current Triune setup and compatibility, see the [fork guide](custom-fork.md).
+
 **Status:** Design (approved direction; pending implementation plan)
 **Date:** 2026-06-22
 **Supersedes:** the runtime core of PR #892 (antigravity-native). Periphery from #892 is reused.

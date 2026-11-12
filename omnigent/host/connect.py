@@ -6,6 +6,8 @@ Spawns runner subprocesses on demand and reports results back to
 the server.
 """
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import asyncio
@@ -1562,7 +1564,7 @@ class HostProcess:
             `omnigent login http://localhost:6767` to authenticate."``.
         """
         return (
-            "If this server uses Omnigent accounts or OIDC login, run "
+            "If this server uses Triune accounts or OIDC login, run "
             f"`{cli_invocation()} login {self._login_hint_url()}` to authenticate."
         )
 

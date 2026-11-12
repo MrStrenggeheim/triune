@@ -12,6 +12,8 @@ Two modes:
   it. The CLI discovers the resulting URL via the local-server pidfile.
 """
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import argparse
@@ -47,7 +49,7 @@ def main() -> None:
     parser.add_argument(
         "--local",
         action="store_true",
-        help="Start (or reuse) a local Omnigent server and connect to it.",
+        help="Start (or reuse) a local Triune server and connect to it.",
     )
     args = parser.parse_args()
 

@@ -27,7 +27,7 @@ record omissions rather than treating unselected checks as passed.
 | `compaction` | P1 | Supported compaction finishes and a later turn works with retained context; pending messages are not lost. |
 | `images` | P1 | A supported image reaches the model and its reply uses the image; unsupported inputs are rejected without losing the draft. |
 | `fork` | P1 | A supported fork uses copied history on its first turn and remains separate from its parent. |
-| `mcp` | P1 | A configured, supported Omnigent MCP connection can call a harmless tool and show its result. |
+| `mcp` | P1 | A configured, supported Triune MCP connection can call a harmless tool and show its result. |
 
 ## How to get to it (user POV)
 
@@ -39,7 +39,7 @@ does not make the surfaces interchangeable.
 | Web new session | Pick a native harness or SDK custom agent, host/workspace, model and effort, then send. See [Composer](./composer.md) and [Custom agents](./custom-agents.md). |
 | Web existing session | Send follow-ups, edit configuration, interrupt, answer approvals, reload or fork. See [Composer](./composer.md), [Sessions](./sessions.md) and [Native harnesses](./native-harnesses.md). |
 | Native terminal / CLI | Launch using the harness's CLI entry, use supported native controls, and switch Terminal ↔ Chat. See [Native harnesses](./native-harnesses.md) and [Terminals](./terminals.md). |
-| SDK CLI / API | Launch a custom agent with `omnigent run` or the session API; verify the server/runner contract. The [bench](../tests/harness_bench/README.md#transport-selection) uses this boundary, not browser rendering. |
+| SDK CLI / API | Launch a custom agent with `triune run` or the session API; verify the server/runner contract. The [bench](../tests/harness_bench/README.md#transport-selection) uses this boundary, not browser rendering. |
 | Alternate UI surfaces | Exercise mobile, fork-dialog configuration and Inbox approvals when the change affects them. Use the owning recipes above, not desktop Chat as a substitute. |
 
 ## Driving it with the repro environment
@@ -48,9 +48,8 @@ Preconditions: read the [verification skill](./skills/verify-omnigent/SKILL.md)
 and the owning feature recipes. Use only an isolated instance you started.
 Record the exact commit, CLI/SDK versions and CI pins, OS, provider/model,
 transport, relevant feature gates and sandbox state. Keep native and SDK
-results separate, including `pi-native` versus `pi`. OSS using a Databricks
-gateway is still OSS; Managed means Databricks-deployed Omnigent and needs its
-own deployment evidence.
+results separate, including `pi-native` versus `pi`. A self-hosted Triune instance using a Databricks gateway remains self-hosted.
+Managed means upstream Omnigent deployed by Databricks and needs its own deployment evidence.
 
 ### Select harnesses and existing checks
 
@@ -110,7 +109,7 @@ checklist.
 ### Pi SDK bundled resources (own environment)
 
 For `launch-reply`, launch an uploaded Pi agent bundle through the server/runner,
-then run `omnigent run <bundle>` from a sibling workspace under Linux Bubblewrap.
+then run `triune run <bundle>` from a sibling workspace under Linux Bubblewrap.
 Include an extension,
 a skill and bundle-root instructions; verify all reach the provider request and
 that tools still use the session workspace. Existing scenarios:
@@ -118,7 +117,7 @@ that tools still use the session workspace. Existing scenarios:
 `tests/e2e/omnigent/test_pi_bundle_project_resources_e2e.py`, and
 `tests/e2e/omnigent/test_pi_managed_extensions_e2e.py`.
 The managed-extensions filename refers to extension provisioning, not Managed
-Omnigent. The uploaded-bundle and existing global-extension CLI scenarios cover
+Triune. The uploaded-bundle and existing global-extension CLI scenarios cover
 unsandboxed startup;
 the separate CLI bundle case covers real Bubblewrap isolation; a macOS skip does not
 validate that boundary. Native Pi resource discovery is a separate path.
@@ -173,7 +172,7 @@ paid live run, or automatic rollout requirement.
 
 Copy this table into the PR's Test Plan or linked evidence. Expand it for **every
 affected harness × checklist ID × entry point/configuration**; do not combine
-SDK/native, mock/live or OSS/Managed results. Include gaps even where no test
+SDK/native, mock/live or self-hosted/upstream Managed results. Include gaps even where no test
 exists. Add an owner/next step for unresolved rows.
 
 | Harness / transport / model | Checklist ID / entry point | Coverage | Run result | Evidence / gap / owner |

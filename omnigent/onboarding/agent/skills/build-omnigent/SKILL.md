@@ -1,7 +1,9 @@
 ---
 name: build-omnigent
-description: Patterns and templates for generating valid Omnigent agent directories. Load when ready to create files.
+description: Patterns and templates for generating valid Triune agent directories. Load when ready to create files.
 ---
+
+<!-- Modified for Triune. -->
 
 # Agent Generation
 
@@ -9,7 +11,7 @@ Use these patterns to generate a valid agent directory. Always generate
 the minimal set of files needed — don't over-engineer.
 
 Every template below has been validated with the same parser/validator
-that `omnigent server` uses. If your environment exposes the
+that `triune server` uses. If your environment exposes the
 `validate_agent` tool (the dedicated agent-authoring environment does),
 run it after generating files to confirm the spec loads. Load the
 **`omnigent-knowledge`** skill if you need the deeper field reference

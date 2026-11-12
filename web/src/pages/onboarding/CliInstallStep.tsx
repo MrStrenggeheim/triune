@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { OnboardingBackButton, OnboardingHeading } from "./primitives";
@@ -18,10 +19,10 @@ export function CliInstallStep({
     setError(undefined);
     try {
       if (!(await onRecheck?.())) {
-        setError("Omnigent CLI not found. Make sure omnigent is on your PATH, then check again.");
+        setError("Triune CLI not found. Make sure triune is on your PATH, then check again.");
       }
     } catch {
-      setError("Could not check for the Omnigent CLI. Please try again.");
+      setError("Could not check for the Triune CLI. Please try again.");
     } finally {
       setChecking(false);
     }
@@ -29,14 +30,14 @@ export function CliInstallStep({
 
   return (
     <div className="flex h-full flex-col gap-4 px-2 pb-1 pt-8">
-      <OnboardingHeading>Install the Omnigent CLI</OnboardingHeading>
+      <OnboardingHeading>Install the Triune CLI</OnboardingHeading>
       <p className="text-base text-muted-foreground">
         Automatic installation is unavailable on this platform. Follow the installation instructions
         for your operating system, then return here and check again.
       </p>
       <Button asChild variant="outline">
         <a
-          href="https://omnigent.ai/quickstart/install#install-omnigent"
+          href="https://github.com/MrStrenggeheim/triune#quick-start"
           target="_blank"
           rel="noreferrer"
         >
@@ -44,7 +45,7 @@ export function CliInstallStep({
         </a>
       </Button>
       <p className="text-sm text-muted-foreground">
-        Check that <code>omnigent --version</code> works in a new terminal.
+        Check that <code>triune --version</code> works in a new terminal.
       </p>
       {error && (
         <p role="alert" className="text-sm text-destructive">

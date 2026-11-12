@@ -1,5 +1,8 @@
 # Fork Discoverability Design
 
+> Historical upstream Omnigent design discussion; names, commands and release assumptions are retained as context.
+> For current Triune setup and compatibility, see the [fork guide](../../custom-fork.md).
+
 ## Goal
 
 Make conversation forking discoverable from session menus and keep the final

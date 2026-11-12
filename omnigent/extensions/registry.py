@@ -1,5 +1,7 @@
 """Discovery and deterministic validation for installed extensions."""
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import importlib.metadata
@@ -254,7 +256,7 @@ def validate_manifest(manifest: ExtensionManifest) -> None:
         core_range = SpecifierSet(manifest.requires_omnigent)
     except InvalidSpecifier as exc:
         raise ExtensionValidationError(
-            f"extension {manifest.id!r} has invalid Omnigent requirement "
+            f"extension {manifest.id!r} has invalid Triune requirement "
             f"{manifest.requires_omnigent!r}"
         ) from exc
     try:
@@ -262,10 +264,10 @@ def validate_manifest(manifest: ExtensionManifest) -> None:
         # as its base release so normal ranges also work in development and CI.
         compatibility_version = Version(Version(VERSION).base_version)
     except InvalidVersion as exc:
-        raise ExtensionValidationError(f"Omnigent has invalid version {VERSION!r}") from exc
+        raise ExtensionValidationError(f"Triune has invalid version {VERSION!r}") from exc
     if not core_range.contains(compatibility_version):
         raise ExtensionValidationError(
-            f"extension {manifest.id!r} requires Omnigent {manifest.requires_omnigent}; "
+            f"extension {manifest.id!r} requires Triune {manifest.requires_omnigent}; "
             f"running version is {VERSION}"
         )
 

@@ -4,6 +4,8 @@ Registers builtin, client-specified, and local-python tools.
 MCP lifecycle lives on the runner — see designs/RUNNER_MCP.md.
 """
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import logging
@@ -199,7 +201,7 @@ class ToolManager:
         Registered without spec opt-in so the agent can browse policy
         templates and add CEL or builtin policies to the current session
         at runtime; ``tool_groups.policies: false`` drops the pair. The
-        runner dispatches both tools via the Omnigent server's REST
+        runner dispatches both tools via the Triune server's REST
         endpoints.
         """
         if not self._spec.tool_groups.policies:
@@ -216,7 +218,7 @@ class ToolManager:
         Registered without spec opt-in so an agent can create, list,
         update, and delete recurring scheduled tasks at runtime;
         ``tool_groups.scheduled_tasks: false`` drops all four. The runner
-        dispatches them via the Omnigent server's ``/v1/scheduled-tasks``
+        dispatches them via the Triune server's ``/v1/scheduled-tasks``
         REST endpoints.
         """
         if not self._spec.tool_groups.scheduled_tasks:
@@ -838,7 +840,7 @@ class ToolManager:
         for callable_tool in load_local_callable_tools(server_local_tools):
             if not is_valid_tool_name(callable_tool.name()):
                 _logger.warning(
-                    "Omnigent callable tool %r has invalid name — skipping",
+                    "Triune callable tool %r has invalid name — skipping",
                     callable_tool.name(),
                 )
                 continue

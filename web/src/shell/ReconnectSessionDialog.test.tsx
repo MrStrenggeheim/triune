@@ -1,3 +1,4 @@
+// Modified for Triune.
 // Unit tests for ReconnectSessionDialog — the affordance shown when the
 // open session is unreachable (host offline, or not host-bound with the
 // runner down). Two tabs: Reconnect (instruction + CLI command) and
@@ -10,7 +11,7 @@
 //      reach the host machine), Clone tab is the default.
 //   3. local_stranded → wrapper-specific resume command, with the conv
 //      id + server URL substituted.
-//   4. claude-native local_stranded → `omnigent claude --resume`.
+//   4. claude-native local_stranded → `triune claude --resume`.
 //   5. The Clone tab embeds ForkSessionForm with the source props, and
 //      its onClose closes the dialog.
 //   6. open={false} renders nothing.
@@ -79,13 +80,13 @@ afterEach(() => {
 });
 
 describe("buildReconnectCommand", () => {
-  it("emits `omnigent host` for host_offline (no --resume, no YAML)", () => {
+  it("emits `triune host` for host_offline (no --resume, no YAML)", () => {
     const cmd = buildReconnectCommand({
       conversationId: "conv_host1",
       serverUrl: "https://example.databricksapps.com",
       state: "host_offline",
     });
-    expect(cmd).toContain("omnigent host");
+    expect(cmd).toContain("triune host");
     expect(cmd).toContain("--server 'https://example.databricksapps.com'");
     // The --profile flag was removed from the CLI; emitting it here would
     // hand users a command that errors with "No such option".
@@ -96,7 +97,7 @@ describe("buildReconnectCommand", () => {
     expect(cmd).not.toContain("path/to/agent.yaml");
   });
 
-  it("prefers `omnigent host` for a host_offline claude-native session", () => {
+  it("prefers `triune host` for a host_offline claude-native session", () => {
     // A claude-native session can still be host-bound; while the host is
     // down the host relaunches whatever runtime it needs, so host wins.
     const cmd = buildReconnectCommand({
@@ -105,8 +106,8 @@ describe("buildReconnectCommand", () => {
       wrapper: "claude-code-native-ui",
       state: "host_offline",
     });
-    expect(cmd).toContain("omnigent host");
-    expect(cmd).not.toContain("omnigent claude");
+    expect(cmd).toContain("triune host");
+    expect(cmd).not.toContain("triune claude");
   });
 
   it("emits the generic run form for a local_stranded session", () => {
@@ -115,7 +116,7 @@ describe("buildReconnectCommand", () => {
       serverUrl: "https://example.databricksapps.com",
       state: "local_stranded",
     });
-    expect(cmd).toContain("omnigent run path/to/agent.yaml");
+    expect(cmd).toContain("triune run path/to/agent.yaml");
     expect(cmd).toContain("--resume conv_abc123");
     expect(cmd).toContain("--server 'https://example.databricksapps.com'");
     expect(cmd).not.toContain("--profile");
@@ -130,7 +131,7 @@ describe("buildReconnectCommand", () => {
     expect(cmd).toContain("--server 'https://example.com/api?profile=dev&glob=*'");
   });
 
-  it("emits `omnigent devin --resume` for a devin-native local_stranded session", () => {
+  it("emits `triune devin --resume` for a devin-native local_stranded session", () => {
     // Every native wrapper resumes through its own verb; `omnigent run` cannot
     // resume one at all, which is what this used to suggest.
     const cmd = buildReconnectCommand({
@@ -139,24 +140,24 @@ describe("buildReconnectCommand", () => {
       wrapper: "devin-native-ui",
       state: "local_stranded",
     });
-    expect(cmd).toContain("omnigent devin");
+    expect(cmd).toContain("triune devin");
     expect(cmd).toContain("--resume conv_devin1");
-    expect(cmd).not.toContain("omnigent run");
+    expect(cmd).not.toContain("triune run");
     expect(cmd).not.toContain("path/to/agent.yaml");
   });
 
-  it("emits `omnigent claude --resume` for a claude-native local_stranded session", () => {
+  it("emits `triune claude --resume` for a claude-native local_stranded session", () => {
     const cmd = buildReconnectCommand({
       conversationId: "conv_claude1",
       serverUrl: "https://x.databricksapps.com",
       wrapper: "claude-code-native-ui",
       state: "local_stranded",
     });
-    expect(cmd).toContain("omnigent claude");
+    expect(cmd).toContain("triune claude");
     expect(cmd).toContain("--resume conv_claude1");
     // No agent YAML for claude-native — the wrapper has none.
     expect(cmd).not.toContain("path/to/agent.yaml");
-    expect(cmd).not.toContain("omnigent run");
+    expect(cmd).not.toContain("triune run");
   });
 
   it("falls back to the run form for an unknown wrapper (local_stranded)", () => {
@@ -166,8 +167,8 @@ describe("buildReconnectCommand", () => {
       wrapper: "some-future-wrapper",
       state: "local_stranded",
     });
-    expect(cmd).toContain("omnigent run path/to/agent.yaml");
-    expect(cmd).not.toContain("omnigent claude");
+    expect(cmd).toContain("triune run path/to/agent.yaml");
+    expect(cmd).not.toContain("triune claude");
   });
 
   it("resolves the native verb from the harness when there is no wrapper label", () => {
@@ -182,9 +183,9 @@ describe("buildReconnectCommand", () => {
       harness: "devin-native",
       state: "local_stranded",
     });
-    expect(cmd).toContain("omnigent devin");
+    expect(cmd).toContain("triune devin");
     expect(cmd).toContain("--resume conv_legacy_devin");
-    expect(cmd).not.toContain("omnigent run");
+    expect(cmd).not.toContain("triune run");
   });
 
   it("prefers the wrapper label over the harness when both are present", () => {
@@ -195,8 +196,8 @@ describe("buildReconnectCommand", () => {
       harness: "devin-native",
       state: "local_stranded",
     });
-    expect(cmd).toContain("omnigent claude");
-    expect(cmd).not.toContain("omnigent devin");
+    expect(cmd).toContain("triune claude");
+    expect(cmd).not.toContain("triune devin");
   });
 
   it("falls back to the run form when neither wrapper nor harness is native", () => {
@@ -207,7 +208,7 @@ describe("buildReconnectCommand", () => {
       harness: "openai-agents",
       state: "local_stranded",
     });
-    expect(cmd).toContain("omnigent run path/to/agent.yaml");
+    expect(cmd).toContain("triune run path/to/agent.yaml");
   });
 });
 
@@ -291,7 +292,7 @@ describe("<ReconnectSessionDialog />", () => {
     renderDialog({ state: "host_offline", isOwner: true });
     expect(screen.getByText("Host is offline")).toBeInTheDocument();
     const block = screen.getByTestId("reconnect-session-command");
-    expect(block.textContent).toContain("omnigent host");
+    expect(block.textContent).toContain("triune host");
     // The clone form stays mounted (forceMount) but its panel is the
     // inactive one while the Reconnect tab is the default.
     expect(clonePanelState()).toBe("inactive");
@@ -422,7 +423,7 @@ describe("<ReconnectSessionDialog />", () => {
     // local_stranded isn't about a host machine — whoever started it can
     // relaunch, so the command shows regardless of ownership.
     const block = screen.getByTestId("reconnect-session-command");
-    expect(block.textContent).toContain("omnigent run path/to/agent.yaml");
+    expect(block.textContent).toContain("triune run path/to/agent.yaml");
     expect(block.textContent).toContain("--resume conv_abc123");
     expect(screen.getByText("Agent disconnected")).toBeInTheDocument();
     // The description testid pins the visible tab copy (the same string
@@ -438,7 +439,7 @@ describe("<ReconnectSessionDialog />", () => {
       wrapper: "claude-code-native-ui",
     });
     const block = screen.getByTestId("reconnect-session-command");
-    expect(block.textContent).toContain("omnigent claude");
+    expect(block.textContent).toContain("triune claude");
     expect(block.textContent).not.toContain("path/to/agent.yaml");
   });
 
@@ -496,7 +497,7 @@ describe("<ReconnectSessionDialog />", () => {
       },
     });
     expect(screen.getByRole("alert")).toHaveTextContent("Finish signing in");
-    expect(screen.getByTestId("reconnect-session-command")).toHaveTextContent("omnigent host");
+    expect(screen.getByTestId("reconnect-session-command")).toHaveTextContent("triune host");
     fireEvent.click(screen.getByRole("button", { name: "Retry reconnect" }));
     expect(onReconnect).toHaveBeenCalledOnce();
   });

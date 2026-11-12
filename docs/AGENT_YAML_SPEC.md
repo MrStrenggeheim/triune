@@ -1,9 +1,9 @@
 # Agent YAML spec
 
-Omnigent can run an agent from a single YAML file:
+Triune can run an agent from a single YAML file:
 
 ```bash
-omnigent run path/to/agent.yaml
+triune run path/to/agent.yaml
 ```
 
 Use this file to choose the harness/model, write the agent-owned system
@@ -30,7 +30,7 @@ executor:
 resolved from the YAML file's directory.
 
 These fields define the portable, agent-authored portion of the system prompt.
-Omnigent may append framework-owned lifecycle or metadata instructions at
+Triune may append framework-owned lifecycle or metadata instructions at
 runtime after agent and per-request instructions; those additions are not part
 of the agent YAML.
 
@@ -82,9 +82,9 @@ gateway / `auth.type: databricks` does not apply. Authenticate it with
 id (e.g. `auto`, `gpt-5`) rather than a `databricks-*` id.
 
 The `kiro-native` harness is the native Kiro CLI terminal path used by
-`omnigent kiro`. It requires `kiro-cli` on `PATH` and Kiro's own login/auth; it
+`triune kiro`. It requires `kiro-cli` on `PATH` and Kiro's own login/auth; it
 does not use Databricks, OpenAI, or Anthropic provider credentials. Plain
-`harness: kiro` is not a generic Omnigent harness id. Kiro's TUI remains the
+`harness: kiro` is not a generic Triune harness id. Kiro's TUI remains the
 authoritative approval surface; supported one-time tool approvals can also be
 mirrored into Chat cards, while persistent trust choices remain explicit Kiro
 TUI/flag actions. See `kiro-native-elicitation.md`.
@@ -93,14 +93,14 @@ TUI/flag actions. See `kiro-native-elicitation.md`.
 
 `harness: antigravity` runs the agent through Google's
 [Antigravity SDK](https://pypi.org/project/google-antigravity/)
-(`pip install "omnigent[antigravity]"`). It defaults to **Gemini 3.5 Flash**
+(from a Triune source checkout, `uv sync --locked --extra antigravity`). It defaults to **Gemini 3.5 Flash**
 and can also drive Claude / GPT-OSS. Authenticate with an Antigravity /
 Gemini API key, or Vertex AI (`project` / `location`) — the SDK is
 Gemini-native and has no OpenAI-compatible gateway / Databricks path.
 
-For the native `omni agy` CLI, use the separate
+For the native `triune agy` CLI, use the separate
 [native agy gateway guide](native-agy-gateways.md), which covers native Gemini
-gateways and Databricks profiles configured through `omni setup`.
+gateways and Databricks profiles configured through `triune setup`.
 
 ```yaml
 executor:
@@ -142,7 +142,7 @@ instructions: AGENTS.md
 
 The default is `true`; the value must be a YAML boolean. Explicit `prompt:` or
 `instructions:` content (including an explicitly referenced `AGENTS.md`) and
-Omnigent's runtime instructions are still sent to Pi. This option maps to Pi's
+Triune's runtime instructions are still sent to Pi. This option maps to Pi's
 `--no-context-files` flag. It does not disable skills, extensions, or Pi's
 separate `SYSTEM.md` discovery. It supports `pi` and `pi-native` only.
 
@@ -158,7 +158,7 @@ the bundle:
   Extensions run as code inside the Pi process, so bundle only extensions you
   trust. Hook-style extensions (for example `before_agent_start`) take full
   effect; tools an extension registers are loaded but not offered to the model,
-  because sessions expose only Omnigent's bridged tools to Pi.
+  because sessions expose only Triune's bridged tools to Pi.
 - `skills/<name>/SKILL.md` and `.pi/skills/<name>/SKILL.md` are passed with
   `--skill` and follow the `skills` filter; when both roots define the same
   name, `skills/` wins.
@@ -175,7 +175,7 @@ exposed.
 
 ### Pi system prompt
 
-With `harness: pi` or `pi-native`, `system_prompt_mode` controls how Omnigent
+With `harness: pi` or `pi-native`, `system_prompt_mode` controls how Triune
 sends agent instructions to Pi:
 
 - `append` (default) keeps Pi's base prompt and appends agent instructions
@@ -238,13 +238,13 @@ apply on the next terminal launch; explicit native CLI arguments remain availabl
 
 `harness: copilot` runs the agent through the
 [GitHub Copilot SDK](https://pypi.org/project/github-copilot-sdk/)
-(`pip install "omnigent[copilot]"`). The SDK bundles the Copilot CLI it drives
+(from a Triune source checkout, `uv sync --locked --extra copilot`). The SDK bundles the Copilot CLI it drives
 as a backing server, so no separate CLI install is needed. Like cursor and
 antigravity it talks only to GitHub's Copilot backend — there is no Databricks
 gateway / `auth.type: databricks` path. Authenticate with a **GitHub token** that
 carries Copilot access: a fine-grained PAT with the "Copilot Requests"
 permission, or an OAuth token from the GitHub CLI (`gh auth token`) / Copilot
-CLI. Resolution: spec `auth.api_key` → a token registered via `omnigent setup`
+CLI. Resolution: spec `auth.api_key` → a token registered via `triune setup`
 (the `copilot:` config block) → ambient `COPILOT_GITHUB_TOKEN` / `GH_TOKEN` /
 `GITHUB_TOKEN`. Choose a Copilot model id (e.g. `claude-haiku-4.5`, `gpt-5-mini`,
 or omit for auto-select) rather than a `databricks-*` id. Classic `ghp_` PATs are
@@ -278,16 +278,16 @@ executor:
   model: kimi-k2-turbo
 ```
 
-By default Kimi authenticates against Moonshot AI's backend — Omnigent
+By default Kimi authenticates against Moonshot AI's backend — Triune
 declares no `executor.auth` block. To route through a gateway, either set
 `HARNESS_KIMI_GATEWAY_BASE_URL` + `HARNESS_KIMI_GATEWAY_API_KEY` in the
 shell, declare a key/gateway provider in `~/.omnigent/config.yaml`, or use
-`executor.auth: {type: databricks, profile: …}` and let Omnigent resolve
+`executor.auth: {type: databricks, profile: …}` and let Triune resolve
 the workspace.
 
 CLI flags such as `--harness` and `--model` can override or supply missing
 executor values for a run. Databricks credentials come from the spec's
-`executor.auth` block or your `omnigent setup` provider config — there is
+`executor.auth` block or your `triune setup` provider config — there is
 no profile flag.
 
 ## Qwen Code
@@ -312,7 +312,7 @@ Register commands in `~/.omnigent/config.yaml` under `acp.agents`; the slug is
 derived from the agent name.
 
 OpenClaw's Gateway ACP bridge is one such server. It rejects per-session
-`mcpServers`, so disable Omnigent's MCP relay for that entry and let OpenClaw
+`mcpServers`, so disable Triune's MCP relay for that entry and let OpenClaw
 use its own tools, routing, memory, and channels:
 
 ```yaml
@@ -323,7 +323,7 @@ acp:
       omnigent_mcp: false
 ```
 
-Then run it with `omni run --harness acp:openclaw` or select `OpenClaw` in the
+Then run it with `triune run --harness acp:openclaw` or select `OpenClaw` in the
 app. See the [OpenClaw integration guide](openclaw.md) for registry import,
 Gateway setup, and compatibility details.
 
@@ -436,9 +436,9 @@ The requirements are checked on the machine running the sandbox, not the UI:
   enclosing container must allow namespace creation/entry and OverlayFS mounts.
   For example, Ubuntu 24.04's AppArmor restrictions can block unprivileged user
   namespaces even on a recent kernel; use an administrator-approved policy for
-  the sandbox launcher. Omnigent does not change host security settings.
+  the sandbox launcher. Triune does not change host security settings.
 
-Omnigent attempts the actual mounts and tests tmpfs user extended attributes
+Triune attempts the actual mounts and tests tmpfs user extended attributes
 when initializing a copy-on-write environment. It does not reject a working
 distro backport based on `uname`, or accept a host solely because its kernel is
 new enough. Failure reports the running kernel,
@@ -507,7 +507,7 @@ os_env:
 Prefer the narrowest filesystem and network access that supports the task. Do
 not pass secrets through the environment unless the tool genuinely needs them.
 
-You usually don't need to choose a `sandbox.type` — omit it and Omnigent picks
+You usually don't need to choose a `sandbox.type` — omit it and Triune picks
 the platform default (`linux_bwrap` on Linux, `darwin_seatbelt` on macOS, or
 `windows_jobobject` on Windows), so the same YAML works across platforms. Use
 `type: auto` to explicitly request the platform-default sandbox backend:
@@ -669,7 +669,7 @@ HTTP-uploaded agent bundles cannot declare server-side Python or TypeScript
 source-file tools, server-side callable tools, unregistered policy handlers, or
 absolute/escaping working directories. This includes terminals and nested
 agents. These restrictions apply on multi-user servers and, starting in 0.19.0,
-on local single-user servers too, including bundles uploaded by `omnigent run`.
+on local single-user servers too, including bundles uploaded by `triune run`.
 Loopback requests can originate from agents as well as the operator.
 
 Invalid uploads return HTTP 400 before tools or policy handlers are imported.
@@ -690,9 +690,9 @@ To migrate an existing uploaded agent:
 4. Make subsequent MCP configuration changes on the migrated agent. Removing an
    MCP server from an old agent does not bypass bundle validation.
 
-Use operator-registered agents (`omnigent server --agent ./my-agent`) for trusted
+Use operator-registered agents (`triune server --agent ./my-agent`) for trusted
 in-process tools, or MCP/client tools for uploaded agents.
-`omnigent run ./my-agent --no-session` starts a dedicated local server with
+`triune run ./my-agent --no-session` starts a dedicated local server with
 trusted startup registration and creates its session from that registration. Direct trusted
 in-process callers retain the explicit
 `validate_agent_bundle(..., enforce_handler_allowlist=False)` opt-out; HTTP
@@ -748,7 +748,7 @@ For client-provided tools, use `runtime: client` and do not set `callable`.
 ### Linux desktop keyrings
 
 The host and runner inherit `DBUS_SESSION_BUS_ADDRESS` and `XDG_RUNTIME_DIR`
-to resolve credentials stored by `omnigent setup`. Restart the host from the
+to resolve credentials stored by `triune setup`. Restart the host from the
 desktop session after changing these values. The keyring must be available
 and unlocked.
 
@@ -961,5 +961,5 @@ tools:
 - Run the YAML before publishing it:
 
   ```bash
-  omnigent run path/to/agent.yaml -p "Say hello"
+  triune run path/to/agent.yaml -p "Say hello"
   ```

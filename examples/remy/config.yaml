@@ -1,3 +1,4 @@
+# Modified for Triune; inherited notices remain applicable.
 # Remy — an assistant that remembers.
 #
 # Remy uses Hindsight long-term memory so what you tell it in one run is
@@ -8,14 +9,14 @@
 # Memory is keyed by the agent id, so all of Remy's runs share one memory bank.
 #
 # Setup:
-#   pip install 'omnigent[hindsight]'
+#   uv sync --locked --extra hindsight  # from a Triune source checkout
 #   export HINDSIGHT_API_KEY=hsk_...        # https://ui.hindsight.vectorize.io
 #
 # Usage:
-#   omnigent run examples/remy
+#   triune run examples/remy
 #
 # Remy runs on the Claude Agent SDK harness, so configure a Claude provider
-# first (e.g. `omnigent setup`, or export ANTHROPIC_API_KEY).
+# first (e.g. `triune setup`, or export ANTHROPIC_API_KEY).
 
 spec_version: 1
 name: remy

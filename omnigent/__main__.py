@@ -1,4 +1,6 @@
-"""Allow running Omnigent as ``python -m omnigent``."""
+"""Allow running Triune as ``python -m omnigent``."""
+
+# Modified for Triune.
 
 from omnigent.cli import main
 

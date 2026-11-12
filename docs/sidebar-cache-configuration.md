@@ -45,7 +45,7 @@ sessions and pins loaded before `/v1/me` finishes recover without another list
 request, including when polling is disabled. Pin responses retain fetched rows
 so owned-only filtering can update as identity becomes available.
 
-All three booleans default to `true`, preserving the OSS Inbox and pin behavior.
+All three booleans default to `true`, preserving the self-hosted Inbox and pin behavior.
 To avoid Shared-list requests in My sessions, set `inboxIncludesShared: false`.
 Set `pinsIncludeShared: false` as well to avoid the separate shared-pin request.
 
@@ -120,7 +120,7 @@ cursor exactly matching an ID in the original unfiltered page qualifies for
 legacy row-ID repair. Cursors are never decoded.
 
 Managed hosts resolve their own feature flags and pass these configuration
-values through the embed integration; the OSS client has no SAFE dependency.
+values through the embed integration; the self-hosted client has no SAFE dependency.
 
 ## Verify in a browser
 

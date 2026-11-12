@@ -2,7 +2,7 @@
 
 The orchestrator surface for inspecting and materializing agents. These
 tools are **runner-dispatched**: the runner has no in-process stores, so
-each proxies the Omnigent server's existing REST endpoints over
+each proxies the Triune server's existing REST endpoints over
 ``server_client`` (same channel and security posture as the
 ``sys_session_*`` family in
 :mod:`omnigent.tools.builtins.spawn`). They ship as schema-only
@@ -20,6 +20,8 @@ each proxies the Omnigent server's existing REST endpoints over
 
 See ``designs/ORCHESTRATOR_SYS_TOOLS.md`` for the full surface.
 """
+
+# Modified for Triune.
 
 from __future__ import annotations
 

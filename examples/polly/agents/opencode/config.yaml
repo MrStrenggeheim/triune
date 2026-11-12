@@ -1,3 +1,4 @@
+# Modified for Triune; inherited notices remain applicable.
 spec_version: 1
 name: opencode
 description: OpenCode coding sub-agent — implements, cross-vendor reviews, or explores a scoped task in its own worktree.
@@ -5,7 +6,7 @@ description: OpenCode coding sub-agent — implements, cross-vendor reviews, or 
 # Native OpenCode server harness: the runner owns `opencode serve` + an SSE
 # forwarder and injects each turn over loopback HTTP. It runs in its own
 # terminal the human can open in the UI's Subagents panel and TAKE OVER.
-# OpenCode's permission prompts surface as web approval cards (and Omnigent
+# OpenCode's permission prompts surface as web approval cards (and Triune
 # policies apply), so risky actions are gated rather than auto-bypassed.
 executor:
   type: omnigent

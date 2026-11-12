@@ -9,6 +9,8 @@ observer imports this module on every tool completion, so the REST client and
 ``httpx`` load inside the functions that use them.
 """
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import logging
@@ -1149,7 +1151,7 @@ class AzureDevOpsPullRequests:
 
         :raises ValueError: Always.
         """
-        raise ValueError("Merging Azure DevOps pull requests from Omnigent is not supported yet.")
+        raise ValueError("Merging Azure DevOps pull requests from Triune is not supported yet.")
 
     def merge(
         self,
@@ -1163,7 +1165,7 @@ class AzureDevOpsPullRequests:
 
         :raises ValueError: Always.
         """
-        raise ValueError("Merging Azure DevOps pull requests from Omnigent is not supported yet.")
+        raise ValueError("Merging Azure DevOps pull requests from Triune is not supported yet.")
 
     def disable_auto_merge(
         self,
@@ -1174,7 +1176,7 @@ class AzureDevOpsPullRequests:
 
         :raises ValueError: Always.
         """
-        raise ValueError("Merging Azure DevOps pull requests from Omnigent is not supported yet.")
+        raise ValueError("Merging Azure DevOps pull requests from Triune is not supported yet.")
 
     def review_candidates(
         self,

@@ -19,6 +19,8 @@ config byte-for-byte and needs no TOML writer: a trailing ``[[hooks]]`` table
 array is always valid regardless of what section preceded it.
 """
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import contextlib
@@ -86,7 +88,7 @@ def render_kimi_hooks_toml(*, bridge_dir: Path, python_executable: str | None = 
     # to answer the card — after which kimi's own TUI prompt stands.
     return (
         "\n"
-        "# --- Omnigent native hooks (auto-generated; do not edit) ---\n"
+        "# --- Triune native hooks (auto-generated; do not edit) ---\n"
         "[[hooks]]\n"
         'event = "PreToolUse"\n'
         f'command = "{pre}"\n'

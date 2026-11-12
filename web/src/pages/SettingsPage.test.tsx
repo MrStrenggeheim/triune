@@ -1,3 +1,4 @@
+// Modified for Triune.
 // Tests for the Settings content panel. The section nav lives in the sidebar
 // card (see settingsNav); the page renders only the section named by the URL.
 // Covers the Appearance theme picker, the auth-gated Account section, and the
@@ -453,7 +454,7 @@ describe("SettingsPage", () => {
   it("groups General settings into titled outlined cards and hides its description on mobile", () => {
     renderPage("/settings/general");
 
-    expect(screen.getByText("Configure general Omnigent behavior.")).toHaveClass("max-md:hidden");
+    expect(screen.getByText("Configure general Triune behavior.")).toHaveClass("max-md:hidden");
 
     for (const testId of [
       "settings-group-composer",
@@ -608,7 +609,7 @@ describe("SettingsPage", () => {
     expect(
       screen.getByText("Set text across the interface. Icons and spacing stay fixed."),
     ).toHaveClass("max-md:hidden");
-    expect(screen.getByText("Choose how Omnigent looks on this device.")).toHaveClass(
+    expect(screen.getByText("Choose how Triune looks on this device.")).toHaveClass(
       "max-md:hidden",
     );
     for (const testId of [

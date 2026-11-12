@@ -1,5 +1,8 @@
 # Omnigent bot identities & attribution setup
 
+> Upstream Omnigent operations reference: these identities and GitHub App settings belong to `omnigent-ai/omnigent`, not Triune.
+> For the maintained fork and current commands, see the [Triune fork guide](custom-fork.md).
+
 This doc explains how commits and automated PR reviews in the
 `omnigent-ai/omnigent` repo are attributed, and how the supporting GitHub App
 was set up. There are **two deliberately distinct identities** — do not

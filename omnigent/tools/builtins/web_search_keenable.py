@@ -23,6 +23,8 @@ Configured in the agent spec::
 See https://docs.keenable.ai
 """
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import logging
@@ -44,7 +46,7 @@ _DEFAULT_MAX_RESULTS: int = 5
 
 # Identifies this integration to Keenable via the ``X-Keenable-Title`` header
 # so traffic from the Omnigent provider is attributable.
-_CLIENT_TITLE = "Omnigent"
+_CLIENT_TITLE = "Triune"
 
 
 def _keenable_base_url() -> str:

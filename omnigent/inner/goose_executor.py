@@ -29,6 +29,8 @@ Requirements:
     provider (``goose configure`` → keyring / ``~/.config/goose/config.yaml``).
 """
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import asyncio
@@ -594,7 +596,7 @@ class GooseExecutor(Executor):
             else:
                 error = {
                     "code": -32601,
-                    "message": f"omnigent: unsupported ACP request method {method!r}",
+                    "message": f"triune: unsupported ACP request method {method!r}",
                 }
         except _AcpRequestError as exc:
             error = {"code": exc.code, "message": exc.message}
@@ -622,7 +624,7 @@ class GooseExecutor(Executor):
         if self._os_environment is None:
             env = create_os_environment(self._os_env)
             if env is None:
-                raise _AcpRequestError(-32603, "omnigent: no os_env for fs delegation")
+                raise _AcpRequestError(-32603, "triune: no os_env for fs delegation")
             self._os_environment = env
         return self._os_environment
 

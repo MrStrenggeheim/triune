@@ -1,5 +1,8 @@
 # Cursor-native TUI Mirror — Elicitation Plan
 
+> Historical upstream Omnigent design discussion; names, commands and release assumptions are retained as context.
+> For current Triune setup and compatibility, see the [fork guide](custom-fork.md).
+
 > **⚠️ SUPERSEDED — historical.** The shipped implementation uses **transcript-based**
 > detection (tailing cursor's chat `store.db` for pending tool calls), not pane scraping. See
 > [`cursor-native-elicitation.md`](./cursor-native-elicitation.md) for the current design.

@@ -3,7 +3,7 @@
 This class exists solely to provide the tool **schema** to
 :class:`~omnigent.tools.manager.ToolManager` so the LLM can see and
 call ``sys_advise_models``.  Execution is handled server-side: the
-Omnigent server intercepts the ``tools/call`` in
+Triune server intercepts the ``tools/call`` in
 :func:`~omnigent.server.routes.sessions._handle_advise_models_mcp`
 before the MCP proxy ever reaches the runner.
 
@@ -12,6 +12,8 @@ The tool is registered by ``ToolManager`` when:
 - ``RuntimeCaps.routing_client`` is configured (a server ``llm:`` block, or a
   ``routing.provider=external`` block).
 """
+
+# Modified for Triune.
 
 from __future__ import annotations
 

@@ -56,6 +56,8 @@ launch (:func:`_launch_and_record`) remains only as a defensive fallback for the
 unexpected case where the runner produces no terminal in the wait window.
 """
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import asyncio
@@ -554,7 +556,7 @@ def _run_with_remote_server(
         asyncio.run(_drive())
     except httpx.ConnectError as exc:
         raise click.ClickException(
-            f"Could not reach the omnigent server at {base_url}. "
+            f"Could not reach the Triune server at {base_url}. "
             "Confirm the server is running and reachable from here "
             f"(e.g. `curl {base_url}/health`), and that --server is correct."
         ) from exc

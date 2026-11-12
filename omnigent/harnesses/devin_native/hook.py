@@ -27,6 +27,8 @@ Kept deliberately import-light: it runs on every tool call, so it must not pull
 in the runner or server stacks.
 """
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import json
@@ -222,7 +224,7 @@ def _mirror_permission_request(
                     if refreshed:
                         headers = refreshed
                         print(
-                            "omnigent devin permission-request hook: Omnigent auth "
+                            "omnigent devin permission-request hook: Triune auth "
                             "expired; re-minted token and retrying",
                             file=sys.stderr,
                         )

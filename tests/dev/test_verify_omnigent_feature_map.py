@@ -1,3 +1,4 @@
+# Modified for Triune; inherited notices remain applicable.
 """The verify-omnigent feature map stays consistent with the repository.
 
 The map (``feature-map/``) points at tests instead of
@@ -30,7 +31,7 @@ _SECTIONS = [
 _TEST_REF = re.compile(r"\b(tests/[\w/.-]+\.py)(?:::(\w+))?")
 _UI_LANES = ("e2e_ui", "browser_ui")
 _UI_AREA_REF = re.compile(r"\btests/(e2e_ui|browser_ui)/(\w+)/")
-_CLI_REF = re.compile(r"`omnigent ([a-z][\w-]*)")
+_CLI_REF = re.compile(r"`(?:triune|omnigent) ([a-z][\w-]*)")
 
 
 def _feature_files() -> list[Path]:

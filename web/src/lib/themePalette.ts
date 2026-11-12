@@ -1,3 +1,4 @@
+// Modified for Triune.
 // Persisted, app-global color-palette preference.
 //
 // The web UI has two independent appearance axes:
@@ -281,7 +282,7 @@ export const PALETTES: readonly PaletteMeta[] = [
   },
   {
     id: "omni",
-    label: "Omnigent",
+    label: "Triune",
     blurb: "The signature pink brand look.",
     light: {
       bg: "#fdf7fb",

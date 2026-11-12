@@ -20,6 +20,8 @@ Everything else surfaces a copy-pasteable hint to the existing
 --resume`` shape is tracked separately.
 """
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import asyncio
@@ -313,7 +315,7 @@ def _read_wrapper_label_local(*, conv_id: str) -> str | None:
     if conversation is None:
         raise click.ClickException(
             f"Conversation {conv_id!r} not found in the local persistent store. "
-            "Pass --server if the conversation lives on a remote Omnigent server.",
+            "Pass --server if the conversation lives on a remote Triune server.",
         )
     labels = conversation.labels
     return labels.get(_WRAPPER_LABEL_KEY) if isinstance(labels, dict) else None

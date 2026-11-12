@@ -1,6 +1,6 @@
+// Modified for Triune.
 import { useEffect, useRef, useState } from "react";
-import { OttoEyes } from "@/components/OttoEyes";
-import { OttoIcon } from "@/components/icons/OttoIcon";
+import { OmnigentLogo } from "@/components/OmnigentLogo";
 import { withBasePath } from "@/lib/basePath";
 import { useAppName, useLogoUrl } from "@/lib/branding";
 import { authenticatedFetch } from "@/lib/identity";
@@ -87,11 +87,7 @@ function acquireLogo(path: string, generation: number): BlobUrlHandle {
 }
 
 function FallbackLogo({ className, variant }: { className?: string; variant: "eyes" | "icon" }) {
-  return variant === "eyes" ? (
-    <OttoEyes className={className} />
-  ) : (
-    <OttoIcon className={className} aria-hidden />
-  );
+  return <OmnigentLogo className={className} aria-hidden={variant === "icon"} />;
 }
 
 function EmbeddedBrandLogo({
@@ -158,8 +154,8 @@ function StandaloneBrandLogo({
 
 /**
  * The app's brand logo: the operator's custom logo when configured, else the
- * Otto mascot. `variant` picks the logo variant and matching fallback —
- * `"eyes"` (hero) → `main`/`OttoEyes`, `"icon"` (indicators) → `loading`/`OttoIcon`.
+ * approved three-stroke mark. The existing variant names select the operator
+ * logo: `"eyes"` (hero) uses `main`; `"icon"` (indicators) uses `loading`.
  */
 export function BrandLogo({
   className,

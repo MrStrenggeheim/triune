@@ -1,5 +1,8 @@
 # Harness test bench: a standardized capability conformance suite
 
+> Historical upstream Omnigent design discussion; names, commands and release assumptions are retained as context.
+> For current Triune setup and compatibility, see the [fork guide](custom-fork.md).
+
 A pluggable bench that, given a harness, empirically reports its verdict on
 every capability dimension in the harness support matrix — "is model switching
 available", "is steering possible", "does policy DENY actually block a call" —

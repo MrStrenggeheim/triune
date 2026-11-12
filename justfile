@@ -159,7 +159,7 @@ electron-run *flags:
         arm64) archdir="mac-arm64" ;;
         *) archdir="mac" ;;  # electron-builder names the x64 output "mac"
     esac
-    find_app() { ls -d "web/electron/dist-dev/$archdir/Omnigent Dev.app" 2>/dev/null | head -1 || true; }
+    find_app() { ls -d "web/electron/dist-dev/$archdir/Triune Dev.app" 2>/dev/null | head -1 || true; }
     app="$(find_app)"
     if [ "$rebuild" = 1 ] || [ -z "$app" ]; then
         echo "Building the packaged app (this takes a few minutes)…"
@@ -168,9 +168,9 @@ electron-run *flags:
         app="$(find_app)"
     fi
     [ -n "$app" ] || { echo "No $archdir build found after building."; exit 1; }
-    echo "Quitting any running Omnigent Dev…"
-    osascript -e 'quit app "Omnigent Dev"' 2>/dev/null || true
-    pkill -x 'Omnigent Dev' 2>/dev/null || true
+    echo "Quitting any running Triune Dev…"
+    osascript -e 'quit app "Triune Dev"' 2>/dev/null || true
+    pkill -x 'Triune Dev' 2>/dev/null || true
     sleep 1
     if [ "$reset_state" = 1 ]; then
         # Uninstall the CLI. The shared uninstaller exits non-zero both when no
@@ -189,9 +189,9 @@ electron-run *flags:
         # Wipe the desktop app data directly so a fresh-user reset works even with
         # no CLI installed (the uninstaller's global guard skips desktop-data in
         # that case). Intentional destroy — see the confirmation above.
-        rm -rf "$HOME/Library/Application Support/Omnigent Dev" \
-               "$HOME/Library/Caches/Omnigent Dev" \
-               "$HOME/Library/Logs/Omnigent Dev"
+        rm -rf "$HOME/Library/Application Support/Triune Dev" \
+               "$HOME/Library/Caches/Triune Dev" \
+               "$HOME/Library/Logs/Triune Dev"
     fi
     if [ "$v2" = 1 ]; then
         echo "Launching $app (v2 flow forced)"
@@ -272,10 +272,10 @@ typecheck-python: _ensure-uv
 
 [group('lint')]
 lint-ts:
-    pnpm install --frozen-lockfile --filter web --filter omnigent-vscode
+    pnpm install --frozen-lockfile --filter web --filter triune-vscode
     pnpm --filter web run lint
     pnpm --filter web run type-check
-    pnpm --filter omnigent-vscode run type-check
+    pnpm --filter triune-vscode run type-check
 
 # --- Lockfile maintenance ---
 

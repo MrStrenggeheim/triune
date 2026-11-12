@@ -1,5 +1,7 @@
 """Process entry point used by launchd and systemd host services."""
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import argparse
@@ -40,10 +42,10 @@ def _wait_while_workspace_is_served(server: str) -> None:
 
 def main() -> int:
     """Run the foreground host command and normalize permanent failures."""
-    parser = argparse.ArgumentParser(description="Omnigent host service")
+    parser = argparse.ArgumentParser(description="Triune host service")
     mode = parser.add_mutually_exclusive_group(required=True)
-    mode.add_argument("--server", help="Remote Omnigent server URL.")
-    mode.add_argument("--local", action="store_true", help="Run a local Omnigent server.")
+    mode.add_argument("--server", help="Remote Triune server URL.")
+    mode.add_argument("--local", action="store_true", help="Run a local Triune server.")
     args = parser.parse_args()
 
     from omnigent.cli import cli

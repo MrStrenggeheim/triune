@@ -34,6 +34,8 @@ non-loopback (remote) deploys where the server's machine ≠ the
 operator's.
 """
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import getpass
@@ -236,7 +238,7 @@ def _mint_loopback_cli_token(
     except Exception as exc:  # noqa: BLE001 — best-effort, must not block boot
         logger.warning(
             "accounts: failed to write loopback CLI token (%s) — "
-            "`omnigent run` may need `omnigent login`",
+            "`triune run` may need `triune login`",
             exc,
         )
         return False

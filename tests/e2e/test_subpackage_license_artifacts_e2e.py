@@ -1,3 +1,4 @@
+# Modified for Triune; inherited notices remain applicable.
 from __future__ import annotations
 
 import tarfile
@@ -29,7 +30,14 @@ def test_subpackage_artifacts_contain_canonical_legal_files(
         dist_info = metadata_path.rsplit("/", 1)[0]
         for filename in LEGAL_FILES:
             archived = f"{dist_info}/licenses/{filename}"
-            assert wheel.read(archived) == (REPO_ROOT / filename).read_bytes()
+            assert (
+                wheel.read(archived)
+                == (
+                    REPO_ROOT / "LICENSES" / "Apache-2.0.txt"
+                    if filename == "LICENSE"
+                    else REPO_ROOT / filename
+                ).read_bytes()
+            )
 
     sdist_path = next(tmp_path.glob(f"{wheel_prefix}-*.tar.gz"))
     with tarfile.open(sdist_path, "r:gz") as sdist:
@@ -42,7 +50,14 @@ def test_subpackage_artifacts_contain_canonical_legal_files(
         for filename in LEGAL_FILES:
             archived_file = sdist.extractfile(f"{archive_root}/{filename}")
             assert archived_file is not None
-            assert archived_file.read() == (REPO_ROOT / filename).read_bytes()
+            assert (
+                archived_file.read()
+                == (
+                    REPO_ROOT / "LICENSES" / "Apache-2.0.txt"
+                    if filename == "LICENSE"
+                    else REPO_ROOT / filename
+                ).read_bytes()
+            )
 
 
 def _assert_license_metadata(metadata: Message) -> None:

@@ -85,7 +85,7 @@ the header menu), and each place is a separate entry point.
 - `compaction-model-recovery`: a Codex turn that failed while compacting on the
   previous model shows the provider's error and why on a gray error card, with
   **Fork session…**. A spent-budget card is gray for every harness, since it
-  isn't an Omnigent failure. Rate-limit and transient failures keep **Retry**
+  isn't a Triune failure. Rate-limit and transient failures keep **Retry**
   instead and point to Fork in the session menu. A fork onto another model
   rebuilds the conversation from its history instead of cloning Codex's rollout,
   and fails rather than starting empty if that rebuild fails; the original is
@@ -233,7 +233,7 @@ turns. The header's Fork action copies the whole session instead. In either
 dialog, keep the agent or choose another built-in or custom agent; for a
 native target, the dialog also shows model, reasoning effort, and permission
 mode pickers. Your custom
-agents (installed with `omnigent agent add`, imported in the Create custom agent
+agents (installed with `triune agent add`, imported in the Create custom agent
 dialog, or uploaded by running a session with their spec) stay available until
 you remove them.
 
@@ -281,7 +281,7 @@ status and live session updates, including when the app is embedded.
 
 **Reconnect:** in a session whose agent stopped, use the reconnect affordance
 in the chat; the dialog shows the command for this situation (for example
-`omnigent host` when the host is offline, or the harness's `--resume` command
+`triune host` when the host is offline, or the harness's `--resume` command
 when a local session is stranded). In the desktop app, **Reconnect host** acts
 directly for this machine or a recognized Arca host; Arca's connect console
 asks for confirmation before running, and a failed attempt opens the dialog,

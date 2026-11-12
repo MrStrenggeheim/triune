@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { PlusIcon, SearchIcon, SettingsIcon, type LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { HeaderActionButton } from "@/components/HeaderActionButton";
@@ -10,7 +11,8 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { OmnigentLogo } from "@/components/OmnigentLogo";
+import { BrandLogo } from "@/components/BrandLogo";
+import { useAppName } from "@/lib/branding";
 import { SidebarToggle } from "@/shell/SidebarToggle";
 
 export interface WorkbenchOpenAction {
@@ -34,6 +36,7 @@ export function WorkbenchAppBar({
   onSettings: () => void;
   openActions: WorkbenchOpenAction[];
 }) {
+  const appName = useAppName();
   return (
     <header
       className="workbench-app-bar relative flex h-9 min-h-9 shrink-0 items-center gap-2 border-b bg-sidebar px-2"
@@ -47,8 +50,8 @@ export function WorkbenchAppBar({
           tooltipShortcut={[MOD_KEY, "B"]}
           onClick={onToggleSidebar}
         />
-        <OmnigentLogo className="size-7 shrink-0" />
-        <span className="hidden text-base font-bold sm:block">Omnigent</span>
+        <BrandLogo className="size-7 shrink-0" />
+        <span className="hidden text-base font-bold sm:block">{appName}</span>
       </div>
       <Button
         variant="outline"

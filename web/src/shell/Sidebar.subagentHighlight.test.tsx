@@ -1,4 +1,6 @@
+// Modified for Triune.
 import { conversationPage } from "@/test/sidebarMockHelpers";
+import wordmarkAsset from "@/assets/omnigent-wordmark.svg";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/hooks/useScopeCache", () => import("@/test/mockScopeCache"));
@@ -115,14 +117,14 @@ function rowFor(id: string): HTMLElement {
 }
 
 describe("sidebar highlight while viewing a sub-agent", () => {
-  it("renders the official Omnigent wordmark instead of styled text", () => {
+  it("renders the Triune wordmark instead of styled text", () => {
     mockConversations([]);
     renderAt("/");
 
     const wordmark = screen.getByTestId("sidebar-wordmark");
-    expect(wordmark).toHaveAttribute("alt", "Omnigent");
+    expect(wordmark).toHaveAttribute("alt", "Triune");
     expect(wordmark).toHaveClass("h-[15px]", "dark:invert");
-    expect(wordmark.getAttribute("src")).toContain("omnigent-wordmark");
+    expect(wordmark).toHaveAttribute("src", wordmarkAsset);
   });
 
   it("sits flush to the window edge, no floating margin or border", () => {

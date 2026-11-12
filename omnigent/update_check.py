@@ -1,37 +1,11 @@
-"""Lightweight CLI update reminder.
+"""Triune installed metadata and compatibility helpers for legacy update callers.
 
-Two install shapes are supported:
-
-* **Dev clone** (``git clone … && uv sync`` / ``pip install -e .``): we
-  walk up from this module to find a ``.git/`` directory, then run
-  ``git fetch`` and ``rev-list`` to count how many commits ``HEAD`` is
-  behind ``origin/main`` (or ``origin/master``). The result is cached
-  to ``~/.omnigent/.update_check.json`` so the (potentially slow)
-  ``git fetch`` only runs once per staleness window. The notice points
-  the user at ``git pull``.
-
-* **Installed wheel** (``uv tool install omnigent``,
-  ``pip install omnigent``, ``pipx install``, Homebrew, etc.): no clone
-  is reachable on disk, so we compare the installed version against the
-  latest release on the *configured package index* (via the Simple
-  Repository API — :func:`fetch_latest_version`) and nag *only when a
-  strictly newer release exists* — never merely because the install is
-  old. The index is resolved from ``OMNIGENT_INDEX_URL`` /
-  ``UV_INDEX_URL`` / ``PIP_INDEX_URL`` or, failing those, the uv/pip
-  *config files* (``uv.toml`` / ``pip.conf``); default pypi.org. So it
-  works on corporate mirrors and air-gapped networks — even when the
-  mirror is configured in a file rather than an env var — and stays
-  consistent with what ``omni upgrade`` actually pulls. To avoid adding
-  latency to the hot
-  path, the foreground only ever reads the cached "latest version" and
-  prints from it; the (network) lookup runs in a detached background
-  process (:func:`refresh_update_cache`) that refreshes the cache for the
-  next invocation. The notice fires once per new release (tracked via
-  ``last_notified_version``) and points the user at ``omni upgrade``.
-
-The dispatcher in ``maybe_show_update_notice`` picks the shape based on
-whether a ``.git/`` directory is reachable from this module's path.
+Automatic update checks and installers are disabled for this source-only fork.
+Use TRIUNE_UPDATE_GUIDANCE to direct users to the maintained source repository.
+Legacy cache paths and helper interfaces remain compatible with existing installs.
 """
+
+# Modified for Triune.
 
 from __future__ import annotations
 
@@ -63,7 +37,17 @@ _CACHE_DIR = Path.home() / ".omnigent"
 _CACHE_FILE = _CACHE_DIR / ".update_check.json"
 _STALENESS_SECONDS = 4 * 60 * 60  # 4 hours
 _GIT_TIMEOUT_SECONDS = 5
-_DIST_NAME = "omnigent"
+_DIST_NAME = "triune"
+_AUTOMATIC_UPDATES_ENABLED = False
+TRIUNE_SOURCE_URL = "https://github.com/MrStrenggeheim/triune"
+TRIUNE_UPDATE_GUIDANCE = (
+    "Automatic package and nightly upgrades are disabled for Triune. "
+    "Update your Triune checkout from " + TRIUNE_SOURCE_URL + " (branch main) "
+    "with `git pull --ff-only`, then follow that checkout's README to rebuild "
+    "and reinstall Triune with your existing extras. "
+    "For an installed wheel, obtain a new build from that source. "
+    "No package index or release check was performed."
+)
 # "Is a newer release out?" is answered against the *configured* package
 # index via the Simple Repository API (PEP 503/691) — the universal
 # protocol every index speaks (pypi.org, a corporate mirror, devpi,
@@ -193,6 +177,9 @@ def maybe_show_update_notice() -> None:
     check is disabled by env var, when metadata is missing, when
     ``git`` is unavailable, or when any I/O error occurs.
     """
+    if not _AUTOMATIC_UPDATES_ENABLED:
+        return
+
     if os.environ.get(_ENV_SKIP):
         return
 
@@ -214,6 +201,9 @@ def _run_dev_clone_check(repo_root: Path) -> None:
     :param repo_root: Absolute path to the dev clone's Git repo root,
         e.g. ``Path("/Users/me/omnigent")``.
     """
+    if not _AUTOMATIC_UPDATES_ENABLED:
+        return
+
     try:
         cached = _read_cache()
         if cached is not None and cached.kind == "clone" and not _is_stale(cached):
@@ -267,6 +257,9 @@ def _run_installed_wheel_check() -> None:
     the *next* invocation has fresh data. This keeps the hot path at zero
     added latency — the failure mode of the old install-age nag.
     """
+    if not _AUTOMATIC_UPDATES_ENABLED:
+        return
+
     try:
         info = _read_installed_wheel_info()
     except (OSError, ValueError, KeyError):
@@ -518,6 +511,9 @@ def fetch_latest_version(
         pre-releases, ``"0.2.0rc1"``), or ``None`` on any network / parse
         error, a non-200 response, or when no matching release is found.
     """
+    if not _AUTOMATIC_UPDATES_ENABLED:
+        return None
+
     import httpx
     from packaging.utils import canonicalize_name
 
@@ -629,6 +625,9 @@ def refresh_update_cache() -> None:
     the shared cache, preserving ``last_notified_version`` so a pending
     "fire once per release" notice is not re-armed.
     """
+    if not _AUTOMATIC_UPDATES_ENABLED:
+        return
+
     # Background best-effort: a crash here must never surface, so swallow
     # everything (the early returns below still exit cleanly).
     with contextlib.suppress(Exception):
@@ -668,6 +667,9 @@ def _spawn_background_refresh() -> None:
     Any spawn failure is swallowed — the worst case is simply that the
     cache is refreshed on a later invocation instead.
     """
+    if not _AUTOMATIC_UPDATES_ENABLED:
+        return
+
     from omnigent.inner import _proc
 
     with contextlib.suppress(OSError, ValueError):
@@ -906,6 +908,9 @@ def _print_notice(commits_behind: int) -> None:
     :param commits_behind: Number of commits the local clone is
         behind, e.g. ``3``.
     """
+    if not _AUTOMATIC_UPDATES_ENABLED:
+        return
+
     from rich.console import Console
     from rich.panel import Panel
     from rich.text import Text
@@ -932,6 +937,9 @@ def _print_pypi_notice(current: str, latest: str) -> None:
     :param current: The installed version, e.g. ``"0.1.0"``.
     :param latest: The newer release available on PyPI, e.g. ``"0.2.0"``.
     """
+    if not _AUTOMATIC_UPDATES_ENABLED:
+        return
+
     from rich.console import Console
     from rich.panel import Panel
     from rich.text import Text
@@ -996,10 +1004,9 @@ def _get_distribution() -> importlib.metadata.Distribution | None:
         or ``None`` when not installed (e.g. running directly from a
         source tarball without ``pip install``).
     """
-    try:
-        return importlib.metadata.distribution(_DIST_NAME)
-    except importlib.metadata.PackageNotFoundError:
-        return None
+    from omnigent.version import installed_distribution
+
+    return installed_distribution()
 
 
 def _unredact_ssh_userinfo(vcs_url: str) -> str:
@@ -1529,6 +1536,9 @@ def _build_upgrade_suggestion(
         (so the interactive prompt is offered) or a prose fallback
         (so the prompt is suppressed).
     """
+    if not _AUTOMATIC_UPDATES_ENABLED:
+        return _UpgradeSuggestion(TRIUNE_UPDATE_GUIDANCE, runnable=False)
+
     installer = info.detected_installer or info.installer
     pre = _PRERELEASE_FLAG.get(installer or "", "") if allow_prerelease else ""
     extras = sorted(set(info.extras) | set(extra_overrides))
@@ -1619,7 +1629,7 @@ def _build_upgrade_suggestion(
 # Canonical public repo for nightly builds. Nightlies are git tags consumed
 # straight from GitHub (they never reach an index), so the channel lives
 # upstream by definition: fork installs also upgrade onto upstream nightlies.
-_NIGHTLY_REPO_URL = "https://github.com/omnigent-ai/omnigent"
+_NIGHTLY_REPO_URL = TRIUNE_SOURCE_URL
 
 
 def _newest_nightly_version(ls_remote_output: str) -> str | None:
@@ -1661,6 +1671,9 @@ def _latest_nightly_version(repo_url: str = _NIGHTLY_REPO_URL) -> str | None:
     :param repo_url: Repo to list tags from; defaults to the canonical repo.
     :returns: e.g. ``"0.8.0.dev20260804"``, or ``None``.
     """
+    if not _AUTOMATIC_UPDATES_ENABLED:
+        return None
+
     try:
         result = subprocess.run(
             ["git", "ls-remote", "--tags", repo_url, "refs/tags/v*.dev*"],
@@ -1727,6 +1740,10 @@ def _run_upgrade_command(command: str, console: Console) -> int:
         command string). The caller treats any non-zero return as
         "upgrade failed" and falls back to the existing install.
     """
+    if not _AUTOMATIC_UPDATES_ENABLED:
+        console.print(TRIUNE_UPDATE_GUIDANCE)
+        return -1
+
     import shlex
 
     console.print(f"[yellow]Running:[/yellow] {command}")
@@ -1787,7 +1804,8 @@ def _probe_installed_distribution() -> tuple[str | None, str | None]:
     probe = (
         "import importlib.metadata as m\n"
         "try:\n"
-        "    print(m.version('omnigent'))\n"
+        "    from omnigent.version import installed_version\n"
+        "    print(installed_version())\n"
         "except Exception:\n"
         "    print('')\n"
         "try:\n"

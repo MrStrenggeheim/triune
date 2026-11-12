@@ -24,6 +24,8 @@ remove drops a key. The click handlers call
 delete a key and write the result wholesale.
 """
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
@@ -490,7 +492,7 @@ def add_menu_options() -> list[AddOption]:
         ),
         _opt(
             "Pi — original auth",
-            "Use Pi's own auth (~/.pi/agent) as-is, without Omnigent managing the provider.",
+            "Use Pi's own auth (~/.pi/agent) as-is, without Triune managing the provider.",
             SUBSCRIPTION_KIND,
             cli="pi",
         ),

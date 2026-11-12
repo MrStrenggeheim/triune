@@ -1,3 +1,5 @@
+import type * as Host from "./host";
+// Modified for Triune.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getOmnigentServerIdentity } from "./host";
 import { applyImportedSettings, collectSettings, readSettingsFile } from "./settingsPortability";
@@ -9,7 +11,10 @@ import {
   type TerminalClipboardPreference,
 } from "./terminalClipboardPreferences";
 
-vi.mock("./host", () => ({ getOmnigentServerIdentity: vi.fn() }));
+vi.mock("./host", async (importOriginal) => ({
+  ...(await importOriginal<typeof Host>()),
+  getOmnigentServerIdentity: vi.fn(),
+}));
 
 const KEY = 'omnigent:terminal-clipboard:v1:"server-a"';
 const OTHER_KEY = 'omnigent:terminal-clipboard:v1:"server-b"';
@@ -192,6 +197,6 @@ describe("terminal clipboard preference", () => {
     expect(readTerminalClipboardPreference()).toBe("ask");
     await expect(
       readSettingsFile(new File([JSON.stringify(imported)], "settings.json")),
-    ).rejects.toThrow("valid Omnigent settings");
+    ).rejects.toThrow("valid Triune settings");
   });
 });

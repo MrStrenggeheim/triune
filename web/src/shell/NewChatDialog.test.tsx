@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { testAgent } from "@/test/agentFixtures";
 import { Toaster } from "@/components/ui/sonner";
 import { toast } from "@/lib/notifications";
@@ -6438,14 +6439,14 @@ describe("NewChatLandingScreen", () => {
 
     expect(screen.getByTestId("connect-host-dialog")).toBeTruthy();
     expect(screen.getByTestId("connect-host-command")).toHaveTextContent(
-      `omni host --server '${window.location.origin}/api?profile=dev&glob=*'`,
+      `triune host --server '${window.location.origin}/api?profile=dev&glob=*'`,
     );
 
     const lakeboxTab = screen.getByRole("tab", { name: "Databricks Lakebox" });
     fireEvent.mouseDown(lakeboxTab);
     fireEvent.click(lakeboxTab);
     expect(screen.getByTestId("connect-lakebox-connect-command")).toHaveTextContent(
-      `omni sandbox connect --provider lakebox --sandbox-id <id> --server '${window.location.origin}/api?profile=dev&glob=*'`,
+      `triune sandbox connect --provider lakebox --sandbox-id <id> --server '${window.location.origin}/api?profile=dev&glob=*'`,
     );
   });
 
@@ -6975,7 +6976,7 @@ describe("NewChatLandingScreen", () => {
       harness: "cursor-native",
       readiness: "binary-missing",
       badgeName: "binary missing",
-      warning: "Cursor isn't configured on machine-1 — run omni setup",
+      warning: "Cursor isn't configured on machine-1 — run triune setup",
     },
     {
       id: "a_pi",
@@ -6984,7 +6985,7 @@ describe("NewChatLandingScreen", () => {
       harness: "pi-native",
       readiness: "version-too-low",
       badgeName: "outdated",
-      warning: "Pi has an outdated CLI on machine-1 — run omni setup",
+      warning: "Pi has an outdated CLI on machine-1 — run triune setup",
     },
     {
       id: "a_polly",
@@ -7059,7 +7060,7 @@ describe("NewChatLandingScreen", () => {
       .getAttribute("aria-label");
     await userEvent.hover(within(row).getByText("Codex"));
     expect(await screen.findByRole("tooltip")).toHaveTextContent(
-      "Codex isn't configured on machine-1 — run omni setup on that machine.",
+      "Codex isn't configured on machine-1 — run triune setup on that machine.",
     );
     fireEvent.click(row);
     fireEvent.keyDown(row, { key: "Enter" });
@@ -7077,7 +7078,7 @@ describe("NewChatLandingScreen", () => {
     fireEvent.click(screen.getByTestId("new-chat-landing-harness-more"));
     fireEvent.focus(screen.getByTestId("new-chat-landing-agent-a2"));
     expect(await screen.findByRole("tooltip")).toHaveTextContent(
-      "Codex isn't configured on machine-1 — run omni setup on that machine.",
+      "Codex isn't configured on machine-1 — run triune setup on that machine.",
     );
   });
 
@@ -7103,12 +7104,12 @@ describe("NewChatLandingScreen", () => {
     expect(screen.getByTestId("new-chat-landing-agent-warning")).toBeVisible();
     await userEvent.hover(picker);
     expect(await screen.findByTestId("new-chat-landing-agent-tooltip")).toHaveTextContent(
-      "Codex isn't configured on machine-1 — run omni setup on that machine.",
+      "Codex isn't configured on machine-1 — run triune setup on that machine.",
     );
     await userEvent.unhover(picker);
     fireEvent.focus(picker);
     expect(await screen.findByTestId("new-chat-landing-agent-tooltip")).toHaveTextContent(
-      "Codex isn't configured on machine-1 — run omni setup on that machine.",
+      "Codex isn't configured on machine-1 — run triune setup on that machine.",
     );
   });
 
@@ -7273,7 +7274,7 @@ describe("NewChatLandingScreen", () => {
     breakSelectedHarness("a1", "claude-native", false);
 
     fireEvent.click(screen.getByTestId("new-chat-landing-harness-setup"));
-    expect(screen.getByTestId("harness-setup-empty").textContent).toContain("omni setup");
+    expect(screen.getByTestId("harness-setup-empty").textContent).toContain("triune setup");
     expect(screen.queryByTestId("harness-setup-install")).toBeNull();
   });
 

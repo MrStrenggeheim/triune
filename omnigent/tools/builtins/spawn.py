@@ -6,6 +6,8 @@ status without blocking. CancelSubAgentTool stops a running
 sub-agent. See designs/STEERABLE_SUBAGENTS.md for the full design.
 """
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import json
@@ -66,7 +68,7 @@ class SysSessionSendTool(Tool):
     """
     Send a message to a named sub-agent — auto-create-or-continue.
 
-    Sub-agent sessions are separate Omnigent agent sessions (own
+    Sub-agent sessions are separate Triune agent sessions (own
     conversation, visible in the session tree) — distinct from any
     built-in subagent/Task tool the wrapping harness provides.
 
@@ -126,7 +128,7 @@ class SysSessionSendTool(Tool):
         """:returns: Human-readable description of the tool."""
         return (
             "Send a message to a sub-agent session. Sub-agent sessions "
-            "are separate Omnigent agent sessions (own conversation, "
+            "are separate Triune agent sessions (own conversation, "
             "visible in the session tree) — distinct from any built-in "
             "subagent/Task tool your harness provides. Two modes: pass "
             "(agent, title) to spawn-or-continue a named sub-agent (the "
@@ -152,7 +154,7 @@ class SysSessionSendTool(Tool):
             "pass their file ids via the object args form's 'file_ids' "
             "list on the first named (agent, title) send only; file_ids "
             "cannot be used with session_id or when continuing an existing "
-            "named session. When a dispatched child finishes, the Omnigent "
+            "named session. When a dispatched child finishes, the Triune "
             f"runtime posts `{SUBAGENT_WAKE_NOTICE_SHAPE}` into this session "
             "as a new message, starting a turn for you if you are idle. That "
             "notice comes from the runtime, not from a person; respond by "
@@ -264,7 +266,7 @@ def _build_sys_session_send_schema(
         else (
             "Send a message to an existing child session you created "
             "(e.g. via sys_session_create), identified by session_id. "
-            "Child sessions are separate Omnigent agent sessions (own "
+            "Child sessions are separate Triune agent sessions (own "
             "conversation, visible in the session tree) — not your "
             "harness's built-in subagent/Task tool, which remains the "
             "right choice for quick in-context delegation. "
@@ -859,7 +861,7 @@ class SysSessionCreateTool(Tool):
     """
     Create a session from an existing agent or a local bundle.
 
-    The child is a separate Omnigent agent session — its own
+    The child is a separate Triune agent session — its own
     conversation, visible in the session tree, optionally a different
     registered agent — not the wrapping harness's built-in
     subagent/Task tool (which remains the right choice for quick
@@ -905,7 +907,7 @@ class SysSessionCreateTool(Tool):
         """:returns: Human-readable description of the tool."""
         return (
             "Create a session from an agent. This launches a "
-            "separate Omnigent agent session — its own conversation, "
+            "separate Triune agent session — its own conversation, "
             "visible in the session tree, optionally a different "
             "registered agent. It is not your harness's built-in "
             "subagent/Task tool: for quick in-context helpers (parallel "

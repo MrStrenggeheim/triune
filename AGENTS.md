@@ -19,9 +19,9 @@ Keep each customization in a focused commit. Never edit installed package files.
 
 ## Reuse and design
 
-Read `design-system/omnigent/MASTER.md` before changing workspace UI.
+Read `design-system/triune/MASTER.md` before changing workspace UI.
 
-- Before changing UI, compare existing equivalents and reuse the complete shared component, tokens and interaction; verify sibling typography, tooltip shape, colors and focus/hover states against `design-system/omnigent/MASTER.md`.
+- Before changing UI, compare existing equivalents and reuse the complete shared component, tokens and interaction; verify sibling typography, tooltip shape, colors and focus/hover states against `design-system/triune/MASTER.md`.
 - Search for and reuse existing helpers before adding code. Refactor an existing
   implementation if that avoids duplication.
 - Treat local extensions as part of the whole product: reuse existing UI components, styles and interaction patterns, extend shared primitives when necessary, and preserve navigation and selection during background refreshes.
@@ -75,7 +75,7 @@ Use `just` for common tasks; run `just --list` for grouped recipes.
 
 - `just ensure` — install/check prerequisites, including the git hooks
 - `just run-ios` / `just run-android` — build/run mobile apps
-- `just dev` / `just dev-mobile` — start the omnigent dev pod
+- `just dev` / `just dev-mobile` — start the Triune dev pod
 - `just electron-dev` / `just electron-build` — Electron desktop shell
 - `just lint` / `just lint-all` — run pre-commit; `just hooks` — install the git hooks
 - `just normalize-locks` — rewrite lockfile registries to PyPI/npmjs.org
@@ -196,3 +196,10 @@ instructions:
   not duplicate policy across adapters or add lifecycle metadata to `AgentSpec`.
 - If framework instructions grow beyond a small ordered list, introduce a
   structured `FrameworkInstructions` value at the prompt-composition boundary.
+
+## Product and licensing
+
+The product is Triune; its primary command is `triune`.
+Preserve legacy import, environment, protocol and saved-state identifiers unless a tested migration explicitly replaces them.
+Read LICENSING.md before adding or copying source: inherited Apache rights and notices remain, while new own material uses PolyForm Noncommercial 1.0.0 unless separately marked.
+Keep the three tilted strokes mark, selected accent and shared design components unchanged during branding work.

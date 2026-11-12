@@ -29,7 +29,7 @@ Wire format (matches the API Gateway / Kinesis ingestion schema):
     }
 
 ``session_id`` is a per-process UUID that groups all events from one
-server run — it is NOT the Omnigent conversation id (which goes in
+server run — it is NOT the Triune conversation id (which goes in
 ``params``).  ``params`` is a JSON-encoded string of event-specific
 fields.  ``additionalProperties: false`` on the gateway means any field
 not in the schema above will cause a 400, so event-specific data must
@@ -56,6 +56,8 @@ The config shape::
 If the config fetch fails or the config disables telemetry, the client
 stops itself and drops all pending events.
 """
+
+# Modified for Triune.
 
 from __future__ import annotations
 

@@ -1,3 +1,4 @@
+// Modified for Triune.
 // Databricks OAuth (PKCE + loopback) for the desktop shell.
 //
 // Runs the RFC 8252 native-app authorization-code flow against a Databricks
@@ -432,15 +433,15 @@ async function runInteractiveLogin(origin, { signal } = {}) {
     pages: {
       received: [
         "Databricks sign-in received",
-        "Return to Omnigent to finish connecting, then close this tab.",
+        "Return to Triune to finish connecting, then close this tab.",
       ],
       failed: [
         "Databricks sign-in was not completed",
-        "Close this tab and try connecting again in Omnigent.",
+        "Close this tab and try connecting again in Triune.",
       ],
       incomplete: [
         "Databricks sign-in could not be completed",
-        "Close this tab and try connecting again in Omnigent.",
+        "Close this tab and try connecting again in Triune.",
       ],
     },
     signal,

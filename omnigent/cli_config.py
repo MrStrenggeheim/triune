@@ -1,6 +1,6 @@
 """Interactive harness & credential configuration for the CLI.
 
-Everything behind ``omnigent config`` / ``omnigent setup`` and the first-run
+Everything behind ``triune config`` / ``triune setup`` and the first-run
 ``configure harnesses`` picker: detecting installed provider CLIs, prompting for
 API keys, installing SDK harnesses, and writing the results to global config.
 Extracted from :mod:`omnigent.cli` to keep that module under the repo's
@@ -14,6 +14,8 @@ call-time proxies below, so importing this module never imports ``omnigent.cli``
 (no cycle) and a test's ``monkeypatch`` of ``omnigent.cli.<helper>`` is still
 honoured.
 """
+
+# Modified for Triune.
 
 from __future__ import annotations
 
@@ -156,7 +158,7 @@ def _tmux_dependency_problem() -> str | None:
     """
     Return a one-line problem if tmux is missing or too old, else ``None``.
 
-    The native tmux-backed harnesses (``omnigent claude`` / ``codex`` and
+    The native tmux-backed harnesses (``triune claude`` / ``codex`` and
     every managed terminal) need a tmux at or above
     :data:`omnigent.util.tmux_compat.MIN_TMUX_VERSION`. Managed terminals enable
     ``allow-passthrough``, which tmux added in 3.3. Parses ``tmux -V`` (e.g.
@@ -299,7 +301,7 @@ def _run_configure_databricks() -> None:
 
     Shells out to ``ucode configure`` to authenticate workspaces and set
     up harnesses (Claude SDK, Codex, OpenAI Agents, Pi). After setup,
-    Omnigent reads ``~/.ucode/state.json`` to pick per-harness model
+    Triune reads ``~/.ucode/state.json`` to pick per-harness model
     defaults and base URLs.
 
     :returns: None.
@@ -323,7 +325,7 @@ def _run_configure_databricks() -> None:
             "see the command output above for details."
         )
 
-    click.echo("ucode configuration complete. Omnigent will use state.json for harness setup.")
+    click.echo("ucode configuration complete. Triune will use state.json for harness setup.")
 
 
 def _warn_missing_harness_dependencies() -> None:
@@ -336,7 +338,7 @@ def _warn_missing_harness_dependencies() -> None:
     wrapper needs it (Node when a harness CLI runs, tmux when ``omnigent
     claude`` launches). This *warns* rather than aborts on purpose: the
     pure-Python ``openai-agents`` harness runs without either tool, so a
-    hard failure would block a valid flow — but ``omnigent claude`` /
+    hard failure would block a valid flow — but ``triune claude`` /
     ``codex`` do need both, hence the prominent notice.
 
     :returns: None. Side effect: writes a yellow warning block to stderr
@@ -1211,13 +1213,13 @@ def _adopt_detected_providers() -> list[str]:
 def _promote_global_auth_to_provider() -> str | None:
     """Backfill a databricks providers entry from an existing global ``auth:`` block.
 
-    Older ``omnigent setup`` runs configured Databricks only via the top-level
+    Older ``triune setup`` runs configured Databricks only via the top-level
     ``auth: {type: databricks}`` block — which ``configure harnesses`` does not
     read — so the readout showed no Databricks provider (and an ambient CLI
     login as the default) even though routing used Databricks. This promotes
     that block into a first-class ``kind: databricks`` providers entry the next
     time ``configure harnesses`` opens, so existing configs self-heal without
-    re-running ``omnigent setup``.
+    re-running ``triune setup``.
 
     Becomes the default only for families with no existing **provider** default —
     mirroring routing precedence (explicit provider default > ``auth:`` block),
@@ -1327,7 +1329,7 @@ def _announce_auto_configured_credentials(adopted: list[str]) -> None:
     single compact, dimmed line naming them inline (e.g. ``Anthropic API Key,
     Claude Subscription, ChatGPT Subscription``) — so a user who never ran an
     explicit setup sees, the first time we auto-configure, exactly which
-    credentials omnigent picked up (rather than silently inheriting them).
+    credentials triune picked up (rather than silently inheriting them).
     Styled ``dim`` rather than the onboarding accent so it reads as a quiet
     notice, not a prominent header.
 
@@ -1349,14 +1351,14 @@ def _announce_auto_configured_credentials(adopted: list[str]) -> None:
         return
     console.print(
         "\n[dim]Found existing credentials on your machine, "
-        f"auto-configured for omnigent: {', '.join(labels)}[/dim]"
+        f"auto-configured for triune: {', '.join(labels)}[/dim]"
     )
 
 
 def _adopt_ambient_credentials(progress: RunnerStartupProgress | None = None) -> list[str]:
     """Self-heal config, adopt ambient credentials, and announce what was added.
 
-    The shared front half of both a bare ``omnigent run``'s first-run path
+    The shared front half of both a bare ``triune run``'s first-run path
     (:func:`_resolve_first_run_plan`) and the ``configure harnesses`` picker
     (:func:`_run_configure_harnesses_interactive`): it (1) backfills a legacy
     databricks ``auth:`` block into a real provider, (2) adopts any
@@ -1659,7 +1661,7 @@ def _manage_cursor_sdk_harness() -> None:
     Cursor's own backend with a ``CURSOR_API_KEY`` — the SDK requires one (a
     ``cursor-agent login`` does not apply, and cursor has no provider/gateway
     family). So this manages exactly that credential: set / replace / remove an
-    API key stored in the omnigent secret store, mirroring how the other
+    API key stored in the triune secret store, mirroring how the other
     harnesses persist their api keys (the secret in the store, a
     ``keychain:``/``env:`` reference in ``~/.omnigent/config.yaml``).
 
@@ -1727,7 +1729,7 @@ def _set_cursor_api_key() -> str | None:
     Offers an existing ``CURSOR_API_KEY`` from the environment first (recorded
     as an ``env:`` reference, so the secret never enters the config or the
     secret store), else reads the key with a hidden prompt and stores it in the
-    omnigent secret store under ``keychain:cursor``. The ``crsr_`` prefix is
+    triune secret store under ``keychain:cursor``. The ``crsr_`` prefix is
     validated with a soft warning so a wrong paste is caught without
     hard-blocking a future key format. The key value is never echoed.
 
@@ -2173,7 +2175,7 @@ def _manage_qwen_harness() -> None:
     to launch ``qwen`` for ``/auth`` — it does **not** pretend to run a ``qwen
     login``
     (there isn't one). Storing/injecting an OpenAI-compatible key *through
-    Omnigent* is deferred (see docs/QWEN_FOLLOWUPS.md, Provider Injection).
+    Triune* is deferred (see docs/QWEN_FOLLOWUPS.md, Provider Injection).
 
     Like the CLI-backed harnesses, a missing CLI gates the drill-in — there's
     nothing to configure for a harness you can't run.
@@ -2251,11 +2253,11 @@ def _manage_qwen_harness() -> None:
 
 
 def _print_goose_auth_help() -> None:
-    """Print Goose's configuration options (Omnigent manages no Goose credential)."""
+    """Print Goose's configuration options (Triune manages no Goose credential)."""
     from omnigent.onboarding.interactive import console
 
     console.print(
-        "\n  [bold]Configure Goose[/bold] (Omnigent stores no Goose credential):\n"
+        "\n  [bold]Configure Goose[/bold] (Triune stores no Goose credential):\n"
         "    • Interactive: run [bold]goose configure[/bold] to pick a provider "
         "and store its key (keyring or ~/.config/goose/config.yaml)\n"
         "    • Env override: set [bold]GOOSE_PROVIDER[/bold] + [bold]GOOSE_MODEL[/bold] "
@@ -2301,7 +2303,7 @@ def _show_acp_cli_harness(name: str) -> None:
     """Show install + sign-in instructions for one builtin ACP CLI harness.
 
     These harnesses own their credentials (``OWN_AUTH``) and install out-of-band,
-    so there is nothing for Omnigent to store or run on the user's behalf — the
+    so there is nothing for Triune to store or run on the user's behalf — the
     drill-in reports what it can and names the two commands. Read-only: it
     changes no config, which is why it's a display rather than a manage loop.
 
@@ -2334,10 +2336,10 @@ def _show_acp_cli_harness(name: str) -> None:
 def _manage_goose_harness() -> None:
     """Run the level-2 loop for Goose: ensure the CLI, then guide ``goose configure``.
 
-    Goose owns its own auth (keyring / ``~/.config/goose/config.yaml``) — Omnigent
+    Goose owns its own auth (keyring / ``~/.config/goose/config.yaml``) — Triune
     stores no Goose credential — so, like the Qwen drill-in, this reports
     best-effort configuration status and offers to launch ``goose configure``; it
-    does not store a key through Omnigent. A missing CLI gates the drill-in
+    does not store a key through Triune. A missing CLI gates the drill-in
     (nothing to configure for a harness you can't run); Goose ships out-of-band
     (brew / curl, no npm package), so we show its install hint rather than
     auto-installing. Serves both ``goose-native`` (TUI) and the headless
@@ -2392,13 +2394,13 @@ def _manage_goose_harness() -> None:
 
 
 def _print_acp_examples() -> None:
-    """Print example ACP-agent commands (Omnigent stores no credential)."""
+    """Print example ACP-agent commands (Triune stores no credential)."""
     from omnigent.onboarding.interactive import console
 
     console.print(
         "\n  [bold]Custom ACP agents[/bold] — connect any agent that speaks the "
         "Agent Client Protocol ([underline]agentclientprotocol.com[/underline]).\n"
-        "  Omnigent stores no credential — log into each agent via its own CLI first.\n\n"
+        "  Triune stores no credential — log into each agent via its own CLI first.\n\n"
         "  Example commands to paste:\n"
         "    • Gemini CLI     [bold]gemini --experimental-acp[/bold]\n"
         "    • Qwen Code      [bold]qwen --acp[/bold]\n"
@@ -2532,7 +2534,7 @@ def _import_openclaw_agents() -> None:
                 f"    • [bold]{escape(entry.name)}[/bold] → "
                 f"[dim]{escape(entry.command)}[/dim]{suffix}"
             )
-        console.print("  [dim]Omnigent stores only these launch commands, not credentials.[/dim]")
+        console.print("  [dim]Triune stores only these launch commands, not credentials.[/dim]")
 
         if not click.confirm("Import coding agents from OpenClaw?", default=True):
             console.print("  [yellow]Skipped OpenClaw import.[/yellow]")
@@ -2548,7 +2550,7 @@ def _manage_acp_agent(slug: str) -> None:
     """Per-agent drill-in for one configured ACP agent: remove it.
 
     Reached by selecting the agent's own row in the configure-harnesses overview.
-    A single-shot menu (Remove / Back) — Omnigent stores no credential, so there
+    A single-shot menu (Remove / Back) — Triune stores no credential, so there
     is nothing else to manage per agent yet.
 
     :param slug: The agent's slug (see :func:`omnigent.onboarding.acp_auth.slugify`).
@@ -2577,7 +2579,7 @@ def _manage_hermes_harness() -> None:
     """Run the level-2 loop for Hermes: install the CLI, then configure it.
 
     Hermes owns its own auth via ``hermes model`` (interactive provider/model
-    picker) and is installed via a curl script from Nous Research — Omnigent
+    picker) and is installed via a curl script from Nous Research — Triune
     stores no Hermes credential. A missing CLI offers to run the vendor
     installer; when installed, the drill-in offers to launch ``hermes model``
     for provider configuration.
@@ -2661,7 +2663,7 @@ def _manage_kiro_harness() -> None:
     """Run the level-2 loop for Kiro: ensure the CLI is installed and signed in.
 
     Kiro owns its own auth via ``kiro-cli login`` (Builder ID / social login /
-    Identity Center) and is installed via Kiro's curl installer — Omnigent stores
+    Identity Center) and is installed via Kiro's curl installer — Triune stores
     no Kiro credential. A missing CLI gates the drill-in; when installed, the
     drill-in offers to launch ``kiro-cli login`` to sign in. Mirrors
     :func:`_manage_hermes_harness`.
@@ -2721,7 +2723,7 @@ def _manage_devin_harness() -> None:
     Devin ships a real login (``devin auth login``, browser or manual token) and
     — unlike most native CLIs here — a genuine status probe (``devin auth status``
     exits 0 only while logged in), so this drill-in can report the live auth
-    state and offer sign-out. Omnigent stores no Devin credential: the CLI writes
+    state and offer sign-out. Triune stores no Devin credential: the CLI writes
     its own credential file and reads it back at spawn.
 
     Like the other CLI-backed harnesses, a missing CLI gates the drill-in —
@@ -2791,7 +2793,7 @@ def _manage_devin_harness() -> None:
 def _print_kimi_auth_help() -> None:
     """Print Kimi Code's authentication options.
 
-    Kimi authenticates against Moonshot AI's backend rather than an Omnigent
+    Kimi authenticates against Moonshot AI's backend rather than a Triune
     credential. Membership accounts use ``kimi login`` (OAuth). Pay-per-use
     accounts are rejected by OAuth ("unable to verify your membership
     benefits"), so they configure an API-key provider instead — and which one
@@ -2805,7 +2807,7 @@ def _print_kimi_auth_help() -> None:
       ``https://api.kimi.com/coding/v1`` to ``~/.kimi-code/config.toml``.
 
     Both are covered below so a user on either platform can complete auth.
-    Omnigent stores no kimi credential and cannot thread one per spawn, so all
+    Triune stores no kimi credential and cannot thread one per spawn, so all
     of this lives in the kimi CLI's own config.
     """
     from omnigent.onboarding.interactive import console
@@ -2835,7 +2837,7 @@ def _print_kimi_auth_help() -> None:
         '            type = "kimi"\n'
         '            base_url = "https://api.kimi.com/coding/v1"\n'
         '            api_key = "sk-…"[/dim]\n'
-        "    • Omnigent stores no kimi credential and cannot thread one per "
+        "    • Triune stores no kimi credential and cannot thread one per "
         "spawn — configure it once in the kimi CLI\n"
     )
 
@@ -2992,7 +2994,7 @@ def _manage_copilot_harness() -> None:
     Copilot runs via the ``github-copilot-sdk`` package and authenticates against
     GitHub's Copilot backend with a GitHub token — the SDK requires one and it
     has no provider/gateway family. So this manages exactly that credential:
-    set / replace / remove a token stored in the omnigent secret store, mirroring
+    set / replace / remove a token stored in the triune secret store, mirroring
     how cursor / antigravity persist theirs (the secret in the store, a
     ``keychain:``/``env:`` reference in ``~/.omnigent/config.yaml``).
 
@@ -3556,8 +3558,8 @@ def _print_opencode_auth_help() -> None:
         "      stored in ~/.local/share/opencode/auth.json.\n"
         "    • Provider env vars (OPENAI_API_KEY / ANTHROPIC_API_KEY / …) are auto-detected.\n"
         "    • Databricks gateway: set an agent ``profile`` (configured under Claude / Codex);\n"
-        "      Omnigent synthesizes opencode's per-session provider config from it.\n"
-        "  Omnigent stores no OpenCode credential of its own.\n"
+        "      Triune synthesizes opencode's per-session provider config from it.\n"
+        "  Triune stores no OpenCode credential of its own.\n"
         f"  [dim]Tip:[/dim] 'Set default model' picks which model "
         f"`{cli_invocation(name='omni')} opencode` launches on\n"
         "  (otherwise OpenCode uses its built-in default, opencode/big-pickle)."
@@ -3571,7 +3573,7 @@ def _manage_opencode_harness() -> None:
     ``~/.local/share/opencode/auth.json``) or ambient provider env vars — so,
     like the Goose / Qwen drill-ins, this reports which providers OpenCode can
     reach and offers to launch its native login; it never stores a key through
-    Omnigent. (For the Databricks-gateway path the agent's ``profile`` is
+    Triune. (For the Databricks-gateway path the agent's ``profile`` is
     synthesized into opencode's per-session config instead — set under
     Claude / Codex.)
 
@@ -3695,7 +3697,7 @@ def _repair_conflicting_provider_defaults() -> bool:
 def _run_configure_harnesses_interactive() -> None:
     """Run the interactive model/credential three-level picker.
 
-    Invoked by ``omnigent setup --no-internal-beta`` and the bare-``run``
+    Invoked by ``triune setup --no-internal-beta`` and the bare-``run``
     first-run path, so both drive the identical flow.
     Opening it backfills a legacy databricks ``auth:`` block into a real
     provider and adopts any ambient-detected credential — announcing the

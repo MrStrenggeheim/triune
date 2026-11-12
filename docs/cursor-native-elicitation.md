@@ -8,9 +8,9 @@
 
 ## Goal / behavior
 
-Surface an Omnigent **elicitation card whenever the `cursor-agent` TUI gates a tool call or
+Surface a Triune **elicitation card whenever the `cursor-agent` TUI gates a tool call or
 asks a question**, answerable from the web **or** the embedded TUI. Cursor's own native gate
-stays the source of truth — Omnigent never modifies cursor's JS bundle and never suppresses
+stays the source of truth — Triune never modifies cursor's JS bundle and never suppresses
 the TUI prompt. The failure mode is benign: if detection ever breaks, the embedded TUI prompt
 still works and the user answers there.
 
@@ -119,7 +119,7 @@ opposite default of the rest of this design, so the accept is deliberately fail-
   surfaced prompt is awaiting an answer.
 - **`AskQuestion` is excluded** — a question is human input, not a gate `y` can answer.
 - Because a gate answered this way is never seen by a human, the accept logs the tool name and
-  an argument preview at INFO: that line is the only record Omnigent approved the call.
+  an argument preview at INFO: that line is the only record Triune approved the call.
 
 The attempt counters are in-memory, so a runner restart re-tries a call that is still pending.
 

@@ -1,3 +1,4 @@
+// Modified for Triune.
 // Landing-screen footer: app/community links + a "Maintained by" note. Links
 // open in the user's real browser (window.open on the file:// page is routed
 // out by the shell's popup policy, same as the Cloud-docs button).
@@ -12,25 +13,25 @@ const LINKS: { key: string; label: string; icon: ReactNode; href: string }[] = [
     key: "ios",
     label: "iOS App",
     icon: <AppleGlyph />,
-    href: "https://apps.apple.com/us/app/omnigent/id6783102694",
+    href: "https://github.com/MrStrenggeheim/triune",
   },
   {
     key: "android",
     label: "Android App",
     icon: <AndroidGlyph />,
-    href: "https://omnigent.ai/docs/interact/mobile#android-app",
+    href: "https://github.com/MrStrenggeheim/triune",
   },
   {
     key: "github",
     label: "GitHub",
     icon: <GithubMono size={16} />,
-    href: "https://github.com/omnigent-ai/omnigent",
+    href: "https://github.com/MrStrenggeheim/triune",
   },
   {
     key: "discord",
-    label: "Join Discord",
+    label: "Community",
     icon: <DiscordGlyph />,
-    href: "https://discord.gg/omnigent",
+    href: "https://github.com/MrStrenggeheim/triune/discussions",
   },
 ];
 
@@ -53,7 +54,7 @@ export function LandingFooter() {
         •
       </span>
       <span className="whitespace-nowrap px-2 text-base text-muted-foreground">
-        Maintained by Databricks and the Omnigent community
+        Maintained by the Triune community
       </span>
     </div>
   );

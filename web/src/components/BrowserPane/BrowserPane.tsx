@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { TooltipButton } from "@/components/ui/tooltip";
 /** Embedded browser pane. The page is a native Electron WebContentsView the
  *  main process paints over a placeholder `<div>` this component measures
@@ -700,7 +701,7 @@ export function BrowserPane({
             <DialogDescription>
               Copies {activeCookieScope}'s cookies into this conversation's browser, so the site
               reuses the sign-in you already have in Chrome. Nothing is written back to Chrome, and
-              the copy disappears when Omnigent quits.
+              the copy disappears when Triune quits.
             </DialogDescription>
           </DialogHeader>
           <div className="flex flex-col gap-3">
@@ -748,7 +749,7 @@ export function BrowserPane({
             <p className="text-muted-foreground text-xs">
               {countForScope(activeCookieScope)}{" "}
               {countForScope(activeCookieScope) === 1 ? "cookie" : "cookies"} for{" "}
-              {activeCookieScope} and its subdomains. Other sites' cookies stay out of Omnigent
+              {activeCookieScope} and its subdomains. Other sites' cookies stay out of Triune
               entirely.
             </p>
             {activeCookieScope !== cookiePreview?.host && (

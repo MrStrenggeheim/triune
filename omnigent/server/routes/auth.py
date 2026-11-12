@@ -22,6 +22,8 @@ See ``designs/OIDC_AUTH.md`` for the complete design.
 These routes are only mounted when ``OMNIGENT_AUTH_PROVIDER=oidc``.
 """
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import hmac
@@ -73,8 +75,8 @@ _CLI_TICKET_TTL_SECONDS = 300  # 5 minutes
 # An upgrade notice, never a key in the login-ticket store.
 _CLI_UPGRADE_TICKET = "upgrade-required"
 _CLI_UPGRADE_MESSAGE = (
-    "Upgrade Omnigent to sign in: this server requires a newer login client. "
-    "For the CLI, run `omni upgrade`, then retry `omnigent login`. "
+    "Upgrade Triune to sign in: this server requires a newer login client. "
+    "For the CLI, run `omni upgrade`, then retry `triune login`. "
     "For mobile, update the app. For Slack, ask your administrator to update the integration."
 )
 _CLI_LOGIN_MAX_BODY_BYTES = 4096
@@ -891,7 +893,7 @@ def create_auth_router(
             return HTMLResponse(
                 _cli_consent_html(
                     error="Sign in again to approve this login. "
-                    "Run `omnigent login` again and sign in when prompted."
+                    "Run `triune login` again and sign in when prompted."
                 ),
                 status_code=200,
                 headers=_CLI_BROWSER_HEADERS,
@@ -1180,17 +1182,17 @@ def _cli_consent_html(
 
     if upgrade_required:
         body = (
-            "<h1>Update Omnigent to sign in</h1>"
+            "<h1>Update Triune to sign in</h1>"
             "<p>This server has a security update that requires a newer version "
             "of the app you used to start sign-in. This login attempt did not "
             "grant access.</p>"
             "<ul><li><b>CLI:</b> Run <code>omni upgrade</code>, then run your "
             "<code>omnigent login</code> command again. If the upgrade command "
             "is unavailable, update using your original installer.</li>"
-            "<li><b>iOS or Android:</b> Update the Omnigent app through your "
+            "<li><b>iOS or Android:</b> Update the Triune app through your "
             "app store or your organization's distribution channel, then "
             "start sign-in again.</li>"
-            "<li><b>Slack:</b> Ask your administrator to update the Omnigent "
+            "<li><b>Slack:</b> Ask your administrator to update the Triune "
             "Slack integration, then restart setup in Slack.</li></ul>"
             "<p>If no compatible update is available, contact your server "
             "administrator. Retrying with this version will not sign you in.</p>"
@@ -1207,11 +1209,11 @@ def _cli_consent_html(
     else:
         body = (
             "<h1>Authorize sign-in</h1>"
-            f"<p>An Omnigent client is requesting a session as "
-            f"<b>{esc(user_id)}</b> on this Omnigent server.</p>"
+            f"<p>An Triune client is requesting a session as "
+            f"<b>{esc(user_id)}</b> on this Triune server.</p>"
             f'<p class="muted">Code: {esc(user_code)}</p>'
             '<p class="warn">⚠️ Only approve if you just started this sign-in '
-            "from Omnigent. For CLI or Slack sign-in, also check that this code "
+            "from Triune. For CLI or Slack sign-in, also check that this code "
             "matches the one shown in your terminal or Slack. If you didn't "
             "start this sign-in, click Deny — approving gives that client "
             "access as you.</p>"
@@ -1226,7 +1228,7 @@ def _cli_consent_html(
         "<!doctype html><html><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width, initial-scale=1'>"
         f"<title>{'Update required' if upgrade_required else 'Authorize access'}"
-        " — Omnigent</title><style>"
+        " — Triune</title><style>"
         "body{font-family:system-ui,sans-serif;max-width:32rem;margin:4rem auto;"
         "padding:0 1rem;line-height:1.5}h1{font-size:1.4rem}.muted{color:#666;"
         "font-size:.9rem}.warn{color:#8a5a00;background:#fff7e6;padding:.6rem .8rem;"

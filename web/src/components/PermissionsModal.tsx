@@ -1,3 +1,4 @@
+// Modified for Triune.
 /**
  * Permissions management modal for a session.
  *
@@ -178,9 +179,7 @@ export function PermissionsModal({
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">Sharing unavailable</DialogTitle>
-            <DialogDescription>
-              Sharing has been disabled for this Omnigent server.
-            </DialogDescription>
+            <DialogDescription>Sharing has been disabled for this Triune server.</DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="outline" onClick={() => onOpenChange(false)}>
@@ -323,7 +322,7 @@ export function PermissionsModal({
         {workspaceBlocked && (
           <p id={blockedNoticeId} className="text-sm text-destructive">
             This session&apos;s working directory (a home or root directory) cannot be shared on
-            this Omnigent server.
+            this Triune server.
           </p>
         )}
 
@@ -670,7 +669,7 @@ function QrCodeDialog({
             Open in mobile app
           </DialogTitle>
           <DialogDescription>
-            Scan with your phone's camera to open this session in the Omnigent app.
+            Scan with your phone's camera to open this session in the Triune app.
           </DialogDescription>
         </DialogHeader>
         <div className="flex justify-center">
@@ -683,7 +682,7 @@ function QrCodeDialog({
               // mode; the padding also serves as the QR quiet zone.
               bgColor="#ffffff"
               fgColor="#000000"
-              aria-label="QR code to open this session in the Omnigent app"
+              aria-label="QR code to open this session in the Triune app"
             />
           </div>
         </div>

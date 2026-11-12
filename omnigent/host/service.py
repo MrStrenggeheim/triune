@@ -1,5 +1,7 @@
 """Install the Omnigent host as a per-user operating-system service."""
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import os
@@ -123,7 +125,7 @@ def _systemd_unit(
     ]
     lines = [
         "[Unit]",
-        "Description=Omnigent host",
+        "Description=Triune host",
         "Wants=network-online.target",
         "After=network-online.target",
         "",

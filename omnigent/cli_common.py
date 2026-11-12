@@ -9,6 +9,8 @@ that imports nothing from ``omnigent.cli`` — lets both ``cli`` and ``cli_nativ
 import them without an import cycle.
 """
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import click
@@ -28,7 +30,7 @@ CLAUDE_STARTUP_PROFILE_ENV_VAR = "OMNIGENT_CLAUDE_STARTUP_PROFILE"
 def reject_native_on_windows(harness: str) -> None:
     """Fail a native (tmux/PTY) harness command with an actionable message.
 
-    The ``omnigent claude`` / ``codex`` / ``cursor`` native wrappers drive a
+    The ``triune claude`` / ``codex`` / ``cursor`` native wrappers drive a
     private tmux server and PTY, which don't exist on Windows. Point users at
     the SDK harnesses / web UI instead of letting them hit a tmux crash.
 

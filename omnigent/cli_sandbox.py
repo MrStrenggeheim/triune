@@ -1,6 +1,6 @@
-"""Sandbox CLI commands: run an Omnigent host in a remote sandbox.
+"""Sandbox CLI commands: run a Triune host in a remote sandbox.
 
-``omnigent sandbox …`` bootstraps an Omnigent host inside a sandbox
+``triune sandbox …`` bootstraps a Triune host inside a sandbox
 from one of the registered providers (``--provider``) so that sessions
 on it are reachable from the server-hosted UI, TUI, and ``omnigent
 resume``. Provider availability is build-dependent — the Databricks
@@ -10,6 +10,8 @@ only when at least one provider is available.
 The provider-agnostic step implementations live in
 :mod:`omnigent.onboarding.sandboxes`.
 """
+
+# Modified for Triune.
 
 from __future__ import annotations
 
@@ -29,14 +31,14 @@ from omnigent.onboarding.sandboxes import (
 
 def _omnigent_repo_root() -> Path:
     """
-    Locate the omnigent checkout that hosts the three packages
+    Locate the Triune checkout that hosts the three packages
     we build wheels for (``sdks/python-client``, ``sdks/ui``, ``.``).
 
     Strategy:
 
     1. Walk up from the current working directory looking for a parent
        that contains both ``sdks/python-client`` and ``omnigent``.
-       This succeeds when the user runs ``omnigent sandbox …`` from
+       This succeeds when the user runs ``triune sandbox …`` from
        inside a checkout.
     2. Fall back to ``Path(__file__).resolve().parents[1]`` so an
        editable install (``pip install -e .``) still works when the
@@ -59,7 +61,7 @@ def _omnigent_repo_root() -> Path:
         if (candidate / "sdks" / "python-client").is_dir() and (candidate / "omnigent").is_dir():
             return candidate
     raise click.ClickException(
-        "Could not locate the omnigent repo root from "
+        "Could not locate the Triune repo root from "
         f"{cwd}. Pass --repo-root explicitly or run from inside a checkout."
     )
 
@@ -79,7 +81,7 @@ def _resolve_repo_root(repo_root: Path | None) -> Path:
     if not (resolved / "sdks" / "python-client").is_dir():
         raise click.ClickException(
             f"--repo-root {resolved} doesn't contain sdks/python-client; "
-            "point it at an omnigent checkout."
+            "point it at a Triune checkout."
         )
     return resolved
 
@@ -117,7 +119,7 @@ def _normalize_server_url(server_url: str) -> str:
     BEFORE any sandbox work — without it, a scheme-less value (e.g.
     ``//myapp.databricksapps.com``, a paste artifact) sails through
     provisioning, wheel build, and ship, and only explodes at the
-    final in-sandbox ``omnigent login`` step.
+    final in-sandbox ``triune login`` step.
 
     :param server_url: Raw ``--server`` value, e.g.
         ``"https://myapp-123.aws.databricksapps.com/"``.
@@ -164,13 +166,13 @@ def _print_ready_banner(provider: str, sandbox_id: str, server_url: str) -> None
 @click.group("sandbox")
 def sandbox() -> None:
     """
-    Run an Omnigent host inside a remote sandbox.
+    Run a Triune host inside a remote sandbox.
 
     \b
     Subcommands:
-      create   Provision a sandbox + bootstrap Omnigent into it.
+      create   Provision a sandbox + bootstrap Triune into it.
       connect  Register the sandbox as a host with your server (runs
-               `omnigent host` in the sandbox).
+               `triune host` in the sandbox).
 
     \b
     Provider notes:
@@ -231,7 +233,7 @@ def sandbox() -> None:
     "repo_root",
     type=click.Path(file_okay=False, path_type=Path),
     default=None,
-    help="Path to the omnigent checkout.",
+    help="Path to the Triune checkout.",
 )
 @click.option(
     "--no-auth",
@@ -254,19 +256,19 @@ def sandbox_create(
     skip_auth: bool,
 ) -> None:
     """
-    Provision a sandbox and ship Omnigent into it.
+    Provision a sandbox and ship Triune into it.
 
     The server's workspace is derived from ``--server`` (the same
-    unauthenticated probe ``omnigent login`` uses), and for lakebox
+    unauthenticated probe ``triune login`` uses), and for lakebox
     the sandbox is created IN that workspace — so the sandbox always
     lives where the server lives, regardless of the local default
-    profile. Builds the Omnigent wheels from your local checkout,
+    profile. Builds the Triune wheels from your local checkout,
     installs them into the fresh sandbox, and finishes by logging the
-    sandbox in to the server (``omnigent login`` runs inside the
+    sandbox in to the server (``triune login`` runs inside the
     sandbox; the browser step is driven from this machine). Sandboxes
     are disposable — when your code changes, just create a new one.
 
-    After this finishes, run ``omnigent sandbox connect`` to register
+    After this finishes, run ``triune sandbox connect`` to register
     the sandbox as a host with your server.
     """
     from omnigent.onboarding.sandboxes import (
@@ -329,11 +331,11 @@ def sandbox_auth(
     server_url: str,
 ) -> None:
     """
-    Run the server login inside the sandbox (``omnigent login``).
+    Run the server login inside the sandbox (``triune login``).
 
     Use this when the runner inside the sandbox starts failing because
     its cached OAuth grant expired (~90 days). Strictly faster than
-    ``omnigent sandbox create --sandbox-id`` because it skips wheel
+    ``triune sandbox create --sandbox-id`` because it skips wheel
     build / ship / pip install — it only re-authenticates.
     """
     from omnigent.onboarding.sandboxes import derive_workspace, login_app_oauth_in_sandbox
@@ -391,8 +393,8 @@ def sandbox_connect(
     """
     Register the sandbox as a host with your server.
 
-    Runs ``omnigent host --server <url>`` inside the sandbox — the
-    host resolves its own credentials (a stored ``omnigent login``
+    Runs ``triune host --server <url>`` inside the sandbox — the
+    host resolves its own credentials (a stored ``triune login``
     token, or the sandbox's ambient Databricks credentials such as the
     Lakebox image's baked workspace PAT). The remote command holds a
     WebSocket open until interrupted — Ctrl-C tears down the
@@ -430,11 +432,11 @@ def sandbox_connect(
 @click.pass_context
 def lakebox(ctx: click.Context) -> None:
     """
-    Alias for ``omnigent sandbox … --provider lakebox``.
+    Alias for ``triune sandbox … --provider lakebox``.
 
     Kept so existing muscle memory and scripts keep working. The
     subcommands (``create`` / ``auth`` / ``connect``) are the exact
-    ``omnigent sandbox`` commands with ``--provider lakebox``
+    ``triune sandbox`` commands with ``--provider lakebox``
     pre-filled.
     """
     # Pre-fill --provider for the shared sandbox subcommands so

@@ -57,7 +57,7 @@ can supply their own provider through the existing launcher interface.
   tests/server/integration/test_session_orchestration.py --reruns 0` checks the
   authenticated routes, ownership stores, refusal matrix and managed request /
   durable startup contract with simulated provisioning. It covers default provider
-  selection for OSS and embedding configurations. Runner tests cover an absent
+  selection for self-hosted and embedding configurations. Runner tests cover an absent
   orchestration route without falling back to ordinary creation.
   Two ASGI replicas sharing a database verify host routing for root, child and
   side-chat destinations with the production runner client/auth and a simulated

@@ -1,3 +1,4 @@
+// Modified for Triune.
 "use strict";
 
 /**
@@ -162,7 +163,7 @@ async function ensureUv(deps = {}) {
   const env = deps.env ?? process.env;
   const hasUv = deps.hasUv || ((e) => commandExists("uv", e));
   if (hasUv(env)) return { ok: true, env };
-  onOutput("Installing uv (required by the Omnigent installer)…\n");
+  onOutput("Installing uv (required by the Triune installer)…\n");
   const run = await runStreaming("sh", ["-c", UV_INSTALLER], {
     spawn: deps.spawn,
     onOutput,
@@ -177,7 +178,7 @@ async function ensureUv(deps = {}) {
     return {
       ok: false,
       error:
-        "Couldn't install uv, which the Omnigent installer requires. " +
+        "Couldn't install uv, which the Triune installer requires. " +
         "Install it from https://docs.astral.sh/uv/getting-started/installation/ and try again.",
     };
   }
@@ -241,7 +242,8 @@ async function installCli(deps = {}) {
   if (platform !== "darwin") {
     return {
       ok: false,
-      error: "In-app install is macOS-only for now. Install the CLI from https://omnigent.ai/.",
+      error:
+        "In-app install is macOS-only for now. Install the CLI from https://github.com/MrStrenggeheim/triune.",
     };
   }
   const script = (deps.resolveInstallScript || resolveInstallScript)();
@@ -255,7 +257,7 @@ async function installCli(deps = {}) {
   const uv = await (deps.ensureUv || ensureUv)({ spawn: deps.spawn, onOutput });
   if (!uv.ok) return uv;
 
-  onOutput("Installing the Omnigent CLI…\n");
+  onOutput("Installing the Triune CLI…\n");
   const run = await runStreaming("sh", [scriptArg, "--non-interactive"], {
     spawn: deps.spawn,
     onOutput,

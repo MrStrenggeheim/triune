@@ -11,6 +11,8 @@ The runner's :class:`omnigent.runner.mcp_manager.RunnerMcpManager`
 is the only production consumer; see designs/RUNNER_MCP.md.
 """
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import asyncio
@@ -628,7 +630,7 @@ class McpServerConnection:
         :param name: The tool name as returned by discovery.
         :param arguments: The tool arguments dict (already parsed
             from the LLM's JSON string).
-        :param session_id: Omnigent session id, e.g. ``"conv_abc123"``.
+        :param session_id: Triune session id, e.g. ``"conv_abc123"``.
             Forwarded to ``_invoke_tool`` for inline elicitation
             context. ``None`` when no session is available.
         :returns: A tagged image result or the legacy newline-joined text.
@@ -675,12 +677,12 @@ class McpServerConnection:
         When the MCP server returns an ``InputRequiredResult``
         (MRTR pattern, ``resultType == "input_required"``), raises
         :class:`McpElicitationRequired` so the caller (runner
-        ``/mcp/execute`` → Omnigent server) can surface the elicitation
+        ``/mcp/execute`` → Triune server) can surface the elicitation
         to the user and retry with ``inputResponses``.
 
         :param name: The tool name.
         :param arguments: The tool arguments dict.
-        :param session_id: Omnigent session id, e.g. ``"conv_abc123"``.
+        :param session_id: Triune session id, e.g. ``"conv_abc123"``.
             Set on the connection for the inline elicitation handler.
         :returns: The formatted tool result string.
         :raises McpElicitationRequired: When the MCP server returns
@@ -738,7 +740,7 @@ class McpServerConnection:
         """
         Retry a ``tools/call`` with MRTR ``inputResponses``.
 
-        Called by the Omnigent server after the user has responded to an
+        Called by the Triune server after the user has responded to an
         ``InputRequiredResult`` elicitation. Sends a new
         ``tools/call`` with the user's ``inputResponses`` and the
         opaque ``requestState`` per the MCP MRTR spec.
@@ -1315,7 +1317,7 @@ class McpServerConnection:
         backend), so ``sandbox: true`` consistently produced silent
         hangs on the first ``tool/call``. Inner-stack stdio MCPs
         have always spawned without sandboxing
-        (``omnigent/inner/mcp_tools.py``); Omnigent now matches that
+        (``omnigent/inner/mcp_tools.py``); Triune now matches that
         baseline. Per-MCP sandboxing — if reintroduced — should
         flow through the ``omnigent/environments/`` primitive
         with explicit outbound-host allowlists, not srt-defaults.
@@ -1672,7 +1674,7 @@ async def _call_tool_with_reconnect(
     :param arguments: The tool arguments dict.
     :param retry: Retry policy controlling max attempts, backoff
         base, and backoff cap.
-    :param session_id: Omnigent session id forwarded to
+    :param session_id: Triune session id forwarded to
         ``_invoke_tool`` for inline elicitation context.
     :returns: The formatted tool result string.
     """

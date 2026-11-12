@@ -12,4 +12,24 @@ the two in sync, so releases are cut by bumping pyproject alone (via
 ``scripts/update_versions.py``).
 """
 
+# Modified for Triune.
+
+import importlib.metadata
+
 VERSION = "0.20.0"
+
+
+def installed_distribution() -> importlib.metadata.Distribution | None:
+    """Read Triune metadata, falling back to the legacy distribution name."""
+    for name in ("triune", "omnigent"):
+        try:
+            return importlib.metadata.distribution(name)
+        except importlib.metadata.PackageNotFoundError:
+            continue
+    return None
+
+
+def installed_version() -> str:
+    """Return the installed version, or the source version when uninstalled."""
+    distribution = installed_distribution()
+    return distribution.version if distribution is not None else VERSION

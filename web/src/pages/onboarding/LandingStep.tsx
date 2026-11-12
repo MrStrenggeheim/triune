@@ -1,3 +1,4 @@
+// Modified for Triune.
 // Onboarding step 1: the hero landing. Without MDM presets: "Get started
 // locally" / "Join your team". With presets: one "Join your team (<name>)" split
 // button; its dropdown selects from presets, recents, and a server URL field.
@@ -99,7 +100,7 @@ export function LandingStep({
     <div className="flex min-w-0 flex-1 flex-col gap-2 px-2 pb-1">
       <div className="text-center flex-1 flex flex-col justify-center">
         <h1 className="text-2xl font-normal leading-9 tracking-[-0.03em] text-foreground">
-          Meet Omnigent
+          Meet Triune
         </h1>
         <p className="mt-1 text-base text-muted-foreground">
           One interface for all your coding agents
@@ -201,7 +202,7 @@ export function LandingStep({
                   onKeyDown={(e) => {
                     if (e.key === "Enter") selectTyped();
                   }}
-                  placeholder="Enter Omnigent server URL"
+                  placeholder="Enter Triune server URL"
                   aria-label="Server URL"
                   aria-invalid={invalid}
                 />

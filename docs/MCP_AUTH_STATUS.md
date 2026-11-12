@@ -2,8 +2,8 @@
 
 `/mcp` shows whether each MCP server a session can use is connected. For servers the
 host owns (Claude Code, Codex and Cursor configs, including an organization's
-`managed-mcp.json`), Omnigent has no way to know that state: whatever manages those
-sign-ins does. This file is how that manager tells Omnigent.
+`managed-mcp.json`), Triune has no way to know that state: whatever manages those
+sign-ins does. This file is how that manager tells Triune.
 
 ## Where it lives
 
@@ -41,7 +41,7 @@ to `connected` updates the row.
 - An entry naming a server the host did not discover is ignored. Report servers under
   the name and harness the config uses.
 - A `status` outside the two values above is ignored, so a newer manager can add one
-  without breaking an older Omnigent: the row simply shows no state.
+  without breaking an older Triune: the row simply shows no state.
 - `sign_in_url` must be an absolute `http(s)` URL with a hostname, no embedded
   credentials, and no whitespace or control characters. Anything else is dropped and
   the row shows the state with nothing to click. The same rule is applied again where

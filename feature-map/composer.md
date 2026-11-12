@@ -683,7 +683,7 @@ Other connection providers alone do not enable the managed MCP picker.
   Skip bypasses only this launch's check; it does not renew credentials or
   guarantee that sandbox authentication will succeed.
 - The launch action banner appears only on deployments whose launch code
-  reports it; Omnigent's own sandbox providers never do. Its text comes from the
+  reports it; Triune's own sandbox providers never do. Its text comes from the
   deployment, so check the wording there rather than in the web UI.
 - Session choices and server-stored project defaults are separate from local
   YAML and the shared-preference foundation; see

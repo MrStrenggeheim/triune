@@ -20,6 +20,8 @@ Requirements:
     The ``qwen`` CLI (v0.18+) must be installed and on PATH.
 """
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import asyncio
@@ -778,7 +780,7 @@ class QwenExecutor(Executor):
             else:
                 error = {
                     "code": -32601,
-                    "message": f"omnigent: unsupported ACP request method {method!r}",
+                    "message": f"triune: unsupported ACP request method {method!r}",
                 }
         except _AcpRequestError as exc:
             # A handler-raised, client-facing failure (e.g. file not found):
@@ -812,7 +814,7 @@ class QwenExecutor(Executor):
         if self._os_environment is None:
             env = create_os_environment(self._os_env)
             if env is None:
-                raise _AcpRequestError(-32603, "omnigent: no os_env for fs delegation")
+                raise _AcpRequestError(-32603, "triune: no os_env for fs delegation")
             self._os_environment = env
         return self._os_environment
 

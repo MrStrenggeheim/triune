@@ -1,3 +1,4 @@
+# Modified for Triune; inherited notices remain applicable.
 spec_version: 1
 name: cursor
 description: Cursor coding sub-agent — implements, cross-vendor reviews, or explores a scoped task in its own worktree.
@@ -5,7 +6,7 @@ description: Cursor coding sub-agent — implements, cross-vendor reviews, or ex
 # Native Cursor TUI harness (`cursor-agent`): runs in its own terminal the
 # human can open in the UI's Subagents panel and TAKE OVER. Headless workers
 # can't answer ApprovalCards, so YOLO skips cursor-agent's in-terminal
-# prompts (and the mirrored web cards). Omnigent ``blast_radius`` still
+# prompts (and the mirrored web cards). Triune ``blast_radius`` still
 # DENYs the catastrophic set. Opt out with ``yolo: false``; or set
 # ``permission_mode: auto`` for Smart Auto (``--auto-review``) instead.
 executor:

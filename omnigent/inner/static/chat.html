@@ -1,9 +1,10 @@
 <!DOCTYPE html>
+<!-- Modified for Triune. -->
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Omnigent Chat</title>
+<title>Triune Chat</title>
 <!-- Markdown + syntax highlighting + HTML sanitization from CDN.
      Versions are pinned and protected with Subresource Integrity (SRI):
      the browser refuses to run a file whose hash doesn't match, so a
@@ -218,7 +219,7 @@ header { flex-shrink: 0; border-bottom: 1px solid var(--border); background: var
     <textarea id="msg-input" rows="1" placeholder="Type a message..." onkeydown="handleKey(event)"></textarea>
     <button class="btn-send" id="send-btn" onclick="sendMessage()">Send</button>
   </div>
-  <div class="powered">Powered by Omnigent</div>
+  <div class="powered">Powered by Triune</div>
 </div>
 
 <script>
@@ -607,7 +608,7 @@ function notifyTurnDone(tab, preview) {
   //  - the chat tab that finished is not the one the user is looking at
   const userIsWatching = !document.hidden && tab.id === activeTabId;
   if (userIsWatching) return;
-  const title = (agentInfo?.name || 'Omnigent') + ' replied';
+  const title = (agentInfo?.name || 'Triune') + ' replied';
   const body = (tab.title !== ('Chat ' + tab.id) ? tab.title + ': ' : '') +
     (preview.length > 120 ? preview.substring(0, 120) + '...' : preview);
   const n = new Notification(title, { body, tag: 'omnigent-' + tab.id });
@@ -638,7 +639,7 @@ async function init() {
     const name = agentInfo.name || 'Agent';
     document.getElementById('agent-name').textContent = name;
     fillHeaderMascot();
-    document.title = 'Omnigent \u2014 ' + name;
+    document.title = 'Triune \u2014 ' + name;
     if (agentInfo.tools?.length > 0) {
       const toggle = document.getElementById('tools-toggle');
       toggle.style.display = '';

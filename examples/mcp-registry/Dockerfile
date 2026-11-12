@@ -6,4 +6,4 @@ WORKDIR /app
 COPY . .
 RUN uv sync --frozen --extra vault --no-dev
 ENV PATH="/app/.venv/bin:$PATH"
-CMD ["omnigent", "host", "--server", "http://host.docker.internal:18780", "--no-open", "--non-interactive"]
+CMD ["triune", "host", "--server", "http://host.docker.internal:18780", "--no-open", "--non-interactive"]

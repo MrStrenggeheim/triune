@@ -1,3 +1,4 @@
+// Modified for Triune.
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { CliCommandBlock } from "./CliCommandBlock";
 import { CloseShellDialog } from "./CloseShellDialog";
@@ -31,7 +32,7 @@ export const LongCliCommand: Story = {
   render: () => (
     <div className="w-[620px]">
       <CliCommandBlock
-        command="omnigent host --server https://workspace.example.com/api/2.0/omnigent --workspace /Users/example/projects/very-long-repository-name"
+        command="triune host --server https://workspace.example.com/api/2.0/omnigent --workspace /Users/example/projects/very-long-repository-name"
         testIdPrefix="story-cli"
       />
     </div>

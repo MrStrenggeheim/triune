@@ -23,6 +23,8 @@ Design notes
   original hooks so Ctrl-C and normal exits behave exactly as before.
 """
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import contextlib
@@ -62,8 +64,8 @@ class _CrashConfig(TypedDict):
 
 
 _CONFIG: _CrashConfig = {
-    "app_name": "omnigent",
-    "repo": "omnigent-ai/omnigent",
+    "app_name": "Triune",
+    "repo": "MrStrenggeheim/triune",
     "version": "unknown",
     "crashes_dir": None,
     "keep_reports": 10,
@@ -445,7 +447,7 @@ def _issue_body(exc: BaseException, tb_text: str) -> str:
     exc_type = type(exc).__qualname__
     msg = str(exc).strip() or "(no message)"
     return (
-        "This crash was auto-reported by Omnigent's crash handler.\n\n"
+        "This crash was auto-reported by Triune's crash handler.\n\n"
         f"**Exception:** `{exc_type}: {msg}`\n\n"
         "**Command:**\n"
         f"```\n{_command_line()}\n```\n\n"

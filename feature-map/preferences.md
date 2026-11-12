@@ -39,15 +39,15 @@ local; automatic client sync and shared/machine scope controls remain deferred.
 
 ## How to get to it (user POV)
 
-**Local CLI and files:** `omnigent config set --global model=<model>` or
+**Local CLI and files:** `triune config set --global model=<model>` or
 `harness=<harness>` saves a user default. Omit `--global` to save in the current
-project. Use `omnigent config list` to inspect the files and
-`omnigent config unset [--global] model` to remove a value. Startup commands
+project. Use `triune config list` to inspect the files and
+`triune config unset [--global] model` to remove a value. Startup commands
 and argument lists are configured in the user file's per-harness mappings;
 `config list` names any project-file entries it ignores.
 
-**Launch:** run `omnigent run` with an agent/default agent and optional model
-or harness flags, or use a native command such as `omnigent codex` with
+**Launch:** run `triune run` with an agent/default agent and optional model
+or harness flags, or use a native command such as `triune codex` with
 pass-through arguments. The native entry points and prerequisites are listed in
 [Native harnesses](./native-harnesses.md).
 
@@ -65,11 +65,11 @@ resolution, identity, and limits. These endpoints do not adopt preferences into
 launchers or turn on sync. Embedded apps opt in with `create_app(preference_store=...)`;
 omitting an auth provider uses the reserved `local` user namespace.
 
-**Cloud configuration CLI:** `omnigent config cloud --server URL show`, `save`,
+**Cloud configuration CLI:** `triune config cloud --server URL show`, `save`,
 `import`, and `onboard`. Save/import show a preview and require confirmation
 (`--yes` accepts explicitly). A launcher can supply `--plugin-opt-outs PATH`
 before the subcommand to include its existing JSON preferences. `onboard` is an
-interactive launcher hook; OSS startup does not invoke it automatically. See the
+interactive launcher hook; self-hosted startup does not invoke it automatically. See the
 [configuration guide](../docs/cloud-configuration.md). Automatic prompting and
 plugin management by an external launcher require a separate integration.
 
@@ -161,9 +161,9 @@ interpreter, server identity/auth mode and database; use synthetic settings.
 - Record commands, output, exit codes and before/after state; identify pasted
   terminal output separately from captured transcripts. Check `show` excludes
   credentials and commands. A missing server or failed connection should report
-  the configuration/connection error without advising `omnigent stop`.
+  the configuration/connection error without advising `triune stop`.
 
-Direct `onboard` and SSH tunneling verify the OSS CLI path. They do not verify
+Direct `onboard` and SSH tunneling verify the self-hosted CLI path. They do not verify
 deployed OAuth, workspace routing/identity, managed rollout gates, or automatic
 launcher startup and plugin housekeeping. Record those gaps separately, along
 with live conflict/rollback faults and any databases not exercised.
@@ -196,7 +196,7 @@ It also walks small pages across replicas, resumes a cursor after restart,
 and rejects continuation after another edit; a stable traversal has no missing
 or duplicated preferences.
 No services or providers are mocked; no model is called. This verifies the local
-OSS API, not managed deployment or actual native application of preferences.
+self-hosted API, not managed deployment or actual native application of preferences.
 The store matrix can also run on PostgreSQL, MySQL, and CockroachDB when
 `OMNIGENT_TEST_DB_URI` names an isolated backend. CI's external-database lanes
 run `tests/stores`; the real-process test is an explicit run on those backends:
@@ -228,7 +228,7 @@ observed results, any mocked services, and remaining entry-point gaps.
   resolutions stop permanently; reads and identical retries still work. The
   configuration snapshot uses one bounded row and has no receipt history.
 - Requests have bounded bodies and worker admission. Managed rollout and task
-  ownership still require deployment wiring; the OSS process recipe does not
+  ownership still require deployment wiring; the self-hosted process recipe does not
   validate managed authentication or MySQL concurrency.
 - Managed deployment, Universe wiring, Arclet startup, automatic outbox/reconnect,
   and native plugin isolation remain unverified follow-ups.

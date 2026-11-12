@@ -1,6 +1,8 @@
 """Canonical cap for a ``function_call_output``'s ``output``, applied by every
 producer so a multi-MB tool result can't become one giant SSE frame."""
 
+# Modified for Triune.
+
 import json
 
 from omnigent.runtime.mcp_tool_result import decode_mcp_image_result, encode_mcp_image_result
@@ -25,7 +27,7 @@ def cap_tool_output(output: str, *, max_bytes: int | None = None) -> str:
     omitted = len(encoded) - max_bytes
     # Drop a partial trailing multibyte char left by slicing on a byte boundary.
     kept = encoded[:max_bytes].decode("utf-8", errors="ignore")
-    return f"{kept}\n\n[output truncated by omnigent: {omitted} of {len(encoded)} bytes omitted]"
+    return f"{kept}\n\n[output truncated by triune: {omitted} of {len(encoded)} bytes omitted]"
 
 
 def _cap_image_envelope(output: str, max_bytes: int) -> str:

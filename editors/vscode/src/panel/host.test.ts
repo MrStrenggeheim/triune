@@ -1,3 +1,4 @@
+// Modified for Triune; inherited notices remain applicable.
 /**
  * Unit tests for the pure helpers in panel/host.ts (render decision + placeholder).
  */
@@ -30,7 +31,7 @@ describe("renderResolvingHtml", () => {
   it("is a self-contained placeholder with a CSP and no scripts", () => {
     const html = renderResolvingHtml();
     expect(html).toContain("Content-Security-Policy");
-    expect(html).toContain("Resolving Omnigent server");
+    expect(html).toContain("Resolving Triune server");
     expect(html).not.toContain("<script");
   });
 });

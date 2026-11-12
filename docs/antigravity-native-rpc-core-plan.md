@@ -1,5 +1,8 @@
 # Antigravity-native RPC Core Rework — Implementation Plan
 
+> Historical upstream Omnigent design discussion; names, commands and release assumptions are retained as context.
+> For current Triune setup and compatibility, see the [fork guide](custom-fork.md).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Rework the antigravity-native harness runtime onto agy's connect-RPC surface — structured trajectory-step reads, interaction bridging (questions + approvals), and real interrupt — replacing the JSONL transcript-tail + send-keys-interaction core.

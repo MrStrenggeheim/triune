@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { MobileWorkspaceTabs } from "./MobileWorkspace";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
@@ -5043,11 +5044,11 @@ describe("AppShell share action", () => {
       expect(shareButton).not.toHaveAttribute("title");
       fireEvent.focus(
         screen.getByLabelText(
-          "Share session disabled: Sharing has been disabled for this Omnigent server.",
+          "Share session disabled: Sharing has been disabled for this Triune server.",
         ),
       );
       expect(screen.getByRole("tooltip")).toHaveTextContent(
-        "Sharing has been disabled for this Omnigent server.",
+        "Sharing has been disabled for this Triune server.",
       );
     });
   });

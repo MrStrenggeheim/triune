@@ -1,3 +1,4 @@
+// Modified for Triune.
 /**
  * The invite-redemption page (``/register?invite=...``).
  *
@@ -80,7 +81,7 @@ export function RegisterPage() {
       <div className="space-y-1 text-center">
         <h1 className="text-2xl font-semibold tracking-tight">Create your account</h1>
         <p className="text-ui text-muted-foreground">
-          You were invited to join this Omnigent server.
+          You were invited to join this Triune server.
         </p>
       </div>
 

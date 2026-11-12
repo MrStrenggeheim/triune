@@ -12,7 +12,7 @@ Conversation and tool views share resizable, dockable panes while keeping their 
 - `references`: whole chats, completed answers, selected messages and quotes enter drafts with stable source snapshots.
 - `activity`: retained shell history and the dedicated Activity view expose actual activity; the composer dock is disabled.
 - `navigation`: global commands, contextual find, explicit conversation sources and mobile view switching retain existing workflows.
-- `appearance`: shared content surfaces, primary bottom tab strips, consistent switches and list density follow `design-system/omnigent/MASTER.md`.
+- `appearance`: shared content surfaces, primary bottom tab strips, consistent switches and list density follow `design-system/triune/MASTER.md`.
 - `migration`: existing conversation, file and shell references remain accessible without starting or stopping resources.
 
 ## How to get to it (user POV)
@@ -75,7 +75,7 @@ Preconditions: follow the [verification skill](skills/verify-omnigent/SKILL.md),
 - Canvas and saved conversation grids retain their existing routes; they are not silently converted into new layouts.
 - Their legacy shell unit coverage remains in `web/src/shell/AppShell.test.tsx`; default docked routes use the browser journeys above.
 
-## Approved iteration acceptance
+### Approved iteration acceptance
 
 - Select chat text: Reply has one icon; Ask subchat… creates a durable child with an unsent quote; Send to… preserves the chosen chat's draft.
 - In an existing or new composer, microphone follows Add; control labels share typography and foreground, with effort secondary.
@@ -89,7 +89,7 @@ Preconditions: follow the [verification skill](skills/verify-omnigent/SKILL.md),
 Verification: `tests/browser_ui/chat/test_workspace_iteration.py`, the existing workspace selection/design and unified workspace journeys, and the owning component suites.
 Layout miniatures and Inbox consolidation remain deferred.
 
-## Current cycle controls
+### Current cycle controls
 
 - Host/path follows approved B: computer icon, secondary Host, middle dot, primary path and chevron.
 - Add host is directly reachable in every workspace dialog; it reuses server-specific instructions without losing the path draft.

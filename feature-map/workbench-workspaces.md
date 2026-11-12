@@ -50,7 +50,7 @@ Preconditions: use the isolated [verification environment](skills/verify-omnigen
 
 ## Gotchas
 
-- This filesystem workspace is distinct from an Omnigent deployment's tenant/workspace ID and from a project label.
+- This filesystem workspace is distinct from a Triune deployment's tenant/workspace ID and from a project label.
 - The initial independent resource API is owner-scoped; existing shared-chat resource access remains on its authorized compatibility path.
 - Runner-only environments require their original live environment; independence of identity does not make suspended or destroyed compute available.
 - Browsing changes tool scope, not the agent's working directory or any running shell's directory.

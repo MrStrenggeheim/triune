@@ -29,6 +29,8 @@ path but is blocked at the org policy layer, so this bridge does not
 use it.
 """
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import argparse
@@ -566,8 +568,8 @@ def _windows_native_claude_error(claude_path: str) -> ClaudeNativeHookInterprete
     """
     return ClaudeNativeHookInterpreterMismatchError(
         "Claude Code executable "
-        f"{claude_path!r} is Windows-native, but Omnigent is running under WSL. "
-        "Claude Code cannot run Omnigent's WSL Python hook command from its Windows shell. "
+        f"{claude_path!r} is Windows-native, but Triune is running under WSL. "
+        "Claude Code cannot run Triune's WSL Python hook command from its Windows shell. "
         "Install @anthropic-ai/claude-code from WSL (for example, `npm install -g "
         "@anthropic-ai/claude-code`) so a WSL-native `claude` binary wins PATH resolution, "
         "then retry."
@@ -7724,7 +7726,7 @@ def _tool_relay_handler_factory(
             # the fixed prefix is prepended.
             if len(detail) > _POLICY_PROXY_ERROR_DETAIL_MAX:
                 detail = detail[: _POLICY_PROXY_ERROR_DETAIL_MAX - 3] + "..."
-            message = f"omnigent policy-eval proxy could not reach the Omnigent server: {detail}"
+            message = f"omnigent policy-eval proxy could not reach the Triune server: {detail}"
             # Keep the full exception (with traceback) in the runner log; the
             # user-facing body is capped and can drop a diagnostically useful tail.
             _logger.warning("policy-eval proxy forward failed: %s", detail, exc_info=exc)
@@ -7794,7 +7796,7 @@ def _run_relay_tool(
     try:
         result = future.result(timeout=_TOOL_CALL_TIMEOUT_S)
     except Exception as exc:  # noqa: BLE001 - relay converts callback failures to MCP errors.
-        return _mcp_error(f"Omnigent tool dispatch failed: {exc}")
+        return _mcp_error(f"Triune tool dispatch failed: {exc}")
     return _mcp_response_from_tool_result(result)
 
 
@@ -8108,8 +8110,8 @@ def _handle_mcp_request(
                 "version": "0.1.0",
             },
             "instructions": (
-                "Omnigent tools are available as MCP tools when the "
-                "active Omnigent turn advertises them; local sys_os_* "
+                "Triune tools are available as MCP tools when the "
+                "active Triune turn advertises them; local sys_os_* "
                 "tools are available outside an active turn for "
                 "workspace file and shell access."
             ),
@@ -8270,7 +8272,7 @@ def _call_relay_tool(
     token = relay.get("token")
     url = relay.get("url")
     if not isinstance(token, str) or not isinstance(url, str):
-        return _mcp_error("active Omnigent tool relay is missing url/token")
+        return _mcp_error("active Triune tool relay is missing url/token")
     payload = json.dumps({"name": name, "arguments": arguments}).encode("utf-8")
     req = request.Request(
         f"{url}/tool",
@@ -8294,13 +8296,13 @@ def _call_relay_tool(
     # through ``_call_mcp_tool`` → ``_stdio_jsonrpc_loop`` and kill the MCP
     # server.
     except OSError as exc:
-        return _mcp_error(f"failed to call Omnigent tool relay: {exc}")
+        return _mcp_error(f"failed to call Triune tool relay: {exc}")
     try:
         decoded = json.loads(raw)
     except json.JSONDecodeError:
-        return _mcp_error("Omnigent tool relay returned malformed JSON")
+        return _mcp_error("Triune tool relay returned malformed JSON")
     if not isinstance(decoded, dict):
-        return _mcp_error("Omnigent tool relay returned non-object JSON")
+        return _mcp_error("Triune tool relay returned non-object JSON")
     return decoded
 
 
@@ -10045,7 +10047,7 @@ _CONTEXT_OVERFLOW_REPLACEMENT = (
 _LOGIN_COMMAND_RE = re.compile(r"(?<![\w/])/login\b")
 
 _LOGIN_GUIDANCE = (
-    "`/login` is not available from the Omnigent web chat — run "
+    "`/login` is not available from the Triune web chat — run "
     "`omni setup` on the host to sign in again."
 )
 

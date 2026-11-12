@@ -62,7 +62,7 @@ policies:
 **4. Start the server.**
 
 ```bash
-omnigent server --config server_config.yaml
+triune server --config server_config.yaml
 ```
 
 After starting, you can also add or remove policies at runtime through the REST API (see [Admin policy REST API](#admin-policy-rest-api)).
@@ -285,16 +285,16 @@ Forces a specific sandbox configuration on agent start.
 `env_passthrough` is the escape hatch for an agent that authenticates from an
 environment variable. Agent CLIs are spawned with a **deny-by-default**
 environment: the shared base (`HOME`, `PATH`, proxy/TLS, locale, `TMPDIR`, the
-Omnigent session marker) plus the harness's own variable family, and nothing
+Triune session marker) plus the harness's own variable family, and nothing
 else. A host secret belonging to some other provider is not inherited.
 
 That means an ambient key which used to reach the CLI implicitly now has to be
 declared. Two cases worth knowing:
 
 - **A generic ACP agent** (`type: acp`) gets no vendor family at all, because
-  Omnigent cannot know which vendor an arbitrary agent belongs to. Gemini via
+  Triune cannot know which vendor an arbitrary agent belongs to. Gemini via
   ACP needs `env_passthrough: ["GEMINI_API_KEY"]`.
-- **Goose** owns `GOOSE_*` only. Goose configured through Omnigent's
+- **Goose** owns `GOOSE_*` only. Goose configured through Triune's
   provider/gateway routing is unaffected, but a goose set up against an ambient
   provider key (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, ...) needs that name
   declared here.

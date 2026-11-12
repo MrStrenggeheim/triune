@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { TooltipButton } from "@/components/ui/tooltip";
 /**
  * "Set up <agent> on <host>" dialog for the New Chat landing screen.
@@ -157,7 +158,7 @@ export function HarnessSetupDialog({
           // (all green ticks) rather than showing a "run omni setup"
           // signpost that would contradict the "is ready" description.
           <p className="py-1 text-ui text-muted-foreground" data-testid="harness-setup-empty">
-            Run <code className="rounded bg-muted px-1 py-0.5 font-mono text-sm">omni setup</code>{" "}
+            Run <code className="rounded bg-muted px-1 py-0.5 font-mono text-sm">triune setup</code>{" "}
             on {host?.name} to finish setting up {name}.
           </p>
         ) : hasSteps ? (

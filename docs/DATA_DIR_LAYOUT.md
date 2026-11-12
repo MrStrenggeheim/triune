@@ -1,6 +1,6 @@
 # Runtime data directory layout
 
-Omnigent keeps all machine-local state in a single **runtime data directory**,
+Triune keeps all machine-local state in a single **runtime data directory**,
 `~/.omnigent` by default. This is where the runtime database, logs,
 credentials, per-harness session state, and process registries live.
 
@@ -45,7 +45,7 @@ directly instead of going through `data_dir()`.
 | `telemetry.json` | Telemetry state, including the persistent `installation_id`. | `omnigent/telemetry/installation_id.py` |
 | `.update_check.json` **†** | Cached result of the (potentially slow) update check. | `omnigent/update_check.py` |
 | `install_ledger.json` | Record of what the installer wrote, used by uninstall/purge. | `omnigent/install_ledger.py` |
-| `admins`, `allowed_domains` | OSS server operator state: admin list and OIDC allowed-domains, co-located so operator-editable files live together. Operator-managed input files — the cited modules read them. A listed identity is promoted to the database admin flag on login (OIDC, accounts) or on first page load (header auth); removing it from `admins` does not revoke that flag, which must be cleared separately. | Read by `omnigent/server/admin_list.py`, `omnigent/server/oidc_access.py` |
+| `admins`, `allowed_domains` | self-hosted server operator state: admin list and OIDC allowed-domains, co-located so operator-editable files live together. Operator-managed input files — the cited modules read them. A listed identity is promoted to the database admin flag on login (OIDC, accounts) or on first page load (header auth); removing it from `admins` does not revoke that flag, which must be cleared separately. | Read by `omnigent/server/admin_list.py`, `omnigent/server/oidc_access.py` |
 | `sharing_mode`, `public_sharing`, `default_public_sessions` | Server-side sharing settings, written from Settings > Sharing. Each overrides its boot default: `OMNIGENT_SHARING_MODE`, `OMNIGENT_PUBLIC_SHARING` and `OMNIGENT_DEFAULT_PUBLIC_SESSIONS` (`off` / `sandbox` / `all`, which new sessions start with public read access). | `omnigent/server/sharing_settings.py` |
 
 ## Directories
@@ -167,5 +167,5 @@ data dir. See e.g. `omnigent/harnesses/qwen_native/bridge.py`.
   backups you created by hand (e.g. `chat.db.bak*`, `chat1.db`) and leftovers
   from older versions (e.g. `server.yaml`, `node-ca-bundle.pem`) that the
   current code no longer writes.
-- To remove this state, `omnigent uninstall --purge` handles the tree; see
+- To remove this state, `triune uninstall --purge` handles the tree; see
   `docs/UNINSTALL_DESIGN.md`.

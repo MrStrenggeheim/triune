@@ -1,5 +1,8 @@
 # `native-qwen` — Design Proposal
 
+> Historical upstream Omnigent design discussion; names, commands and release assumptions are retained as context.
+> For current Triune setup and compatibility, see the [fork guide](custom-fork.md).
+
 A terminal-native Qwen Code harness (`harness: qwen-native`, alias `native-qwen`)
 that embeds the **live interactive `qwen` TUI** in the Omnigent web UI, instead of
 driving `qwen --acp` as a piped request/response subprocess (the existing `qwen`

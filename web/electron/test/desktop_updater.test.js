@@ -1,3 +1,4 @@
+// Modified for Triune.
 // Direct unit tests for the desktop auto-updater module.
 //
 // Unlike update-main.test.js (which boots the whole main.js in a vm to prove
@@ -161,8 +162,13 @@ describe("desktop_updater — pure helpers", () => {
     );
     const packageConfig = require("../package.json");
 
-    assert.equal(devConfig.url, packageConfig.build.publish[0].url);
-    assert.match(devConfig.url, /^https:\/\//);
+    const feed = packageConfig.build.publish[0];
+    assert.equal(devConfig.provider, "github");
+    assert.equal(devConfig.owner, "MrStrenggeheim");
+    assert.equal(devConfig.repo, "triune");
+    assert.equal(feed.provider, devConfig.provider);
+    assert.equal(feed.owner, devConfig.owner);
+    assert.equal(feed.repo, devConfig.repo);
   });
 
   it("classifies signing/integrity errors as security errors", () => {
@@ -423,7 +429,7 @@ describe("desktop_updater — IPC trust + consent", () => {
     h.updater.registerIpc();
     await h.ipcHandlers.get("omnigent:update-download")(h.event);
     assert.equal(h.calls.showMessageBox.length, 1);
-    assert.equal(h.calls.showMessageBox[0].options.message, "Download an Omnigent update?");
+    assert.equal(h.calls.showMessageBox[0].options.message, "Download a Triune update?");
     assert.equal(h.calls.downloadUpdate, 1);
 
     // set-config
@@ -431,7 +437,7 @@ describe("desktop_updater — IPC trust + consent", () => {
     h.updater.init();
     h.updater.registerIpc();
     await h.ipcHandlers.get("omnigent:set-update-config")(h.event, { mode: "manual" });
-    assert.equal(h.calls.showMessageBox[0].options.message, "Change Omnigent update settings?");
+    assert.equal(h.calls.showMessageBox[0].options.message, "Change Triune update settings?");
     assert.equal(h.readSettings().update_mode, "manual");
   });
 

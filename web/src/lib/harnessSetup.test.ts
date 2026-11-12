@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { describe, expect, it } from "vitest";
 
 import {
@@ -106,7 +107,7 @@ const QWEN_STEPS: SetupStepWire[] = [
     title: "Add a Qwen credential",
     detail: "Qwen needs an API key or gateway. Set it up on the host for now.",
     action: "setup",
-    command: "omni setup",
+    command: "triune setup",
     status_key: null,
   },
 ];
@@ -421,15 +422,15 @@ describe("resolveSetupSteps", () => {
       {
         kind: "install",
         title: "Set up on the host",
-        detail: "Run omni setup on the host.",
+        detail: "Run triune setup on the host.",
         action: "setup",
-        command: "omni setup",
+        command: "triune setup",
         status_key: null,
       },
     ];
     const steps = resolveSetupSteps(generic, "cursor-native", hostWith({ "cursor-native": false }));
     expect(steps).toHaveLength(1);
-    expect(steps[0].command).toBe("omni setup");
+    expect(steps[0].command).toBe("triune setup");
   });
 
   it("returns [] with no descriptor or no harness", () => {

@@ -33,6 +33,8 @@ stdin, and reads the decision back from stdout as
   nothing and kimi's own TUI prompt stands. Never blocks the TUI.
 """
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import argparse
@@ -190,7 +192,7 @@ def _main_evaluate_policy(argv: list[str]) -> int:
     try:
         eval_response = resp.json()
     except json.JSONDecodeError:
-        print("omnigent kimi evaluate-policy hook: malformed Omnigent response", file=sys.stderr)
+        print("omnigent kimi evaluate-policy hook: malformed Triune response", file=sys.stderr)
         return _fail_closed()
 
     hook_output = evaluation_response_to_hook_output(hook_event, eval_response)

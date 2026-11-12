@@ -1,3 +1,4 @@
+# Modified for Triune; inherited notices remain applicable.
 spec_version: 1
 name: reviewer
 description: >-
@@ -8,7 +9,7 @@ description: >-
 # Fact-checker on the Codex harness — deliberately a DIFFERENT vendor than
 # Scribe's claude-sdk brain, so it catches claims the author's own model would
 # wave through. No model is pinned, so it runs on whatever OpenAI provider you
-# configured (`omnigent setup`). Booting this agent needs an OpenAI provider; if
+# configured (`triune setup`). Booting this agent needs an OpenAI provider; if
 # none is configured, Scribe finalizes without the cross-check.
 executor:
   type: omnigent

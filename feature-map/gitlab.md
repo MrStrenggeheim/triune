@@ -12,7 +12,7 @@ reads the MR; agent CLI and MCP writes associate it with the session.
 - `associations`: link, select, and unlink MRs across projects.
 - `partial`: incomplete comments, checks, files, and omitted diff explanations.
 - `auth`: missing CLI or denied access retains checkout context and a useful hint.
-- `discovery`: glab-configured hosts are recognized without Omnigent configuration,
+- `discovery`: glab-configured hosts are recognized without Triune configuration,
   including alongside GitHub and Azure DevOps remotes.
 - `tracking`: successful mutations persist; reads, comments, failures, and replay
   do not create extra associations.
@@ -27,7 +27,7 @@ reads the MR; agent CLI and MCP writes associate it with the session.
 
 ## Driving it with the repro environment
 
-Preconditions: use the [Verify Omnigent skill](skills/verify-omnigent/SKILL.md)
+Preconditions: use the [Verify Triune skill](skills/verify-omnigent/SKILL.md)
 and start an isolated instance. Browser fixtures replace GitLab resource
 responses; they exercise the actual shared UI without contacting GitLab.
 

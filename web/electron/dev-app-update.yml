@@ -1,3 +1,5 @@
-provider: generic
-url: https://omnigent.ai/_desktop/updates/
+# Modified for Triune: never use the upstream desktop update channel.
+provider: github
+owner: MrStrenggeheim
+repo: triune
 updaterCacheDirName: omnigent-desktop-electron-updater-dev

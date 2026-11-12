@@ -20,6 +20,8 @@ every invocation re-derives "what needs to happen" from one filesystem
 read.
 """
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import configparser
@@ -384,8 +386,8 @@ def run_onboarding() -> bool:
 
     console.print(
         Panel(
-            "[bold]Omnigent onboarding[/bold]\n\n"
-            "Setting up the Databricks profiles Omnigent needs "
+            "[bold]Triune onboarding[/bold]\n\n"
+            "Setting up the Databricks profiles Triune needs "
             f"({', '.join(f'`{s.name}`' for s in DEFAULT_PROFILES)}).",
             border_style="cyan",
             padding=(1, 2),
@@ -628,8 +630,8 @@ def maybe_run_onboarding() -> None:
         n = _apply_silent_aliases(actions.aliasable, console)
         if n:
             console.print(
-                f"omnigent: aliased {n} existing profile(s) "
-                f"to Omnigent names: "
+                f"triune: aliased {n} existing profile(s) "
+                f"to Triune names: "
                 f"{', '.join(spec.name for _, spec in actions.aliasable)}"
             )
         existing = _existing_profile_hosts()
@@ -641,7 +643,7 @@ def maybe_run_onboarding() -> None:
     missing_parts = [s.name for s in actions.oauth]
     missing_parts += [f"{s.name} (wrong host)" for s, _ in actions.wrong_host]
     console.print(
-        f"\n  [yellow]Omnigent needs Databricks profiles: {', '.join(missing_parts)}[/yellow]"
+        f"\n  [yellow]Triune needs Databricks profiles: {', '.join(missing_parts)}[/yellow]"
     )
     try:
         answer = input("  Run onboarding now? [Y/n] ").strip().lower()

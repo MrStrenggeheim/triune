@@ -15,7 +15,7 @@ Codex exit-screen telemetry.
 | Harness | Diagnostic source | When exported |
 | --- | --- | --- |
 | Codex native | App-server stderr pipe; bounded terminal output on startup exit | Stderr continuously throughout the app-server lifetime; terminal evidence before startup cleanup |
-| Claude native | An Omnigent-owned Claude `--debug-file` | Continuously while the transcript forwarder runs, plus a bounded final drain on shutdown or launch failure |
+| Claude native | An Triune-owned Claude `--debug-file` | Continuously while the transcript forwarder runs, plus a bounded final drain on shutdown or launch failure |
 
 The flag is shared across harnesses and lifecycle phases. Codex captures the
 app-server's stderr, including startup and runtime diagnostics. A separate
@@ -59,7 +59,7 @@ masking, and cookie-value masking are confined to diagnostic sanitization.
 
 Enabled capture also configures the app-server's `RUST_LOG` filter. Without an
 explicit filter, Codex can retain useful diagnostics in its native local store
-while its stderr contains only the listener banner. Omnigent selects warnings
+while its stderr contains only the listener banner. Triune selects warnings
 plus targeted HTTP, engine-client, MCP, and tool-timing diagnostics:
 
 ```text
@@ -203,7 +203,7 @@ classes. `native_launch_os_errno`, `native_launch_os_errno_name`, and
 chain. Missing fields mean unavailable evidence. These fields contain no raw
 exception messages, paths, arguments, or pane output.
 
-`native_launch_code_origin` identifies the last available Omnigent module,
+`native_launch_code_origin` identifies the last available Triune module,
 function, and line in the exception traceback, falling back to the available
 leaf when no framework frame exists. It names the launch operation without
 exporting its filesystem path; an exception without a traceback omits it.
@@ -378,7 +378,7 @@ The status can be synthesized from a runner-tunnel acknowledgement, so it does
 not establish that a corresponding HTTP request reached the server.
 
 Claude transcript entries marked `isApiErrorMessage` also produce INFO
-`native_failure_observed` events, correlated by Omnigent session/response ID and
+`native_failure_observed` events, correlated by Triune session/response ID and
 native record ID. These observations do not publish an additional failed status.
 Transcript observations are logged before delivery so a rejected upload still
 leaves evidence. Each text block has its own `failure_id`; count distinct IDs to
@@ -387,7 +387,7 @@ session ID and `native_record_id` when available; for affected sessions, count
 distinct session IDs.
 Hook and transcript observations have separate source identities: do not sum
 their counts as failed turns or copy a nearby request ID onto a hook failure.
-The ordinary log-envelope `request_id` may refer to an Omnigent event POST; it
+The ordinary log-envelope `request_id` may refer to a Triune event POST; it
 is not an inference request ID.
 
 Subagent hook failures suppressed by the existing parent-status guard produce
@@ -482,7 +482,7 @@ can finish draining, but the original launch failure is already in the logs.
 
 Claude owns disk rotation. In Claude 2.1.277, the custom debug file rotates near
 10 MiB to `<filename>.1`, retaining one predecessor (roughly 20 MiB total, with
-possible append overshoot). This is CLI-version-dependent, not an Omnigent disk
+possible append overshoot). This is CLI-version-dependent, not a Triune disk
 quota. The next enabled launch in the same bridge directory removes the prior
 owned file and its rotated predecessor. Other user debug files are never read
 or deleted.
@@ -561,7 +561,7 @@ the session remains open, without requiring a startup timeout. A quiet stderr
 pipe produces no events. Setting the flag to `0` disables these INFO events.
 
 To check early failure, start a fresh opted-in session with
-`omnigent codex --omni-telemetry-invalid-flag`. Inspect that session's
+`triune codex --omni-telemetry-invalid-flag`. Inspect that session's
 `codex_thread_start_failed` or `terminal_exit_observed` records: expect exit
 status `2` and `unexpected argument` in `terminal_last_output`. A discovery
 failure should have `reason=terminal_exited`, not `timeout`. Repeat with capture

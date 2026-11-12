@@ -1,5 +1,8 @@
 # Upgrade experience: `omni upgrade` + release-available notices
 
+> Historical upstream Omnigent design discussion; names, commands and release assumptions are retained as context.
+> For current Triune setup and compatibility, see the [fork guide](custom-fork.md).
+
 How Omnigent keeps a user's CLI — and the local processes it spawns — current
 across PyPI releases. Three pieces ship together:
 

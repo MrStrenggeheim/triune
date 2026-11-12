@@ -21,6 +21,8 @@ at most :data:`MAX_LOG_FILES` entries. A ``latest-cli.log`` symlink
 is maintained for quick access.
 """
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import asyncio
@@ -214,7 +216,7 @@ def _log_dir() -> Path:
     """
     Return the CLI diagnostics log directory.
 
-    Uses the shared Omnigent runtime data dir so ``OMNIGENT_DATA_DIR``
+    Uses the shared Triune runtime data dir so ``OMNIGENT_DATA_DIR``
     isolates diagnostics with the DB, artifacts, and process logs.
 
     :returns: ``<data-dir>/logs/cli``.
@@ -396,7 +398,7 @@ def print_stale_host_hint() -> None:
     dest = getattr(sys.stderr, "_original_stderr", sys.stderr)
     print(
         "If this is a runner tunnel rejection (HTTP 401), stale host processes "
-        f"may be the cause. Run `{cli_invocation()} stop` to stop existing Omnigent "
+        f"may be the cause. Run `{cli_invocation()} stop` to stop existing Triune "
         "host instances, then try again.",
         file=dest,
     )
@@ -422,7 +424,7 @@ def suppresses_recovery_hint(exc: BaseException) -> bool:
 
     The hint (:func:`print_stale_host_hint`) assumes the failure may be a
     runner tunnel rejection caused by stale host processes. That is
-    misleading for whole classes of error ``omnigent stop`` cannot fix — a
+    misleading for whole classes of error ``triune stop`` cannot fix — a
     missing Python dependency (e.g. the ``psycopg`` Postgres driver) or a
     background local server that crashed with its real cause already
     surfaced inline. Suppressing the hint for those keeps the error
@@ -610,7 +612,7 @@ def _update_latest_symlink(log_dir: Path, log_path: Path) -> None:
 def _safe_mtime(path: Path) -> float:
     """Return *path*'s mtime, or ``0.0`` if it has vanished.
 
-    ``_prune_old_logs`` runs at the start of every ``omnigent run``, so two
+    ``_prune_old_logs`` runs at the start of every ``triune run``, so two
     concurrent launches can glob the same log set then race to delete it. A
     plain ``p.stat()`` in the sort key would then hit a just-removed file and
     raise ``FileNotFoundError``, aborting the whole prune and crashing CLI

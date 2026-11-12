@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { AlertTriangleIcon } from "lucide-react";
@@ -274,7 +275,7 @@ function SupportedSwitchHostDialog({
 
         {noTargets ? (
           <p className="text-xs text-muted-foreground" data-testid="switch-host-no-targets">
-            No other hosts are online. Connect one with <code>omnigent host</code> and try again.
+            No other hosts are online. Connect one with <code>triune host</code> and try again.
           </p>
         ) : (
           <>

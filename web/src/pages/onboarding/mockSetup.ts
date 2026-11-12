@@ -1,3 +1,4 @@
+// Modified for Triune.
 // Dev-only mock of the Electron `omnigentSetup` bridge, so the four desktop
 // onboarding variants (new/returning × MDM/no-MDM) are reachable in a plain
 // `vite dev` browser — no Electron, no macOS Managed Preferences, no `defaults`.
@@ -94,10 +95,10 @@ export function maybeMockSetup(params: URLSearchParams): ServerSelectorV2Setup |
       // stream finishes — so the warm-up beat shows an empty terminal first.
       return new Promise<{ ok: boolean; error?: string }>((resolve) => {
         const lines = [
-          "Installing uv (required by the Omnigent installer)…",
-          "Installing the Omnigent CLI…",
-          "uv tool install --force --python 3.12 omnigent",
-          "Installed omnigent",
+          "Installing uv (required by the Triune installer)…",
+          "Installing the Triune CLI…",
+          "uv tool install --force --python 3.12 triune",
+          "Installed triune",
         ];
         let i = 0;
         const timer = setInterval(() => {
@@ -129,7 +130,7 @@ export function maybeMockSetup(params: URLSearchParams): ServerSelectorV2Setup |
               "Host is running",
             ]
           : [
-              `$ omnigent host --server ${url}`,
+              `$ triune host --server ${url}`,
               "Signing in to the server if needed…",
               "Connected this laptop.",
             ];

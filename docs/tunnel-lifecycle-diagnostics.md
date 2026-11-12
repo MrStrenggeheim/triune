@@ -463,7 +463,7 @@ uv run --no-sync pytest -q tests/host/test_connect.py tests/host/test_frames.py 
   tests/runner/transports/ws_tunnel/test_diagnostics.py --reruns 0
 ```
 
-For a local host check, run `omnigent host` against a disposable local server,
+For a local host check, run `triune host` against a disposable local server,
 record its PID, pause it with `kill -STOP "$host_pid"` for eight seconds, then
 resume it with `kill -CONT "$host_pid"`. Match `host_tunnel_health` to the
 server's `host_tunnel` by connection ID. The local loop delay should appear

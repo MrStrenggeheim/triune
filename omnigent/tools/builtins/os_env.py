@@ -8,7 +8,7 @@ inner :mod:`omnigent.inner.session` when the agent's
 :class:`omnigent.inner.os_env.OSEnvironment` instance so the
 same shell + cwd + sandbox is used across calls.
 
-The Omnigent path can't reuse those Session tool registrations
+The Triune path can't reuse those Session tool registrations
 directly: its
 the harness HTTP executor
 talks to the harness subprocess via the new HTTP contract,
@@ -29,6 +29,8 @@ tools depend on the inner os_env machinery
 once :mod:`omnigent.inner` retires. Keeping the dependency
 in one file makes that future deletion clean.
 """
+
+# Modified for Triune.
 
 from __future__ import annotations
 

@@ -1,3 +1,4 @@
+// Modified for Triune.
 // OIDC credentials: sign-in through the server's native loopback flow in the
 // system browser (RFC 8252 + PKCE), and the per-origin refresh grant that
 // renews sessions silently. The session cookie itself lives in Electron's jar.
@@ -116,15 +117,12 @@ async function signInWithBrowser(serverUrl, { signal, openExternal } = {}) {
       pages: {
         received: [
           "Sign-in received",
-          "Return to Omnigent to finish connecting, then close this tab.",
+          "Return to Triune to finish connecting, then close this tab.",
         ],
-        failed: [
-          "Sign-in was not completed",
-          "Close this tab and try connecting again in Omnigent.",
-        ],
+        failed: ["Sign-in was not completed", "Close this tab and try connecting again in Triune."],
         incomplete: [
           "Sign-in could not be completed",
-          "Close this tab and try connecting again in Omnigent.",
+          "Close this tab and try connecting again in Triune.",
         ],
       },
       signal,

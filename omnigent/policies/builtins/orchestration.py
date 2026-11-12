@@ -7,6 +7,8 @@ The evaluators run runner-side at tool dispatch
 (``omnigent/runner/policy.py``) and add no server routes.
 """
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import posixpath
@@ -694,7 +696,7 @@ POLICY_REGISTRY: list[dict[str, object]] = [
         "name": "Block Dangerous Shell Commands",
         "description": "Allows safe shell commands, applies a configurable ASK or DENY action "
         "to recoverable risky commands, and always denies catastrophic commands such as "
-        "force-push or rm -rf /. Supports Omnigent, Claude/Codex, Cursor, Pi, Hermes, and Goose.",
+        "force-push or rm -rf /. Supports Triune, Claude/Codex, Cursor, Pi, Hermes, and Goose.",
         "params_schema": {
             "type": "object",
             "properties": {

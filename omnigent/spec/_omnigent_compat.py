@@ -33,6 +33,8 @@ for new executor types. Add concrete typed fields and dedicated
 validator branches instead.
 """
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -436,7 +438,7 @@ def load_omnigent_yaml(
             for e in result.errors
         ):
             message += (
-                "\n\nNote: if this harness is valid on a newer Omnigent server, "
+                "\n\nNote: if this harness is valid on a newer Triune server, "
                 "this client (runner) may be older than the server that produced "
                 "the spec — upgrade the runner to pick up newer harnesses."
             )

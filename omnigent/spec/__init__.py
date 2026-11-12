@@ -1,5 +1,7 @@
 """Agent image spec: parsing, validation, and safe extraction."""
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import logging
@@ -350,7 +352,7 @@ def _prune_invalid_sub_agents(spec: AgentSpec) -> list[str]:
         _logger.warning(
             "Dropping sub-agent %r from agent %r: it failed validation on this "
             "client and will be unavailable. This usually means the spec was "
-            "produced by a newer Omnigent server with a feature this client does "
+            "produced by a newer Triune server with a feature this client does "
             "not support (e.g. a harness it does not recognize) — upgrade this "
             "client to use it. Validation errors: %s",
             name,

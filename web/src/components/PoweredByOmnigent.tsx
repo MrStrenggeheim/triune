@@ -1,8 +1,9 @@
-import { OttoEyes } from "@/components/OttoEyes";
+// Modified for Triune.
+import { OmnigentLogo } from "@/components/OmnigentLogo";
 
 /**
- * Understated "Powered by Omnigent" mark for the landing footer. Always uses
- * the real Otto mascot (not the operator's logo), since it credits the product.
+ * Understated "Powered by Triune" mark for the landing footer. Always uses
+ * the approved three-stroke mark (not the operator's logo), since it credits the product.
  */
 export function PoweredByOmnigent() {
   return (
@@ -11,8 +12,8 @@ export function PoweredByOmnigent() {
       data-testid="powered-by-omnigent"
     >
       <span>Powered by</span>
-      <OttoEyes className="h-3.5 w-auto opacity-60 transition-opacity duration-300 ease-out group-hover:opacity-100" />
-      <span>Omnigent</span>
+      <OmnigentLogo className="h-3.5 w-auto opacity-60 transition-opacity duration-300 ease-out group-hover:opacity-100" />
+      <span>Triune</span>
     </div>
   );
 }

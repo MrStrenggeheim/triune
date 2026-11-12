@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { normalizeAttachmentContent, type ChatAttachmentContent } from "@/lib/chatAttachments";
 import {
   createContext,
@@ -561,7 +562,7 @@ export function ChatAttachment({
             <span className="text-xs text-muted-foreground">
               {fileId?.startsWith("pending:")
                 ? "Uploading…"
-                : "File is not attached. Ask the agent to use omnigent attach-file."}
+                : "File is not attached. Ask the agent to use triune attach-file."}
             </span>
           )}
         </span>

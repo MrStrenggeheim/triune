@@ -48,6 +48,8 @@ scripted step source and a captured post sink, no real agy and no real sockets.
 The loop is finite under test via an injectable ``stop`` predicate.
 """
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import asyncio
@@ -1076,7 +1078,7 @@ async def supervise_reader(
             return
         state.turn_active = False
         _logger.info(
-            "agy reader closing a turn agy reports finished but Omnigent still had "
+            "agy reader closing a turn agy reports finished but Triune still had "
             "open (step-based close was missed): session=%s cascade=%s",
             session_id,
             cascade_id,
@@ -3212,7 +3214,7 @@ async def _rotate_session_for_cascade(
     )
 
     _logger.info(
-        "agy reader rotated Omnigent session after /clear: old_session=%s new_session=%s "
+        "agy reader rotated Triune session after /clear: old_session=%s new_session=%s "
         "new_cascade=%s",
         old_session_id,
         new_session_id,

@@ -5,6 +5,8 @@ session-event dispatch, native-terminal launch, MCP tool calls, fork/switch.
 Imports state/constants from ``.common`` and primitives from ``.helpers``;
 imported by the router in ``sessions.py``."""
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import asyncio
@@ -2304,7 +2306,7 @@ async def _resolve_native_delivery(
         meta = data.get("_meta")
         if not isinstance(meta, dict) or not meta.get("native_delivery_attempt"):
             raise OmnigentError(
-                "This client cannot retry delivery. Update Omnigent or answer in the terminal.",
+                "This client cannot retry delivery. Update Triune or answer in the terminal.",
                 code=ErrorCode.INVALID_INPUT,
             )
         if meta.get("native_delivery_attempt") != delivery.get("attempt") or data.get(

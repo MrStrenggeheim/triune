@@ -25,6 +25,8 @@ behind the launcher; see
 implementation.
 """
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import os
@@ -121,7 +123,7 @@ def build_wheels(
             "`curl -LsSf https://astral.sh/uv/install.sh | sh` and retry."
         )
 
-    click.echo(f"▸ Building Omnigent wheels → {tgz_path}")
+    click.echo(f"▸ Building Triune wheels → {tgz_path}")
     env = os.environ.copy()
     if pypi_proxy is not None:
         env.setdefault("UV_INDEX_URL", pypi_proxy)

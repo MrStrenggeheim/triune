@@ -1,5 +1,7 @@
 """Lightweight server performance metrics for the FastAPI app."""
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import asyncio
@@ -807,12 +809,12 @@ def _create_request_otel_instruments(meter: MeterLike) -> _RequestOtelInstrument
         started=meter.create_counter(
             "omnigent.server.http.requests.started",
             unit="{request}",
-            description="HTTP requests started by the Omnigent server.",
+            description="HTTP requests started by the Triune server.",
         ),
         completed=meter.create_counter(
             "omnigent.server.http.requests.completed",
             unit="{request}",
-            description="HTTP requests completed by the Omnigent server.",
+            description="HTTP requests completed by the Triune server.",
         ),
         failed=meter.create_counter(
             "omnigent.server.http.requests.failed",

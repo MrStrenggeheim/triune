@@ -36,6 +36,8 @@ Notes that shape this launcher:
   environment by the SDK, 12-factor — like the other providers' keys.
 """
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import contextlib
@@ -199,7 +201,7 @@ def _template_build_hint(template: str, exc: Exception) -> click.ClickException:
     """
     return click.ClickException(
         f"E2B sandbox creation failed: template '{template}' is unavailable or "
-        "incompatible. Build the Omnigent host image into an E2B template first "
+        "incompatible. Build the Triune host image into an E2B template first "
         "(`e2b template build` — see deploy/e2b/README.md), or set the correct "
         f"template via sandbox.e2b.template / {TEMPLATE_ENV_VAR}. ({exc})"
     )

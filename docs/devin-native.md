@@ -1,7 +1,7 @@
 # The `devin-native` harness
 
 `omnigent devin` wraps the resident **Devin CLI** TUI (Cognition) in a
-runner-owned tmux pane and mirrors it into an Omnigent conversation.
+runner-owned tmux pane and mirrors it into a Triune conversation.
 
 It **replaces** Devin's built-in ACP harness. That row (`devin-acp`, and the
 `omnigent.inner.devin` dialect behind it) was **removed in 0.14**: the id is
@@ -27,9 +27,9 @@ then) resumes on the native wrap, not ACP.
     devin auth login
     omnigent devin
 
-Omnigent stores no Devin credential — the CLI writes its own credential file and
+Triune stores no Devin credential — the CLI writes its own credential file and
 reads it back at spawn. `devin auth status` is a real probe (exit 0 only while
-logged in), so `omni setup` reports the live auth state rather than guessing.
+logged in), so `triune setup` reports the live auth state rather than guessing.
 
 ## Why hooks, not screen-scraping
 
@@ -39,7 +39,7 @@ native harnesses have to reconstruct:
 
 | Field | What it gives us |
 |---|---|
-| `prompt_id` | The turn id — used directly as the Omnigent `response_id` |
+| `prompt_id` | The turn id — used directly as the Triune `response_id` |
 | `tool_use_id` | Pairs `PreToolUse` with its `PostToolUse`, so tool cards match their output with no ordering heuristic |
 | `last_assistant_message` (on `Stop`) | The assistant bubble, with no transcript parsing |
 
@@ -72,7 +72,7 @@ cumulative tokens → `external_session_usage`).
 Devin reads hooks from its user config, and `--config <path>` overrides where
 that config lives. Rather than writing `.devin/hooks.v1.json` into the user's
 checkout (a tracked file), `write_devin_session_config()` merges the user's own
-`~/.config/devin/config.json` with an Omnigent `hooks` block into a
+`~/.config/devin/config.json` with a Triune `hooks` block into a
 session-scoped file inside the bridge dir. The user's theme, permissions and MCP
 preferences survive, the repo stays clean, and the hooks die with the session.
 Project-level `.devin/config.json` still applies on top, because `--config`
@@ -82,7 +82,7 @@ replaces only the *user* config.
 
 Two independent gates, matching `claude-native`:
 
-* **Omnigent policy** — `UserPromptSubmit` (request), `PreToolUse` (tool call)
+* **Triune policy** — `UserPromptSubmit` (request), `PreToolUse` (tool call)
   and `PostToolUse` (tool result) POST to
   `/v1/sessions/{id}/policies/evaluate`. The shared
   `omnigent/native_policy_hook.py` seam owns the translation, including
@@ -90,7 +90,7 @@ Two independent gates, matching `claude-native`:
   codex-native here. An ASK verdict is resolved server-side (the POST parks
   until a human answers) and returns a hard ALLOW/DENY.
 * **Devin's own consent prompt** — `PermissionRequest` is republished as an
-  Omnigent elicitation, so the approval card renders in Chat instead of being
+  Triune elicitation, so the approval card renders in Chat instead of being
   stranded in a pane nobody is watching. A timeout or unreachable server emits
   nothing, which Devin reads as "no opinion" and falls back to its own TUI
   prompt (fail-ask).
@@ -105,7 +105,7 @@ the hook normalizes that before calling the shared seam.
 ## Model and effort
 
 Devin has **no `--effort` flag**: effort is a suffix on the model id
-(`claude-opus-5-xhigh`). Omnigent keeps model and effort as separate axes and
+(`claude-opus-5-xhigh`). Triune keeps model and effort as separate axes and
 recombines them at launch via `resolve_devin_launch_model()`, which validates the
 pair against `devin models list --format json`. A family with no such rung (e.g.
 `gemini-3.8-flash` has no `max`) falls back to the bare family slug, which Devin
@@ -174,7 +174,7 @@ the executor declares `supports_live_message_queue()`.
 | `omnigent/harnesses/devin_native/main.py` | CLI launcher, model/effort discovery, daemon+runner plumbing |
 | `omnigent/harnesses/devin_native/bridge.py` | Bridge dir, session config + hook registration, tmux inject/interrupt |
 | `omnigent/harnesses/devin_native/hook.py` | Lifecycle-hook subprocess: record, policy, elicitation |
-| `omnigent/harnesses/devin_native/forwarder.py` | `hooks.jsonl` + ATIF → Omnigent conversation items |
+| `omnigent/harnesses/devin_native/forwarder.py` | `hooks.jsonl` + ATIF → Triune conversation items |
 | `omnigent/inner/devin_native_executor.py` | Web turn → tmux injection, `/model` switch |
 | `omnigent/inner/devin_native_harness.py` | `harness: devin-native` FastAPI app |
 | `omnigent/runner/native/orchestration.py` | `_auto_create_devin_terminal` / `_launch_devin` |

@@ -3,6 +3,8 @@
 The public API is ``run_repl(client, agent_name, tool_handler)``.
 """
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import asyncio
@@ -6433,7 +6435,7 @@ def _build_github_issue_url(
     ]
 
     body = "\n".join(body_parts)
-    base = "https://github.com/omnigent-ai/omnigent/issues/new"
+    base = "https://github.com/MrStrenggeheim/triune/issues/new"
     return (
         f"{base}"
         f"?title={quote('[Bug] TUI issue')}"
@@ -6518,14 +6520,15 @@ async def _cmd_report(
     """Open a GitHub issue pre-filled with the current session context."""
     import platform
     import webbrowser
-    from importlib.metadata import version as _pkg_version
 
     from rich.text import Text
+
+    from omnigent.version import installed_version
 
     session_id: str | None = session.session_id if hasattr(session, "session_id") else None
 
     try:
-        version = _pkg_version("omnigent")
+        version = installed_version()
     except Exception:  # noqa: BLE001
         version = None
 

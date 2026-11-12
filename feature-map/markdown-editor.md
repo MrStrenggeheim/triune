@@ -42,7 +42,7 @@ and the recording protocol for comparing revisions.
 
 ## Driving it with the repro environment
 
-Preconditions: follow the [Verify Omnigent skill](skills/verify-omnigent/SKILL.md).
+Preconditions: follow the [Verify Triune skill](skills/verify-omnigent/SKILL.md).
 Build the exact checkout and use its frozen dependency lock. The browser-contract
 journeys below need no server: they run the production SPA with a sealed mock
 backend, a fresh browser context, and a fixed Markdown fixture. Server-backed

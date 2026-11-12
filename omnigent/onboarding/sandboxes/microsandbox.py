@@ -33,6 +33,8 @@ marshalled onto a single PROCESS-LIFETIME background loop thread
 (:func:`_run`) - one daemon thread for all launcher instances.
 """
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import asyncio
@@ -629,7 +631,7 @@ class MicrosandboxSandboxLauncher(SandboxLauncher):
         if handle.status != msb.SandboxStatus.RUNNING:
             raise click.ClickException(
                 f"microsandbox sandbox '{sandbox_id}' is {handle.status} - "
-                "resume it first (`omnigent sandbox connect` restarts stopped "
+                "resume it first (`triune sandbox connect` restarts stopped "
                 "sandboxes; managed sessions wake them automatically)."
             )
         sandbox = await handle.connect(timeout=_CONNECT_TIMEOUT_S)
@@ -817,7 +819,7 @@ class MicrosandboxSandboxLauncher(SandboxLauncher):
             except msb.SandboxNotFoundError as exc:
                 raise click.ClickException(
                     f"microsandbox sandbox '{sandbox_id}' not found. Create a "
-                    "fresh one with `omnigent sandbox create --provider "
+                    "fresh one with `triune sandbox create --provider "
                     "microsandbox`."
                 ) from exc
             if handle.status == msb.SandboxStatus.RUNNING:

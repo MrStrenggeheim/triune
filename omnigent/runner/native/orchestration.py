@@ -6,6 +6,8 @@ via a spec_resolver callback for in-process use, or via
 GET /v1/agents/{id}/contents for out-of-process use).
 """
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import asyncio
@@ -1845,7 +1847,7 @@ async def _auto_create_opencode_terminal(
                     # below instead of silently starting empty.
                     resume_lost_history = True
             if opencode_session_id is None:
-                created = await client.create_session({"title": f"omnigent:{session_id}"})
+                created = await client.create_session({"title": f"triune:{session_id}"})
                 opencode_session_id = created.id
                 # Rehydrate prior context (text-prefix replay) when this is a
                 # lost-session resume OR a forked clone carrying history — both
@@ -2999,7 +3001,7 @@ async def _post_pi_native_notice(
 
 
 _CODEX_THREAD_RESET_NOTICE = (
-    "Codex could not load this session's saved transcript, so Omnigent started a fresh "
+    "Codex could not load this session's saved transcript, so Triune started a fresh "
     "Codex thread instead of failing the turn. The chat history here is intact, but "
     "Codex's own memory of the earlier turns is not restored."
 )
@@ -4438,7 +4440,7 @@ async def _auto_create_qwen_terminal(
             mcp_enabled = False
             _logger.warning(
                 "qwen-native: bridge dir failed secure validation; skipping "
-                "Omnigent MCP wiring for session %s.",
+                "Triune MCP wiring for session %s.",
                 session_id,
                 exc_info=True,
             )
@@ -6179,11 +6181,11 @@ async def _codex_discover_thread_and_forward(
         )
         write_bridge_startup_error(
             bridge_dir,
-            "Codex is not signed in and no Omnigent provider routes the codex "
+            "Codex is not signed in and no Triune provider routes the codex "
             "harness, so the Codex TUI is parked on its sign-in screen and "
             f"cannot run this turn. Launch routing: {routing_summary}. "
             "Sign in from the session terminal, or configure a provider "
-            "(`omnigent setup`), then send the message again.",
+            "(`triune setup`), then send the message again.",
         )
 
     discovery_started_at = time.monotonic()
@@ -8229,7 +8231,7 @@ def _native_terminal_start_error_payload(
                 message += f"\n{runtime_name} startup terminal output:\n{output}"
     elif isinstance(exc, ClaudeNativeHookInterpreterMismatchError):
         message = (
-            "Claude Code is Windows-native, but Omnigent is running under WSL. "
+            "Claude Code is Windows-native, but Triune is running under WSL. "
             "Install @anthropic-ai/claude-code from WSL so a WSL-native `claude` "
             "binary wins PATH resolution, then retry."
         )
@@ -9156,7 +9158,7 @@ async def _auto_create_claude_terminal(
             "native-claude: could not derive a provider/ucode launch config "
             "— FALLING BACK to Claude Code's own login; "
             "your configured provider will NOT be used. Check "
-            "`omnigent setup --no-internal-beta` "
+            "`triune setup --no-internal-beta` "
             "and that the secret resolves in this process.",
             exc_info=True,
             extra={"session_id": session_id},

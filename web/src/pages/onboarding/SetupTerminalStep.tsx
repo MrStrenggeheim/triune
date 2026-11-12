@@ -1,3 +1,4 @@
+// Modified for Triune.
 // Onboarding step: run the install + start/connect sequence, shown as a small
 // terminal-styled status log. When the CLI isn't installed yet, an install
 // phase runs first (streaming install_oss.sh output via onInstallLog); on
@@ -26,7 +27,7 @@ export function SetupTerminalStep({
   onSetupLog,
   onBack,
   onConnectAnyway,
-  runningLabel = "Starting Omnigent",
+  runningLabel = "Starting Triune",
   runningHint = "Starting the local server…",
   connection = null,
   onCancelConnect,
@@ -115,7 +116,7 @@ export function SetupTerminalStep({
         if (canceled || !alive.current) return;
         if (!res.ok) {
           setPhase("failed");
-          setError(res.error ?? "Couldn't install the Omnigent CLI.");
+          setError(res.error ?? "Couldn't install the Triune CLI.");
           return;
         }
         setLines([]);
@@ -148,11 +149,11 @@ export function SetupTerminalStep({
   const streamed = lines.length > 0;
   const baseLabel =
     phase === "ready"
-      ? "Omnigent is ready"
+      ? "Triune is ready"
       : phase === "failed"
-        ? "Couldn't set up Omnigent"
+        ? "Couldn't set up Triune"
         : phase === "installing"
-          ? "Installing the Omnigent CLI"
+          ? "Installing the Triune CLI"
           : runningLabel;
   const phaseLabel = inProgress ? `${baseLabel}${".".repeat(dots)}` : baseLabel;
   const pendingHint = phase === "installing" ? "Installing the CLI…" : runningHint;
@@ -201,7 +202,7 @@ export function SetupTerminalStep({
         )}
         {phase === "failed" && (
           <div className="text-destructive">
-            <span className="select-none">✕</span> {error ?? "Could not set up Omnigent."}
+            <span className="select-none">✕</span> {error ?? "Could not set up Triune."}
           </div>
         )}
       </div>

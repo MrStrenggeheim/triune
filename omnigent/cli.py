@@ -1,5 +1,7 @@
 """CLI entry point for omnigent."""
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import base64
@@ -446,7 +448,7 @@ def _server_uvicorn_log_config(
     """
     Return Uvicorn logging config with request-duration access logs.
 
-    Uvicorn emits the FastAPI access line itself, so Omnigent standardizes
+    Uvicorn emits the FastAPI access line itself, so Triune standardizes
     its default and access formatters while preserving handler routing and
     request-duration enrichment.
 
@@ -756,7 +758,7 @@ _HostPayload: TypeAlias = dict[str, _HostJsonValue]
 
 def _effective_global_config_path() -> Path:
     """
-    Return the path to the user-level Omnigent config.
+    Return the path to the user-level Triune config.
 
     :returns: ``$OMNIGENT_CONFIG_HOME/config.yaml`` when the env
         override is set, otherwise :data:`_GLOBAL_CONFIG_PATH`.
@@ -804,7 +806,7 @@ def _display_config_path(path: Path) -> str:
 
 def _load_global_config() -> dict[str, Any]:  # type: ignore[explicit-any]
     """
-    Load the global omnigent config from ``~/.omnigent/config.yaml``.
+    Load the global triune config from ``~/.omnigent/config.yaml``.
 
     Returns an empty dict when the file does not exist or is empty.
     Top-level default keys (``default_agent``, ``server``,
@@ -813,7 +815,7 @@ def _load_global_config() -> dict[str, Any]:  # type: ignore[explicit-any]
     ``auth:`` key holds a nested mapping —
     ``{"type": "databricks", "profile": "oss"}`` or
     ``{"type": "api_key", "api_key": "…"}`` — written by
-    ``omnigent setup`` and used by the runtime to supply executor
+    ``triune setup`` and used by the runtime to supply executor
     credentials when an agent spec does not declare ``executor.auth``.
 
     :returns: Parsed YAML as a dict, e.g.
@@ -954,7 +956,7 @@ def _pick_first_run_harness() -> _FirstRunPlan | None:
 
 
 def _resolve_first_run_plan() -> _FirstRunPlan | None:
-    """Resolve the harness + default agent for a bare ``omnigent run``.
+    """Resolve the harness + default agent for a bare ``triune run``.
 
     Adopts ambient-detected credentials, then picks a harness from what's
     configured (Claude→polly / Codex / Pi). When nothing is configured,
@@ -1025,7 +1027,7 @@ def _resolve_default_agent_target(
         return default_agent
     if default_harness is not None:
         click.echo(
-            f"omnigent: default agent '{default_agent}' uses harness "
+            f"triune: default agent '{default_agent}' uses harness "
             f"{default_harness!r}, but you specified --harness {requested!r}; "
             f"launching a minimal built-in {requested!r} agent instead.",
             err=True,
@@ -1035,7 +1037,7 @@ def _resolve_default_agent_target(
 
 def _parse_config_bool(key: str, value: _ConfigValue) -> bool:
     """
-    Parse a boolean value from YAML or ``omnigent config KEY=VALUE``.
+    Parse a boolean value from YAML or ``triune config KEY=VALUE``.
 
     :param key: Config key being parsed, e.g.
         ``"auto_open_conversation"``.
@@ -1062,7 +1064,7 @@ def _resolve_auto_open_conversation_setting(cfg: dict[str, Any]) -> bool | None:
 
     Tri-state on purpose so callers can distinguish "the user has not
     expressed a preference" (``None``) from an explicit opt-in/opt-out.
-    ``omnigent run`` uses this to default the browser-open ON for
+    ``triune run`` uses this to default the browser-open ON for
     interactive launches while still honoring an explicit
     ``auto_open_conversation: false``; see :func:`run`.
 
@@ -1084,7 +1086,7 @@ def _resolve_auto_open_conversation_from_config(cfg: dict[str, Any]) -> bool:  #
     Resolve whether CLI launches should open conversation URLs.
 
     Defaults to ``False`` when the user has not configured the key.
-    ``omnigent run`` does not use this resolver — it defaults the
+    ``triune run`` does not use this resolver — it defaults the
     browser-open ON for interactive launches via
     :func:`_resolve_auto_open_conversation_setting`.
 
@@ -1122,7 +1124,7 @@ def _normalize_harness_scalar_on_write(
         return False
     cfg["harness"] = {"default": raw}
     click.echo(
-        f"omnigent: migrated `harness:` to the new mapping form in {path} (behavior unchanged)",
+        f"triune: migrated `harness:` to the new mapping form in {path} (behavior unchanged)",
         err=True,
     )
     return True
@@ -1145,8 +1147,8 @@ def _save_global_config(  # type: ignore[explicit-any]
 
     Creates the ``~/.omnigent/`` directory if it does not exist.
     Values may be plain strings, booleans, or nested mappings (the
-    ``auth:`` block written by ``omnigent setup``, or a ``providers:``
-    block written by ``omnigent setup --no-internal-beta``).
+    ``auth:`` block written by ``triune setup``, or a ``providers:``
+    block written by ``triune setup --no-internal-beta``).
 
     By default every key in *settings* **replaces** the existing value
     wholesale (a shallow ``dict.update``). For keys listed in
@@ -1276,10 +1278,10 @@ def _save_local_config(
 
 
 def _default_db_uri() -> str:
-    """Default DB URI for ``omnigent server`` — the machine-global
+    """Default DB URI for ``triune server`` — the machine-global
     ``<data_dir>/chat.db``.
 
-    Resolves to the same path the ``omnigent run`` daemon spawns its
+    Resolves to the same path the ``triune run`` daemon spawns its
     local server against (``_local_data_dir()``, honoring
     ``OMNIGENT_DATA_DIR`` → else ``~/.omnigent``). Pinning ``server``
     to the same DB as ``run`` means there is **one local DB — and so one
@@ -1295,10 +1297,10 @@ def _default_db_uri() -> str:
 
 
 def _default_artifact_location() -> str:
-    """Default artifact dir for ``omnigent server`` — ``<data_dir>/artifacts``.
+    """Default artifact dir for ``triune server`` — ``<data_dir>/artifacts``.
 
     Kept in lock-step with :func:`_default_db_uri` so a default-config
-    ``omnigent server`` and ``omnigent run`` share one coherent
+    ``triune server`` and ``triune run`` share one coherent
     machine-global instance (same DB *and* same artifacts) — otherwise a
     conversation created by one would reference files the other can't
     resolve. ``--artifact-location`` / the config file still override.
@@ -1319,7 +1321,7 @@ def _display_db_uri(db_uri: str) -> str:
     passing it via the environment.
 
     :param db_uri: The resolved store DB URI, e.g.
-        ``"postgresql://omnigent:pw@db:5432/omnigent"``.
+        ``"postgresql://triune:pw@db:5432/omnigent"``.
     :returns: The URI with the password replaced by ``***``, or the
         original string when it is not a parseable SQLAlchemy URL.
     """
@@ -1344,7 +1346,7 @@ def _ensure_sqlite_parent_dir(db_uri: str) -> None:
     so a first-ever run — or any run after the data dir was cleared — must
     create that dir before the stores connect. The daemon-spawned server
     handles this in ``ensure_local_omnigent_server``; this is the equivalent for
-    the foreground ``omnigent server`` command.
+    the foreground ``triune server`` command.
 
     No-op for non-SQLite URIs (Postgres etc.) and for in-memory SQLite.
 
@@ -1398,7 +1400,7 @@ def _require_existing_sqlite_db(db_uri: str) -> None:
     if not db_path.exists():
         raise click.ClickException(
             f"Database file {str(db_path)!r} does not exist. Check the path in "
-            f"the database URL — db-upgrade upgrades an existing Omnigent "
+            f"the database URL — db-upgrade upgrades an existing Triune "
             f"database and will not create one."
         )
 
@@ -1417,7 +1419,7 @@ def _apply_bind_auth_defaults(host: str) -> None:
     - **Loopback** (``127.0.0.1`` / ``localhost`` / ``::1``) + header
       default → set ``OMNIGENT_LOCAL_SINGLE_USER=1``: the no-login
       header-mode ``"local"`` fallback. The user's own machine, no proxy
-      to inject identity — same posture as the daemon / ``omnigent run``
+      to inject identity — same posture as the daemon / ``triune run``
       spawn paths.
     - **Non-loopback** (``0.0.0.0``, a network-exposed deploy) + no
       explicit auth → set ``OMNIGENT_AUTH_ENABLED=1``: accounts (login)
@@ -1531,7 +1533,7 @@ def _preregister_agent(  # type: ignore[explicit-any]  # agent_store / artifact_
     runs at server startup for each ``--agent`` flag.
 
     :param agent_source: Either an agent-image directory containing
-        ``config.yaml`` (standard omnigent shape) or a standalone
+        ``config.yaml`` (standard triune shape) or a standalone
         omnigent YAML file (e.g.
         ``examples/coding_supervisor.yaml``). The file-vs-directory
         branch lives inside ``materialize_bundle``; this function
@@ -1677,7 +1679,7 @@ def _validate_agent_policy_functions(  # type: ignore[explicit-any]  # spec type
                     f"{policy.name!r} references function {path!r}, which "
                     f"cannot be resolved from sys.path "
                     f"({type(exc).__name__}: {exc}). Install the trusted callable "
-                    f"package in both the Omnigent CLI and server/runtime environments, "
+                    f"package in both the Triune CLI and server/runtime environments, "
                     f"or correct the policy path. CLI preflight does not import "
                     f"modules from the workspace directory.",
                 ) from exc
@@ -1704,15 +1706,15 @@ def _format_version() -> str:
     version_str = VERSION
     info = _read_build_info()
     if info is None:
-        return f"omnigent {version_str}"
+        return f"Triune {version_str}"
     epoch, sha = info
     when = datetime.datetime.fromtimestamp(epoch, tz=datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     if sha:
         # Short SHA (first 8 chars) — enough to disambiguate in bug
         # reports without making the line unwieldy.
-        return f"omnigent {version_str} ({sha[:8]}, built {when})"
+        return f"Triune {version_str} ({sha[:8]}, built {when})"
     # _build_info exists but has no SHA (built without git available).
-    return f"omnigent {version_str} (built {when})"
+    return f"Triune {version_str} (built {when})"
 
 
 def _print_version_callback(ctx: click.Context, _param: click.Parameter, value: bool) -> None:
@@ -1724,7 +1726,7 @@ def _print_version_callback(ctx: click.Context, _param: click.Parameter, value: 
     it ``_read_build_info()`` — during ``omnigent.cli`` import. The
     successful sub-import would then set ``omnigent._build_info`` as
     an attribute on the ``omnigent`` package object. Once that
-    attribute exists, ``from omnigent import _build_info`` short-
+    attribute exists, ``from triune import _build_info`` short-
     circuits *before* consulting ``sys.modules``, defeating the
     test-suite's ``sys.modules[...] = None`` blocker and making most
     update_check tests pick up live values from disk.
@@ -1783,7 +1785,7 @@ def _harness_extra_checks() -> dict[str, Callable[[], bool]]:
     """Map extras-gated harness commands to their SDK-installed predicate.
 
     Harnesses that ride an optional pip extra (lazily imported on first
-    turn) are hidden from ``omnigent --help`` until the extra is
+    turn) are hidden from ``triune --help`` until the extra is
     importable, so the listing only advertises harnesses ready to launch.
     The predicates use ``importlib.util.find_spec`` (no heavy import).
     Commands absent from this map are always listed.
@@ -1816,7 +1818,7 @@ class _OmnigentCLI(click.Group):
     TTY-gated by :func:`omnigent.inner.ui.show_banner`, so ``omnigent
     --help`` shows the banner interactively while piped/CI help stays
     clean. Only the top-level group overrides help; subcommand help
-    (``omnigent run --help``) is untouched.
+    (``triune run --help``) is untouched.
     """
 
     def format_usage(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
@@ -1996,8 +1998,8 @@ def _finish_cli_profile(profiler: Any, output_path: Path) -> None:  # type: igno
         f"{total_calls:,} calls ({primitive_calls:,} primitive)",
         err=True,
     )
-    _print_rows("Top Omnigent call paths", omnigent_rows)
-    _print_rows("Top Omnigent functions by self time", self_time_rows)
+    _print_rows("Top Triune call paths", omnigent_rows)
+    _print_rows("Top Triune functions by self time", self_time_rows)
     click.echo(f"\nFull profile data: {output_path}", err=True)
 
 
@@ -2064,7 +2066,7 @@ def _extract_global_logging_flags(argv: list[str]) -> tuple[list[str], bool, boo
     is_eager=True,
     expose_value=False,
     callback=_set_debug_logging,
-    help="Enable verbose DEBUG logging for Omnigent processes.",
+    help="Enable verbose DEBUG logging for Triune processes.",
 )
 @click.option(
     "--log-to-stderr",
@@ -2083,7 +2085,7 @@ def _extract_global_logging_flags(argv: list[str]) -> tuple[list[str], bool, boo
     help="Show the version and exit.",
 )
 def cli() -> None:
-    """Omnigent CLI."""
+    """Triune CLI."""
 
 
 # Names of every subcommand the click group owns. Used by
@@ -2185,7 +2187,7 @@ def _warn_deprecated_harness_path_env_vars() -> None:
 
     for legacy, canonical in legacy_harness_path_env_vars_set():
         click.echo(
-            f"omnigent: {legacy} is deprecated; set {canonical} instead. "
+            f"triune: {legacy} is deprecated; set {canonical} instead. "
             f"{legacy} support will be removed in v0.8.0.",
             err=True,
         )
@@ -2250,7 +2252,7 @@ def main() -> None:
     # dispatch, imports — are all caught. See omnigent/crash_handler.py.
     from omnigent.crash_handler import install_crash_handler
 
-    install_crash_handler(app_name="omnigent", repo="omnigent-ai/omnigent")
+    install_crash_handler(app_name="Triune", repo="MrStrenggeheim/triune")
 
     # Operators can force all use through a wrapper (e.g. `isaac omni`) by
     # setting OMNIGENT_REQUIRE_WRAPPER; the wrapper sets OMNIGENT_WRAPPER_BYPASS
@@ -2406,8 +2408,8 @@ def _is_run_shorthand(argv: list[str]) -> bool:
     where *target* is an agent YAML/directory rather than a subcommand.
 
     Used by :func:`main` to transparently redirect
-    ``omnigent myagent.yaml --model m`` to
-    ``omnigent run myagent.yaml --model m``.
+    ``triune myagent.yaml --model m`` to
+    ``triune run myagent.yaml --model m``.
 
     :param argv: CLI arguments without the program name, e.g.
         ``["myagent.yaml", "--model", "m"]``.
@@ -2450,10 +2452,10 @@ def _is_removed_ad_hoc_invocation(argv: list[str]) -> bool:
       the removed top-level ad-hoc chat accepted.
 
     False when the first non-flag token matches a known
-    subcommand (``omnigent run ...``, ``omnigent attach ...``),
+    subcommand (``triune run ...``, ``triune attach ...``),
     when the user asks for top-level help/version
-    (``omnigent --help``, ``omnigent --version``), or when the
-    token is a single command-shaped word (e.g. ``omnigent blah``)
+    (``triune --help``, ``triune --version``), or when the
+    token is a single command-shaped word (e.g. ``triune blah``)
     — those stay on the click path so an unknown command produces
     click's standard "No such command" error rather than the ad-hoc
     removal notice.
@@ -2534,7 +2536,7 @@ def _is_local_server_request(server: str | None) -> bool:
 @dataclass(frozen=True)
 class _HostHttpResult:
     """
-    Decoded Omnigent management HTTP response.
+    Decoded Triune management HTTP response.
 
     :param status_code: HTTP status code, e.g. ``200``. ``0`` means no
         HTTP response was received because the request failed locally.
@@ -2574,7 +2576,7 @@ class _DaemonSessionsResult:
     """
     Sessions fetched for one daemon target.
 
-    :param base_url: Omnigent server base URL, e.g.
+    :param base_url: Triune server base URL, e.g.
         ``"https://example.databricksapps.com"``. ``None`` when a
         local daemon's server cannot be discovered.
     :param sessions: Session rows owned by the daemon host id.
@@ -2665,7 +2667,7 @@ def _normalize_daemon_target(server_url: str | None) -> str:
     """
     Normalize a daemon target key.
 
-    :param server_url: Requested Omnigent server URL, e.g.
+    :param server_url: Requested Triune server URL, e.g.
         ``"https://example.databricksapps.com/"``. ``None`` or empty
         string selects local mode.
     :returns: ``"local"`` for local mode, otherwise the URL without a
@@ -2737,7 +2739,7 @@ def _daemon_host_online(record: _HostDaemonRecord, *, timeout_s: float = 2.0) ->
     Probe whether a daemon's host is currently online on its server.
 
     A daemon process being alive (PID check) does not mean its WebSocket
-    tunnel to the Omnigent server is up: the server only reports the host
+    tunnel to the Triune server is up: the server only reports the host
     ``online`` while a daemon holds an authenticated tunnel and has
     heartbeated within ``HOST_LIVENESS_TTL_S``. After a server restart,
     an ungraceful daemon death, or a flapping tunnel, the daemon can be a
@@ -2894,7 +2896,7 @@ def _find_daemon_record(target: str) -> _HostDaemonRecord | None:
 
 def _update_daemon_resolved_server_url(target: str, server_url: str) -> None:
     """
-    Record the concrete Omnigent server URL served by a daemon target.
+    Record the concrete Triune server URL served by a daemon target.
 
     :param target: Normalized target, e.g. ``"local"``.
     :param server_url: Concrete server URL, e.g.
@@ -2974,9 +2976,9 @@ def _daemon_host_identity_changed(record: _HostDaemonRecord) -> bool:
 
 def _terminate_host_unit(record: _HostDaemonRecord, *, reason: str) -> None:
     """
-    Tear down a daemon and, in local mode, the Omnigent server it owns.
+    Tear down a daemon and, in local mode, the Triune server it owns.
 
-    The ``--local`` daemon spawns its Omnigent server once and never respawns
+    The ``--local`` daemon spawns its Triune server once and never respawns
     it, so a stale daemon and its server must be replaced as a unit:
     killing only the daemon would strand the server (and vice versa). This
     stops both so the caller can spawn a fresh, correctly-configured pair.
@@ -3395,7 +3397,7 @@ def _foreground_daemon_record(
 
     :param target: Normalized daemon target, e.g.
         ``"https://example.databricksapps.com"`` or ``"local"``.
-    :param server_url: Concrete Omnigent server URL being connected to, e.g.
+    :param server_url: Concrete Triune server URL being connected to, e.g.
         ``"http://127.0.0.1:8123"``.
     :param host_id: Local host id, e.g. ``"host_abc123"``.
     :returns: Daemon registry record for ``os.getpid()``.
@@ -3693,9 +3695,9 @@ def _load_or_create_host_id() -> str | None:
 def _ensure_host_daemon(server_url: str | None) -> bool:
     """Start or reuse a host daemon for one target.
 
-    :param server_url: Omnigent server URL the daemon connects to, or ``None``
+    :param server_url: Triune server URL the daemon connects to, or ``None``
         for local mode — the daemon starts (or reuses) a persistent local
-        Omnigent server and connects to that.
+        Triune server and connects to that.
     :returns: ``True`` when a config (auth source) change tore down this
         target's daemon, whether it was respawned or another URL's daemon now
         serves the workspace — the caller should ask the user to re-run
@@ -3799,10 +3801,10 @@ def _build_host_daemon_env(
     """
     Build the environment for the background host daemon.
 
-    Remote daemons connect to an already-running Omnigent server, so they only
+    Remote daemons connect to an already-running Triune server, so they only
     need process essentials, TLS trust, Databricks auth, and explicitly
-    configured harness credentials. Local daemons also start the local Omnigent
-    server, which must inherit Omnigent config plus provider credentials such as
+    configured harness credentials. Local daemons also start the local Triune
+    server, which must inherit Triune config plus provider credentials such as
     ``OPENAI_API_KEY`` and ``OPENAI_BASE_URL``. Both modes are allowlisted:
     local mode carries the runtime/provider vars needed by the local server,
     but unrelated shell secrets are not inherited merely because the daemon
@@ -3810,7 +3812,7 @@ def _build_host_daemon_env(
     :func:`omnigent.host.connect._build_runner_env` separately.
     Passthrough names and saved provider references are trusted host-owner inputs.
 
-    :param server_url: Omnigent server URL for remote mode, e.g.
+    :param server_url: Triune server URL for remote mode, e.g.
         ``"https://example.databricksapps.com"``, or a falsey value
         such as ``None`` / ``""`` for local daemon mode.
     :returns: Environment dict for ``subprocess.Popen``.
@@ -3952,8 +3954,8 @@ def _verified_databricks_org_id(
         exc = click.ClickException(
             f"Requested workspace {requested_org_id}, but the server reports "
             f"workspace {reported_org_id}. The server URL may be truncated or "
-            "point to a different workspace. Copy the full Omnigent URL from "
-            "the intended workspace and retry. Saved Omnigent login details were not changed."
+            "point to a different workspace. Copy the full Triune URL from "
+            "the intended workspace and retry. Saved Triune login details were not changed."
         )
         setattr(exc, SUPPRESS_RECOVERY_HINT_ATTR, True)
         raise exc
@@ -3970,7 +3972,7 @@ def _persist_databricks_org_id(server: str, org_id: str) -> None:
     except OSError as error:
         exc = click.ClickException(
             "Could not persist the workspace routing selector. "
-            "Check that the Omnigent data directory is writable, then retry."
+            "Check that the Triune data directory is writable, then retry."
         )
         setattr(exc, SUPPRESS_RECOVERY_HINT_ATTR, True)
         raise exc from error
@@ -3997,7 +3999,7 @@ def _ensure_databricks_server_auth(server: str, *, non_interactive: bool = False
         e.g. ``"https://myapp-123.aws.databricksapps.com"``.
     :param non_interactive: When ``True``, never run the browser login —
         emit the same fail-loud hint a headless invocation gets, even on a
-        TTY. Lets callers (e.g. ``omnigent host --non-interactive``) keep
+        TTY. Lets callers (e.g. ``triune host --non-interactive``) keep
         their scripted, no-prompt behavior.
     :raises click.ClickException: When the server is Databricks-fronted,
         no credentials resolve, and the login flow is suppressed (stdin is
@@ -4080,16 +4082,16 @@ def _ensure_databricks_server_auth(server: str, *, non_interactive: bool = False
 
 
 def _ensure_backend(server: str | None) -> str:
-    """Ensure the host daemon is running and return the Omnigent server URL.
+    """Ensure the host daemon is running and return the Triune server URL.
 
     The daemon is the single backend for ``attach`` / ``run`` / ``claude`` /
-    ``codex``: it spawns the runner and, in local mode, the Omnigent server too.
+    ``codex``: it spawns the runner and, in local mode, the Triune server too.
     The CLI is a pure client of the returned URL.
 
     :param server: ``--server`` value after config fallback. A non-empty
         value targets that (remote or explicit-local) server. ``None`` or
         ``""`` selects local mode: the daemon starts (or reuses) a
-        persistent local Omnigent server and this returns its discovered loopback
+        persistent local Triune server and this returns its discovered loopback
         URL.
     :returns: A concrete base URL, e.g. ``"http://127.0.0.1:8123"`` or the
         remote URL passed in.
@@ -4151,16 +4153,16 @@ def _ensure_backend(server: str | None) -> str:
 def _exit_for_auth_mode_change(base_url: str) -> None:
     """Tell the user the server was restarted in a new mode, then exit clean.
 
-    The local Omnigent server bakes its auth posture (header vs accounts, cookie
+    The local Triune server bakes its auth posture (header vs accounts, cookie
     secret) at boot, so an ``OMNIGENT_AUTH_ENABLED`` flip restarts it
     via :func:`_ensure_host_daemon`. Continuing the *same* command across
     that restart is brittle — the in-flight session/credential/terminal
     bring-up straddles two server identities. Instead we stop here with a
-    clear, actionable message and exit 0, so the next ``omnigent run`` is
+    clear, actionable message and exit 0, so the next ``triune run`` is
     a clean single-mode start. When the new mode is accounts and no admin
     exists yet, point the user at the one-time setup URL.
 
-    :param base_url: The freshly-restarted Omnigent server URL, e.g.
+    :param base_url: The freshly-restarted Triune server URL, e.g.
         ``"http://127.0.0.1:6767"``.
     :returns: Never returns — raises ``SystemExit(0)``.
     :raises SystemExit: Always, with code 0 (a clean, expected stop).
@@ -4190,9 +4192,9 @@ def _exit_for_auth_mode_change(base_url: str) -> None:
 def _discover_local_server_url(
     timeout: float = _LOCAL_SERVER_DISCOVER_TIMEOUT_S,
 ) -> str:
-    """Poll until the daemon-started local Omnigent server is reachable.
+    """Poll until the daemon-started local Triune server is reachable.
 
-    In local mode the daemon owns the Omnigent server; the CLI discovers its URL
+    In local mode the daemon owns the Triune server; the CLI discovers its URL
     via the local-server pidfile + ``/health`` rather than starting it
     itself.
 
@@ -4220,20 +4222,20 @@ def _discover_local_server_url(
                 tail_path, tail = tail_info
                 detail = f"\n  Server log: {tail_path}\n\n  Last 50 lines:\n{tail}"
             raise LocalServerStartupError(
-                "The local daemon exited before its Omnigent server became ready. "
+                "The local daemon exited before its Triune server became ready. "
                 f"See logs under {process_log_dir_reference('host')} and "
                 f"{process_log_dir_reference('server')}." + detail
             )
         time.sleep(0.2)
     raise LocalServerStartupError(
-        f"Timed out after {timeout:.0f}s waiting for the local Omnigent server to "
+        f"Timed out after {timeout:.0f}s waiting for the local Triune server to "
         f"start. See {process_log_dir_reference('server')} for details."
     )
 
 
 @dataclass
 class _CliRunnerProcess:
-    """Runner subprocess metadata for the ``omnigent server`` command.
+    """Runner subprocess metadata for the ``triune server`` command.
 
     :param proc: Runner subprocess handle.
     :param runner_id: Runner id used for the WS tunnel, e.g.
@@ -4263,11 +4265,11 @@ def _start_cli_runner_process(
     """Start the out-of-process runner used by CLI server flows.
 
     The runner always connects back over the WebSocket tunnel. Local
-    ``omnigent server`` passes its loopback URL; ``run --server``
-    passes the remote Omnigent server URL.
+    ``triune server`` passes its loopback URL; ``run --server``
+    passes the remote Triune server URL.
 
     For remote Databricks-fronted servers, the runner subprocess
-    authenticates via the stored ``omnigent login`` record (or
+    authenticates via the stored ``triune login`` record (or
     ambient Databricks SDK credentials). Tokens are refreshed
     transparently on each WebSocket reconnect and HTTP callback —
     no static token is passed via environment variable.
@@ -4581,9 +4583,9 @@ def server(
     background: bool,
     base_path: str | None,
 ) -> None:
-    """Start the Omnigent server, or manage the background server.
+    """Start the Triune server, or manage the background server.
 
-    Bare ``omnigent server`` runs the server in the FOREGROUND (Ctrl-C to
+    Bare ``triune server`` runs the server in the FOREGROUND (Ctrl-C to
     stop) — for deploys / Docker. Pass ``--background`` to spawn it as a
     detached background process instead (the managed local server that
     ``run`` / ``claude`` / ``codex`` reuse). Subcommands manage that
@@ -5019,7 +5021,7 @@ def server(
         server_config=title_server_config,
     )
 
-    click.echo(f"Starting omnigent server on {host}:{port}")
+    click.echo(f"Starting Triune server on {host}:{port}")
     click.echo(f"  database:  {_display_db_uri(db_uri)}")
     click.echo(f"  artifacts: {art_loc}")
     click.echo(f"  log:       {_display_path(server_log_path)}")
@@ -5103,11 +5105,11 @@ def server(
 
 
 def _stop_local_server_and_daemon(*, force: bool) -> bool:
-    """Stop the background Omnigent server and the local host daemon that owns it.
+    """Stop the background Triune server and the local host daemon that owns it.
 
     Stops the local-mode host daemon first (the daemon spawns its server
     once and never respawns it, so leaving it alive would only have it
-    reconnect-flap against a dead server), then the detached Omnigent server
+    reconnect-flap against a dead server), then the detached Triune server
     recorded in ``~/.omnigent/local_server.pid``. Best-effort and
     idempotent — a missing daemon or server is a no-op.
 
@@ -5133,8 +5135,8 @@ def _stop_local_server_and_daemon(*, force: bool) -> bool:
 def _run_background_server() -> None:
     """Ensure (or reuse) the managed detached local server and report it.
 
-    The shared body of ``omnigent server --background`` and its deprecated
-    ``omnigent server start`` alias: spawn the detached managed server (or
+    The shared body of ``triune server --background`` and its deprecated
+    ``triune server start`` alias: spawn the detached managed server (or
     adopt a healthy one that is already up) and return immediately instead of
     running uvicorn in-process.
 
@@ -5158,7 +5160,7 @@ def _run_background_server() -> None:
 
 @server.command("start", hidden=True)
 def server_start() -> None:
-    """Deprecated alias for ``omnigent server --background``.
+    """Deprecated alias for ``triune server --background``.
 
     Removed in v0.7.0 by #3105 and restored here for compatibility: the
     desktop app ships on its own update channel, so a client built before
@@ -5171,7 +5173,7 @@ def server_start() -> None:
     :returns: None.
     """
     click.echo(
-        f"omnigent: `server start` is deprecated; use `{cli_invocation()} server --background`.",
+        f"triune: `server start` is deprecated; use `{cli_invocation()} server --background`.",
         err=True,
     )
     _run_background_server()
@@ -5184,12 +5186,12 @@ def server_start() -> None:
     help="SIGKILL the local host daemon if it does not exit on SIGTERM.",
 )
 def server_stop(force: bool) -> None:
-    """Stop the background Omnigent server and the local host daemon.
+    """Stop the background Triune server and the local host daemon.
 
     Stops the local host daemon first, then the detached server recorded
     in ``~/.omnigent/local_server.pid`` — its web UI and sessions become
     unreachable. To stop hosting but KEEP the server up, use
-    ``omnigent host stop``; to stop everything, use ``omnigent stop``.
+    ``triune host stop``; to stop everything, use ``triune stop``.
 
     :param force: SIGKILL the local host daemon after the grace period if it
         does not exit on SIGTERM.
@@ -5204,7 +5206,7 @@ def server_stop(force: bool) -> None:
 @server.command("status")
 @click.option("--json", "json_output", is_flag=True, help="Emit JSON.")
 def server_status(json_output: bool) -> None:
-    """Show whether the background Omnigent server is running.
+    """Show whether the background Triune server is running.
 
     Reports the recorded pid/port, URL, live-session count, and whether a
     local host daemon is attached. Reads ``~/.omnigent/local_server.pid``
@@ -5250,7 +5252,7 @@ def server_status(json_output: bool) -> None:
 
 
 @cli.command("start")
-@click.option("--server", default=None, help="Omnigent server URL to host on.")
+@click.option("--server", default=None, help="Triune server URL to host on.")
 @click.option(
     "--no-open",
     is_flag=True,
@@ -5270,24 +5272,24 @@ def server_status(json_output: bool) -> None:
     ),
 )
 def start(server: str | None, no_open: bool, non_interactive: bool) -> None:
-    """Start Omnigent on this machine, in the background.
+    """Start Triune on this machine, in the background.
 
-    The on switch, and the counterpart of ``omnigent stop``: brings up the
+    The on switch, and the counterpart of ``triune stop``: brings up the
     local server (web UI / history) and registers this machine as a host, then
     returns. With a configured or explicit ``--server`` it hosts on that server
     instead, and no local server is started.
 
-    An alias of ``omnigent host --background`` — reach for that spelling when
-    a script wants the host lifecycle by name (``omnigent host status`` /
-    ``omnigent host stop``). Sign-in happens here, in your terminal, before the
+    An alias of ``triune host --background`` — reach for that spelling when
+    a script wants the host lifecycle by name (``triune host status`` /
+    ``triune host stop``). Sign-in happens here, in your terminal, before the
     daemon detaches.
 
-    :param server: Omnigent server URL to host on, e.g.
+    :param server: Triune server URL to host on, e.g.
         ``"https://example.databricksapps.com"``. ``None`` falls back to
         config; empty string forces local mode.
     :param no_open: When ``True``, skip automatically opening the host web UI.
     :param non_interactive: When ``True``, never launch the browser login for
-        an un-authed remote server — fail with the ``omnigent login`` hint
+        an un-authed remote server — fail with the ``triune login`` hint
         instead.
     :returns: None.
     """
@@ -5306,12 +5308,12 @@ def start(server: str | None, no_open: bool, non_interactive: bool) -> None:
     help="Continue past failures and SIGKILL daemons that do not exit on SIGTERM.",
 )
 def stop(force: bool) -> None:
-    """Stop everything Omnigent is running on this machine.
+    """Stop everything Triune is running on this machine.
 
-    The off switch, and the counterpart of ``omnigent start``: stops every host
+    The off switch, and the counterpart of ``triune start``: stops every host
     daemon (local and remote-targeted) and the detached background server.
     Runners are reaped when their daemon exits. To stop only hosting while
-    keeping the local server (web UI / history) up, use ``omnigent host stop``
+    keeping the local server (web UI / history) up, use ``triune host stop``
     instead.
 
     :param force: Continue past individual failures and SIGKILL daemons that
@@ -5588,7 +5590,7 @@ def doctor(
     if json_output:
         click.echo(json.dumps(payload, indent=2, sort_keys=True))
     elif ledger is None:
-        click.echo("No Omnigent install detected; no ledger written.")
+        click.echo("No Triune install detected; no ledger written.")
     elif apply_changes:
         click.echo(f"Wrote backfill ledger to {backfill_ledger_path()}.")
     else:
@@ -5622,7 +5624,7 @@ def uninstall(
     no_backup: bool,
     assume_inferred: bool,
 ) -> None:
-    """Uninstall Omnigent from this machine."""
+    """Uninstall Triune from this machine."""
     from omnigent.install_ledger import resolve_uninstall_ledger
 
     ledger = resolve_uninstall_ledger()
@@ -5650,13 +5652,13 @@ def uninstall(
                         "backups": [],
                         "summary": {"done": 0, "skipped": 0, "failed": 0, "reported": 0},
                         "exit_code": 3,
-                        "error": "no Omnigent install detected",
+                        "error": "no Triune install detected",
                     },
                     indent=2,
                 )
             )
             raise SystemExit(3)
-        click.echo("No Omnigent install detected; nothing to uninstall.", err=True)
+        click.echo("No Triune install detected; nothing to uninstall.", err=True)
         raise SystemExit(3)
 
     script_path = _uninstall_script_path()
@@ -5929,7 +5931,7 @@ def _upgrade_to_nightly(
     Nightlies are ``vX.Y.Z.devYYYYMMDD`` git tags cut from the newest green
     commit on main; they never reach the package index. So "is there
     something newer" is answered by the repo's tags, and the upgrade is a
-    git-pinned reinstall regardless of how omnigent was first installed:
+    git-pinned reinstall regardless of how triune was first installed:
     a registry install hops onto the channel, an older nightly moves
     forward, and a same-version rerun no-ops. The registry shapes that
     cannot record extras (pip / ``uv pip``) are refused with a manual
@@ -5942,8 +5944,6 @@ def _upgrade_to_nightly(
     :param extra_overrides: Extras supplied by ``omni upgrade --extra``.
     :param dry_run: Print the command and exit without running it.
     """
-    import importlib.metadata
-
     from packaging.version import InvalidVersion, Version
 
     from omnigent.update_check import (
@@ -5955,8 +5955,9 @@ def _upgrade_to_nightly(
         _upgrade_failure_message,
         _uv_tool_receipt_path,
     )
+    from omnigent.version import installed_version
 
-    current = importlib.metadata.version("omnigent")
+    current = installed_version()
     target = _latest_nightly_version()
     if target is None:
         raise click.ClickException(
@@ -6058,278 +6059,59 @@ def _upgrade_to_nightly(
     "--check",
     "check_only",
     is_flag=True,
-    help="Report whether a newer release is available, without upgrading. "
-    "Exits non-zero when a newer release exists.",
+    help="Show Triune source update instructions without querying releases.",
 )
 @click.option(
     "--force",
     is_flag=True,
-    help="Stop in-flight sessions immediately instead of waiting for them to drain.",
+    help="Compatibility option; automatic upgrades are disabled.",
 )
 @click.option(
     "--pre",
     "pre",
     is_flag=True,
-    help="Consider pre-releases (e.g. release candidates), and pass the "
-    "installer's allow-pre-releases flag. Useful for validating a TestPyPI rc.",
+    help="Compatibility option; automatic upgrades are disabled.",
 )
 @click.option(
     "--nightly",
     is_flag=True,
-    help="Upgrade to the newest nightly build: a vX.Y.Z.devYYYYMMDD git tag "
-    "installed straight from GitHub with your installer (needs git, plus "
-    "Node 22 and pnpm to build the web UI). Skips the package index.",
+    help="Compatibility option; Triune has no automatic nightly channel.",
 )
 @click.option(
     "--extra",
     "extra_overrides",
     multiple=True,
-    help="Extra dependency set(s) to keep or add during the upgrade. "
-    "May be given multiple times. Overrides extras detected from installer metadata.",
+    help="Compatibility option; preserve extras when rebuilding from source.",
 )
 @click.option(
     "--target-version",
-    help="Upgrade to a specific version instead of the latest release.",
+    help="Compatibility option; choose your revision in the Triune checkout.",
 )
 @click.option(
     "--dry-run",
     is_flag=True,
-    help="Print the detected install shape and upgrade command, then exit "
-    "without stopping sessions or running the installer.",
+    help="Show Triune source update instructions without running an installer.",
 )
 def upgrade(
     check_only: bool,
-    force: bool,
-    pre: bool,
-    nightly: bool,
-    extra_overrides: tuple[str, ...],
-    target_version: str | None,
+    force: bool,  # noqa: ARG001 — retained command compatibility
+    pre: bool,  # noqa: ARG001 — retained command compatibility
+    nightly: bool,  # noqa: ARG001 — retained command compatibility
+    extra_overrides: tuple[str, ...],  # noqa: ARG001 — retained command compatibility
+    target_version: str | None,  # noqa: ARG001 — retained command compatibility
     dry_run: bool,
 ) -> None:
-    """Upgrade Omnigent to the latest release.
+    """Show instructions for updating Triune from its source repository.
 
-    Detects how omnigent was installed (uv tool / pipx), checks the
-    configured index for a newer release and — unless ``--check`` — drains
-    and stops the local background server and host daemon, then runs the
-    matching upgrade command. The next ``omni`` invocation starts a fresh
-    server on the new code automatically, so no explicit restart is needed.
-
-    In-flight agent sessions are waited on by default; pass ``--force`` to
-    stop them immediately. Pass ``--pre`` to consider pre-releases (rc /
-    beta). Pass ``--extra`` to keep or add extras that the installer did not
-    record. Use ``--target-version`` when validating a specific release.
-    Pass ``--nightly`` to move onto the newest nightly build instead:
-    nightlies are git tags that never reach the index, so that path
-    reinstalls from GitHub pinned to the newest nightly tag (``--extra``,
-    ``--dry-run``, and ``--check`` compose with it; ``--pre`` and
-    ``--target-version`` do not apply).
-
-    Requires the install to have come from a tool that records extras:
-    ``uv tool install`` or ``pipx install``. ``pip`` does not record
-    extras, so ``omni upgrade`` refuses to auto-upgrade it and prints the
-    manual command instead. Source checkouts / editable installs are not
-    upgraded here — update those with ``git pull``.
-
-    :param check_only: Only report availability; do not upgrade. Exits
-        with status 1 when a newer release exists.
-    :param force: Stop in-flight sessions immediately rather than draining.
-    :param pre: Consider pre-releases and allow the installer to fetch them.
-    :param nightly: Upgrade to the newest nightly git tag instead of the
-        latest index release.
-    :param extra_overrides: Extras requested via ``--extra``.
-    :param target_version: Pin the upgrade to this version.
-    :param dry_run: Print the command and exit without running it.
-    :returns: None.
+    Automatic package and nightly upgrades are disabled for this fork.
+    Existing options remain accepted for command compatibility.
     """
-    import importlib.metadata
+    from omnigent.update_check import TRIUNE_UPDATE_GUIDANCE
 
-    from omnigent.update_check import (
-        _UPGRADE_INDEX_TIMEOUT_SECONDS,
-        _build_upgrade_suggestion,
-        _find_repo_root,
-        _is_newer,
-        _probe_installed_distribution,
-        _read_installed_wheel_info,
-        _run_upgrade_command,
-        _upgrade_failure_message,
-        _uv_tool_receipt_path,
-        fetch_latest_version,
-    )
-
-    if nightly and target_version:
-        raise click.UsageError(
-            "--nightly and --target-version are mutually exclusive: --nightly "
-            "always tracks the newest nightly tag. To install a specific "
-            "nightly, run your installer against that tag directly, e.g. "
-            "`uv tool install --force git+https://github.com/omnigent-ai/omnigent@v0.8.0.dev20260801`."
-        )
-
-    # Source checkout / editable install — there's no released wheel to
-    # swap in place; the correct update path is git, not a reinstall.
-    if _find_repo_root() is not None:
-        raise click.ClickException(
-            "This is a source checkout — update it with `git pull` (and reinstall "
-            f"dependencies), not `{cli_invocation(name='omni')} upgrade`."
-        )
-    info = _read_installed_wheel_info()
-    if info is None:
-        raise click.ClickException(
-            "Couldn't determine how omnigent is installed; upgrade it manually."
-        )
-    if info.is_editable:
-        raise click.ClickException(
-            "This is an editable install — update it with `git pull`, "
-            f"not `{cli_invocation(name='omni')} upgrade`."
-        )
-
-    # Nightly channel: resolved from git tags, not the index, and applies to
-    # every install shape, so it dispatches before the VCS-vs-registry split
-    # (a VCS install pinned to an older nightly tag must move tags, not
-    # re-pull its pinned ref).
-    if nightly:
-        _upgrade_to_nightly(
-            info,
-            check_only=check_only,
-            force=force,
-            extra_overrides=extra_overrides,
-            dry_run=dry_run,
-        )
+    if check_only or dry_run:
+        click.echo(TRIUNE_UPDATE_GUIDANCE)
         return
-
-    # A git/VCS install tracks a moving git ref, not a PyPI release. Its
-    # version string (a frozen ``0.1.0`` on an unbumped ``main``, say) is NOT
-    # comparable to the latest PyPI release: comparing them reports a build
-    # that is *ahead* of the release as "behind" and loops forever, because
-    # reinstalling the ref can never change that version string. For these
-    # installs "upgrade" means re-pulling the ref — compared and verified by
-    # commit, not by PyPI version.
-    if info.vcs_url:
-        _upgrade_vcs_install(
-            info,
-            check_only=check_only,
-            force=force,
-            pre=pre,
-            extra_overrides=extra_overrides,
-        )
-        return
-
-    # pip / ``uv pip`` do not record which extras were requested for a plain
-    # registry install. Auto-upgrade cannot preserve them safely, so we print
-    # a manual command instead. We still allow ``--check`` because that only
-    # reports availability.
-    if not check_only:
-        if info.detected_installer == "pip":
-            click.echo(
-                "omnigent was installed with pip, and pip does not record which extras "
-                f"were requested. `{cli_invocation(name='omni')} upgrade` cannot preserve them "
-                "safely, so you should upgrade manually:\n\n"
-                "    pip install -U omnigent\n"
-                "    # or, if you need extras:\n"
-                "    pip install -U 'omnigent[your,extras,here]'"
-            )
-            raise SystemExit(0)
-        if info.detected_installer == "uv" and _uv_tool_receipt_path() is None:
-            click.echo(
-                "omnigent was installed with `uv pip`, not `uv tool install`. "
-                "`uv pip` does not record which extras were requested, so "
-                f"`{cli_invocation(name='omni')} upgrade` cannot preserve them safely. "
-                "Upgrade manually:\n\n"
-                "    uv pip install -U omnigent\n"
-                "    # or, if you need extras:\n"
-                "    uv pip install -U 'omnigent[your,extras,here]'"
-            )
-            raise SystemExit(0)
-
-    current = importlib.metadata.version("omnigent")
-    latest: str | None
-    if target_version:
-        # A pinned target version means we don't have to ask the index what
-        # "latest" is. Treat the target as the desired release. This is
-        # especially useful for release validation against a specific rc or
-        # testing the upgrade path when the current dev version is already
-        # newer than anything on PyPI.
-        latest = target_version
-        click.echo(f"Targeting v{latest}.")
-    else:
-        # User-initiated: a more forgiving timeout + one retry so a momentarily slow
-        # mirror doesn't spuriously report the index as unreachable.
-        latest = fetch_latest_version(
-            include_prereleases=pre, timeout=_UPGRADE_INDEX_TIMEOUT_SECONDS, attempts=2
-        )
-        if latest is None:
-            raise click.ClickException(
-                "Couldn't reach the package index to check for a newer release. Check your "
-                "connection (or OMNIGENT_INDEX_URL / your configured index) and try again."
-            )
-        if not _is_newer(latest, current):
-            click.echo(f"omnigent is up to date (v{current}).")
-            return
-
-        click.echo(f"A new release is available: v{current} → v{latest}.")
-
-    if check_only:
-        # Non-zero so scripts/CI can gate on "an upgrade is available".
-        # SystemExit (not ctx.exit) because main() runs the group with
-        # standalone_mode=False, where ctx.exit's code is returned and
-        # dropped rather than applied — SystemExit propagates correctly.
-        raise SystemExit(1)
-
-    suggestion = _build_upgrade_suggestion(
-        info,
-        allow_prerelease=pre,
-        extra_overrides=extra_overrides,
-        target_version=target_version,
-    )
-    if not suggestion.runnable:
-        raise click.ClickException(
-            f"No automatic upgrade command is known for this install. {suggestion.command}."
-        )
-
-    if dry_run:
-        extras = sorted(set(extra_overrides or info.extras))
-        click.echo(
-            f"Detected installer: {info.detected_installer or info.installer}\n"
-            f"Detected extras: {', '.join(extras) if extras else '(none)'}\n"
-            f"Would run: {suggestion.command}"
-        )
-        return
-
-    _drain_and_stop_local_server(force=force)
-
-    console = Console()
-    code = _run_upgrade_command(suggestion.command, console)
-    if code != 0:
-        raise click.ClickException(
-            _upgrade_failure_message(code, set(info.extras) | set(extra_overrides))
-        )
-
-    # Trust the installed version, not the installer's exit code. The running
-    # process still has the OLD version loaded, so re-read it in a fresh
-    # subprocess. A no-op upgrade (version-pinned spec, a cooldown /
-    # exclude-newer that excludes the new release, or a stale index cache)
-    # exits 0 without moving — claiming "✓ Upgraded" there is exactly the
-    # "I upgraded but it still says an update is available" bug.
-    new_version, _ = _probe_installed_distribution()
-    if new_version is None:
-        click.echo(
-            "Ran the upgrade command, but couldn't confirm the installed version. "
-            f"Run `{cli_invocation(name='omni')} upgrade --check` to verify."
-        )
-        return
-    expected_version = target_version or latest
-    if _is_newer(new_version, current):
-        click.echo(
-            f"✓ Upgraded to v{new_version}. Re-run your command — the local "
-            "server will start on the new version."
-        )
-        return
-    raise click.ClickException(
-        f"The upgrade command ran but omnigent is still v{new_version} (expected "
-        f"v{expected_version}). The install is likely version-pinned, a cooldown / "
-        "exclude-newer is excluding the new release, or the index cache is stale. "
-        "Reinstall it explicitly — e.g. `uv tool upgrade --reinstall omnigent` or "
-        f"`pip install --force-reinstall 'omnigent=={expected_version}'`."
-    )
+    raise click.ClickException(TRIUNE_UPDATE_GUIDANCE)
 
 
 # ``omni update`` is an alias for ``omni upgrade`` — mistyping the latter as
@@ -6342,7 +6124,7 @@ cli.add_command(upgrade, name="update")
 def _bundle(source: Path) -> bytes:
     """
     Produce a tar.gz bundle from a directory or standalone
-    Omnigent YAML file, or pass through an existing tarball.
+    Triune YAML file, or pass through an existing tarball.
 
     Environment variable references (``${VAR}``) in
     ``config.yaml`` and ``tools/mcp/*.yaml`` are expanded
@@ -6352,7 +6134,7 @@ def _bundle(source: Path) -> bytes:
     resolve.
 
     :param source: Path to an agent image directory,
-        standalone Omnigent YAML file, or an existing
+        standalone Triune YAML file, or an existing
         ``.tar.gz`` bundle file.
     :returns: The gzipped tarball bytes.
     :raises OmnigentError: If a required env var is
@@ -6814,15 +6596,15 @@ def polly(run_args: tuple[str, ...]) -> None:
     # :param run_args: Pass-through args for ``run``.
     """Launch polly, the bundled multi-agent coding orchestrator.
 
-    Shorthand for ``omnigent run`` on the packaged polly agent — the default
-    agent ``omnigent run`` launches when a Claude credential is configured.
+    Shorthand for ``triune run`` on the packaged polly agent — the default
+    agent ``triune run`` launches when a Claude credential is configured.
     All ``run`` options are accepted and forwarded.
 
     \b
     Examples:
-      omnigent polly
-      omnigent polly -p "review the last commit"
-      omnigent polly --server https://<app>.databricksapps.com
+      triune polly
+      triune polly -p "review the last commit"
+      triune polly --server https://<app>.databricksapps.com
     """
     _run_bundled_agent("polly", run_args)
 
@@ -6839,15 +6621,15 @@ def debby(run_args: tuple[str, ...]) -> None:
     # :param run_args: Pass-through args for ``run``.
     """Launch debby, the bundled two-headed brainstorming agent.
 
-    Shorthand for ``omnigent run`` on the packaged debby agent. Debby fans
+    Shorthand for ``triune run`` on the packaged debby agent. Debby fans
     every question out to both a Claude and a GPT sub-agent, so a Claude
     and an OpenAI provider must both be configured. All ``run`` options are
     accepted and forwarded.
 
     \b
     Examples:
-      omnigent debby
-      omnigent debby -p "name ideas for a CLI that runs agents"
+      triune debby
+      triune debby -p "name ideas for a CLI that runs agents"
     """
     _run_bundled_agent("debby", run_args)
 
@@ -6860,9 +6642,9 @@ def debby(run_args: tuple[str, ...]) -> None:
 )
 @click.argument("run_args", nargs=-1, type=click.UNPROCESSED)
 def copilot(run_args: tuple[str, ...]) -> None:
-    """Launch GitHub Copilot with Omnigent.
+    """Launch GitHub Copilot with Triune.
 
-    Shorthand for ``omnigent run --harness copilot``; every ``run`` option is forwarded."""
+    Shorthand for ``triune run --harness copilot``; every ``run`` option is forwarded."""
     _run_harness_shorthand("copilot", run_args)
 
 
@@ -6872,9 +6654,9 @@ def copilot(run_args: tuple[str, ...]) -> None:
     "--server",
     default=None,
     help=(
-        "Remote omnigent URL. When set, the picker / lookup queries "
+        "Remote Triune URL. When set, the picker / lookup queries "
         "this server instead of starting a local one. Required when "
-        "running ``omnigent resume`` without a conversation id."
+        "running ``triune resume`` without a conversation id."
     ),
 )
 def resume(
@@ -6888,13 +6670,13 @@ def resume(
     #     ``"conv_abc123"``. None falls through to the picker.
     # :param server: Remote Omnigent server URL (optional in id mode;
     #     required in picker mode).
-    """Resume an Omnigent conversation, auto-dispatching by runtime.
+    """Resume a Triune conversation, auto-dispatching by runtime.
 
     \b
     With CONV_ID: looks up the conversation and dispatches to the
     matching wrapper. claude-native sessions land in
-    ``omnigent claude``; everything else surfaces a clear hint to
-    use ``omnigent run --resume <id> <agent.yaml>``.
+    ``triune claude``; everything else surfaces a clear hint to
+    use ``triune run --resume <id> <agent.yaml>``.
 
     \b
     Without CONV_ID: opens a cross-agent picker over your prior
@@ -6903,9 +6685,9 @@ def resume(
 
     \b
     Examples:
-      omnigent resume conv_abc123
-      omnigent resume conv_abc123 --server https://<app>.databricksapps.com
-      omnigent resume --server https://<app>.databricksapps.com
+      triune resume conv_abc123
+      triune resume conv_abc123 --server https://<app>.databricksapps.com
+      triune resume --server https://<app>.databricksapps.com
     """
     from omnigent.resume_dispatch import run_resume
 
@@ -6964,7 +6746,7 @@ class _SessionImportResult:
     "--server",
     default=None,
     help=(
-        "Omnigent server URL. Defaults to the configured server, an existing "
+        "Triune server URL. Defaults to the configured server, an existing "
         "local server, or a newly started local server."
     ),
 )
@@ -6982,7 +6764,7 @@ def import_session_command(
 ) -> None:
     """Import chats from supported local coding harnesses.
 
-    The source transcript is converted to ordinary Omnigent items and stored
+    The source transcript is converted to ordinary Triune items and stored
     as a normal session. Qwen, Kiro, and Kimi currently preserve visible
     messages but not native tool activity; OpenCode and Pi preserve exported
     tool activity. Use --session for one chat or --last for a bounded batch. A
@@ -6991,12 +6773,12 @@ def import_session_command(
 
     \b
     Examples:
-      omnigent import --harness claude --session <session-id>
-      omnigent import --harness codex --session <session-id>
-      omnigent import --harness opencode --session <session-id>
-      omnigent import --harness qwen --session <session-id>
-      omnigent import --harness claude --last 10
-      omnigent import --harness claude --session <session-id> --force
+      triune import --harness claude --session <session-id>
+      triune import --harness codex --session <session-id>
+      triune import --harness opencode --session <session-id>
+      triune import --harness qwen --session <session-id>
+      triune import --harness claude --last 10
+      triune import --harness claude --session <session-id> --force
     """
     import httpx
 
@@ -7100,7 +6882,7 @@ def import_session_command(
             return _SessionImportResult(
                 sid,
                 "unreachable",
-                message=f"Could not reach the Omnigent server: {exc}",
+                message=f"Could not reach the Triune server: {exc}",
                 raw_exc=exc,
             )
 
@@ -7289,8 +7071,7 @@ def _render_usage(report: dict[str, Any], limit: int) -> None:  # type: ignore[e
     "--server",
     default=None,
     help=(
-        "Omnigent server URL. "
-        "Defaults to the configured server, or a local server already running."
+        "Triune server URL. Defaults to the configured server, or a local server already running."
     ),
 )
 @click.option(
@@ -7301,7 +7082,7 @@ def _render_usage(report: dict[str, Any], limit: int) -> None:  # type: ignore[e
     help="Emit the raw usage report as JSON instead of the table.",
 )
 def usage(limit: int, server: str | None, as_json: bool) -> None:
-    """Show your Omnigent usage and costs.
+    """Show your Triune usage and costs.
 
     The summary is sourced from the per-user daily cost rollup, which
     attributes spend to the UTC calendar day it occurred on — so the
@@ -7318,9 +7099,9 @@ def usage(limit: int, server: str | None, as_json: bool) -> None:
 
     \b
     Examples:
-      omnigent usage
-      omnigent usage --limit 25
-      omnigent usage --json
+      triune usage
+      triune usage --limit 25
+      triune usage --json
     """
     import httpx
 
@@ -7353,13 +7134,13 @@ def usage(limit: int, server: str | None, as_json: bool) -> None:
 @cli.group("session", invoke_without_command=True)
 @click.pass_context
 def session(ctx: click.Context) -> None:
-    """Manage Omnigent sessions.
+    """Manage Triune sessions.
 
     \b
     Examples:
-      omnigent session export --id conv_abc123
-      omnigent session export --id conv_abc123 --output transcript.jsonl
-      omnigent session export --id conv_abc123 --server https://myserver.com
+      triune session export --id conv_abc123
+      triune session export --id conv_abc123 --output transcript.jsonl
+      triune session export --id conv_abc123 --server https://myserver.com
     """
     if ctx.invoked_subcommand is None:
         click.echo(ctx.get_help())
@@ -7385,8 +7166,7 @@ def session(ctx: click.Context) -> None:
     "--server",
     default=None,
     help=(
-        "Omnigent server URL. "
-        "Defaults to the configured server, or a local server already running."
+        "Triune server URL. Defaults to the configured server, or a local server already running."
     ),
 )
 def session_export(session_id: str, output: str | None, server: str | None) -> None:
@@ -7396,13 +7176,13 @@ def session_export(session_id: str, output: str | None, server: str | None) -> N
     the session metadata (``"record_type": "session_meta"``); every
     subsequent line is one conversation item
     (``"record_type": "item"``).  The file preserves full turn order
-    and is independent of ``omnigent import``, which reads native harness history.
+    and is independent of ``triune import``, which reads native harness history.
 
     \b
     Examples:
-      omnigent session export --id conv_abc123
-      omnigent session export --id conv_abc123 --output my_session.jsonl
-      omnigent session export --id conv_abc123 --server https://myserver.com
+      triune session export --id conv_abc123
+      triune session export --id conv_abc123 --output my_session.jsonl
+      triune session export --id conv_abc123 --server https://myserver.com
     """
     import httpx
 
@@ -7547,14 +7327,13 @@ def _import_item_payload(item: Mapping[str, object]) -> dict[str, object]:
     "--server",
     default=None,
     help=(
-        "Omnigent server URL. "
-        "Defaults to the configured server, or a local server already running."
+        "Triune server URL. Defaults to the configured server, or a local server already running."
     ),
 )
 def session_import(input_path: str, title: str | None, server: str | None) -> None:
     """Import a session transcript from a portable JSONL file.
 
-    The inverse of ``omnigent session export``: reads the ``session_meta`` +
+    The inverse of ``triune session export``: reads the ``session_meta`` +
     ``item`` lines and recreates the conversation on the target server as a new
     session (a fresh conversation id each time). Distinct from ``omnigent
     import``, which reads native harness history rather than an export file.
@@ -7573,9 +7352,9 @@ def session_import(input_path: str, title: str | None, server: str | None) -> No
 
     \b
     Examples:
-      omnigent session import -i my_session.jsonl
-      omnigent session import -i my_session.jsonl --title "Repro of ES-2065116"
-      omnigent session import -i my_session.jsonl --server https://myserver.com
+      triune session import -i my_session.jsonl
+      triune session import -i my_session.jsonl --title "Repro of ES-2065116"
+      triune session import -i my_session.jsonl --server https://myserver.com
     """
     import httpx
 
@@ -7742,7 +7521,7 @@ _RUN_HARNESS_HELP = (
     f"Harness to use: {_HARNESS_CHOICES_HELP}. Without AGENT, launches that harness directly."
 )
 _FROM_OPENCLAW_HELP = (
-    "Launch one agent from the OpenClaw/acpx registry without saving it to Omnigent config."
+    "Launch one agent from the OpenClaw/acpx registry without saving it to Triune config."
 )
 _MODEL_HELP = "Model to use for the agent."
 _PROMPT_HELP = "Send this as the first message when the REPL starts."
@@ -7777,28 +7556,26 @@ _LOG_HELP = "Write a JSON dump of the conversation to ~/.omnigent/logs/ on exit.
 
 _DEFAULT_HARNESS_PROMPTS = {
     "claude-sdk": (
-        "You are Claude Code, running through Omnigent. "
+        "You are Claude Code, running through Triune. "
         "Help the user with software engineering tasks."
     ),
     "codex": (
-        "You are Codex, running through Omnigent. Help the user with software engineering tasks."
+        "You are Codex, running through Triune. Help the user with software engineering tasks."
     ),
     "cursor": (
-        "You are Cursor, running through Omnigent. Help the user with software engineering tasks."
+        "You are Cursor, running through Triune. Help the user with software engineering tasks."
     ),
     "kimi": (
-        "You are Kimi Code, running through Omnigent. "
-        "Help the user with software engineering tasks."
+        "You are Kimi Code, running through Triune. Help the user with software engineering tasks."
     ),
     "qwen": (
-        "You are Qwen Code, running through Omnigent. "
-        "Help the user with software engineering tasks."
+        "You are Qwen Code, running through Triune. Help the user with software engineering tasks."
     ),
     "goose": (
-        "You are Goose, running through Omnigent. Help the user with software engineering tasks."
+        "You are Goose, running through Triune. Help the user with software engineering tasks."
     ),
 }
-_DEFAULT_HARNESS_PROMPT = "You are a helpful coding agent running through Omnigent."
+_DEFAULT_HARNESS_PROMPT = "You are a helpful coding agent running through Triune."
 
 # Harnesses whose auto-generated launcher YAML should include an
 # ``os_env`` block.  This triggers the workflow's ``ToolManager``
@@ -7816,7 +7593,7 @@ _OS_ENV_HARNESSES: frozenset[str] = frozenset(
 
 def _validate_harness(harness: str) -> None:
     """
-    Fail fast when *harness* is not a supported Omnigent harness.
+    Fail fast when *harness* is not a supported Triune harness.
 
     :param harness: Harness id from ``--harness``, e.g.
         ``"claude-sdk"``.
@@ -7835,7 +7612,7 @@ def _default_harness_prompt(harness: str) -> str:
     Return the lightweight generated-agent instructions for *harness*.
 
     :param harness: Supported harness id.
-    :returns: Prompt text for the generated Omnigent YAML.
+    :returns: Prompt text for the generated Triune YAML.
     """
     return _DEFAULT_HARNESS_PROMPTS.get(harness, _DEFAULT_HARNESS_PROMPT)
 
@@ -7870,16 +7647,16 @@ def _materialize_harness_launcher_file(
     acp_agent: AcpAgentEntry | None = None,
 ) -> Path:
     """
-    Create a temporary standalone Omnigent YAML for no-AGENT ``run``.
+    Create a temporary standalone Triune YAML for no-AGENT ``run``.
 
-    The generated file uses the single-file Omnigent YAML shape
+    The generated file uses the single-file Triune YAML shape
     (``name`` / ``prompt`` / ``executor``), not native AP
     ``config.yaml``. Passing this file to ``run_chat`` exercises the
-    same compat adapter as ``omnigent run examples/foo.yaml``.
+    same compat adapter as ``triune run examples/foo.yaml``.
 
     Harnesses listed in :data:`_OS_ENV_HARNESSES` get an ``os_env``
     block so the workflow injects ``sys_os_*`` tools into the
-    request — routing file/shell operations through the Omnigent
+    request — routing file/shell operations through the Triune
     dispatch path rather than the harness's internal built-ins.
 
     :param harness: Supported harness id to launch, e.g.
@@ -8169,12 +7946,12 @@ def _dispatch_native_terminal_harness(
 
     ``run --harness cursor-native`` (and the claude/codex/pi equivalents)
     must NOT go through the materialized-launcher REPL: that drives an
-    Omnigent turn per message — which persists its own user item — *while*
+    Triune turn per message — which persists its own user item — *while*
     the harness forwarder mirrors the same message back from the TUI's
     transcript, recording every user message twice. These harnesses are
     terminal-mirror sessions whose turns originate in the TUI, so dispatch
-    straight to the native wrapper (the same code ``omnigent cursor`` /
-    ``omnigent claude`` / etc. run), keeping the TUI the single source of
+    straight to the native wrapper (the same code ``triune cursor`` /
+    ``triune claude`` / etc. run), keeping the TUI the single source of
     turns. A top-level ``--model`` is forwarded in the shape each wrapper
     expects; wrappers with their own config receive it only when explicitly
     provided on the command line.
@@ -8331,7 +8108,7 @@ def _smart_routing_decision(*, server: str, harness: str) -> ArmedSession:
     *harness*'s own first-message hook picks the model once the user types,
     which is what the stderr line reports.
 
-    :param server: Resolved Omnigent server base URL.
+    :param server: Resolved Triune server base URL.
     :param harness: Canonical native harness to bind, e.g. ``"codex-native"``.
     :returns: The armed session to attach the wrapper to.
     :raises click.ClickException: When Smart Routing is unavailable.
@@ -8371,7 +8148,7 @@ def _smart_routing_decision(*, server: str, harness: str) -> ArmedSession:
     )
     click.echo(
         armed.notice
-        or "omnigent: Smart Routing is on for this session; your first message picks the model.",
+        or "triune: Smart Routing is on for this session; your first message picks the model.",
         err=True,
     )
     return armed
@@ -8383,7 +8160,7 @@ def _reject_agent_with_native_terminal_harness(harness: str) -> None:
 
     A ``*-native`` harness mirrors an external CLI's own TUI; the agent spec's
     prompt/tools are never consulted, and driving it through the REPL would
-    double-record every message (Omnigent turn + forwarder mirror). So an
+    double-record every message (Triune turn + forwarder mirror). So an
     explicit AGENT path combined with a native terminal harness has no coherent
     meaning — fail loud and point at the dedicated subcommand.
 
@@ -8426,11 +8203,11 @@ def _dispatch_run(
     agent: str | None = None,
 ) -> None:
     """
-    Route ``omnigent run`` to the right impl.
+    Route ``triune run`` to the right impl.
 
-    The click path always drives the Omnigent server-backed REPL. With
+    The click path always drives the Triune server-backed REPL. With
     ``--server <url>``, use that server URL instead of starting a
-    local server. (``omnigent attach`` is a separate attach-only
+    local server. (``triune attach`` is a separate attach-only
     client and does NOT route through here.)
 
     :param target: Agent YAML/directory path, or ``None`` for
@@ -8442,7 +8219,7 @@ def _dispatch_run(
     :param prompt: ``-p`` / ``--prompt`` value.
     :param system_prompt: ``--system-prompt`` value.
     :param server: Server URL from ``--server`` or config. With a local
-        target, this is the Omnigent server used for upload/session setup; with
+        target, this is the Triune server used for upload/session setup; with
         no target and explicit ``--server``, this is the direct server.
     :param resume_picker: True when ``--resume`` / ``-r`` is set with
         no value (interactive picker).
@@ -8710,10 +8487,10 @@ def _dispatch_run(
 
 def _resolve_attach_server(server: str | None, configured_server: str | None) -> str | None:
     """
-    Resolve the Omnigent server URL ``attach`` should join.
+    Resolve the Triune server URL ``attach`` should join.
 
     Resolution order: an explicit ``--server`` value, then the configured
-    ``server`` default, then a local Omnigent server already running in the
+    ``server`` default, then a local Triune server already running in the
     background. ``attach`` never starts a server, so this returns ``None``
     when none of those is available and the caller fails loud.
 
@@ -8758,7 +8535,7 @@ def _require_live_conversation(
     ``GET /v1/sessions/{id}`` and raises on a transport failure or any
     non-200 status.
 
-    :param base_url: Omnigent server base URL, e.g. ``"http://127.0.0.1:6767"``.
+    :param base_url: Triune server base URL, e.g. ``"http://127.0.0.1:6767"``.
     :param conversation_id: Conversation id to attach to, e.g.
         ``"conv_abc123"``.
     :raises click.ClickException: When the server is unreachable or the
@@ -8826,13 +8603,13 @@ def attach(
     on a server and streams its I/O. It never spawns a server, runner, or
     harness, applies no model/harness defaults, and errors loudly when
     there is nothing live to attach to. To START a session use
-    ``omnigent run``; to reopen/restart a stored one use
-    ``omnigent resume``.
+    ``triune run``; to reopen/restart a stored one use
+    ``triune resume``.
 
     \b
     Examples:
-      omnigent attach conv_abc123
-      omnigent attach conv_abc123 --server https://<app>.databricksapps.com
+      triune attach conv_abc123
+      triune attach conv_abc123 --server https://<app>.databricksapps.com
     """
     cfg = _load_effective_config()
     base_url = _resolve_attach_server(server, cfg.get("server"))
@@ -8918,7 +8695,7 @@ def attach(
     "--server",
     default=None,
     help=(
-        "Remote omnigent URL. Uploads the local YAML as an ephemeral "
+        "Remote Triune URL. Uploads the local YAML as an ephemeral "
         "agent, spawns a LOCAL runner that tunnels to this server (so "
         "terminals/MCPs run on your laptop), and connects the REPL to it. "
         "Pass --server local to auto-spawn a persistent local server in the "
@@ -8981,13 +8758,13 @@ def run(
     debug_events: bool,
     register_host: bool,
 ) -> None:
-    """Start a session with an Omnigent agent.
+    """Start a session with a Triune agent.
 
     AGENT may be an agent YAML file or an agent directory. Without AGENT,
     pass ``--server`` to connect directly to a server, or pass
     ``--harness`` to launch a built-in harness directly.
 
-    Default: omnigent server+REPL architecture (spawns a local
+    Default: triune server+REPL architecture (spawns a local
     server, REPL connects as an HTTP client). With ``--server <url>`` and
     no AGENT, connect directly to that server; with AGENT, use local
     runner + remote server topology (RUNNER.md §6 Flow 1) - laptop hosts
@@ -8995,16 +8772,16 @@ def run(
 
     \b
     Examples:
-      omnigent run --harness claude-sdk
-      omnigent run --harness codex -p "review the last commit"
-      omnigent run --from-openclaw "Gemini CLI" -p "review the last commit"
-      omnigent run examples/hello_world.yaml
-      omnigent run examples/hello_world.yaml --harness codex --model gpt-5.4-mini
-      omnigent run --server http://localhost:6767
-      omnigent run --server http://localhost:6767 --agent scribe -p "hi"
-      omnigent run --server local  # local server, ignoring any configured default
-      omnigent run examples/databricks_coding_agent.yaml --server https://<app>.databricksapps.com
-      omnigent run --server https://<app>.databricksapps.com --profile my-sp -p "hi"
+      triune run --harness claude-sdk
+      triune run --harness codex -p "review the last commit"
+      triune run --from-openclaw "Gemini CLI" -p "review the last commit"
+      triune run examples/hello_world.yaml
+      triune run examples/hello_world.yaml --harness codex --model gpt-5.4-mini
+      triune run --server http://localhost:6767
+      triune run --server http://localhost:6767 --agent scribe -p "hi"
+      triune run --server local  # local server, ignoring any configured default
+      triune run examples/databricks_coding_agent.yaml --server https://<app>.databricksapps.com
+      triune run --server https://<app>.databricksapps.com --profile my-sp -p "hi"
     """
     # A remote --server authenticated via a named Databricks profile: point the
     # SDK credential chain (used by every remote-auth path in this process) at
@@ -9167,7 +8944,7 @@ class _HostGroup(click.Group):
     """
     ``host`` group that accepts a server URL as a positional argument.
 
-    ``omnigent host <url>`` is shorthand for ``omnigent host
+    ``triune host <url>`` is shorthand for ``triune host
     --server <url>`` when ``<url>`` is URL-like or the empty local-mode
     marker. A leading positional token that matches a registered
     management subcommand (``enable``, ``disable``, ``status``, ``stop``,
@@ -9179,7 +8956,7 @@ class _HostGroup(click.Group):
         """
         Redirect a leading URL-like positional into ``--server``.
 
-        ``omnigent host <url>`` is shorthand for ``omnigent host --server
+        ``triune host <url>`` is shorthand for ``triune host --server
         <url>``. We detect a leading URL-like positional with a throwaway
         option parse and, when present, rewrite the argument list to inject
         ``--server <url>`` *before* Click parses it -- so Click sees a normal
@@ -9266,7 +9043,7 @@ class _HostGroup(click.Group):
 
 
 def _prompt_stop_local_server() -> None:
-    """Ask whether to also stop the detached local Omnigent server after exit.
+    """Ask whether to also stop the detached local Triune server after exit.
 
     The local-mode host daemon spawns a detached, persistent local AP
     server (:func:`ensure_local_omnigent_server`) that survives the daemon's exit
@@ -9398,7 +9175,7 @@ def _background_registration_timeout(
     log_detail = _background_host_log_detail(record.log_path)
     if not server_responded and transport_error is not None:
         exc = click.ClickException(
-            f"Could not reach the Omnigent server at {target} within "
+            f"Could not reach the Triune server at {target} within "
             f"{_BACKGROUND_HOST_REGISTRATION_GRACE_S:.0f}s ({transport_error}). "
             "Check that the server is running and that your `server` config "
             f"points at the right URL.{log_detail}"
@@ -9499,7 +9276,7 @@ def _maybe_open_host_web_ui(
     except OSError:
         opened = False
     if not opened:
-        click.echo(f"Open the Omnigent web UI: {web_url}", err=True)
+        click.echo(f"Open the Triune web UI: {web_url}", err=True)
 
 
 def _run_background_host(
@@ -9511,8 +9288,8 @@ def _run_background_host(
 ) -> None:
     """Spawn (or reuse) the detached host daemon and report it.
 
-    The background counterpart of the foreground ``omnigent host`` body,
-    selected by ``--background`` (and the whole of ``omnigent start``): the
+    The background counterpart of the foreground ``triune host`` body,
+    selected by ``--background`` (and the whole of ``triune start``): the
     same daemon loop runs detached (see :func:`_ensure_host_daemon`) so the
     command returns instead of blocking.
 
@@ -9521,18 +9298,18 @@ def _run_background_host(
     spawn — otherwise the daemon would die in the background with an opaque
     redirect error.
 
-    :param server: Resolved Omnigent server URL, e.g.
+    :param server: Resolved Triune server URL, e.g.
         ``"https://example.databricksapps.com"``. ``None`` or ``""`` selects
-        local mode (the daemon starts or reuses a local Omnigent server).
+        local mode (the daemon starts or reuses a local Triune server).
     :param stop_command: Command to echo for stopping this daemon, e.g.
-        ``"omnigent stop"`` — each entry point suggests the teardown that
+        ``"triune stop"`` — each entry point suggests the teardown that
         matches how it was invoked.
     :param non_interactive: When ``True``, never launch the browser login —
-        fail with the ``omnigent login`` hint instead.
+        fail with the ``triune login`` hint instead.
     :param no_open: When ``True``, skip automatically opening the host web UI.
     :raises click.ClickException: If the daemon cannot be spawned, exits
         immediately, fails to register, or (local mode) never serves its local
-        Omnigent server.
+        Triune server.
     """
     if server:
         _ensure_databricks_server_auth(server, non_interactive=non_interactive)
@@ -9622,7 +9399,7 @@ def _host_stop_command(explicit_server: str | None) -> str:
     :param explicit_server: The ``--server`` value as the user spelled it,
         e.g. ``"https://example.databricksapps.com"`` or ``""`` for local
         mode. ``None`` when the option was omitted.
-    :returns: A copy-pasteable command, e.g. ``"omnigent host stop"``.
+    :returns: A copy-pasteable command, e.g. ``"triune host stop"``.
     """
     if explicit_server is None:
         return f"{cli_invocation()} host stop"
@@ -9631,7 +9408,7 @@ def _host_stop_command(explicit_server: str | None) -> str:
 
 
 @cli.group("host", cls=_HostGroup, invoke_without_command=True)
-@click.option("--server", default=None, help="Remote omnigent server URL.")
+@click.option("--server", default=None, help="Remote Triune server URL.")
 @click.option(
     "--no-open",
     is_flag=True,
@@ -9675,21 +9452,21 @@ def host(
 
     \b
     Examples:
-      omnigent host https://omnigent-app.databricksapps.com
-      omnigent host --server https://omnigent-app.databricksapps.com
-      omnigent host ""   # spawn + connect to a local server
-      omnigent host --background   # spawn detached, return immediately
-      omnigent host --no-open   # connect without opening the web UI
-      omnigent host enable   # install and start a per-user system service
-      omnigent host disable  # stop and remove the per-user system service
+      triune host https://omnigent-app.databricksapps.com
+      triune host --server https://omnigent-app.databricksapps.com
+      triune host ""   # spawn + connect to a local server
+      triune host --background   # spawn detached, return immediately
+      triune host --no-open   # connect without opening the web UI
+      triune host enable   # install and start a per-user system service
+      triune host disable  # stop and remove the per-user system service
 
-    The server URL may be given positionally (``omnigent host
+    The server URL may be given positionally (``triune host
     <url>``) or via ``--server <url>``. A leading ``status``, ``stop``,
     ``enable``, ``disable``, ``stop-session``, or ``reset-id`` token still
     runs that management subcommand.
 
     When the target server is Databricks-fronted and you are not signed
-    in, ``host`` runs the same flow ``omnigent login`` would before
+    in, ``host`` runs the same flow ``triune login`` would before
     connecting (an interactive browser flow). Pass ``--non-interactive``
     to keep the old scripted behavior: fail with the login command to run
     instead of prompting. This holds for ``--background`` too: the login
@@ -9697,14 +9474,14 @@ def host(
 
     :param ctx: Click invocation context. ``ctx.invoked_subcommand`` is
         set when a management subcommand such as ``"status"`` is running.
-    :param server: Remote Omnigent server URL, e.g.
+    :param server: Remote Triune server URL, e.g.
         ``"https://example.databricksapps.com"``. ``None`` falls back
         to config; empty string selects local mode.
     :param background: When ``True``, spawn the daemon detached and return
         instead of running the daemon loop in the foreground.
     :param no_open: When ``True``, skip automatically opening the host web UI.
     :param non_interactive: When ``True``, never launch the browser login
-        for an un-authed remote server — fail with the ``omnigent login``
+        for an un-authed remote server — fail with the ``triune login``
         hint instead.
     """
     ctx.ensure_object(dict)
@@ -9805,7 +9582,7 @@ def host(
 
 def _host_group_option(ctx: click.Context, key: str) -> str | None:
     """
-    Read a group-level ``omnigent host`` option for a subcommand.
+    Read a group-level ``triune host`` option for a subcommand.
 
     :param ctx: Click context passed to a host subcommand.
     :param key: Group option key, e.g. ``"server"``.
@@ -9833,10 +9610,10 @@ def _resolve_host_server(server: str | None) -> str | None:
 
 def _daemon_base_url(record: _HostDaemonRecord) -> str | None:
     """
-    Resolve the Omnigent server URL for a daemon record.
+    Resolve the Triune server URL for a daemon record.
 
     :param record: Daemon registry record to inspect.
-    :returns: Omnigent server URL, e.g. ``"http://127.0.0.1:8123"``, or
+    :returns: Triune server URL, e.g. ``"http://127.0.0.1:8123"``, or
         ``None`` when a local daemon's server cannot be discovered.
     """
     if record.mode == "local":
@@ -9960,9 +9737,9 @@ def _host_http_json(
     host_id: str | None = None,
 ) -> _HostHttpResult:
     """
-    Send one management request to an Omnigent server.
+    Send one management request to a Triune server.
 
-    :param base_url: Omnigent server base URL, e.g.
+    :param base_url: Triune server base URL, e.g.
         ``"https://example.databricksapps.com"``.
     :param method: HTTP method, e.g. ``"GET"`` or ``"POST"``.
     :param path: Request path beginning with ``/``, e.g.
@@ -10030,7 +9807,7 @@ def _host_http_json(
 
 def _host_error_text(body: _HostJsonObject | str) -> str:
     """
-    Extract a concise error string from an Omnigent response body.
+    Extract a concise error string from a Triune response body.
 
     :param body: Response body decoded by :func:`_host_http_json`.
     :returns: Human-readable error text.
@@ -10135,7 +9912,7 @@ def _fetch_session_pages(
     """
     Fetch every available session page from a server.
 
-    :param base_url: Omnigent server base URL, e.g.
+    :param base_url: Triune server base URL, e.g.
         ``"https://example.databricksapps.com"``.
     :param connected_only: When ``True``, ask the server for connected
         sessions only.
@@ -10216,7 +9993,7 @@ def _sessions_for_daemon(
         return _DaemonSessionsResult(
             base_url=None,
             sessions=[],
-            error="local Omnigent server is not reachable",
+            error="local Triune server is not reachable",
             unreachable=_local_server_confirmed_dead(),
         )
     host_id = record.host_id or _load_existing_host_id()
@@ -10249,7 +10026,7 @@ def _runner_online_map(
     """
     Resolve live runner connectivity for sessions.
 
-    :param base_url: Omnigent server base URL, e.g.
+    :param base_url: Triune server base URL, e.g.
         ``"https://example.databricksapps.com"``.
     :param sessions: Session rows containing ``runner_id`` values.
     :returns: Map of ``runner_id`` to ``True`` / ``False``. ``None``
@@ -10297,7 +10074,7 @@ def _annotate_sessions_with_runner_online(
     """
     Add ``runner_online`` to session rows.
 
-    :param base_url: Omnigent server base URL, e.g.
+    :param base_url: Triune server base URL, e.g.
         ``"https://example.databricksapps.com"``.
     :param sessions: Session rows returned by ``GET /v1/sessions``.
     :returns: Copies of the session rows with ``runner_online`` added.
@@ -10349,7 +10126,7 @@ def _add_daemon_host_status(
     base_url = payload.get("server_url")
     host_id = payload.get("host_id")
     if not isinstance(base_url, str):
-        payload["error"] = "local Omnigent server is not reachable"
+        payload["error"] = "local Triune server is not reachable"
         return
     if not isinstance(host_id, str) or not host_id:
         payload["error"] = "host id is not available in local config"
@@ -10493,7 +10270,7 @@ def _host_truncate(text: _HostJsonValue, *, max_chars: int) -> str:
     """
     Truncate long text from the right for compact terminal display.
 
-    :param text: Value to truncate, e.g. an Omnigent error message.
+    :param text: Value to truncate, e.g. a Triune error message.
     :param max_chars: Maximum display width, e.g. ``96``.
     :returns: The original text if it fits, otherwise a right-truncated
         string ending in an ellipsis.
@@ -10859,7 +10636,7 @@ def host_enable(
     except HostServiceError as exc:
         raise click.ClickException(str(exc)) from exc
 
-    click.echo(f"Enabled the Omnigent host user service for {_host_display_url(target)}.")
+    click.echo(f"Enabled the Triune host user service for {_host_display_url(target)}.")
     click.echo(f"Service definition: {_display_path(service.path)}")
     if service.log_path is not None:
         click.echo(f"Service output: {_display_path(service.log_path)}")
@@ -10879,7 +10656,7 @@ def host_disable() -> None:
     for record in _list_daemon_records():
         if not _pid_alive(record.pid):
             _delete_daemon_record(record)
-    click.echo("Disabled the Omnigent host user service.")
+    click.echo("Disabled the Triune host user service.")
     click.echo(f"Removed service definition: {_display_path(service.path)}")
 
 
@@ -10945,9 +10722,9 @@ def _stop_session_on_server(
     session_id: str,
 ) -> None:
     """
-    Stop one Omnigent session via the server lifecycle event API.
+    Stop one Triune session via the server lifecycle event API.
 
-    :param base_url: Omnigent server base URL, e.g.
+    :param base_url: Triune server base URL, e.g.
         ``"https://example.databricksapps.com"``.
     :param session_id: Session id, e.g. ``"conv_abc123"``.
     :raises click.ClickException: If the server rejects the stop event.
@@ -11236,7 +11013,7 @@ def host_stop(
         # web UI / history survive). Point users at the full stop so a wedged
         # server doesn't look like it survived a restart.
         click.echo(
-            "This stops hosting only — the local Omnigent server (web UI / history) "
+            "This stops hosting only — the local Triune server (web UI / history) "
             f"stays up. Run `{cli_invocation()} stop` to stop it too."
         )
 
@@ -11258,7 +11035,7 @@ def host_stop_session(
     :param ctx: Click context carrying group-level options.
     :param session_ids: Session ids to stop, e.g.
         ``["conv_abc123", "conv_def456"]``.
-    :param server: Omnigent server URL that owns the sessions, e.g.
+    :param server: Triune server URL that owns the sessions, e.g.
         ``"https://example.databricksapps.com"``. ``None`` falls back
         to config/local discovery.
     :param force: Continue after individual stop failures.
@@ -11270,7 +11047,7 @@ def host_stop_session(
         resolved_server = local_server_url_if_healthy()
         if resolved_server is None:
             raise click.ClickException(
-                "No server was supplied and no local Omnigent server is reachable."
+                "No server was supplied and no local Triune server is reachable."
             )
     for session_id in session_ids:
         try:
@@ -11296,7 +11073,7 @@ def host_reset_id(yes: bool) -> None:
     to a different account``: the server keys host registrations by the
     persisted host id, so once another identity owns it, this machine
     cannot re-register under yours. Resetting the id lets the next
-    ``omnigent host`` register as a brand-new host under the identity you
+    ``triune host`` register as a brand-new host under the identity you
     are signed in as. The host name and other config are preserved.
 
     :param yes: When ``True``, skip the confirmation prompt.
@@ -11346,7 +11123,7 @@ def host_reset_id(yes: bool) -> None:
 
 @cli.command(hidden=True)
 def version() -> None:
-    """Print the installed Omnigent version."""
+    """Print the installed Triune version."""
     print(_format_version())
 
 
@@ -11526,7 +11303,7 @@ def _print_config_defaults() -> None:
     The ``KEY=VALUE`` defaults from ``~/.omnigent/config.yaml`` (user) and
     ``.omnigent/config.yaml`` in the cwd (project defaults). Harness launch
     overrides are user-owned; project configuration can select the default.
-    Used by ``omnigent config list``.
+    Used by ``triune config list``.
 
     :returns: None. Side effect: writes to stdout.
     """
@@ -11673,7 +11450,7 @@ def _slack_daemon() -> IntegrationDaemon:
 @cli.group("integration", invoke_without_command=True)
 @click.pass_context
 def integration(ctx: click.Context) -> None:
-    """Run and manage Omnigent chat integrations.
+    """Run and manage Triune chat integrations.
 
     \b
     Available integrations:
@@ -11745,7 +11522,7 @@ def slack(ctx: click.Context, background: bool) -> None:
     # Foreground: inherit stdio, block until the bot exits (Ctrl-C). Config
     # comes from the inherited environment only (no .env loading — matches
     # `omni server`), so the child inherits our cwd; nothing to special-case.
-    click.echo("Starting the Omnigent Slack bot (foreground). Press Ctrl-C to stop.")
+    click.echo("Starting the Triune Slack bot (foreground). Press Ctrl-C to stop.")
     result = subprocess.run(_slack_argv(), env=os.environ.copy(), check=False)
     raise SystemExit(result.returncode)
 
@@ -11774,7 +11551,7 @@ def _start_slack_background() -> None:
             message += f"\nLast log lines:\n{tail}"
         message += f"\nFull log: {_display_path(Path(record.log_path))}"
         raise click.ClickException(message)
-    click.echo(f"Started the Omnigent Slack bot in the background (pid {record.pid}).")
+    click.echo(f"Started the Triune Slack bot in the background (pid {record.pid}).")
     click.echo(f"Logs: {_display_path(Path(record.log_path))}")
     click.echo("Stop it with: omni integration slack stop")
 
@@ -11798,7 +11575,7 @@ def slack_stop() -> None:
     if record is None:
         click.echo("Slack bot: not running.")
         return
-    click.echo(f"Stopped the Omnigent Slack bot (pid {record.pid}).")
+    click.echo(f"Stopped the Triune Slack bot (pid {record.pid}).")
 
 
 @slack.command("logs")
@@ -11826,10 +11603,10 @@ def slack_logs(follow: bool) -> None:
 
 @cli.group("config", cls=_ConfigGroup)
 def config_grp() -> None:
-    """Get, set, and view Omnigent defaults and credentials.
+    """Get, set, and view Triune defaults and credentials.
 
     Defaults (auto_open_conversation, default_agent, harness, model,
-    server) are used by ``omnigent run``. Project-level config
+    server) are used by ``triune run``. Project-level config
     (``.omnigent/config.yaml`` in the cwd, like ``.git/config``) overrides
     user-level config (``~/.omnigent/config.yaml``, like ``~/.gitconfig``).
 
@@ -11850,7 +11627,7 @@ def config_list() -> None:
 
     Prints the defaults (user + project), then the configured model
     credentials grouped by harness with each harness's default marked — the
-    merged view of everything ``omnigent run`` will use (including
+    merged view of everything ``triune run`` will use (including
     ambient-detected credentials).
 
     :returns: None.
@@ -11871,7 +11648,7 @@ def config_list() -> None:
 )
 @click.argument("settings", nargs=-1, required=True, metavar="KEY=VALUE...")
 def config_set(is_global: bool, settings: tuple[str, ...]) -> None:
-    """Set one or more Omnigent defaults.
+    """Set one or more Triune defaults.
 
     Without ``--global``, pairs are written to ``.omnigent/config.yaml``
     in the current directory (project-level, like ``.git/config``); with
@@ -11891,8 +11668,8 @@ def config_set(is_global: bool, settings: tuple[str, ...]) -> None:
 
     \b
     Examples:
-      omnigent config set default_agent=examples/hello_world.yaml
-      omnigent config set --global server=https://<app>.databricksapps.com
+      triune config set default_agent=examples/hello_world.yaml
+      triune config set --global server=https://<app>.databricksapps.com
     """
     parsed = _parse_config_settings(settings, resolve_paths=is_global)
     _validate_config_set_scope(parsed, is_global=is_global)
@@ -11916,7 +11693,7 @@ def config_set(is_global: bool, settings: tuple[str, ...]) -> None:
 )
 @click.argument("keys", nargs=-1, required=True, metavar="KEY...")
 def config_unset(is_global: bool, keys: tuple[str, ...]) -> None:
-    """Remove one or more Omnigent defaults.
+    """Remove one or more Triune defaults.
 
     :param is_global: When ``True``, remove from ``~/.omnigent/config.yaml``;
         when ``False``, from ``.omnigent/config.yaml`` in cwd.
@@ -11942,12 +11719,12 @@ def config_unset(is_global: bool, keys: tuple[str, ...]) -> None:
 )
 def setup(internal_beta: bool) -> None:
     """
-    Launch the Omnigent first-time setup flow.
+    Launch the Triune first-time setup flow.
 
     By default this runs the standard model/credential picker — choose a
     provider for each harness and set your defaults, then start a session
-    with ``omnigent run``. (List configured credentials with
-    ``omnigent config list``.) Pass ``--internal-beta`` to configure
+    with ``triune run``. (List configured credentials with
+    ``triune config list``.) Pass ``--internal-beta`` to configure
     Databricks internal-beta defaults and authentication instead.
     """
     from omnigent.inner import ui
@@ -12018,9 +11795,7 @@ def setup(internal_beta: bool) -> None:
             }
         )
         click.echo(f"Set default_agent={agent_path} in {_GLOBAL_CONFIG_PATH}")
-        click.echo(
-            f"Type `{cli_invocation()} claude` to get started with Claude Code on omnigent."
-        )
+        click.echo(f"Type `{cli_invocation()} claude` to get started with Claude Code on Triune.")
         return
 
     # --no-internal-beta: validate existing providers before entering the
@@ -12075,14 +11850,13 @@ _AGENT_SERVER_OPTION = click.option(
     "--server",
     default=None,
     help=(
-        "Omnigent server URL. "
-        "Defaults to the configured server, or a local server already running."
+        "Triune server URL. Defaults to the configured server, or a local server already running."
     ),
 )
 
 
 def _agent_cli_error(message: str) -> click.ClickException:
-    """An ``omnigent agent`` error; the stale-host recovery hint can't fix these."""
+    """An ``triune agent`` error; the stale-host recovery hint can't fix these."""
     from omnigent.cli_diagnostics import SUPPRESS_RECOVERY_HINT_ATTR
 
     exc = click.ClickException(message)
@@ -12119,7 +11893,7 @@ def _agent_api_client(server: str | None) -> Iterator[Any]:  # type: ignore[expl
         if not (info.is_success and info.json().get("agent_install") is True):
             raise _agent_cli_error(
                 f"{base_url} does not support installing agents; upgrade the server "
-                "to use `omnigent agent`."
+                "to use `triune agent`."
             )
         yield client
 
@@ -12220,7 +11994,7 @@ def _bundle_untrusted_dir(source: Path) -> bytes:
                     if fh.read(len(_LFS_POINTER)) == _LFS_POINTER:
                         raise _agent_cli_error(
                             f"{_printable(str(rel))} is stored in Git LFS, which "
-                            "`omnigent agent add` doesn't download."
+                            "`triune agent add` doesn't download."
                         )
                 tf.add(str(file_path), arcname=str(rel))
     return buf.getvalue()
@@ -12285,7 +12059,7 @@ def agent_add(source: str, yes: bool, list_only: bool, server: str | None) -> No
     Re-adding an agent with the same name replaces your copy in place.
     Workers, skills, guardrails, and supporting files in the directory are
     all kept. For a directory, ``${VAR}`` references are resolved from this
-    shell, as ``omnigent run`` does; a YAML file or tarball is uploaded as is.
+    shell, as ``triune run`` does; a YAML file or tarball is uploaded as is.
 
     A GitHub repo (``owner/repo[/path][@agent]`` or a github.com URL) is
     shallow-cloned and every agent directory in it (or just ``@agent``) is
@@ -12294,11 +12068,11 @@ def agent_add(source: str, yes: bool, list_only: bool, server: str | None) -> No
 
     \b
     Examples:
-      omnigent agent add ./orion
-      omnigent agent add ./orion.tar.gz --server https://myserver.com
-      omnigent agent add acme/agents --list
-      omnigent agent add acme/agents@orion
-      omnigent agent add https://github.com/acme/agents/tree/main/orion
+      triune agent add ./orion
+      triune agent add ./orion.tar.gz --server https://myserver.com
+      triune agent add acme/agents --list
+      triune agent add acme/agents@orion
+      triune agent add https://github.com/acme/agents/tree/main/orion
     """
     path = Path(source)
     github = None if path.exists() else _parse_github_source(source)
@@ -12393,11 +12167,11 @@ def _list_agents(client: Any) -> list[dict[str, Any]]:  # type: ignore[explicit-
 @agent_grp.command("list")
 @_AGENT_SERVER_OPTION
 def agent_list(server: str | None) -> None:
-    """List your agents (installed with ``omnigent agent add`` or uploaded)."""
+    """List your agents (installed with ``triune agent add`` or uploaded)."""
     with _agent_api_client(server) as client:
         rows = _list_agents(client)
     if not rows:
-        click.echo("No agents yet. Install one with: omnigent agent add <path>")
+        click.echo(f"No agents yet. Install one with: {cli_invocation()} agent add <path>")
         return
     table = _host_table("Your agents")
     table.add_column("Name", style="bold", overflow="fold")
@@ -12417,7 +12191,7 @@ def agent_list(server: str | None) -> None:
 @click.option("--yes", "-y", is_flag=True, help="Remove without asking, even if sessions use it.")
 @_AGENT_SERVER_OPTION
 def agent_remove(agent: str, yes: bool, server: str | None) -> None:
-    """Remove your AGENT, given by name or by the id ``omnigent agent list`` shows.
+    """Remove your AGENT, given by name or by the id ``triune agent list`` shows.
 
     Sessions using it keep running while they can, then must be forked into
     another agent to continue, so you are asked to confirm first.
@@ -12461,7 +12235,7 @@ def debug() -> None:
 @click.argument("url")
 def debug_db_upgrade(url: str) -> None:
     """
-    Upgrade the schema of an Omnigent tracking database to the
+    Upgrade the schema of a Triune tracking database to the
     latest supported version.
 
     URL is a SQLAlchemy database URL, e.g.
@@ -12542,11 +12316,11 @@ def debug_migrate_accounts_to_oidc(
     \b
     Examples:
       # Dry run: append the org domain to every username
-      omnigent debug migrate-accounts-to-oidc sqlite:///chat.db --domain example.com
+      triune debug migrate-accounts-to-oidc sqlite:///chat.db --domain example.com
       # Apply it
-      omnigent debug migrate-accounts-to-oidc sqlite:///chat.db --domain example.com --commit
+      triune debug migrate-accounts-to-oidc sqlite:///chat.db --domain example.com --commit
       # Explicit per-user mapping (add --commit to apply)
-      omnigent debug migrate-accounts-to-oidc sqlite:///chat.db --map alice=alice@corp.com
+      triune debug migrate-accounts-to-oidc sqlite:///chat.db --map alice=alice@corp.com
 
     \b
     IMPORTANT: always back up your database before running with
@@ -12682,7 +12456,7 @@ def debug_logs(
     output to all log files produced for a specific session across relaunches.
 
     \b
-    Log locations (relative to ~/.omnigent or $OMNIGENT_DATA_DIR):
+    Log locations (relative to ~/.triune or $OMNIGENT_DATA_DIR):
       runner       logs/runner/runner-*.log
       host         logs/host/host-*.log
       server       logs/server/server-*.log
@@ -12691,17 +12465,17 @@ def debug_logs(
     \b
     Examples:
       # Tail the most recent local runner log (default)
-      omnigent debug logs
+      triune debug logs
       # List all local runner log files with sizes
-      omnigent debug logs --list
+      triune debug logs --list
       # Show runner logs for a specific session (across relaunches)
-      omnigent debug logs --type runner --session conv_abc123
+      triune debug logs --type runner --session conv_abc123
       # List runner log files for a session
-      omnigent debug logs --type runner --session conv_abc123 --list
+      triune debug logs --type runner --session conv_abc123 --list
       # Follow the latest server log in real-time
-      omnigent debug logs --type server --follow
+      triune debug logs --type server --follow
       # Show the full latest CLI diagnostics log
-      omnigent debug logs --type cli -n 0
+      triune debug logs --type cli -n 0
     """
     import re
     import subprocess
@@ -12820,7 +12594,7 @@ def _workspace_mount_probe_matches(candidate: str, probe: httpx.Response) -> boo
     :param candidate: The probed mount base URL, e.g.
         ``"https://example.databricks.com/api/2.0/omnigent"``.
     :param probe: The ``GET <candidate>/v1/me`` response.
-    :returns: ``True`` when the mount answered 200 (omnigent itself) or
+    :returns: ``True`` when the mount answered 200 (triune itself) or
         with a Databricks-fronted shape (302 to ``/oidc/`` or 401 with
         the ``DatabricksRealm`` challenge).
     """
@@ -12881,9 +12655,9 @@ def _workspace_api_server_url(server: str) -> str:
     """Expand a bare Databricks workspace URL to its omnigent API base.
 
     ``https://<workspace>`` hosts serve the workspace web app at the
-    root; workspace-hosted omnigent lives at ``/api/2.0/omnigent``.
+    root; workspace-hosted triune lives at ``/api/2.0/omnigent``.
     Users naturally paste the bare host, so when a path-less server URL
-    answers like a Databricks workspace web app (a non-omnigent reply
+    answers like a Databricks workspace web app (a non-triune reply
     carrying the ``server: databricks`` header) AND the
     ``/api/2.0/omnigent`` mount answers like the API proxy, the
     expanded URL is adopted. Detection is behavioral — no hostname
@@ -12990,7 +12764,7 @@ def _workspace_api_server_url(server: str) -> str:
             return candidate
         click.echo(
             f"Note: {server} answers like a Databricks workspace, but "
-            f"{candidate} did not answer as an omnigent server even with "
+            f"{candidate} did not answer as a Triune server even with "
             f"the cached workspace credentials. Connecting to {server} as "
             "given; if omnigent is hosted on this workspace, refresh the "
             f"login with `databricks auth login --host {server}` or pass "
@@ -13078,7 +12852,7 @@ def _databricks_root_is_usable(server: str) -> bool:
 
     :param server: A scheme-bearing server URL; its query/fragment is dropped
         before probing, as ``_workspace_api_server_url`` does.
-    :returns: True when the host answers as an omnigent server or a recognized
+    :returns: True when the host answers as a Triune server or a recognized
         Databricks login target.
     """
     import httpx as _httpx
@@ -13107,7 +12881,7 @@ def _resolve_server_url(server: str) -> ServerUrl:
     The ``?o=`` workspace selector is captured off the raw input (the
     expansion strips it before probing) and rides on the returned value;
     when the input carries none, the selector recorded by a previous
-    ``omnigent login`` for the resolved base is used instead.
+    ``triune login`` for the resolved base is used instead.
 
     The URL is always tried as the user gave it first. Only when that fails
     to resolve, and only for an Azure custom (vanity) workspace URL, is the
@@ -13282,7 +13056,7 @@ def _workspace_hosted_profile_org_id(
     workspace_host: str,
     profile_name: str | None = None,
 ) -> str | None:
-    """Return the CLI-recorded workspace id for workspace-hosted Omnigent."""
+    """Return the CLI-recorded workspace id for workspace-hosted Triune."""
     from omnigent.util.server_url import is_workspace_hosted_url
 
     if not is_workspace_hosted_url(server):
@@ -13321,7 +13095,7 @@ def _databricks_host_needs_org_selector(workspace_host: str) -> bool:
 
 
 def _databricks_login(server: str, workspace_host: str, org_id: str | None = None) -> None:
-    """Log in to a Databricks-fronted Omnigent server.
+    """Log in to a Databricks-fronted Triune server.
 
     Covers both Databricks Apps deployments and workspace-hosted
     omnigent (``https://<workspace>/api/2.0/omnigent``). Reuses an
@@ -13600,10 +13374,10 @@ def _remember_default_server(server: str) -> None:
     """
     Persist *server* as the user-level default after a successful login.
 
-    A bare ``omnigent`` (which starts the host) and ``omnigent host`` fall
+    A bare ``omnigent`` (which starts the host) and ``triune host`` fall
     back to the configured ``server`` key when no ``--server`` is passed (see
     :func:`start` and :func:`host`). Without this, a user who runs
-    ``omnigent login <server>`` and then bare ``omnigent`` is still routed
+    ``triune login <server>`` and then bare ``omnigent`` is still routed
     at whatever default ``setup`` baked in — the confusing "I just logged
     in, yet I'm asked to log in again to a different server" path.
     Recording the just-logged-in server as the default closes that gap.
@@ -13625,7 +13399,7 @@ def _remember_default_server(server: str) -> None:
 @cli.command("login")
 @click.argument("server_url")
 def login(server_url: str) -> None:
-    """Authenticate with a remote Omnigent server.
+    """Authenticate with a remote Triune server.
 
     Probes the server's auth mode and runs the matching flow:
 
@@ -13637,14 +13411,14 @@ def login(server_url: str) -> None:
       stores the session JWT when the browser flow completes.
     - header mode: no login needed (proxy injects identity); we
       print a hint and exit successfully.
-    - Databricks-fronted (a Databricks App, or omnigent hosted on
+    - Databricks-fronted (a Databricks App, or triune hosted on
       a workspace API path): detected from the probe response — we
       log in to the workspace via ``databricks auth login --host
       <workspace>`` (browser) and store a pointer record so later
       commands mint fresh workspace tokens automatically. Requires
       the ``databricks`` extra.
 
-    Subsequent ``omnigent run --server <url>`` commands then
+    Subsequent ``triune run --server <url>`` commands then
     use the stored token via the runner / host-tunnel auth chain. A
     successful login also records the server as the user-level default
     (the ``server`` key in ``~/.omnigent/config.yaml``), so a bare
@@ -13653,8 +13427,8 @@ def login(server_url: str) -> None:
 
     \b
     Example:
-      omnigent login http://localhost:6767
-      omnigent login example.cloud.databricks.com/omnigent  # https:// assumed
+      triune login http://localhost:6767
+      triune login example.cloud.databricks.com/omnigent  # https:// assumed
       omnigent          # connects to the server just logged in to
 
     :param server_url: The remote server URL, e.g.
@@ -13730,7 +13504,7 @@ def login(server_url: str) -> None:
         # endpoint, so fail on the probe itself.
         raise click.ClickException(
             f"Unexpected response from {server}/v1/me: HTTP {probe.status_code}. "
-            "This is not an Omnigent auth answer; the server may be erroring, "
+            "This is not a Triune auth answer; the server may be erroring, "
             "or something other than the server may have replied."
             f"{_proxy_interference_hint(server)}"
         )
@@ -13917,7 +13691,7 @@ def _accounts_login(server: str) -> None:
     On success, the session JWT goes to
     ``~/.omnigent/auth_tokens.json`` via the existing
     :func:`omnigent.cli_auth.store_token`. From there both
-    ``omnigent run`` and ``omnigent host`` pick it up
+    ``triune run`` and ``triune host`` pick it up
     automatically when they call ``--server <url>``.
     """
     import httpx as _httpx
@@ -13993,18 +13767,18 @@ _PANE_SPLIT_DIRECTIONS = ("v", "h", "w")
 )
 def pane_split(direction: str | None, parent_pane: str) -> None:
     """
-    Split the parent omnigent pane and run the chooser in the new pane.
+    Split the parent triune pane and run the chooser in the new pane.
 
     Internal subcommand invoked by the tmux key-binding wrappers
     installed by ``omnigent.repl._tmux_pane``. The wrapper fires
-    ``run-shell 'omnigent pane-split -<v|h|w> -p #{pane_id}'`` when
+    ``run-shell 'triune pane-split -<v|h|w> -p #{pane_id}'`` when
     the user presses their split key while focused on an omnigent
     pane; tmux substitutes ``#{pane_id}`` to the focused pane's id
     and we exec the right ``tmux split-window`` / ``new-window``
-    invocation pointing at ``omnigent pane-picker``.
+    invocation pointing at ``triune pane-picker``.
 
     :param direction: One of ``v`` / ``h`` / ``w``. Required.
-    :param parent_pane: The omnigent pane id, e.g. ``%0``. Required.
+    :param parent_pane: The triune pane id, e.g. ``%0``. Required.
     """
     import shlex
 
@@ -14070,9 +13844,9 @@ def pane_picker(parent_pane: str) -> None:
     Launch a fresh REPL conversation in the current new pane.
 
     Internal subcommand. The new tmux pane (created by
-    ``omnigent pane-split``) execs this command, which:
+    ``triune pane-split``) execs this command, which:
 
-    1. Reads the parent omnigent pane's ``@omnigent-launch-argv``
+    1. Reads the parent triune pane's ``@omnigent-launch-argv``
        and friends.
     2. ``os.execvp``\\s the parent's launch argv to spawn a new
        REPL against the same agent in this pane.
@@ -14083,7 +13857,7 @@ def pane_picker(parent_pane: str) -> None:
     ``designs/REPL_TMUX_PANE_SPLIT.md``. With only one option,
     a chooser is friction; we just exec.
 
-    :param parent_pane: The parent omnigent pane id, e.g. ``%0``.
+    :param parent_pane: The parent triune pane id, e.g. ``%0``.
     """
     import json
 
@@ -14469,16 +14243,16 @@ def _bundled_brain_fallback_applies(run_args: tuple[str, ...]) -> bool:
 def _reject_reserved_devin_resume_args(devin_args: tuple[str, ...]) -> None:
     """Reject Devin-owned resume/session flags in passthrough args.
 
-    Omnigent owns resume: it maps a conversation id to Devin's own session id
+    Triune owns resume: it maps a conversation id to Devin's own session id
     and passes ``--resume <devin_session_id>`` itself, so a user-supplied
     ``--resume``/``-c`` would fight it and reattach the wrong session. Same for
-    ``--config``/``--export``, which carry the Omnigent hook wiring.
+    ``--config``/``--export``, which carry the Triune hook wiring.
     """
     reserved = {"--resume", "-r", "--continue", "-c", "--config", "--export"}
     if any(arg == flag or arg.startswith(f"{flag}=") for arg in devin_args for flag in reserved):
         raise click.UsageError(
-            "Devin resume/config flags are reserved for Omnigent handling; use "
-            "`omnigent devin --resume [CONVERSATION]` instead."
+            "Devin resume/config flags are reserved for Triune handling; use "
+            "`triune devin --resume [CONVERSATION]` instead."
         )
 
 
@@ -14487,7 +14261,7 @@ def _reject_reserved_kiro_resume_args(kiro_args: tuple[str, ...]) -> None:
     reserved = {"--resume", "--resume-id", "--resume-picker"}
     if any(arg == flag or arg.startswith(f"{flag}=") for arg in kiro_args for flag in reserved):
         raise click.UsageError(
-            "Kiro resume flags are reserved for Omnigent resume handling; use "
+            "Kiro resume flags are reserved for Triune resume handling; use "
             f"`{cli_invocation()} kiro --resume [CONVERSATION]` instead."
         )
 
@@ -14504,7 +14278,7 @@ def _reject_reserved_codex_transport_args(codex_args: tuple[str, ...]) -> None:
     reserved = reserved_codex_transport_arg(codex_args)
     if reserved is not None:
         raise click.UsageError(
-            f"{reserved!r} is reserved for Omnigent, which starts Codex's app-server "
+            f"{reserved!r} is reserved for Triune, which starts Codex's app-server "
             f"and attaches the TUI itself. Drop it from `{cli_invocation()} codex`, "
             "or run `codex app-server` directly for a standalone app-server."
         )
@@ -14535,15 +14309,15 @@ def _build_kiro_launch_args(
 def _run_bundled_agent(name: str, run_args: tuple[str, ...]) -> None:
     """Forward a bundled-agent subcommand to ``run`` on its packaged path.
 
-    Implements ``omnigent polly`` / ``omnigent debby``: resolves the bundled
+    Implements ``triune polly`` / ``triune debby``: resolves the bundled
     example directory and re-dispatches through the ``run`` command's own
     parser, so every ``run`` flag (``--server``, ``-p``, ``--resume``, ...)
     works unchanged on the agent shorthands without duplicating ``run``'s
     option declarations.
 
-    ``prog_name`` is pinned to ``"omnigent run"`` so context-derived output —
+    ``prog_name`` is pinned to ``"triune run"`` so context-derived output —
     usage errors and the :func:`_build_resume_parts` replay prefix — renders
-    as the canonical ``omnigent run <path>`` form, which stays valid when
+    as the canonical ``triune run <path>`` form, which stays valid when
     replayed.
 
     :param name: Bundled example directory name, e.g. ``"polly"``.
@@ -14576,7 +14350,7 @@ def _run_bundled_agent(name: str, run_args: tuple[str, ...]) -> None:
 
 
 def _run_harness_shorthand(harness: str, run_args: tuple[str, ...]) -> None:
-    """Forward a harness shorthand (``omnigent copilot``) to ``run --harness``, the
+    """Forward a harness shorthand (``triune copilot``) to ``run --harness``, the
     way :func:`_run_bundled_agent` forwards ``polly``; an explicit ``--harness`` in
     *run_args* is a usage error rather than a silent override."""
     if any(arg == "--harness" or arg.startswith("--harness=") for arg in run_args):

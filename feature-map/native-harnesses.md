@@ -1,8 +1,8 @@
 # Native harnesses
 
-Omnigent runs twelve vendor coding CLIs as native harnesses. A user can start
+Triune runs twelve vendor coding CLIs as native harnesses. A user can start
 each one from the web new-session picker or from the command line with
-`omnigent <name>`, then chat with it in Omnigent while its own terminal runs
+`triune <name>`, then chat with it in Triune while its own terminal runs
 alongside. The harnesses share one set of user journeys (launch, sign-in state,
 model and effort choice, approvals, resume, terminal, and cleanup) but each
 implements them separately, so a fix for one harness does not reach the others.
@@ -12,8 +12,8 @@ implements them separately, so a fix for one harness does not reach the others.
 - `launch-web`: pick the harness in the new-session composer and start a session.
 - `agent-instructions`: Pi native delivers authored instructions at launch/resume;
   authors can keep or replace Pi's base prompt and disable automatic context files.
-- `launch-cli`: `omnigent <name>` starts the harness in the user's terminal with
-  an Omnigent session behind it.
+- `launch-cli`: `triune <name>` starts the harness in the user's terminal with
+  a Triune session behind it.
 - `gemini-gateways`: configure native Gemini URL/key or Databricks profile routing,
   repair conflicting defaults, and keep the connection across tool turns.
 - `needs-auth`: a harness without usable credentials is shown as needing
@@ -93,29 +93,29 @@ check the same authored role is present once. For a custom Pi-native agent,
 `executor.context_files: false` excludes automatic workspace/global notes, and
 `executor.system_prompt_mode: replace` replaces Pi's base prompt. Explicit agent
 instructions remain; these options do not restrict file access or extensions.
-The `omnigent pi` wrapper also appends its own startup instructions.
+The `triune pi` wrapper also appends its own startup instructions.
 
 **Working status:** watch the session's Chat indicator after sending from the
 new-session composer, an existing-session composer, or the agent terminal.
 Switch Terminal → Chat, close/reopen the viewer, and reload during quiet work.
 Repeat the Chat and header-menu Terminal paths at phone width. A locally
-launched `omnigent claude` session is a separate launch path; inspect its linked
+launched `triune claude` session is a separate launch path; inspect its linked
 Chat session as well as the local terminal.
 
 **Pi Smart Routing:** enable Smart Routing for the session, then send a task
 from Chat or type it into the native Pi terminal. Follow a completed tool call
 with a question about its result; verify the routed model and retained history.
 
-**CLI:** run `omnigent <name>` from the matrix below; add `--resume` with or
+**CLI:** run `triune <name>` from the matrix below; add `--resume` with or
 without a session ID to resume.
 
 **Claude sub-agents:** from a web-launched Claude session or a locally launched
-`omnigent claude` session, ask Claude to delegate through its Agent tool. Open
+`triune claude` session, ask Claude to delegate through its Agent tool. Open
 the linked session's Agents panel and check the child under its parent. Ask a
 child to delegate again to check nested ownership; completed children remain
 visible while the runner idles.
 
-**Native Gemini setup:** run `omni setup` → Antigravity → Configure native agy
+**Native Gemini setup:** run `triune setup` → Antigravity → Configure native agy
 API key / gateway. If existing providers conflict, choose the Gemini default
 before entering the harness menu. Then start a new CLI or web session.
 
@@ -153,7 +153,7 @@ both open the same repair flow.
 **Idle reap:** finish a turn, then leave the session alone past the idle window:
 a web session with its Terminal view open but untouched or its tabs closed, a
 sub-agent an orchestrator dispatched and never reopened, or a CLI-launched
-`omnigent <name>` whose local terminal sits without keystrokes. The Terminal
+`triune <name>` whose local terminal sits without keystrokes. The Terminal
 view loses the pane; the next message from Chat, the orchestrator, or the CLI
 brings it back with the conversation.
 
@@ -172,18 +172,18 @@ columns name one journey test per harness; "—" means none exists yet.
 
 | Harness | CLI | Mock | Chat render test | Other journey test | Dev skill |
 |---|---|---|---|---|---|
-| `antigravity-native` | `omnigent antigravity` or `omnigent agy` | no | — | tests/e2e/test_antigravity_native_isolated_hooks_e2e.py::test_dispatched_agy_session_loads_user_hooks | [antigravity-native-e2e-dev](../.claude/skills/antigravity-native-e2e-dev/SKILL.md) |
-| `claude-native` | `omnigent claude` | yes | tests/e2e_ui/messages/test_native_claude_render_parity.py::test_native_claude_message_render_parity | tests/e2e/test_claude_native_cli_resume_e2e.py::test_claude_native_cli_resume_restores_history | — |
-| `codex-native` | `omnigent codex` | yes | tests/e2e_ui/messages/test_native_codex_render_parity.py::test_native_codex_message_render_parity | tests/e2e/test_codex_native_cli_resume_e2e.py::test_codex_native_cli_resume_restores_history | — |
-| `cursor-native` | `omnigent cursor` | no | tests/e2e_ui/messages/test_native_cursor_render_parity.py::test_native_cursor_message_render_parity | tests/e2e/test_cursor_native_cli_e2e.py::test_cursor_native_cli_smoke | — |
+| `antigravity-native` | `triune antigravity` or `triune agy` | no | — | tests/e2e/test_antigravity_native_isolated_hooks_e2e.py::test_dispatched_agy_session_loads_user_hooks | [antigravity-native-e2e-dev](../.claude/skills/antigravity-native-e2e-dev/SKILL.md) |
+| `claude-native` | `triune claude` | yes | tests/e2e_ui/messages/test_native_claude_render_parity.py::test_native_claude_message_render_parity | tests/e2e/test_claude_native_cli_resume_e2e.py::test_claude_native_cli_resume_restores_history | — |
+| `codex-native` | `triune codex` | yes | tests/e2e_ui/messages/test_native_codex_render_parity.py::test_native_codex_message_render_parity | tests/e2e/test_codex_native_cli_resume_e2e.py::test_codex_native_cli_resume_restores_history | — |
+| `cursor-native` | `triune cursor` | no | tests/e2e_ui/messages/test_native_cursor_render_parity.py::test_native_cursor_message_render_parity | tests/e2e/test_cursor_native_cli_e2e.py::test_cursor_native_cli_smoke | — |
 | `devin-native` | `omnigent devin` | no | — | tests/e2e_ui/chat/test_devin_native_picker.py::test_devin_picker_offers_its_own_models_and_effort | — |
-| `goose-native` | `omnigent goose` | no | tests/e2e_ui/messages/test_native_goose_render_parity.py::test_native_goose_message_render_parity | tests/e2e/test_goose_native_cli_e2e.py::test_goose_native_cli_smoke | — |
-| `hermes-native` | `omnigent hermes` | no | tests/e2e_ui/messages/test_native_hermes_render_parity.py::test_native_hermes_message_render_parity | tests/e2e/test_hermes_native_policy_hook_path_e2e.py::test_hermes_native_policy_hook_path_lets_the_tool_run | — |
-| `kimi-native` | `omnigent kimi` | no | — | tests/e2e/test_kimi_native_steering_e2e.py::test_midturn_steer_is_applied_not_queued | — |
-| `kiro-native` | `omnigent kiro` | no | tests/e2e_ui/messages/test_native_kiro_render_parity.py::test_native_kiro_message_render_parity | tests/e2e/test_kiro_native_cli_e2e.py::test_kiro_native_cli_smoke | — |
+| `goose-native` | `triune goose` | no | tests/e2e_ui/messages/test_native_goose_render_parity.py::test_native_goose_message_render_parity | tests/e2e/test_goose_native_cli_e2e.py::test_goose_native_cli_smoke | — |
+| `hermes-native` | `triune hermes` | no | tests/e2e_ui/messages/test_native_hermes_render_parity.py::test_native_hermes_message_render_parity | tests/e2e/test_hermes_native_policy_hook_path_e2e.py::test_hermes_native_policy_hook_path_lets_the_tool_run | — |
+| `kimi-native` | `triune kimi` | no | — | tests/e2e/test_kimi_native_steering_e2e.py::test_midturn_steer_is_applied_not_queued | — |
+| `kiro-native` | `triune kiro` | no | tests/e2e_ui/messages/test_native_kiro_render_parity.py::test_native_kiro_message_render_parity | tests/e2e/test_kiro_native_cli_e2e.py::test_kiro_native_cli_smoke | — |
 | `opencode-native` | `omnigent opencode` | no | — | tests/e2e/test_opencode_native_startup_cancel_leak_e2e.py::test_opencode_native_startup_cancel_reaps_serve | — |
-| `pi-native` | `omnigent pi` | no | — | tests/e2e/test_pi_native_send_now_steer_e2e.py::test_pi_native_send_now_steers_into_active_turn | [pi-native-e2e-dev](../.claude/skills/pi-native-e2e-dev/SKILL.md) |
-| `qwen-native` | `omnigent qwen` | no | — | tests/e2e/test_qwen_native_subagent_wake_e2e.py::test_qwen_native_subagent_completion_wakes_parent | — |
+| `pi-native` | `triune pi` | no | — | tests/e2e/test_pi_native_send_now_steer_e2e.py::test_pi_native_send_now_steers_into_active_turn | [pi-native-e2e-dev](../.claude/skills/pi-native-e2e-dev/SKILL.md) |
+| `qwen-native` | `triune qwen` | no | — | tests/e2e/test_qwen_native_subagent_wake_e2e.py::test_qwen_native_subagent_completion_wakes_parent | — |
 
 ## Driving it with the repro environment
 
@@ -244,7 +244,7 @@ the extra fields. Resolver and raw-tunnel checks:
 `tests/host/test_harness_startup.py`,
 `tests/server/integration/test_host_tunnel_route.py::test_startup_http_through_real_tunnel`.
 
-**Native agy gateways (own environment):** `omni setup` → Antigravity →
+**Native agy gateways (own environment):** `triune setup` → Antigravity →
 Configure native agy API key / gateway → Add a credential offers a native Gemini
 URL/key or a local Databricks profile. The gateway must speak native Gemini;
 OpenAI Responses and Chat Completions endpoints are not supported.
@@ -308,11 +308,11 @@ Cross-harness journeys:
   on both surfaces. Chat records the choice as requested, since Antigravity
   does not confirm rule persistence. This does not run a live Antigravity
   terminal or prove that a rule is saved. Saved rules belong to the current
-  Omnigent session; new sessions have separate settings.
+  Triune session; new sessions have separate settings.
 
 - **`launch-cli` and `launch-web`, Pi CLI compatibility (own environment):**
   `tests/e2e/test_pi_native_cli_version_floor_e2e.py::test_real_pi_cli_version_floor`
-  runs real unsupported and supported npm Pi installations through `omnigent pi`
+  runs real unsupported and supported npm Pi installations through `triune pi`
   and the server's native-terminal launch endpoint. Set
   `OMNIGENT_E2E_PI_OLD_BINARY` and `OMNIGENT_E2E_PI_CURRENT_BINARY` to their
   executable paths. The old release must report its version and upgrade command
@@ -654,7 +654,7 @@ Cross-harness journeys:
   covers the real CLI and transcript forwarder through the repro environment.
   It requires Claude Code and tmux; machine-managed Claude settings need an
   isolated container for the scripted model endpoint.
-  Before typing, Omnigent dismisses shell mode and the prompt-history search
+  Before typing, Triune dismisses shell mode and the prompt-history search
   with Escape. A typed shell command keeps the box in shell mode through
   Escape, so it is cleared with Ctrl+U instead and never runs;
   `tests/harnesses/claude_native/test_claude_native_shell_mode_draft.py` covers
@@ -901,8 +901,8 @@ checks do not prove live providers, browser rendering or thought-signature parit
 - Needing sign-in and not being installed are different states with different
   prompts. Reproduce on a host with the same credential situation as the reporter.
 - Some harnesses have a sign-in flow of their own when launched outside
-  Omnigent's managed setup; the managed and unmanaged paths behave differently.
-- The mock instance proves Omnigent's integration with Claude and Codex, not a
+  Triune's managed setup; the managed and unmanaged paths behave differently.
+- The mock instance proves Triune's integration with Claude and Codex, not a
   live vendor model. A passing mock run is not evidence for another harness.
 - Codex's background title requests can echo the user's prompt on another model.
   Identify the user thread when checking its outgoing model and effort, and

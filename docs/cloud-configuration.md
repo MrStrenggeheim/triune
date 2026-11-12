@@ -8,10 +8,10 @@ Use a trusted HTTPS server outside local loopback tests: the CLI uses the normal
 credential resolver, which can fall back to ambient Databricks credentials.
 
 ```sh
-omnigent config cloud --server "$SERVER_URL" save
-omnigent config cloud --server "$SERVER_URL" show
+triune config cloud --server "$SERVER_URL" save
+triune config cloud --server "$SERVER_URL" show
 # On the other machine:
-omnigent config cloud --server "$SERVER_URL" import
+triune config cloud --server "$SERVER_URL" import
 ```
 
 Save and import show before/after values and ask for confirmation. `--yes`
@@ -31,12 +31,12 @@ Selecting Pi does not install it or make it available on Arclets.
 A launcher can include its existing plugin preferences:
 
 ```sh
-omnigent config cloud --server "$SERVER_URL" \
+triune config cloud --server "$SERVER_URL" \
   --plugin-opt-outs "$PLUGIN_PREFERENCES_FILE" save
 ```
 
 Set `PLUGIN_PREFERENCES_FILE` to the file supplied by your launcher and use the
-same option for import. Omnigent does not install or manage those plugins.
+same option for import. Triune does not install or manage those plugins.
 The JSON contains `opted_out` (bare plugin names)
 and `disable_all` (freeze automatic plugin management, leaving installed files
 alone). Without this option, save preserves existing cloud opt-outs and import
@@ -46,7 +46,7 @@ local opt-outs unchanged.
 `onboard` offers save/import once per interactive server/login context and
 remembers a decline. With a server selected, it does nothing without both input
 and output terminals. A missing server still produces a configuration error.
-Explicit `save` and `import` always remain available. OSS startup does not call
+Explicit `save` and `import` always remain available. self-hosted startup does not call
 this hook automatically; managed launcher integration is separate.
 
 Import saves private `*.before-import-*` backups next to changed files. If a

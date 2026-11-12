@@ -1,5 +1,7 @@
 """Helpers for opening Omnigent conversation URLs from CLI frontends."""
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import re
@@ -116,7 +118,7 @@ def open_conversation_url(url: str) -> bool:
 # workflows that tee the run log) can grep the conversation URL the moment
 # the session exists — before the turn finishes — without polling the
 # sessions API. Keep this literal in sync with any log-scraping consumer.
-SESSION_URL_ANNOUNCE_PREFIX = "Omnigent session: "
+SESSION_URL_ANNOUNCE_PREFIX = "Triune session: "
 
 
 def announce_conversation_url(

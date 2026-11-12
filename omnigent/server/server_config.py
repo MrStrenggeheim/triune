@@ -28,6 +28,8 @@ Resolution order for the config path:
    env-only deploys keep working unchanged).
 """
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import logging
@@ -773,7 +775,7 @@ def load_branding_snapshot(config: Mapping[str, Any] | None = None) -> BrandingS
         if asset is not None:
             logo_assets[variant] = asset
     return BrandingSnapshot(
-        app_name=_branding_str(section, "app_name"),
+        app_name=_branding_str(section, "app_name") or "Triune",
         heading=_branding_heading(section),
         logo_assets=MappingProxyType(logo_assets),
         powered_by=_branding_powered_by(section),

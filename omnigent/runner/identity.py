@@ -1,5 +1,7 @@
 """Stable runner identity helpers."""
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import hashlib
@@ -59,7 +61,7 @@ RUNNER_TUNNEL_TOKEN_HEADER = "X-Omnigent-Runner-Tunnel-Token"
 # server imports it from this module (server -> runner, not the reverse).
 # The non-HTTP scheme is deliberate: a browser computes ``Origin`` from
 # the page URL and can never emit this value.
-OMNIGENT_INTERNAL_WS_ORIGIN = "omnigent://internal"
+OMNIGENT_INTERNAL_WS_ORIGIN = "triune://internal"
 # "1" enables per-session workspace isolation so each session
 # gets its own subdirectory. Set by shared-host servers; single-user
 # CLI flows leave it unset (agent sees the project root directly).

@@ -1,7 +1,7 @@
 """Native coding-agent (TUI) CLI subcommands.
 
 Each ``omnigent <tool>`` command (``claude``, ``codex``, ``pi``, …) launches a
-vendor CLI inside an Omnigent-managed terminal. They were extracted from
+vendor CLI inside a Triune-managed terminal. They were extracted from
 :mod:`omnigent.cli` so that file stops carrying ~1400 lines of near-identical
 launchers and so a future registry-driven step can generate them from
 ``native_agents()`` rather than hand-maintaining one ``@cli.command`` per tool.
@@ -16,6 +16,8 @@ decorator-time state (:data:`omnigent.cli_common.RESUME_PICKER_SENTINEL`,
 :data:`omnigent.cli_common.CLAUDE_STARTUP_PROFILE_ENV_VAR`) is imported at module
 scope, from the leaf :mod:`omnigent.cli_common`.
 """
+
+# Modified for Triune.
 
 from __future__ import annotations
 
@@ -100,7 +102,7 @@ def register_native_commands(cli: click.Group) -> None:
         "--server",
         default=None,
         help=(
-            "Remote omnigent URL. Starts a local runner, binds the session, "
+            "Remote Triune URL. Starts a local runner, binds the session, "
             "launches Claude in a terminal resource, and attaches this TTY. "
             'Pass --server "" to auto-spawn a persistent local server in the '
             "background and use that instead of a remote one."
@@ -114,7 +116,7 @@ def register_native_commands(cli: click.Group) -> None:
         flag_value=_RESUME_PICKER_SENTINEL,
         default=None,
         help=(
-            "Resume a prior Omnigent conversation. With a conversation id "
+            "Resume a prior Triune conversation. With a conversation id "
             "(e.g. ``--resume conv_abc123``) attaches directly; with no value "
             "opens an interactive picker scoped to claude-native sessions."
         ),
@@ -211,15 +213,15 @@ def register_native_commands(cli: click.Group) -> None:
         # :param smart_routing: When True, arm Smart Routing for the session so
         #     the first typed message picks the model.
         # :param claude_args: Pass-through args for ``claude``.
-        """Launch Claude Code with Omnigent.
+        """Launch Claude Code with Triune.
 
         \b
         Examples:
-          omnigent claude
-          omnigent claude --resume conv_abc123
-          omnigent claude --resume                  # interactive picker
-          omnigent claude --server https://<app>.databricksapps.com
-          omnigent claude --smart-routing           # first message picks the model
+          triune claude
+          triune claude --resume conv_abc123
+          triune claude --resume                  # interactive picker
+          triune claude --server https://<app>.databricksapps.com
+          triune claude --smart-routing           # first message picks the model
         """
         _reject_native_on_windows("claude")
         if smart_routing:
@@ -280,7 +282,7 @@ def register_native_commands(cli: click.Group) -> None:
 
         if claude_command:
             click.echo(
-                "omnigent: `claude --command` is deprecated; set OMNIGENT_CLAUDE_PATH "
+                "triune: `claude --command` is deprecated; set OMNIGENT_CLAUDE_PATH "
                 "or harness.claude-native.command instead. The --command flag will "
                 "be removed in a future release.",
                 err=True,
@@ -325,7 +327,7 @@ def register_native_commands(cli: click.Group) -> None:
         "--server",
         default=None,
         help=(
-            "Remote omnigent URL. Ensures the host daemon, asks the "
+            "Remote Triune URL. Ensures the host daemon, asks the "
             "daemon-spawned runner to launch Codex, and attaches this TTY. "
             'Pass --server "" to auto-spawn a persistent local server in the '
             "background and use that instead of a remote one."
@@ -339,7 +341,7 @@ def register_native_commands(cli: click.Group) -> None:
         flag_value=_RESUME_PICKER_SENTINEL,
         default=None,
         help=(
-            "Resume a prior Omnigent conversation. With a conversation id "
+            "Resume a prior Triune conversation. With a conversation id "
             "(e.g. ``--resume conv_abc123``) attaches directly; with no value "
             "opens an interactive picker scoped to codex-native sessions."
         ),
@@ -389,15 +391,15 @@ def register_native_commands(cli: click.Group) -> None:
         # :param smart_routing: When True, arm Smart Routing for the session so
         #     the first typed message picks the model.
         # :param codex_args: Pass-through args for ``codex`` before ``resume``.
-        """Launch Codex with Omnigent.
+        """Launch Codex with Triune.
 
         \b
         Examples:
-          omnigent codex
-          omnigent codex --resume conv_abc123
-          omnigent codex --resume                  # interactive picker
-          omnigent codex --server https://<app>.databricksapps.com
-          omnigent codex --smart-routing           # first message picks the model
+          triune codex
+          triune codex --resume conv_abc123
+          triune codex --resume                  # interactive picker
+          triune codex --server https://<app>.databricksapps.com
+          triune codex --smart-routing           # first message picks the model
         """
         _reject_native_on_windows("codex")
         if smart_routing:
@@ -471,7 +473,7 @@ def register_native_commands(cli: click.Group) -> None:
         "--server",
         default=None,
         help=(
-            "Remote omnigent URL. Ensures the host daemon, asks the "
+            "Remote Triune URL. Ensures the host daemon, asks the "
             "daemon-spawned runner to launch OpenCode, and attaches this TTY. "
             'Pass --server "" to auto-spawn a persistent local server in the '
             "background and use that instead of a remote one."
@@ -485,7 +487,7 @@ def register_native_commands(cli: click.Group) -> None:
         flag_value=_RESUME_PICKER_SENTINEL,
         default=None,
         help=(
-            "Resume a prior Omnigent conversation. With a conversation id "
+            "Resume a prior Triune conversation. With a conversation id "
             "(e.g. ``--resume conv_abc123``) attaches directly; with no value "
             "opens an interactive picker scoped to opencode-native sessions."
         ),
@@ -517,14 +519,14 @@ def register_native_commands(cli: click.Group) -> None:
         # (opencode-native resolves its binary on the runner side; if a spec/env
         # path to thread a client override through is added later, this stays
         # consistent with the other native commands' env/config override model.)
-        """Launch OpenCode with Omnigent.
+        """Launch OpenCode with Triune.
 
         \b
         Examples:
-          omnigent opencode
-          omnigent opencode --resume conv_abc123
-          omnigent opencode --resume                  # interactive picker
-          omnigent opencode --server https://<app>.databricksapps.com
+          triune opencode
+          triune opencode --resume conv_abc123
+          triune opencode --resume                  # interactive picker
+          triune opencode --server https://<app>.databricksapps.com
         """
         from omnigent.harnesses.opencode_native.main import run_opencode_native
 
@@ -574,7 +576,7 @@ def register_native_commands(cli: click.Group) -> None:
         "--server",
         default=None,
         help=(
-            "Remote omnigent URL. Ensures the host daemon, asks the "
+            "Remote Triune URL. Ensures the host daemon, asks the "
             "daemon-spawned runner to launch Pi, and attaches this TTY. "
             'Pass --server "" to auto-spawn a persistent local server in the '
             "background and use that instead of a remote one."
@@ -588,7 +590,7 @@ def register_native_commands(cli: click.Group) -> None:
         flag_value=_RESUME_PICKER_SENTINEL,
         default=None,
         help=(
-            "Resume a prior Omnigent conversation. With a conversation id "
+            "Resume a prior Triune conversation. With a conversation id "
             "(e.g. ``--resume conv_abc123``) attaches directly; with no value "
             "opens an interactive picker scoped to pi-native sessions."
         ),
@@ -608,14 +610,14 @@ def register_native_commands(cli: click.Group) -> None:
         session_id: str | None,
         pi_args: tuple[str, ...],
     ) -> None:
-        """Launch Pi with Omnigent.
+        """Launch Pi with Triune.
 
         \b
         Examples:
-          omnigent pi
-          omnigent pi --resume conv_abc123
-          omnigent pi --resume                    # interactive picker
-          omnigent pi --model local-deepseek/deepseek-v4-flash
+          triune pi
+          triune pi --resume conv_abc123
+          triune pi --resume                    # interactive picker
+          triune pi --model local-deepseek/deepseek-v4-flash
         """
         choice = _split_resume_value(resume)
         if session_id is not None and (choice.picker or choice.conversation_id is not None):
@@ -663,7 +665,7 @@ def register_native_commands(cli: click.Group) -> None:
         "--server",
         default=None,
         help=(
-            "Remote omnigent URL. Ensures the host daemon, asks the "
+            "Remote Triune URL. Ensures the host daemon, asks the "
             "daemon-spawned runner to launch the Cursor TUI, and attaches this TTY. "
             'Pass --server "" to auto-spawn a persistent local server in the '
             "background and use that instead of a remote one."
@@ -677,7 +679,7 @@ def register_native_commands(cli: click.Group) -> None:
         flag_value=_RESUME_PICKER_SENTINEL,
         default=None,
         help=(
-            "Resume a prior Omnigent conversation. With a conversation id "
+            "Resume a prior Triune conversation. With a conversation id "
             "(e.g. ``--resume conv_abc123``) attaches directly; with no value "
             "opens an interactive picker scoped to cursor-native sessions."
         ),
@@ -717,16 +719,16 @@ def register_native_commands(cli: click.Group) -> None:
     ) -> None:
         # Param docs live in comments — Click uses the docstring for --help.
         # :param model: Cursor model id passed to cursor-agent as ``--model``.
-        """Launch Cursor with Omnigent.
+        """Launch Cursor with Triune.
 
         \b
         Examples:
-          omnigent cursor
-          omnigent cursor --model MODEL_ID
-          omnigent cursor --resume conv_abc123
-          omnigent cursor --resume                 # interactive picker
-          omnigent cursor --mode plan              # start in plan (read-only) mode
-          omnigent cursor --mode ask               # start in ask (Q&A) mode
+          triune cursor
+          triune cursor --model MODEL_ID
+          triune cursor --resume conv_abc123
+          triune cursor --resume                 # interactive picker
+          triune cursor --mode plan              # start in plan (read-only) mode
+          triune cursor --mode ask               # start in ask (Q&A) mode
         """
         _reject_native_on_windows("cursor")
         choice = _split_resume_value(resume)
@@ -780,7 +782,7 @@ def register_native_commands(cli: click.Group) -> None:
         "--server",
         default=None,
         help=(
-            "Remote omnigent URL. Ensures the host daemon, asks the "
+            "Remote Triune URL. Ensures the host daemon, asks the "
             "daemon-spawned runner to launch the Devin TUI, and attaches this TTY. "
             'Pass --server "" to auto-spawn a persistent local server in the '
             "background and use that instead of a remote one."
@@ -794,7 +796,7 @@ def register_native_commands(cli: click.Group) -> None:
         flag_value=_RESUME_PICKER_SENTINEL,
         default=None,
         help=(
-            "Resume a prior Omnigent conversation. With a conversation id "
+            "Resume a prior Triune conversation. With a conversation id "
             "(e.g. ``--resume conv_abc123``) attaches directly; with no value "
             "opens an interactive picker scoped to devin-native sessions."
         ),
@@ -857,15 +859,15 @@ def register_native_commands(cli: click.Group) -> None:
         prompt: str | None,
         devin_args: tuple[str, ...],
     ) -> None:
-        """Launch Devin with Omnigent.
+        """Launch Devin with Triune.
 
         \b
         Examples:
-          omnigent devin
-          omnigent devin --resume conv_abc123
-          omnigent devin --resume                       # interactive picker
-          omnigent devin --model opus --effort xhigh
-          omnigent devin --permission-mode smart -p "review this repo"
+          triune devin
+          triune devin --resume conv_abc123
+          triune devin --resume                       # interactive picker
+          triune devin --model opus --effort xhigh
+          triune devin --permission-mode smart -p "review this repo"
         """
         choice = _split_resume_value(resume)
         if session_id is not None and (choice.picker or choice.conversation_id is not None):
@@ -919,7 +921,7 @@ def register_native_commands(cli: click.Group) -> None:
         "--server",
         default=None,
         help=(
-            "Remote omnigent URL. Ensures the host daemon, asks the "
+            "Remote Triune URL. Ensures the host daemon, asks the "
             "daemon-spawned runner to launch the Kiro TUI, and attaches this TTY. "
             'Pass --server "" to auto-spawn a persistent local server in the '
             "background and use that instead of a remote one."
@@ -933,7 +935,7 @@ def register_native_commands(cli: click.Group) -> None:
         flag_value=_RESUME_PICKER_SENTINEL,
         default=None,
         help=(
-            "Resume a prior Omnigent conversation. With a conversation id "
+            "Resume a prior Triune conversation. With a conversation id "
             "(e.g. ``--resume conv_abc123``) attaches directly; with no value "
             "opens an interactive picker scoped to kiro-native sessions."
         ),
@@ -983,14 +985,14 @@ def register_native_commands(cli: click.Group) -> None:
         prompt: str | None,
         kiro_args: tuple[str, ...],
     ) -> None:
-        """Launch Kiro with Omnigent.
+        """Launch Kiro with Triune.
 
         \b
         Examples:
-          omnigent kiro
-          omnigent kiro --resume conv_abc123
-          omnigent kiro --resume                  # interactive picker
-          omnigent kiro --model auto -p "review this repo"
+          triune kiro
+          triune kiro --resume conv_abc123
+          triune kiro --resume                  # interactive picker
+          triune kiro --model auto -p "review this repo"
         """
         choice = _split_resume_value(resume)
         if session_id is not None and (choice.picker or choice.conversation_id is not None):
@@ -1049,7 +1051,7 @@ def register_native_commands(cli: click.Group) -> None:
         "--server",
         default=None,
         help=(
-            "Remote omnigent URL. Ensures the host daemon, asks the "
+            "Remote Triune URL. Ensures the host daemon, asks the "
             "daemon-spawned runner to launch the Goose TUI, and attaches this TTY. "
             'Pass --server "" to auto-spawn a persistent local server in the '
             "background and use that instead of a remote one."
@@ -1063,7 +1065,7 @@ def register_native_commands(cli: click.Group) -> None:
         flag_value=_RESUME_PICKER_SENTINEL,
         default=None,
         help=(
-            "Resume a prior Omnigent conversation. With a conversation id "
+            "Resume a prior Triune conversation. With a conversation id "
             "(e.g. ``--resume conv_abc123``) attaches directly; with no value "
             "opens an interactive picker scoped to goose-native sessions."
         ),
@@ -1083,13 +1085,13 @@ def register_native_commands(cli: click.Group) -> None:
         session_id: str | None,
         goose_args: tuple[str, ...],
     ) -> None:
-        """Launch Goose with Omnigent.
+        """Launch Goose with Triune.
 
         \b
         Examples:
-          omnigent goose
-          omnigent goose --resume conv_abc123
-          omnigent goose --resume                 # interactive picker
+          triune goose
+          triune goose --resume conv_abc123
+          triune goose --resume                 # interactive picker
         """
         choice = _split_resume_value(resume)
         if session_id is not None and (choice.picker or choice.conversation_id is not None):
@@ -1136,7 +1138,7 @@ def register_native_commands(cli: click.Group) -> None:
         "--server",
         default=None,
         help=(
-            "Remote omnigent URL. Ensures the host daemon, asks the "
+            "Remote Triune URL. Ensures the host daemon, asks the "
             "daemon-spawned runner to launch the Hermes TUI, and attaches this TTY. "
             'Pass --server "" to auto-spawn a persistent local server in the '
             "background and use that instead of a remote one."
@@ -1150,7 +1152,7 @@ def register_native_commands(cli: click.Group) -> None:
         flag_value=_RESUME_PICKER_SENTINEL,
         default=None,
         help=(
-            "Resume a prior Omnigent conversation. With a conversation id "
+            "Resume a prior Triune conversation. With a conversation id "
             "(e.g. ``--resume conv_abc123``) attaches directly; with no value "
             "opens an interactive picker scoped to hermes-native sessions."
         ),
@@ -1170,13 +1172,13 @@ def register_native_commands(cli: click.Group) -> None:
         session_id: str | None,
         hermes_args: tuple[str, ...],
     ) -> None:
-        """Launch Hermes with Omnigent.
+        """Launch Hermes with Triune.
 
         \b
         Examples:
-          omnigent hermes
-          omnigent hermes --resume conv_abc123
-          omnigent hermes --resume                 # interactive picker
+          triune hermes
+          triune hermes --resume conv_abc123
+          triune hermes --resume                 # interactive picker
         """
         choice = _split_resume_value(resume)
         if session_id is not None and (choice.picker or choice.conversation_id is not None):
@@ -1223,7 +1225,7 @@ def register_native_commands(cli: click.Group) -> None:
         "--server",
         default=None,
         help=(
-            "Remote omnigent URL. Ensures the host daemon, binds a runner, "
+            "Remote Triune URL. Ensures the host daemon, binds a runner, "
             "launches Antigravity (agy) in a terminal resource, and attaches "
             'this TTY. Pass --server "" to auto-spawn a persistent local '
             "server in the background and use that instead of a remote one."
@@ -1237,7 +1239,7 @@ def register_native_commands(cli: click.Group) -> None:
         flag_value=_RESUME_PICKER_SENTINEL,
         default=None,
         help=(
-            "Resume a prior Omnigent conversation. With a conversation id "
+            "Resume a prior Triune conversation. With a conversation id "
             "(e.g. ``--resume conv_abc123``) attaches directly; with no value "
             "opens an interactive picker scoped to antigravity-native sessions."
         ),
@@ -1259,7 +1261,7 @@ def register_native_commands(cli: click.Group) -> None:
         model: str | None,
         antigravity_args: tuple[str, ...],
     ) -> None:
-        """Launch Antigravity (agy) with Omnigent.
+        """Launch Antigravity (agy) with Triune.
 
         \b
         Examples:
@@ -1327,7 +1329,7 @@ def register_native_commands(cli: click.Group) -> None:
         "--server",
         default=None,
         help=(
-            "Remote omnigent URL. Ensures the host daemon, asks the "
+            "Remote Triune URL. Ensures the host daemon, asks the "
             "daemon-spawned runner to launch the qwen TUI, and attaches this TTY. "
             'Pass --server "" to auto-spawn a persistent local server in the '
             "background and use that instead of a remote one."
@@ -1341,7 +1343,7 @@ def register_native_commands(cli: click.Group) -> None:
         flag_value=_RESUME_PICKER_SENTINEL,
         default=None,
         help=(
-            "Resume a prior Omnigent conversation. With a conversation id "
+            "Resume a prior Triune conversation. With a conversation id "
             "(e.g. ``--resume conv_abc123``) attaches directly; with no value "
             "opens an interactive picker scoped to qwen-native sessions."
         ),
@@ -1361,13 +1363,13 @@ def register_native_commands(cli: click.Group) -> None:
         session_id: str | None,
         qwen_args: tuple[str, ...],
     ) -> None:
-        """Launch Qwen Code with Omnigent.
+        """Launch Qwen Code with Triune.
 
         \b
         Examples:
-          omnigent qwen
-          omnigent qwen --resume conv_abc123
-          omnigent qwen --resume                  # interactive picker
+          triune qwen
+          triune qwen --resume conv_abc123
+          triune qwen --resume                  # interactive picker
         """
         choice = _split_resume_value(resume)
         if session_id is not None and (choice.picker or choice.conversation_id is not None):
@@ -1414,7 +1416,7 @@ def register_native_commands(cli: click.Group) -> None:
         "--server",
         default=None,
         help=(
-            "Remote omnigent URL. Ensures the host daemon, asks the "
+            "Remote Triune URL. Ensures the host daemon, asks the "
             "daemon-spawned runner to launch the Kimi TUI, and attaches this TTY. "
             'Pass --server "" to auto-spawn a persistent local server in the '
             "background and use that instead of a remote one."
@@ -1428,7 +1430,7 @@ def register_native_commands(cli: click.Group) -> None:
         flag_value=_RESUME_PICKER_SENTINEL,
         default=None,
         help=(
-            "Resume a prior Omnigent conversation. With a conversation id "
+            "Resume a prior Triune conversation. With a conversation id "
             "(e.g. ``--resume conv_abc123``) attaches directly; with no value "
             "opens an interactive picker scoped to kimi-native sessions."
         ),
@@ -1448,22 +1450,22 @@ def register_native_commands(cli: click.Group) -> None:
         session_id: str | None,
         kimi_args: tuple[str, ...],
     ) -> None:
-        """Launch Kimi Code with Omnigent.
+        """Launch Kimi Code with Triune.
 
         Boots Moonshot AI's interactive ``kimi`` TUI
         (https://github.com/MoonshotAI/Kimi-Code) in a runner-owned terminal and
-        attaches your TTY — the native experience, embedded in the Omnigent web
-        UI. No Omnigent provider config is needed: kimi authenticates against its
+        attaches your TTY — the native experience, embedded in the Triune web
+        UI. No Triune provider config is needed: kimi authenticates against its
         own backend (``kimi login`` for OAuth, or a Moonshot API key).
 
-        For the headless SDK harness (per-turn ``kimi -p`` behind the Omnigent
-        REPL) use ``omnigent run --harness kimi`` instead.
+        For the headless SDK harness (per-turn ``kimi -p`` behind the Triune
+        REPL) use ``triune run --harness kimi`` instead.
 
         \b
         Examples:
-          omnigent kimi
-          omnigent kimi --resume conv_abc123
-          omnigent kimi --resume                   # interactive picker
+          triune kimi
+          triune kimi --resume conv_abc123
+          triune kimi --resume                   # interactive picker
         """
         choice = _split_resume_value(resume)
         if session_id is not None and (choice.picker or choice.conversation_id is not None):

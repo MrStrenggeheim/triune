@@ -1,3 +1,4 @@
+// Modified for Triune.
 // Tests for the pure helpers in src/omnigent_cli.js, run with `node --test`
 // (no extra deps). The spawning functions need a real binary and are covered by
 // the manual verification flow; here we test path resolution order, server-URL
@@ -28,7 +29,23 @@ const {
   getHostConnectionFast,
   probeServerAuth,
   localHostId,
+  getCliStatus,
 } = require("../src/omnigent_cli");
+
+describe("getCliStatus", () => {
+  it("accepts Triune and legacy version labels while rejecting unrelated binaries", async (t) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "triune-cli-version-"));
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+    await Promise.all(
+      ["triune", "omnigent", "omni", "unrelated"].map(async (name) => {
+        const binary = path.join(dir, name);
+        fs.writeFileSync(binary, `#!/bin/sh\nprintf '%s\\n' '${name} 0.20.0'\n`, { mode: 0o755 });
+        const status = await getCliStatus(binary);
+        assert.equal(status.installed, name !== "unrelated");
+      }),
+    );
+  });
+});
 
 describe("cliCommandParts", () => {
   it("keeps public CLI paths bare and adds fixed isaac argv without a shell", () => {
@@ -175,9 +192,9 @@ describe("localServerHealthy", () => {
 });
 
 describe("candidatePaths", () => {
-  it("probes both the omnigent name and the omni alias in each location", () => {
+  it("probes triune and both legacy aliases in each location", () => {
     const paths = candidatePaths();
-    // Every well-known dir contributes an `omnigent` and an `omni` entry.
+    assert.ok(paths.some((p) => p.endsWith("/.local/bin/triune")));
     assert.ok(paths.some((p) => p.endsWith("/.local/bin/omnigent")));
     assert.ok(paths.some((p) => p.endsWith("/.local/bin/omni")));
     assert.ok(paths.includes("/opt/homebrew/bin/omnigent"));
@@ -185,11 +202,12 @@ describe("candidatePaths", () => {
     assert.ok(paths.includes("/usr/local/bin/omni"));
   });
 
-  it("lists the canonical omnigent name before the omni alias within a dir", () => {
+  it("prefers triune before the legacy aliases within a directory", () => {
     const paths = candidatePaths();
+    const triune = paths.indexOf("/opt/homebrew/bin/triune");
     const og = paths.indexOf("/opt/homebrew/bin/omnigent");
     const omni = paths.indexOf("/opt/homebrew/bin/omni");
-    assert.ok(og !== -1 && omni !== -1 && og < omni);
+    assert.ok(triune !== -1 && og !== -1 && omni !== -1 && triune < og && og < omni);
   });
 });
 

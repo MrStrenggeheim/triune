@@ -24,7 +24,7 @@ CLI sign-in reads the request. The panel identifies Azure requests with `!`.
 
 ## Driving it with the repro environment
 
-Preconditions: use the [Verify Omnigent skill](skills/verify-omnigent/SKILL.md)
+Preconditions: use the [Verify Triune skill](skills/verify-omnigent/SKILL.md)
 and an isolated instance. Browser fixtures replace provider responses and do
 not contact Azure DevOps or invoke the Azure CLI.
 

@@ -1,18 +1,18 @@
 # Login and host authentication
 
-Users sign the CLI in to an Omnigent server with `omnigent login`, and register
-their machine as a host with `omnigent host` so sessions can run on it. The
+Users sign the CLI in to a Triune server with `triune login`, and register
+their machine as a host with `triune host` so sessions can run on it. The
 sign-in flow depends on the server: an accounts server asks for a username and
 password, an OIDC server uses a browser ticket, a header-mode server needs no
 login, and a Databricks-fronted server uses the user's Databricks workspace
 credentials. Databricks credentials come in several kinds, and which one a host
 actually uses decides how it behaves when a token expires. Applications can
-also embed Omnigent with their own authentication provider; their users should
-be able to write resources without a separate Omnigent account.
+also embed Triune with their own authentication provider; their users should
+be able to write resources without a separate Triune account.
 
 ## Sub-features
 
-- `login-auto-detect`: `omnigent login <url>` detects the server's sign-in mode.
+- `login-auto-detect`: `triune login <url>` detects the server's sign-in mode.
   States: accounts, OIDC, header mode, Databricks-fronted, and a workspace URL
   with an org selector.
 - `workspace-selector-validation`: a URL's `?o=` routes the current command
@@ -47,7 +47,7 @@ be able to write resources without a separate Omnigent account.
   a launch doesn't reuse it; it refuses and names the login and `host stop`
   commands that fix it. Without file locks (Windows), daemons check only each
   other's records, so two that start at the same moment can both connect.
-- `host-inline-login`: `omnigent host` against a Databricks-fronted server that
+- `host-inline-login`: `triune host` against a Databricks-fronted server that
   the user is not signed in to runs the login flow first; `--non-interactive`
   fails with the login command instead. States: missing Databricks SDK extra,
   missing Databricks CLI, first browser login followed by host registration,
@@ -84,9 +84,9 @@ be able to write resources without a separate Omnigent account.
 
 ## How to get to it (user POV)
 
-**CLI sign-in:** `omnigent login <server-url>`.
+**CLI sign-in:** `triune login <server-url>`.
 
-**Host:** `omnigent host <server-url>` (or `--server`), `omnigent host ""` for a
+**Host:** `triune host <server-url>` (or `--server`), `triune host ""` for a
 local server, `--background`, `--no-open`, `--non-interactive`, and the
 management commands `status`, `stop`, `stop-session`, `reset-id`, `enable`,
 and `disable`.
@@ -128,7 +128,7 @@ Never run these commands against the real `~/.omnigent` or `~/.databrickscfg`.
   data directory, for sign-in prompts and host commands.
 - **`cli-browser-ticket-consent`:** run
   `tests/e2e_ui/auth/test_oidc_login_flow.py::test_oidc_cli_ticket_completes_through_browser`
-  against its isolated OIDC test server. Start `omnigent login <server-url>`
+  against its isolated OIDC test server. Start `triune login <server-url>`
   with throwaway configuration, sign in in the browser, compare the code, and
   approve to complete the waiting CLI. Start a separate login and deny it to
   confirm polling stops; closing the page without deciding must leave it pending.
@@ -159,7 +159,7 @@ Never run these commands against the real `~/.omnigent` or `~/.databrickscfg`.
   drive an actual browser reauthorization.
 - **`databricks-credential-kind`:** needs a real workspace and one test
   profile of each kind. No e2e covers the host daemon against a real workspace.
-- **`host-lifecycle`:** run `omnigent host --help` and the management commands
+- **`host-lifecycle`:** run `triune host --help` and the management commands
   inside cli-setup-verify's sandbox; the system service commands change the
   user's login items, so only run them on a disposable machine. One host per
   workspace: `tests/host/test_daemon_lifecycle.py` (the `test_daemon_yields_*`
@@ -185,10 +185,10 @@ Never run these commands against the real `~/.omnigent` or `~/.databrickscfg`.
 - **`host-inline-login` (own environment, Linux):** run
   `uv run --no-sync pytest tests/e2e/test_host_inline_login.py --reruns 0 -q`.
   It starts an isolated real server and a local HTTPS mock workspace, then
-  drives the real Omnigent and Databricks CLIs through a PTY. First, with the
+  drives the real Triune and Databricks CLIs through a PTY. First, with the
   Databricks CLI absent from PATH, the command must exit with a two-line error
   naming the missing CLI and giving an install link and retry guidance, without
-  the unrelated `omnigent stop` hint, opening a browser, or registering a host.
+  the unrelated `triune stop` hint, opening a browser, or registering a host.
   Restore the CLI and retry the same command and home: Chromium completes the
   OAuth callback, the command continues to `Connected as`, and `GET /v1/hosts`
   confirms this user's host is
@@ -289,7 +289,7 @@ Never run these commands against the real `~/.omnigent` or `~/.databrickscfg`.
 - Sign-in can open a browser even with `--no-open`; use `--non-interactive` in
   scripted runs.
 - For a fresh-machine event, check `databricks --version` before running
-  `omnigent host <server-url>`. Installing Omnigent's Databricks Python extra
+  `triune host <server-url>`. Installing Triune's Databricks Python extra
   does not install the Databricks CLI executable. If the CLI is missing, follow
   the printed install link, verify it is on PATH in the same terminal, and retry
   the same host command. A successful browser sign-in must also return to the

@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { TooltipButton } from "@/components/ui/tooltip";
 /**
  * The Electron server-selector-v2 flow: landing → deployment mode → server
@@ -533,6 +534,6 @@ function terminalRunningCopy(
   }
   if (kind === "connect") return { label: "Connecting", hint: "Connecting to the server…" };
   return localServerRunning
-    ? { label: "Opening Omnigent", hint: "Connecting to the local server…" }
-    : { label: "Starting Omnigent", hint: "Starting the local server…" };
+    ? { label: "Opening Triune", hint: "Connecting to the local server…" }
+    : { label: "Starting Triune", hint: "Starting the local server…" };
 }

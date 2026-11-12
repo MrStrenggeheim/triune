@@ -1,6 +1,6 @@
 # Sandbox providers
 
-Omnigent supports running agent hosts in remote sandboxes. Built-in providers
+Triune supports running agent hosts in remote sandboxes. Built-in providers
 (Modal, Daytona, Blaxel, CoreWeave Sandbox, E2B, Gensee, Islo, OpenShell,
 Boxlite, Kubernetes, microsandbox)
 ship with the core package. Third-party packages can add new providers through
@@ -19,7 +19,7 @@ Each sandbox provider implements the
 [`SandboxLifecycle`](../../omnigent/onboarding/sandboxes/base.py) interface.
 Providers that exec into a running sandbox (Modal, Daytona, …) inherit
 `ExecModelHostLauncher`, which provides a default `start_host` that probes
-`$HOME`, creates a workspace, clones a repo, and backgrounds `omnigent host`.
+`$HOME`, creates a workspace, clones a repo, and backgrounds `triune host`.
 Providers whose sandbox boots running the host directly (Kubernetes), or whose
 control plane owns host startup (Gensee), inherit `SandboxHostLauncher` and
 override `start_host` without exposing a general-purpose exec transport.
@@ -100,7 +100,7 @@ git fetch --tags origin  # explicitly fetch tags if needed
 ```
 
 Replace `main` and `feature` with the relevant branches. When local PR diffs
-cannot find a merge base because history is shallow, Omnigent reports an
+cannot find a merge base because history is shallow, Triune reports an
 actionable error rather than showing a misleading branch-tip comparison.
 Unfetched base branches and failed lazy file retrieval also produce errors;
 unavailable content is not treated as an added or deleted file.
@@ -189,7 +189,7 @@ acme = "omnigent_community_sandbox_acme.plugin:get_contribution"
 
 ```bash
 pip install omnigent-community-sandbox-acme
-omnigent sandbox create --provider acme --server https://your-host
+triune sandbox create --provider acme --server https://your-host
 ```
 
 ## Namespace requirement
@@ -212,7 +212,7 @@ omnigent/
 ```
 
 The `omnigent.community.sandbox` namespace package is already set up by core
-Omnigent using `pkgutil.extend_path`, so your package's files are discovered
+Triune using `pkgutil.extend_path`, so your package's files are discovered
 automatically when installed.
 
 ## Server-managed sandboxes
@@ -278,7 +278,7 @@ Providers declare their feature set via a `capabilities` property returning
 
 | Capability | Description |
 |---|---|
-| `cli_bootstrap` | Supports `omnigent sandbox create` / `connect` |
+| `cli_bootstrap` | Supports `triune sandbox create` / `connect` |
 | `managed_launch` | Supports server-managed `host_type="managed"` sessions |
 | `local_port_forward` | Can bridge a local port into the sandbox |
 | `resume_stopped` | Can resume a stopped sandbox in place |

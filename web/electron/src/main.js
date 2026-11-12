@@ -1,3 +1,4 @@
+// Modified for Triune.
 // Omnigent desktop shell — Electron edition.
 //
 // A deliberately thin Electron wrapper around the existing web UI. It bundles
@@ -2272,7 +2273,7 @@ async function loadServerUrl(
         if (current()) setWindowServerManifest(win, nextManifest);
       });
     }
-    if (!reconnectOverlay.isShown(win)) connectionLoading.show(win, attempt, "Opening Omnigent…");
+    if (!reconnectOverlay.isShown(win)) connectionLoading.show(win, attempt, "Opening Triune…");
     await win.loadURL(target);
     assertCurrent();
     diagnostics.record("connection_result", { origin: originOf(serverUrl), outcome: "loaded" });
@@ -2446,7 +2447,7 @@ function createWindow(targetUrl, opts = {}) {
     // Tall enough that the bundled setup page (logo, Start-locally, divider,
     // URL field, Connect, and a few recents) fits without overflowing.
     minHeight: 600,
-    title: "Omnigent",
+    title: "Triune",
     backgroundColor: "#0b0b0c",
     // macOS: hide the native title bar but keep the traffic lights, inset
     // into the content. The web layer provides the drag surface + clearance
@@ -3183,8 +3184,8 @@ async function confirmHostEnrollment(win) {
   const { response } = await dialog.showMessageBox(win, {
     type: "warning",
     icon: icon.isEmpty() ? undefined : icon,
-    title: "Omnigent",
-    message: `Allow ${host} to manage Omnigent on this machine?`,
+    title: "Triune",
+    message: `Allow ${host} to manage Triune on this machine?`,
     detail:
       `${pinned} wants to connect this machine as a runner. While connected, it ` +
       `can execute agent code and commands here on its behalf.\n\n` +
@@ -3385,8 +3386,8 @@ async function exportDiagnostics() {
   const parent = activeWindow();
   try {
     const options = {
-      title: "Export Omnigent Desktop Diagnostics",
-      defaultPath: `Omnigent-desktop-diagnostics-${new Date().toISOString().slice(0, 10)}.jsonl`,
+      title: "Export Triune Desktop Diagnostics",
+      defaultPath: `Triune-desktop-diagnostics-${new Date().toISOString().slice(0, 10)}.jsonl`,
       filters: [{ name: "Diagnostic logs", extensions: ["jsonl"] }],
     };
     const { canceled, filePath } = parent
@@ -3398,7 +3399,7 @@ async function exportDiagnostics() {
     const options = {
       type: "error",
       title: "Could not export diagnostics",
-      message: "Omnigent could not save the desktop diagnostics.",
+      message: "Triune could not save the desktop diagnostics.",
       detail: error?.message ?? "Check that the destination is writable and try again.",
       buttons: ["OK"],
     };
@@ -3409,7 +3410,7 @@ async function exportDiagnostics() {
 
 function buildMenu() {
   const isMac = process.platform === "darwin";
-  const aboutItem = aboutMenuItem("Omnigent", () => {
+  const aboutItem = aboutMenuItem("Triune", () => {
     aboutWindow.open(activeWindow());
   });
   const settingsItem = settingsMenuItem(() => {
@@ -3492,7 +3493,7 @@ function buildMenu() {
         if (!updater.installUpdateNow()) {
           await dialog.showMessageBox(activeWindow(), {
             type: "info",
-            title: "Omnigent",
+            title: "Triune",
             message: "No update is ready to install",
             detail: "Check for updates first, then download the new version.",
             buttons: ["OK"],
@@ -4600,7 +4601,7 @@ function registerIpc() {
     if (databricksInternalFeaturesEnabled()) return null;
     const win = BrowserWindow.fromWebContents(event.sender) ?? activeWindow();
     const result = await dialog.showOpenDialog(win ?? undefined, {
-      title: "Locate the Omnigent CLI binary",
+      title: "Locate the Triune CLI binary",
       properties: ["openFile"],
     });
     if (result.canceled || result.filePaths.length === 0) return null;
@@ -5068,9 +5069,9 @@ function registerIpc() {
         return "Reconnect was declined. Wait a moment, then retry the preview to show the prompt again.";
       }
       if (arcaPreviewRecoveries.has(target)) {
-        return "Finish the Arca reconnect in Omnigent, then retry the preview.";
+        return "Finish the Arca reconnect in Triune, then retry the preview.";
       }
-      return "Omnigent couldn't restore the Arca connection details. Retry the preview to reconnect.";
+      return "Triune couldn't restore the Arca connection details. Retry the preview to reconnect.";
     },
   });
 }
@@ -5209,10 +5210,10 @@ async function confirmOpenDeepLink(parent, targetOrigin) {
   const { response } = await dialog.showMessageBox(parent, {
     type: "warning",
     icon: icon.isEmpty() ? undefined : icon,
-    title: "Omnigent",
-    message: `Open this Omnigent link?`,
+    title: "Triune",
+    message: `Open this Triune link?`,
     detail:
-      `This link will connect Omnigent to ${host} and open a conversation.\n\n` +
+      `This link will connect Triune to ${host} and open a conversation.\n\n` +
       `Only open links from a server you trust — once connected, it can show ` +
       `notifications and (when you allow it) manage this machine as a runner.`,
     buttons: ["Cancel", "Open"],
@@ -5378,12 +5379,11 @@ async function handleDeepLink(raw) {
 // ---------------------------------------------------------------------------
 
 // Name drives the macOS app menu title and the notification source name.
-app.setName(isDevBuild ? "Omnigent Dev" : "Omnigent");
-if (isDevBuild) {
-  const devData = path.join(app.getPath("appData"), "Omnigent Dev");
-  fs.mkdirSync(devData, { recursive: true });
-  app.setPath("userData", devData);
-}
+app.setName(isDevBuild ? "Triune Dev" : "Triune");
+// Keep existing profiles and server connections across the product rename.
+const legacyData = path.join(app.getPath("appData"), isDevBuild ? "Omnigent Dev" : "Omnigent");
+fs.mkdirSync(legacyData, { recursive: true });
+app.setPath("userData", legacyData);
 
 // Single-instance: focus the existing window instead of opening a second.
 const gotLock = app.requestSingleInstanceLock();

@@ -1,4 +1,5 @@
-# Omnigent server + Postgres (external-runner mode).
+# Modified for Triune; inherited notices remain applicable.
+# Triune server + Postgres (external-runner mode).
 #
 # Quickstart (single-user dev):
 #
@@ -20,7 +21,7 @@
 #   - header — for deploys behind a proxy that injects
 #     X-Forwarded-Email (Databricks Apps, oauth2-proxy, etc).
 
-name: omnigent
+name: triune
 
 services:
   postgres:
@@ -41,7 +42,7 @@ services:
   omnigent:
     # Build this fork by default. Published images are an explicit override;
     # the local tag must not silently select the official upstream release.
-    image: ${OMNIGENT_IMAGE:-omnigent-custom-server}:${OMNIGENT_IMAGE_TAG:-local}
+    image: ${OMNIGENT_IMAGE:-triune-server}:${OMNIGENT_IMAGE_TAG:-local}
     build:
       # Repo root, reached from deploy/docker/ → ../..
       context: ../..

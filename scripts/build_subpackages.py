@@ -1,4 +1,4 @@
-"""Build standalone Python packages with the repository's legal files."""
+"""Modified for Triune: preserve the SDKs' Apache license in built packages."""
 
 from __future__ import annotations
 
@@ -34,7 +34,12 @@ def staged_package(package_dir: Path) -> Iterator[Path]:
             ignore=shutil.ignore_patterns(".venv", "__pycache__", ".pytest_cache", "dist"),
         )
         for filename in LEGAL_FILES:
-            shutil.copy2(REPO_ROOT / filename, staged / filename)
+            source_file = (
+                REPO_ROOT / "LICENSES" / "Apache-2.0.txt"
+                if filename == "LICENSE"
+                else REPO_ROOT / filename
+            )
+            shutil.copy2(source_file, staged / filename)
         _declare_license_files(staged / "pyproject.toml")
         yield staged
 
@@ -42,6 +47,8 @@ def staged_package(package_dir: Path) -> Iterator[Path]:
 def _declare_license_files(pyproject: Path) -> None:
     """Declare the legal files that exist only in the staged project."""
     source = pyproject.read_text(encoding="utf-8")
+    if LICENSE_FILES_DECLARATION in source:
+        return
     anchor = 'license = "Apache-2.0"\n'
     if source.count(anchor) != 1:
         raise ValueError(f"expected one Apache-2.0 license declaration in {pyproject}")

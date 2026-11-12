@@ -1,6 +1,13 @@
 # Changelog
 
-All notable changes to the Omnigent VS Code extension are documented here.
+All notable changes to the Triune VS Code extension are documented here.
+
+## Unreleased
+
+- Display Triune in the activity bar, command palette, editor panel and help text; use `triune server` in startup guidance.
+- Preserve the inherited extension identity, `omnigent.*` command/configuration IDs and local discovery paths for compatibility.
+
+The release below records the original upstream Omnigent extension.
 
 ## [0.1.0]
 

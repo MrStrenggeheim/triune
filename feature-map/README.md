@@ -1,6 +1,6 @@
-# Omnigent feature map
+# Triune feature map
 
-This directory is the maintained source for verifying Omnigent's user-facing
+This directory is the maintained source for verifying Triune's user-facing
 behavior. Read this index before driving the app, then use the matching feature
 file as the recipe. Humans, reproduction and resolution agents, and triage all
 read the same files.
@@ -15,7 +15,7 @@ the referenced tests; they change faster than the user journey.
 
 Read the relevant skill file directly when its capability is needed:
 
-- [Verify Omnigent](skills/verify-omnigent/SKILL.md): start an isolated test
+- [Verify Triune](skills/verify-omnigent/SKILL.md): start an isolated test
   environment, drive user journeys, and capture evidence. Its executable helper
   is `feature-map/skills/verify-omnigent/scripts/verify-env`.
 
@@ -78,9 +78,9 @@ Choose evidence for the changed behavior, not a video for every PR:
 - Record the actual candidate build. For bugs, show before/after when practical
   and label each revision. Generated illustrations are explanations, not proof.
 - Caption each capture with the commit, harness/version (or N/A), entry point,
-  SDK/native transport, OSS/Managed deployment, and mock or live provider/model.
+  SDK/native transport, self-hosted/upstream Managed deployment, and mock or live provider/model.
   State the action, observed outcome and what remains untested. Managed means
-  a managed Omnigent deployment, not an OSS instance using a hosted model gateway.
+  upstream Omnigent's managed deployment; a Triune instance using a hosted model gateway remains self-hosted.
 - A real-app recording may use a scripted provider: label it **mock** and do not
   claim live compatibility. Reuse an authorized verification run; do not make
   paid live calls just to obtain a video. Media supplements tests and proves
@@ -147,7 +147,7 @@ user-visible behavior. It then uses exactly these four H2 sections in order:
   review, deletion, and capability gating.
 
 - [Remote agent launch](./remote-agent-launch.md) covers registered-agent
-  discovery and selection through `omnigent run --server`, interactive and
+  discovery and selection through `triune run --server`, interactive and
   one-shot host launch, existing-session boundaries, and failure diagnostics.
 
 - [Composer](./composer.md) covers the session and new-session composers,
@@ -162,7 +162,7 @@ user-visible behavior. It then uses exactly these four H2 sections in order:
   between explicit cloud save/import, the shared-preference foundation, and
   deferred automatic following.
 - [Login and host authentication](./login-and-host-auth.md) covers
-  `omnigent login`, host daemon credentials, Databricks auth modes, and embedded
+  `triune login`, host daemon credentials, Databricks auth modes, and embedded
   authentication for project writes.
 - [Sessions](./sessions.md) covers the sidebar, whole-session and message forks,
   custom-agent targets, fork access checks, archive, reconnect, and resume.
@@ -221,19 +221,19 @@ map an area, remove it here in the same change.
 
 **CLI commands:**
 
-- Setup and diagnostics: `omnigent setup`, `omnigent config`, `omnigent doctor`,
-  `omnigent diagnose`, `omnigent debug`, `omnigent usage` (config defaults are
+- Setup and diagnostics: `triune setup`, `triune config`, `triune doctor`,
+  `triune diagnose`, `triune debug`, `triune usage` (config defaults are
   mapped; credential configuration and the other commands remain unmapped)
-- Install lifecycle: `omnigent upgrade`, `omnigent update`, `omnigent uninstall`
-- Other running-agent and server workflows: `omnigent run` (local/native modes),
-  `omnigent start`, `omnigent stop`,
-  `omnigent server`, `omnigent attach`, `omnigent resume`, `omnigent session`,
-  `omnigent import`
-- Bundled agents and the Copilot harness: `omnigent polly`, `omnigent debby`,
-  `omnigent copilot`
-- Installing reusable agents: `omnigent agent`
-- Integrations, extensions, and remote sandboxes: `omnigent integration`,
-  `omnigent extensions`, `omnigent sandbox`
+- Install lifecycle: `triune upgrade`, `triune update`, `triune uninstall`
+- Other running-agent and server workflows: `triune run` (local/native modes),
+  `triune start`, `triune stop`,
+  `triune server`, `triune attach`, `triune resume`, `triune session`,
+  `triune import`
+- Bundled agents and the Copilot harness: `triune polly`, `triune debby`,
+  `triune copilot`
+- Installing reusable agents: `triune agent`
+- Integrations, extensions, and remote sandboxes: `triune integration`,
+  `triune extensions`, `triune sandbox`
 
 **Partly mapped:** embedded authentication covers project writes and supporting
 account-context tests; other resource APIs and real identity-provider journeys

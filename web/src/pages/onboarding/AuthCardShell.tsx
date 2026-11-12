@@ -1,3 +1,4 @@
+// Modified for Triune.
 // Card shell for the v2 auth pages: the onboarding AnimatedOmnigentPanel with
 // no drag strip. Desktop shows the animated card; mobile (<md) drops the chrome
 // and animation and lets the content flow.
@@ -31,7 +32,7 @@ export function AuthCardShell({
         <div className="flex w-full max-w-sm flex-1 flex-col justify-center gap-6">
           <img
             src={omnigentLogo}
-            alt="Omnigent"
+            alt="Triune"
             className="mx-auto size-14 object-contain"
             aria-hidden="true"
           />

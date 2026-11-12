@@ -16,6 +16,8 @@ the runner's ambient env / ``omnigent setup`` config (a profile-bound spec route
 through the Databricks gateway; otherwise OpenAI-/Anthropic-compatible env vars).
 """
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import asyncio
@@ -188,7 +190,7 @@ def run_opencode_native(  # pragma: no cover
     _preflight_local_tools()
     if server is None:
         raise click.ClickException(
-            "OpenCode requires a resolved Omnigent server URL. The CLI should resolve "
+            "OpenCode requires a resolved Triune server URL. The CLI should resolve "
             "a backend before run_opencode_native."
         )
     with TemporaryDirectory(prefix="omnigent-opencode-native-") as tmpdir:
@@ -266,7 +268,7 @@ def _run_with_remote_server(  # pragma: no cover
         asyncio.run(_drive())
     except httpx.ConnectError as exc:
         raise click.ClickException(
-            f"Could not reach the omnigent server at {base_url}. "
+            f"Could not reach the Triune server at {base_url}. "
             "Confirm the server is running and reachable from here "
             f"(e.g. `curl {base_url}/health`), and that --server is correct."
         ) from exc

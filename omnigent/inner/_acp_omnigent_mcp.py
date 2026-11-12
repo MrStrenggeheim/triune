@@ -20,6 +20,8 @@ Never fatal: any setup failure (missing bridge helper, no tool executor, the
 just runs without Omnigent tools, exactly as before this feature.
 """
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import asyncio
@@ -134,14 +136,14 @@ class OmnigentAcpMcp:
             )
             self._acp_servers = _to_acp_mcp_servers(build_mcp_config(self._bridge_dir))
             logger.info(
-                "acp[%s] Omnigent MCP relay ready (%d builtin tools bridged)",
+                "acp[%s] Triune MCP relay ready (%d builtin tools bridged)",
                 self._label,
                 len(tools),
             )
             return self._acp_servers
         except Exception as exc:  # noqa: BLE001 — MCP is additive; never break a turn
             logger.warning(
-                "acp[%s] Omnigent MCP bridge setup failed; agent runs without Omnigent tools: %s",
+                "acp[%s] Triune MCP bridge setup failed; agent runs without Triune tools: %s",
                 self._label,
                 exc,
             )

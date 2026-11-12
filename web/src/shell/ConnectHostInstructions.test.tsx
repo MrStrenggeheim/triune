@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it } from "vitest";
@@ -30,16 +31,16 @@ it.each(["loading", false, true] as const)(
       </CapabilitiesProvider>,
     );
     expect(screen.getByText("Connect your machine")).toBeVisible();
-    const command = `omni host --server ${quotedUrl}`;
+    const command = `triune host --server ${quotedUrl}`;
     expect(screen.getByTestId("connect-host-command")).toHaveTextContent(command);
     await user.click(screen.getByTestId("connect-host-copy"));
     expect(await navigator.clipboard.readText()).toBe(command);
     if (databricks === true) {
       await user.click(screen.getByRole("tab", { name: "Databricks Lakebox" }));
       expect(screen.getByTestId("connect-lakebox-create-command")).toHaveTextContent(
-        "omni sandbox create --provider lakebox",
+        "triune sandbox create --provider lakebox",
       );
-      const lakebox = `omni sandbox connect --provider lakebox --sandbox-id <id> --server ${quotedUrl}`;
+      const lakebox = `triune sandbox connect --provider lakebox --sandbox-id <id> --server ${quotedUrl}`;
       expect(screen.getByTestId("connect-lakebox-connect-command")).toHaveTextContent(lakebox);
       await user.click(screen.getByTestId("connect-lakebox-connect-copy"));
       expect(await navigator.clipboard.readText()).toBe(lakebox);
@@ -60,6 +61,6 @@ it("uses the deployment's base path and embedded CLI suffix in the shared dialog
   );
   expect(screen.getByRole("dialog", { name: "Connect a host" })).toBeVisible();
   expect(screen.getByTestId("connect-host-command")).toHaveTextContent(
-    `omni host --server '${window.location.origin}/proxy/6767/api?profile=dev&glob=*'`,
+    `triune host --server '${window.location.origin}/proxy/6767/api?profile=dev&glob=*'`,
   );
 });

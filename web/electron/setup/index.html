@@ -1,9 +1,10 @@
 <!doctype html>
+<!-- Modified for Triune. -->
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Omnigents — Connect</title>
+    <title>Triune — Connect</title>
     <style>
       /* Design tokens lifted from web/src/index.css (:root and .dark) so
          this bundled page matches the web UI it hands off to. */
@@ -422,8 +423,8 @@
       type="button"
       id="cli-gear"
       class="gear-btn"
-      aria-label="Configure the Omnigent CLI"
-      title="Configure the Omnigent CLI"
+      aria-label="Configure the Triune CLI"
+      title="Configure the Triune CLI"
       hidden
     >
       <svg
@@ -450,9 +451,9 @@
           srcset="../../platform-assets/logos/omnigents-logo-reverse.svg"
           media="(prefers-color-scheme: dark)"
         />
-        <img class="logo" src="../../platform-assets/logos/omnigents-logo.svg" alt="Omnigents" />
+        <img class="logo" src="../../platform-assets/logos/omnigents-logo.svg" alt="Triune" />
       </picture>
-      <p class="sub">Run an Omnigent server on this machine, or connect to an existing one.</p>
+      <p class="sub">Run a Triune server on this machine, or connect to an existing one.</p>
       <div id="local-section">
         <!-- Always enabled: when the CLI is missing this opens the settings
              modal (install / set path) instead of failing to start. -->
@@ -498,8 +499,8 @@
 
     <!-- Omnigent CLI settings, opened from the gear. Hidden by default. -->
     <div class="modal-overlay" id="cli-modal" hidden>
-      <div class="modal" role="dialog" aria-modal="true" aria-label="Omnigent CLI settings">
-        <p class="modal-title">Omnigent CLI</p>
+      <div class="modal" role="dialog" aria-modal="true" aria-label="Triune CLI settings">
+        <p class="modal-title">Triune CLI</p>
         <p class="cli-note" id="cli-status"></p>
         <p class="cli-note" id="cli-managed" hidden>
           Managed by your organization. Host enrollment uses <code>isaac omni</code>.
@@ -507,16 +508,16 @@
         <div id="cli-install" hidden>
           <p>
             <a
-              href="https://omnigent.ai/quickstart/install#install-omnigent"
+              href="https://github.com/MrStrenggeheim/triune#quick-start"
               target="_blank"
               rel="noreferrer"
-              >Install the Omnigent CLI ↗</a
+              >Install the Triune CLI ↗</a
             >
           </p>
           <p>Already installed it? Re-detect, or set the path below.</p>
           <button type="button" id="cli-redetect">Re-detect</button>
         </div>
-        <p id="cli-path-label">Path to the Omnigent CLI</p>
+        <p id="cli-path-label">Path to the Triune CLI</p>
         <div class="path-row" id="cli-path-row">
           <input
             id="cli-path"
@@ -833,8 +834,8 @@
         cliStatus.textContent = installed
           ? status.version
             ? `Found: ${status.version}`
-            : "Omnigent CLI found."
-          : "Omnigent CLI not found.";
+            : "Triune CLI found."
+          : "Triune CLI not found.";
         cliPathInput.placeholder = status.path || "/path/to/omni";
         // Draw the eye to the (otherwise quiet) gear when the CLI is missing,
         // unless policy disabled the gear entirely.
@@ -859,7 +860,7 @@
         if (result && result.accepted) {
           cliPathNote.textContent = result.version
             ? `Found: ${result.version}`
-            : "Found the Omnigent CLI.";
+            : "Found the Triune CLI.";
           // Clear the value so the field reverts to showing the (now-updated)
           // resolved path as its placeholder.
           cliPathInput.value = "";
@@ -867,7 +868,7 @@
           return true;
         }
         cliPathNote.className = "cli-note bad";
-        cliPathNote.textContent = "That path is not a runnable Omnigent CLI.";
+        cliPathNote.textContent = "That path is not a runnable Triune CLI.";
         return false;
       }
 
@@ -923,7 +924,7 @@
           if (!cliInstalled) {
             if (cliCustomizationDisabled) {
               err.textContent =
-                "The Omnigent CLI was not found. CLI customization is disabled by your organization.";
+                "The Triune CLI was not found. CLI customization is disabled by your organization.";
             } else {
               openCliModal();
             }

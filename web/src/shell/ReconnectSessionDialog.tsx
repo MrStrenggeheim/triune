@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { useEffect, useState } from "react";
 
 import {
@@ -86,7 +87,7 @@ export function buildReconnectCommand({
   // dialog AND remains valid when pasted into a shell.
   const quotedServerUrl = quoteShellArgument(serverUrl);
   if (state === "host_offline") {
-    return ["omnigent host \\", `  --server ${quotedServerUrl}`].join("\n");
+    return ["triune host \\", `  --server ${quotedServerUrl}`].join("\n");
   }
   // Every native TUI wrapper resumes through its own verb (`omnigent devin
   // --resume …`), and the verb is the registry key — the generic
@@ -96,13 +97,13 @@ export function buildReconnectCommand({
   const nativeAgent = nativeCodingAgentForWrapper(wrapper) ?? nativeCodingAgentForHarness(harness);
   if (nativeAgent !== undefined) {
     return [
-      `omnigent ${nativeAgent.key} \\`,
+      `triune ${nativeAgent.key} \\`,
       `  --resume ${conversationId} \\`,
       `  --server ${quotedServerUrl}`,
     ].join("\n");
   }
   return [
-    "omnigent run path/to/agent.yaml \\",
+    "triune run path/to/agent.yaml \\",
     `  --resume ${conversationId} \\`,
     `  --server ${quotedServerUrl}`,
   ].join("\n");

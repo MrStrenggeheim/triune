@@ -1,4 +1,4 @@
-"""Custom setuptools build for omnigent.
+"""Modified for Triune: setuptools build with retained internal package paths.
 
 Generates ``omnigent/_build_info.py`` at wheel build time so the
 CLI's update-check (``omnigent/update_check.py``) can tell the user
@@ -188,7 +188,7 @@ class _GenerateBuildInfo(build_py):
                 pnpm_cmd = None
         if pnpm_cmd is None:
             raise SystemExit(
-                "omnigent build: pnpm not found on PATH, so the web UI "
+                "triune build: pnpm not found on PATH, so the web UI "
                 "cannot be built. Omnigent requires Node.js 22 LTS or "
                 "newer with pnpm (the web UI is a pnpm workspace; the "
                 "Claude / Codex / Pi harness CLIs are npm packages). "
@@ -227,7 +227,7 @@ class _GenerateBuildInfo(build_py):
             )
         except (subprocess.SubprocessError, OSError) as exc:
             raise SystemExit(
-                f"omnigent build: web UI build failed on Node.js {node_version} "
+                f"triune build: web UI build failed on Node.js {node_version} "
                 f"({_subprocess_failure_details(exc)}). Fix the failure above "
                 "and rerun the install. If "
                 "this Node.js release is incompatible with pnpm or Vite, "
@@ -284,7 +284,7 @@ def _require_supported_node() -> str:
     node = shutil.which("node")
     if node is None:
         raise SystemExit(
-            "omnigent build: Node.js not found on PATH, so the web UI "
+            "triune build: Node.js not found on PATH, so the web UI "
             f"cannot be built. Node.js {_MINIMUM_NODE_VERSION_TEXT} or newer "
             "is required. Install it from https://nodejs.org/en/download and "
             "retry, or run with OMNIGENT_SKIP_WEB_UI=true to skip the web UI "
@@ -300,7 +300,7 @@ def _require_supported_node() -> str:
         )
     except (subprocess.SubprocessError, OSError) as exc:
         raise SystemExit(
-            f"omnigent build: could not determine the Node.js version "
+            f"triune build: could not determine the Node.js version "
             f"(`node --version` failed: {exc}). Node.js "
             f"{_MINIMUM_NODE_VERSION_TEXT} or newer is required. Install it "
             "from https://nodejs.org/en/download and retry, or run with "
@@ -314,7 +314,7 @@ def _require_supported_node() -> str:
             raise ValueError
     except ValueError:
         raise SystemExit(
-            f"omnigent build: could not parse Node.js version "
+            f"triune build: could not parse Node.js version "
             f"{version_str or 'unknown'}. Node.js "
             f"{_MINIMUM_NODE_VERSION_TEXT} or newer is required. Install it "
             "from https://nodejs.org/en/download and retry, or run with "
@@ -322,7 +322,7 @@ def _require_supported_node() -> str:
         ) from None
     if version_parts < _MINIMUM_NODE_VERSION:
         raise SystemExit(
-            f"omnigent build: Node.js {_MINIMUM_NODE_VERSION_TEXT} or newer "
+            f"triune build: Node.js {_MINIMUM_NODE_VERSION_TEXT} or newer "
             f"is required but found Node.js {version_str}. Upgrade from "
             "https://nodejs.org/en/download and retry, or run with "
             "OMNIGENT_SKIP_WEB_UI=true to skip the web UI build."

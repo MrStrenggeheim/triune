@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { TooltipButton } from "@/components/ui/tooltip";
 import type { ReactNode } from "react";
 import { ArrowLeft, ArrowRight, Download, Play } from "lucide-react";
@@ -27,8 +28,8 @@ export function OnboardingHeading({
 /** Main action label: install the CLI first, start the stopped local server, or
  *  just open (a running local server or a remote one). */
 export function installActionLabel(installed?: boolean, startsLocal?: boolean): string {
-  if (!installed) return "Install Omnigent";
-  return startsLocal ? "Start Omnigent" : "Open Omnigent";
+  if (!installed) return "Install Triune";
+  return startsLocal ? "Start Triune" : "Open Triune";
 }
 
 /** Leading icon for the install/start/open action, paired with installActionLabel. */

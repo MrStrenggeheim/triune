@@ -1,6 +1,6 @@
 #!/bin/sh
 
-# Omnigent uninstaller. POSIX sh by design so it still works when the Python
+# Modified for Triune: uninstall this distribution; preserve inherited state identifiers. POSIX sh by design so it still works when the Python
 # wheel is wedged or PATH is broken.
 
 set -u
@@ -640,30 +640,30 @@ report_shared_deps() {
 
 uninstall_wheel() {
   if [ "$DRY_RUN" = true ]; then
-    record_action wheel omnigent remove reported "" "would run uv tool uninstall omnigent"
+    record_action wheel triune remove reported "" "would run uv tool uninstall triune"
     return 0
   fi
   if ! command -v uv >/dev/null 2>&1; then
     if ! command -v omnigent >/dev/null 2>&1 && ! command -v omni >/dev/null 2>&1; then
-      record_action wheel omnigent remove skipped "" "already absent"
+      record_action wheel triune remove skipped "" "already absent"
       return 0
     fi
-    record_action wheel omnigent remove failed "" "uv not found; remove the tool manually"
+    record_action wheel triune remove failed "" "uv not found; remove the tool manually"
     return 1
   fi
   uv_output="$(mktemp "${TMPDIR:-/tmp}/omnigent-uninstall-uv.XXXXXX")" || return 1
-  if uv tool uninstall omnigent >"$uv_output" 2>&1; then
+  if uv tool uninstall triune >"$uv_output" 2>&1; then
     rm -f "$uv_output"
-    record_action wheel omnigent remove done "" "uv tool uninstall omnigent"
+    record_action wheel triune remove done "" "uv tool uninstall triune"
   else
     output="$(cat "$uv_output" 2>/dev/null || true)"
     rm -f "$uv_output"
     case "$output" in
       *'not installed'* | *'No tool'* | *'not found'*)
-        record_action wheel omnigent remove skipped "" "already absent"
+        record_action wheel triune remove skipped "" "already absent"
         ;;
       *)
-        record_action wheel omnigent remove failed "" "uv tool uninstall failed: $output"
+        record_action wheel triune remove failed "" "uv tool uninstall failed: $output"
         ;;
     esac
   fi
@@ -698,7 +698,7 @@ emit_json() {
 }
 
 if ! has_shell_install_signal; then
-  record_action anchor omnigent detect failed "" "no Omnigent install detected"
+  record_action anchor omnigent detect failed "" "no Triune install detected"
   EXIT_CODE=3
   [ "$JSON" = true ] && emit_json
   exit "$EXIT_CODE"

@@ -14,6 +14,8 @@ URL via the pidfile this module writes. The module deliberately avoids
 importing ``cli.py`` to keep that dependency direction clean.
 """
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import contextlib
@@ -204,11 +206,11 @@ def server_config_signature(*, include_features: bool = True) -> str:
     :returns: A short hex digest, e.g. ``"3f9a1c2b4d5e6f70"``.
     """
     import hashlib
-    import importlib.metadata
 
     from omnigent.server.auth import resolve_auth_source
     from omnigent.server.feature_flags import resolve_feature_flags
     from omnigent.server.server_config import session_title_instructions
+    from omnigent.version import installed_version
 
     title_instructions = None
     if include_features:
@@ -216,12 +218,7 @@ def server_config_signature(*, include_features: bool = True) -> str:
 
         title_instructions = session_title_instructions(load_global_config())
 
-    try:
-        version = importlib.metadata.version("omnigent")
-    except importlib.metadata.PackageNotFoundError:
-        # Running from a source tree with no registered distribution —
-        # nothing to key version-drift on, so leave it out of the payload.
-        version = ""
+    version = installed_version()
 
     base_path = _resolve_effective_base_path()
 

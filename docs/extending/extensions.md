@@ -1,13 +1,13 @@
 # Extensions
 
-Omnigent extensions are operator-installed Python distributions that contribute
+Triune extensions are operator-installed Python distributions that contribute
 validated application metadata. V1 supports namespaced browser pages and links
 in the primary sidebar.
 
 ## Trust model
 
 Installing a Python distribution is a full-code-trust operation: Python entry
-points execute in the Omnigent server process while their manifests are loaded.
+points execute in the Triune server process while their manifests are loaded.
 Only administrators should install extension packages.
 
 Browser UI receives a separate boundary. It runs in an opaque-origin sandboxed
@@ -41,8 +41,8 @@ Python environment, and restart the server. Installation implies enablement for
 V1; there is no separate enable switch.
 
 ```bash
-omni extensions list
-omni extensions doctor publisher.extension
+triune extensions list
+triune extensions doctor publisher.extension
 ```
 
 A broken extension does not stop healthy extensions or the server. Public

@@ -6,7 +6,7 @@ refreshes upstream credentials. Runners receive a catalog reference and tool sch
 
 The **registry** is administrator-owned configuration: service IDs, destinations,
 authentication and allowed tools/users. The **gateway** executes requests through
-a per-service `/v1/mcp/{service}` endpoint. An Omnigent policy adapter validates
+a per-service `/v1/mcp/{service}` endpoint. An Triune policy adapter validates
 session context and applies request/response policies around the execution backend.
 
 See the [architecture overview](../../designs/MCP_REGISTRY_GATEWAY.md) for component
@@ -25,7 +25,7 @@ flowchart LR
     proxy[Existing ProxyMcpManager]
     harness --> proxy
   end
-  subgraph server[Omnigent server]
+  subgraph server[Triune server]
     catalog[Registry YAML]
     api[Catalog and account API]
     gateway[General MCP endpoint / policy adapter]
@@ -52,7 +52,7 @@ flowchart LR
 ```
 
 The upstream MCP server lives at the administrator's URL. It is an outbound
-request from the Omnigent server. A `transport: registry` entry does not start a
+request from the Triune server. A `transport: registry` entry does not start a
 local MCP subprocess. Existing direct HTTP and stdio entries retain their behavior.
 
 ## Server and execution-host versions
@@ -67,7 +67,7 @@ execution there; the new feature needs a capable server and runner.
 
 Install the MCP registry build on both the server and every execution host that
 will run selected registry services. For this prototype, use the same commit on
-both sides, including the Omnigent package baked into sandbox images. Restart the
+both sides, including the Triune package baked into sandbox images. Restart the
 host daemon and the session's runner after updating; changing a checkout does not
 replace an already running `uv tool` installation or daemon.
 
@@ -133,7 +133,7 @@ on the server.
 ```mermaid
 sequenceDiagram
   participant UI as Browser / New session
-  participant Server as Omnigent server
+  participant Server as Triune server
   participant Store as Agent + session stores
   participant Sandbox as Execution host / harness
   participant MCP as Remote MCP service
@@ -191,7 +191,7 @@ export OMNIGENT_CREDENTIAL_VAULT_KEY=mcp-demo
 export VAULT_ADDR=http://127.0.0.1:18781
 export VAULT_TOKEN=local-mcp-demo-only
 export OMNIGENT_MCP_OAUTH_STATE_SECRET="$(uv run --no-sync python -c 'import secrets; print(secrets.token_urlsafe(40))')"
-uv run --no-sync omnigent server --host 0.0.0.0 --port 18780 \
+uv run --no-sync triune server --host 0.0.0.0 --port 18780 \
   --database-uri "sqlite:///$MCP_DEMO_STATE/demo.db" \
   --artifact-location "$MCP_DEMO_STATE/artifacts"
 ```
@@ -269,7 +269,7 @@ export OMNIGENT_CONFIG_HOME="$MCP_DEMO_STATE/local-host-config"
 export OMNIGENT_LOCAL_SINGLE_USER=1
 export OPENAI_BASE_URL=http://127.0.0.1:18783/v1
 export OPENAI_API_KEY=mock-key
-uv run --no-sync omnigent host --server http://localhost:18780 --no-open --non-interactive
+uv run --no-sync triune host --server http://localhost:18780 --no-open --non-interactive
 ```
 
 Set `MCP_DEMO_STATE` to the directory created in terminal 1. In New session, choose
@@ -286,7 +286,7 @@ admin database/UI. Settings shows users only the entries they can access.
 
 | Field | Purpose |
 | --- | --- |
-| `public_url` | External Omnigent base URL used for OAuth callbacks; HTTPS except localhost. |
+| `public_url` | External Triune base URL used for OAuth callbacks; HTTPS except localhost. |
 | `services[].id` | Stable service key, also used in agent bundles and `service__tool` names. |
 | `url` | Administrator-approved Streamable HTTP MCP destination. |
 | `tools` | Required, nonempty list of allowed upstream tool names. |
@@ -303,7 +303,7 @@ PKCE S256 is used. Confidential clients send the secret named by
 `OMNIGENT_MCP_OAUTH_STATE_SECRET` of at least 32 characters.
 
 The local demo accepts only its registered callback URL, defaulting to
-`http://localhost:18780/v1/connections/mcp-tracker/callback`. If the Omnigent
+`http://localhost:18780/v1/connections/mcp-tracker/callback`. If the Triune
 port or base path changes, start the provider with `--redirect-uri <callback>`.
 Disconnected Databricks services ask for a workspace URL in the launch picker
 before opening the existing Databricks OAuth flow.
@@ -356,7 +356,7 @@ administrator's allowlist always applies.
 ```mermaid
 sequenceDiagram
   participant H as Harness on local / remote / sandbox host
-  participant G as Omnigent general MCP gateway / policy adapter
+  participant G as Triune general MCP gateway / policy adapter
   participant P as Existing policy layer
   participant C as Encrypted credential store
   participant O as External OAuth provider
@@ -448,9 +448,9 @@ source fidelity; the managed browser journey is still needed to verify behavior.
 ### Bring your own gateway
 
 For a standard Streamable HTTP gateway, use its URL as an approved registry entry
-with the credential it expects. Omnigent applies policies before forwarding the
+with the credential it expects. Triune applies policies before forwarding the
 call and again before returning the result. The external gateway owns downstream
-routing and credentials; it does not need to understand Omnigent sessions.
+routing and credentials; it does not need to understand Triune sessions.
 
 For a proprietary gateway, implement `McpGatewayBackend` and pass it to
 `create_app(mcp_gateway_backend=...)`. The same `McpPolicyAdapter` protects both

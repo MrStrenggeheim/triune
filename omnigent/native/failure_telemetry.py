@@ -1,5 +1,7 @@
 """Bounded native failure evidence, independent of session status and display text."""
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import json
@@ -197,7 +199,7 @@ def provider_error_context_from_text(text: object) -> FailureContext:
 def native_failure_id(source: str, *identity: str | int | float | None) -> str:
     """Derive an observation ID from durable source identity, never a retry timestamp."""
     key = json.dumps([source, *identity], separators=(",", ":"), ensure_ascii=True)
-    return str(uuid.uuid5(uuid.NAMESPACE_URL, "omnigent:native-failure:" + key))
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, "triune:native-failure:" + key))
 
 
 def exception_code_origin(

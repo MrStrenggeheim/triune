@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { TooltipButton } from "@/components/ui/tooltip";
 import { useFileContentReader } from "./FileContentReader";
 // TipTap-based rich text editor for markdown files.
@@ -543,7 +544,7 @@ function MarkdownRichTextViewerInner({
       {canEdit && sessionActive && !isDirty && !hasExternalUpdate && (
         <div className="absolute bottom-0 left-0 right-0 z-10 flex items-center gap-1.5 border-t border-border bg-warning/10 px-4 py-1.5 text-sm text-foreground backdrop-blur-sm">
           <AlertTriangleIcon className="size-3.5 shrink-0 text-warning" />
-          Omnigent is still working — edits you make now may be overwritten when it saves this file.
+          Triune is still working — edits you make now may be overwritten when it saves this file.
           Wait for it to finish, or copy your changes first.
         </div>
       )}

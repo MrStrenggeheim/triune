@@ -1,3 +1,4 @@
+// Modified for Triune.
 // The onboarding card + animated blob panel + centered starfish logo.
 //
 // Ported from the design handoff, with `motion` replaced by CSS transitions
@@ -54,7 +55,7 @@ export function AnimatedOmnigentPanel({
     <section
       className={`omnigent-card${autoHeight ? " omnigent-card--auto" : ""}`}
       style={{ width: CARD_WIDTH, ...(autoHeight ? {} : { height }) }}
-      aria-label="Omnigent onboarding"
+      aria-label="Triune onboarding"
     >
       <div className="omnigent-animated-panel" style={{ height: panelHeight, ...maskStyle }}>
         <BlobGraphic />
@@ -64,7 +65,7 @@ export function AnimatedOmnigentPanel({
         ) : (
           <img
             src={omnigentLogo}
-            alt="Omnigent"
+            alt="Triune"
             className={`omnigent-panel-logo${centeredLogo ? " omnigent-panel-logo--centered" : ""}`}
             style={{ width: LOGO_SIZE, height: LOGO_SIZE }}
           />

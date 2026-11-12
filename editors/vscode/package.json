@@ -1,14 +1,14 @@
 {
-  "name": "omnigent-vscode",
-  "displayName": "Omnigent",
-  "description": "Open your running local Omnigent server inside VS Code, in an editor-beside iframe.",
+  "name": "triune-vscode",
+  "displayName": "Triune",
+  "description": "Open your running local Triune server inside VS Code, in an editor-beside iframe.",
   "version": "0.1.0",
-  "publisher": "databricks",
+  "publisher": "MrStrenggeheim",
   "license": "Apache-2.0",
   "icon": "media/omnigent-icon.png",
   "repository": {
     "type": "git",
-    "url": "https://github.com/omnigent-ai/omnigent.git",
+    "url": "https://github.com/MrStrenggeheim/triune.git",
     "directory": "editors/vscode"
   },
   "engines": {
@@ -18,12 +18,12 @@
   "activationEvents": [],
   "contributes": {
     "configuration": {
-      "title": "Omnigent",
+      "title": "Triune",
       "properties": {
         "omnigent.serverUrl": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Manual Omnigent server URL override for a **localhost** server (e.g. `http://127.0.0.1:6767`). Leave empty to auto-discover a locally running Omnigent server. Non-localhost URLs are not supported in this build."
+          "markdownDescription": "Manual Triune server URL override for a **localhost** server (e.g. `http://127.0.0.1:6767`). Leave empty to auto-discover a locally running Triune server. Non-localhost URLs are not supported in this build."
         }
       }
     },
@@ -31,7 +31,7 @@
       "activitybar": [
         {
           "id": "omnigent-container",
-          "title": "Omnigent",
+          "title": "Triune",
           "icon": "media/omnigent-icon.svg"
         }
       ]
@@ -41,20 +41,20 @@
         {
           "type": "tree",
           "id": "omnigent.home",
-          "name": "Omnigent"
+          "name": "Triune"
         }
       ]
     },
     "viewsWelcome": [
       {
         "view": "omnigent.home",
-        "contents": "Open the running Omnigent server UI in an editor tab.\n[Open Omnigent](command:omnigent.open)\nStart a local server with `omnigent server`, or set `omnigent.serverUrl` to a localhost URL."
+        "contents": "Open the running Triune server UI in an editor tab.\n[Open Triune](command:omnigent.open)\nStart a local server with `triune server`, or set `omnigent.serverUrl` to a localhost URL."
       }
     ],
     "commands": [
       {
         "command": "omnigent.open",
-        "title": "Omnigent: Open",
+        "title": "Triune: Open",
         "icon": "media/omnigent-icon.svg"
       }
     ],

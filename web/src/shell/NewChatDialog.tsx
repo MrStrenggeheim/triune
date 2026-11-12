@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { readDefaultModel, availableDefaultModel } from "@/lib/defaultModelPreferences";
 import { useLoadedConversations } from "@/hooks/useSidebarData";
 import { useComposerContext } from "@/hooks/useComposerContext";
@@ -793,14 +794,15 @@ function harnessWarningMessage(
   if (reason === "version-too-low") {
     return (
       <>
-        {agentName} has an outdated CLI on {hostName} — run <code>omni setup</code>, or upgrade the
-        CLI directly on that machine.
+        {agentName} has an outdated CLI on {hostName} — run <code>triune setup</code>, or upgrade
+        the CLI directly on that machine.
       </>
     );
   }
   return (
     <>
-      {agentName} isn&apos;t configured on {hostName} — run <code>omni setup</code> on that machine.
+      {agentName} isn&apos;t configured on {hostName} — run <code>triune setup</code> on that
+      machine.
     </>
   );
 }

@@ -1,6 +1,7 @@
+// Modified for Triune.
 import { Spinner } from "@/components/ui/spinner";
 
-export function PageLoading({ label = "Loading Omnigent…" }: { label?: string }) {
+export function PageLoading({ label = "Loading Triune…" }: { label?: string }) {
   return (
     <div
       className="flex min-h-screen items-center justify-center gap-3 bg-background text-muted-foreground"

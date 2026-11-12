@@ -5,6 +5,8 @@ tool_result) and can allow, ask for approval, or deny content. They can be
 stateless (pure validators) or stateful (rate limiters, budget trackers).
 """
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import enum
@@ -80,7 +82,7 @@ class _PolicySession(Protocol):
 
 
 _POLICY_SYSTEM_PROMPT = (
-    "You are an Omnigent policy evaluator. Return exactly one JSON object and nothing else."
+    "You are a Triune policy evaluator. Return exactly one JSON object and nothing else."
 )
 
 

@@ -1,3 +1,4 @@
+// Modified for Triune.
 // IPC surface for the embedded browser pane, extracted out of main.js. main.js
 // wires the per-window registry + trust gate and calls `registerBrowserIpc(...)`.
 //
@@ -60,11 +61,11 @@ function buildCookieImportPrompt({ host, scope, profileName, cookieCount }) {
       ? `${scope} and its subdomains (this tab is on ${host})`
       : `${scope} and its subdomains`;
   return {
-    message: `Import ${what} into Omnigent?`,
+    message: `Import ${what} into Triune?`,
     detail:
       `From Chrome profile "${flattenProfileLabel(profileName, scope)}" for ${where}.\n\n` +
       "They stay available to this conversation's embedded browser tabs, including any the " +
-      "agent controls, until you quit Omnigent.",
+      "agent controls, until you quit Triune.",
   };
 }
 

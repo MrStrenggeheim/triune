@@ -1,6 +1,6 @@
 # Network resilience
 
-What a user should see when the network between Omnigent's pieces breaks, and
+What a user should see when the network between Triune's pieces breaks, and
 which scenarios currently meet that bar. Every row comes from a script in
 `tests/e2e/resilience/scenarios/` that runs against the
 [resilience lab](../tests/e2e/resilience/README.md). The lab is a real server,

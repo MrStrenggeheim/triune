@@ -1,5 +1,7 @@
 """Database utilities — engine caching, session management, helpers."""
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import hashlib
@@ -759,9 +761,9 @@ def _verify_db_revision_is_supported(
         script.get_revision(current)
     except CommandError as exc:
         raise RuntimeError(
-            "Omnigent database schema is newer than this version of Omnigent "
+            "Triune database schema is newer than this version of Triune "
             f"(found revision {current!r}, latest supported revision {head!r}). "
-            "Upgrade Omnigent before using this database."
+            "Upgrade Triune before using this database."
         ) from exc
 
 
@@ -803,7 +805,7 @@ def _initialize_or_verify_schema(engine: Engine, db_uri: str) -> None:
 
     if current != head:
         _logger.warning(
-            "Omnigent database schema is out of date "
+            "Triune database schema is out of date "
             "(found revision %r, expected %r); attempting automatic migration.",
             current,
             head,
@@ -812,7 +814,7 @@ def _initialize_or_verify_schema(engine: Engine, db_uri: str) -> None:
             _run_migrations(engine, db_uri)
         except Exception as exc:
             raise RuntimeError(
-                f"Omnigent database schema is out of date "
+                f"Triune database schema is out of date "
                 f"(found revision {current!r}, expected {head!r}) "
                 f"and automatic migration failed. Take a backup of your database, then run\n"
                 f"\n"
@@ -824,7 +826,7 @@ def _initialize_or_verify_schema(engine: Engine, db_uri: str) -> None:
         migrated = _get_current_db_revision(engine)
         if migrated != head:
             raise RuntimeError(
-                f"Omnigent automatic database migration did not reach head "
+                f"Triune automatic database migration did not reach head "
                 f"(started at {current!r}, now at {migrated!r}, expected {head!r}). "
                 f"Take a backup of your database, then run\n"
                 f"\n"

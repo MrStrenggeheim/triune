@@ -27,6 +27,8 @@ forward motion ("Starting up…", "Starting the local server…",
 "Connecting…", "Launching your agent…") instead of a silent gap.
 """
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import contextlib
@@ -235,7 +237,7 @@ def runner_startup_progress(
     # No clear-on-success because the line was the user's only
     # signal that something was happening — leaving it in the
     # scrollback is the right behavior for a log capture.
-    click.echo(f"omnigent: {initial_message}", err=True)
+    click.echo(f"triune: {initial_message}", err=True)
 
     def _update_plain(msg: str) -> None:
         """
@@ -245,7 +247,7 @@ def runner_startup_progress(
             ``"Launching your agent…"``.
         :returns: None.
         """
-        click.echo(f"omnigent: {msg}", err=True)
+        click.echo(f"triune: {msg}", err=True)
 
     # Plain mode has no live region to tear down, so ``finish`` is a
     # no-op (the printed lines stay in scrollback by design).

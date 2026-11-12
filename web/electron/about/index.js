@@ -1,3 +1,4 @@
+// Modified for Triune.
 "use strict";
 
 const api = window.omnigentAbout;
@@ -20,7 +21,7 @@ const closeButton = document.getElementById("close");
 
 function versionOnly(value) {
   if (typeof value !== "string" || value.trim() === "") return "Unavailable";
-  return value.match(/^omnigent\s+(\S+)/i)?.[1] ?? value;
+  return value.match(/^(?:triune|omnigent)\s+(\S+)/i)?.[1] ?? value;
 }
 
 function showResult(element, result) {
@@ -64,7 +65,7 @@ function renderDesktopUpdate(status) {
     desktopCheck.hidden = false;
     showResult(desktopResult, {
       state: "up-to-date",
-      message: "Omnigent Desktop is up to date.",
+      message: "Triune Desktop is up to date.",
     });
     return;
   }
@@ -125,7 +126,7 @@ async function loadInfo() {
     }
     const platformName = info?.platformName || "Desktop";
     productKind.textContent = platformName;
-    desktopHeading.textContent = `Omnigent ${platformName} app`;
+    desktopHeading.textContent = `Triune ${platformName} app`;
     desktopVersion.textContent = info?.desktopVersion || "Unavailable";
 
     const cli = info?.cli;

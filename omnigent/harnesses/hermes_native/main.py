@@ -14,6 +14,8 @@ is no extension bridge — the runner sets up the terminal environment directly
 (forcing ``NO_COLOR`` so the pane scrapes cleanly).
 """
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import asyncio
@@ -182,7 +184,7 @@ def run_hermes_native(
     _preflight_local_tools()
     if server is None:
         raise click.ClickException(
-            "Hermes requires a resolved Omnigent server URL. The CLI should call "
+            "Hermes requires a resolved Triune server URL. The CLI should call "
             "_ensure_backend before run_hermes_native."
         )
     with TemporaryDirectory(prefix="omnigent-hermes-native-") as tmpdir:
@@ -295,7 +297,7 @@ def _run_with_remote_server(
         asyncio.run(_drive())
     except httpx.ConnectError as exc:
         raise click.ClickException(
-            f"Could not reach the omnigent server at {base_url}. "
+            f"Could not reach the Triune server at {base_url}. "
             "Confirm the server is running and reachable from here "
             f"(e.g. `curl {base_url}/health`), and that --server is correct."
         ) from exc

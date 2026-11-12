@@ -13,11 +13,13 @@ no ``server_client``. Any call that reaches ``Tool.invoke`` here means
 the tool was misrouted to the server-side path — the base class raises
 ``NotImplementedError`` loudly in that case.
 
-Descriptions for the five browser tools that drive the Omnigent
+Descriptions for the five browser tools that drive the Triune
 desktop app's embedded browser. Request-driven harnesses omit them when
 the turn starts without a stream subscriber; native harnesses have a
 session-scoped relay surface, but unclaimed calls still fail promptly.
 """
+
+# Modified for Triune.
 
 from __future__ import annotations
 
@@ -51,9 +53,9 @@ class BrowserNavigateTool(Tool):
     def description(cls) -> str:
         """:returns: Human-readable description of the tool."""
         return (
-            "Open or navigate the Omnigent desktop app's embedded "
+            "Open or navigate the Triune desktop app's embedded "
             "browser pane to a URL. Auto-opens the pane if it isn't "
-            "open yet. Requires the Omnigent desktop window to be "
+            "open yet. Requires the Triune desktop window to be "
             "running — fails cleanly otherwise. After a load settles, "
             "call browser_snapshot to inspect what's on the page."
         )

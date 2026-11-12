@@ -1,5 +1,7 @@
 """Install ledger and uninstall backfill helpers."""
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import hashlib
@@ -21,7 +23,7 @@ LEDGER_NAME = "install_ledger.json"
 BACKFILL_LEDGER_NAME = "install_ledger.backfill.json"
 PROFILE_MARKER_BEGIN = "# >>> Omnigent installer >>>"
 PROFILE_MARKER_END = "# <<< Omnigent installer <<<"
-CONSOLE_SCRIPTS = ["omnigent", "omni"]
+CONSOLE_SCRIPTS = ["triune", "omnigent", "omni"]
 
 
 def utc_now() -> str:
@@ -554,8 +556,10 @@ def new_ledger(*, source: str, strategy: str, deep: bool) -> InstallLedger:
         schema_version=SCHEMA_VERSION,
         ledger_source=source,
         generator={
-            "name": "omnigent",
-            "version": _version_for(shutil.which("omnigent")) or "unknown",
+            "name": "triune",
+            "version": (
+                _version_for(shutil.which("triune") or shutil.which("omnigent")) or "unknown"
+            ),
             "strategy": strategy,
             "os": platform_name(),
             "wrote_at": now,

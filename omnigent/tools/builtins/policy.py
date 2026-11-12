@@ -8,6 +8,8 @@
     so the agent can pick the best fit before creating one.
 """
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 from typing import Any
@@ -21,7 +23,7 @@ class SysAddPolicyTool(Tool):
 
     The agent picks a handler from ``sys_policy_registry`` and
     passes its ``factory_params``. The runner forwards the request
-    to the Omnigent server's ``POST /v1/sessions/{session_id}/policies``
+    to the Triune server's ``POST /v1/sessions/{session_id}/policies``
     endpoint.
     """
 

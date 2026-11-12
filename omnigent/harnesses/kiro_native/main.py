@@ -1,5 +1,7 @@
 """Native Kiro TUI wrapper for the Omnigent CLI."""
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import asyncio
@@ -225,7 +227,7 @@ def run_kiro_native(
     _preflight_local_tools()
     if server is None:
         raise click.ClickException(
-            "Kiro requires a resolved Omnigent server URL. The CLI should call "
+            "Kiro requires a resolved Triune server URL. The CLI should call "
             "_ensure_backend before run_kiro_native."
         )
     with TemporaryDirectory(prefix="omnigent-kiro-native-") as tmpdir:
@@ -333,7 +335,7 @@ def _run_with_remote_server(
         asyncio.run(_drive())
     except httpx.ConnectError as exc:
         raise click.ClickException(
-            f"Could not reach the omnigent server at {base_url}. "
+            f"Could not reach the Triune server at {base_url}. "
             "Confirm the server is running and reachable from here "
             f"(e.g. `curl {base_url}/health`), and that --server is correct."
         ) from exc

@@ -1,6 +1,6 @@
 # Native agy credentials and gateways
 
-`omni agy` uses the native Gemini API when configured with an API key or
+`triune agy` uses the native Gemini API when configured with an API key or
 gateway. A gateway must match the API protocol, authentication method, and
 models agy requests. Serving a Gemini model through an OpenAI-compatible API
 does not make that endpoint compatible with agy.
@@ -10,7 +10,7 @@ SDK harness has [separate authentication settings](AGENT_YAML_SPEC.md#antigravit
 
 ## Choose a connection
 
-Run `omni setup` → **Antigravity** → **Configure native agy API key / gateway**
+Run `triune setup` → **Antigravity** → **Configure native agy API key / gateway**
 → **Add a credential**.
 
 | What you have | Setup option | Requirements |
@@ -49,7 +49,7 @@ only answers a simple text prompt has not demonstrated the complete agent flow.
 Setup validates recognizable URL mistakes before asking for a key. It does not
 send an inference request to prove an arbitrary gateway's compatibility. A saved
 credential or green setup row is not evidence that the full agent flow succeeded;
-use the smoke steps below. External gateway keys are stored in Omnigent's secret
+use the smoke steps below. External gateway keys are stored in Triune's secret
 store and referenced by configuration. This option does not refresh expiring
 upstream tokens.
 
@@ -60,7 +60,7 @@ documented candidates, not a list of gateways live-verified with agy.
 
 | Gateway | API root to enter | Authentication and compatibility notes |
 |---|---|---|
-| [LiteLLM Google AI Studio pass-through](https://docs.litellm.ai/docs/pass_through/google_ai_studio) | `http://127.0.0.1:4000/gemini` for a local proxy | Supports Gemini-native requests and streaming without protocol translation. Configure the Google key on the proxy and use a LiteLLM key in Omnigent. Allow all main and auxiliary models agy requests. |
+| [LiteLLM Google AI Studio pass-through](https://docs.litellm.ai/docs/pass_through/google_ai_studio) | `http://127.0.0.1:4000/gemini` for a local proxy | Supports Gemini-native requests and streaming without protocol translation. Configure the Google key on the proxy and use a LiteLLM key in Triune. Allow all main and auxiliary models agy requests. |
 | [Bifrost GenAI integration](https://docs.getbifrost.ai/integrations/genai-sdk/overview) | `http://127.0.0.1:8080/genai` for a local instance | Documents a GenAI client using a Bifrost virtual key. Configure the Gemini backend and model routing. Because this frontend adapts requests and responses, verify tool and reasoning metadata through the full agent flow. |
 | [Cloudflare AI Gateway Google AI Studio route](https://developers.cloudflare.com/ai-gateway/usage/providers/google-ai-studio/) | `https://gateway.ai.cloudflare.com/v1/<account>/<gateway>/google-ai-studio` | The provider-key pass-through example uses a Google key. Configurations requiring the additional `cf-aig-authorization` header need more header support than the current URL-and-key form provides. |
 
@@ -90,7 +90,7 @@ the gateway. Record the gateway version, agy version, model choices, and results
 
 That live run tests the gateway implementation and its actual upstream. The mock
 journey does not establish a third-party gateway's compatibility. A local gateway
-backed by Omnigent's Databricks adapter is useful for testing setup, but does not
+backed by Triune's Databricks adapter is useful for testing setup, but does not
 replace this independent canary. Run the same smoke against a second gateway
 before claiming interoperability across implementations.
 
@@ -104,11 +104,11 @@ authentication. For a CLI OAuth login:
 
 ```sh
 databricks auth login --profile work
-omni setup
+triune setup
 ```
 
-Install the `databricks` extra in the environment running Omnigent if setup asks
-for it, for example `pip install 'omnigent[databricks]'`. PAT and service-principal
+Install the `databricks` extra in the environment running Triune if setup asks
+for it, for example `uv sync --locked --extra databricks` from a [Triune source checkout](custom-fork.md#run-it). PAT and service-principal
 credentials belong in the Databricks profile configuration; they do not require
 an interactive OAuth login.
 
@@ -120,7 +120,7 @@ The workspace host must be an HTTPS root. HTTP hosts, including loopback, are
 rejected before authentication or discovery; configure the HTTPS workspace URL
 in your Databricks profile.
 
-Omnigent starts a local adapter with each agy process. It supplies the profile's
+Triune starts a local adapter with each agy process. It supplies the profile's
 Bearer token, refreshes access tokens through the profile's authentication
 provider, and maps agy's model names to the corresponding Databricks model
 services. It forwards native Gemini bodies and streaming responses unchanged to:
@@ -147,8 +147,8 @@ to pick up models added later.
 
 If OAuth refresh fails, run `databricks auth login --profile work` again in the
 same environment. `DATABRICKS_AUTH_STORAGE=plaintext` is not required by
-Omnigent; some CLI versions use it to access an older file credential cache.
-Use a consistent storage setting for login and Omnigent. To move to the CLI's
+Triune; some CLI versions use it to access an older file credential cache.
+Use a consistent storage setting for login and Triune. To move to the CLI's
 default secure store, unset that variable before logging in again. Restart an
 existing local host daemon after changing its authentication environment.
 
@@ -167,7 +167,7 @@ providers explicitly claim Gemini, setup first asks which default to keep.
 Canceling leaves the conflict unresolved without rewriting the configuration.
 
 New Gemini-only gateway entries and Databricks `native_gemini` entries are not
-compatible with older Omnigent versions that lack this feature. Before
+compatible with older Triune versions that lack this feature. Before
 downgrading, remove those new entries or restore your previous configuration.
 
 Setup does not automatically save a detected Gemini key whose companion
@@ -177,7 +177,7 @@ that saved provider too: changing the environment alone does not replace it.
 
 Adding the first credential makes it the Gemini default. Adding another
 credential preserves the existing default. Select the desired credential and
-choose **Make default for Gemini**, then start a **new** `omni agy` session.
+choose **Make default for Gemini**, then start a **new** `triune agy` session.
 Existing sessions retain their original connection; `/model` changes the model,
 not the provider, endpoint, or authentication method.
 
@@ -185,13 +185,13 @@ Create a small file in your working directory:
 
 ```sh
 printf 'Gateway smoke: file tools work.\n' > gateway-smoke.txt
-omni agy
+triune agy
 ```
 
 Ask: **Read gateway-smoke.txt using the file tool and quote its contents.**
 Confirm a tool call occurs and the reply contains the file's actual text.
 Then ask a follow-up question about the content. Exit and use
-`omni agy --resume` to resume that conversation and verify continuity.
+`triune agy --resume` to resume that conversation and verify continuity.
 In the web UI, stop the test session's terminal, click **Resume session**, and
 ask another question about the file without using tools. Earlier messages and
 the original tool result should appear once, followed by the new turn.

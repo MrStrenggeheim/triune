@@ -1,3 +1,4 @@
+# Modified for Triune; inherited notices remain applicable.
 """E2E: operator branding from the server config reshapes the web UI.
 
 Branding is delivered entirely through the unauthenticated ``GET /v1/info``
@@ -11,7 +12,7 @@ rendered result.
 Covered: custom app name (browser-tab title + sidebar wordmark), custom hero
 heading, an explicit empty heading that hides the hero line instead of falling
 back to the default, the custom in-app logo and favicon, and the "Powered by
-Omnigent" credit — which appears only when branding is set.
+Triune" credit — which appears only when branding is set.
 """
 
 from __future__ import annotations
@@ -66,7 +67,9 @@ def test_custom_branding_reshapes_the_landing(page: Page, live_server: str) -> N
 
     # App name → browser-tab title and sidebar wordmark.
     expect(page).to_have_title(re.compile(r"Acme Agent"))
-    expect(page.get_by_role("link", name="Acme Agent")).to_be_visible()
+    expect(
+        page.get_by_role("banner", name="Application").get_by_text("Acme Agent", exact=True)
+    ).to_be_visible()
 
     # Custom hero heading replaces the built-in default.
     expect(page.get_by_role("heading", name="Acme Corp")).to_be_visible()
@@ -100,7 +103,7 @@ def test_empty_heading_hides_the_hero_line(page: Page, live_server: str) -> None
 
 
 def test_powered_by_false_hides_the_credit(page: Page, live_server: str) -> None:
-    """A branded deployment can explicitly hide the Omnigent attribution."""
+    """A branded deployment can explicitly hide the Triune attribution."""
     base_url = live_server
     _stub_logos(page)
     _stub_info(
@@ -120,5 +123,7 @@ def test_unbranded_keeps_defaults_and_hides_credit(page: Page, live_server: str)
     _open_landing(page, base_url)
 
     expect(page.get_by_role("heading", name="What should we build?")).to_be_visible()
-    expect(page.get_by_role("link", name="Omnigent")).to_be_visible()
+    expect(
+        page.get_by_role("banner", name="Application").get_by_text("Triune", exact=True)
+    ).to_be_visible()
     expect(page.get_by_test_id("powered-by-omnigent")).to_have_count(0)

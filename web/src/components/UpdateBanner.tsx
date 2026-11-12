@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { type UpdateStatus, updateBridge } from "@/lib/nativeBridge";
 import { NotificationCard } from "./NotificationCard";
@@ -92,10 +93,10 @@ export function UpdateBanner({ variant = "floating" }: { variant?: "floating" | 
         title: isError
           ? "Update check failed"
           : visibleStatus.state === "downloading"
-            ? `Downloading Omnigent Desktop update… ${progress}%`
+            ? `Downloading Triune Desktop update… ${progress}%`
             : visibleStatus.state === "downloaded"
-              ? `Omnigent Desktop ${version ?? "update"} is ready to install`
-              : `Omnigent Desktop ${version ?? "update"} is available`,
+              ? `Triune Desktop ${version ?? "update"} is ready to install`
+              : `Triune Desktop ${version ?? "update"} is available`,
         type: isError ? "error" : "info",
         description: (
           <>

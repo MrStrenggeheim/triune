@@ -12,7 +12,7 @@ Generated attachments keep their original bytes; workspace references use their 
 - `html`: isolated HTML preview has an opaque sandbox and restrictive content policy, with source and original download.
 - `media`: browser-supported audio/video plays with controls; unsupported codecs retain download access and a clear error.
 - `other-files`: Office documents, archives and other binaries retain a compact filename/type/size card and download.
-- `native`: `omnigent attach-file PATH --session CHAT --server URL` uploads locally authorized bytes; native agents can use their session environment variable.
+- `native`: `triune attach-file PATH --session CHAT --server URL` uploads locally authorized bytes; native agents can use their session environment variable.
 - `generated`: Codex viewed/generated images, supported inline byte outputs, native provider image-generation results and `upload_file` results become durable file references.
 - `scope`: message references retain their original workspace/environment, owner and filesystem generation; switching workspace never reinterprets a path.
 - `security`: arbitrary Markdown paths cannot read the server filesystem; traversal, outward symlinks and cross-session file IDs are refused.
@@ -24,7 +24,7 @@ Generated attachments keep their original bytes; workspace references use their 
 
 - Composer: attach, paste or drop files, then send; open a file's label or use its download control in the user message.
 - Assistant: click an attached image to enlarge it, open a file label for its preview, or download the original.
-- Native agent: run `omnigent attach-file output/report.pdf`; supply `--session` and `--server` outside an agent session.
+- Native agent: run `triune attach-file output/report.pdf`; supply `--session` and `--server` outside an agent session.
 - SDK agent: use `upload_file` for a workspace file; the result card remains outside folded tool details.
 - Markdown: local images, file links and path citations open the original message's authorized resource; explicitly attach temporary files outside the workspace.
 - Phone: use the same cards and dialogs within the narrow conversation layout.

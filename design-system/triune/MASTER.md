@@ -1,6 +1,6 @@
-# Omnigent workspace design system
+# Triune workspace design system
 
-A compact developer workspace built from Omnigent's existing components.
+A compact developer workspace built from Triune's existing components.
 The approved workspace specification governs behavior; later owner corrections govern appearance.
 
 ## Basis

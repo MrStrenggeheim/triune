@@ -5,6 +5,8 @@ caches/registries/task-sets and immutable config the helpers and router share,
 so a single instance is imported by reference across the package.
 """
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import asyncio
@@ -481,7 +483,7 @@ _BROWSER_ACTION_NO_RENDERER_RESULT: dict[str, Any] = {"error": "no browser rende
 
 
 _BROWSER_ACTION_TIMEOUT_RESULT: dict[str, Any] = {
-    "error": "browser action timed out — is the session open in the Omnigent desktop app?"
+    "error": "browser action timed out — is the session open in the Triune desktop app?"
 }
 
 

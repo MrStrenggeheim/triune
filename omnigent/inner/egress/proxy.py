@@ -21,6 +21,8 @@ Lifecycle::
     await proxy.stop()
 """
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import asyncio
@@ -272,7 +274,7 @@ class EgressProxy:
         self._expected_auth_value: bytes | None
         if auth_token is not None:
             self._expected_auth_value = b"Basic " + base64.b64encode(
-                f"omnigent:{auth_token}".encode()
+                f"triune:{auth_token}".encode()
             )
         else:
             self._expected_auth_value = None

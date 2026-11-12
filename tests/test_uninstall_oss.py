@@ -1,3 +1,4 @@
+# Modified for Triune; inherited notices remain applicable.
 from __future__ import annotations
 
 import json
@@ -93,7 +94,7 @@ def test_uninstall_script_removes_profile_block_and_runs_wheel_last(tmp_path: Pa
     assert payload["summary"]["done"] >= 2
     assert "Omnigent installer" not in profile.read_text()
     assert profile.read_text() == "keep\nkeep2\n"
-    assert uv_log.read_text().strip() == "tool uninstall omnigent"
+    assert uv_log.read_text().strip() == "tool uninstall triune"
     assert list(home.glob(".zshrc.omnigent.bak.*"))
     assert any(
         action["artifact"] == "shared_dep"
@@ -172,7 +173,7 @@ def test_uninstall_script_purge_without_target_also_removes_cli(tmp_path: Path) 
     assert result.returncode == 0, result.stderr
     assert not state.exists()
     assert "Omnigent installer" not in profile.read_text()
-    assert uv_log.read_text().strip() == "tool uninstall omnigent"
+    assert uv_log.read_text().strip() == "tool uninstall triune"
 
 
 def test_uninstall_script_purge_uses_unique_backup_paths_for_multiple_trees(

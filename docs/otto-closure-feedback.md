@@ -67,7 +67,7 @@ The process suite covers evidence and markers on later pages, existing reasons
 on all three discussion surfaces, repeated deliveries, failed reads, ambiguous
 POST responses and a PR reopened while its reviews are being read. These are
 real action-process tests with a mocked GitHub service, not a live webhook,
-GitHub permission check, model canary or OS sandbox test. No model, Omnigent
+GitHub permission check, model canary or OS sandbox test. No model, Triune
 runtime, Docker or bwrap is required by this Actions handler.
 
 For a future authorized live check, use a disposable Otto PR: close it without

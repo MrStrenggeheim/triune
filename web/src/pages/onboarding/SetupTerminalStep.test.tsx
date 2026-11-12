@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SetupTerminalStep, WARMUP_MS } from "./SetupTerminalStep";
@@ -183,7 +184,7 @@ describe("SetupTerminalStep", () => {
     const { container, rerender } = render(<SetupTerminalStep {...props} />);
     const bar = () => container.querySelector<HTMLElement>("[style*='width']")?.style.width;
     expect(bar()).toBe("10%");
-    act(() => emit("$ omnigent host --server https://team.example.com/"));
+    act(() => emit("$ triune host --server https://team.example.com/"));
     expect(bar()).toBe("35%");
     rerender(<SetupTerminalStep {...props} connection={{ phase: "connecting" }} />);
     expect(bar()).toBe("70%");

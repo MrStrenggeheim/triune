@@ -5,7 +5,7 @@
 
 ## Behavior
 
-`omnigent kiro` still runs Kiro's own terminal UI. When Kiro shows a tool approval prompt in the embedded Terminal, Omnigent also mirrors supported one-time approvals into Chat as an approval card. The Terminal prompt remains authoritative and answerable; the Chat card is additive.
+`triune kiro` still runs Kiro's own terminal UI. When Kiro shows a tool approval prompt in the embedded Terminal, Triune also mirrors supported one-time approvals into Chat as an approval card. The Terminal prompt remains authoritative and answerable; the Chat card is additive.
 
 Supported today:
 
@@ -88,4 +88,4 @@ For new records:
 - The runner sets `KIRO_ACP_RECORD_PATH` itself inside the allowlisted child environment. It does not inherit an arbitrary recorder path from the parent shell.
 - Kiro-derived prompt text is treated as untrusted UI input and truncated before it is sent as a card preview.
 - The web UI never exposes persistent trust for Kiro. Users who want persistent trust must use Kiro's own trust flags or TUI controls deliberately.
-- Kiro remains authenticated by Kiro's own CLI login and does not use Omnigent Databricks, OpenAI, or Anthropic provider credentials.
+- Kiro remains authenticated by Kiro's own CLI login and does not use Triune Databricks, OpenAI, or Anthropic provider credentials.

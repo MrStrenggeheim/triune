@@ -1,6 +1,6 @@
 # Agent file-opening API
 
-Agents can request that Omnigent open a file in the workspace viewer. This uses
+Agents can request that Triune open a file in the workspace viewer. This uses
 an existing session; it does not launch an app, switch to another session, read
 file contents back to the agent, or modify the file.
 

@@ -1,4 +1,5 @@
 // !$*UTF8*$!
+// Modified for Triune.
 {
 	archiveVersion = 1;
 	classes = {
@@ -673,7 +674,7 @@
 				CODE_SIGN_ENTITLEMENTS = Omnigent/Omnigent.entitlements;
 				DATABRICKS_OAUTH_CLIENT_ID = omnigent;
 				DATABRICKS_OAUTH_REDIRECT_URL = "https://login.databricks.com/mobile-redirect";
-				APP_DISPLAY_NAME = Omnigent;
+				APP_DISPLAY_NAME = Triune;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_IDENTITY = "Apple Development";
@@ -707,7 +708,7 @@
 				CODE_SIGN_ENTITLEMENTS = Omnigent/Omnigent.entitlements;
 				DATABRICKS_OAUTH_CLIENT_ID = omnigent;
 				DATABRICKS_OAUTH_REDIRECT_URL = "https://login.databricks.com/mobile-redirect";
-				APP_DISPLAY_NAME = Omnigent;
+				APP_DISPLAY_NAME = Triune;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_IDENTITY = "Apple Development";

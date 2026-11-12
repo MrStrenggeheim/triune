@@ -1,5 +1,7 @@
 """Native Codex TUI wrapper for the Omnigent CLI."""
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import asyncio
@@ -460,7 +462,7 @@ def run_codex_native(
     _preflight_local_tools()
     if server is None:
         raise click.ClickException(
-            "Codex requires a resolved Omnigent server URL. The CLI should call "
+            "Codex requires a resolved Triune server URL. The CLI should call "
             "_ensure_backend before run_codex_native."
         )
     with TemporaryDirectory(prefix="omnigent-codex-native-") as tmpdir:
@@ -893,7 +895,7 @@ def _run_with_remote_server(
         asyncio.run(_drive())
     except httpx.ConnectError as exc:
         raise click.ClickException(
-            f"Could not reach the omnigent server at {base_url}. "
+            f"Could not reach the Triune server at {base_url}. "
             "Confirm the server is running and reachable from here "
             f"(e.g. `curl {base_url}/health`), and that --server is correct."
         ) from exc
@@ -2687,20 +2689,20 @@ def _codex_function_call_payload_from_session_item(
     if not isinstance(name, str) or not name:
         item_id = item.get("id")
         raise click.ClickException(
-            "Cannot synthesize Codex resume rollout: Omnigent function_call "
+            "Cannot synthesize Codex resume rollout: Triune function_call "
             f"{item_id!r} has an invalid name."
         )
     if not isinstance(call_id, str) or not call_id:
         item_id = item.get("id")
         raise click.ClickException(
-            "Cannot synthesize Codex resume rollout: Omnigent function_call "
+            "Cannot synthesize Codex resume rollout: Triune function_call "
             f"{item_id!r} has an invalid call_id."
         )
     arguments = item.get("arguments")
     if not isinstance(arguments, str):
         item_id = item.get("id")
         raise click.ClickException(
-            "Cannot synthesize Codex resume rollout: Omnigent function_call "
+            "Cannot synthesize Codex resume rollout: Triune function_call "
             f"{item_id!r} has non-string arguments."
         )
     if len(arguments) > _MAX_REPLAYED_ARGUMENTS_CHARS:
@@ -2742,14 +2744,14 @@ def _codex_function_call_output_payload_from_session_item(
     if not isinstance(call_id, str) or not call_id:
         item_id = item.get("id")
         raise click.ClickException(
-            "Cannot synthesize Codex resume rollout: Omnigent function_call_output "
+            "Cannot synthesize Codex resume rollout: Triune function_call_output "
             f"{item_id!r} has an invalid call_id."
         )
     output = item.get("output")
     if not isinstance(output, str):
         item_id = item.get("id")
         raise click.ClickException(
-            "Cannot synthesize Codex resume rollout: Omnigent function_call_output "
+            "Cannot synthesize Codex resume rollout: Triune function_call_output "
             f"{item_id!r} has non-string output."
         )
     return {

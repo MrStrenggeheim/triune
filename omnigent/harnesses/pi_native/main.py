@@ -1,5 +1,7 @@
 """Native Pi TUI wrapper for the Omnigent CLI."""
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import asyncio
@@ -94,7 +96,7 @@ def check_pi_cli_version_floor(version: tuple[int, int, int]) -> None:
         return
     installed = ".".join(str(part) for part in version)
     raise PiNativeCliOutdatedError(
-        f"The installed Pi CLI ({installed}) is older than the minimum Omnigent "
+        f"The installed Pi CLI ({installed}) is older than the minimum Triune "
         f"supports ({floor}). Upgrade with: {harness_install_display(PI_KEY)}, "
         "then start the session again."
     )
@@ -268,7 +270,7 @@ def run_pi_native(
     _preflight_local_tools()
     if server is None:
         raise click.ClickException(
-            "Pi requires a resolved Omnigent server URL. The CLI should call "
+            "Pi requires a resolved Triune server URL. The CLI should call "
             "_ensure_backend before run_pi_native."
         )
     with TemporaryDirectory(prefix="omnigent-pi-native-") as tmpdir:
@@ -380,7 +382,7 @@ def _run_with_remote_server(
         asyncio.run(_drive())
     except httpx.ConnectError as exc:
         raise click.ClickException(
-            f"Could not reach the omnigent server at {base_url}. "
+            f"Could not reach the Triune server at {base_url}. "
             "Confirm the server is running and reachable from here "
             f"(e.g. `curl {base_url}/health`), and that --server is correct."
         ) from exc

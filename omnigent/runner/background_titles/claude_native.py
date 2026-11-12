@@ -1,5 +1,7 @@
 """Background title generation through isolated Claude Code print mode."""
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import asyncio
@@ -88,7 +90,7 @@ async def generate_background_title(context: BackgroundTitleContext) -> str | No
             except ClaudeNativeHookInterpreterMismatchError:
                 _logger.warning(
                     "background Claude Code title skipped: %s is Windows-native "
-                    "under WSL and cannot run Omnigent's hook command",
+                    "under WSL and cannot run Triune's hook command",
                     resolved_claude,
                 )
                 return None

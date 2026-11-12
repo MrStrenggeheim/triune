@@ -1,5 +1,7 @@
 """Canonical Codex launch options and private config-file profile materialization."""
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import copy
@@ -163,7 +165,7 @@ class CodexTransportArgsError(OmnigentError, ValueError):
         super().__init__(
             f"terminal_launch_args may not contain the runner-owned Codex transport "
             f"token {token!r}. Start a new Codex session without that argument; "
-            "Omnigent starts the app-server and attaches the terminal automatically.",
+            "Triune starts the app-server and attaches the terminal automatically.",
             code=ErrorCode.HARNESS_NOT_CONFIGURED,
         )
 

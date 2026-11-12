@@ -5,6 +5,8 @@ publishers, persistence, validation, and the runner-forward primitives.
 Imports shared state/constants from ``.common``; imported by
 ``.orchestration`` and by the router in ``sessions.py``."""
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import asyncio
@@ -11763,12 +11765,12 @@ def require_filesystem_attachment_runtime(
         if connection is not None and required not in connection.hello.capabilities:
             if required != CAP_FILESYSTEM_ATTACHMENTS:
                 raise OmnigentError(
-                    "Update Omnigent on this host and restart it before attaching this "
+                    "Update Triune on this host and restart it before attaching this "
                     "file type. This host cannot deliver it to the agent as a file.",
                     code=ErrorCode.CONFLICT,
                 )
             raise OmnigentError(
-                "Update Omnigent on this host and restart it before attaching archives, "
+                "Update Triune on this host and restart it before attaching archives, "
                 "Office documents, or databases. This host cannot restore these files "
                 "when a session resumes.",
                 code=ErrorCode.CONFLICT,
@@ -11781,7 +11783,7 @@ def require_filesystem_attachment_runtime(
             code=ErrorCode.WRONG_REPLICA,
         )
     raise OmnigentError(
-        "Connect an updated Omnigent host before attaching archives, Office documents, "
+        "Connect an updated Triune host before attaching archives, Office documents, "
         "or databases, then retry.",
         code=ErrorCode.CONFLICT,
     )

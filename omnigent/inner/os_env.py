@@ -1,5 +1,7 @@
 """OS environment abstraction and helper process transport."""
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import atexit
@@ -2022,7 +2024,7 @@ def _run_helper(config: JsonValue) -> int:
             parts = urlparse(current)
             if not parts.hostname:
                 continue
-            netloc = f"omnigent:{token_value}@{parts.hostname}"
+            netloc = f"triune:{token_value}@{parts.hostname}"
             if parts.port is not None:
                 netloc += f":{parts.port}"
             os.environ[env_key] = urlunparse(parts._replace(netloc=netloc))

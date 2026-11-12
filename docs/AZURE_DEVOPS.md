@@ -114,7 +114,7 @@ PR.
 ## Verify the integration
 
 On a host with an Azure repository, run `az login` or set
-`AZURE_DEVOPS_EXT_PAT` before starting Omnigent. Open a session in that repository,
+`AZURE_DEVOPS_EXT_PAT` before starting Triune. Open a session in that repository,
 then click the composer’s `!N` link or open **Pull Requests** in the workspace
 panel. Confirm the Azure DevOps heading, request title, Summary, Comments, and
 Changes. Repeat at a mobile viewport to check the full-screen drawer. Link a

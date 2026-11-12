@@ -1,5 +1,8 @@
 # Qwen Integration Follow-ups
 
+> Historical upstream Omnigent design discussion; names, commands and release assumptions are retained as context.
+> For current Triune setup and compatibility, see the [fork guide](custom-fork.md).
+
 Tracks pending work and known limitations for the Qwen Code harness
 (`harness: qwen`, driving `qwen --acp`).
 

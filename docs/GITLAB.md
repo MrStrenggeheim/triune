@@ -8,8 +8,8 @@ glab auth login --hostname gitlab.com
 glab auth status --hostname gitlab.com
 ```
 
-Omnigent uses the CLI's existing credentials. It does not require a GitLab OAuth
-connection in Omnigent. Install and authenticate `glab` inside a sandbox when
+Triune uses the CLI's existing credentials. It does not require a GitLab OAuth
+connection in Triune. Install and authenticate `glab` inside a sandbox when
 that sandbox runs the session.
 
 ## Private instances and remotes
@@ -20,7 +20,7 @@ Sign in to each private GitLab instance with `glab` on the execution host:
 glab auth login --hostname git.example.com
 ```
 
-Omnigent discovers hosts from the CLI's config file. No Omnigent host
+Triune discovers hosts from the CLI's config file. No Triune host
 setting or OAuth connection is needed. It follows `GLAB_CONFIG_DIR`, the legacy
 `~/.config/glab-cli` directory, and glab's platform-specific XDG config search
 order. Host changes take effect without restarting the runner. After logout,
@@ -35,7 +35,7 @@ GITLAB_HOST=git.example.com:8443 glab auth login --api-host git.example.com:8443
 ```
 
 The host selection above applies only to the login command. `glab` saves the
-authority including its port; Omnigent reads it on subsequent requests. A
+authority including its port; Triune reads it on subsequent requests. A
 separate `api_host` remains glab's API routing setting, not an additional web
 origin. GitLab.com is supported by default. Nested groups and project-local MR
 numbers are preserved:
@@ -104,7 +104,7 @@ credential provisioning are separate features.
 To verify manually:
 
 1. Sign in with `glab auth login`, then start a session in a GitLab checkout with
-   an open MR without setting Omnigent provider hosts. Open
+   an open MR without setting Triune provider hosts. Open
    its Pull Requests tab. Confirm the `!` number, description, comments, and pipeline
    results match GitLab.
 2. Open a changed file, then expand context. For a fork MR, check a renamed file

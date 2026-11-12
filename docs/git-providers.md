@@ -24,7 +24,7 @@ host downgrade protection, separate from server/host wire compatibility.
 
 ## Add an installed provider
 
-Install a Python package in the Omnigent host environment with an entry point:
+Install a Python package in the Triune host environment with an entry point:
 
 ```toml
 [project.entry-points."omnigent.git_providers"]
@@ -46,7 +46,7 @@ A provider can supply `request_name` (such as `"merge request"`) and
 `number_prefix` (such as `"!"`) for shared UI labels. The defaults are
 `"pull request"` and `"#"`.
 
-Discovery runs once per process. Restart Omnigent after installing a provider.
+Discovery runs once per process. Restart Triune after installing a provider.
 Built-in IDs cannot be overridden. Duplicate IDs, invalid descriptors, and
 broken imports are logged and skipped so other providers remain available.
 
@@ -58,7 +58,7 @@ others. Selecting a particular request reads that request independently of the
 checkout, and removing a request prevents discovery from adding it again.
 
 Providers should recognize their public hosts and the instances in their CLI's
-existing login configuration without requiring Omnigent settings.
+existing login configuration without requiring Triune settings.
 `OMNIGENT_GIT_PROVIDER_<ID>_HOSTS` optionally adds comma-separated instances.
 Providers decide how those instances map to their URLs and authentication.
 GitHub also recognizes `GH_HOST` and the signed-in hosts in the gh CLI config.

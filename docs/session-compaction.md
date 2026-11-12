@@ -4,14 +4,14 @@ Coding harnesses compact their own context when a conversation approaches the
 model's context window: older messages are summarized into a single
 continuation summary, and the live agent resumes from that summary rather than
 from the full transcript. This note covers how compaction affects **importing**
-a local harness session into Omnigent.
+a local harness session into Triune.
 
 ## The compaction boundary
 
 Each harness records the boundary differently:
 
 - **Claude Code** writes the continuation summary to its JSONL transcript as a
-  user record flagged `isCompactSummary: true`. Omnigent surfaces that record as
+  user record flagged `isCompactSummary: true`. Triune surfaces that record as
   a single item flagged `is_compact_summary` (see
   `omnigent/harnesses/claude_native/bridge.py`), which is the reliable,
   always-present compaction signal — the post-compaction `SessionStart

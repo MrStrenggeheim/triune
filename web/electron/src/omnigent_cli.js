@@ -1,4 +1,5 @@
-// Discovery and invocation of the local `omnigent` CLI for the desktop shell.
+// Modified for Triune.
+// Discovery and invocation of the local CLI for the desktop shell.
 //
 // The desktop manages servers by shelling out to the same `omnigent` binary a
 // user would run by hand — `server --background/stop/status` and `host status` (the
@@ -33,7 +34,7 @@ const DEFAULT_TIMEOUT_MS = 10000;
  * install instructions in the repo root README.
  */
 const INSTALL_COMMAND =
-  "curl -fsSL https://raw.githubusercontent.com/omnigent-ai/omnigent/main/scripts/install_oss.sh | sh";
+  "curl -fsSL https://raw.githubusercontent.com/MrStrenggeheim/triune/custom/scripts/install.sh | sh";
 
 /**
  * Strip a trailing slash so URL comparisons survive the difference between
@@ -258,16 +259,14 @@ async function localServerHealthy(timeoutMs = 1500) {
 }
 
 /**
- * The CLI binary's two console-script names — both resolve to the same entry
- * point (`omnigent.cli:main`); `omni` is the short alias. We probe `omnigent`
- * first (canonical) but accept `omni` so a machine that only installed the
- * alias still resolves. See pyproject.toml `[project.scripts]`.
+ * Prefer Triune's console script while accepting the legacy aliases.
+ * All three names resolve to `omnigent.cli:main`.
  */
-const CLI_NAMES = ["omnigent", "omni"];
+const CLI_NAMES = ["triune", "omnigent", "omni"];
 
 /**
  * Well-known install locations for the CLI binary, in priority order. For each
- * directory we list the `omnigent` name then the `omni` alias.
+ * directory we list `triune` before its legacy aliases.
  * `uv tool install` (the documented installer) drops it in ~/.local/bin;
  * the rest cover Homebrew and source/cargo installs. Probing these matters
  * because a GUI-launched Electron app inherits a minimal PATH that usually
@@ -326,8 +325,8 @@ function whichName(name) {
 }
 
 /**
- * Resolve the CLI on PATH, trying `omnigent` then the `omni` alias. Returns the
- * first hit, or null when neither is on PATH.
+ * Resolve the CLI on PATH, preferring `triune` before the legacy aliases.
+ * Returns the first hit, or null when none is on PATH.
  *
  * @returns {string | null}
  */
@@ -389,7 +388,7 @@ function resolveCliPath(configuredPath, deps = {}) {
  */
 function cliCommandParts(command) {
   if (typeof command === "string" && command !== "") {
-    return { executable: command, prefixArgs: [], displayName: "omnigent" };
+    return { executable: command, prefixArgs: [], displayName: path.basename(command) };
   }
   if (
     command &&
@@ -546,11 +545,11 @@ async function getCliStatus(configuredPath) {
   }
   const res = await runCli(resolved.path, ["--version"], { timeoutMs: 5000 });
   const version = res.stdout.trim() || res.stderr.trim() || "";
-  // Must exit cleanly AND identify itself as omni — `omnigent --version` prints
-  // e.g. "omnigent 0.3.0.dev0 (…)". The exit-code alone isn't enough: an
+  // Must exit cleanly and identify itself as Triune or a legacy CLI name.
+  // The exit-code alone isn't enough: an
   // unrelated binary (e.g. /bin/echo) also exits 0 on `--version`, and we must
   // not accept it as the CLI (it would later fail to run a server / host).
-  const ok = res.code === 0 && /\bomni/i.test(version);
+  const ok = res.code === 0 && /\b(?:triune|omnigent|omni)\b/i.test(version);
   return {
     installed: ok,
     path: ok ? resolved.path : null,

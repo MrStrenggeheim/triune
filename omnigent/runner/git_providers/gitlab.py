@@ -1,5 +1,7 @@
 """GitLab MR panel adapter, authenticated by glab on the execution host."""
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import base64
@@ -577,17 +579,17 @@ class GitLabPullRequests:
 
     def merge_options(self, root: str, reference: PullRequestRef) -> dict[str, Any]:
         del root, reference
-        raise ValueError("Merging GitLab merge requests from Omnigent is not supported yet.")
+        raise ValueError("Merging GitLab merge requests from Triune is not supported yet.")
 
     def merge(
         self, root: str, reference: PullRequestRef, *, merge_method: str, expected_head: str
     ) -> dict[str, Any]:
         del root, reference, merge_method, expected_head
-        raise ValueError("Merging GitLab merge requests from Omnigent is not supported yet.")
+        raise ValueError("Merging GitLab merge requests from Triune is not supported yet.")
 
     def disable_auto_merge(self, root: str, reference: PullRequestRef) -> dict[str, Any]:
         del root, reference
-        raise ValueError("Merging GitLab merge requests from Omnigent is not supported yet.")
+        raise ValueError("Merging GitLab merge requests from Triune is not supported yet.")
 
     def review_candidates(self, root: str, reference: PullRequestRef) -> dict[str, Any]:
         del root, reference

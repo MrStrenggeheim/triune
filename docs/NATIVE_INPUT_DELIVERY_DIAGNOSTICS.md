@@ -1,7 +1,7 @@
 # Tracing a native web message
 
 `native_prompt_not_recorded` is saved when a later native transcript message
-matches a newer queued web input. Its timestamp is when Omnigent discovered
+matches a newer queued web input. Its timestamp is when Triune discovered
 the older missing message. Use the identifiers below to find the original
 delivery attempt; a nearby warning may belong to the later message.
 
@@ -19,7 +19,7 @@ and codes rather than put content in an allowed field.
 | `pending_id` | The server's queued entry. Also appears as `cleared_pending_id` on `session.input.consumed`. |
 | `delivery_attempt_id` | The server-generated ID for one queued submission attempt. A retry while still pending reuses it without forwarding again. |
 | `input_enqueued_at_ms` | Server enqueue time, in Unix milliseconds. Preserved if persistence fails and the pending entry is restored. |
-| `response_id` | The Omnigent executor response, or the saved conversation item's response at persistence. These can differ; use the input identifiers to connect the records. |
+| `response_id` | The Triune executor response, or the saved conversation item's response at persistence. These can differ; use the input identifiers to connect the records. |
 | `item_id` / `error_item_id` | Durable conversation items. Join the saved error's SSE `item_id` to the settlement's `error_item_id`. |
 | `matched_item_id` / `matched_response_id` | The later native record that matched a newer input and caused earlier entries to settle. These belong to that later record. |
 | `delivery_id` | Claude's existing local delivery trace ID. Its attempts and timing now carry the input identifiers too. |
@@ -28,9 +28,9 @@ and codes rather than put content in an allowed field.
 | `native_rpc_attempt_id` | Pairs one Codex RPC attempt with its accepted, failed, or cancelled result, including attempts recovered by retrying. |
 | `requested_native_turn_id` | The target of that specific steer; absent for a new turn start. |
 | `initial_native_turn_id` | Bridge state before a complete injection, which can differ from the target of a recovered RPC attempt. |
-| `lifecycle_response_id` | The Omnigent turn lifecycle that named this stable input before settlement. |
+| `lifecycle_response_id` | The Triune turn lifecycle that named this stable input before settlement. |
 
-Join within the same workspace and Omnigent session. Missing IDs mean that a
+Join within the same workspace and Triune session. Missing IDs mean that a
 producer did not supply them; do not infer ownership from timestamps alone.
 
 ## Events

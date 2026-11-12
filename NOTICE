@@ -150,3 +150,15 @@ Copyright (c) 2011-2012 by Selectel. Copyright (c) 2012-2017 by pyte authors and
 
 psycopg - https://pypi.org/project/psycopg/
 Copyright (C) 2003-2019 Federico Di Gregorio. Copyright (C) 2020-2021 The Psycopg Team.
+
+________________
+
+Triune modifications
+
+Triune is independently maintained by MrStrenggeheim.
+Based on Omnigent (https://github.com/omnigent-ai/omnigent), including the
+Apache-licensed custom baseline 4646d0bbd9492eed3bff0e95d39f8ac85d1b1eb8.
+See LICENSING.md and MODIFICATIONS.md for the scope of new Triune changes.
+Original notices above and prior license grants remain applicable.
+
+Required Notice: Copyright 2026 MrStrenggeheim. Triune (https://github.com/MrStrenggeheim/triune).

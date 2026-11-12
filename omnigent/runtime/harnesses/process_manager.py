@@ -17,6 +17,8 @@ the per-conversation Unix socket. Everything HTTP-shaped is in
 the per-harness ``create_app()`` factories.
 """
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import asyncio
@@ -306,7 +308,7 @@ async def _wait_for_bind(
             raise RuntimeError(
                 f"harness {harness!r} for conversation "
                 f"{conversation_id!r} exited with "
-                f"{process.returncode} during spawn (see Omnigent stderr)"
+                f"{process.returncode} during spawn (see Triune stderr)"
             )
         if await endpoint.can_connect():
             # Lock down the socket file's permissions defensively
@@ -1667,7 +1669,7 @@ async def sweep_orphaned_harness_processes(*, tmp_parent: Path | None = None) ->
             if _pid_alive(pid):
                 continue
         _logger.info(
-            "sweeping orphaned Omnigent instance dir %s (pid %d not running)",
+            "sweeping orphaned Triune instance dir %s (pid %d not running)",
             child,
             pid,
         )

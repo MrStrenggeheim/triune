@@ -1,3 +1,4 @@
+// Modified for Triune.
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 const { EventEmitter } = require("node:events");
@@ -247,7 +248,7 @@ describe("About window", () => {
     assert.match(html, /Run <code>omni update<\/code> to update\./);
     assert.match(html, /id="close"[^>]*>Close<\/button>/);
     assert.match(script, /info\.appIconDataUrl\.startsWith\("data:image\/"\)/);
-    assert.match(script, /desktopHeading\.textContent = `Omnigent \$\{platformName\} app`/);
+    assert.match(script, /desktopHeading\.textContent = `Triune \$\{platformName\} app`/);
     assert.match(script, /event\.key !== "Escape"/);
     assert.match(script, /api\?\.close\(\)/);
     assert.match(preload, /downloadDesktopUpdate:[\s\S]*about-download-desktop-update/);

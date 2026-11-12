@@ -101,6 +101,8 @@ later message follows: stale entries are evicted lazily on the next
 same conversation.
 """
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import copy
@@ -356,7 +358,7 @@ def _evict_stale_locked(conversation_id: str, now: float) -> None:
 def make_pending_id(conversation_id: str, stable_id: str | None = None) -> str:
     """Give durable and transient copies of one input the same session-scoped id."""
     identifier = (
-        uuid.uuid5(uuid.NAMESPACE_URL, f"omnigent:pending-input:{conversation_id}:{stable_id}")
+        uuid.uuid5(uuid.NAMESPACE_URL, f"triune:pending-input:{conversation_id}:{stable_id}")
         if stable_id is not None
         else uuid.uuid4()
     )

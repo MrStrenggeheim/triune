@@ -1,3 +1,4 @@
+# Modified for Triune; inherited notices remain applicable.
 """Tests for the OSS installer shell script (``scripts/install_oss.sh``).
 
 The installer is POSIX ``sh``. Its argument parsing and URL/path/profile
@@ -73,7 +74,7 @@ def test_fork_entry_point_reuses_installer_and_cleans_download(
     else:
         assert args_file.read_text().splitlines() == [
             "--repo",
-            "https://github.com/MrStrenggeheim/omnigent.git@custom",
+            "https://github.com/MrStrenggeheim/triune.git@main",
             "--no-databricks",
             "--non-interactive",
         ]
@@ -380,16 +381,16 @@ def test_check_bubblewrap_missing_no_pkg_manager_warns_generically(
 @pytest.mark.parametrize(
     ("args", "target"),
     [
-        ("", "omnigent[databricks]"),
-        ("--version 1.2.3", "omnigent[databricks]==1.2.3"),
-        ("--repo https://github.com/o/r", "omnigent[databricks] @ git+https://github.com/o/r"),
-        ("--extra databricks", "omnigent[databricks]"),
-        ("--extra foo,databricks", "omnigent[foo,databricks]"),
-        ("--extra foo,bar --extra baz", "omnigent[databricks,foo,bar,baz]"),
-        ("--no-databricks", "omnigent"),
-        ("--no-databricks --extra antigravity", "omnigent[antigravity]"),
-        ("--extra antigravity --no-databricks", "omnigent[antigravity]"),
-        ("--no-databricks --extra databricks", "omnigent[databricks]"),
+        ("", "triune[databricks]"),
+        ("--version 1.2.3", "triune[databricks]==1.2.3"),
+        ("--repo https://github.com/o/r", "triune[databricks] @ git+https://github.com/o/r"),
+        ("--extra databricks", "triune[databricks]"),
+        ("--extra foo,databricks", "triune[foo,databricks]"),
+        ("--extra foo,bar --extra baz", "triune[databricks,foo,bar,baz]"),
+        ("--no-databricks", "triune"),
+        ("--no-databricks --extra antigravity", "triune[antigravity]"),
+        ("--extra antigravity --no-databricks", "triune[antigravity]"),
+        ("--no-databricks --extra databricks", "triune[databricks]"),
     ],
 )
 def test_install_target_selects_extras(lib: Path, args: str, target: str) -> None:
@@ -397,6 +398,7 @@ def test_install_target_selects_extras(lib: Path, args: str, target: str) -> Non
         lib,
         f"""
         uv() {{ printf 'arg=%s\\n' "$@"; }}
+        REPO_URL=
         parse_args {args}
         normalize_repo_url
         install_omnigent
@@ -465,6 +467,21 @@ def databricks_env(tmp_path: Path) -> dict[str, str]:
         "TEST_CURL_LOG": str(tmp_path / "curl.log"),
         "TEST_LEDGER": str(tmp_path / "ledger.log"),
     }
+
+
+def test_default_source_is_triune_main(lib: Path) -> None:
+    """A direct installer run must use Triune and pair both SDKs with its ref."""
+    result = run(
+        lib,
+        'uv() { printf "arg=%s\\n" "$@"; }; parse_args --no-databricks; '
+        "normalize_repo_url; install_omnigent",
+    )
+    assert result.returncode == 0, result.stderr
+    arguments = [line[4:] for line in result.stdout.splitlines() if line.startswith("arg=")]
+    source = "git+https://github.com/MrStrenggeheim/triune.git@main"
+    assert arguments[-1] == source
+    assert f"omnigent-client @ {source}#subdirectory=sdks/python-client" in arguments
+    assert f"omnigent-ui-sdk @ {source}#subdirectory=sdks/ui" in arguments
 
 
 @pytest.mark.parametrize(
@@ -570,7 +587,7 @@ def test_main_requires_selected_dependencies_before_reporting_success(
     lib: Path, databricks_env: dict[str, str], args: str, download_fails: bool
 ) -> None:
     bindir = Path(databricks_env["TEST_BIN_DIR"])
-    omnigent = bindir / "omnigent"
+    omnigent = bindir / "triune"
     omnigent.write_text(
         '#!/bin/sh\nif [ "$*" = "_internal write-ledger --from-env" ]; then\n'
         '  command -v databricks > "$TEST_LEDGER"\n'
@@ -579,6 +596,7 @@ def test_main_requires_selected_dependencies_before_reporting_success(
     )
     omnigent.chmod(0o755)
     (bindir / "omni").symlink_to(omnigent)
+    (bindir / "omnigent").symlink_to(omnigent)
     fault = "curl() { return 22; }" if download_fails else ""
     r = run(
         lib,
@@ -616,5 +634,5 @@ def test_main_requires_selected_dependencies_before_reporting_success(
             assert "Databricks" not in r.stdout
         else:
             assert ledger.read_text().splitlines() == [str(bindir / "databricks"), "omnigent"]
-        assert "Omnigent installed successfully" in r.stdout
+        assert "Triune installed successfully" in r.stdout
         assert f'PATH="{bindir}:$PATH"' in r.stdout

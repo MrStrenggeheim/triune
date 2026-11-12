@@ -11,6 +11,8 @@ A user who has not connected is refused with :class:`OwnerCredentialMissingError
 there is no shared server identity. See ``deploy/databricks/README.md``.
 """
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import logging
@@ -505,10 +507,10 @@ class DatabricksSandboxLauncher(SandboxLauncher):
         stdout = response.stdout or ""
         stderr = response.stderr or ""
         if response.truncated:
-            stderr += "\n[omnigent: output truncated by the sandbox exec API]\n"
+            stderr += "\n[triune: output truncated by the sandbox exec API]\n"
         if status == statuses.EXECUTE_COMMAND_STATUS_TIMED_OUT:
             returncode = 124
-            stderr += f"\n[omnigent: command timed out after {_EXEC_TIMEOUT_S}s]\n"
+            stderr += f"\n[triune: command timed out after {_EXEC_TIMEOUT_S}s]\n"
         elif response.exit_code is None:
             # An unrecognized status decodes to None; treat it as a failure.
             returncode = 0 if status == statuses.EXECUTE_COMMAND_STATUS_COMPLETED else 1

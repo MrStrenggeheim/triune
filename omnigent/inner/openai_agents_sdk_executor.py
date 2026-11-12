@@ -9,6 +9,8 @@ Conversation state is delegated to the SDK's session layer. Each Omnigent
 Session gets its own SDK SQLiteSession keyed by the Omnigent session id.
 """
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import asyncio
@@ -1563,7 +1565,7 @@ class OpenAIAgentsSDKExecutor(Executor):
             return state.agent
 
         state.agent = agents_sdk.Agent(
-            name="Omnigent",
+            name="Triune",
             instructions=system_prompt or None,
             model=model,
             model_settings=agents_sdk.ModelSettings(

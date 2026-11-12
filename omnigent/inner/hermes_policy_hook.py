@@ -31,6 +31,8 @@ Environment variables (set by the wrapper shell script):
                             evaluation.
 """
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import json
@@ -143,9 +145,9 @@ def main() -> None:
     if action == "POLICY_ACTION_DENY":
         out: dict[str, str] = {"decision": "block"}
         if reason:
-            out["reason"] = f"Tool '{tool_name}' denied by Omnigent policy: {reason}"
+            out["reason"] = f"Tool '{tool_name}' denied by Triune policy: {reason}"
         else:
-            out["reason"] = f"Tool '{tool_name}' denied by Omnigent policy"
+            out["reason"] = f"Tool '{tool_name}' denied by Triune policy"
         json.dump(out, sys.stdout)
     elif action == "POLICY_ACTION_ASK":
         # The server resolves ASK by parking the HTTP request until the

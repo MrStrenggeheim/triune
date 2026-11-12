@@ -1,10 +1,10 @@
-# Custom Omnigent — docker-compose stack
+# Custom Triune — docker-compose stack
 
 Run the server as a self-contained Docker stack on any host: your
 laptop, a VPS, an EC2 instance, a home server, anywhere `docker
 compose` runs.
 
-The default application image is the local `omnigent-custom-server:local` build.
+The default application image is the local `triune-server:local` build.
 Use `--build` after updating the checkout; published images require an explicit `OMNIGENT_IMAGE`/`OMNIGENT_IMAGE_TAG` override.
 
 The stack:
@@ -240,7 +240,7 @@ OMNIGENT_OIDC_COOKIE_SECRET=<64-hex-chars>
 
 For an IdP application registered as a **public client**, set
 `OMNIGENT_OIDC_TOKEN_ENDPOINT_AUTH_METHOD=none` and **unset**
-`OMNIGENT_OIDC_CLIENT_SECRET`. Omnigent still sends its client ID, redirect URI,
+`OMNIGENT_OIDC_CLIENT_SECRET`. Triune still sends its client ID, redirect URI,
 and PKCE verifier, but omits the client-secret field entirely. This is an
 explicit opt-in: the default `client_secret_post` continues to require a secret,
 including for GitHub login. PKCE S256 is used in both modes.
@@ -266,7 +266,7 @@ also works with discovery. Overrides do not apply to GitHub's special OAuth
 login flow.
 
 Authorization URL query parameters (for example, `?p=policy`) are preserved.
-Omnigent-generated OAuth parameters take precedence on name collisions.
+Triune-generated OAuth parameters take precedence on name collisions.
 
 Only trusted operators should configure these addresses: the token endpoint
 receives authorization codes and, for confidential clients, the client secret;
@@ -278,7 +278,7 @@ from the issuer, but the token's issuer must still match
 
 PS256-signed identity tokens are supported alongside the existing RSA and EC
 algorithms. These options do not disable signature, expiration, email
-verification, admission, or reauthentication checks. They configure **Omnigent
+verification, admission, or reauthentication checks. They configure **Triune
 login**, not upstream MCP credentials or shared-session credential ownership.
 
 When migrating from a custom integration that inferred public-client mode from
@@ -290,7 +290,7 @@ these compatibility options never enable it automatically.
 To verify a deployment, restart with the settings above, sign in from a private
 browser window, then run `omnigent login <server-url>` and finish the browser
 flow. Confirm both identify the expected account. The identity provider must
-enforce PKCE and one-time authorization codes; Omnigent supplies the verifier.
+enforce PKCE and one-time authorization codes; Triune supplies the verifier.
 
 ### HTTPS for the callback URL
 
@@ -412,7 +412,7 @@ injected into the container.
 
 ## Host image (`--target host`)
 
-The same Dockerfile publishes a second image: the official Omnigent
+The same Dockerfile publishes a second image: the official Triune
 **host** image, which remote sandboxes boot from so they start in
 seconds instead of paying an in-sandbox dependency install. It bakes
 the full omnigent install (all three packages + deps, `python` and

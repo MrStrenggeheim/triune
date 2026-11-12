@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { useScrollRestore } from "./useScrollRestore";
 import {
   ResourceViewIdContext,
@@ -1658,7 +1659,7 @@ function PullRequestPanelDetails({
         <PullRequestEmptyState
           icon={DownloadIcon}
           title="Update your host to use the Pull Requests tab"
-          hint="The Pull Requests tab needs the host running Omnigent 0.13.0 or later. Update the host, then reconnect the session."
+          hint="The Pull Requests tab needs the host running Triune 0.13.0 or later. Update the host, then reconnect the session."
         >
           {emptyStateAction}
         </PullRequestEmptyState>

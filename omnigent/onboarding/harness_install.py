@@ -33,6 +33,8 @@ Linux; on macOS it reuses :func:`harness_cli_logged_in` as a Keychain fallback
 when the credentials file is absent — see ``ambient._claude_login_detected``.)
 """
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import json
@@ -329,7 +331,7 @@ _HARNESS_INSTALL: dict[str, HarnessInstallSpec] = {
         status_args=("auth", "status"),
         install_hint=_DEVIN_INSTALL_HINT,
         install_command=("bash", "-c", _DEVIN_INSTALL_HINT),
-        auth_hint="run `devin auth login` (Omnigent stores no Devin credential)",
+        auth_hint="run `devin auth login` (Triune stores no Devin credential)",
     ),
 }
 

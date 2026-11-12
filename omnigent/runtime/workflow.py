@@ -4,6 +4,8 @@ Load agent → build prompt → call LLM → execute tools → repeat.
 All durably checkpointed for crash recovery.
 """
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import json
@@ -2336,7 +2338,7 @@ def _build_kimi_spawn_env(
             "``executor.auth`` from the spec and configure the provider once "
             "via `kimi provider add` in $KIMI_CODE_HOME/config.toml (default "
             "~/.kimi-code/config.toml), then pin the "
-            "resulting model id in the agent spec. Omnigent-side provider "
+            "resulting model id in the agent spec. Triune-side provider "
             "injection is a deferred follow-up.",
             code=ErrorCode.INVALID_INPUT,
         )

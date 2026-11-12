@@ -1,3 +1,4 @@
+// Modified for Triune.
 import type { ReactNode } from "react";
 import {
   Dialog,
@@ -39,24 +40,24 @@ export function ConnectHostInstructions({
           </TabsList>
           <TabsContent value="local">
             <CliCommandBlock
-              command={`omni host --server ${quotedServerUrl}`}
+              command={`triune host --server ${quotedServerUrl}`}
               testIdPrefix="connect-host"
             />
           </TabsContent>
           <TabsContent value="lakebox" className="flex flex-col gap-1.5">
             <CliCommandBlock
-              command="omni sandbox create --provider lakebox"
+              command="triune sandbox create --provider lakebox"
               testIdPrefix="connect-lakebox-create"
             />
             <CliCommandBlock
-              command={`omni sandbox connect --provider lakebox --sandbox-id <id> --server ${quotedServerUrl}`}
+              command={`triune sandbox connect --provider lakebox --sandbox-id <id> --server ${quotedServerUrl}`}
               testIdPrefix="connect-lakebox-connect"
             />
           </TabsContent>
         </Tabs>
       ) : (
         <CliCommandBlock
-          command={`omni host --server ${quotedServerUrl}`}
+          command={`triune host --server ${quotedServerUrl}`}
           testIdPrefix="connect-host"
         />
       )}

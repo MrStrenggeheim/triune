@@ -1,3 +1,4 @@
+// Modified for Triune.
 // Standalone entry for the Electron server selector V2.
 //
 // Loaded from a file:// window (see electron/src/main.js `setupPagePath`).
@@ -14,7 +15,7 @@ import { maybeMockSetup } from "./pages/onboarding/mockSetup";
 import "./index.css";
 
 const DEFAULT_URL = "http://localhost:6767";
-const CLOUD_DOCS_URL = "https://omnigent.ai/docs/deploy/overview";
+const CLOUD_DOCS_URL = "https://github.com/MrStrenggeheim/triune#deployment";
 
 /** The `omnigentSetup` preload bridge (see electron/src/preload.js). */
 interface OmnigentSetup {
@@ -262,7 +263,7 @@ export function BridgeSetupApp() {
                   ok: false,
                   error:
                     "The installer finished but the omnigent CLI still isn't detected. " +
-                    "Try opening a new terminal, or install it from https://omnigent.ai/.",
+                    "Try opening a new terminal, or install it from https://github.com/MrStrenggeheim/triune.",
                 };
               }
               return { ok: result?.ok === true, error: result?.error };

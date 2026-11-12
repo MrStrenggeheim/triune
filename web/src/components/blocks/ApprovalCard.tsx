@@ -1,3 +1,4 @@
+// Modified for Triune.
 // Inline approval / option-picker card rendered when the server
 // emits an MCP-shape `response.elicitation_request`.
 //
@@ -475,7 +476,7 @@ export function ApprovalCard({
             variant="outline"
             className="h-auto max-w-full whitespace-normal text-left"
             onClick={() => submitPersist("always")}
-            title={`Ask Antigravity to save a rule allowing commands starting with “${agyPermission.alwaysAllowPattern}” for this Omnigent session`}
+            title={`Ask Antigravity to save a rule allowing commands starting with “${agyPermission.alwaysAllowPattern}” for this Triune session`}
             data-testid="approval-card-agy-always-allow"
             componentId="approval.approve_always_agy"
           >
@@ -898,8 +899,7 @@ export function ApprovalCard({
             )}
             {agyPermission?.alwaysAllowPattern && (
               <span className="text-sm text-muted-foreground">
-                Always allow saves a rule for this Omnigent session. New sessions have separate
-                rules.
+                Always allow saves a rule for this Triune session. New sessions have separate rules.
               </span>
             )}
             {formattedPreview && (

@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { TooltipButton } from "@/components/ui/tooltip";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -564,7 +565,7 @@ function IsaacCommand({
   return (
     <>
       <DialogDescription>Run this in a terminal on {hostName}, then come back.</DialogDescription>
-      <CommandRow command="omni setup" label="Copy omni setup" />
+      <CommandRow command="triune setup" label="Copy triune setup" />
       <p className="text-sm text-muted-foreground">
         Choose {harnessLabel}, then the Databricks Unity Gateway credential.
       </p>
@@ -589,10 +590,10 @@ function SetupCommand({
   return (
     <>
       <DialogDescription>
-        Run <code className="font-mono text-foreground">omni setup</code> on {hostName} to finish
+        Run <code className="font-mono text-foreground">triune setup</code> on {hostName} to finish
         setting up {harnessLabel}.
       </DialogDescription>
-      <CommandRow command="omni setup" label="Copy omni setup" />
+      <CommandRow command="triune setup" label="Copy triune setup" />
       {stillNotReady && (
         <p role="status" className="text-sm text-destructive">
           {harnessLabel} still isn’t ready on {hostName}.
@@ -663,7 +664,7 @@ function ErrorState({ error, hostName }: { error: string; hostName: string }) {
       <div className="rounded-xl border border-destructive/30 bg-destructive/5 px-3.5 py-2.5 text-ui text-destructive">
         {error}
       </div>
-      <CommandRow command="omni setup" label="Copy omni setup" />
+      <CommandRow command="triune setup" label="Copy triune setup" />
     </>
   );
 }

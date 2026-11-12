@@ -1,3 +1,4 @@
+# Modified for Triune; inherited notices remain applicable.
 [build-system]
 # Cap below hatchling 1.32.0, which flipped the default core-metadata-version
 # to 2.5 (2026-08-11) — ahead of what twine and PyPI's Warehouse accept, so
@@ -13,6 +14,7 @@ version = "0.20.0"
 description = "Terminal UI components (Rich + prompt_toolkit) for building omnigent frontends"
 readme = "README.md"
 license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
 requires-python = ">=3.12"
 dependencies = [
     # Version-locked (==) with the sibling client SDK; released together

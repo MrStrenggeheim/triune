@@ -1,6 +1,6 @@
-# Deploying Omnigent
+# Deploying Triune
 
-Omnigent ships several ways to deploy the server, organized by
+Triune ships several ways to deploy the server, organized by
 target platform. Pick the one that matches your environment.
 
 Deploying buys you a stable URL: sessions become reachable from any device,
@@ -11,7 +11,7 @@ the machines that register as hosts (see [Execution model](#execution-model)).
 ## Deploy in one click
 
 No local tooling needed. Pick a platform, click the button, and your
-Omnigent server is live with HTTPS in a few minutes.
+Triune server is live with HTTPS in a few minutes.
 
 | Platform | Button | Docs |
 |---|---|---|
@@ -131,10 +131,10 @@ deploy/
 | Deploy on a Databricks workspace (Lakebase + UC Volumes), self-managed | Databricks Apps | [`databricks/README.md`](databricks/README.md): uses Asset Bundles |
 
 > **On Databricks?** The fully managed
-> [Omnigent on Databricks](https://docs.databricks.com/aws/en/omnigent/)
+> [Triune on Databricks](https://docs.databricks.com/aws/en/omnigent/)
 > (Beta) is the recommended path: Databricks operates the server for
 > you, wired to workspace identity, Foundation Models, Unity Gateway, and
-> MLflow Tracing. Enable the **Omnigent** preview in your workspace
+> MLflow Tracing. Enable the **Triune** preview in your workspace
 > settings. The self-managed Databricks Apps bundle above is for when
 > you need control the managed service does not expose yet.
 
@@ -221,7 +221,7 @@ you or your team routinely open several.
 
 ## Execution model
 
-Omnigent runs in two pieces that talk to each other over a
+Triune runs in two pieces that talk to each other over a
 WebSocket tunnel:
 
 - **Server**: the FastAPI app you deploy here. Handles HTTP / SSE
@@ -262,7 +262,7 @@ clients: their next login cannot complete until they are updated. Existing
 sessions and refresh grants keep their normal expiry and revocation behavior.
 Browser-only login and the other authentication modes are unchanged.
 
-An old client's empty login request opens an **Update Omnigent to sign in**
+An old client's empty login request opens an **Update Triune to sign in**
 page. CLI users should run `omni upgrade` and retry their login; mobile users
 should update the app through their normal distribution channel; Slack users
 need their administrator to update the integration. The terminal or Slack
@@ -285,7 +285,7 @@ provider. The old client must show the upgrade page without signing in; the
 updated client must complete fresh sign-in and browser approval. Preserve
 PKCE and consent enforcement if rolling back an unrelated deployment issue.
 
-Updated clients send proof in `X-Omnigent-Code-Verifier`; proxies must forward
+Updated clients send proof in `X-Triune-Code-Verifier`; proxies must forward
 this header without logging it. Query-based proof remains supported for API
 compatibility, so do not retain `/auth/cli-poll` query strings either: a ticket
 and verifier together can redeem an approved login. Approval requires a browser
@@ -329,7 +329,7 @@ omnigent sandbox connect --provider modal --sandbox-id <id> --server https://you
 
 > [!NOTE]
 > Modal caps sandbox lifetime at 24 hours. Re-run `create` + `connect` to
-> roll the host onto a fresh sandbox. Daytona and Islo have no Omnigent-imposed
+> roll the host onto a fresh sandbox. Daytona and Islo have no Triune-imposed
 > lifetime cap; Daytona free-tier orgs restrict egress to an allowlist; see
 > [`daytona/README.md`](daytona/README.md) for the relay workaround. E2B
 > shares Modal's 24-hour cap **and** boots from a pre-built E2B *template*
@@ -372,7 +372,7 @@ for a later sweep, while the session history and durable host binding stay
 available for a fresh sandbox generation. Both
 `terminate_after_offline_days` and `sweep_interval_s` must be positive integers.
 
-**The host image.** Most sandboxes boot from the official prebaked host image (`ghcr.io/omnigent-ai/omnigent-host:latest`, published by CI from the `host` target of [`docker/Dockerfile`](docker/Dockerfile)), so the host starts in seconds instead of installing Omnigent at boot. The image ships the coding-harness CLIs (`claude`, `codex`, `pi`, `kiro-cli`). Blaxel uses `blaxel/omnigent-host:latest`, which combines this host runtime with Blaxel's required `sandbox-api`. E2B uses its provider template. Gensee uses a provider-managed runtime rather than this registry-image setting. To use a custom image with a provider that accepts one, build the same `host` target and point the provider config at it:
+**The host image.** Most sandboxes boot from the official prebaked host image (`ghcr.io/omnigent-ai/omnigent-host:latest`, published by CI from the `host` target of [`docker/Dockerfile`](docker/Dockerfile)), so the host starts in seconds instead of installing Triune at boot. The image ships the coding-harness CLIs (`claude`, `codex`, `pi`, `kiro-cli`). Blaxel uses `blaxel/omnigent-host:latest`, which combines this host runtime with Blaxel's required `sandbox-api`. E2B uses its provider template. Gensee uses a provider-managed runtime rather than this registry-image setting. To use a custom image with a provider that accepts one, build the same `host` target and point the provider config at it:
 
 ```bash
 docker build -f docker/Dockerfile --target host \
@@ -404,7 +404,7 @@ modal secret create omnigent-llm \
   OMNIGENT_ANTHROPIC_API_KEY=sk-ant-… OPENAI_API_KEY=sk-…
 ```
 
-Prefer `OMNIGENT_ANTHROPIC_API_KEY` for Claude Code API-key auth. Omnigent
+Prefer `OMNIGENT_ANTHROPIC_API_KEY` for Claude Code API-key auth. Triune
 resolves it into Claude Code's `apiKeyHelper`, avoiding a raw
 `ANTHROPIC_API_KEY` in the Claude CLI process.
 
@@ -648,7 +648,7 @@ branding:
     main: logo.png               # branding-assets/logo.png
     loading: loading.webp        # working indicator (falls back to main)
     favicon: favicon.png         # browser-tab icon
-  powered_by: true               # "Powered by Omnigent" credit; false to hide
+  powered_by: true               # "Powered by Triune" credit; false to hide
 ```
 
 Logo files must live under a dedicated `branding-assets/` directory beside the
@@ -663,9 +663,9 @@ The values are served over the unauthenticated `GET /v1/info` and
 `GET /v1/branding/logo/<variant>` endpoints so the login screen is branded before
 sign-in. Any unset field keeps its built-in default, so a partial block is fine.
 
-The small "Powered by Omnigent" credit under the landing composer appears only
+The small "Powered by Triune" credit under the landing composer appears only
 once you set custom branding; `powered_by: false` hides it even then. It always
-shows the Omnigent mascot, never your logo.
+shows the Triune mascot, never your logo.
 
 `server_name` names this particular server, so people who connect the desktop
 app to several servers can tell them apart. It is published in the

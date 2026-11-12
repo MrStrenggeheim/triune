@@ -55,6 +55,8 @@ and is managed out-of-band via ``kimi provider add`` (Omnigent-side
 provider injection is a deferred follow-up).
 """
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import asyncio
@@ -710,7 +712,7 @@ class KimiExecutor(Executor):
     ) -> AsyncIterator[ExecutorEvent]:
         if tools and not self._warned_tools_without_bridge:
             _logger.warning(
-                "kimi executor received %d declared tool(s) but Omnigent has no "
+                "kimi executor received %d declared tool(s) but Triune has no "
                 "tool-injection bridge for the upstream kimi binary yet (no "
                 "per-spawn --mcp-config-file). The tools will not be exposed to "
                 "kimi for this session (MCP tool-injection is a deferred follow-up).",

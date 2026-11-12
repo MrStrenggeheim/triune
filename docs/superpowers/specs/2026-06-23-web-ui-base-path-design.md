@@ -1,5 +1,8 @@
 # Web UI base-path support (issue #1031)
 
+> Historical upstream Omnigent design discussion; names, commands and release assumptions are retained as context.
+> For current Triune setup and compatibility, see the [fork guide](../../custom-fork.md).
+
 **Date:** 2026-06-23
 **Issue:** [#1031](https://github.com/omnigent-ai/omnigent/issues/1031) — Support serving the standalone Web UI under a subpath, e.g. code-server `/proxy/<port>/`.
 

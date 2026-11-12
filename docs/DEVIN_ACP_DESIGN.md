@@ -1,4 +1,7 @@
 > **Historical.** The built-in `devin-acp` row and its `omnigent.inner.devin`
+
+> Historical upstream Omnigent design discussion; names, commands and release assumptions are retained as context.
+> For current Triune setup and compatibility, see the [fork guide](custom-fork.md).
 > dialect were removed in 0.14, replaced by the native wrap (`devin-native`, see
 > `docs/devin-native.md`). This document is kept for the design rationale: the
 > `AcpExtension` seam it describes is still the way a vendor layers an ACP

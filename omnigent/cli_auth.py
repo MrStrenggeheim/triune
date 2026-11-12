@@ -1,4 +1,4 @@
-"""CLI-side auth storage for ``omnigent login``.
+"""CLI-side auth storage for ``triune login``.
 
 Persists per-server auth state in ``~/.omnigent/auth_tokens.json``
 keyed by server URL. Three record shapes live side by side:
@@ -7,7 +7,7 @@ keyed by server URL. Three record shapes live side by side:
   (``{"token": ..., "user_id": ..., "expires_at": ...}``).
 - **Databricks Apps pointer records**
   (``{"auth_type": "databricks", "workspace_host": ...}``) written by
-  ``omnigent login <apps-url>``. These deliberately store NO token:
+  ``triune login <apps-url>``. These deliberately store NO token:
   Databricks OAuth access tokens expire after ~1 hour, so the record
   just names the workspace whose host-keyed Databricks CLI OAuth cache
   (``databricks auth login --host <ws>``) mints fresh bearers on
@@ -18,6 +18,8 @@ keyed by server URL. Three record shapes live side by side:
 
 See ``designs/OIDC_AUTH.md`` §CLI Login Flow.
 """
+
+# Modified for Triune.
 
 from __future__ import annotations
 
@@ -57,7 +59,7 @@ REFRESH_MIN_REMAINING_SECONDS = 90.0
 def _token_file_path() -> Path:
     """Return the path to the auth token storage file.
 
-    Uses the shared Omnigent state directory, honoring
+    Uses the shared Triune state directory, honoring
     ``OMNIGENT_DATA_DIR``.
 
     :returns: Path to ``<data-dir>/auth_tokens.json``.
@@ -203,7 +205,7 @@ def store_token(
     :param refresh_token: Login-issued refresh grant token, when the
         server handed one out. Lets :func:`refresh_stored_token` renew
         the access token past expiry without a human re-running
-        ``omnigent login``.
+        ``triune login``.
     """
     entry: dict[str, str | float] = {
         "token": token,
@@ -372,7 +374,7 @@ def _warn_expired_once(server_url: str, expires_at: float, *, has_refresh: bool)
     else:
         _logger.warning(
             "Stored login session for %s expired on %s and holds no refresh "
-            "material. Run `omnigent login %s` to re-authenticate.",
+            "material. Run `triune login %s` to re-authenticate.",
             normalized,
             expired_on,
             normalized,
@@ -525,7 +527,7 @@ def _refresh_locked(server_url: str, normalized: str, timeout: float) -> str | N
         return None
     if resp.status_code != 200:
         _logger.warning(
-            "Token refresh against %s refused (HTTP %d) — run `omnigent login %s` "
+            "Token refresh against %s refused (HTTP %d) — run `triune login %s` "
             "to re-authenticate.",
             safe,
             resp.status_code,
@@ -674,7 +676,7 @@ DATABRICKS_ORG_ID_HEADER = "X-Databricks-Org-Id"
 # control tunnel, its runners' tunnels, and their session traffic all land on
 # one replica when they carry the same key (the host_id). Omitted for an
 # unsharded / single-replica deployment, which needs no sticky routing.
-OMNIGENT_SLICE_KEY_HEADER = "X-Databricks-Omnigent-Slice-Key"
+OMNIGENT_SLICE_KEY_HEADER = "X-Databricks-Triune-Slice-Key"
 
 # Opaque extra request headers for dev/test: a JSON object of header name→value
 # in :data:`DATABRICKS_EXTRA_HEADERS_ENV_VAR`. Databricks deployments use it to
@@ -718,7 +720,7 @@ def databricks_request_headers(
 
     The single source of truth for server-request headers. It always
     includes the :data:`DATABRICKS_ORG_ID_HEADER` workspace-routing header
-    when ``omnigent login https://<host>/?o=<id>`` recorded a selector, and
+    when ``triune login https://<host>/?o=<id>`` recorded a selector, and
     adds ``Authorization`` when a bearer is supplied. Folding both into one
     builder makes routing travel with auth: a caller that has a token gets
     routing for free, and a caller whose credential is set elsewhere (an
@@ -753,7 +755,7 @@ def databricks_request_headers(
         server URL. When omitted, the selector from the stored login record is
         used. An explicit value wins over stored state.
     :returns: A header dict carrying ``Authorization``, ``X-Databricks-Org-Id``,
-        ``X-Databricks-Omnigent-Slice-Key``, ``X-Omnigent-Installation-Id``,
+        ``X-Databricks-Triune-Slice-Key``, ``X-Omnigent-Installation-Id``,
         and/or the configured extra headers as available, possibly empty.
     """
     from omnigent.telemetry.request_headers import telemetry_request_headers
@@ -821,7 +823,7 @@ def open_server_client(
     host_id: str | None = None,
     event_dispatcher: RunnerEventDispatcher | None = None,
 ) -> httpx.AsyncClient:
-    """Open an :class:`httpx.AsyncClient` to an Omnigent server, keyed for routing.
+    """Open an :class:`httpx.AsyncClient` to a Triune server, keyed for routing.
 
     The one way to open a client to the server. It folds
     :func:`databricks_request_headers` in for you, so a request to a host-sharded

@@ -1,3 +1,4 @@
+// Modified for Triune.
 // Shell-owned About window.
 //
 // The connected app UI is supplied by the server, so product/version details
@@ -122,7 +123,7 @@ function createAboutWindow({
     about = new BrowserWindow({
       ...(parent ? { parent } : {}),
       modal: Boolean(parent),
-      title: "About Omnigent",
+      title: "About Triune",
       width: ABOUT_WIDTH,
       height: ABOUT_HEIGHT,
       minWidth: 640,

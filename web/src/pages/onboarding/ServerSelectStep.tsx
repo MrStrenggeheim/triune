@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { TooltipButton } from "@/components/ui/tooltip";
 // Onboarding step 3: join an existing server or add a new one. Lists
 // recent/managed servers from the omnigentSetup bridge as selectable cards
@@ -46,7 +47,7 @@ import { ownServerName } from "@/lib/serverNames";
 import "../../../electron/src/url.js";
 
 const DEFAULT_LOCAL = "http://localhost:6767";
-const CREATE_SERVER_URL = "https://omnigent.ai/";
+const CREATE_SERVER_URL = "https://github.com/MrStrenggeheim/triune";
 // A URL pointing at the loopback interface is a local install.
 const LOCAL_HOST_RE = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/i;
 
@@ -346,7 +347,7 @@ export function ServerSelectStep({
                     {check === "checking"
                       ? "Checking…"
                       : check === "ok"
-                        ? "Omnigent server"
+                        ? "Triune server"
                         : check === "reachable"
                           ? "Reachable"
                           : isLocalInstall(url)
@@ -439,7 +440,7 @@ export function ServerSelectStep({
                 onKeyDown={(e) => {
                   if (e.key === "Enter") addServer();
                 }}
-                placeholder="Enter Omnigent server URL"
+                placeholder="Enter Triune server URL"
                 className="border-0 px-0 shadow-none focus-visible:ring-0"
                 aria-label="Server URL"
               />

@@ -1,5 +1,8 @@
 # Model Hardcoding Plan
 
+> Historical upstream Omnigent design discussion; names, commands and release assumptions are retained as context.
+> For current Triune setup and compatibility, see the [fork guide](custom-fork.md).
+
 ## Current Inventory
 
 Production model selection uses explicit operator configuration, provider or

@@ -28,6 +28,8 @@ Design invariants (see designs/OMNIGENT_INTEGRATION.md §1 and §2):
   cancellable_function-type tools.
 """
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import copy
@@ -1538,7 +1540,7 @@ def _fail_on_unsupported_tool(
                 f"omnigent agent {agent_name!r} declares tool "
                 f"{tool_name!r} of type `mcp` with "
                 f"``databricks_server={tool.databricks_server!r}`` — "
-                f"Omnigent' MCPServerConfig doesn't understand the "
+                f"Triune's MCPServerConfig doesn't understand the "
                 f"named-Databricks-server shape. Translate to an "
                 f"explicit HTTP ``url`` or stdio ``command``+``args`` "
                 f"MCP first.",

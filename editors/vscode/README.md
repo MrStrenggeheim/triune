@@ -1,23 +1,27 @@
-# Omnigent for VS Code
+# Triune for VS Code
 
-A minimal VS Code extension that opens your **running local Omnigent server** inside
+A minimal VS Code extension that opens your **running local Triune server** inside
 the editor — an editor-beside pane that iframes the same UI you see at
 `http://127.0.0.1:6767`. It is a thin client of the local server's existing HTTP API
 (`server/API.md`); there is nothing new to run on the server side.
 
-This is the first, deliberately small donation (tracking
+The original Omnigent integration was a small upstream contribution (tracking
 [omnigent-ai/omnigent#1219](https://github.com/omnigent-ai/omnigent/issues/1219)):
 localhost discovery, the editor iframe pane, and the activity-bar / editor-title icons.
 Sessions, diffs, send-selection, and remote/embedded rendering are intentionally out of
 scope for now.
+
+Build Triune from [MrStrenggeheim/triune `main`](https://github.com/MrStrenggeheim/triune/tree/main), following the [fork guide](../../docs/custom-fork.md).
+Start its server with `triune server`, then run **Triune: Open** in VS Code.
+The extension retains the `omnigent-vscode` package identity, `omnigent.*` configuration/command/view IDs and `~/.omnigent` discovery path for compatibility.
 
 ## How it works
 
 - On activation the extension discovers a locally running server via
   `~/.omnigent/local_server.pid` and a `/health` probe (or uses `omnigent.serverUrl`
   when set to a localhost URL).
-- The Omnigent activity-bar view offers an **Open Omnigent** button. The
-  **Omnigent: Open** command (`omnigent.open`) — also on the editor title bar and in the
+- The Triune activity-bar view offers an **Open Triune** button. The
+  **Triune: Open** command (`omnigent.open`) — also on the editor title bar and in the
   command palette — opens an editor-beside pane that frames the running server.
 - The iframe path is used for **local** servers only; a local server is loopback and
   needs no auth, so no token ever appears in the iframe URL.
@@ -60,5 +64,7 @@ src/
 └── discovery/          # local-server discovery (pidfile / health / liveness)
 ```
 
-Licensed under Apache-2.0 (see `LICENSE`). Contributions require a DCO sign-off
-(`git commit -s`), per the repository `CONTRIBUTING.md`.
+The inherited upstream license notice is retained below; current Triune scope is defined in the repository [LICENSE](../../LICENSE) and [LICENSING.md](../../LICENSING.md).
+
+> Licensed under Apache-2.0 (see `LICENSE`). Contributions require a DCO sign-off
+> (`git commit -s`), per the repository `CONTRIBUTING.md`.

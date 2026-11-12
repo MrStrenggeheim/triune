@@ -24,6 +24,8 @@ Two rules shape everything here:
   wrapper launches its own. The launch always happens.
 """
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import json
@@ -257,7 +259,7 @@ def _unavailable(reason: str) -> ArmedSession:
     return ArmedSession(
         session_id=None,
         notice=(
-            f"omnigent: Smart Routing was unavailable ({reason}); launching on the default model."
+            f"triune: Smart Routing was unavailable ({reason}); launching on the default model."
         ),
     )
 

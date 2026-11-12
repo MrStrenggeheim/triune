@@ -1,5 +1,7 @@
 """Agent requests to open workspace files in the current session's UI."""
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 from pathlib import PurePosixPath
@@ -47,7 +49,7 @@ class UiOpenFileTool(Tool):
     def description(cls) -> str:
         """Return the agent-facing contract."""
         return (
-            "Open a workspace-relative file in Omnigent UIs currently viewing this session. "
+            "Open a workspace-relative file in Triune UIs currently viewing this session. "
             "Does not modify the file or switch users to another session. Requests are not "
             "replayed later. The result reports stream delivery, not confirmation that a UI "
             "displayed the file; file access errors and unsaved-edit prompts remain in the UI."

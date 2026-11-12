@@ -1,3 +1,4 @@
+# Modified for Triune; inherited notices remain applicable.
 # Debby — the two-headed brainstorming partner.
 #
 # Debby never answers from a single model. Every question she receives is
@@ -10,10 +11,10 @@
 # number of rounds before they converge.
 #
 # Usage:
-#   omnigent run examples/debby
+#   triune run examples/debby
 #
 # Debby's two heads run on the claude-sdk and codex harnesses, so
-# configure both a Claude and an OpenAI provider first (e.g. `omnigent setup`,
+# configure both a Claude and an OpenAI provider first (e.g. `triune setup`,
 # or export ANTHROPIC_API_KEY and OPENAI_API_KEY).
 
 spec_version: 1
@@ -28,7 +29,7 @@ description: >-
 # thinking of her own on the user's question — she orchestrates the two
 # partners, lays out both views, and (under `debate`) runs the critique
 # loop and synthesizes. No model is pinned, so the claude-sdk harness runs on
-# whatever Claude provider you configured (`omnigent setup`) — an Anthropic
+# whatever Claude provider you configured (`triune setup`) — an Anthropic
 # API key, a Claude subscription, an OpenAI-compatible gateway, or a Databricks
 # workspace — resolving that provider's default Claude model (the bundled
 # catalog default is claude-opus-4-8).

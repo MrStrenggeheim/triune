@@ -1,3 +1,4 @@
+// Modified for Triune.
 import SwiftUI
 
 struct AppRootView: View {
@@ -132,7 +133,7 @@ struct AppRootView: View {
       }
     #endif
     .alert(
-      "Open this Omnigent link?",
+      "Open this Triune link?",
       isPresented: $showDeepLinkConsent
     ) {
       Button("Cancel", role: .cancel) { consentDeepLink = nil }
@@ -141,7 +142,7 @@ struct AppRootView: View {
       if let consentDeepLink {
         Text(
           """
-          This link will connect Omnigent to \(consentDeepLink.origin.hostLabel) and open a conversation.
+          This link will connect Triune to \(consentDeepLink.origin.hostLabel) and open a conversation.
 
           Only open links from a server you trust.
           """

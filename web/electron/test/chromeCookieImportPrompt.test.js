@@ -1,3 +1,4 @@
+// Modified for Triune.
 // Tests for the native Chrome-cookie import prompt (src/browserIpc.js), run
 // with `node --test`.
 //
@@ -41,7 +42,7 @@ describe("buildCookieImportPrompt", () => {
       profileName: "Work",
       cookieCount: 3,
     });
-    assert.equal(message, "Import 3 cookies into Omnigent?");
+    assert.equal(message, "Import 3 cookies into Triune?");
     assert.match(detail, /From Chrome profile "Work" for example\.com and its subdomains/);
     // The picker can import an ancestor, so say which page receives the copy.
     assert.match(detail, /this tab is on mail\.example\.com\)/);

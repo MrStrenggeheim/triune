@@ -1,6 +1,6 @@
 # OLTP database best practices
 
-Use this guide when designing or reviewing Omnigent's application schemas,
+Use this guide when designing or reviewing Triune's application schemas,
 queries, transactions, and storage code. It is the database reference for Polly
 and its reviewers, and is maintained alongside the code it governs.
 
@@ -48,7 +48,7 @@ for maintainers instead of inventing an exception or a speculative blocker.
 ## Storage layer and workload design
 
 **Required:** New features must use the existing application storage
-abstractions. In Omnigent, these are the stores under `omnigent/stores/`, managed
+abstractions. In Triune, these are the stores under `omnigent/stores/`, managed
 SQLAlchemy sessions, and Alembic migrations. Use
 `make_named_managed_session_maker` and stable operation names as described in
 [`AGENTS.md`](../AGENTS.md#database-query-names). Use the artifact store for
@@ -274,7 +274,7 @@ and downstream tools.
 | `LONGBLOB` or `LONGTEXT` | These permit excessively large values. Use bounded fields or artifact storage. |
 | Native SQL `JSON` | Normalize repeated entries into a child table, or use a bounded opaque binary representation when relational access is unnecessary. |
 | `TEXT` or `MEDIUMTEXT` | Use bounded strings for actual text, or a bounded binary payload for serialized/compressed data. Charset checks on text columns are incompatible with arbitrary compressed or encrypted bytes. |
-| String UUIDs | Use 16-byte binary UUID storage. In Omnigent, reuse `Uuid16` and its dialect variants rather than storing formatted UUID strings. |
+| String UUIDs | Use 16-byte binary UUID storage. In Triune, reuse `Uuid16` and its dialect variants rather than storing formatted UUID strings. |
 
 For exact quantities, choose the smallest sufficient integer type or an exact
 decimal. For example, store 1.53 currency units as 153 minor units; name the

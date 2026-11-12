@@ -1,5 +1,7 @@
 """Background transcript forwarding for native Claude Code sessions."""
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import asyncio
@@ -455,7 +457,7 @@ def _note_forward_failure(retry_key: str, exc: httpx.HTTPError, *, session_id: s
         and not _forward_health.degraded_logged
     ):
         _logger.error(
-            "claude-native forward sync degraded: %d consecutive Omnigent "
+            "claude-native forward sync degraded: %d consecutive Triune "
             "event-post failures; transcript/usage mirroring may be incomplete "
             "(latest key=%s)",
             _forward_health.consecutive_failures,
@@ -727,7 +729,7 @@ class _SubagentStatusCapability:
             ):
                 if self.supported:
                     _logger.info(
-                        "Omnigent server does not accept subagent.status; "
+                        "Triune server does not accept subagent.status; "
                         "skipping idle observations until the forwarder restarts"
                     )
                 self.supported = False
@@ -2053,7 +2055,7 @@ def _truncated_batch_field(
             ensure_ascii=False,
             separators=(",", ":"),
         )
-    notice = f"[content truncated by omnigent: {omitted} of {len(encoded)} bytes omitted]"
+    notice = f"[content truncated by triune: {omitted} of {len(encoded)} bytes omitted]"
     return f"{prefix}\n\n{notice}"
 
 
@@ -2225,7 +2227,7 @@ async def _post_external_conversation_items(
         # SessionEventInput and reject a top-level list with 422.
         if batch_capability.supported is not False:
             _logger.info(
-                "Omnigent server does not accept session event arrays; "
+                "Triune server does not accept session event arrays; "
                 "forwarding child transcript items individually"
             )
         batch_capability.supported = False
@@ -4025,7 +4027,7 @@ async def _maybe_mirror_external_session_id(
             )
             return True
         _logger.warning(
-            "Transient Omnigent error PATCHing external_session_id (%s); session=%s — will retry",
+            "Transient Triune error PATCHing external_session_id (%s); session=%s — will retry",
             exc.response.status_code,
             session_id,
             extra={"session_id": session_id},
@@ -6360,7 +6362,7 @@ async def _post_title_change_if_new(
     except httpx.HTTPError:
         # Leave posted_title behind observed_title so the next poll retries.
         _logger.warning(
-            "Failed to mirror /rename to Omnigent session=%s; the web session "
+            "Failed to mirror /rename to Triune session=%s; the web session "
             "list may show a stale title until the next poll",
             session_id,
             exc_info=True,
@@ -6414,7 +6416,7 @@ async def _post_model_change_if_new(
     except httpx.HTTPError:
         # Leave posted_model behind observed_model so the next poll retries.
         _logger.warning(
-            "Failed to mirror model change to Omnigent session=%s; model pill / "
+            "Failed to mirror model change to Triune session=%s; model pill / "
             "cost-budget gate may lag until the next poll",
             session_id,
             exc_info=True,
@@ -6962,7 +6964,7 @@ async def _maybe_sync_effort_from_slash_command(
         resp.raise_for_status()
     except httpx.HTTPError:
         _logger.warning(
-            "Failed to mirror in-pane /effort=%s to Omnigent session=%s; "
+            "Failed to mirror in-pane /effort=%s to Triune session=%s; "
             "effort pill may lag until the next change",
             level,
             session_id,

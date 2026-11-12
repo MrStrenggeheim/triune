@@ -10,6 +10,8 @@ an injected ``client_factory`` (tests), a running
 (harness-side, where only the URL + auth secret are known).
 """
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import logging
@@ -203,7 +205,7 @@ class OpenCodeHttpTransport:
                 if existing is not None:
                     return existing.id
             created = await client.create_session(
-                {"title": f"omnigent:{launch.omnigent_session_id}"}
+                {"title": f"triune:{launch.omnigent_session_id}"}
             )
             return created.id
         finally:

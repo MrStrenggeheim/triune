@@ -1,4 +1,16 @@
-# Publishing the Omnigent VS Code extension
+# Building and distributing the Triune VS Code extension
+
+Triune is distributed from [MrStrenggeheim/triune `main`](https://github.com/MrStrenggeheim/triune/tree/main).
+Build and package the extension locally using [README.md](README.md#build--test--package), then install the resulting `.vsix` in VS Code.
+Start `triune server` and run **Triune: Open** to confirm that the panel shows the local server.
+The inherited `omnigent-vscode` package name and command/configuration IDs remain compatibility identifiers.
+See the repository [LICENSE](../../LICENSE) and [LICENSING.md](../../LICENSING.md) for distribution terms.
+
+## Upstream Omnigent release process (historical reference)
+
+The process below describes upstream Omnigent's Databricks publishing infrastructure.
+It does not establish a Triune Marketplace release or grant access to upstream publisher credentials.
+Its repository links, workflow IDs, commands and release assumptions are retained as upstream context.
 
 This directory holds the Omnigent VS Code extension. It is published
 under the shared **`databricks`** VS Code Marketplace publisher (and the

@@ -1,15 +1,13 @@
 #!/bin/sh
 
-# Omnigent installer.
+# Modified for Triune: install this repository, never the upstream package.
 #
-# Installs `omnigent[databricks]` from PyPI with uv and the Databricks CLI,
-# wires up PATH, and points you at first-run. The wheel bundles the web UI, so the
-# default install needs no Node/npm and runs no build.
+# Installs Triune from this repository with matching SDKs and a built web UI.
+# The small install.sh entry point omits optional Databricks integration.
 #
 # Options:
-#   --version X   install a specific PyPI release (default: latest)
 #   --repo URL    install from a git checkout instead (builds from source;
-#                 requires Node 22+/npm) — for development
+#                 requires Node 22.13+ and pnpm)
 #   --extra NAME  install an optional-dependency extra (repeatable, or
 #                 comma-separated), in addition to databricks
 #   --no-databricks  omit the default Databricks extra and CLI
@@ -23,8 +21,8 @@
 
 set -eu
 
-# Published PyPI package, the default install. --version pins a release.
-PACKAGE_NAME="omnigent"
+# Package identity is distinct from inherited Python import names.
+PACKAGE_NAME="triune"
 VERSION=
 # Databricks workspace login is included; --extra adds other integrations.
 EXTRAS=
@@ -35,9 +33,8 @@ DATABRICKS_CLI_SHA256_LINUX_AMD64=5599f6a4c01535142cdb1aa16527ec68e6aa849bd7ce72
 DATABRICKS_CLI_SHA256_LINUX_ARM64=27440b096de110978ea8621ed936692bf88e6912ddadea810f7cac78850ceb02
 DATABRICKS_CLI_SHA256_DARWIN_AMD64=968946e53e0b197870931c34d103e2e4317002314db6e04a11495af2554415c3
 DATABRICKS_CLI_SHA256_DARWIN_ARM64=5c899a18bb280a33cb1814418fd1352a6a6e5487a2d9eb850c573114885c2f83
-# Set by --repo to install from a git checkout instead (development; builds
-# the web UI from source). Empty => install the published wheel from PyPI.
-REPO_URL=
+# Always use this product source by default; --repo can select a revision.
+REPO_URL=https://github.com/MrStrenggeheim/triune.git@main
 PYTHON_VERSION="3.12"
 INSTALL_URL=
 NON_INTERACTIVE=false
@@ -70,19 +67,11 @@ init_style() {
   fi
 }
 
-# The Otto + "omnigent" wordmark lockup, printed once at the top of an
-# interactive install. Mirrors omnigent.inner.wordmark.lockup_lines(); the
-# whole lockup is painted in the brand magenta (flat — no gradient in sh).
-# Skipped off a TTY (use_terminal_ui) so piped/CI installs stay clean.
+# Modified for Triune; the same three tilted strokes identify the product.
 print_banner() {
   use_terminal_ui || return 0
-  printf '\n'
-  printf '%s  ⠀⠀⠀⢠⣿⡄⠀⠀⠀   ██████╗ ███╗   ███╗███╗   ██╗██╗ ██████╗ ███████╗███╗   ██╗████████╗%s\n' "$MAGENTA" "$RESET"
-  printf '%s  ⢴⣶⣶⠉⣿⠉⣶⣶⡦  ██╔═══██╗████╗ ████║████╗  ██║██║██╔════╝ ██╔════╝████╗  ██║╚══██╔══╝%s\n' "$MAGENTA" "$RESET"
-  printf '%s  ⠀⠙⣿⣶⣿⣶⣿⠋⠀  ██║   ██║██╔████╔██║██╔██╗ ██║██║██║  ███╗█████╗  ██╔██╗ ██║   ██║%s\n' "$MAGENTA" "$RESET"
-  printf '%s  ⠀⢠⣿⡿⠿⢿⣿⡄⠀  ╚██████╔╝██║ ╚═╝ ██║██║ ╚████║██║╚██████╔╝███████╗██║ ╚████║   ██║%s\n' "$MAGENTA" "$RESET"
-  printf '%s  ⠀⠈⠁⠀⠀⠀⠈⠁⠀   ╚═════╝ ╚═╝     ╚═╝╚═╝  ╚═══╝╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝   ╚═╝%s\n' "$MAGENTA" "$RESET"
-  printf '%s  all your agents, one cli%s\n\n' "$DIM" "$RESET"
+  printf '\n%s  /// Triune%s\n' "$MAGENTA" "$RESET"
+  printf '%s  all your agents, one workspace%s\n\n' "$DIM" "$RESET"
 }
 
 usage() {
@@ -412,7 +401,7 @@ check_npm() {
   fi
 }
 
-# `omnigent claude` / `omnigent codex` launch through a local tmux terminal
+# `triune claude` / `triune codex` launch through a local tmux terminal
 # and won't start without it, so surface it up front and offer to install it.
 # Emit the package-manager command that installs $1 on this Linux box, or
 # nothing when no known package manager is present. Shared by the tmux and
@@ -443,16 +432,16 @@ check_tmux() {
   case "$(uname -s)" in
     Darwin)
       if command -v brew >/dev/null 2>&1; then
-        if prompt_yes_no "tmux is missing (needed for \`omnigent claude\` / \`omnigent codex\`). Install it with brew?"; then
-          run_with_spinner "brew install tmux" brew install tmux || warn "brew install tmux failed — install tmux manually before \`omnigent claude\`."
+        if prompt_yes_no "tmux is missing (needed for \`triune claude\` / \`triune codex\`). Install it with brew?"; then
+          run_with_spinner "brew install tmux" brew install tmux || warn "brew install tmux failed — install tmux manually before \`triune claude\`."
           return
         fi
       fi
-      warn "tmux not found — \`omnigent claude\` / \`omnigent codex\` need it. Install with: brew install tmux"
+      warn "tmux not found — \`triune claude\` / \`triune codex\` need it. Install with: brew install tmux"
       ;;
     Linux)
       install_cmd="$(linux_pkg_install_cmd tmux)"
-      if [ -n "$install_cmd" ] && prompt_yes_no "tmux is missing (needed for \`omnigent claude\` / \`omnigent codex\`). Install it now ($install_cmd)?"; then
+      if [ -n "$install_cmd" ] && prompt_yes_no "tmux is missing (needed for \`triune claude\` / \`triune codex\`). Install it now ($install_cmd)?"; then
         # Run directly (not via run_with_spinner) so sudo can prompt for a password.
         sh -c "$install_cmd" || warn "tmux install failed — run manually: $install_cmd"
         if command -v tmux >/dev/null 2>&1; then
@@ -463,15 +452,15 @@ check_tmux() {
         return
       fi
       if [ -n "$install_cmd" ]; then
-        warn "tmux not found — \`omnigent claude\` / \`omnigent codex\` need it. Install with: $install_cmd"
+        warn "tmux not found — \`triune claude\` / \`triune codex\` need it. Install with: $install_cmd"
       else
-        warn "tmux not found — \`omnigent claude\` / \`omnigent codex\` need it. Install it with your package manager."
+        warn "tmux not found — \`triune claude\` / \`triune codex\` need it. Install it with your package manager."
       fi
       ;;
   esac
 }
 
-# The native `omnigent claude` / `omnigent codex` / `pi` harnesses wrap each
+# The native `triune claude` / `triune codex` / `pi` harnesses wrap each
 # agent terminal in a bubblewrap (`bwrap`) OS-sandbox; on Linux that isolation
 # is mandatory and fail-loud, so a missing `bwrap` binary makes those terminals
 # fail to start. macOS sandboxes with the built-in seatbelt backend and needs
@@ -487,7 +476,7 @@ check_bubblewrap() {
   fi
 
   install_cmd="$(linux_pkg_install_cmd bubblewrap)"
-  if [ -n "$install_cmd" ] && prompt_yes_no "bubblewrap is missing (needed to sandbox native \`omnigent claude\` / \`omnigent codex\` terminals). Install it now ($install_cmd)?"; then
+  if [ -n "$install_cmd" ] && prompt_yes_no "bubblewrap is missing (needed to sandbox native \`triune claude\` / \`triune codex\` terminals). Install it now ($install_cmd)?"; then
     run_with_spinner "install bubblewrap" sh -c "$install_cmd" || warn "bubblewrap install failed — run manually: $install_cmd"
     if command -v bwrap >/dev/null 2>&1; then
       OMNIGENT_LEDGER_DEP_BWRAP=omnigent
@@ -496,9 +485,9 @@ check_bubblewrap() {
     return
   fi
   if [ -n "$install_cmd" ]; then
-    warn "bubblewrap (bwrap) not found — native \`omnigent claude\` / \`omnigent codex\` terminals need it on Linux. Install with: $install_cmd"
+    warn "bubblewrap (bwrap) not found — native \`triune claude\` / \`triune codex\` terminals need it on Linux. Install with: $install_cmd"
   else
-    warn "bubblewrap (bwrap) not found — native \`omnigent claude\` / \`omnigent codex\` terminals need it on Linux. Install it with your package manager."
+    warn "bubblewrap (bwrap) not found — native \`triune claude\` / \`triune codex\` terminals need it on Linux. Install it with your package manager."
   fi
 }
 
@@ -518,13 +507,13 @@ install_omnigent() {
     else
       target="$INSTALL_URL"
     fi
-    step "Installing Omnigent from source${extras_suffix:+ $extras_suffix} (Python $PYTHON_VERSION)"
+    step "Installing Triune from source${extras_suffix:+ $extras_suffix} (Python $PYTHON_VERSION)"
   elif [ -n "$VERSION" ]; then
     target="${PACKAGE_NAME}${extras_suffix}==${VERSION}"
-    step "Installing Omnigent $VERSION${extras_suffix:+ $extras_suffix} (Python $PYTHON_VERSION)"
+    step "Installing Triune $VERSION${extras_suffix:+ $extras_suffix} (Python $PYTHON_VERSION)"
   else
     target="${PACKAGE_NAME}${extras_suffix}"
-    step "Installing Omnigent${extras_suffix:+ $extras_suffix} (Python $PYTHON_VERSION)"
+    step "Installing Triune${extras_suffix:+ $extras_suffix} (Python $PYTHON_VERSION)"
   fi
   # Source installs must pair the backend with the SDKs from the same ref;
   # uv tool install does not apply the checkout's tool.uv.sources mapping.
@@ -671,7 +660,7 @@ maybe_add_bin_to_path() {
       step "PATH is already configured in $profile"
       return
     fi
-    fail "$profile already has an Omnigent installer block. Update it manually to: $path_line"
+    fail "$profile already has an Triune installer block. Update it manually to: $path_line"
   fi
 
   if ! prompt_yes_no "Add $bin_dir to PATH in $profile?"; then
@@ -691,12 +680,12 @@ maybe_add_bin_to_path() {
 
 write_install_ledger() {
   bin_dir="$1"
-  cli_path="$bin_dir/omnigent"
+  cli_path="$bin_dir/triune"
   if [ ! -x "$cli_path" ]; then
-    cli_path="$(command -v omnigent 2>/dev/null || true)"
+    cli_path="$(command -v triune 2>/dev/null || true)"
   fi
   if [ -z "$cli_path" ]; then
-    warn "Could not write install ledger: omnigent command not found."
+    warn "Could not write install ledger: triune command not found."
     return 0
   fi
   if [ -n "$LEDGER_PROFILE" ]; then
@@ -716,14 +705,14 @@ write_install_ledger() {
 
 verify_omnigent() {
   bin_dir="$1"
-  cli_path="$bin_dir/omnigent"
+  cli_path="$bin_dir/triune"
 
   if [ ! -x "$cli_path" ]; then
-    cli_path="$(command -v omnigent 2>/dev/null || true)"
+    cli_path="$(command -v triune 2>/dev/null || true)"
   fi
 
   if [ -z "$cli_path" ]; then
-    fail "Omnigent installed, but the omnigent command was not found."
+    fail "Triune installed, but the triune command was not found."
   fi
 
   "$cli_path" --help >/dev/null
@@ -731,9 +720,9 @@ verify_omnigent() {
 
   # `omni` is a shorthand alias installed alongside `omnigent`; check it so a
   # packaging regression that drops it surfaces here rather than later.
-  for alias_cmd in omni; do
+  for alias_cmd in omnigent omni; do
     if [ ! -x "$bin_dir/$alias_cmd" ] && ! command -v "$alias_cmd" >/dev/null 2>&1; then
-      warn "the $alias_cmd alias was not installed (expected a console-script entry point alongside omnigent)."
+      warn "the $alias_cmd alias was not installed (expected a console-script entry point alongside triune)."
     fi
   done
 }
@@ -748,21 +737,21 @@ print_next_steps() {
     command_prefix="PATH=\"$bin_dir:\$PATH\" "
   fi
 
-  printf '\n%sOmnigent installed successfully.%s\n\n' "$BOLD" "$RESET"
+  printf '\n%sTriune installed successfully.%s\n\n' "$BOLD" "$RESET"
   printf 'Start chatting — first run sets up a model and a local web UI:\n'
-  printf '  %s%somnigent%s\n\n' "$command_prefix" "$MAGENTA" "$RESET"
+  printf '  %s%striune%s\n\n' "$command_prefix" "$MAGENTA" "$RESET"
   printf 'Or launch a specific coding harness:\n'
-  printf '  %somnigent claude          # Claude Code\n' "$command_prefix"
-  printf '  %somnigent codex           # Codex\n\n' "$command_prefix"
+  printf '  %striune claude          # Claude Code\n' "$command_prefix"
+  printf '  %striune codex           # Codex\n\n' "$command_prefix"
   printf 'Manage model credentials any time:\n'
-  printf '  %somnigent setup\n\n' "$command_prefix"
+  printf '  %striune setup\n\n' "$command_prefix"
   printf 'Uninstall the CLI but keep local history and credentials:\n'
-  printf '  %somnigent uninstall --yes\n\n' "$command_prefix"
+  printf '  %striune uninstall --yes\n\n' "$command_prefix"
   if has_databricks_extra; then
-    printf 'Connect to a Databricks-hosted Omnigent server:\n'
+    printf 'Connect to a Databricks-hosted Triune server:\n'
     printf '  %somnigent login <workspace-url>/omnigent\n\n' "$command_prefix"
     printf '%sDatabricks dependencies and CLI are installed. To use a workspace\n' "$DIM"
-    printf 'as your model provider, select Databricks in omnigent setup.%s\n' "$RESET"
+    printf 'as your model provider, select Databricks in triune setup.%s\n' "$RESET"
   fi
 }
 

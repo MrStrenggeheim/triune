@@ -1,6 +1,6 @@
 # GitHub App setup (per-user GitHub connect)
 
-How to register and wire the **GitHub App** that powers Omnigent's per-user
+How to register and wire the **GitHub App** that powers Triune's per-user
 GitHub connect. Once configured, a signed-in user can **Settings → Sandbox
 Integrations → Connect GitHub**, and their managed sandboxes then authenticate
 `git` / `gh` as them (clone private repos, push branches, open PRs) using a
@@ -31,7 +31,7 @@ short-lived token minted from that user's authorization — never a shared PAT.
   the account/org that owns the repo — so access is auditable and revocable per
   install, and there is no long-lived personal secret to leak.
 
-> **The one gotcha:** user OAuth alone lets Omnigent *list* the repos a user can
+> **The one gotcha:** user OAuth alone lets Triune *list* the repos a user can
 > see, but **reading a private repo's contents/branches requires the App to be
 > installed on that repo's owner** (see [Step 6](#step-6--install-the-app)). A
 > connected-but-not-installed App returns `404` on private repo content.
@@ -42,7 +42,7 @@ short-lived token minted from that user's authorization — never a shared PAT.
 
 - Admin on the GitHub account or org that will **own** the App (personal
   account is fine for a dev instance; use the org for a shared deploy).
-- Your Omnigent server's public origin, e.g.
+- Your Triune server's public origin, e.g.
   `https://omnigent.example.com`. The OAuth callback must be
   reachable from a browser at `…/v1/connections/github/callback`.
 - The credential store configured (`OMNIGENT_CREDENTIAL_*` / KMS) so tokens can
@@ -61,30 +61,30 @@ Fill in:
 | Field | Value |
 | --- | --- |
 | **GitHub App name** | Anything unique, e.g. `omnigent-connect` (the resolved slug becomes the install URL). |
-| **Homepage URL** | Your Omnigent origin, e.g. `https://omnigent.example.com`. |
+| **Homepage URL** | Your Triune origin, e.g. `https://omnigent.example.com`. |
 | **Description** | Optional — shown on the authorize screen. |
 
 ![Register the GitHub App: name, description, homepage](images/github-app/01-register.png)
 
 ## Step 2 — Identifying and authorizing users (OAuth)
 
-This is the part Omnigent's connect flow depends on.
+This is the part Triune's connect flow depends on.
 
 - **Callback URL / Redirect URI**: `https://<your-omnigent-origin>/v1/connections/github/callback`
   (for example: `https://omnigent.example.com/v1/connections/github/callback`).
-  This **must** equal `OMNIGENT_GITHUB_APP_REDIRECT_URI` (or the value Omnigent
+  This **must** equal `OMNIGENT_GITHUB_APP_REDIRECT_URI` (or the value Triune
   derives from `OMNIGENT_DOMAIN`, which is exactly this shape).
-- **Expire user authorization tokens**: **checked** — Omnigent uses the
+- **Expire user authorization tokens**: **checked** — Triune uses the
   `refresh_token` to keep long sessions alive.
 - **Request user authorization (OAuth) during installation**: leave **unchecked** —
-  Omnigent runs connect as a separate, explicit step.
+  Triune runs connect as a separate, explicit step.
 - **Enable Device Flow**: leave **unchecked**.
 
 ![Identifying and authorizing users: callback URL + expire tokens](images/github-app/02-oauth.png)
 
 ## Step 3 — Webhook
 
-Omnigent's connect flow does **not** consume webhooks. **Uncheck "Active"** under
+Triune's connect flow does **not** consume webhooks. **Uncheck "Active"** under
 Webhook (leaving the URL blank). This avoids GitHub retrying deliveries to a
 non-existent endpoint.
 
@@ -134,7 +134,7 @@ On the App's **General** page:
   `OMNIGENT_GITHUB_APP_PRIVATE_KEY_PATH` (a file path).
 
 > Treat the client secret and private key like passwords — never commit them.
-> Put them in the same secret store Omnigent already reads (e.g. the
+> Put them in the same secret store Triune already reads (e.g. the
 > `omnigent-github-app` ExternalSecret on the Kubernetes deploys).
 
 ![Generate client secret and private key](images/github-app/06-secrets.png)
@@ -150,14 +150,14 @@ the repo's owner, cloning or listing branches of a private repo returns `404`
 even for a correctly *connected* user.
 
 Set `OMNIGENT_GITHUB_APP_SLUG` to the App's slug (from its URL,
-`github.com/apps/<slug>`) so Omnigent can render the in-product "Install" link
+`github.com/apps/<slug>`) so Triune can render the in-product "Install" link
 (`https://github.com/apps/<slug>/installations/new`).
 
 ![Install the App on an org, all repositories](images/github-app/07-install.png)
 
 ---
 
-## Wire it into Omnigent
+## Wire it into Triune
 
 Set these on the **server** (the feature enables itself once client id + secret +
 a resolvable redirect URI are present):
@@ -167,7 +167,7 @@ a resolvable redirect URI are present):
 OMNIGENT_GITHUB_APP_CLIENT_ID=Iv23li...           # App "Client ID"
 OMNIGENT_GITHUB_APP_CLIENT_SECRET=<generated>     # from "Generate a new client secret"
 
-# Redirect URI — set explicitly, OR let Omnigent derive it from OMNIGENT_DOMAIN
+# Redirect URI — set explicitly, OR let Triune derive it from OMNIGENT_DOMAIN
 # as https://$OMNIGENT_DOMAIN/v1/connections/github/callback (same shape).
 OMNIGENT_GITHUB_APP_REDIRECT_URI=https://<your-origin>/v1/connections/github/callback
 
@@ -189,10 +189,10 @@ nor `OMNIGENT_DOMAIN`), the feature logs a warning and **stays disabled**.
 
 ## Verify
 
-1. Sign in to Omnigent as a real user, open **Settings → Sandbox Integrations**.
+1. Sign in to Triune as a real user, open **Settings → Sandbox Integrations**.
    The **Connect GitHub** control appears (the nav link only shows when the App
    is configured — driven by `github_app_enabled` in `/v1/info`).
-2. Click **Connect GitHub** → GitHub's authorize screen → back to Omnigent with
+2. Click **Connect GitHub** → GitHub's authorize screen → back to Triune with
    `?github=connected`. The panel now shows **Connected as `<login>`**.
 3. Start a sandbox session on a **private** repo owned by an account where the
    App is **installed**; confirm the sandbox can `git clone`, push a branch, and

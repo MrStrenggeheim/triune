@@ -1,6 +1,6 @@
 """The Omnigent brand wordmark and Otto lockup for CLI output.
 
-A bold "ANSI-Shadow" block-letter ``omnigent`` wordmark — the canonical
+A bold "ANSI-Shadow" block-letter ``triune`` wordmark — the canonical
 figlet font with one duplicate body row dropped (5 rows), so every letter
 stays legible and it sits exactly as tall as the Otto-the-starfish mascot
 from :mod:`omnigent.inner.mascots`, which it pairs with 1:1.
@@ -16,6 +16,8 @@ The brand color is Otto's magenta-pink ``#F43BA6`` (see
 :data:`omnigent.inner.mascots.MASCOT_ART_COLOR`); the optional gradient
 fades it toward a lighter pink across the wordmark columns.
 """
+
+# Modified for Triune.
 
 from __future__ import annotations
 
@@ -51,6 +53,8 @@ _INDENT = "  "
 # are concatenated.
 _GLYPH_ROWS = 5
 _GLYPHS: dict[str, tuple[str, ...]] = {
+    "r": ("██████╗ ", "██╔══██╗", "██████╔╝", "██║  ██║", "╚═╝  ╚═╝"),
+    "u": ("██╗   ██╗", "██║   ██║", "██║   ██║", "╚██████╔╝", " ╚═════╝ "),
     "o": (" ██████╗ ", "██╔═══██╗", "██║   ██║", "╚██████╔╝", " ╚═════╝ "),
     "m": ("███╗   ███╗", "████╗ ████║", "██╔████╔██║", "██║ ╚═╝ ██║", "╚═╝     ╚═╝"),
     "n": ("███╗   ██╗", "████╗  ██║", "██╔██╗ ██║", "██║ ╚████║", "╚═╝  ╚═══╝"),
@@ -60,7 +64,7 @@ _GLYPHS: dict[str, tuple[str, ...]] = {
     "t": ("████████╗", "╚══██╔══╝", "   ██║   ", "   ██║   ", "   ╚═╝   "),
 }
 
-_WORDMARK_TEXT = "omnigent"
+_WORDMARK_TEXT = "triune"
 
 
 def _build_wordmark(word: str) -> tuple[str, ...]:
@@ -68,7 +72,7 @@ def _build_wordmark(word: str) -> tuple[str, ...]:
     Concatenate per-letter glyphs into the wordmark rows.
 
     :param word: The text to render; every character must have a glyph
-        in :data:`_GLYPHS`, e.g. ``"omnigent"``.
+        in :data:`_GLYPHS`, e.g. ``"triune"``.
     :returns: The wordmark rows (top cap · identity · bottom · shadow).
     """
     rows = ["" for _ in range(_GLYPH_ROWS)]
@@ -79,7 +83,7 @@ def _build_wordmark(word: str) -> tuple[str, ...]:
     return tuple(rows)
 
 
-#: The rows of the ``omnigent`` wordmark, as plain (uncolored) text.
+#: The rows of the ``triune`` wordmark, as plain (uncolored) text.
 WORDMARK_LINES: tuple[str, ...] = _build_wordmark(_WORDMARK_TEXT)
 
 # Which Otto row each wordmark row sits on. Otto and the wordmark are both
@@ -228,7 +232,7 @@ def render_compact(console: Console, *, subtitle: str | None = None) -> None:
     """
     line = Text(_INDENT)
     line.append("✦ ", style=WORDMARK_COLOR)
-    line.append("omnigent", style=f"bold {WORDMARK_COLOR}")
+    line.append("Triune", style=f"bold {WORDMARK_COLOR}")
     if subtitle:
         line.append(f"  {subtitle}", style="dim")
     console.print(line)

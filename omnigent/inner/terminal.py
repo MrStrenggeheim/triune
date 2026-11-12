@@ -4,6 +4,8 @@ Each terminal instance runs a command in its own tmux server (isolated socket)
 with optional filesystem isolation (fork) and sandboxing (bwrap/seccomp).
 """
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import asyncio
@@ -297,7 +299,7 @@ def _tmux_status_option_commands() -> list[list[str]]:
             "set-option",
             "-g",
             "status-left",
-            f"Omnigent: #{{{_TMUX_CONVERSATION_LINK_OPTION}}}",
+            f"Triune: #{{{_TMUX_CONVERSATION_LINK_OPTION}}}",
         ],
         ["set-option", "-g", "status-left-style", "fg=default,bg=default"],
         ["set-option", "-g", "status-left-length", "200"],
@@ -835,7 +837,7 @@ def _require_supported_tmux() -> None:
         raise TmuxUnavailableError(
             "tmux is not installed or not on PATH. Native terminals need tmux "
             f"{MIN_TMUX_VERSION_HINT} or newer: install it (macOS: `brew install tmux`), "
-            "or restart the Omnigent host from a shell where `tmux -V` works."
+            "or restart the Triune host from a shell where `tmux -V` works."
         )
     version = tmux_version(tmux)
     if version is None:

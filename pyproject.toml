@@ -3,20 +3,21 @@ requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "omnigent"
+name = "triune"
 # Keep in sync with omnigent/version.py's VERSION constant.
 version = "0.20.0"
-description = "Omnigent: declarative agent authoring and runtime framework"
+description = "Triune: an agent workspace for chats, files and terminals"
 readme = "README.md"
+license = "Apache-2.0 AND PolyForm-Noncommercial-1.0.0"
+license-files = ["LICENSE", "LICENSING.md", "LICENSES/*.txt", "NOTICE"]
 requires-python = ">=3.12"
 authors = [
-    { name = "Databricks, Inc." },
+    { name = "MrStrenggeheim" },
 ]
 keywords = ["agents", "llm", "ai", "databricks", "cli"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -304,7 +305,7 @@ databricks = [
     "opentelemetry-distro>=0,<1",
     # Databricks uses a Postgres control plane (Lakebase); reuse the single
     # psycopg pin from the `postgres` extra so the two never drift.
-    "omnigent[postgres]",
+    "triune[postgres]",
     "pymysql>=1.1,<2",
     # Databricks-specific MCP servers. Not imported by core Omnigent
     # code, so it is opt-in here rather than a default dependency. Floored
@@ -407,14 +408,14 @@ dev = [
 ]
 
 [project.scripts]
-# Unified entry point. `omnigent` is the click-based CLI that absorbs
-# the legacy argparse commands from `omnigent/inner/cli.py` plus the
-# omnigent `ap` subcommands. See designs/UNIFICATION.md § CLI
-# absorption. `omni` is installed as a short alias — both resolve to
-# the same entry point. (No former-name aliases: only `omnigent` and
-# `omni` ship, internal and OSS alike.)
+# Modified for Triune; preserve the old commands for existing integrations.
+triune = "omnigent.cli:main"
 omnigent = "omnigent.cli:main"
 omni = "omnigent.cli:main"
+
+[project.urls]
+Repository = "https://github.com/MrStrenggeheim/triune"
+Issues = "https://github.com/MrStrenggeheim/triune/issues"
 
 [tool.uv]
 # Keep plain `uv sync` aligned with the published base package. Repository

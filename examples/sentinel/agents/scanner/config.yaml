@@ -1,3 +1,4 @@
+# Modified for Triune; inherited notices remain applicable.
 spec_version: 1
 name: scanner
 description: >-
@@ -7,7 +8,7 @@ description: >-
   Never edits files.
 
 # Read-only explorer on the Claude Agent SDK. No model is pinned, so it runs on
-# whatever Claude provider you configured (`omnigent setup`).
+# whatever Claude provider you configured (`triune setup`).
 executor:
   type: omnigent
   config:

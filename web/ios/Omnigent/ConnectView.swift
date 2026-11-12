@@ -1,3 +1,4 @@
+// Modified for Triune.
 import SwiftUI
 
 struct ConnectView: View {
@@ -32,7 +33,7 @@ struct ConnectView: View {
           .frame(height: 80)
           .padding(.bottom, 12)
 
-        Text("Enter the URL of the Omnigent server.")
+        Text("Enter the URL of the Triune server.")
           .font(.system(size: 14))
           .lineSpacing(2)
           .multilineTextAlignment(.center)
@@ -151,7 +152,7 @@ struct ConnectView: View {
         .frame(width: 44, height: 44)
         .contentShape(Rectangle())
     }
-    .accessibilityLabel("About Omnigent")
+    .accessibilityLabel("About Triune")
   }
 
   private var visibleRecentServers: [String] {
@@ -236,9 +237,9 @@ private enum InfoLink: Identifiable {
 
   var url: URL {
     switch self {
-    case .website: URL(string: "https://omnigent.ai")!
-    case .docs: URL(string: "https://omnigent.ai/docs")!
-    case .privacy: URL(string: "https://omnigent.ai/privacy")!
+    case .website: URL(string: "https://github.com/MrStrenggeheim/triune")!
+    case .docs: URL(string: "https://github.com/MrStrenggeheim/triune#readme")!
+    case .privacy: URL(string: "https://github.com/MrStrenggeheim/triune")!
     }
   }
 }

@@ -6,6 +6,8 @@ through the existing runner terminal resource API, then attaches the
 local TTY to the existing terminal WebSocket protocol.
 """
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import asyncio
@@ -2817,7 +2819,7 @@ def _strip_resume_from_claude_args(args: tuple[str, ...]) -> tuple[str, ...]:
             continue
         if arg in ("--resume", "-r"):
             _logger.warning(
-                "Stripped stray %s from claude args; use `omnigent claude --resume`.", arg
+                "Stripped stray %s from claude args; use `triune claude --resume`.", arg
             )
             consume_value = True
             continue
@@ -3586,7 +3588,7 @@ def resolve_native_claude_config(
     log_info_once(
         _logger,
         "native-claude routing: Claude CLI login (no provider configured for the Claude "
-        "harness, no Databricks profile). Run `omnigent setup --no-internal-beta` to route "
+        "harness, no Databricks profile). Run `triune setup --no-internal-beta` to route "
         "through a provider.",
     )
     return None
@@ -5001,7 +5003,7 @@ def _run_with_remote_server(
                 # TCP connection — the Omnigent server at this URL isn't reachable.
                 # Fail loud with the URL instead of a raw httpx traceback.
                 raise click.ClickException(
-                    f"Could not reach the omnigent server at {base_url}. "
+                    f"Could not reach the Triune server at {base_url}. "
                     "Confirm the server is running and reachable from here "
                     f"(e.g. `curl {base_url}/health`), and that --server is correct."
                 ) from exc
@@ -6323,7 +6325,7 @@ def _preflight_local_tools(command: str) -> None:
     if resolved_command is None:
         raise click.ClickException(
             f"Claude Code CLI command {command!r} was not found on local PATH. "
-            "--server selects the Omnigent server only; Claude still runs locally."
+            "--server selects the Triune server only; Claude still runs locally."
         )
     try:
         validate_claude_hook_interpreter_compatibility(resolved_command)

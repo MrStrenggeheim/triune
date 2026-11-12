@@ -1,3 +1,4 @@
+// Modified for Triune.
 // Invite-accept landing shown before the register form in the v2 flow. Accept
 // just advances to the form — the account is created on form submit.
 
@@ -17,7 +18,7 @@ export function JoinTeamStep({
       <div className="flex flex-col items-center gap-1 text-center">
         <h1 className="text-2xl font-semibold tracking-tight text-foreground">Join your team</h1>
         <p className="text-ui text-muted-foreground">
-          Connect to their Omnigent server to start collaborating.
+          Connect to their Triune server to start collaborating.
         </p>
         {serverUrl && (
           <p className="text-ui font-medium text-foreground">

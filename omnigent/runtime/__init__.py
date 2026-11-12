@@ -4,6 +4,8 @@ Workflow code imports getter functions from here rather than
 touching _globals directly.
 """
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
@@ -419,7 +421,7 @@ def get_harness_process_manager() -> HarnessProcessManager:
     pm = _globals._harness_process_manager
     if pm is None:
         raise RuntimeError(
-            "HarnessProcessManager not initialized — Omnigent lifespan startup "
+            "HarnessProcessManager not initialized — Triune lifespan startup "
             "must call set_harness_process_manager() before any workflow "
             "dispatches to a non-default harness"
         )

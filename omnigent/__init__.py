@@ -1,4 +1,6 @@
-"""Omnigent: A declarative agent authoring and runtime framework."""
+"""Triune: A declarative agent authoring and runtime framework."""
+
+# Modified for Triune.
 
 # Some libraries we transitively depend on call ``hashlib.md5()``
 # without ``usedforsecurity=False`` for non-security content hashes.

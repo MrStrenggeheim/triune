@@ -9,6 +9,8 @@ with Blaxel's ``sandbox-api`` binary. Deployments can override that default with
 a fixed Blaxel image tag, like other managed sandbox providers.
 """
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import codecs
@@ -715,7 +717,7 @@ class BlaxelSandboxLauncher(ExecModelHostLauncher):
             if name in _CONTROL_CREDENTIAL_ENV_VARS:
                 raise click.ClickException(
                     f"sandbox env passthrough must not inject Blaxel control credential {name}; "
-                    "keep provider credentials in the Omnigent server process only."
+                    "keep provider credentials in the Triune server process only."
                 )
             value = os.environ.get(name)
             if value is None:
@@ -867,7 +869,7 @@ class BlaxelSandboxLauncher(ExecModelHostLauncher):
     def keep_alive(self, sandbox_id: str) -> None:
         """Explain that the host process owns Blaxel keep-alive."""
         del sandbox_id
-        click.echo("  → the Omnigent host process keeps the Blaxel sandbox active")
+        click.echo("  → the Triune host process keeps the Blaxel sandbox active")
 
     @staticmethod
     def _process_identifier(process: object, fallback_name: str) -> str:
@@ -1078,7 +1080,7 @@ class BlaxelSandboxLauncher(ExecModelHostLauncher):
         status = _status_value(getattr(process, "status", ""))
         if status in _TERMINAL_PROCESS_STATUSES:
             raise click.ClickException(
-                f"Omnigent host process failed to start on Blaxel sandbox '{sandbox_id}'."
+                f"Triune host process failed to start on Blaxel sandbox '{sandbox_id}'."
             )
         return RemoteCommandResult(returncode=0, stdout="launched\n", stderr="")
 

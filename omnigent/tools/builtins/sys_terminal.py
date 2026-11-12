@@ -26,6 +26,8 @@ Cwd resolution at launch follows the §4.6 precedence list — see
 :meth:`SysTerminalLaunchTool._resolve_cwd` for the implementation.
 """
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import asyncio
@@ -766,7 +768,7 @@ class SysTerminalLaunchTool(Tool):
            ``"."``, or ``"./"``).
         3. ``spec.os_env.cwd`` if it's set to a meaningful path
            (not ``None``, ``""``, ``"."``, or ``"./"``).
-        4. ``ctx.workspace`` — the per-task workspace Omnigent creates
+        4. ``ctx.workspace`` — the per-task workspace Triune creates
            in ``runtime/workflow.py``.
 
         :param cwd_override: Per-call override (or ``None``).

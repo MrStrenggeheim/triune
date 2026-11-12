@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, expect, it, vi } from "vitest";
@@ -24,7 +25,7 @@ function stubBridge(over: Record<string, unknown>) {
 it("reserves a full-width 48px desktop title-bar band", async () => {
   stubBridge({});
   const { container } = render(<BridgeSetupApp />);
-  await screen.findByRole("button", { name: /open omnigent/i });
+  await screen.findByRole("button", { name: /open triune/i });
   expect(container.firstElementChild).toHaveStyle({
     position: "fixed",
     top: "0px",
@@ -60,7 +61,7 @@ it("tags a connect with a request ID, shows only its phases, and cancels it", as
     },
   });
   render(<BridgeSetupApp />);
-  const openButton = await screen.findByRole("button", { name: /open omnigent/i });
+  const openButton = await screen.findByRole("button", { name: /open triune/i });
   await waitFor(() => expect(openButton).toBeEnabled());
   fireEvent.click(openButton);
   await waitFor(() => expect(setServerUrl).toHaveBeenCalledTimes(1));
@@ -90,7 +91,7 @@ it("a cancel from the shell (workspace picker closed) fails the terminal with Re
   });
   render(<BridgeSetupApp />);
   fireEvent.click(await screen.findByRole("button", { name: /join your team/i }));
-  fireEvent.click(await screen.findByRole("button", { name: /open omnigent/i }));
+  fireEvent.click(await screen.findByRole("button", { name: /open triune/i }));
   expect(await screen.findByText("Connection cancelled.")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: /retry/i })).toBeInTheDocument();
   expect(screen.queryByText(/server ready/i)).not.toBeInTheDocument();
@@ -114,10 +115,10 @@ it("shows manual instructions without an installer and detects the CLI after ins
   });
   render(<BridgeSetupApp />);
   fireEvent.click(await screen.findByRole("button", { name: /get started locally/i }));
-  fireEvent.click(screen.getByRole("button", { name: "Install Omnigent" }));
+  fireEvent.click(screen.getByRole("button", { name: "Install Triune" }));
   expect(screen.getByRole("link", { name: "Installation instructions" })).toHaveAttribute(
     "href",
-    "https://omnigent.ai/quickstart/install#install-omnigent",
+    "https://github.com/MrStrenggeheim/triune#quick-start",
   );
   expect(screen.queryByRole("button", { name: "Continue anyway" })).not.toBeInTheDocument();
   expect(installCli).not.toHaveBeenCalled();
@@ -142,7 +143,7 @@ it("keeps remote connections available without a CLI or installer", async () => 
     installCli,
   });
   render(<BridgeSetupApp />);
-  fireEvent.click(await screen.findByRole("button", { name: "Open Omnigent" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Open Triune" }));
   await waitFor(() => expect(setServerUrl).toHaveBeenCalledOnce());
   expect(startLocalServer).not.toHaveBeenCalled();
   expect(installCli).not.toHaveBeenCalled();

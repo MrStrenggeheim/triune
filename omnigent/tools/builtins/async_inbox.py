@@ -18,7 +18,7 @@ All tools in this module are gated on the agent's top-level
 **defaults to ``True``** to match the legacy inner stack's
 default (``omnigent/inner/datamodel.py::AgentDef.async_enabled``),
 so agents that don't mention it still see the async surface and
-the same YAML produces the same tool list under Omnigent mode and the
+the same YAML produces the same tool list under Triune mode and the
 legacy path. Agents that explicitly want a minimal-tools surface
 declare ``async: false`` to suppress all three.
 
@@ -26,6 +26,8 @@ See ``designs/SERVER_HARNESS_CONTRACT.md`` §Async work + inbox
 for the protocol design and the rationale for the inbox-vs-poll
 flip.
 """
+
+# Modified for Triune.
 
 from __future__ import annotations
 
@@ -62,7 +64,7 @@ class SysCancelTaskTool(Tool):
             "will transition to cancelled status; you'll see a "
             "[System: task ... cancelled] message before your next "
             "iteration. Already-terminal tasks are unchanged (no error). "
-            "NOTE: this tool only cancels tasks that Omnigent created via "
+            "NOTE: this tool only cancels tasks that Triune created via "
             "sys_session_send / sys_call_async. Background shell commands "
             "launched by Bash (`&`) are tracked by the Claude SDK — kill "
             "those with the KillBash tool instead. Calling sys_cancel_task "
@@ -298,7 +300,7 @@ class SysReadInboxTool(Tool):
             "a textual summary; an empty inbox returns a sentinel "
             "string. It is also the expected response to the runtime's "
             f"sub-agent wake notice `{SUBAGENT_WAKE_NOTICE_SHAPE}`, which "
-            "Omnigent posts into your session when a dispatched child "
+            "Triune posts into your session when a dispatched child "
             "finishes; that notice comes from the runtime, not from a person."
         )
 
@@ -330,7 +332,7 @@ class SysReadInboxTool(Tool):
         topic — an async-only API. AP's sync ``_call_tool`` path runs
         in ``run_in_executor`` (a thread without an event loop), so
         we can't call the drain from there. Returning ``True`` here
-        routes through :meth:`dispatch_async`, which Omnigent awaits
+        routes through :meth:`dispatch_async`, which Triune awaits
         directly in the workflow's async body.
 
         Despite the ``True`` return, this tool does NOT spawn a

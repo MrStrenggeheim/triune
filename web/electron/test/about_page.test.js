@@ -1,3 +1,4 @@
+// Modified for Triune.
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
@@ -114,7 +115,7 @@ describe("About page desktop update flow", () => {
 
     assert.deepEqual(page.order, ["subscribe", "snapshot"]);
     assert.equal(page.elements["product-kind"].textContent, "macOS");
-    assert.equal(page.elements["desktop-heading"].textContent, "Omnigent macOS app");
+    assert.equal(page.elements["desktop-heading"].textContent, "Triune macOS app");
     assert.equal(page.elements["desktop-check"].hidden, true);
     assert.equal(page.elements["desktop-update-now"].hidden, false);
     assert.equal(

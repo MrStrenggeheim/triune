@@ -21,6 +21,8 @@ the XDG dirs are preserved across runner restarts so a local resume keeps
 OpenCode's persisted session history.
 """
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import base64
@@ -82,8 +84,8 @@ _POLICY_PLUGIN_FILE = "omnigent-policy.js"
 # explicit ``POLICY_ACTION_DENY`` blocks a prompt (throw) or withholds a tool
 # result (redact). Raw string so the JS ``\n`` / regex escapes survive verbatim.
 _OPENCODE_POLICY_PLUGIN_JS = r"""
-// Omnigent policy bridge for opencode-native (generated; do not edit).
-// Forwards opencode lifecycle hooks to the Omnigent policy engine so
+// Triune policy bridge for opencode-native (generated; do not edit).
+// Forwards opencode lifecycle hooks to the Triune policy engine so
 // REQUEST-phase (prompt-submit) and TOOL_RESULT-phase policies enforce — the
 // phases the reactive permission.asked path cannot reach.
 const BASE = (process.env.OMNIGENT_POLICY_URL || "").replace(/\/+$/, "");
@@ -171,7 +173,7 @@ export const OmnigentPolicyPlugin = async () => ({
       // can't change the TUI text from a plugin, but the thrown message is
       // written to opencode's session log, so carry the policy reason there.
       throw new Error(
-        "Omnigent policy blocked this prompt: " + (verdict.reason || "request denied"),
+        "Triune policy blocked this prompt: " + (verdict.reason || "request denied"),
       );
     }
   },
@@ -186,7 +188,7 @@ export const OmnigentPolicyPlugin = async () => ({
       { result: output.output },
     );
     if (verdict.result === "POLICY_ACTION_DENY") {
-      output.output = "[Omnigent policy withheld this tool result: " +
+      output.output = "[Triune policy withheld this tool result: " +
         (verdict.reason || "denied") + "]";
     }
   },

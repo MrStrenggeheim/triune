@@ -1,6 +1,6 @@
 # Remote agent launch
 
-Users run a registered agent with `omnigent run --server <url>`, choose from
+Users run a registered agent with `triune run --server <url>`, choose from
 the server and their own registrations, and send a prompt interactively or
 with `-p`. New sessions use the selected registration; existing sessions keep
 their own agents. Without a matching online runner, a new session can launch
@@ -26,19 +26,19 @@ one on this machine's connected host.
 
 ## How to get to it (user POV)
 
-- Interactive: `omnigent run --server <url>`; choose a registered agent and type
+- Interactive: `triune run --server <url>`; choose a registered agent and type
   a prompt. Repeat after a conversation exists to check unused registrations.
-- Explicit selection: `omnigent run --server <url> --agent <name>`.
+- Explicit selection: `triune run --server <url> --agent <name>`.
 - One-shot: add `-p "hi"`; with several registrations, omit `--agent` once to
   check the selection error rather than an interactive prompt.
-- Connected-host launch: start `omnigent host --server <url>` on this machine,
+- Connected-host launch: start `triune host --server <url>` on this machine,
   then use either new-session entry point with no matching runner online.
-- Existing session: `omnigent run --server <url> --resume <session-id>` or
-  `omnigent run --server <url> --fork <session-id>`.
+- Existing session: `triune run --server <url> --resume <session-id>` or
+  `triune run --server <url> --fork <session-id>`.
 
 ## Driving it with the repro environment
 
-Preconditions: read [Verify Omnigent](skills/verify-omnigent/SKILL.md). The tests
+Preconditions: read [Verify Triune](skills/verify-omnigent/SKILL.md). The tests
 below use their own isolated services or mocked transport; do not start the
 default verification environment for them. Its prestarted runner would mask
 the host-launch case. Use this checkout's frozen dependencies, a local mock

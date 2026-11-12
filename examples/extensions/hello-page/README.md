@@ -1,6 +1,6 @@
 # Hello Page extension
 
-Reference implementation of an Omnigent V1 browser extension. It contributes a
+Reference implementation of a Triune V1 browser extension. It contributes a
 primary-sidebar item and an isolated page, follows the host theme, navigates
 through the parent, and stores a visit count in extension-scoped IndexedDB.
 
@@ -13,12 +13,12 @@ pnpm --filter @omnigent/extension-sdk build
 pnpm --filter @omnigent/example-hello-extension build
 ```
 
-Install the package into an Omnigent development environment and restart the
+Install the package into a Triune development environment and restart the
 server so entry-point discovery runs again:
 
 ```bash
 uv pip install -e examples/extensions/hello-page
-uv run omnigent extensions doctor omnigent.hello-page
+uv run triune extensions doctor omnigent.hello-page
 ```
 
 For a faster local UI loop, point the explicit development override at the

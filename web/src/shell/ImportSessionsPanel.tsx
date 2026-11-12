@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useHosts } from "@/hooks/useHosts";
@@ -86,7 +87,7 @@ export function ImportSessionsPanel() {
     return (
       <p className="text-sm text-muted-foreground" data-testid="import-no-hosts">
         None of your machines are online. Start one with{" "}
-        <code className="rounded bg-muted px-1 py-0.5 font-mono">omnigent host</code> from your
+        <code className="rounded bg-muted px-1 py-0.5 font-mono">triune host</code> from your
         terminal, then return here.
       </p>
     );

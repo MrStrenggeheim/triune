@@ -6,6 +6,8 @@ via a spec_resolver callback for in-process use, or via
 GET /v1/agents/{id}/contents for out-of-process use).
 """
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import asyncio
@@ -1737,7 +1739,7 @@ def create_runner_app(
                 [
                     "",
                     "Last captured terminal output: unavailable. The process exited before "
-                    "Omnigent captured a pane snapshot.",
+                    "Triune captured a pane snapshot.",
                 ]
             )
         return "\n".join(parts)

@@ -1,3 +1,4 @@
+// Modified for Triune.
 // Onboarding: local-setup intro, shown after "Get started locally" on the
 // landing. Explains what the local install gives you, then Install/Open starts
 // the local server. See the design prototype (New + Native → "Get started
@@ -47,7 +48,7 @@ export function LocalIntroStep({
 }) {
   return (
     <div className="flex h-full flex-col px-2 pb-1 pt-8">
-      <OnboardingHeading>Set up Omnigent locally</OnboardingHeading>
+      <OnboardingHeading>Set up Triune locally</OnboardingHeading>
 
       <p className="flex-1 text-base text-muted-foreground max-w-sm mx-auto text-center">
         Use Claude Code, Codex, Cursor, and other local harnesses from one UI. Keep history and
