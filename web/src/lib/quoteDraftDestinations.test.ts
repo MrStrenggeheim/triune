@@ -1,3 +1,5 @@
+// Modified for Triune.
+
 import { afterEach, expect, it, vi } from "vitest";
 import { useChatStore } from "@/store/chatStore";
 import { clearReferenceDrafts, readReferenceDraft } from "./contextReferenceDrafts";

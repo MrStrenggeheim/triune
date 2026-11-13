@@ -1,3 +1,5 @@
+# Modified for Triune.
+
 """Integration tests for /v1/sessions endpoints.
 
 Exercises every sessions-API surface added in the migration:

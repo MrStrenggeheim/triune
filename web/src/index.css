@@ -1,3 +1,5 @@
+/* Modified for Triune. */
+
 @import "tailwindcss";
 @plugin "@tailwindcss/typography";
 @import "tw-animate-css";

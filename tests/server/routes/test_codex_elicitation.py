@@ -1,3 +1,5 @@
+# Modified for Triune.
+
 """Tests for the Codex elicitation protocol adapters.
 
 These are pure-function tests — no HTTP or runtime needed.

@@ -1,3 +1,5 @@
+# Modified for Triune.
+
 """Pydantic models for the API layer — request/response shapes AND
 SSE stream events.
 

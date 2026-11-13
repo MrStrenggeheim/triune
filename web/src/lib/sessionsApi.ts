@@ -1,3 +1,5 @@
+// Modified for Triune.
+
 // Typed client for the four `/v1/sessions` endpoints introduced in
 // commit `e64a490` ("Migrate session ↔ client interactions to
 // /v1/sessions"). Mirrors `omnigent/server/routes/sessions.py`.

@@ -1,3 +1,5 @@
+// Modified for Triune.
+
 import { readReferenceDraft, writeReferenceDraft } from "./contextReferenceDrafts";
 import type { ContextReference } from "./contextReferences";
 import { getSessionDraft, setSessionDraft } from "./sessionDrafts";

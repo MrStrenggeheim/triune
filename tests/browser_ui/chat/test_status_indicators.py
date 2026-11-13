@@ -1,3 +1,5 @@
+# Modified for Triune.
+
 """Browser-lane coverage for live status events reaching chat indicators."""
 
 from __future__ import annotations

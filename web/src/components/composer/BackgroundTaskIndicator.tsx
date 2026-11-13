@@ -1,3 +1,5 @@
+// Modified for Triune.
+
 import { useEffect, useId, useRef, useState } from "react";
 import { ChevronRightIcon, SquareTerminalIcon } from "lucide-react";
 

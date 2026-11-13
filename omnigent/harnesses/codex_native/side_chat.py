@@ -1,3 +1,5 @@
+# Modified for Triune.
+
 """Codex ``/side`` ephemeral side-chat support for the native Codex harness.
 
 A side chat is an ephemeral fork of the active Codex thread. It inherits the

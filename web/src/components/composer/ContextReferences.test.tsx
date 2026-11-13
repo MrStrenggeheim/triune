@@ -1,3 +1,5 @@
+// Modified for Triune.
+
 import { createRef } from "react";
 import { useMentionBrowser } from "@/hooks/useMentionBrowser";
 import { readReferenceDraft, writeReferenceDraft } from "@/lib/contextReferenceDrafts";

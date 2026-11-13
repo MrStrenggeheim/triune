@@ -1,3 +1,5 @@
+# Modified for Triune.
+
 """Tests for utility endpoints on the FastAPI app (health + version).
 
 These endpoints are defined inline in ``create_app()`` in

@@ -1,3 +1,5 @@
+# Modified for Triune.
+
 """Tests for native session lifecycle, status, interrupt, and stop events."""
 
 from __future__ import annotations

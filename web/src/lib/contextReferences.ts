@@ -1,3 +1,5 @@
+// Modified for Triune.
+
 import { authenticatedFetch } from "./identity";
 import { withBasePath } from "./basePath";
 

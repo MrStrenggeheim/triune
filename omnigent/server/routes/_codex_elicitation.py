@@ -1,3 +1,5 @@
+# Modified for Triune.
+
 """Codex app-server elicitation protocol adapters for session routes."""
 
 from __future__ import annotations

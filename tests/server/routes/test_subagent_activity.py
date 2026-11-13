@@ -1,3 +1,5 @@
+# Modified for Triune.
+
 """Lifecycle notices remain named, ordered, and idempotent across native delivery races."""
 
 from typing import Any

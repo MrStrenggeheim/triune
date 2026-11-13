@@ -1,3 +1,5 @@
+# Modified for Triune.
+
 """Unit test for pin-key stripping in child-session summaries.
 
 ``_child_session_summary_from_conversation`` builds a ``ChildSessionSummary``

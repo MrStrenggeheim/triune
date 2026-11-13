@@ -1,3 +1,5 @@
+// Modified for Triune.
+
 import { describe, expect, it, vi } from "vitest";
 import type { Bubble, RenderItem } from "@/lib/renderItems";
 import type { RoutingScope } from "@/lib/routingDecision";

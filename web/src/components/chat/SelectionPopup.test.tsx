@@ -1,3 +1,5 @@
+// Modified for Triune.
+
 import { createRef } from "react";
 import {
   act,

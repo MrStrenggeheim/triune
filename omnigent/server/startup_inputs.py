@@ -1,3 +1,5 @@
+# Modified for Triune.
+
 """Accept startup messages into conversation history and recover them on the host's replica."""
 
 from __future__ import annotations

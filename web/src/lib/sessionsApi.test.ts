@@ -1,3 +1,5 @@
+// Modified for Triune.
+
 // Unit tests for `sessionsApi.ts` — happy-path POSTs with mocked
 // `fetch`, plus argument-shape pins for `interrupt` and `approve`.
 //

@@ -1,3 +1,5 @@
+# Modified for Triune.
+
 """Tests for native Claude Code bridge helpers."""
 
 from __future__ import annotations

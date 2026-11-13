@@ -27,5 +27,14 @@ Those previously Apache-licensed features retain their original permissions.
 - Present attributed peer cards and compact lifecycle rows, with a flat Orchestration view and shared message actions.
 - Preserve peer identity through native Codex echoes and resolve peer file references through their authorized source scope.
 
+## Reliability and agent workspace — 2026-11-13
+
+- Retain drafts while bounding live streams; preserve durable startup inputs and native consumption identity.
+- Preserve dispatch-specific agent metadata and expose parent-owned child controls only when the runtime supports them.
+- Reuse the original composer shelf, separate Orchestration agent/shell history, and open resources in tabs without inspectors.
+- Keep tab overflow, close and pin controls usable at narrow widths.
+- Open quote subchats before runner readiness, keep internal snapshots outside drafts, and fold inherited history on request.
+- Replace per-frame text-background painting with opacity-based working highlights while preserving reduced motion.
+
 [LICENSING.md](LICENSING.md) defines scope and the required notice.
 Git diffs against the imported baseline identify exact modified paths and lines.

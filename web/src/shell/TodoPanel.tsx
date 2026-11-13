@@ -1,3 +1,5 @@
+// Modified for Triune.
+
 import { CheckCircle2Icon, CircleIcon, CircleDotIcon } from "lucide-react";
 import { useConversationChatStore } from "@/workbench/ScopedChatStore";
 import { cn } from "@/lib/utils";

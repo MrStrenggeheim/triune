@@ -1,3 +1,5 @@
+// Modified for Triune.
+
 // Conversation state outlives network observation in remembered layouts.
 // Detaching a stream preserves drafts, pending sends and the reader's window.
 

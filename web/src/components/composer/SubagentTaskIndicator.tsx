@@ -1,3 +1,5 @@
+// Modified for Triune.
+
 import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { BotIcon } from "lucide-react";
 

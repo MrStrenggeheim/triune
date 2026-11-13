@@ -1,3 +1,5 @@
+// Modified for Triune.
+
 /**
  * Runtime capabilities probe.
  *

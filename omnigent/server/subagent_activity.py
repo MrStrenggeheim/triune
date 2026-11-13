@@ -1,3 +1,5 @@
+# Modified for Triune.
+
 """Durable parent-chat links for subagent delegation and returned results."""
 
 from __future__ import annotations

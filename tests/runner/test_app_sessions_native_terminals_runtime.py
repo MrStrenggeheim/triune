@@ -1,3 +1,5 @@
+# Modified for Triune.
+
 """Tests for Codex, Claude, Antigravity, and Kimi terminal runtime behavior."""
 
 from __future__ import annotations

@@ -1,3 +1,5 @@
+// Modified for Triune.
+
 import type { ConversationBranch } from "./conversationBranches";
 import type { NativeChildCapabilities } from "./nativeChildControls";
 // Mirrors the response/error/usage types in
