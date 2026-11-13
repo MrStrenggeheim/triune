@@ -9,11 +9,13 @@ Activity combines the selected chat's main agent and subagents with recorded she
 - `commands`: captured noninteractive commands appear as command executions rather than fabricated interactive terminals.
 - `history`: keep ended activity available while the runner is offline and clearly describe partial capture, unknown state and bounded retention.
 - `provenance`: descendant activity preserves its source chat and agent; each descendant needs its own existing read permission.
-- `filters`: All, Agents and Shells filter the panel; earlier activity is collapsed initially.
+- `filters`: shared All, Agents and Shells control filters separate sections, including settled records, ordered by last observed activity.
+- `source`: current-chat origin or explicit originating link; alternative combined Host/workspace selector limits independent inventory.
+- `controls`: two-line rows open named conversation/shell tabs; supported running work has Stop, retained output never attaches a process.
 
 ## How to get to it (user POV)
 
-- Desktop: select Activity in the right panel; the stored tab ID remains compatible with the former Agents tab.
+- Desktop: open Orchestration from the shared Open menu or a task card's square-arrow button; the stored activity identifier remains compatible.
 - Phone: open Workspace and select Activity.
 - Expand an agent to inspect its family, filter Shells, open an existing live terminal or inspect past output.
 - Return from another chat to see that conversation's activity rather than the selected filesystem workspace's inventory.
@@ -23,7 +25,8 @@ Activity combines the selected chat's main agent and subagents with recorded she
 Preconditions: use the isolated [verification environment](skills/verify-omnigent/SKILL.md) and temporary terminal sessions; historical coverage depends on recorded tool/lifecycle data.
 
 - Seeded persisted-command projection, retained-output dialog and no terminal attachment: `tests/e2e_ui/agents/test_chat_activity_history.py::test_activity_inspects_recorded_commands_without_attaching_a_terminal`.
-- Filters, grouping, existing-agent navigation, live-open identity and retained-output dialogs: `web/src/shell/ChatActivityPanel.test.tsx` and `web/src/hooks/useChatActivity.test.tsx`.
+- Filters, history, intent consumption and tab navigation: `web/src/shell/ChatActivityPanel.test.tsx`, `web/src/workbench/ActivityView.test.tsx` and `web/src/hooks/useChatActivity.test.tsx`.
+- Recorded commands open without a terminal attach: `web/src/workbench/TerminalResourceView.test.tsx`.
 - Lifecycle capture, command versus shell completion and bounded durable history: `tests/terminals/test_activity_history.py`, `tests/runner/test_session_activity.py` and `tests/server/test_session_activity.py`.
 - Existing session resource permission gates: `tests/server/routes/test_shell_permission_gate.py`.
 - Manually run a command in a shell while leaving the shell open, then end the shell: the command can complete while the shell is still live, and only the shell's actual end supplies its ended state.

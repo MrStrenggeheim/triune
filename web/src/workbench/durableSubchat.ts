@@ -7,7 +7,10 @@ import { readReferenceDraft, writeReferenceDraft } from "@/lib/contextReferenceD
 import type { WorkbenchActions } from "./WorkbenchContext";
 
 const pendingSources = new Set<string>();
-const recoverableChildren = new Map<string, { id: string; initialize: () => Promise<void> }>();
+const recoverableChildren = new Map<
+  string,
+  { id: string; prepared?: boolean; initialize: () => Promise<void> }
+>();
 const pendingChildren = new Map<string, Promise<string>>();
 
 /** Bind a durable fork through the same host launch API as the ordinary Clone dialog. */
@@ -15,7 +18,7 @@ export function createDurableSubchat(
   sourceId: string,
   boundaryId: string | undefined,
   retryKey: string,
-  onCreated?: (id: string) => void,
+  onCreated?: (id: string) => void | Promise<void>,
 ): Promise<string> {
   const pending = pendingChildren.get(retryKey);
   if (pending) return pending;
@@ -52,7 +55,10 @@ export function createDurableSubchat(
         },
       };
       recoverableChildren.set(retryKey, child);
-      onCreated?.(child.id);
+    }
+    if (!child.prepared) {
+      await onCreated?.(child.id);
+      child.prepared = true;
     }
     try {
       await child.initialize();

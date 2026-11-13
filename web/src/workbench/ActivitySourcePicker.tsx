@@ -1,6 +1,6 @@
 // Modified for Triune.
 import { useEffect, useState } from "react";
-import { CheckIcon, ChevronDownIcon, MessageSquareIcon, ServerIcon } from "lucide-react";
+import { CheckIcon, ChevronDownIcon, MessageSquareIcon, MonitorIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Command,
@@ -15,6 +15,11 @@ import { useHosts } from "@/hooks/useHosts";
 import { useSession } from "@/hooks/useSession";
 import { useViewerId } from "@/hooks/useViewerId";
 import { resourceViewStorageScope } from "@/lib/resourceViewStorage";
+import { WorkspaceSelector } from "@/shell/WorkspaceSelector";
+import {
+  WorkspaceSelectionDialog,
+  type WorkspaceSelection,
+} from "@/shell/WorkspaceSelectionDialog";
 import { conversationDisplayLabel } from "@/shell/sidebarNav";
 import type { ActivitySource } from "./ActivityView";
 
@@ -22,11 +27,14 @@ import type { ActivitySource } from "./ActivityView";
 export function ActivitySourcePicker({
   source,
   onChange,
+  onChooseWorkspace,
 }: {
   source?: ActivitySource | null;
   onChange: (source: ActivitySource) => void | Promise<void>;
+  onChooseWorkspace: (selection: WorkspaceSelection) => Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
+  const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [busy, setBusy] = useState(false);
@@ -47,12 +55,9 @@ export function ActivitySourcePicker({
       chats.data?.pages.flatMap((page) => page.data).map((chat) => [chat.id, chat]),
     ).values(),
   ];
-  const matchingHosts = hosts.data?.filter((host) =>
-    `${host.name} ${host.host_id}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()),
-  );
   const label =
     source?.kind === "host"
-      ? `Host: ${hosts.data?.find((host) => host.host_id === source.hostId)?.name || source.hostId}`
+      ? `Host: ${hosts.data?.find((host) => host.host_id === source.hostId)?.name || source.hostId} · ${source.workspace?.root || "Choose path"}`
       : source?.kind === "chat"
         ? `Chat: ${session?.title || source.conversationId}`
         : "Choose source";
@@ -79,26 +84,36 @@ export function ActivitySourcePicker({
 
   return (
     <>
-      <Button
-        variant="ghost"
-        size="sm"
-        aria-label={`Choose orchestration source · ${label}`}
-        aria-haspopup="dialog"
-        aria-expanded={open}
-        className="min-w-0 gap-1"
-        onClick={() => {
-          setError(null);
-          setOpen(true);
-        }}
-      >
-        {source?.kind === "host" ? (
-          <ServerIcon className="size-3.5 shrink-0" />
-        ) : (
+      {source?.kind === "host" ? (
+        <WorkspaceSelector
+          hostLabel={
+            hosts.data?.find((host) => host.host_id === source.hostId)?.name || source.hostId
+          }
+          path={source.workspace?.root ?? ""}
+          aria-label={`Choose orchestration source · ${label}`}
+          aria-haspopup="dialog"
+          aria-expanded={open}
+          menuOpen={open || workspaceOpen}
+          onClick={() => setOpen(true)}
+        />
+      ) : (
+        <Button
+          variant="ghost"
+          size="sm"
+          aria-label={`Choose orchestration source · ${label}`}
+          aria-haspopup="dialog"
+          aria-expanded={open}
+          className="min-w-0 gap-1"
+          onClick={() => {
+            setError(null);
+            setOpen(true);
+          }}
+        >
           <MessageSquareIcon className="size-3.5 shrink-0" />
-        )}
-        <span className="truncate">{label}</span>
-        <ChevronDownIcon className="size-3.5 shrink-0" />
-      </Button>
+          <span className="truncate">{label}</span>
+          <ChevronDownIcon className="size-3.5 shrink-0" />
+        </Button>
+      )}
       <CommandDialog
         open={open}
         onOpenChange={(next) => {
@@ -108,11 +123,11 @@ export function ActivitySourcePicker({
           }
         }}
         title="Orchestration source"
-        description="Choose a host's independent shells or a chat's agents, messages and shell use."
+        description="Choose a chat or a host workspace."
       >
         <Command shouldFilter={false}>
           <CommandInput
-            placeholder="Search hosts and chats…"
+            placeholder="Search chats…"
             value={query}
             onValueChange={setQuery}
             disabled={busy}
@@ -123,37 +138,18 @@ export function ActivitySourcePicker({
             </p>
           )}
           <CommandList aria-label="Orchestration sources">
-            <CommandGroup heading="Hosts">
-              {hosts.isLoading && (
-                <p role="status" className="px-2 text-sm">
-                  Loading hosts…
-                </p>
-              )}
-              {hosts.error && (
-                <Button variant="ghost" size="sm" onClick={() => void hosts.refetch()}>
-                  Could not load hosts · Retry
-                </Button>
-              )}
-              {matchingHosts?.map((host) => (
-                <CommandItem
-                  key={host.host_id}
-                  value={`host:${host.host_id}`}
-                  disabled={busy}
-                  onSelect={() => void select({ kind: "host", hostId: host.host_id })}
-                >
-                  <ServerIcon className="size-3.5" />
-                  <span className="min-w-0 flex-1 truncate">{host.name || host.host_id}</span>
-                  {host.status === "offline" && (
-                    <span className="text-muted-foreground">Offline</span>
-                  )}
-                  {source?.kind === "host" && source.hostId === host.host_id && (
-                    <CheckIcon className="size-3.5" />
-                  )}
-                </CommandItem>
-              ))}
-              {!hosts.isLoading && !hosts.error && matchingHosts?.length === 0 && (
-                <p className="px-2 text-sm text-muted-foreground">No matching hosts.</p>
-              )}
+            <CommandGroup heading="Source">
+              <CommandItem
+                value="host-workspace"
+                disabled={busy}
+                onSelect={() => {
+                  setOpen(false);
+                  setWorkspaceOpen(true);
+                }}
+              >
+                <MonitorIcon className="size-3.5" />
+                Host / workspace
+              </CommandItem>
             </CommandGroup>
             <CommandGroup heading="Chats">
               {(!settled || chats.isLoading) && (
@@ -200,6 +196,16 @@ export function ActivitySourcePicker({
           </CommandList>
         </Command>
       </CommandDialog>
+      {workspaceOpen && (
+        <WorkspaceSelectionDialog
+          open
+          onOpenChange={setWorkspaceOpen}
+          hostId={source?.kind === "host" ? source.hostId : null}
+          initialPath={source?.kind === "host" ? source.workspace?.root : undefined}
+          workspacePath={source?.kind === "host" ? source.workspace?.root : undefined}
+          onConfirm={onChooseWorkspace}
+        />
+      )}
     </>
   );
 }

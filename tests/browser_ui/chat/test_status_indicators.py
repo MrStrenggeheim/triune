@@ -174,7 +174,7 @@ def test_background_task_popover_stays_interactive_and_within_viewport(
             control.click()
 
     pill = _pill(page, 1)
-    expect(pill).to_have_text("1", timeout=10_000)
+    expect(pill).to_have_text("Shells1", timeout=10_000)
     expect(pill).to_have_attribute("aria-expanded", "false")
     activate(pill)
 

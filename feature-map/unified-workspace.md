@@ -18,7 +18,7 @@ Conversation and tool views share resizable, dockable panes while keeping their 
 ## How to get to it (user POV)
 
 - Use + Open beside desktop application Search, or the subtle plus after the last tab, to add Explorer, Changes, Search, a manual terminal, Agent CLI, Orchestration or Automations.
-- Drag a tab to a pane edge to split; use its own close button to close it, use the tab pin before its close control to keep a view across chats.
+- Drag a tab to split; use its own close control, or hover/focus its type icon to pin it across chats.
 - Click a chat to restore its layout; choose Open to side or drag a sidebar chat into a tab group or split edge to add it to the current layout.
 - The app bar has no Layout control; a new chat starts in its own arrangement.
 - Expand conversations with children to revisit subchats; use the trailing count/chevron to expand subchats; draft, unread and running markers remain on the right, beside hover actions.
@@ -97,7 +97,7 @@ Layout miniatures and Inbox consolidation remain deferred.
 - Add host is directly reachable in every workspace dialog; it reuses server-specific instructions without losing the path draft.
 - Live-file chips use the File Editor and the Appearance file-opening preference; right-click or touch overflow exposes explicit destinations and file actions.
 - Rendered previews retain the existing large modal/image lightbox with supported zoom and pan.
-- A pinned tab always has a filled pin; pinning and unpinning do not move or narrow its pane.
+- A pinned tab has a filled type icon at rest and filled pin on hover/focus; pinning preserves geometry.
 - Nested pinned reservations can leave empty, usable drop regions when another chat has fewer panes.
 - Tab-bar drops show a primary insertion line; edge drops preview their final half-pane geometry using the shared file-drop surface.
 - Right-click a tab for view controls; tab overflow has a right fade and no visible scrollbar.
@@ -144,8 +144,12 @@ Compare the same two/four/twelve-chat scenarios when measuring latency; browser/
 - Incoming peer cards show the actual trusted agent name and source chat, up to three compact lines, and Show full/less.
 - The shared user-message footer copies complete text and creates links for the owning conversation, independently of focus.
 - Ordinary human quotations of peer transport headers retain their human presentation.
-- Task rows show their recorded agent/task, spinner or success/error status and one square-arrow-out shortcut; there is no task ellipsis.
-- The Orchestration tab uses Workflow; its default flat list combines active agents and open shells by observed last activity.
+- Task rows show dispatch-specific name/task/input/result, semantic state and separate child-chat and originating-Orchestration shortcuts.
+- Orchestration uses Workflow, current-chat origin by default, separate Agents/Shells sections and a shared category filter, including settled work.
+- Source selection chooses Chat or combined Host/workspace; the selected root constrains host inventory.
+- Agent and shell rows open named tabs; historical output never attaches or launches a process.
+- Native child input and steering require current runtime capabilities, independently of transcript readability.
+- Hidden chats detach streams while retaining state; denied stream slots wait instead of exhausting HTTP/1 connections.
 - Filters, graph, peer history and details remain available in its menu; a completed/failed card can open its exact inspector repeatedly.
 - Native Codex inputs retain their canonical identity through start/steer and echo; unresolved historical messages are not reclassified by text.
 - Peer file references resolve their captured sender target and retain recipient/source ACL and host/runner ownership checks.

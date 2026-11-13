@@ -2,11 +2,20 @@
 import { measureElement, useVirtualizer } from "@tanstack/react-virtual";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter } from "react-router-dom";
+import type { AnyBlock } from "@/lib/blocks";
+import type { ConversationBranch } from "@/lib/conversationBranches";
 import type { Bubble } from "@/lib/renderItems";
 import { useChatStore } from "@/store/chatStore";
 import * as scopedChat from "@/workbench/ScopedChatStore";
 import { Conversation, ConversationContent } from "@/components/ai-elements/conversation";
-import { isNativeFindShortcut, type TranscriptGeometry, VirtualBubbleList } from "./Transcript";
+import {
+  isNativeFindShortcut,
+  Transcript,
+  type TranscriptGeometry,
+  VirtualBubbleList,
+} from "./Transcript";
 
 afterEach(() => {
   cleanup();
@@ -28,6 +37,71 @@ const assistantBubble: Extract<Bubble, { kind: "assistant" }> = {
   error: null,
   items: [{ kind: "text", itemId: "assistant-1", text: "hello back", final: true }],
 };
+
+it("folds only opted-in subchat history and preserves child messages across disclosure", () => {
+  const branch: ConversationBranch = {
+    source_conversation_id: "parent",
+    inherited_item_count: 1,
+    inherited_last_item_id: "inherited",
+    reference_only: false,
+    recovery: "replay",
+  };
+  const blocks: AnyBlock[] = ["inherited", "child"].map((id) => ({
+    type: "user_message",
+    ctx: { itemId: id, responseId: id, agent: null, depth: 0, turn: 0, timestamp: 0 },
+    content: [{ type: "input_text", text: `${id} message` }],
+  }));
+  const previous = useChatStore.getState();
+  useChatStore.setState({
+    conversationId: "history-child",
+    blocks,
+    pendingUserMessages: [],
+    activeResponse: null,
+    sessionStatus: "idle",
+  });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const view = (hideInheritedHistory: boolean) => (
+    <QueryClientProvider client={client}>
+      <MemoryRouter>
+        <Transcript
+          branch={branch}
+          hideInheritedHistory={hideInheritedHistory}
+          hostId={null}
+          setConversationEl={() => {}}
+          containerEl={null}
+          scroller={null}
+          setScroller={() => {}}
+          sendScrollNonce={0}
+          hasMoreHistory={false}
+          loadingMoreHistory={false}
+          isMobileViewport
+          showsWorking={false}
+          agentsError={null}
+          sandboxLaunching={false}
+          spacerMeasureRef={{ current: null }}
+        />
+      </MemoryRouter>
+    </QueryClientProvider>
+  );
+  try {
+    const result = render(view(true));
+    expect(screen.queryByText("inherited message")).not.toBeInTheDocument();
+    expect(screen.getByText("child message")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Show history" }));
+    expect(screen.getByText("inherited message")).toBeVisible();
+    expect(screen.getByText("child message")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Hide history" }));
+    expect(screen.queryByText("inherited message")).not.toBeInTheDocument();
+    expect(screen.getByText("child message")).toBeVisible();
+    result.rerender(view(false));
+    expect(screen.getByText("inherited message")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Show history" })).not.toBeInTheDocument();
+    result.unmount();
+  } finally {
+    useChatStore.setState(previous);
+    client.clear();
+  }
+});
 
 function list(
   hasTasks: boolean,

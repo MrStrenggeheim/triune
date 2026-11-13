@@ -32,14 +32,18 @@ export function SubagentTaskRow({
   description,
   status,
   action,
+  preview,
+  children,
 }: {
   agentName: string;
   description: string;
   status: AgentStatus;
   action?: ReactNode;
+  preview?: string;
+  children?: ReactNode;
 }) {
   return (
-    <div className="border-l-2 border-primary/60 pl-2">
+    <div className="border-l-2 border-primary/60 pl-2 [&_.activity-row>p]:line-clamp-1">
       <ActivityRow
         icon={<BotIcon aria-hidden="true" className="size-3.5" />}
         title={
@@ -47,13 +51,16 @@ export function SubagentTaskRow({
             <strong className="font-semibold">{agentName}</strong>: {description}
           </>
         }
+        preview={preview}
         status={
           <span className="flex items-center gap-2">
             <SubagentTaskStatus status={status} />
             {action}
           </span>
         }
-      />
+      >
+        {children}
+      </ActivityRow>
     </div>
   );
 }

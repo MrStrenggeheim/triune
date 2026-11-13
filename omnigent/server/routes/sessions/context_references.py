@@ -140,7 +140,12 @@ def capture_items(
                     "Choose text messages or quote selected text, and attach original files explicitly.",
                 )
             if capture.scope == "quote":
-                item = {key: value for key, value in item.items() if key != "content"}
+                # Quotes carry their selected text separately, never tool arguments or output.
+                item = {
+                    key: value
+                    for key, value in item.items()
+                    if key in {"id", "type", "role", "status", "response_id", "created_at"}
+                }
             encoded = json.dumps(item, ensure_ascii=False)
             size += len(encoded.encode())
             items.append(item)

@@ -134,3 +134,42 @@ it("does not treat a missing cursor as a complete graph", async () => {
   expect(result.current.descendantCounts).toBeNull();
   expect(authenticatedFetch).toHaveBeenCalledTimes(1);
 });
+
+it("keeps an embedded native child out of sidebar roots", async () => {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  clients.push(client);
+  vi.mocked(authenticatedFetch).mockImplementation(async (url) => {
+    const path = new URL(String(url), "http://test").pathname;
+    return new Response(
+      JSON.stringify(
+        path === "/v1/sessions/native-child"
+          ? {
+              ...conversation("native-child"),
+              parent_session_id: "root",
+              labels: { "omnigent.wrapper": "codex-native-ui-subagent" },
+            }
+          : { data: [], has_more: false, last_id: null },
+      ),
+    );
+  });
+  const { result } = renderHook(
+    () =>
+      useConversationBranches({
+        enabled: true,
+        rows,
+        activeId: "native-child",
+        filter: "mine",
+        searchQuery: "",
+      }),
+    {
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <QueryClientProvider client={client}>{children}</QueryClientProvider>
+      ),
+    },
+  );
+  await waitFor(() => expect(authenticatedFetch).toHaveBeenCalledTimes(2));
+  await waitFor(() =>
+    expect(result.current.ancestors.some((row) => row.id === "native-child")).toBe(true),
+  );
+  expect(result.current.rows.map((row) => row.id)).toEqual(["root"]);
+});

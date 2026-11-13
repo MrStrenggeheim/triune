@@ -158,7 +158,12 @@ export function useConversationBranches({
     const result = new Map<string, Conversation>();
     for (const page of query.data?.pages ?? [])
       for (const row of page.data) if (branchSource(row)) result.set(row.id, row);
-    for (const row of lineage.data ?? []) result.set(row.id, row);
+    for (const row of lineage.data ?? []) {
+      // Delegated transcripts open within the owner's layout, not as sidebar roots.
+      const parent = (row as Conversation & { parent_session_id?: string }).parent_session_id;
+      if (parent && !branchSource(row)) continue;
+      result.set(row.id, row);
+    }
     // Existing list rows carry optimistic rename/archive/project updates.
     for (const row of rows) result.set(row.id, row);
     return [...result.values()];

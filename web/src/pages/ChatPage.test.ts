@@ -120,7 +120,7 @@ describe("Composer structural read-only reasons", () => {
       readOnlyReasonForSessionLabels(null, {
         labels: { "omnigent.wrapper": "claude-code-native-ui-subagent" },
       }),
-    ).toBe("Claude Code sub-agents are read-only");
+    ).toBe("Checking whether this sub-agent can receive messages…");
   });
 
   it("gives a sealed codex /side child its own reason, not the generic one", () => {
@@ -158,6 +158,29 @@ describe("Composer structural read-only reasons", () => {
   it("returns null for editable sessions without structural labels", () => {
     expect(readOnlyReasonForSessionLabels({ labels: {} }, { labels: {} })).toBeNull();
   });
+
+  it.each(["codex-native-ui-subagent", "claude-code-native-ui-subagent"])(
+    "gates %s replies and steering by current runtime capabilities",
+    (wrapper) => {
+      const session = { labels: { "omnigent.wrapper": wrapper } };
+      expect(readOnlyReasonForSessionLabels(session, null)).not.toBeNull();
+      const capabilities = {
+        version: 1 as const,
+        state: "active",
+        can_reply: false,
+        can_steer: true,
+        can_stop: true,
+      };
+      expect(readOnlyReasonForSessionLabels(session, null, capabilities)).toBeNull();
+      expect(
+        readOnlyReasonForSessionLabels(session, null, {
+          ...capabilities,
+          can_steer: false,
+          reason: "parent_runtime_unavailable",
+        }),
+      ).toContain("runtime is unavailable");
+    },
+  );
 });
 
 describe("Terminal-first surface selection", () => {
@@ -1563,6 +1586,26 @@ describe("buildSlashCommandWithArgsSet", () => {
 });
 
 describe("dispatchInitialPrompt", () => {
+  it("preserves the initial input identity and clears its draft only on acceptance", () => {
+    const send = vi.fn().mockResolvedValue(undefined);
+    const accepted = vi.fn();
+    dispatchInitialPrompt(
+      {
+        text: "Durable initial message",
+        skill: null,
+        stableId: "first-input",
+        onAccepted: accepted,
+      },
+      "agent",
+      send,
+      vi.fn(),
+    );
+    expect(send).toHaveBeenCalledWith("Durable initial message", "agent", [], {
+      stableId: "first-input",
+      onAccepted: accepted,
+    });
+    expect(accepted).not.toHaveBeenCalled();
+  });
   // The wire-shape fork for the landing composer's first message. The
   // skill branch is what makes "/review-pr 123" typed on the landing page
   // actually invoke the skill — if it regresses to the plain path, the

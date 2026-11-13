@@ -1,5 +1,13 @@
 import { createRef } from "react";
-import { cleanup, createEvent, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  createEvent,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { setEmbedRoot } from "@/lib/host";
@@ -9,6 +17,11 @@ import { ContextReferenceNavigationContext } from "@/lib/contextReferenceNavigat
 import * as references from "@/lib/contextReferences";
 import { clearSessionDrafts, getSessionDraft, setSessionDraft } from "@/lib/sessionDrafts";
 import { useChatStore } from "@/store/chatStore";
+import { toast, type Action } from "@/lib/notifications";
+
+vi.mock("@/lib/notifications", () => ({
+  toast: { loading: vi.fn(() => "loading"), dismiss: vi.fn(), error: vi.fn() },
+}));
 
 vi.mock("@/lib/contextReferences", async (original) => ({
   ...(await original<typeof references>()),
@@ -204,7 +217,10 @@ it("asks a durable subchat from the scoped selected item with an attributed unse
   ]);
   fireEvent.click(screen.getByRole("menuitem", { name: "Ask subchat…" }));
   await waitFor(() =>
-    expect(navigation.openConversation).toHaveBeenCalledWith("child", { beside: true }),
+    expect(navigation.openConversation).toHaveBeenCalledWith("child", {
+      beside: true,
+      title: "Subchat",
+    }),
   );
   expect(references.captureReference).toHaveBeenCalledExactlyOnceWith(
     "scoped-child",
@@ -222,14 +238,10 @@ it("asks a durable subchat from the scoped selected item with an attributed unse
       boundaryId: "selected-item",
       text: "Selected message",
     }),
+    expect.any(Function),
   );
-  expect(references.referenceRequest).toHaveBeenCalledWith(
-    "/v1/sessions/scoped-child/context-reference/check",
-    { destination_id: "child", scope: "quote" },
-  );
-  expect(getSessionDraft("child")?.text).toBe(
-    "> Selected message\n\n[Open source](/c/scoped-child?message=selected-item)\n\n",
-  );
+  expect(references.referenceRequest).not.toHaveBeenCalled();
+  expect(getSessionDraft("child")?.text).toBe("> Selected message");
   expect(getSessionDraft("scoped-child")).toBeUndefined();
   expect(legacyAsk).not.toHaveBeenCalled();
   expect(send).not.toHaveBeenCalled();
@@ -240,22 +252,31 @@ it("retains the selection and source draft after child creation fails and retrie
   navigation.createSubchat.mockRejectedValueOnce(new Error("Cannot create child"));
   setSessionDraft("scoped-child", { text: "Keep parent draft", files: [] });
   fireEvent.click(screen.getByRole("menuitem", { name: "Ask subchat…" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent("Cannot create child");
+  await waitFor(() =>
+    expect(toast.error).toHaveBeenCalledWith("Cannot create child", expect.anything()),
+  );
   expect(navigation.createSubchat).toHaveBeenCalledTimes(1);
   expect(navigation.openConversation).not.toHaveBeenCalled();
   expect(getSessionDraft("child")).toBeUndefined();
   expect(getSessionDraft("scoped-child")?.text).toBe("Keep parent draft");
   expect(window.getSelection()?.toString()).toBe("Selected message");
-  fireEvent.click(screen.getByRole("button", { name: "Ask subchat…" }));
+  await act(async () => {
+    const action = vi.mocked(toast.error).mock.calls.at(-1)?.[1]?.action as Action | undefined;
+    if (!action) throw new Error("Expected a retry action");
+    action.onClick({} as React.MouseEvent<HTMLButtonElement>);
+  });
   await waitFor(() =>
-    expect(navigation.openConversation).toHaveBeenCalledWith("child", { beside: true }),
+    expect(navigation.openConversation).toHaveBeenCalledWith("child", {
+      beside: true,
+      title: "Subchat",
+    }),
   );
   expect(navigation.createSubchat).toHaveBeenCalledTimes(2);
   expect(references.captureReference).toHaveBeenCalledTimes(1);
   expect(getSessionDraft("child")?.text.match(/> Selected message/g)).toHaveLength(1);
 });
 
-it("opens Send to's existing chat picker and waits for explicit insertion without sending", async () => {
+it("inserts from Send to's existing chat picker without confirmation or sending", async () => {
   const { navigation } = selectScopedMessage();
   setSessionDraft("target", { text: "Destination draft", files: [] });
   const send = vi.spyOn(useChatStore.getState(), "send");
@@ -265,29 +286,28 @@ it("opens Send to's existing chat picker and waits for explicit insertion withou
     "slim-scrollbar",
   );
   fireEvent.click(await screen.findByRole("button", { name: "Destination" }));
-  expect(getSessionDraft("target")?.text).toBe("Destination draft");
-  expect(navigation.openConversation).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole("button", { name: "Insert quote" }));
   await waitFor(() =>
-    expect(navigation.openConversation).toHaveBeenCalledWith("target", { beside: true }),
+    expect(navigation.openConversation).toHaveBeenCalledWith("target", {
+      beside: true,
+      title: "Destination",
+    }),
   );
   expect(getSessionDraft("target")?.text).toContain("Destination draft\n\n> Selected message");
   expect(navigation.createSubchat).not.toHaveBeenCalled();
   expect(send).not.toHaveBeenCalled();
 });
 
-it("keeps the created child for retry when destination authorization fails without inserting a draft", async () => {
+it("does not recheck a new fork's destination after authorized creation", async () => {
   const { navigation } = selectScopedMessage();
   vi.mocked(references.referenceRequest).mockRejectedValueOnce(new Error("Source access revoked"));
   fireEvent.click(screen.getByRole("menuitem", { name: "Ask subchat…" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent("Source access revoked");
-  expect(navigation.createSubchat).toHaveBeenCalledTimes(1);
-  expect(navigation.openConversation).not.toHaveBeenCalled();
-  expect(getSessionDraft("child")).toBeUndefined();
-  fireEvent.click(screen.getByRole("button", { name: "Ask subchat…" }));
   await waitFor(() =>
-    expect(navigation.openConversation).toHaveBeenCalledWith("child", { beside: true }),
+    expect(navigation.openConversation).toHaveBeenCalledWith("child", {
+      beside: true,
+      title: "Subchat",
+    }),
   );
   expect(navigation.createSubchat).toHaveBeenCalledTimes(1);
-  expect(getSessionDraft("child")?.text).toContain("scoped-child?message=selected-item");
+  expect(references.referenceRequest).not.toHaveBeenCalled();
+  expect(getSessionDraft("child")?.replyDraft?.quotes[0]?.text).toBe("Selected message");
 });

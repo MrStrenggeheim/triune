@@ -61,6 +61,7 @@ See the unified-workspace feature map for source mappings and desktop/mobile acc
 ## Performance and retained views
 
 Views retain drafts, buffers, undo state and terminal lifecycles while inactive presentation and view-owned polling pause.
+Hidden chat streams detach without discarding their retained state; live streams obey the origin connection budget and reconcile missed items when shown again.
 Stable resource boundaries and scoped subscriptions avoid updating unrelated chats when switching layouts or opening files.
 File links add their tab before original capture completes; editing starts after the original is retained through the authenticated capture route.
 Snapshots use binary artifacts with small versioned metadata, while existing captures remain readable.
@@ -72,7 +73,16 @@ Cross-chat agent communication and independent workers are enabled by default.
 Settings → General → Agent communication stores a personal choice on the server and applies it to new actions immediately.
 It does not disable ordinary subagents or cancel accepted work.
 Peer cards show the trusted sender and source chat, a compact expandable message, and the shared message footer.
-Orchestration shows active agents and open shells in a flat list; lifecycle rows link directly to their activity entry, including completed agents.
+Orchestration defaults to the current chat and separates agents from shells, including completed work, with a shared category filter and supported Stop controls.
+Its alternative Host/workspace source uses the existing combined selector and limits inventory to the chosen root.
+Task rows retain dispatch-specific names, instructions and results; their buttons open the child or its originating Orchestration in tabs.
+The original composer shelf reuses existing question, approval, shell, agent and plan components without dropdown chevrons.
+Native child composers and steering are gated by current parent-runtime capabilities; readable history alone never enables input.
+Claude native children and Codex runtimes without an external targeted-input API remain read-only rather than silently launching a replacement conversation.
 Codex inputs carry their canonical message identity through the native echo so agent messages retain provenance and human quotations remain ordinary messages.
 Peer file references require the captured sender scope and access to both chats and the source filesystem.
+Ask Subchat creates a durable fork at the selection and opens its named tab before runner initialization finishes.
+The draft contains a quote card and source annotation; inherited history appears only after Show history, while explicit forks keep their normal history view.
+An inherited source is not serialized into the model input a second time, and quote captures retain navigation metadata without unrelated tool arguments or output.
+The working shimmer crossfades static highlights through opacity, preserving reduced-motion behavior without repainting a moving text background every frame.
 Administrators can set `OMNIGENT_FEATURES=-session_orchestration` to disable the capability for the deployment; that startup override requires a restart.

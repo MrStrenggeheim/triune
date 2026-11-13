@@ -2,7 +2,12 @@
 // Required Notice: Copyright 2026 MrStrenggeheim. Triune (https://github.com/MrStrenggeheim/triune).
 import { expect, it } from "vitest";
 import type { ChildSessionInfo } from "@/hooks/useChildSessions";
-import { readSubagentActivity, subagentName, subagentTaskDescription } from "./subagentActivity";
+import {
+  readSubagentActivity,
+  shortTaskText,
+  subagentName,
+  subagentTaskDescription,
+} from "./subagentActivity";
 
 const child = (fields: Partial<ChildSessionInfo>): ChildSessionInfo => ({
   id: "opaque-uuid",
@@ -69,4 +74,24 @@ it("does not interpret an ambiguous legacy event title as an agent or task descr
       resource: { title: "Some old label" },
     }),
   ).toMatchObject({ agentName: null, taskDescription: null });
+});
+
+it("preserves full dispatch input and result while compacting the task label", () => {
+  const activity = readSubagentActivity({
+    type: "resource_event",
+    resource_type: "session",
+    event_type: "session.subagent.returned",
+    resource_id: "child",
+    resource: {
+      dispatch_id: "dispatch-1",
+      task_input: "  Original input\n",
+      result_text: "  Result\n",
+    },
+  });
+  expect(activity).toMatchObject({
+    dispatchId: "dispatch-1",
+    taskInput: "  Original input\n",
+    resultText: "  Result\n",
+  });
+  expect(shortTaskText("A long\noriginal task", 10)).toBe("A long or…");
 });

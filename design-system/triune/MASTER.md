@@ -70,7 +70,7 @@ Desktop tab/container headers and view headers remain separate rows, including s
 Mobile reuses horizontally scrolling tabs, including views from other panes; only the selected view is shown.
 Narrow composer workspace controls collapse to an icon and chevron while retaining their accessible full location.
 The shell owns the device bottom safe area once; the mobile composer adds only an 8px content gutter.
-Remove pane docking menus and the app-bar Layout control; pin belongs immediately before each tab close control.
+Remove pane docking menus and the app-bar Layout control; hover/focus replaces the tab type icon with its pin control, without reserving another slot.
 Keep the chat content action menu as three dots; place the existing Chat/Terminal switch immediately before it.
 Keep conversation breadcrumbs in the view header.
 Center empty guidance within the entire available content area.
@@ -82,7 +82,9 @@ Running, approval, draft and unread indicators coexist in the trailing row group
 Parents alone have a trailing child-count/chevron; children use shallow indentation.
 Hover actions truncate titles before controls instead of covering labels or status.
 
-The composer activity dock is disabled until the owner requests another design.
+The custom ConversationActivityDock remains disabled.
+The approved original composer shelf groups questions, approvals, shells, agents and plan progress above the input, using existing forms and popovers.
+Shelf buttons have no chevrons; labels collapse under measured space pressure while icons and counts remain visible.
 Activity data and the dedicated Activity view remain available.
 
 ## Reuse rule
@@ -110,6 +112,8 @@ Background color changes mark full surface edges without an additional border; e
 The native bottom gesture area shares the chat surface and has no exterior pane divider.
 
 Each chat owns a remembered layout by default; explicit Open to side or sidebar drag adds it to the current layout.
+Ask Subchat opens a named adjacent tab without confirmation; keep only the quote and source annotation in its draft, with inherited history collapsed behind Show history.
+Preserve typed text around inserted quotes and keep internal context serialization outside editable content.
 Do not replace another chat's saved arrangement during explicit embedded opening.
 Layout miniatures, Inbox consolidation and composer spacing redesign are deferred.
 
@@ -119,7 +123,7 @@ Every implementation report includes action/expected-result acceptance steps and
 ## Current cycle refinements
 
 - Pin changes persistence only: retain pane geometry, support resizing and interpolate other chat layouts into the free areas.
-- Pinned tabs show a filled primary pin permanently; active state remains the primary bottom strip.
+- Pinned tabs show a filled type icon at rest and a filled pin on hover/focus; active state remains the primary bottom strip.
 - Dock resize indicators reuse the sidebar handle's thin paint and hover/active tones while retaining practical hit areas.
 - Shared dock and terminal splits allow 20–80% resizing; retain existing saved positions within those bounds.
 - Tab insertion uses a vertical primary marker; split preview uses the actual resulting half-pane footprint and shared file-drop surfaces.
@@ -153,8 +157,10 @@ Capture errors use the notification system and an explicit Retry action in that 
 
 Peer messages use a slim accent edge and one header: bubble icon, actual agent name, source chat and message menu.
 Show at most three compact message lines with Show full/less, then reuse the user-message timestamp, Copy and Copy link footer.
-Task rows use the robot icon, actual agent name, short recorded task and semantic status icons; one square-arrow-out action opens the activity entry.
+Task rows use the robot icon, recorded name/task, compact expandable input/result and semantic status icons.
+A chat button opens the named child beside its parent; square-arrow-out opens the spawning chat's Orchestration and consumes its focus request.
 Use Orchestration with the Workflow icon for the view, while retaining internal compatibility identifiers.
-Its default list contains active agents and open agent-triggered shells ordered by observed activity, with state on the right.
-Keep filters, graph, messages and history details in the existing menu; no permanent status groups, root banner or explanatory paragraphs.
+Its default list contains separate Agents and Shells sections, including settled work, each ordered by observed activity.
+Use the shared All/Agents/Shells control in the header and two-line resource entries with state and supported controls on the right.
+Open resources in tabs; retain graph and messages in the existing menu, without inspector modals or status-group hierarchies.
 Real errors remain visible; source attribution comes from trusted records, never from a text prefix.

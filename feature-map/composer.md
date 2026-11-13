@@ -10,6 +10,13 @@ and steers messages while the agent is busy.
 
 ## Sub-features
 
+- `attention-shelf`: original inset tray above input, with Questions, Approvals, Shells, Agents and Plan; no chevrons, measured compact labels, hidden when empty.
+- `child-controls`: current runtime capabilities enable native child replies or steering; unsupported children keep a disabled composer with a reason.
+- `initial-input-recovery`: retain the first prompt, attachment bytes and create identity across failed startup/reload; clear drafts on acceptance.
+- `quote-subchat`: Ask Subchat and Send to new subchat create once, seed an unsent quote and open beside before runner readiness, without confirmation or internal JSON.
+- `inherited-history`: quote-created forks hide their inherited prefix behind Show history; explicit forks retain normal defaults and child messages stay visible.
+- `working-shimmer`: opacity crossfades retain the working animation without per-frame text-background painting; reduced motion remains static.
+
 - `wrap-preferences`: chat code/text, tool/command input and tool/command output remember independent word-wrap choices across reloads.
 - `file-annotations`: Ask in chat from a file selection adds a source-annotated quote to the current draft without sending it.
 
@@ -323,10 +330,18 @@ in the composer, then click the microphone beside **Ask a side question...**.
 
 ## Driving it with the repro environment
 
+
 Preconditions: a running instance (`verify-env start`, then `verify-env
 doctor`), the built web UI, and mock replies configured for any journey that
 sends a message. Run e2e tests through the instance:
 
+- Attention shelf and real question/plan forms: `tests/browser_ui/chat/test_triune_next_iteration.py::test_original_composer_shelf_requests_and_counts` covers desktop/mobile and retained drafts.
+- Direct quote subchat, held host launch, clean drafts and history toggle: `tests/browser_ui/chat/test_workspace_iteration.py::test_quote_subchat_opens_before_launch_and_hides_inherited_history`.
+- Existing destination drafts retain their text before the quote: `tests/browser_ui/chat/test_workspace_iteration.py::test_selected_quote_menu_reuses_app_controls_and_retains_destination_draft`.
+- History boundaries and explicit-fork defaults: `web/src/lib/inheritedHistory.test.ts` and `web/src/components/chat/Transcript.virtualList.test.tsx`.
+- Shelf resolution and conversation changes: `web/src/components/composer/ComposerAttentionShelf.test.tsx`.
+- Initial-input identity and capability gating: `web/src/pages/ChatPage.test.ts`, `web/src/shell/NewChatDialog.flow.test.tsx`, and `web/src/store/chatStore.test.ts`.
+- Child ancestry, turn-targeted steering and unsupported runtime states: `tests/runner/test_native_child_controls.py` and `tests/server/routes/test_native_child_controls.py`.
 - Composer controls, PR/task retention and crowded phone geometry: `tests/browser_ui/chat/test_composer_acceptance.py`.
 - New/existing composer placement and direct queue docking: `tests/browser_ui/chat/test_composer_geometry_contract.py::test_workspace_controls_live_in_the_card_action_row` and `tests/browser_ui/chat/test_composer_geometry_contract.py::test_queued_rows_and_nested_workspace_share_the_tray_grid`.
 

@@ -8,6 +8,14 @@ import * as api from "@/lib/contextReferences";
 import { clearSessionDrafts, getSessionDraft, setSessionDraft } from "@/lib/sessionDrafts";
 import { setEmbedRoot } from "@/lib/host";
 import { QuoteDestinationMenu } from "./QuoteDestinationMenu";
+import { StrictMode } from "react";
+import { clearReferenceDrafts } from "@/lib/contextReferenceDrafts";
+import { useChatStore } from "@/store/chatStore";
+import { toast, type Action } from "@/lib/notifications";
+
+vi.mock("@/lib/notifications", () => ({
+  toast: { loading: vi.fn(() => "loading"), dismiss: vi.fn(), error: vi.fn() },
+}));
 
 vi.mock("@/lib/contextReferences", async (original) => ({
   ...(await original<typeof api>()),
@@ -51,6 +59,8 @@ afterEach(() => {
   cleanup();
   setEmbedRoot(null);
   clearSessionDrafts();
+  clearReferenceDrafts();
+  useChatStore.setState({ sideChatComposers: {}, sideChatDrafts: {} });
   vi.resetAllMocks();
 });
 
@@ -99,8 +109,9 @@ it("ignores a captured snapshot that resolves after dismissal", async () => {
         finish = resolve;
       }),
   );
-  render(menu({ intent: "subchat" }));
-  await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  const view = render(menu({ intent: "subchat" }));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  view.unmount();
   await act(async () => finish(reference));
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(navigation.createSubchat).not.toHaveBeenCalled();
@@ -117,7 +128,6 @@ it("retains newer destination drafts when authorization resolves after dismissal
   );
   render(menu());
   await userEvent.click(await screen.findByRole("button", { name: "Destination" }));
-  await userEvent.click(screen.getByRole("button", { name: "Insert quote" }));
   await waitFor(() => expect(api.referenceRequest).toHaveBeenCalled());
   fireEvent.keyDown(document.body, { key: "Escape" });
   setSessionDraft("target", { text: "Newer draft", files: [] });
@@ -127,6 +137,42 @@ it("retains newer destination drafts when authorization resolves after dismissal
   expect(screen.queryByRole("dialog")).toBeNull();
 });
 
+it.each(["subchat", "pick"] as const)(
+  "opens %s once across caller rerenders without confirmation",
+  async (intent) => {
+    let finish!: (id: string) => void;
+    navigation.createSubchat.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const view = render(<StrictMode>{menu({ intent })}</StrictMode>);
+    if (intent === "pick")
+      await userEvent.click(screen.getByRole("button", { name: "New subchat" }));
+    await waitFor(() => expect(navigation.createSubchat).toHaveBeenCalledTimes(1));
+    view.rerender(
+      <StrictMode>{menu({ intent, source: { ...source }, onClose: vi.fn() })}</StrictMode>,
+    );
+    expect(screen.queryByText(/visible to everyone|quote will be copied/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Insert quote" })).toBeNull();
+    setSessionDraft("child", { text: "Keep destination draft", files: [] });
+    await act(async () => finish("child"));
+    await waitFor(() =>
+      expect(navigation.openConversation).toHaveBeenCalledExactlyOnceWith("child", {
+        beside: true,
+        title: "Subchat",
+      }),
+    );
+    expect(api.captureReference).toHaveBeenCalledTimes(2);
+    expect(navigation.createSubchat).toHaveBeenCalledTimes(1);
+    expect(getSessionDraft("child")?.replyDraft?.quotes).toEqual([
+      { before: "Keep destination draft", text: source.text },
+    ]);
+    expect(getSessionDraft("child")?.text).not.toMatch(/snapshot|Open source|version/);
+  },
+);
+
 it("does not reopen or navigate when a dismissed child launch resolves", async () => {
   let finish!: (id: string) => void;
   navigation.createSubchat.mockImplementation(
@@ -135,9 +181,9 @@ it("does not reopen or navigate when a dismissed child launch resolves", async (
         finish = resolve;
       }),
   );
-  render(menu({ intent: "subchat" }));
+  const view = render(menu({ intent: "subchat" }));
   await waitFor(() => expect(navigation.createSubchat).toHaveBeenCalled());
-  await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  view.unmount();
   await act(async () => finish("child"));
   expect(navigation.openConversation).not.toHaveBeenCalled();
   expect(api.referenceRequest).not.toHaveBeenCalled();
@@ -149,11 +195,55 @@ it("retries failed quote capture explicitly and creates only one child", async (
   vi.mocked(api.captureReference).mockRejectedValueOnce(new Error("Temporary failure"));
   navigation.createSubchat.mockResolvedValue("child");
   render(menu({ intent: "subchat" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent("Temporary failure");
-  await userEvent.click(screen.getByRole("button", { name: "Retry capture" }));
   await waitFor(() =>
-    expect(navigation.openConversation).toHaveBeenCalledWith("child", { beside: true }),
+    expect(toast.error).toHaveBeenCalledWith("Temporary failure", expect.anything()),
+  );
+  await act(async () => {
+    const action = vi.mocked(toast.error).mock.calls.at(-1)?.[1]?.action as Action | undefined;
+    if (!action) throw new Error("Expected a retry action");
+    action.onClick({} as React.MouseEvent<HTMLButtonElement>);
+  });
+  await waitFor(() =>
+    expect(navigation.openConversation).toHaveBeenCalledWith("child", {
+      beside: true,
+      title: "Subchat",
+    }),
   );
   expect(navigation.createSubchat).toHaveBeenCalledTimes(1);
   expect(getSessionDraft("child")?.text).toContain("> Exact quote");
 });
+
+it.each(["resolve", "reject"])(
+  "seeds and opens before held initialization can %s without duplicating the quote",
+  async (outcome) => {
+    let finish!: (id: string) => void;
+    let fail!: (error: Error) => void;
+    navigation.createSubchat.mockImplementation(async (_source, onCreated) => {
+      await onCreated("early-child");
+      return new Promise<string>((resolve, reject) => {
+        finish = resolve;
+        fail = reject;
+      });
+    });
+    render(menu({ intent: "subchat" }));
+    await waitFor(() =>
+      expect(navigation.openConversation).toHaveBeenCalledExactlyOnceWith("early-child", {
+        beside: true,
+        title: "Subchat",
+      }),
+    );
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(getSessionDraft("early-child")?.replyDraft?.quotes).toEqual([
+      { before: "", text: source.text },
+    ]);
+    expect(api.referenceRequest).not.toHaveBeenCalled();
+    await act(async () => {
+      if (outcome === "resolve") finish("early-child");
+      else fail(new Error("Launch failed"));
+    });
+    expect(navigation.openConversation).toHaveBeenCalledTimes(1);
+    expect(getSessionDraft("early-child")?.replyDraft?.quotes).toHaveLength(1);
+    if (outcome === "reject")
+      expect(toast.error).toHaveBeenCalledWith("Launch failed", expect.anything());
+  },
+);

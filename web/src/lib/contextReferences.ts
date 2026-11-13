@@ -1,6 +1,8 @@
 import { authenticatedFetch } from "./identity";
 import { withBasePath } from "./basePath";
 
+export { QUOTE_SUBCHAT_HISTORY_LABEL, shouldHideQuoteSubchatHistory } from "./inheritedHistory";
+
 export type ReferenceScope = "whole" | "last_answer" | "messages" | "quote";
 export const referenceScopeLabels: Record<ReferenceScope, string> = {
   whole: "Whole chat",
@@ -31,6 +33,8 @@ export interface ContextReference {
   quote: string | null;
   audience: string;
   representation: string;
+  /** Draft-only provenance: this fork already contains the captured source history. */
+  inherited_by?: string;
 }
 export interface ReferenceChat {
   message_id?: string;
@@ -113,6 +117,7 @@ export function captureReference(
   );
 }
 export function serializeContextReference(reference: ContextReference): string {
+  if (reference.inherited_by) return "";
   return `[Chat context snapshot]\n${JSON.stringify(reference)}\n[/Chat context snapshot]`;
 }
 export function referenceSourceUrl(sourceId: string, boundaryId: string): string {

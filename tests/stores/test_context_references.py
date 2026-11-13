@@ -6,7 +6,12 @@ import json
 import pytest
 from fastapi import HTTPException
 
-from omnigent.entities import MessageData, NewConversationItem
+from omnigent.entities import (
+    FunctionCallData,
+    FunctionCallOutputData,
+    MessageData,
+    NewConversationItem,
+)
 from omnigent.errors import OmnigentError
 from omnigent.server.auth import LEVEL_EDIT, LEVEL_OWNER, LEVEL_READ
 from omnigent.server.routes.sessions.context_references import (
@@ -43,6 +48,48 @@ def test_reference_whole_paginates_and_freezes_boundary(conversation_store):
     store.append(source.id, [message("later")])
     assert capture_items(store, source.id, request) == frozen
     assert all("created_at" in item for item in frozen)
+
+
+def test_quote_retains_navigation_ids_without_tool_arguments_or_output(conversation_store):
+    source = conversation_store.create_conversation()
+    items = conversation_store.append(
+        source.id,
+        [
+            NewConversationItem(
+                type="function_call",
+                response_id="turn",
+                status="completed",
+                data=FunctionCallData(
+                    agent="model",
+                    name="shell",
+                    call_id="call",
+                    arguments='{"command":"private command"}',
+                ),
+            ),
+            NewConversationItem(
+                type="function_call_output",
+                response_id="turn",
+                status="completed",
+                data=FunctionCallOutputData(
+                    agent="model", call_id="call", output="private output"
+                ),
+            ),
+            message("Selected answer", role="assistant"),
+        ],
+    )
+    quoted = capture_items(
+        conversation_store,
+        source.id,
+        CaptureReference(
+            scope="quote", boundary_id=items[-1].id, message_ids=["turn"], quote="Selected answer"
+        ),
+    )
+    assert [item["id"] for item in quoted] == [item.id for item in items]
+    assert all(
+        set(item) <= {"id", "type", "role", "status", "response_id", "created_at"}
+        for item in quoted
+    )
+    assert "private" not in json.dumps(quoted)
 
 
 def test_reference_scopes_do_not_substitute_or_truncate(conversation_store):

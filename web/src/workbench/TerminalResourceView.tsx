@@ -9,6 +9,7 @@ import { CloseShellDialog } from "@/shell/CloseShellDialog";
 import { isOwnerLevel, LEVEL_OWNER } from "@/lib/permissionsApi";
 import { authenticatedFetch } from "@/lib/identity";
 import { apiErrorFromResponse } from "@/lib/sessionsApi";
+import type { ChatActivityResponse } from "@/hooks/useChatActivity";
 import {
   manualTerminalRecord,
   RetainedTerminalOutput,
@@ -20,6 +21,66 @@ import {
 const TerminalView = lazy(() =>
   import("@/components/blocks/TerminalView").then((module) => ({ default: module.TerminalView })),
 );
+
+/** Recorded commands are read through their owner; this view never attaches a terminal. */
+export function RetainedActivityView({
+  conversationId,
+  activity,
+  active,
+}: {
+  conversationId: string;
+  activity: { name: string; state: string; entryIds: string[] };
+  active: boolean;
+}) {
+  const history = useQuery<ChatActivityResponse>({
+    queryKey: ["chat-activity", conversationId],
+    queryFn: async ({ signal }) => {
+      const response = await authenticatedFetch(
+        `/v1/sessions/${encodeURIComponent(conversationId)}/activity`,
+        { signal },
+      );
+      if (!response.ok) throw await apiErrorFromResponse(response);
+      return response.json();
+    },
+    enabled: active,
+    staleTime: 5_000,
+    retry: false,
+  });
+  const entries = history.data?.data.filter((entry) => activity.entryIds.includes(entry.id)) ?? [];
+  const output = entries
+    .map(
+      (entry) =>
+        `${entry.kind === "command" ? `$ ${entry.name}\n` : ""}${entry.output ?? ""}${entry.exit_status != null ? `\nExit code: ${entry.exit_status}` : ""}`,
+    )
+    .join("\n\n");
+  return (
+    <div className="flex h-full min-h-0 flex-col" data-context-search-region="native">
+      <div className="workspace-control-header flex items-center gap-2 border-b px-3 text-xs">
+        <span className="min-w-0 flex-1 truncate">{activity.name}</span>
+        <span className="text-muted-foreground">Retained output</span>
+        <TooltipButton
+          type="button"
+          className="flex size-7 items-center justify-center rounded hover:bg-muted"
+          aria-label="Refresh history"
+          onClick={() => void history.refetch()}
+        >
+          <RefreshCwIcon className="size-3.5" />
+        </TooltipButton>
+      </div>
+      {history.error ? (
+        <p role="alert" className="p-3 text-sm">
+          {history.error.message}
+        </p>
+      ) : history.isLoading ? (
+        <p role="status" className="p-3 text-sm">
+          Loading retained output…
+        </p>
+      ) : (
+        <RetainedTerminalOutput terminal={{ output }} />
+      )}
+    </div>
+  );
+}
 
 interface TerminalResourceProps {
   workspace?: WorkbenchWorkspace;

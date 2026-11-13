@@ -14,13 +14,14 @@ import {
   ConversationEmptyState,
   ConversationScrollButton,
 } from "@/components/ai-elements/conversation";
-import { Message, MessageContent } from "@/components/ai-elements/message";
-import { ElicitationCard } from "@/components/blocks/ApprovalCard";
 import { cn } from "@/lib/utils";
 import { getCurrentAuthorId } from "@/lib/identity";
 import { hasCommandModifier } from "@/lib/hotkeys";
 import { isSystemUserContent } from "@/lib/systemMessage";
 import { isTerminalCommandInput } from "@/lib/blocks";
+import type { ConversationBranch } from "@/lib/conversationBranches";
+import { hasInheritedHistory, inheritedHistoryEnd } from "@/lib/inheritedHistory";
+import { TooltipButton } from "@/components/ui/tooltip";
 import {
   type Bubble,
   type BubbleCache,
@@ -40,7 +41,6 @@ import { useMessageDeepLink } from "@/hooks/useMessageDeepLink";
 import { useUserMessageNav } from "@/hooks/useUserMessageNav";
 import { useChatSearchHighlights } from "@/hooks/useChatSearchHighlights";
 import { useContextSearch } from "@/shell/ContextSearchContext";
-import { ChatPlanAccordion } from "@/shell/ChatPlanAccordion";
 import {
   RunnerStartingIndicator,
   McpStartupIndicator,
@@ -78,6 +78,9 @@ import {
 } from "@/shell/useScrollRestore";
 
 export interface TranscriptProps {
+  branch?: ConversationBranch | null;
+  /** Opt in only for quote-created subchats; explicit forks retain their normal view. */
+  hideInheritedHistory?: boolean;
   hostId: string | null | undefined;
   /** Ref callback for the conversation wrapper element (SelectionPopup scope +
    *  JumpToTopButton hover ancestor). Owned by the parent, forwarded here. */
@@ -124,6 +127,8 @@ export function isNativeFindShortcut(
  * dialogs bail out via React's normal prop-equality check.
  */
 function TranscriptImpl({
+  branch,
+  hideInheritedHistory = false,
   hostId,
   setConversationEl,
   containerEl,
@@ -150,6 +155,23 @@ function TranscriptImpl({
   const hasTasks = useChatStore((s) => s.todos.length > 0);
   const conversationId = useChatStore((s) => s.conversationId);
   const contextSearch = useContextSearch();
+  const [expandedHistoryId, setExpandedHistoryId] = useState<string | null>(null);
+  const [searchParams] = useSearchParams();
+  const messageId = searchParams.get(MESSAGE_QUERY_PARAM);
+  const inheritedEnd = useMemo(() => inheritedHistoryEnd(blocks, branch), [blocks, branch]);
+  const canFoldHistory = hideInheritedHistory && hasInheritedHistory(branch);
+  const historyId = `${conversationId}:${branch?.inherited_last_item_id}`;
+  const searchTarget = contextSearch?.highlightTarget ?? null;
+  const targetId =
+    searchTarget?.conversationId === conversationId ? searchTarget.itemId : messageId;
+  const targetsHistory =
+    !!targetId && blocks.slice(0, inheritedEnd + 1).some((block) => block.ctx.itemId === targetId);
+  const historyExpanded = expandedHistoryId === historyId || targetsHistory;
+  const canLoadHistory = !canFoldHistory || historyExpanded || inheritedEnd < 0;
+  const visibleBlocks = useMemo(
+    () => (canFoldHistory && !historyExpanded ? blocks.slice(inheritedEnd + 1) : blocks),
+    [blocks, canFoldHistory, historyExpanded, inheritedEnd],
+  );
 
   // Build bubbles once per blocks/activeResponse change. Per-surface reuse
   // cache so a streaming append rebuilds only the active bubble, reusing the
@@ -160,7 +182,7 @@ function TranscriptImpl({
     const committed = stripGatedSubagentRoutingChips(
       reorderCommittedRequestElicitations(
         buildBubbles(
-          blocks,
+          visibleBlocks,
           activeResponse,
           bubbleCacheRef.current,
           interruptedResponseIds,
@@ -175,7 +197,7 @@ function TranscriptImpl({
       buildPendingBubbles(pendingUserMessages, getCurrentAuthorId()),
     );
   }, [
-    blocks,
+    visibleBlocks,
     activeResponse,
     interruptedResponseIds,
     pendingUserMessages,
@@ -190,7 +212,7 @@ function TranscriptImpl({
   );
   const committedUserIds = useMemo(() => {
     const ids = new Set<string>();
-    for (const block of blocks) {
+    for (const block of visibleBlocks) {
       if (
         ((block.type === "user_message" && !isSystemUserContent(block.content)) ||
           isTerminalCommandInput(block)) &&
@@ -200,7 +222,7 @@ function TranscriptImpl({
       }
     }
     return ids;
-  }, [blocks]);
+  }, [visibleBlocks]);
   // Keep every bubble-derived surface on one coherent model so the
   // rail/spacer/indicators always describe the rows being rendered.
   const display = useMemo(
@@ -209,13 +231,13 @@ function TranscriptImpl({
       bubbles,
       streamBubbles,
       pendingElicitations,
-      blockCount: blocks.length,
+      blockCount: visibleBlocks.length,
       committedUserIds,
       hasCommittedAnchor:
-        committedUserIds.size > 0 || blocks.some((block) => block.type !== "user_message"),
+        committedUserIds.size > 0 || visibleBlocks.some((block) => block.type !== "user_message"),
       hasTasks,
       mcpStartupActive,
-      hasMoreHistory,
+      hasMoreHistory: hasMoreHistory && canLoadHistory,
       loadingMoreHistory,
       showsWorking,
     }),
@@ -224,13 +246,14 @@ function TranscriptImpl({
       bubbles,
       streamBubbles,
       pendingElicitations,
-      blocks,
+      visibleBlocks,
       committedUserIds,
       hasTasks,
       mcpStartupActive,
       hasMoreHistory,
       loadingMoreHistory,
       showsWorking,
+      canLoadHistory,
     ],
   );
   const [nativeFindConversationId, setNativeFindConversationId] = useState<string | null>(null);
@@ -247,8 +270,6 @@ function TranscriptImpl({
     return () => window.removeEventListener("keydown", handleFind);
   }, [display.conversationId, focused]);
   const disableVirtualization = nativeFindConversationId === display.conversationId;
-  const [searchParams] = useSearchParams();
-  const messageId = searchParams.get(MESSAGE_QUERY_PARAM);
 
   // Virtualizer-derived geometry (scroll handle, active turn, range nonce),
   // published by VirtualBubbleList. The rail reads the active turn and the
@@ -285,7 +306,6 @@ function TranscriptImpl({
     ready: display.conversationId === conversationId && !!scroller?.el && !!scrollToItemRef.current,
     rangeNonce: spacerMeasureNonce,
   });
-  const searchTarget = contextSearch?.highlightTarget ?? null;
   useChatSearchHighlights({
     conversationId: conversationId ?? null,
     query:
@@ -353,31 +373,21 @@ function TranscriptImpl({
   const showWorkingIndicator = shouldShowWorkingIndicator(display.showsWorking, display.bubbles);
   const arcaWarning = useArcaShutdownBanner();
   const showArcaBanner = arcaWarning.showForHost(hostId);
-  const hasPinnedBanner = display.hasTasks;
   return (
     <>
-      {/* Task tracker pinned above the thread. Sibling of the viewport (not an
-      overlay) so it shrinks the scroll area rather than covering messages.
-      Self-hides with no tasks. */}
-      <ChatPlanAccordion className="mt-14 md:mt-12" />
-      {showArcaBanner && <ArcaShutdownBanner warning={arcaWarning} hasTasks={display.hasTasks} />}
+      {showArcaBanner && <ArcaShutdownBanner warning={arcaWarning} hasTasks={false} />}
       {/* Wrapper div gives us a ref to scope the SelectionPopup to the
       conversation area without requiring Conversation to forward refs. */}
       <div
         ref={setConversationEl}
         className="@container/chat relative flex min-h-0 flex-1 overflow-hidden"
       >
-        <Conversation
-          className={cn(
-            hasPinnedBanner ? "chat-scroll-composer-fade" : "chat-scroll-fade",
-            "flex-1",
-          )}
-        >
+        <Conversation className="chat-scroll-fade flex-1">
           <ConversationContent
             scrollClassName="transcript-hide-native-scrollbar"
             className={cn(
               "chat-conversation-content mx-auto w-full gap-4 px-4 pb-6 md:px-[clamp(0px,calc((var(--chat-column-width)+3.5rem-100cqi)*0.5),1.75rem)]",
-              hasPinnedBanner ? "pt-4" : "pt-20",
+              "pt-20",
               showArcaBanner && "chat-content-under-arca-banner",
               CHAT_COLUMN_WIDTH,
             )}
@@ -386,11 +396,26 @@ function TranscriptImpl({
             <ScrollToBottomOnSend nonce={sendScrollNonce} />
             <KeepBottomOnViewportResize />
             <ConversationScrollRefBridge onScroller={setScroller} />
-            <HistoryAutoLoader
-              scrollElement={scroller?.el ?? null}
-              rowCount={display.streamBubbles.length}
-            />
-            {display.bubbles.length === 0 && !showWorkingIndicator && !display.mcpStartupActive ? (
+            {canLoadHistory && (
+              <HistoryAutoLoader
+                scrollElement={scroller?.el ?? null}
+                rowCount={display.streamBubbles.length}
+              />
+            )}
+            {canFoldHistory && (
+              <TooltipButton
+                type="button"
+                aria-expanded={historyExpanded}
+                onClick={() => setExpandedHistoryId(historyExpanded ? null : historyId)}
+                className="self-start text-xs text-muted-foreground hover:text-foreground transition-colors"
+              >
+                {historyExpanded ? "Hide history" : "Show history"}
+              </TooltipButton>
+            )}
+            {display.bubbles.length === 0 &&
+            !canFoldHistory &&
+            !showWorkingIndicator &&
+            !display.mcpStartupActive ? (
               sandboxLaunching ? (
                 <RunnerStartingIndicator variant="hero" />
               ) : (
@@ -418,7 +443,7 @@ function TranscriptImpl({
                   showsWorking={display.showsWorking}
                   sessionIdle={sessionStatus === "idle"}
                   conversationId={display.conversationId}
-                  hasTasks={display.hasTasks}
+                  hasTasks={false}
                   disableVirtualization={disableVirtualization}
                   messageId={
                     searchTarget?.conversationId === conversationId
@@ -427,21 +452,6 @@ function TranscriptImpl({
                   }
                   onGeometryChange={onGeometryChange}
                 />
-                {/* Pending elicitation cards, floated to the bottom of the chat
-                so an outstanding question stays in view. Newest renders last,
-                nearest the composer. Above the Working… indicator. */}
-                {display.pendingElicitations.map((item) => (
-                  <Message
-                    key={item.elicitationId}
-                    from="assistant"
-                    className="max-w-full"
-                    data-testid="bottom-elicitation"
-                  >
-                    <MessageContent className="w-full">
-                      <ElicitationCard item={item} />
-                    </MessageContent>
-                  </Message>
-                ))}
                 {/* Working… shimmer, lit for the whole busy turn. */}
                 {showWorkingIndicator && <WorkingIndicator />}
                 {/* Managed-sandbox stage cue; only when Working is absent. */}
@@ -459,7 +469,6 @@ function TranscriptImpl({
               blockCount={display.blockCount}
               committedUserIds={display.committedUserIds}
               hasCommittedAnchor={display.hasCommittedAnchor}
-              topGapPx={display.hasTasks ? 16 : undefined}
               measureRef={spacerMeasureRef}
               remeasureNonce={spacerMeasureNonce}
             />
@@ -468,7 +477,7 @@ function TranscriptImpl({
         </Conversation>
         {/* Constant-height scrollbar. Sibling of Conversation so it escapes the
         chat-scroll-fade mask. */}
-        <TranscriptScrollbar scroller={scroller} topInset={display.hasTasks ? 12 : undefined} />
+        <TranscriptScrollbar scroller={scroller} />
         {/* Hover the top edge to reveal a pill that loads all older history. */}
         <JumpToTopButton
           containerEl={containerEl}

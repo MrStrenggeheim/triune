@@ -660,18 +660,27 @@ describe("dock tab controls", () => {
     },
   );
 
-  it("shows the right fade only with remaining overflow and reveals keyboard-selected tabs", () => {
+  it("shows directional fades only where tabs overflow and reveals keyboard-selected tabs", () => {
     const reveal = vi.spyOn(Element.prototype, "scrollIntoView");
     function Workspace() {
       const [layout, setLayout] = useState(createDockLayout([view("a"), view("b")]));
       return (
-        <DockWorkspace layout={layout} onLayoutChange={setLayout} renderView={() => null} compact />
+        <DockWorkspace
+          layout={layout}
+          onLayoutChange={setLayout}
+          renderView={() => null}
+          openActions={[]}
+          compact
+        />
       );
     }
     try {
       render(<Workspace />);
       const strip = screen.getByRole("tablist");
       const header = strip.parentElement!;
+      expect(strip).toHaveAttribute("data-workspace-tabs-viewport");
+      expect(strip.querySelector(".dock-tab-add")).toBeInTheDocument();
+      expect(header).toHaveAttribute("data-overflow-left", "false");
       expect(header).toHaveAttribute("data-overflow-right", "false");
       Object.defineProperties(strip, {
         clientWidth: { configurable: true, value: 200 },
@@ -679,9 +688,20 @@ describe("dock tab controls", () => {
         scrollLeft: { configurable: true, writable: true, value: 0 },
       });
       fireEvent.scroll(strip);
+      expect(header).toHaveAttribute("data-overflow-left", "false");
+      expect(header).toHaveAttribute("data-overflow-right", "true");
+      strip.scrollLeft = 100;
+      fireEvent.scroll(strip);
+      expect(header).toHaveAttribute("data-overflow-left", "true");
       expect(header).toHaveAttribute("data-overflow-right", "true");
       strip.scrollLeft = 200;
       fireEvent.scroll(strip);
+      expect(header).toHaveAttribute("data-overflow-left", "true");
+      expect(header).toHaveAttribute("data-overflow-right", "false");
+      Object.defineProperty(strip, "scrollWidth", { value: 200 });
+      strip.scrollLeft = 0;
+      fireEvent.scroll(strip);
+      expect(header).toHaveAttribute("data-overflow-left", "false");
       expect(header).toHaveAttribute("data-overflow-right", "false");
       fireEvent.keyDown(screen.getByRole("tab", { name: "a" }), { key: "ArrowRight" });
       expect(screen.getByRole("tab", { name: "b" })).toHaveFocus();
@@ -689,6 +709,29 @@ describe("dock tab controls", () => {
     } finally {
       reveal.mockRestore();
     }
+  });
+
+  it("uses the shared wheel behavior only inside an overflowing dock tab strip", () => {
+    render(
+      <DockWorkspace
+        layout={createDockLayout([view("a"), view("b")])}
+        onLayoutChange={vi.fn()}
+        renderView={(item) => <div data-testid={`pane-content-${item.id}`} />}
+      />,
+    );
+    const strip = screen.getByRole("tablist");
+    Object.defineProperties(strip, {
+      clientWidth: { configurable: true, value: 200 },
+      scrollWidth: { configurable: true, value: 400 },
+    });
+    expect(fireEvent.wheel(strip, { deltaY: 30 })).toBe(false);
+    expect(strip.scrollLeft).toBe(30);
+    expect(fireEvent.wheel(strip, { deltaX: 12, deltaY: 20 })).toBe(true);
+    expect(fireEvent.wheel(screen.getByTestId("pane-content-a"), { deltaY: 30 })).toBe(true);
+    expect(strip.scrollLeft).toBe(30);
+    Object.defineProperty(strip, "scrollWidth", { value: 200 });
+    expect(fireEvent.wheel(strip, { deltaY: 30 })).toBe(true);
+    expect(strip.scrollLeft).toBe(30);
   });
 
   it("opens the shared context menu for the clicked tab and routes close through its guard", async () => {
@@ -849,10 +892,16 @@ describe("useDockLayout", () => {
     render(<Workspace />);
     const explorer = screen.getByLabelText("Pin resource Explorer");
     const pin = screen.getByRole("button", { name: "Pin Explorer" });
+    const tabGroup = pin.closest(".dock-tab-group")!;
+    const typeIcon = tabGroup.querySelector(".dock-tab-type-icon svg");
+    expect(typeIcon).toBeInTheDocument();
+    expect(tabGroup).toHaveAttribute("data-pinned", "false");
     expect(pin.nextElementSibling).toBe(screen.getByRole("button", { name: "Close Explorer" }));
     act(() => pin.focus());
     await user.keyboard("{Enter}");
     expect(dock.pinnedViewIds).toEqual(["Explorer"]);
+    expect(tabGroup).toHaveAttribute("data-pinned", "true");
+    expect(tabGroup.querySelector(".dock-tab-type-icon svg")).toBe(typeIcon);
     expect(screen.getByRole("button", { name: "Unpin Explorer" })).toHaveAttribute(
       "aria-pressed",
       "true",

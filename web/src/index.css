@@ -1895,20 +1895,57 @@ html[data-electron-mac] .breadcrumb-folder {
   animation: imc-verdict-ping 650ms ease-out 1;
 }
 
-/* Text shimmer: a clipped gradient swept across the text. Pure CSS so it
- * doesn't pull framer-motion (~165KB) into the bundle — see Shimmer in
- * components/ai-elements/shimmer.tsx. Duration is set via --shimmer-duration. */
-@keyframes shimmer-sweep {
-  from {
-    background-position: 100% center;
+/* Rasterize the text highlight once, then animate only its opacity. */
+@keyframes shimmer-highlight {
+  0%,
+  66.667%,
+  100% {
+    opacity: 0;
   }
-  to {
-    background-position: 0% center;
+  33.333% {
+    opacity: 1;
   }
 }
 
-.text-shimmer {
-  animation: shimmer-sweep var(--shimmer-duration, 2s) linear infinite;
+.text-shimmer-highlight {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  user-select: none;
+  animation: shimmer-highlight var(--shimmer-duration, 2s) ease-in-out infinite;
+}
+
+.text-shimmer-highlight:nth-child(1) {
+  --shimmer-center: 20%;
+}
+
+.text-shimmer-highlight:nth-child(2) {
+  --shimmer-center: 50%;
+  animation-delay: calc(var(--shimmer-duration, 2s) / -1.5);
+}
+
+.text-shimmer-highlight:nth-child(3) {
+  --shimmer-center: 80%;
+  animation-delay: calc(var(--shimmer-duration, 2s) / -3);
+}
+
+.text-shimmer-highlight::before {
+  content: attr(data-text);
+  display: block;
+  color: transparent;
+  background: linear-gradient(
+    90deg,
+    transparent calc(var(--shimmer-center) - var(--spread)),
+    var(--color-background) var(--shimmer-center),
+    transparent calc(var(--shimmer-center) + var(--spread))
+  );
+  background-clip: text;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .text-shimmer-highlight {
+    display: none;
+  }
 }
 
 /* Otto working indicator: gentle bob + periodic blink (see OttoIcon.tsx).

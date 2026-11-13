@@ -9,10 +9,17 @@ export interface SubagentActivity {
   status: string | null;
   agentName: string | null;
   taskDescription: string | null;
+  dispatchId: string | null;
+  taskInput: string | null;
+  resultText: string | null;
 }
 
 function text(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function fullText(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value : null;
 }
 
 /** Agent identity and task text are separate; native tool labels can contain task text. */
@@ -29,6 +36,7 @@ export function subagentName(child: ChildSessionInfo): string {
       : null;
   return (
     text(labels?.["omnigent.codex_native.agent_nickname"]) ??
+    text(labels?.["omnigent.claude_native.agent_name"]) ??
     text(child.agent_name) ??
     text(labels?.["omnigent.codex_native.agent_role"]) ??
     text(labels?.["omnigent.antigravity_native.agent_role"]) ??
@@ -42,7 +50,8 @@ export function subagentTaskDescription(child: ChildSessionInfo): string | null 
   return (
     text(child.task_summary) ??
     text(child.labels?.["omnigent.claude_native.description"]) ??
-    text(child.labels?.["omnigent.codex_native.prompt"])
+    text(child.labels?.["omnigent.codex_native.prompt"]) ??
+    text(child.labels?.["omnigent.claude_native.prompt"])
   );
 }
 
@@ -78,5 +87,13 @@ export function readSubagentActivity(item: Record<string, unknown>): SubagentAct
     status: typeof status === "string" ? status : null,
     agentName: text(fields.agent_name),
     taskDescription: text(fields.task_summary) ?? text(fields.description),
+    dispatchId: text(fields.dispatch_id),
+    taskInput: fullText(fields.task_input),
+    resultText: fullText(fields.result_text),
   };
+}
+
+export function shortTaskText(value: string, limit = 120): string {
+  const collapsed = value.replace(/\s+/g, " ").trim();
+  return collapsed.length <= limit ? collapsed : `${collapsed.slice(0, limit - 1).trimEnd()}…`;
 }

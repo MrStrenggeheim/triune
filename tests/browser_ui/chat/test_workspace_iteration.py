@@ -5,6 +5,7 @@ import re
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+import pytest
 from playwright.sync_api import Page, Route, expect
 
 from tests.browser_ui.chat.session_contract import list_payload, message_item
@@ -342,21 +343,21 @@ def test_peer_cards_and_orchestration_keep_attribution_and_minimal_controls(
     task.get_by_role("link", name="Inspect Ada in Orchestration", exact=True).click()
     orchestration = _view(page, "Orchestration")
     inspector = page.get_by_role("dialog", name="Ada", exact=True)
-    expect(inspector).to_be_visible()
-    page.keyboard.press("Escape")
     expect(inspector).to_have_count(0)
     task.get_by_role("link", name="Inspect Ada in Orchestration", exact=True).click()
-    expect(inspector).to_be_visible()
-    page.keyboard.press("Escape")
+    expect(inspector).to_have_count(0)
     expect(page.get_by_role("tab", name="Orchestration", exact=True)).to_have_count(1)
     expect(
         page.get_by_role("tab", name="Orchestration", exact=True).locator("svg.lucide-workflow")
     ).to_have_count(1)
-    entries = orchestration.get_by_role("list", name="Orchestration", exact=True)
+    orchestration.get_by_role("button", name="All", exact=True).click()
+    entries = orchestration.get_by_role("list", name="Agents", exact=True)
     expect(entries).to_contain_text("James")
-    expect(entries).to_contain_text("tests")
-    expect(entries).not_to_contain_text("Ada")
-    expect(entries.get_by_role("listitem").first).to_contain_text("tests")
+    expect(entries).to_contain_text("Ada")
+    expect(orchestration.get_by_role("list", name="Shells", exact=True)).to_contain_text("tests")
+    expect(
+        orchestration.get_by_role("group", name="Orchestration filter", exact=True)
+    ).to_be_visible()
     expect(orchestration.get_by_role("heading", name="Recent", exact=True)).to_have_count(0)
     _capture(page, output_path, "desktop-flat-orchestration")
     page.set_viewport_size({"width": 390, "height": 844})
@@ -429,10 +430,146 @@ def test_selected_quote_menu_reuses_app_controls_and_retains_destination_draft(
     picker = page.get_by_role("dialog", name="Send to", exact=True)
     expect(picker).to_be_visible()
     picker.get_by_role("button", name="Chat B", exact=True).click()
-    picker.get_by_role("button", name="Insert quote", exact=True).click()
     draft = _view(page, "Chat B").get_by_label("Message the agent")
-    expect(draft).to_have_value(re.compile(r"Existing B draft[\s\S]*> Answer from Chat A"))
+    expect(_view(page, "Chat B").get_by_label("Reply text before quote 1")).to_have_value(
+        "Existing B draft"
+    )
+    expect(draft).to_have_value("")
+    expect(_view(page, "Chat B").get_by_test_id("composer-reply-quote")).to_contain_text(
+        "Answer from Chat A"
+    )
+    expect(draft).not_to_have_value(re.compile("Chat context snapshot|snapshot_id"))
     assert first.event_posts == []
     assert second.event_posts == []
     _capture(page, output_path, "quote-in-existing-unsent-draft")
+    assert browser_errors == []
+
+
+@pytest.mark.parametrize("entry", ["Ask subchat…", "Send to…"])
+@pytest.mark.parametrize("width", [390, 1440], ids=["phone", "desktop"])
+def test_quote_subchat_opens_before_launch_and_hides_inherited_history(
+    page: Page,
+    workspace_journey: WorkspaceJourney,
+    browser_contract: BrowserContract,
+    output_path: str,
+    browser_errors: list[str],
+    entry: str,
+    width: int,
+) -> None:
+    """Create once, seed a clean quote, open before host readiness, and fold inherited history."""
+    source, child = workspace_journey.chats
+    source_item = source.session_id + "-answer"
+    branch = {
+        "source_conversation_id": source.session_id,
+        "source_item_id": source_item,
+        "inherited_last_item_id": "copied-source",
+        "inherited_item_count": 1,
+        "reference_only": False,
+        "recovery": "replay",
+    }
+    child.update_session(title="Subchat", branch=branch)
+    child.set_items(
+        [
+            message_item(
+                "copied-source", "assistant", "Inherited source history", response_id="source-turn"
+            )
+        ]
+    )
+    created: list[dict] = []
+    launches: list[Route] = []
+    browser_contract.json(
+        "/v1/sessions",
+        lambda _: list_payload(
+            [source.session_snapshot(), *([child.session_snapshot()] if created else [])]
+        ),
+    )
+
+    def fork(route: Route) -> None:
+        created.append(route.request.post_data_json)
+        route.fulfill(json=child.session_snapshot())
+
+    def labels(route: Route) -> None:
+        child.update_session(
+            labels={
+                **child.session_snapshot().get("labels", {}),
+                **route.request.post_data_json.get("labels", {}),
+            }
+        )
+        route.fulfill(json=child.session_snapshot())
+
+    browser_contract.route(
+        browser_contract._matcher(f"/v1/sessions/{source.session_id}/fork"), fork
+    )
+    browser_contract.route(
+        browser_contract._matcher(f"/v1/sessions/{child.session_id}"),
+        lambda route: labels(route) if route.request.method == "PATCH" else route.fallback(),
+    )
+    browser_contract.route(
+        browser_contract._matcher(f"/v1/hosts/{source.host_id}/runners"),
+        lambda route: launches.append(route),
+    )
+    browser_contract.json(
+        f"/v1/sessions/{source.session_id}/context-reference",
+        {
+            "version": 1,
+            "snapshot_id": "quote-snapshot",
+            "source_id": source.session_id,
+            "source_title": "Chat A",
+            "destination_id": None,
+            "scope": "quote",
+            "boundary_id": source_item,
+            "captured_at": 1704067200,
+            "items": [],
+            "quote": "Answer from Chat A",
+            "audience": "owner",
+            "representation": "Selected text",
+        },
+        method="POST",
+    )
+    browser_contract.json(
+        f"/v1/sessions/{source.session_id}/context-reference/check",
+        {"allowed": True},
+        method="POST",
+    )
+    browser_contract.json(
+        "/v1/context-references/chats", {"data": [], "has_more": False, "next_cursor": None}
+    )
+    page.set_viewport_size({"width": width, "height": 1000 if width > 500 else 844})
+    page.goto(source.url)
+    if page.get_by_role("button", name="Close navigation", exact=True).is_visible():
+        page.keyboard.press("Control+b")
+    _view(page, "Chat A").get_by_text("Answer from Chat A", exact=True).evaluate("""element => {
+      const range = document.createRange(); range.selectNodeContents(element);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      document.dispatchEvent(new Event('selectionchange'));
+    }""")
+    page.get_by_role("menu", name="Selected text", exact=True).get_by_role(
+        "menuitem", name=entry, exact=True
+    ).click()
+    if entry == "Send to…":
+        page.get_by_role("dialog", name="Send to", exact=True).get_by_role(
+            "button", name="New subchat", exact=True
+        ).click()
+    view = _view(page, "Subchat")
+    expect(view.get_by_test_id("composer-reply-quote")).to_contain_text("Answer from Chat A")
+    page.wait_for_function(
+        "() => !!document.querySelector('[data-testid=\"composer-reply-quote\"]')"
+    )
+    assert len(created) == 1
+    assert len(launches) == 1, "The child must be shown before host launch has completed"
+    expect(page.get_by_role("dialog", name="Ask subchat", exact=True)).to_have_count(0)
+    expect(view.get_by_label("Message the agent")).not_to_have_value(
+        re.compile("Chat context snapshot|snapshot_id|Open source")
+    )
+    expect(view.get_by_text("Inherited source history", exact=True)).to_have_count(0)
+    view.get_by_role("button", name="Show history", exact=True).click()
+    expect(view.get_by_text("Inherited source history", exact=True)).to_be_visible()
+    view.get_by_role("button", name="Hide history", exact=True).click()
+    expect(view.get_by_text("Inherited source history", exact=True)).to_have_count(0)
+    _capture(page, output_path, f"direct-subchat-{width}-{entry[:3]}")
+    for route in launches:
+        route.fulfill(json={"runner_id": "quote-runner"})
+    assert source.event_posts == [] and child.event_posts == []
     assert browser_errors == []

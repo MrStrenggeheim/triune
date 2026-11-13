@@ -124,15 +124,13 @@ it("inserts an existing destination draft without sending or dropping attachment
     </ContextReferenceNavigationContext.Provider>,
   );
   fireEvent.click(await screen.findByRole("button", { name: "Destination" }));
-  expect(screen.getByText(/including future participants/)).toBeVisible();
-  fireEvent.click(screen.getByRole("button", { name: "Insert quote" }));
   await waitFor(() => expect(close).toHaveBeenCalled());
   expect(getSessionDraft("target")?.text).toContain("Existing draft");
-  expect(getSessionDraft("target")?.text).toContain("message=item-at-selection");
+  expect(getSessionDraft("target")?.replyDraft?.quotes[0]?.text).toBe(reference.quote);
   expect(readReferenceDraft("target")).toEqual([reference]);
   expect(getSessionDraft("target")?.files).toEqual([file]);
   expect(useChatStore.getState().sideChatComposers.target.files).toEqual([file]);
-  expect(open).toHaveBeenCalledWith("target", { beside: true });
+  expect(open).toHaveBeenCalledWith("target", { beside: true, title: "Destination" });
   expect(create).not.toHaveBeenCalled();
   expect(send).not.toHaveBeenCalled();
   send.mockRestore();
@@ -148,21 +146,23 @@ it("creates a subchat at the captured item even if the source advances while cho
   await waitFor(() => expect(api.captureReference).toHaveBeenCalledTimes(1));
   await act(async () => {});
   vi.mocked(api.captureReference).mockResolvedValue({ ...reference, boundary_id: "later-item" });
-  vi.mocked(api.referenceRequest).mockRejectedValueOnce(new Error("Connection lost"));
   fireEvent.click(screen.getByRole("button", { name: "New subchat" }));
-  fireEvent.click(screen.getByRole("button", { name: "Insert quote" }));
   await waitFor(() =>
-    expect(create).toHaveBeenCalledWith({ ...source, boundaryId: "item-at-selection" }),
+    expect(create).toHaveBeenCalledWith(
+      { ...source, boundaryId: "item-at-selection" },
+      expect.any(Function),
+    ),
   );
-  expect(await screen.findByRole("alert")).toHaveTextContent("Connection lost");
-  fireEvent.click(screen.getByRole("button", { name: "Insert quote" }));
   await waitFor(() =>
-    expect(navigation.openConversation).toHaveBeenCalledWith("child", { beside: true }),
+    expect(navigation.openConversation).toHaveBeenCalledWith("child", {
+      beside: true,
+      title: "Subchat",
+    }),
   );
   expect(create).toHaveBeenCalledTimes(1);
   expect(api.captureReference).toHaveBeenCalledTimes(1);
   expect(useChatStore.getState().sideChatDrafts.child).toBeUndefined();
-  expect(getSessionDraft("child")?.text).toContain("item-at-selection");
+  expect(readReferenceDraft("child")[0]?.boundary_id).toBe("item-at-selection");
 });
 
 it("uses a mounted destination's current draft and keeps revoked sources out", async () => {
@@ -175,11 +175,10 @@ it("uses a mounted destination's current draft and keeps revoked sources out", a
     </ContextReferenceNavigationContext.Provider>,
   );
   fireEvent.click(await screen.findByRole("button", { name: "Destination" }));
-  fireEvent.click(screen.getByRole("button", { name: "Insert quote" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("Source access revoked");
   expect(insert).not.toHaveBeenCalled();
   vi.mocked(api.referenceRequest).mockResolvedValue({ ok: true });
-  fireEvent.click(screen.getByRole("button", { name: "Insert quote" }));
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
   await waitFor(() => expect(insert).toHaveBeenCalledTimes(1));
   unregister();
 });

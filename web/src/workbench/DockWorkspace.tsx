@@ -38,6 +38,7 @@ import { OpenViewMenu } from "./OpenViewMenu";
 import type { WorkbenchOpenAction } from "./WorkbenchAppBar";
 import { HeaderActionButton } from "@/components/HeaderActionButton";
 import { FileDropSurface } from "@/components/FileDropOverlay";
+import { WorkspaceTabsScroller } from "@/shell/WorkspaceTabsScroller";
 import {
   ContextMenu,
   ContextMenuTrigger,
@@ -624,10 +625,16 @@ function DockPaneChrome({
     owner.viewIds.map((id, index) => ({ id, index, owner })),
   );
   const stripRef = useRef<HTMLDivElement>(null);
+  const [addWidth, setAddWidth] = useState(0);
+  const [overflowLeft, setOverflowLeft] = useState(false);
   const [overflowRight, setOverflowRight] = useState(false);
   const measureOverflow = useCallback(() => {
     const strip = stripRef.current;
-    if (strip) setOverflowRight(strip.scrollWidth - strip.clientWidth - strip.scrollLeft > 1);
+    if (strip) {
+      setAddWidth(strip.querySelector<HTMLElement>(".dock-tab-add")?.offsetWidth ?? 0);
+      setOverflowLeft(strip.scrollLeft > 1);
+      setOverflowRight(strip.scrollWidth - strip.clientWidth - strip.scrollLeft > 1);
+    }
   }, []);
   useEffect(() => {
     measureOverflow();
@@ -649,12 +656,18 @@ function DockPaneChrome({
       onPointerDownCapture={onFocus}
       onFocusCapture={onFocus}
     >
-      <div className="dock-pane-header" data-overflow-right={overflowRight}>
-        <div
-          ref={stripRef}
+      <div
+        className="dock-pane-header"
+        data-overflow-left={overflowLeft}
+        data-overflow-right={overflowRight}
+        style={{ "--dock-add-width": `${addWidth}px` } as CSSProperties}
+      >
+        <WorkspaceTabsScroller
+          viewportRef={stripRef}
           role="tablist"
           aria-label={`Views in ${pane.id}`}
           className="dock-tabs"
+          contentClassName="dock-tabs-content"
           data-conversation-drop-pane={pane.id}
           onScroll={measureOverflow}
         >
@@ -747,7 +760,7 @@ function DockPaneChrome({
               </OpenViewMenu>
             </div>
           )}
-        </div>
+        </WorkspaceTabsScroller>
       </div>
       {dragging && (
         <div className="dock-drop-overlay">
@@ -808,6 +821,8 @@ function DockTab({
             setNodeRef(node);
           }}
           className="dock-tab-group"
+          data-workspace-tab
+          data-pinned={pinned}
           data-insertion={insertion}
           data-conversation-drop-pane={pane.id}
           data-conversation-drop-index={index}
@@ -845,7 +860,9 @@ function DockTab({
               } else listeners?.onKeyDown?.(event);
             }}
           >
-            <WorkbenchViewIcon kind={view.kind} />
+            <span className="dock-tab-type-icon" aria-hidden="true">
+              <WorkbenchViewIcon kind={view.kind} />
+            </span>
             <span className="dock-tab-label">{view.title}</span>
           </button>
           {(onPin || pinned) && (

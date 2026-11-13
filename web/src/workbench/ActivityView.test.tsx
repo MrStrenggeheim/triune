@@ -9,6 +9,7 @@ import { authenticatedFetch } from "@/lib/identity";
 import { resourceViewStorageScope } from "@/lib/resourceViewStorage";
 import type { WorkbenchWorkspace } from "@/lib/workbenchWorkspace";
 import type { ChatActivityPanelProps } from "@/shell/ChatActivityPanel";
+import type * as ChatActivityModule from "@/shell/ChatActivityPanel";
 import type { WorkspaceSelectionDialogProps } from "@/shell/WorkspaceSelectionDialog";
 import { ActivityView, type ActivityViewProps } from "./ActivityView";
 
@@ -23,7 +24,8 @@ vi.mock("@/hooks/useConversations", () => ({
 vi.mock("@/hooks/useSession", () => ({
   useSession: () => ({ session: { title: "Captured chat" } }),
 }));
-vi.mock("@/shell/ChatActivityPanel", () => ({
+vi.mock("@/shell/ChatActivityPanel", async (importOriginal) => ({
+  ...(await importOriginal<typeof ChatActivityModule>()),
   ChatActivityPanel: ({
     conversationId,
     rootSessionId,
@@ -49,7 +51,10 @@ vi.mock("@/shell/WorkspaceSelectionDialog", () => ({
     onOpenChange,
   }: WorkspaceSelectionDialogProps) => (
     <div role="dialog" aria-label="Workspace">
-      <button type="button" onClick={() => void onConfirm({ hostId, path: "/chosen" })}>
+      <button
+        type="button"
+        onClick={() => void onConfirm({ hostId: hostId ?? "host-a", path: "/chosen" })}
+      >
         Confirm root
       </button>
       <button type="button" onClick={() => onOpenChange(false)}>
@@ -132,29 +137,34 @@ it("forwards an explicit completed-agent target and repeated-open request to the
   expect(screen.getByTestId("chat-activity")).toHaveAttribute("data-link-request", "open-again");
 });
 
-it("starts unselected and offers real host/chat groups, capturing an authorized root on selection", async () => {
-  fetchMock.mockResolvedValue(list([workspace]));
+function chooseWorkspace() {
+  fireEvent.click(screen.getByRole("button", { name: /Choose orchestration source/ }));
+  fireEvent.click(screen.getByRole("option", { name: "Host / workspace" }));
+}
+
+it("offers chat or the shared combined host/workspace picker with a captured root", async () => {
+  const chosen = { ...workspace, root: "/chosen" };
+  fetchMock.mockResolvedValue(json(chosen));
   const props = defaults();
   setup(props);
   expect(screen.getByText("Choose a host or chat to view its activity.")).toBeVisible();
   expect(fetchMock).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole("button", { name: /Choose orchestration source/ }));
-  expect(screen.getByRole("group", { name: "Hosts" })).toBeVisible();
-  expect(screen.getByRole("group", { name: "Chats" })).toBeVisible();
-  expect(useSessionSearch).toHaveBeenLastCalledWith("", "title", {
-    enabled: true,
-    cacheIdentity: '["server-a","viewer-a"]',
-  });
-  fireEvent.click(screen.getByRole("option", { name: "Host A" }));
+  chooseWorkspace();
+  fireEvent.click(screen.getByRole("button", { name: "Confirm root" }));
   await waitFor(() =>
     expect(props.onSourceChange).toHaveBeenCalledWith({
       kind: "host",
       hostId: "host-a",
-      workspace,
+      workspace: chosen,
     }),
   );
-  expect(fetchMock.mock.calls.map(([path]) => path)).toEqual(["/v1/workbench-workspaces"]);
-  expect(screen.queryByTestId("chat-activity")).not.toBeInTheDocument();
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/v1/workbench-workspaces",
+    expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ host_id: "host-a", root: "/chosen" }),
+    }),
+  );
 });
 
 it.each(["account", "server"])("does not expose cached roots after a %s change", async (change) => {
@@ -210,7 +220,7 @@ it("keeps a captured chat until persistence succeeds and displays rejected sourc
   expect(fetchMock).not.toHaveBeenCalled();
 });
 
-it("composes host inventories by root and opens exact workspace terminals including ended history", async () => {
+it("limits inventory to the selected host/root and keeps ended shells openable", async () => {
   const second = { ...workspace, id: "workspace-second", root: "/other" };
   fetchMock.mockImplementation(async (path) => {
     if (path === "/v1/workbench-workspaces")
@@ -220,43 +230,38 @@ it("composes host inventories by root and opens exact workspace terminals includ
         { ...workspace, id: "foreign", host_id: "host-b" },
         { ...workspace, id: "isolated", target_kind: "runneronly" },
       ]);
-    return json({
-      data: [
-        shell(
-          String(path).includes("workspace-second") ? "ended" : "live",
-          String(path).includes("workspace-second") ? "exited" : "running",
-        ),
-      ],
-      available: true,
-    });
+    return json({ data: [shell("ended", "exited")], available: true });
   });
   const props = { ...defaults(), source: { kind: "host", hostId: "host-a", workspace } as const };
   const { container } = setup(props);
-  const region = await screen.findByRole("region", { name: "Shell inventory · /other" });
-  fireEvent.click(await within(region).findByRole("button", { name: "ended" }));
+  const region = await screen.findByRole("region", { name: "Shell inventory · /repo" });
+  fireEvent.click(await within(region).findByRole("button", { name: "Open ended" }));
   expect(props.onOpenTerminal).toHaveBeenCalledWith({
-    workspaceId: second.id,
+    workspaceId: workspace.id,
     sessionId: "",
     terminalId: "same-terminal-id",
   });
   expect(within(region).getByText("Exited")).toBeVisible();
-  fireEvent.click(within(region).getByRole("button", { name: "Expand activity" }));
-  expect(within(region).getByLabelText("Retained shell output")).toHaveTextContent(
-    "retained ended",
-  );
-  fireEvent.click(within(region).getByRole("button", { name: "New shell" }));
-  expect(props.onNewTerminal).toHaveBeenCalledWith(second);
-  expect(container.querySelectorAll(".workspace-control-header")).toHaveLength(1);
   expect(
-    fetchMock.mock.calls.some(([path]) => /foreign|isolated|\/sessions\//.test(String(path))),
-  ).toBe(false);
+    screen.queryByRole("region", { name: "Shell inventory · /other" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: /Choose orchestration source.*Host A.*\/repo/ }),
+  ).toBeVisible();
+  fireEvent.click(within(region).getByRole("button", { name: "New shell" }));
+  expect(props.onNewTerminal).toHaveBeenCalledWith(workspace);
+  expect(container.querySelectorAll(".workspace-control-header")).toHaveLength(1);
+  expect(fetchMock.mock.calls.map(([path]) => path)).toEqual([
+    "/v1/workbench-workspaces",
+    "/v1/workbench-workspaces/workspace-a/terminals",
+  ]);
 });
 
 it("does not trust a persisted workspace to authorize an absent host", async () => {
   fetchMock.mockResolvedValue(list([workspace]));
   setup({ ...defaults(), source: { kind: "host", hostId: "missing-host", workspace } });
   expect(await screen.findByText("Host unavailable. Refresh to check access.")).toBeVisible();
-  expect(screen.getByRole("button", { name: "Choose workspace" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: /Choose orchestration source/ })).toBeVisible();
   expect(screen.queryByRole("region", { name: /Shell inventory/ })).not.toBeInTheDocument();
   expect(fetchMock.mock.calls.every(([path]) => path === "/v1/workbench-workspaces")).toBe(true);
 });
@@ -272,10 +277,10 @@ it("resolves the chosen host/root and ignores its late result after an origin sw
   );
   const props = { ...defaults(), source: { kind: "host", hostId: "host-a", workspace } as const };
   const view = setup(props);
-  fireEvent.click(await screen.findByRole("button", { name: "Choose workspace" }));
+  chooseWorkspace();
   fireEvent.click(screen.getByRole("button", { name: "Cancel root" }));
   expect(fetchMock.mock.calls.every(([, options]) => !options?.method)).toBe(true);
-  fireEvent.click(screen.getByRole("button", { name: "Choose workspace" }));
+  chooseWorkspace();
   fireEvent.click(screen.getByRole("button", { name: "Confirm root" }));
   await waitFor(() => expect(resolve).toBeDefined());
   expect(fetchMock).toHaveBeenCalledWith(

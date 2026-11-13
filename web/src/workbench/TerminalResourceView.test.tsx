@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { TerminalResourceView } from "./TerminalResourceView";
+import { TerminalResourceView, RetainedActivityView } from "./TerminalResourceView";
 import { authenticatedFetch } from "@/lib/identity";
 import { useSession } from "@/hooks/useSession";
 import { terminalHistoryKey } from "./TerminalInventoryView";
@@ -76,6 +76,42 @@ afterEach(() => {
 beforeEach(() => {
   fetchMock.mockReset();
   vi.mocked(useSession).mockReturnValue({ session: null, error: null, isLoading: false });
+});
+
+it("opens a recorded command through its owner without attaching or launching a shell", async () => {
+  fetchMock.mockResolvedValue(
+    response({
+      data: [
+        {
+          id: "command-1",
+          kind: "command",
+          name: "printf result",
+          state: "exited",
+          session_id: "child-owner",
+          output: "\u001b[32mresult\u001b[0m",
+          exit_status: 0,
+          owner_kind: "chat",
+          owner_id: "child-owner",
+        },
+      ],
+    }),
+  );
+  const { wrapper } = setup();
+  render(
+    <RetainedActivityView
+      conversationId="child-owner"
+      activity={{ name: "Build checks", state: "exited", entryIds: ["command-1"] }}
+      active
+    />,
+    { wrapper },
+  );
+  const output = await screen.findByLabelText("Retained shell output");
+  expect(output).toHaveTextContent("$ printf result");
+  expect(output).toHaveTextContent("result");
+  expect(output.textContent).not.toContain("\u001b");
+  expect(screen.queryByTestId("terminal")).toBeNull();
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  expect(fetchMock.mock.calls[0][0]).toBe("/v1/sessions/child-owner/activity");
 });
 
 it("attaches a manual shell to its workspace and unmounting never stops it", async () => {

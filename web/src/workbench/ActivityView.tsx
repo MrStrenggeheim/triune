@@ -1,7 +1,7 @@
 // Modified for Triune.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { FolderIcon, RefreshCwIcon } from "lucide-react";
+import { RefreshCwIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useHosts } from "@/hooks/useHosts";
 import { useViewerId } from "@/hooks/useViewerId";
@@ -9,8 +9,14 @@ import { authenticatedFetch } from "@/lib/identity";
 import { resourceViewStorageScope } from "@/lib/resourceViewStorage";
 import { apiErrorFromResponse } from "@/lib/sessionsApi";
 import type { WorkbenchWorkspace } from "@/lib/workbenchWorkspace";
-import { ChatActivityPanel, type ChatActivityTerminalTarget } from "@/shell/ChatActivityPanel";
-import { WorkspaceSelectionDialog } from "@/shell/WorkspaceSelectionDialog";
+import {
+  ActivityFilterControl,
+  ChatActivityPanel,
+  type ActivityFilter,
+  type ChatActivityPanelProps,
+  type ChatActivityTerminalTarget,
+} from "@/shell/ChatActivityPanel";
+import type { WorkspaceSelection } from "@/shell/WorkspaceSelectionDialog";
 import { ActivitySourcePicker } from "./ActivitySourcePicker";
 import { TerminalInventoryView } from "./TerminalInventoryView";
 
@@ -26,6 +32,10 @@ export interface ActivityViewProps {
   onSourceChange: (source: ActivitySource) => void | Promise<void>;
   onOpenTerminal: (target: ChatActivityTerminalTarget) => void;
   onNewTerminal: (workspace: WorkbenchWorkspace) => void;
+  onOpenAgent?: ChatActivityPanelProps["onOpenAgent"];
+  onConsumeLinkIntent?: ChatActivityPanelProps["onConsumeLinkIntent"];
+  canStopAgent?: ChatActivityPanelProps["canStopAgent"];
+  onStopAgent?: ChatActivityPanelProps["onStopAgent"];
 }
 
 async function fetchWorkspaces({ signal }: { signal: AbortSignal }): Promise<WorkbenchWorkspace[]> {
@@ -42,33 +52,64 @@ export function ActivityView(props: ActivityViewProps) {
   const viewerId = useViewerId();
   const scope = resourceViewStorageScope();
   const workspacesKey = ["workbench-workspaces", scope] as const;
-  async function changeSource(next: ActivitySource) {
-    if (!viewerId || scope !== resourceViewStorageScope())
-      throw new Error("Activity identity changed. Choose the source again.");
-    if (next.kind === "chat" || next.workspace) return onSourceChange(next);
-    // Workspace discovery is independent of chat grants and never resolves through a chat.
-    const workspaces = await queryClient.fetchQuery({
-      queryKey: workspacesKey,
-      queryFn: fetchWorkspaces,
-      staleTime: 2_000,
-    });
-    const roots = workspaces.filter(
-      (workspace) => workspace.host_id === next.hostId && workspace.target_kind === "host",
-    );
-    const preferred =
-      source?.kind === "host" && source.hostId === next.hostId ? source.workspace?.id : undefined;
-    if (scope !== resourceViewStorageScope())
-      throw new Error("Activity identity changed. Choose the source again.");
-    await onSourceChange({
-      ...next,
-      workspace: roots.find((workspace) => workspace.id === preferred) ?? roots[0],
-    });
+  const origin = JSON.stringify([scope, source]);
+  const currentOrigin = useRef(origin);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  currentOrigin.current = origin;
+  function assertOrigin() {
+    if (!viewerId || scope !== resourceViewStorageScope() || currentOrigin.current !== origin)
+      throw new Error("Activity source changed. Choose the source again.");
   }
+  async function changeSource(next: ActivitySource) {
+    assertOrigin();
+    await onSourceChange(next);
+  }
+  async function chooseWorkspace({ hostId, path }: WorkspaceSelection) {
+    assertOrigin();
+    if (!hostId) throw new Error("Choose a host for this workspace.");
+    const response = await authenticatedFetch("/v1/workbench-workspaces", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ host_id: hostId, root: path }),
+    });
+    if (!response.ok) throw await apiErrorFromResponse(response);
+    const workspace = (await response.json()) as WorkbenchWorkspace;
+    if (
+      !workspace.id ||
+      workspace.host_id !== hostId ||
+      workspace.target_kind !== "host" ||
+      !workspace.root
+    )
+      throw new Error("The server returned an invalid host workspace.");
+    if (
+      !mounted.current ||
+      currentOrigin.current !== origin ||
+      scope !== resourceViewStorageScope()
+    )
+      return;
+    assertOrigin();
+    await onSourceChange({ kind: "host", hostId, workspace });
+    void queryClient.invalidateQueries({ queryKey: workspacesKey });
+  }
+  const sourceControl = (
+    <ActivitySourcePicker
+      key={origin}
+      source={source}
+      onChange={changeSource}
+      onChooseWorkspace={chooseWorkspace}
+    />
+  );
   if (!source) {
     return (
       <div className="flex h-full min-h-0 flex-col bg-[var(--workspace-content)]">
         <header className="workspace-control-header flex shrink-0 items-center border-b bg-[var(--workspace-content)] px-2">
-          <ActivitySourcePicker onChange={changeSource} />
+          {sourceControl}
         </header>
         <div className="flex flex-1 items-center justify-center p-4 text-sm text-muted-foreground">
           Choose a host or chat to view its activity.
@@ -84,7 +125,11 @@ export function ActivityView(props: ActivityViewProps) {
         active={props.active}
         focusAgentId={props.focusAgentId}
         linkRequestId={props.linkRequestId}
-        sourceControl={<ActivitySourcePicker source={source} onChange={changeSource} />}
+        sourceControl={sourceControl}
+        onOpenAgent={props.onOpenAgent}
+        onConsumeLinkIntent={props.onConsumeLinkIntent}
+        canStopAgent={props.canStopAgent}
+        onStopAgent={props.onStopAgent}
         onOpenTerminal={onOpenTerminal}
       />
     );
@@ -96,7 +141,7 @@ export function ActivityView(props: ActivityViewProps) {
       source={source}
       scope={scope}
       viewerId={viewerId}
-      onSourceChange={changeSource}
+      sourceControl={sourceControl}
     />
   );
 }
@@ -106,25 +151,19 @@ function HostActivity({
   scope,
   viewerId,
   active = true,
-  onSourceChange,
+  sourceControl,
   onOpenTerminal,
   onNewTerminal,
 }: ActivityViewProps & {
   source: Extract<ActivitySource, { kind: "host" }>;
   scope: string;
   viewerId: string | null;
+  sourceControl: ReactNode;
 }) {
   const hosts = useHosts({ enabled: active });
   const queryClient = useQueryClient();
   const workspacesKey = ["workbench-workspaces", scope] as const;
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const mounted = useRef(true);
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
+  const [filter, setFilter] = useState<ActivityFilter>("All");
   const workspaces = useQuery({
     queryKey: workspacesKey,
     queryFn: fetchWorkspaces,
@@ -137,43 +176,19 @@ function HostActivity({
   const host = hosts.data?.find((candidate) => candidate.host_id === source.hostId);
   const roots =
     workspaces.data?.filter(
-      (workspace) => workspace.host_id === source.hostId && workspace.target_kind === "host",
+      (workspace) =>
+        workspace.host_id === source.hostId &&
+        workspace.target_kind === "host" &&
+        workspace.id === source.workspace?.id &&
+        workspace.root === source.workspace.root,
     ) ?? [];
   const authorized = !!viewerId && !!host && !hosts.error;
-
-  async function chooseRoot(root: string) {
-    const response = await authenticatedFetch("/v1/workbench-workspaces", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ host_id: source.hostId, root }),
-    });
-    if (!response.ok) throw await apiErrorFromResponse(response);
-    const workspace = (await response.json()) as WorkbenchWorkspace;
-    if (
-      !workspace.id ||
-      workspace.host_id !== source.hostId ||
-      workspace.target_kind !== "host" ||
-      !workspace.root
-    )
-      throw new Error("The server returned an invalid host workspace.");
-    await queryClient.invalidateQueries({ queryKey: workspacesKey });
-    if (mounted.current) await onSourceChange({ ...source, workspace });
-  }
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-[var(--workspace-content)]">
       <header className="workspace-control-header flex shrink-0 items-center gap-1 border-b bg-[var(--workspace-content)] px-2">
-        <ActivitySourcePicker source={source} onChange={onSourceChange} />
-        <Button
-          variant="ghost"
-          size="sm"
-          className="ml-auto"
-          disabled={!authorized || host.status !== "online"}
-          onClick={() => setPickerOpen(true)}
-        >
-          <FolderIcon className="size-3.5" />
-          Choose workspace
-        </Button>
+        {sourceControl}
+        <ActivityFilterControl value={filter} onChange={setFilter} />
         <Button
           variant="ghost"
           size="icon-sm"
@@ -209,11 +224,16 @@ function HostActivity({
         )}
         {authorized && !workspaces.isLoading && roots.length === 0 && !workspaces.error && (
           <p className="p-3 text-sm text-muted-foreground">
-            No authorized workspaces on this host. Choose a workspace to create an independent
-            shell.
+            Selected workspace unavailable. Choose a host workspace to view its shells.
+          </p>
+        )}
+        {filter === "Agents" && (
+          <p role="status" className="p-3 text-sm text-muted-foreground">
+            Host workspaces contain independent shells. Choose a chat to view agents.
           </p>
         )}
         {authorized &&
+          filter !== "Agents" &&
           roots.map((workspace) => (
             <TerminalInventoryView
               key={workspace.id}
@@ -231,17 +251,6 @@ function HostActivity({
             />
           ))}
       </div>
-      {pickerOpen && (
-        <WorkspaceSelectionDialog
-          open
-          onOpenChange={setPickerOpen}
-          hostId={source.hostId}
-          allowHostChange={false}
-          initialPath={source.workspace?.root}
-          workspacePath={source.workspace?.root}
-          onConfirm={({ path }) => chooseRoot(path)}
-        />
-      )}
     </div>
   );
 }

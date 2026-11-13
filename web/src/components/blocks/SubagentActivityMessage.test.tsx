@@ -153,7 +153,7 @@ describe("sub-agent activity", () => {
     expect(screen.getByTestId("subagent-activity")).toHaveTextContent(
       `James: Research public positioning${label}`,
     );
-    expect(screen.getByRole("link")).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "Inspect James in Orchestration" })).toHaveAttribute(
       "href",
       "/c/parent?debug=1&panel=activity&focusAgentId=conv_child",
     );
@@ -182,13 +182,21 @@ describe("sub-agent activity", () => {
         </WorkbenchProvider>
       </MemoryRouter>,
     );
-    expect(screen.getAllByRole("link")).toHaveLength(1);
+    expect(screen.getAllByRole("link")).toHaveLength(2);
     fireEvent.click(screen.getByRole("link", { name: "Inspect Gibbs in Orchestration" }));
-    expect(openView).toHaveBeenCalledWith({
-      kind: "activity",
-      source: { kind: "chat", conversationId: "parent" },
-      focusAgentId: "child",
-    });
+    expect(openView).toHaveBeenCalledWith(
+      {
+        kind: "activity",
+        source: { kind: "chat", conversationId: "parent" },
+        focusAgentId: "child",
+      },
+      { beside: true },
+    );
+    fireEvent.click(screen.getByRole("link", { name: "Open Gibbs chat beside" }));
+    expect(openView).toHaveBeenLastCalledWith(
+      { kind: "conversation", conversationId: "child", title: "Gibbs" },
+      { beside: true },
+    );
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });
 
@@ -208,6 +216,53 @@ describe("sub-agent activity", () => {
     );
     expect(screen.getByTestId("subagent-activity")).toHaveTextContent("Agent: Delegated task");
     expect(screen.queryByText("Ambiguous old label")).not.toBeInTheDocument();
+  });
+
+  it("keeps dispatch identity and expandable input/result after the child is reused", () => {
+    const client = new QueryClient();
+    client.setQueryData(childSessionsQueryKey("parent"), [
+      {
+        id: "child",
+        agent_name: "Later name",
+        task_summary: "Later task",
+        busy: true,
+        labels: { "omnigent.subagent.dispatch_id": "dispatch-2" },
+      },
+    ]);
+    const fullInput = "Inspect the original navigation task. ".repeat(10);
+    const fullResult = "Original clean result. ".repeat(10);
+    const view = render(
+      <MemoryRouter>
+        <QueryClientProvider client={client}>
+          <SubagentActivityMessage
+            data={{
+              type: "resource_event",
+              resource_type: "session",
+              event_type: "session.subagent.returned",
+              resource_id: "child",
+              resource: {
+                agent_name: "Curie",
+                task_summary: "Original task",
+                dispatch_id: "dispatch-1",
+                task_input: fullInput,
+                result_text: fullResult,
+              },
+            }}
+          />
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+    expect(screen.getByTestId("subagent-activity")).toHaveTextContent("Curie: Original task");
+    expect(screen.queryByText("Later name")).not.toBeInTheDocument();
+    expect(screen.queryByText("Later task")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Expand activity" }));
+    expect(screen.getByText(fullInput.trim())).toBeVisible();
+    expect(screen.getByText(fullResult.trim())).toBeVisible();
+    expect(screen.getByRole("button", { name: "Copy" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Collapse activity" }));
+    expect(screen.queryByText(fullInput.trim())).not.toBeInTheDocument();
+    view.unmount();
+    client.clear();
   });
 
   it.each([

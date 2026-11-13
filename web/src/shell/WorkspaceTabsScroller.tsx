@@ -1,4 +1,11 @@
-import { type ReactNode, type RefObject, useLayoutEffect, useEffect, useRef } from "react";
+import {
+  type HTMLAttributes,
+  type ReactNode,
+  type RefObject,
+  useLayoutEffect,
+  useEffect,
+  useRef,
+} from "react";
 
 /** Scroll open tabs horizontally with a hidden scrollbar. */
 export function WorkspaceTabsScroller({
@@ -6,13 +13,20 @@ export function WorkspaceTabsScroller({
   onOverflowChange,
   overflowControlRef,
   grow = true,
+  viewportRef: suppliedViewportRef,
+  className,
+  contentClassName,
+  ...viewportProps
 }: {
   children: ReactNode;
   grow?: boolean;
   onOverflowChange?: (overflow: boolean) => void;
   overflowControlRef?: RefObject<HTMLDivElement | null>;
-}) {
-  const viewportRef = useRef<HTMLDivElement>(null);
+  viewportRef?: RefObject<HTMLDivElement | null>;
+  contentClassName?: string;
+} & HTMLAttributes<HTMLDivElement>) {
+  const localViewportRef = useRef<HTMLDivElement>(null);
+  const viewportRef = suppliedViewportRef ?? localViewportRef;
   const contentRef = useRef<HTMLDivElement>(null);
 
   useLayoutEffect(() => {
@@ -34,7 +48,7 @@ export function WorkspaceTabsScroller({
       observer.disconnect();
       window.removeEventListener("resize", measure);
     };
-  }, [children, onOverflowChange, overflowControlRef]);
+  }, [children, onOverflowChange, overflowControlRef, viewportRef]);
 
   useEffect(() => {
     const viewport = viewportRef.current;
@@ -53,9 +67,12 @@ export function WorkspaceTabsScroller({
     };
     // Keep the active tab in view as the rail or tab list resizes.
     const observer = new ResizeObserver(() => {
-      content
-        .querySelector<HTMLElement>('[aria-current="true"], [aria-selected="true"]')
-        ?.scrollIntoView({ block: "nearest", inline: "nearest" });
+      const active = content.querySelector<HTMLElement>(
+        '[aria-current="true"], [aria-selected="true"]',
+      );
+      // A grouped tab includes its close control in the visible scroll target.
+      const target = active?.closest<HTMLElement>("[data-workspace-tab]") ?? active;
+      target?.scrollIntoView({ block: "nearest", inline: "nearest" });
     });
     observer.observe(viewport);
     observer.observe(content);
@@ -64,15 +81,20 @@ export function WorkspaceTabsScroller({
       observer.disconnect();
       viewport.removeEventListener("wheel", wheel);
     };
-  }, []);
+  }, [viewportRef]);
 
   return (
     <div
+      {...viewportProps}
       ref={viewportRef}
       data-workspace-tabs-viewport
-      className={`no-drag min-w-0 ${grow ? "flex-1" : "flex-[0_1_auto]"} overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden`}
+      className={`no-drag min-w-0 ${grow ? "flex-1" : "flex-[0_1_auto]"} overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${className ?? ""}`}
     >
-      <div ref={contentRef} data-workspace-tabs-content className="flex w-max items-center gap-0.5">
+      <div
+        ref={contentRef}
+        data-workspace-tabs-content
+        className={`flex w-max items-center gap-0.5 ${contentClassName ?? ""}`}
+      >
         {children}
       </div>
     </div>

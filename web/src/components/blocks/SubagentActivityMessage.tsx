@@ -1,9 +1,10 @@
 // Modified for Triune.
 import { useContext } from "react";
 import { QueryClientContext } from "@tanstack/react-query";
-import { SquareArrowOutUpRightIcon } from "lucide-react";
+import { MessageCircleIcon, SquareArrowOutUpRightIcon } from "lucide-react";
 import { ConversationScopeContext } from "@/components/chat/conversationScope";
 import { Button } from "@/components/ui/button";
+import { MessageFooter } from "@/components/chat/MessageFooter";
 import { useChildSessions } from "@/hooks/useChildSessions";
 import { Link, useLocation, useNavigate } from "@/lib/routing";
 import { sessionNavigationSearch } from "@/lib/sessionNavigation";
@@ -12,6 +13,7 @@ import {
   subagentEventStatus,
   subagentName,
   subagentTaskDescription,
+  shortTaskText,
   type SubagentActivity,
 } from "@/lib/subagentActivity";
 import { useConversationChatStore, useConversationChatVisible } from "@/workbench/ScopedChatStore";
@@ -45,7 +47,13 @@ function RecordedTask({
   const { children } = useChildSessions(conversationId, undefined, { enabled: visible });
   const child = children.find((candidate) => candidate.id === activity.sessionId);
   const currentDescription = child ? subagentTaskDescription(child) : null;
-  const matchesTask = !activity.taskDescription || activity.taskDescription === currentDescription;
+  const currentDispatch =
+    child?.labels?.["omnigent.subagent.dispatch_id"] ??
+    child?.labels?.["omnigent.codex_native.collab_tool_call_id"] ??
+    child?.labels?.["omnigent.claude_native.tool_use_id"];
+  const matchesTask = activity.dispatchId
+    ? activity.dispatchId === currentDispatch
+    : !activity.taskDescription || activity.taskDescription === currentDescription;
   const hasCurrentState =
     child &&
     (child.busy ||
@@ -56,9 +64,11 @@ function RecordedTask({
     <Task
       activity={activity}
       conversationId={conversationId}
-      agentName={child ? subagentName(child) : undefined}
+      agentName={activity.agentName ?? (child ? subagentName(child) : undefined)}
       description={
-        activity.phase === "delegated" && child ? (currentDescription ?? undefined) : undefined
+        child && (!activity.dispatchId || matchesTask)
+          ? (currentDescription ?? undefined)
+          : undefined
       }
       status={
         activity.phase === "delegated" && child && hasCurrentState && matchesTask
@@ -91,6 +101,10 @@ function Task({
   params.set("focusAgentId", activity.sessionId);
   const to = { pathname: `/c/${encodeURIComponent(origin)}`, search: `?${params.toString()}` };
   const name = agentName ?? activity.agentName ?? "Agent";
+  const task = activity.taskDescription ?? description ?? activity.taskInput;
+  const input = activity.taskInput;
+  const result = activity.resultText;
+  const preview = result ?? (input && input !== task ? input : null);
   return (
     <div
       className="not-prose w-full min-w-0 text-sm"
@@ -101,44 +115,95 @@ function Task({
       <SubagentTaskRow
         agentName={name}
         description={
-          activity.taskDescription ??
-          description ??
+          (task ? shortTaskText(task) : null) ??
           (activity.phase === "delegated" ? "Delegated task" : "Result returned")
         }
         status={status ?? subagentEventStatus(activity)}
+        preview={preview ? shortTaskText(preview, 180) : undefined}
         action={
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            aria-label={`Inspect ${name} in Orchestration`}
-            asChild
-          >
-            <Link
-              to={to}
-              onClick={(event) => {
-                if (
-                  event.button !== 0 ||
-                  event.metaKey ||
-                  event.ctrlKey ||
-                  event.shiftKey ||
-                  event.altKey
-                )
-                  return;
-                event.preventDefault();
-                if (workbench && origin)
-                  workbench.openView({
-                    kind: "activity",
-                    source: { kind: "chat", conversationId: origin },
-                    focusAgentId: activity.sessionId,
-                  });
-                else navigate(to);
-              }}
+          <>
+            <Button variant="ghost" size="icon-xs" aria-label={`Open ${name} chat beside`} asChild>
+              <Link
+                to={{ pathname: `/c/${encodeURIComponent(activity.sessionId)}`, search: "" }}
+                onClick={(event) => {
+                  if (
+                    event.button !== 0 ||
+                    event.metaKey ||
+                    event.ctrlKey ||
+                    event.shiftKey ||
+                    event.altKey
+                  )
+                    return;
+                  if (workbench) {
+                    event.preventDefault();
+                    workbench.openView(
+                      { kind: "conversation", conversationId: activity.sessionId, title: name },
+                      { beside: true },
+                    );
+                  }
+                }}
+              >
+                <MessageCircleIcon aria-hidden="true" className="size-3.5" />
+              </Link>
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              aria-label={`Inspect ${name} in Orchestration`}
+              asChild
             >
-              <SquareArrowOutUpRightIcon aria-hidden="true" className="size-3.5" />
-            </Link>
-          </Button>
+              <Link
+                to={to}
+                onClick={(event) => {
+                  if (
+                    event.button !== 0 ||
+                    event.metaKey ||
+                    event.ctrlKey ||
+                    event.shiftKey ||
+                    event.altKey
+                  )
+                    return;
+                  event.preventDefault();
+                  if (workbench && origin)
+                    workbench.openView(
+                      {
+                        kind: "activity",
+                        source: { kind: "chat", conversationId: origin },
+                        focusAgentId: activity.sessionId,
+                      },
+                      { beside: true },
+                    );
+                  else navigate(to);
+                }}
+              >
+                <SquareArrowOutUpRightIcon aria-hidden="true" className="size-3.5" />
+              </Link>
+            </Button>
+          </>
         }
-      />
+      >
+        {input || result ? (
+          <div className="group space-y-2 py-1 text-sm">
+            {input && (
+              <div>
+                <p className="text-xs text-muted-foreground">Input</p>
+                <p className="whitespace-pre-wrap break-words">{input}</p>
+              </div>
+            )}
+            {result && (
+              <div>
+                <p className="text-xs text-muted-foreground">Result</p>
+                <p className="whitespace-pre-wrap break-words">{result}</p>
+              </div>
+            )}
+            <MessageFooter
+              text={[input, result].filter(Boolean).join("\n\n")}
+              messageId={null}
+              conversationId={conversationId}
+            />
+          </div>
+        ) : undefined}
+      </SubagentTaskRow>
     </div>
   );
 }

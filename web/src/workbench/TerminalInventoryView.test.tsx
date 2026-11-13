@@ -179,3 +179,54 @@ it.each(["http", "network"])("retains rows and displays %s refresh failures", as
   expect(screen.getByRole("button", { name: "retained" })).toBeVisible();
   expect(screen.getByRole("button", { name: "New shell" })).toBeDisabled();
 });
+
+it("uses two-line embedded rows, sorts observed exit activity and stops only an owner-authorized live shell", async () => {
+  const live = { ...row("live"), metadata: { output: "live output", created_at: 300 } };
+  const old = {
+    ...row("old", "exited"),
+    metadata: { output: "saved output", created_at: 100, exited_at: 500 },
+  };
+  fetchMock.mockImplementation(async (_path, options) =>
+    options?.method === "DELETE" ? new Response(null, { status: 204 }) : response([live, old]),
+  );
+  const open = vi.fn();
+  const view = render(
+    <TerminalInventoryView
+      workspace={workspace}
+      active
+      embedded
+      onOpenTerminal={open}
+      onNewTerminal={vi.fn()}
+    />,
+    { wrapper: setup() },
+  );
+  await screen.findByRole("button", { name: "Open old" });
+  expect(
+    screen
+      .getAllByRole("button")
+      .filter((button) => ["old", "live"].includes(button.getAttribute("aria-label") ?? ""))
+      .map((button) => button.getAttribute("aria-label")),
+  ).toEqual(["old", "live"]);
+  expect(screen.queryByRole("button", { name: "Stop old" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Stop live" }));
+  await waitFor(() =>
+    expect(fetchMock).toHaveBeenCalledWith("/v1/workbench-workspaces/workspace-a/terminals/live", {
+      method: "DELETE",
+    }),
+  );
+  expect(open).not.toHaveBeenCalled();
+  view.rerender(
+    <TerminalInventoryView
+      workspace={{ ...workspace, permission_level: 1 }}
+      active
+      embedded
+      onOpenTerminal={open}
+      onNewTerminal={vi.fn()}
+    />,
+  );
+  expect(screen.queryByRole("button", { name: "Stop live" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Open old" }));
+  expect(open).toHaveBeenCalledWith("old");
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Expand activity" })).not.toBeInTheDocument();
+});

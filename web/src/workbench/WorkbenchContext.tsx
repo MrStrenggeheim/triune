@@ -41,11 +41,15 @@ export interface OpenWorkbenchView {
   replaceOpen?: boolean;
   searchQuery?: string;
   terminalOwner?: "workspace" | "conversation";
+  retainedActivity?: { name: string; state: string; entryIds: string[] };
   legacySessionResource?: boolean;
 }
 
 export interface WorkbenchActions {
-  openConversation: (id: string, options?: { beside?: boolean; messageId?: string }) => void;
+  openConversation: (
+    id: string,
+    options?: { beside?: boolean; messageId?: string; title?: string },
+  ) => void;
   openView: (request: OpenWorkbenchView, options?: { beside?: boolean }) => void;
   focusedConversationId?: string;
   openConversationIds?: readonly string[];

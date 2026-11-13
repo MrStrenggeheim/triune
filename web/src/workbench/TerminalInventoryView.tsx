@@ -12,6 +12,7 @@ import { stripAnsi } from "@/lib/ansi";
 import { authenticatedFetch } from "@/lib/identity";
 import { LEVEL_OWNER } from "@/lib/permissionsApi";
 import { apiErrorFromResponse } from "@/lib/sessionsApi";
+import { ActivityActions } from "@/shell/ChatActivityPanel";
 import type { WorkbenchWorkspace } from "@/lib/workbenchWorkspace";
 
 export interface ManualTerminalRecord extends TerminalInfo {
@@ -19,6 +20,8 @@ export interface ManualTerminalRecord extends TerminalInfo {
   connectivity: string;
   output: string;
   exitCode?: number;
+  lastActive: number;
+  lastCommand?: string;
 }
 
 export function terminalHistoryKey(workspaceId: string) {
@@ -37,6 +40,12 @@ export function manualTerminalRecord(raw: Record<string, unknown>): ManualTermin
     connectivity: String(raw.connectivity ?? metadata.connectivity ?? "unknown"),
     output: typeof output === "string" ? output : "",
     exitCode: typeof exitCode === "number" ? exitCode : undefined,
+    lastActive: Math.max(
+      ...[raw.created_at, raw.exited_at, metadata.created_at, metadata.exited_at].map((value) =>
+        typeof value === "number" && Number.isFinite(value) ? value : 0,
+      ),
+    ),
+    lastCommand: typeof metadata.last_command === "string" ? metadata.last_command : undefined,
   };
 }
 
@@ -54,7 +63,11 @@ export function terminalStateLabel(terminal: ManualTerminalRecord) {
   return terminal.state === "running" ? "Running" : "Process state unknown";
 }
 
-export function RetainedTerminalOutput({ terminal }: { terminal: ManualTerminalRecord }) {
+export function RetainedTerminalOutput({
+  terminal,
+}: {
+  terminal: Pick<ManualTerminalRecord, "output">;
+}) {
   return (
     <div className="min-h-0 overflow-auto p-3">
       <p className="mb-2 text-xs text-muted-foreground">
@@ -99,9 +112,12 @@ export function TerminalInventoryView({
       if (!response.ok) throw await apiErrorFromResponse(response);
       const payload = await response.json();
       return {
-        terminals: (payload.data ?? []).map((row: Record<string, unknown>) =>
-          manualTerminalRecord(row),
-        ) as ManualTerminalRecord[],
+        terminals: (payload.data ?? [])
+          .map((row: Record<string, unknown>) => manualTerminalRecord(row))
+          .sort(
+            (left: ManualTerminalRecord, right: ManualTerminalRecord) =>
+              right.lastActive - left.lastActive || left.id.localeCompare(right.id),
+          ) as ManualTerminalRecord[],
         available: payload.available !== false,
       };
     },
@@ -116,6 +132,17 @@ export function TerminalInventoryView({
     workspace.available !== false &&
     inventory.data?.available === true &&
     !inventory.error;
+  async function stopTerminal(terminal: ManualTerminalRecord) {
+    try {
+      const response = await authenticatedFetch(
+        `/v1/workbench-workspaces/${encodeURIComponent(workspace.id)}/terminals/${encodeURIComponent(terminal.id)}`,
+        { method: "DELETE" },
+      );
+      if (!response.ok && response.status !== 404) throw await apiErrorFromResponse(response);
+    } finally {
+      void inventory.refetch();
+    }
+  }
   return (
     <section
       aria-label={`Shell inventory${embedded ? ` · ${workspace.root}` : ""}`}
@@ -124,7 +151,9 @@ export function TerminalInventoryView({
       <header
         className={`flex shrink-0 items-center gap-2 border-b px-3 ${embedded ? "min-h-10 py-1" : "workspace-control-header"}`}
       >
-        <span className="min-w-0 flex-1 truncate text-sm">Shells · {workspace.root}</span>
+        <span className="min-w-0 flex-1 truncate text-sm">
+          {embedded ? "Shells" : `Shells · ${workspace.root}`}
+        </span>
         <TooltipButton
           type="button"
           aria-label="Refresh shells"
@@ -163,20 +192,56 @@ export function TerminalInventoryView({
         {inventory.data?.terminals.length === 0 && (
           <p className="text-sm text-muted-foreground">No retained shells in this workspace.</p>
         )}
-        {inventory.data?.terminals.map((terminal) => (
-          <ActivityRow
-            key={terminal.id}
-            icon={<TerminalIcon className="size-3.5" />}
-            title={
-              <Button variant="ghost" size="sm" onClick={() => onOpenTerminal(terminal.id)}>
-                {terminalDisplayLabel(terminal)}
-              </Button>
-            }
-            status={terminalStateLabel(terminal)}
-          >
-            <RetainedTerminalOutput terminal={terminal} />
-          </ActivityRow>
-        ))}
+        {inventory.data?.terminals.map((terminal) =>
+          embedded ? (
+            <ActivityRow
+              key={terminal.id}
+              icon={<TerminalIcon aria-hidden="true" className="size-3.5" />}
+              title={terminalDisplayLabel(terminal)}
+              description={terminal.lastCommand ?? "No command recorded"}
+              onOpen={() => onOpenTerminal(terminal.id)}
+              status={
+                <>
+                  <span
+                    className={
+                      terminal.connectivity === "connected" && terminal.state === "running"
+                        ? "text-session-active"
+                        : terminal.exitCode
+                          ? "text-destructive"
+                          : "text-muted-foreground"
+                    }
+                  >
+                    {terminalStateLabel(terminal)}
+                  </span>
+                  <ActivityActions
+                    name={terminalDisplayLabel(terminal)}
+                    onOpen={() => onOpenTerminal(terminal.id)}
+                    onStop={
+                      canCreate &&
+                      terminal.state === "running" &&
+                      terminal.connectivity === "connected"
+                        ? () => stopTerminal(terminal)
+                        : undefined
+                    }
+                  />
+                </>
+              }
+            />
+          ) : (
+            <ActivityRow
+              key={terminal.id}
+              icon={<TerminalIcon className="size-3.5" />}
+              title={
+                <Button variant="ghost" size="sm" onClick={() => onOpenTerminal(terminal.id)}>
+                  {terminalDisplayLabel(terminal)}
+                </Button>
+              }
+              status={terminalStateLabel(terminal)}
+            >
+              <RetainedTerminalOutput terminal={terminal} />
+            </ActivityRow>
+          ),
+        )}
       </div>
     </section>
   );

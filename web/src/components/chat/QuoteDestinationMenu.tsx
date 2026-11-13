@@ -14,9 +14,10 @@ import {
 } from "@/lib/contextReferences";
 import { insertQuoteDraft, insertQuoteReference } from "@/lib/quoteDraftDestinations";
 import { textSelectionMenuClassName } from "./TextSelectionMenu";
+import { toast } from "@/lib/notifications";
 
 export function QuoteDestinationMenu({
-  source,
+  source: selectedSource,
   x,
   y,
   onClose,
@@ -28,6 +29,8 @@ export function QuoteDestinationMenu({
   onClose: () => void;
   intent?: "pick" | "subchat";
 }) {
+  // One menu owns one captured selection, independent of caller rerenders.
+  const source = useRef(selectedSource).current;
   const navigation = useContext(ContextReferenceNavigationContext);
   const active = useRef(true);
   const focusBeforeOpen = useRef(document.activeElement as HTMLElement | null);
@@ -44,9 +47,9 @@ export function QuoteDestinationMenu({
       active.current = false;
     };
   }, []);
-  const createdSubchat = useRef<string | null>(null);
-  const autoStarted = useRef(false);
+  const startedDestination = useRef<ReferenceChat | "new" | null>(null);
   const inserting = useRef(false);
+  const inserted = useRef(false);
   const [query, setQuery] = useState("");
   const [finding, setFinding] = useState(false);
   const [chats, setChats] = useState<ReferenceChat[]>([]);
@@ -54,6 +57,14 @@ export function QuoteDestinationMenu({
   const [busy, setBusy] = useState(false);
   const [reference, setReference] = useState<ContextReference | null>(null);
   const [captureAttempt, setCaptureAttempt] = useState(0);
+  const loading = useRef<string | number | undefined>(undefined);
+  useEffect(() => {
+    if (intent !== "subchat") return;
+    loading.current = toast.loading("Opening subchat…");
+    return () => {
+      if (loading.current !== undefined) toast.dismiss(loading.current);
+    };
+  }, [intent]);
   useEffect(() => {
     if (source.file) return;
     let alive = true;
@@ -67,13 +78,24 @@ export function QuoteDestinationMenu({
         if (alive && active.current) setReference(value);
       },
       (failure) => {
-        if (alive && active.current) setError(failure.message);
+        if (alive && active.current) {
+          setError(failure.message);
+          if (intent === "subchat") {
+            toast.error(failure.message, {
+              id: loading.current,
+              action: {
+                label: "Retry",
+                onClick: () => setCaptureAttempt((attempt) => attempt + 1),
+              },
+            });
+          }
+        }
       },
     );
     return () => {
       alive = false;
     };
-  }, [source, captureAttempt]);
+  }, [source, captureAttempt, intent]);
   const [destination, setDestination] = useState<ReferenceChat | "new" | null>(
     intent === "subchat" ? "new" : null,
   );
@@ -90,7 +112,7 @@ export function QuoteDestinationMenu({
     );
     return () => controller.abort();
   }, [query, intent]);
-  const insert = useCallback(async () => {
+  const insert = useCallback(async (): Promise<void> => {
     if (!destination || inserting.current || !active.current) return;
     inserting.current = true;
     setBusy(true);
@@ -102,11 +124,24 @@ export function QuoteDestinationMenu({
       if (destination === "new") {
         if (!navigation?.createSubchat || !reference)
           throw new Error("Subchat creation is unavailable for this source");
-        createdSubchat.current ??= await navigation.createSubchat({
-          ...source,
-          boundaryId: reference.boundary_id,
-        });
-        targetId = createdSubchat.current;
+        const openCreated = (id: string) => {
+          if (!active.current || inserted.current) return;
+          insertQuoteReference(id, reference, true);
+          inserted.current = true;
+          navigation.openConversation(id, { beside: true, title: "Subchat" });
+          window.getSelection()?.removeAllRanges();
+          close();
+        };
+        targetId = await navigation.createSubchat(
+          {
+            ...source,
+            boundaryId: reference.boundary_id,
+          },
+          openCreated,
+        );
+        // Compatibility with providers that only return an initialized child.
+        openCreated(targetId);
+        return;
       } else targetId = destination.id;
       if (!active.current) return;
       await referenceRequest(
@@ -120,21 +155,42 @@ export function QuoteDestinationMenu({
           targetId,
           `[File selection: ${JSON.stringify({ ...source.file, source_id: source.conversationId })}]\n${source.text}`,
         );
-      navigation.openConversation(targetId, { beside: true });
+      navigation.openConversation(targetId, {
+        beside: true,
+        title: destination.title,
+      });
       window.getSelection()?.removeAllRanges();
       close();
     } catch (failure) {
-      if (active.current) setError((failure as Error).message);
+      const message = (failure as Error).message;
+      if (active.current) setError(message);
+      if (intent === "subchat" || inserted.current) {
+        toast.error(message, {
+          id: loading.current,
+          action: {
+            label: "Retry",
+            onClick: () => {
+              if (inserted.current && navigation?.createSubchat && reference) {
+                void navigation
+                  .createSubchat({ ...source, boundaryId: reference.boundary_id })
+                  .catch((retryFailure) => toast.error((retryFailure as Error).message));
+              } else void insert();
+            },
+          },
+        });
+      }
     } finally {
       inserting.current = false;
       if (active.current) setBusy(false);
     }
-  }, [destination, navigation, source, reference, close]);
+  }, [destination, navigation, source, reference, close, intent]);
   useEffect(() => {
-    if (intent !== "subchat" || !reference || autoStarted.current) return;
-    autoStarted.current = true;
+    if (!destination || (!source.file && !reference) || startedDestination.current === destination)
+      return;
+    startedDestination.current = destination;
     void insert();
-  }, [intent, reference, insert]);
+  }, [destination, source, reference, insert]);
+  if (intent === "subchat") return null;
   return (
     <Popover
       open={open}
@@ -148,7 +204,7 @@ export function QuoteDestinationMenu({
       <PopoverContent
         data-text-selection-menu
         data-context-reference-picker
-        aria-label={intent === "subchat" ? "Ask subchat" : "Send to"}
+        aria-label="Send to"
         align="start"
         sideOffset={0}
         collisionPadding={8}
@@ -165,21 +221,11 @@ export function QuoteDestinationMenu({
         }}
       >
         {destination ? (
-          <>
-            <p className="p-2 text-sm">
-              The quote will be copied to{" "}
-              {destination === "new" ? "a new subchat" : destination.title}, visible to everyone
-              with access, including future participants.
+          !error && (
+            <p role="status" className="p-2 text-sm">
+              {destination === "new" ? "Opening subchat…" : "Inserting quote…"}
             </p>
-            <Button disabled={busy || (!source.file && !reference)} onClick={() => void insert()}>
-              {intent === "subchat" ? "Ask subchat…" : "Insert quote"}
-            </Button>
-            {intent !== "subchat" && (
-              <Button variant="ghost" disabled={busy} onClick={() => setDestination(null)}>
-                Back
-              </Button>
-            )}
-          </>
+          )
         ) : (
           <>
             {navigation?.createSubchat && !source.file && (
@@ -230,6 +276,11 @@ export function QuoteDestinationMenu({
         {error && !source.file && !reference && (
           <Button variant="ghost" onClick={() => setCaptureAttempt((attempt) => attempt + 1)}>
             Retry capture
+          </Button>
+        )}
+        {error && destination && (source.file || reference) && (
+          <Button variant="ghost" disabled={busy} onClick={() => void insert()}>
+            Retry
           </Button>
         )}
         <Button variant="ghost" onClick={close}>

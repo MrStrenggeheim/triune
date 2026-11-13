@@ -36,6 +36,7 @@
 }
 
 .dock-pane-header {
+  --dock-add-width: 0px;
   position: relative;
   z-index: 2;
   display: flex;
@@ -48,6 +49,7 @@
 }
 
 .dock-tabs {
+  container-type: inline-size;
   display: flex;
   align-items: stretch;
   flex: 1;
@@ -57,28 +59,48 @@
   overflow-y: hidden;
   scrollbar-width: none;
   touch-action: pan-x;
+  scroll-padding-right: var(--dock-add-width);
+}
+
+.dock-tabs-content {
+  flex-shrink: 0;
+  min-width: 100%;
+  height: 100%;
+  align-items: stretch;
+  gap: 0;
 }
 
 .dock-tabs::-webkit-scrollbar {
   display: none;
 }
 
+.dock-pane-header[data-overflow-left="true"]::before,
 .dock-pane-header[data-overflow-right="true"]::after {
   content: "";
   position: absolute;
-  inset: 0 0 0 auto;
+  top: 0;
+  bottom: 0;
   width: 28px;
-  background: linear-gradient(to right, transparent, var(--workspace-content));
   pointer-events: none;
-  z-index: 3;
+  z-index: 5;
+}
+
+.dock-pane-header[data-overflow-left="true"]::before {
+  left: 0;
+  background: linear-gradient(to left, transparent, var(--workspace-content));
+}
+
+.dock-pane-header[data-overflow-right="true"]::after {
+  right: var(--dock-add-width);
+  background: linear-gradient(to right, transparent, var(--workspace-content));
 }
 
 .dock-tab {
   display: flex;
   align-items: center;
   gap: 6px;
-  flex-shrink: 0;
-  max-width: 240px;
+  flex: 1 1 auto;
+  min-width: 0;
   padding: 0 12px;
   font-size: 13px;
   touch-action: pan-x;
@@ -86,7 +108,8 @@
   -webkit-touch-callout: none;
 }
 
-.dock-tab span {
+.dock-tab-label {
+  min-width: 0;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -206,7 +229,9 @@
 .dock-tab-group {
   position: relative;
   display: flex;
-  flex-shrink: 0;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: min(268px, calc(100cqi - var(--dock-add-width)));
   align-items: center;
   padding-right: 4px;
 }
@@ -246,6 +271,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
   width: 24px;
   height: 24px;
   border-radius: var(--radius-sm);
@@ -256,6 +282,10 @@
   color: var(--foreground);
 }
 .dock-tab-pin {
+  position: absolute;
+  left: 20px;
+  top: 50%;
+  transform: translate(-50%, -50%);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -264,16 +294,26 @@
   border-radius: var(--radius-sm);
   color: var(--muted-foreground);
   opacity: 0;
-  pointer-events: none;
+}
+.dock-tab-type-icon {
+  display: flex;
+  flex-shrink: 0;
+}
+.dock-tab-group[data-pinned="true"] .dock-tab-type-icon {
+  color: var(--primary);
+}
+.dock-tab-group[data-pinned="true"] .dock-tab-type-icon svg {
+  fill: currentColor;
+}
+.dock-tab-group:has(.dock-tab-pin):hover .dock-tab-type-icon,
+.dock-tab-group:has(.dock-tab-pin):focus-within .dock-tab-type-icon {
+  opacity: 0;
 }
 .dock-tab-group:hover .dock-tab-pin,
 .dock-tab-group:focus-within .dock-tab-pin {
   opacity: 1;
-  pointer-events: auto;
 }
 .dock-tab-pin[aria-pressed="true"] {
-  opacity: 1;
-  pointer-events: auto;
   color: var(--primary);
 }
 .dock-tab-pin:hover {
@@ -282,12 +322,6 @@
 }
 .dock-tab-pin[aria-pressed="true"]:hover {
   color: var(--primary);
-}
-@media (hover: none), (pointer: coarse) {
-  .dock-tab-pin {
-    opacity: 1;
-    pointer-events: auto;
-  }
 }
 @media (prefers-reduced-motion: reduce) {
   .dock-tab,
@@ -315,6 +349,7 @@
   z-index: 10;
 }
 .dock-tab:focus-visible,
+.dock-tab-pin:focus-visible,
 .dock-tab-close:focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: -2px;

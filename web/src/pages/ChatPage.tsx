@@ -55,8 +55,7 @@ import {
 } from "@/components/composer/ChatComposer";
 import { ComposerMentionChips } from "@/components/composer/ComposerMentionChips";
 import { ComposerAddMenu } from "@/components/composer/ComposerAddMenu";
-import { BackgroundTaskIndicator } from "@/components/composer/BackgroundTaskIndicator";
-import { SubagentTaskIndicator } from "@/components/composer/SubagentTaskIndicator";
+import { ComposerAttentionShelf } from "@/components/composer/ComposerAttentionShelf";
 import { ReplyDraftBlocks } from "@/components/composer/ReplyDraftBlocks";
 import {
   ComposerPermissionPicker,
@@ -109,6 +108,7 @@ import {
   isStaleTempConvId,
   isTempConvId,
   type PendingInitialPrompt,
+  type SendOptions,
 } from "@/store/chatStore";
 import {
   claudeNativeSubagentLabel,
@@ -128,6 +128,9 @@ import {
 } from "@/lib/sideChat";
 import { shouldQueueSend } from "@/lib/messageQueue";
 import { readAlwaysSteer } from "@/lib/alwaysSteerPreferences";
+import { shouldHideQuoteSubchatHistory } from "@/lib/inheritedHistory";
+import { useNativeChildCapabilities } from "@/hooks/useNativeChildCapabilities";
+import { nativeChildReadOnlyReason, type NativeChildCapabilities } from "@/lib/nativeChildControls";
 import { skillInvocationPrefix } from "@/lib/harnessSetup";
 import { DEVIN_NATIVE_PERMISSION_MODES } from "@/lib/nativeHarnessModes";
 import { readSubmitWithModEnter } from "@/lib/composerSendShortcutPreferences";
@@ -521,7 +524,6 @@ export function ChatPage({
   // null when no prompt is pending clears a prior conversation's value
   // when ChatPage stays mounted across `/c/:a` → `/c/:b`.
   useEffect(() => {
-    if (scoped) return;
     if (!urlConvId) {
       setInitialPrompt(null);
       return;
@@ -531,7 +533,7 @@ export function ChatPage({
       cached?.conversationId === urlConvId ? cached.prompt : consumePendingInitialPrompt(urlConvId);
     consumedInitialPromptRef.current = { conversationId: urlConvId, prompt };
     setInitialPrompt(prompt === null ? null : { conversationId: urlConvId, prompt });
-  }, [urlConvId, scoped]);
+  }, [urlConvId]);
 
   // Subscribe to the bits of store state we render. Each is a
   // primitive selector so re-renders fire only when that specific
@@ -621,7 +623,6 @@ export function ChatPage({
   // sends once — while still resetting for the next conversation, since
   // ChatPage stays mounted across `/c/:a` → `/c/:b`.
   useEffect(() => {
-    if (scoped) return;
     if (
       !shouldSendInitialPrompt({
         initialPrompt: initialPrompt?.prompt.text ?? null,
@@ -641,8 +642,8 @@ export function ChatPage({
     if (initialPrompt === null || !agentId || !urlConvId) return;
     initialPromptSentForConvRef.current = urlConvId;
     const { send, sendSlashCommand } = useChatStore.getState();
-    dispatchInitialPrompt(initialPrompt.prompt, agentId, send, sendSlashCommand);
-  }, [initialPrompt, urlConvId, loadingConversation, agentId, scoped, useChatStore]);
+    dispatchInitialPrompt(initialPrompt.prompt, agentId, send, sendSlashCommand, urlConvId);
+  }, [initialPrompt, urlConvId, loadingConversation, agentId, useChatStore]);
 
   // Open state owned here (not inside MainAgentSurface) so the dialog
   // survives a re-mount of the chat surface. Declared BEFORE the
@@ -967,6 +968,17 @@ export function ChatPage({
     urlConvId,
     conversationsData !== undefined,
   );
+  const nativeChildWrapper =
+    activeSession?.labels?.["omnigent.wrapper"] ?? activeConv?.labels?.["omnigent.wrapper"];
+  const isNativeChild =
+    nativeChildWrapper === "codex-native-ui-subagent" ||
+    nativeChildWrapper === "claude-code-native-ui-subagent";
+  const nativeControls = useNativeChildCapabilities(
+    isNativeChild ? sessionConvId : null,
+    visible,
+    activeSession?.nativeChildCapabilities,
+  );
+  const nativeCapabilities = nativeControls.data ?? activeSession?.nativeChildCapabilities;
   const reconnectHostId = activeSession?.hostId ?? activeConv?.host_id ?? null;
   const { reconnect, dialogOpen, setDialogOpen, localReconnect, arcaReconnect } =
     useSessionReconnect({
@@ -986,13 +998,18 @@ export function ChatPage({
       // the bind. Pin the prompt to THIS session so it replays here, never
       // into a session the user may switch to first; carry any attachments
       // so the replay sends the same payload.
-      if (urlConvId && runnerOnline === false && (isUnboundFork || canResumeOnLocalHost)) {
+      if (
+        urlConvId &&
+        !isNativeChild &&
+        runnerOnline === false &&
+        (isUnboundFork || canResumeOnLocalHost)
+      ) {
         setPendingResumePrompt({ sessionId: urlConvId, text, files: files ?? [], replyDraft });
         setResumeDirDialogOpen(true);
         return;
       }
       // Recover the unreachable host before dispatching another turn.
-      if (urlConvId && isUnreachable) {
+      if (urlConvId && !isNativeChild && isUnreachable) {
         void reconnect();
         return;
       }
@@ -1013,7 +1030,7 @@ export function ChatPage({
           chat.status,
           chat.sessionStatus,
           chat.queuedMessages,
-          readAlwaysSteer(),
+          readAlwaysSteer() || Boolean(nativeCapabilities?.can_steer),
           opensSideChat,
           holdsInitialDraft(chat),
         )
@@ -1023,6 +1040,12 @@ export function ChatPage({
       }
       void useChatStore.getState().send(text, agentId, files, {
         replyDraft,
+        ...(nativeCapabilities?.can_steer
+          ? {
+              nativeChildAction: "steer",
+              nativeChildTurnId: nativeCapabilities.active_turn_id ?? undefined,
+            }
+          : {}),
         onConversationCreated: (newId) => {
           // Eager URL update: the moment the server tells us this
           // conversation's id, promote `/` → `/c/:newId`. Replace (not
@@ -1038,6 +1061,9 @@ export function ChatPage({
       runnerOnline,
       isUnboundFork,
       canResumeOnLocalHost,
+      isNativeChild,
+      nativeCapabilities?.can_steer,
+      nativeCapabilities?.active_turn_id,
       isUnreachable,
       reconnect,
       navigate,
@@ -1085,7 +1111,17 @@ export function ChatPage({
   // composer editable so the user can draft the next message during creation,
   // but gate submission until the temp id is promoted below.
   const sendDisabledReason = isTempConvId(urlConvId) ? "Starting the session…" : null;
-  const readOnlyReason = readOnlyReasonForSessionLabels(activeSession, activeConv);
+  const structuralReadOnlyReason = readOnlyReasonForSessionLabels(
+    activeSession,
+    activeConv,
+    nativeCapabilities,
+  );
+  const readOnlyReason =
+    isNativeChild &&
+    nativeControls.isError &&
+    !(activeSession?.labels?.["omnigent.closed"] === "true")
+      ? "This sub-agent's controls are unavailable; its history remains readable"
+      : structuralReadOnlyReason;
   // Once present, the live session snapshot is authoritative. Memoized so the
   // derived props it feeds (modelPickerKind, effortLevels, wrapperLabel) keep a
   // stable identity across the switch's re-render burst.
@@ -1211,6 +1247,11 @@ export function ChatPage({
 
   const mainAgent = (
     <MainAgentSurface
+      branch={activeSession?.branch}
+      hideInheritedHistory={shouldHideQuoteSubchatHistory(
+        activeSession?.labels,
+        activeSession?.branch,
+      )}
       conversationId={urlConvId ?? null}
       hostId={activeSession?.hostId ?? activeConv?.host_id ?? null}
       status={status}
@@ -1343,6 +1384,8 @@ function SessionLayout({ mainAgent }: SessionLayoutProps) {
 }
 
 interface MainAgentSurfaceProps {
+  branch?: Session["branch"];
+  hideInheritedHistory?: boolean;
   onNewSession: () => void;
   /**
    * Active conversation id, or null when on the landing page. Forwarded
@@ -1539,6 +1582,8 @@ export function updateWarmTerminalSurfaces(
  * see ViewModeToggle) so the user can flip back to Chat.
  */
 const MainAgentSurface = memo(function MainAgentSurfaceImpl({
+  branch,
+  hideInheritedHistory,
   conversationId,
   hostId,
   status,
@@ -1849,6 +1894,8 @@ const MainAgentSurface = memo(function MainAgentSurfaceImpl({
           subscription and the bubble pipeline, so an SSE frame re-renders it
           alone — this surface's composer and chrome below bail out. */}
           <Transcript
+            branch={branch}
+            hideInheritedHistory={hideInheritedHistory}
             hostId={hostId}
             setConversationEl={setConversationEl}
             containerEl={containerEl}
@@ -1915,6 +1962,7 @@ const MainAgentSurface = memo(function MainAgentSurfaceImpl({
             isTerminalFirst={isTerminalFirst}
             isNativeWrapper={isNativeWrapper}
             unreachable={
+              !(readOnlyReason === null && nativeCodingAgentForSubagentWrapper(wrapperLabel)) &&
               !sandboxLaunching &&
               (liveness.kind === "host_offline" || liveness.kind === "local_stranded")
             }
@@ -2414,7 +2462,6 @@ function ComposerImpl(
   ref: ForwardedRef<ComposerHandle>,
 ) {
   const useChatStore = useConversationChatStore();
-  const scoped = useIsScopedConversation();
   const workbench = useWorkbench();
   const [subchatBusy, setSubchatBusy] = useState(false);
   const composerMounted = useRef(true);
@@ -3535,13 +3582,22 @@ function ComposerImpl(
 
   useEffect(() => {
     if (!conversationId) return;
-    return registerQuoteDestination(conversationId, (addition) => {
-      editText(null, (current) => appendDraftText(current, addition));
-      dirtyRef.current = true;
-      textareaRef.current = tailTextareaRef.current;
-      if (focusedRef.current) tailTextareaRef.current?.focus();
-    });
-  }, [conversationId, editText]);
+    return registerQuoteDestination(
+      conversationId,
+      (addition) => {
+        editText(null, (current) => appendDraftText(current, addition));
+        dirtyRef.current = true;
+        textareaRef.current = tailTextareaRef.current;
+        if (focusedRef.current) tailTextareaRef.current?.focus();
+      },
+      (quote) => {
+        appendQuote(quote);
+        dirtyRef.current = true;
+        textareaRef.current = tailTextareaRef.current;
+        if (focusedRef.current) tailTextareaRef.current?.focus();
+      },
+    );
+  }, [conversationId, editText, appendQuote]);
 
   const mentionedItemsRef = useRef(mentionedItems);
   mentionedItemsRef.current = mentionedItems;
@@ -4107,6 +4163,7 @@ function ComposerImpl(
         />
         {/* An empty child label must not create a nameless tray. */}
         {subAgentLabel ? <SubagentComposerTray label={subAgentLabel} /> : null}
+        <ComposerAttentionShelf />
       </div>
       <ChatComposer
         keyboard={{ submitWithModEnter, preventsKeyboardSubmit }}
@@ -4481,8 +4538,6 @@ function ComposerImpl(
                 data-testid="composer-task-indicators"
                 className="flex shrink-0 items-center gap-0 empty:hidden"
               >
-                {!scoped && <BackgroundTaskIndicator />}
-                {!scoped && <SubagentTaskIndicator conversationId={conversationId} />}
                 {goal && <GoalStatusPill goal={goal} onOpen={() => setGoalDialogOpen(true)} />}
               </div>
               <div className="flex min-w-0 items-center rounded-lg">
@@ -4734,13 +4789,36 @@ export function shouldSendInitialPrompt(params: {
 export function dispatchInitialPrompt(
   prompt: PendingInitialPrompt,
   agentId: string,
-  send: (text: string, agentId: string, files: File[]) => Promise<void>,
-  sendSlashCommand: (name: string, args: string, agentId: string) => Promise<void>,
+  send: (text: string, agentId: string, files: File[], options?: SendOptions) => Promise<void>,
+  sendSlashCommand: (
+    name: string,
+    args: string,
+    agentId: string,
+    options?: SendOptions,
+  ) => Promise<void>,
+  conversationId?: string,
 ): void {
+  const options: SendOptions = {
+    stableId: prompt.stableId,
+    onAccepted: prompt.onAccepted,
+    ...(conversationId ? { pinnedConversationId: conversationId } : {}),
+  };
   if (prompt.skill) {
-    void sendSlashCommand(prompt.skill.name, prompt.skill.args, agentId);
+    if (prompt.stableId || prompt.onAccepted || conversationId) {
+      void sendSlashCommand(prompt.skill.name, prompt.skill.args, agentId, {
+        ...options,
+      });
+    } else {
+      void sendSlashCommand(prompt.skill.name, prompt.skill.args, agentId);
+    }
   } else {
-    void send(prompt.text, agentId, prompt.files ?? []);
+    if (prompt.stableId || prompt.onAccepted || conversationId) {
+      void send(prompt.text, agentId, prompt.files ?? [], {
+        ...options,
+      });
+    } else {
+      void send(prompt.text, agentId, prompt.files ?? []);
+    }
   }
 }
 
@@ -4817,7 +4895,13 @@ const PI_NATIVE_EFFORT_LEVELS = [
 type NativeModelPickerKind =
   "claude" | "codex" | "cursor" | "kiro" | "opencode" | "pi" | "devin" | "acp" | "configured";
 
-type LabelSource = { labels?: Record<string, string | null> | null } | null | undefined;
+type LabelSource =
+  | {
+      labels?: Record<string, string | null> | null;
+      nativeChildCapabilities?: NativeChildCapabilities | null;
+    }
+  | null
+  | undefined;
 
 /**
  * Resolve a structural read-only reason from session labels.
@@ -4835,6 +4919,7 @@ type LabelSource = { labels?: Record<string, string | null> | null } | null | un
 export function readOnlyReasonForSessionLabels(
   activeSession: LabelSource,
   activeConv: LabelSource,
+  nativeCapabilities?: NativeChildCapabilities | null,
 ): string | null {
   const closed =
     activeSession?.labels?.["omnigent.closed"] ?? activeConv?.labels?.["omnigent.closed"];
@@ -4855,8 +4940,8 @@ export function readOnlyReasonForSessionLabels(
   }
   const wrapper =
     activeSession?.labels?.["omnigent.wrapper"] ?? activeConv?.labels?.["omnigent.wrapper"];
-  if (wrapper === "claude-code-native-ui-subagent") {
-    return "Claude Code sub-agents are read-only";
+  if (wrapper === "claude-code-native-ui-subagent" || wrapper === "codex-native-ui-subagent") {
+    return nativeChildReadOnlyReason(nativeCapabilities ?? activeSession?.nativeChildCapabilities);
   }
   return null;
 }

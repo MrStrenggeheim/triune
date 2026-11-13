@@ -54,16 +54,12 @@ def test_failed_subagent_stays_beside_model_without_growing_composer(
         card.bounding_box(),
     )
     assert indicator_box is not None and model_box is not None and final is not None
-    assert indicator_box["x"] + indicator_box["width"] <= model_box["x"] + 1
-    assert (
-        abs(
-            indicator_box["y"]
-            + indicator_box["height"] / 2
-            - model_box["y"]
-            - model_box["height"] / 2
-        )
-        <= 1
-    )
+    shelf_box = page.get_by_test_id("composer-attention-shelf").bounding_box()
+    assert shelf_box is not None
+    assert indicator_box["x"] >= shelf_box["x"]
+    assert indicator_box["x"] + indicator_box["width"] <= shelf_box["x"] + shelf_box["width"] + 1
+    assert indicator_box["y"] + indicator_box["height"] <= final["y"] + 1
+    expect(page.get_by_test_id("composer-attention-shelf")).to_contain_text("Agents1")
     assert final["height"] == pytest.approx(baseline["height"], abs=1)
     indicator.click()
     expect(page.get_by_role("link", name="Inspect failed helper", exact=True)).to_have_attribute(
@@ -211,7 +207,7 @@ def test_pr_context_and_background_tasks_stay_inside_composer(
     page.set_viewport_size({"width": viewport_width, "height": 844 if is_mobile else 900})
     page.goto(chat.url)
     chat.wait_for_stream()
-    bar = page.locator("[data-composer-card]")
+    bar = page.locator("form.chat-composer-form")
     pr_link = bar.get_by_test_id("composer-pr-link")
     pr_label = pr_link.locator("span").last
     expect(pr_label).to_have_text(f"#{pr_number}", timeout=30_000)
@@ -221,9 +217,9 @@ def test_pr_context_and_background_tasks_stay_inside_composer(
     if font_family is not None:
         applied_family = context.evaluate("el => getComputedStyle(el).fontFamily")
         assert applied_family.split(",")[0].strip("\"' ") == font_family
-    expect(bar.get_by_test_id("background-task-pill")).to_have_text("1")
+    expect(bar.get_by_test_id("background-task-pill")).to_have_text("Shells1")
     subagent = bar.get_by_test_id("subagent-task-pill")
-    expect(subagent).to_have_text("1")
+    expect(subagent).to_have_text("Agents1")
     expect(subagent).to_have_accessible_name("1 sub-agent: 1 active")
     expect(bar).to_contain_text("live-branch")
     expect(bar).not_to_contain_text("pr-head-not-checkout")
@@ -258,7 +254,7 @@ def test_pr_context_and_background_tasks_stay_inside_composer(
     actions = page.get_by_test_id("composer-action-row")
     workspace = page.get_by_test_id("composer-workspace-controls")
     assert actions.locator('[data-testid="composer-workspace-controls"]').count() == 1
-    assert page.locator(".composer-workspace-surface").count() == 0
+    expect(page.get_by_test_id("composer-attention-shelf")).to_be_visible()
     send = page.get_by_role("button", name="Send", exact=True).bounding_box()
     assert send is not None
     context_ring = control_bounds["composer-context-ring"]

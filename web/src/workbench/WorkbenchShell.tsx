@@ -53,6 +53,7 @@ import { getOmnigentServerIdentity } from "@/lib/host";
 import { useViewerId, useIdentityReady } from "@/hooks/useViewerId";
 import { useContextSearchController } from "@/hooks/useContextSearchController";
 import { useLoadedConversations } from "@/hooks/useSidebarData";
+import { subagentName } from "@/lib/subagentActivity";
 import { resolveChatWorkspace } from "@/hooks/useWorkbenchSelection";
 import { createTerminal, findAgentTerminal, useTerminals } from "@/hooks/useTerminals";
 import { useDebugMode } from "@/hooks/useDebugMode";
@@ -72,7 +73,7 @@ import { getFindContext } from "@/lib/findContext";
 import { readPanelFolder, panelFolderKey, setPanelFolder, usePanelFolder } from "@/lib/panelFolder";
 import type { WorkbenchWorkspace } from "@/lib/workbenchWorkspace";
 import { authenticatedFetch } from "@/lib/identity";
-import { ApiError, apiErrorFromResponse } from "@/lib/sessionsApi";
+import { ApiError, apiErrorFromResponse, interrupt } from "@/lib/sessionsApi";
 import { Sidebar, isMobileViewport } from "@/shell/Sidebar";
 import { ContextSearchProvider } from "@/shell/ContextSearchContext";
 import { CommandPalette } from "@/shell/CommandPalette";
@@ -91,7 +92,7 @@ import {
 import { WorkbenchAppBar, type WorkbenchOpenAction } from "./WorkbenchAppBar";
 import { ConversationView } from "./ConversationView";
 import { ActivityView, type ActivitySource } from "./ActivityView";
-import { TerminalResourceView } from "./TerminalResourceView";
+import { TerminalResourceView, RetainedActivityView } from "./TerminalResourceView";
 import { ResourceView, inheritResourceViewState } from "./ResourceView";
 import { DockWorkspace, type DockViewVisibility } from "./DockWorkspace";
 import { useDockLayout } from "./useDockLayout";
@@ -434,10 +435,10 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
   const routeConversationRef = useRef(conversationId);
   routeConversationRef.current = conversationId;
   const openConversation = useCallback(
-    (id: string, options?: { beside?: boolean; messageId?: string }) => {
+    (id: string, options?: { beside?: boolean; messageId?: string; title?: string }) => {
       const current = dockRef.current;
       if (options?.beside) {
-        current.addView(conversationView(id, titlesRef.current.get(id)), {
+        current.addView(conversationView(id, options?.title ?? titlesRef.current.get(id)), {
           paneId: current.layout.focusedPaneId ?? undefined,
           edge: "right",
         });
@@ -538,7 +539,7 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
   const openView = useCallback(
     (request: OpenWorkbenchView, options?: { beside?: boolean; paneId?: string }) => {
       if (request.kind === "conversation" && request.conversationId) {
-        openConversation(request.conversationId, options);
+        openConversation(request.conversationId, { ...options, title: request.title });
         return;
       }
       const captured = {
@@ -730,10 +731,10 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
         kind,
         source:
           kind === "activity"
-            ? selectedWorkspace?.host_id
-              ? { kind: "host", hostId: selectedWorkspace.host_id, workspace: selectedWorkspace }
-              : resourceConversationId
-                ? { kind: "chat", conversationId: resourceConversationId }
+            ? resourceConversationId
+              ? { kind: "chat", conversationId: resourceConversationId }
+              : selectedWorkspace?.host_id
+                ? { kind: "host", hostId: selectedWorkspace.host_id, workspace: selectedWorkspace }
                 : undefined
             : undefined,
         workspace: selectedWorkspace,
@@ -1039,6 +1040,16 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
             }}
           />
         );
+      else if (view.kind === "terminal" && sessionId && resource.retainedActivity)
+        content = (
+          <RetainedActivityView
+            conversationId={sessionId}
+            activity={
+              resource.retainedActivity as NonNullable<OpenWorkbenchView["retainedActivity"]>
+            }
+            active={showDock && visibility.visible}
+          />
+        );
       else if (view.kind === "terminal" && typeof resource.terminalId === "string")
         content = (
           <TerminalResourceView
@@ -1067,6 +1078,36 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
             }
             active={showDock && visibility.visible}
             source={activitySource(resource, workspace, sessionId, view.kind === "shells")}
+            onOpenAgent={(child) =>
+              openView(
+                { kind: "conversation", conversationId: child.id, title: subagentName(child) },
+                { beside: true },
+              )
+            }
+            canStopAgent={(child) => Boolean(child.busy)}
+            onStopAgent={async (child) => {
+              try {
+                await interrupt(child.id);
+                await queryClient.invalidateQueries({
+                  predicate: (query) =>
+                    query.queryKey[0] === "conversation" && query.queryKey[2] === "child_sessions",
+                });
+                await queryClient.invalidateQueries({ queryKey: ["native-child-capabilities"] });
+              } catch (error) {
+                toast.error(error instanceof Error ? error.message : "Could not stop sub-agent");
+                throw error;
+              }
+            }}
+            onConsumeLinkIntent={() => {
+              void updateResource(view, {
+                focusAgentId: undefined,
+                linkRequestId: undefined,
+              }).catch((error) =>
+                toast.error(
+                  error instanceof Error ? error.message : "Could not clear navigation request",
+                ),
+              );
+            }}
             onSourceChange={async (source) => {
               const accepted = await updateResource(view, {
                 source,
@@ -1085,6 +1126,21 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
               openView({ kind: "terminal", workspace: target, terminalOwner: "workspace" })
             }
             onOpenTerminal={(target) => {
+              if (target.retainedOnly && target.activity && !target.workspaceId) {
+                openView({
+                  kind: "terminal",
+                  conversationId: target.sessionId,
+                  terminalId: target.activity.id,
+                  terminalOwner: "conversation",
+                  title: target.activity.name,
+                  retainedActivity: {
+                    name: target.activity.name,
+                    state: target.activity.state,
+                    entryIds: target.activity.entries.map((entry) => entry.id),
+                  },
+                });
+                return;
+              }
               const launch = async () => {
                 let terminalWorkspace: WorkbenchWorkspace | undefined;
                 if (target.workspaceId) {
@@ -1160,7 +1216,7 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
         </div>
       );
     },
-    [showDock, debug, openView, updateResource, registerGuard, closeView],
+    [showDock, debug, openView, updateResource, registerGuard, closeView, queryClient],
   );
   const referenceNavigation = useMemo(
     () => ({ openConversation, createSubchat: createQuoteSubchat }),

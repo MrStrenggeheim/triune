@@ -118,4 +118,66 @@ describe("WorkspaceTabsScroller", () => {
     fireEvent.wheel(viewport, { deltaY: 30 });
     expect(viewport.scrollLeft).toBe(30);
   });
+
+  it.each([
+    { deltaMode: 0, deltaY: 2, expected: 2 },
+    { deltaMode: 1, deltaY: -2, expected: -32 },
+    { deltaMode: 2, deltaY: 1, expected: 272 },
+    { deltaMode: 0, deltaX: 15, deltaY: 20, ctrlKey: true, expected: 15 },
+  ])("normalizes wheel units for $deltaMode and $deltaY", ({ expected, ...wheel }) => {
+    setupGeometry();
+    tabsWidth = 450;
+    const { container } = render(<Harness />);
+    const viewport = container.querySelector<HTMLElement>("[data-workspace-tabs-viewport]")!;
+    expect(fireEvent.wheel(viewport, wheel)).toBe(false);
+    expect(viewport.scrollLeft).toBe(expected);
+  });
+
+  it("exposes the viewport ref, attributes and styles without replacing scroll handling", () => {
+    setupGeometry();
+    tabsWidth = 450;
+    const viewportRef = { current: null as HTMLDivElement | null };
+    const onScroll = vi.fn();
+    render(
+      <WorkspaceTabsScroller
+        viewportRef={viewportRef}
+        role="tablist"
+        aria-label="Dock tabs"
+        className="dock-tabs"
+        contentClassName="dock-tabs-content"
+        onScroll={onScroll}
+      >
+        <button type="button">Tab</button>
+      </WorkspaceTabsScroller>,
+    );
+    const viewport = screen.getByRole("tablist", { name: "Dock tabs" });
+    expect(viewportRef.current).toBe(viewport);
+    expect(viewport).toHaveClass("dock-tabs");
+    expect(viewport.querySelector("[data-workspace-tabs-content]")).toHaveClass(
+      "dock-tabs-content",
+    );
+    fireEvent.wheel(viewport, { deltaY: 25 });
+    expect(viewport.scrollLeft).toBe(25);
+    fireEvent.scroll(viewport);
+    expect(onScroll).toHaveBeenCalledOnce();
+  });
+
+  it.each([false, true])("reveals the complete active tab on resize (grouped: %s)", (grouped) => {
+    setupGeometry();
+    render(
+      <WorkspaceTabsScroller>
+        <div data-workspace-tab={grouped || undefined}>
+          <button type="button" aria-selected="true">
+            Selected
+          </button>
+          <button type="button">Close</button>
+        </div>
+      </WorkspaceTabsScroller>,
+    );
+    const selected = screen.getByRole("button", { name: "Selected" });
+    const target = grouped ? selected.parentElement! : selected;
+    const reveal = vi.spyOn(target, "scrollIntoView");
+    resize(250);
+    expect(reveal).toHaveBeenCalledWith({ block: "nearest", inline: "nearest" });
+  });
 });

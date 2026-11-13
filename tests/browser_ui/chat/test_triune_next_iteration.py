@@ -4,6 +4,7 @@
 import json
 from pathlib import Path
 
+import pytest
 from playwright.sync_api import Page, expect
 
 from tests.browser_ui.chat.session_contract import list_payload
@@ -16,6 +17,108 @@ from tests.browser_ui.chat.test_unified_workspace import (
 from tests.browser_ui.chat.test_unified_workspace import browser_errors as browser_errors
 from tests.browser_ui.chat.test_unified_workspace import workspace_journey as workspace_journey
 from tests.browser_ui.conftest import BrowserContract
+
+
+@pytest.mark.parametrize("width", [390, 1440], ids=["phone", "desktop"])
+def test_original_composer_shelf_requests_and_counts(
+    page: Page,
+    workspace_journey: WorkspaceJourney,
+    browser_contract: BrowserContract,
+    output_path: str,
+    browser_errors: list[str],
+    width: int,
+) -> None:
+    """Existing forms sit above the composer without overflow or moving its controls."""
+    first = workspace_journey.chats[0]
+    first.update_session(
+        todos=[{"content": "Verify native controls", "status": "in_progress", "activeForm": ""}],
+        background_task_count=1,
+        background_tasks=[
+            {
+                "id": "shell",
+                "type": "shell",
+                "description": "Focused checks",
+                "command": "pnpm test",
+                "status": "running",
+            }
+        ],
+    )
+    browser_contract.json(
+        f"/v1/sessions/{first.session_id}/child_sessions",
+        {
+            "data": [
+                {
+                    "id": "helper",
+                    "title": "Hilbert",
+                    "session_name": "Hilbert",
+                    "task_summary": "Inspect child controls",
+                    "busy": True,
+                    "current_task_status": "in_progress",
+                    "pending_elicitations_count": 0,
+                    "labels": {},
+                }
+            ]
+        },
+    )
+    page.set_viewport_size({"width": width, "height": 1000 if width > 500 else 844})
+    page.goto(first.url)
+    editor = _view(page, "Chat A").get_by_label("Message the agent")
+    editor.fill("Keep this draft")
+    first.wait_for_stream()
+    for key, extra in [
+        (
+            "question",
+            {
+                "ask_user_question": {
+                    "questions": [
+                        {
+                            "id": "coverage",
+                            "question": "Which checks should run?",
+                            "options": [{"label": "Focused", "description": "Changed controls"}],
+                            "multiSelect": False,
+                        }
+                    ]
+                }
+            },
+        ),
+        ("permission", {}),
+    ]:
+        first.emit(
+            {
+                "event": "response.elicitation_request",
+                "data": {
+                    "type": "response.elicitation_request",
+                    "elicitation_id": key,
+                    "params": {
+                        "mode": "form",
+                        "message": "Allow focused checks",
+                        "phase": "tool_call",
+                        "policy_name": "native",
+                        "requestedSchema": {},
+                        **extra,
+                    },
+                },
+            }
+        )
+    shelf = page.get_by_test_id("composer-attention-shelf")
+    expect(shelf.get_by_role("button", name="Questions: 1", exact=True)).to_be_visible()
+    expect(shelf.get_by_role("button", name="Approvals: 1", exact=True)).to_be_visible()
+    expect(shelf.get_by_test_id("background-task-pill")).to_contain_text("1")
+    expect(shelf.get_by_test_id("subagent-task-pill")).to_contain_text("1")
+    expect(shelf.get_by_role("button", name="Plan: 0 of 1 completed", exact=True)).to_be_visible()
+    assert shelf.locator(".lucide-chevron-down").count() == 0
+    assert shelf.evaluate("el => el.scrollWidth <= el.clientWidth + 1")
+    shelf.get_by_role("button", name="Questions: 1", exact=True).click()
+    expect(page.get_by_test_id("ask-user-question-form")).to_contain_text(
+        "Which checks should run?"
+    )
+    _capture(page, output_path, f"shelf-question-{width}")
+    page.keyboard.press("Escape")
+    expect(editor).to_have_value("Keep this draft")
+    shelf.get_by_role("button", name="Plan: 0 of 1 completed", exact=True).click()
+    expect(page.get_by_text("Verify native controls", exact=True)).to_be_visible()
+    _capture(page, output_path, f"shelf-plan-{width}")
+    assert browser_errors == []
 
 
 def test_pane_add_empty_state_and_mobile_search(
