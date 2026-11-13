@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import copy
 import gzip
+import threading
 
 import pytest
 from starlette.datastructures import Headers
@@ -50,6 +51,31 @@ async def _exchange(
         wrapped = GZipJSONMiddleware(wrapped)
     await wrapped(scope, receive, send)
     return sent
+
+
+async def test_json_compression_keeps_cpu_work_off_the_event_loop(monkeypatch):
+    main_thread = threading.get_ident()
+    compressed_on: list[int] = []
+    compress = gzip.compress
+
+    def track_compression(*args, **kwargs):
+        compressed_on.append(threading.get_ident())
+        return compress(*args, **kwargs)
+
+    monkeypatch.setattr(gzip, "compress", track_compression)
+    body = b"x" * 4096
+    sent = await _exchange(
+        [
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [(b"content-type", b"application/json")],
+            },
+            {"type": "http.response.body", "body": body},
+        ]
+    )
+    assert gzip.decompress(sent[1]["body"]) == body
+    assert len(compressed_on) == 1 and compressed_on[0] != main_thread
 
 
 @pytest.mark.parametrize(

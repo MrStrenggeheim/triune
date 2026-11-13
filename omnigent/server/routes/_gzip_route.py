@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import gzip
 from collections.abc import Mapping
 
 from fastapi.routing import APIRoute
@@ -107,6 +109,7 @@ class _StateAwareGZipResponder(GZipResponder):
         self._state = state
         self._skip_compression = False
         self._accepts_gzip = accepts_gzip
+        self._compresslevel = compresslevel
 
     async def send_with_compression(self, message: Message) -> None:
         """
@@ -155,7 +158,9 @@ class _StateAwareGZipResponder(GZipResponder):
                 if "*" not in vary and "accept-encoding" not in vary:
                     headers["Vary"] = ", ".join([*vary_values, "Accept-Encoding"])
                 if self._accepts_gzip:
-                    body = self.apply_compression(body, more_body=False)
+                    body = await asyncio.to_thread(
+                        gzip.compress, body, compresslevel=self._compresslevel, mtime=0
+                    )
                     headers["Content-Encoding"] = "gzip"
                     headers["Content-Length"] = str(len(body))
                     if "etag" in headers and not headers["etag"].startswith("W/"):
