@@ -1003,6 +1003,8 @@ function AssistantBubble({
   const errorNotice = hasError && bubble.items.every((it) => it.kind === "error");
   const spansFullColumn = isWide || hasError;
   const hasSubagentNotice = bubble.items.some((it) => it.kind === "subagent_activity");
+  const activityOnly =
+    hasSubagentNotice && bubble.items.every((it) => it.kind === "subagent_activity");
 
   return (
     <>
@@ -1046,7 +1048,7 @@ function AssistantBubble({
           </p>
         )}
         {/* Skip fold-only and error-only bubbles. Order: actions, then timestamp. */}
-        {!foldOnly && !errorOnly && (
+        {!foldOnly && !errorOnly && !activityOnly && (
           <div
             className={cn(
               "flex items-center gap-3 py-1",

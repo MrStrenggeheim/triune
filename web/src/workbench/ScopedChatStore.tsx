@@ -17,6 +17,7 @@ import {
   type ChatState,
 } from "@/store/chatStore";
 import { conversationRegistry } from "@/store/conversationRegistry";
+import { refreshConversationObservationPriority } from "@/store/streamObservation";
 import { createInitialConversationState, isConversationStateKey } from "@/store/conversationState";
 
 type BoundChatStore = UseBoundStore<StoreApi<ChatState>>;
@@ -146,10 +147,14 @@ export function ScopedChatStoreProvider({
   const store = useMemo(() => createScopedChatStore(conversationId), [conversationId]);
   const root = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
-    const release = conversationRegistry.retain(conversationId, visible);
+    const release = conversationRegistry.retain(conversationId, visible, focused);
+    refreshConversationObservationPriority();
     if (visible) void ensureConversationStreamed(conversationId);
-    return release;
-  }, [conversationId, visible]);
+    return () => {
+      release();
+      refreshConversationObservationPriority();
+    };
+  }, [conversationId, visible, focused]);
   return (
     <ScopedChatStoreContext.Provider value={store}>
       <ScopedChatVisibleContext.Provider value={visible}>

@@ -1,3 +1,4 @@
+// Modified for Triune.
 import type { MessageCommunication } from "./messageCommunication";
 import type { ChatAttachmentContent } from "./chatAttachments";
 import type { NativePermissionDelivery } from "./nativePermissionDelivery";
@@ -762,7 +763,7 @@ export type AnyBlock =
   | PolicyDeniedBlock
   | ResponseEndBlock;
 
-/** Whether a pending card answers `sessionId`'s own prompt, not a mirrored sub-agent's. */
+/** Whether this session is parked on its own request; async questions do not block input. */
 export function hasPendingOwnElicitation(
   blocks: readonly AnyBlock[],
   sessionId: string | null,
@@ -771,6 +772,7 @@ export function hasPendingOwnElicitation(
     (b) =>
       b.type === "elicitation" &&
       b.status === "pending" &&
+      b.askUserQuestion?.isBlocking !== false &&
       (b.targetSessionId == null || b.targetSessionId === sessionId),
   );
 }

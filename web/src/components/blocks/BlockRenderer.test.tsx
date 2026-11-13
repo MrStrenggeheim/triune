@@ -1,3 +1,4 @@
+// Modified for Triune.
 // BlockRenderer dispatch wiring. The kind→component switch is easy
 // to break by removing a case — neither the walker nor the
 // individual card tests catch that. Drive it directly here.
@@ -1362,11 +1363,20 @@ describe("BlockRenderer dispatch", () => {
         kind: "subagent_activity",
         itemId,
         data: {
+          id: itemId,
           type: "resource_event",
           event_type: `session.subagent.${phase}`,
           resource_type: "session",
           resource_id: "conv_child",
-          resource: { title: "Peirce" },
+          resource: {
+            title: "Peirce",
+            agent_name: "Peirce",
+            task_summary: "Record a clip",
+            dispatch_id: "dispatch-1",
+            ...(phase === "returned"
+              ? { status: "completed", result_text: "Peirce's verified result." }
+              : {}),
+          },
         },
       });
       const text = (itemId: string, value: string): RenderItem => ({
@@ -1382,9 +1392,15 @@ describe("BlockRenderer dispatch", () => {
           </MemoryRouter>,
         );
       const noticeLabels = () =>
-        screen.queryAllByTestId("subagent-activity").map((node) => node.textContent);
+        [
+          ...document.querySelectorAll(
+            '[data-testid="subagent-activity"], [data-testid="subagent-reply"]',
+          ),
+        ].map((node) =>
+          node.getAttribute("data-phase") === "returned" ? "Completed Peirce" : "Started Peirce",
+        );
 
-      it("folds mid-turn notices into the work around them", () => {
+      it("keeps task and reply cards outside the work around them", () => {
         renderTurn([
           tool(1, "spawn_agent"),
           notice("n1", "delegated"),
@@ -1393,21 +1409,21 @@ describe("BlockRenderer dispatch", () => {
           text("m1", "Peirce finished the recording."),
         ]);
         expect(screen.getByText("Peirce finished the recording.")).toBeDefined();
-        expect(noticeLabels()).toEqual([]);
+        expect(noticeLabels()).toEqual(["Started Peirce", "Completed Peirce"]);
 
-        fireEvent.click(screen.getByRole("button", { name: "Worked" }));
+        fireEvent.click(screen.getAllByRole("button", { name: "Worked" })[0]);
         expect(noticeLabels()).toEqual(["Started Peirce", "Completed Peirce"]);
       });
 
       it.each([false, true])(
-        "shows trailing notices only until the turn continues (continued = %s)",
+        "keeps trailing tasks visible when the turn continues (continued = %s)",
         (continued) => {
           renderTurn(
             [text("m1", "Starting Peirce."), tool(1, "spawn_agent"), notice("n1", "delegated")],
             continued,
           );
           expect(screen.getAllByRole("button", { name: "Worked" })).toHaveLength(1);
-          expect(noticeLabels()).toEqual(continued ? [] : ["Started Peirce"]);
+          expect(noticeLabels()).toEqual(["Started Peirce"]);
         },
       );
 
@@ -1451,7 +1467,7 @@ describe("BlockRenderer dispatch", () => {
           ],
           labels: ["Completed Peirce"],
         },
-      ])("folds a notice run into the nearest work, $shape", ({ continued, items, labels }) => {
+      ])("keeps task replies outside work, $shape", ({ continued, items, labels }) => {
         render(
           <MemoryRouter>
             <BlockRenderer
@@ -1462,7 +1478,7 @@ describe("BlockRenderer dispatch", () => {
             />
           </MemoryRouter>,
         );
-        expect(noticeLabels()).toEqual([]);
+        expect(noticeLabels()).toEqual(labels);
         // One timed row: the notices add no row of their own.
         fireEvent.click(screen.getByRole("button", { name: "Worked for 42s" }));
         expect(noticeLabels()).toEqual(labels);

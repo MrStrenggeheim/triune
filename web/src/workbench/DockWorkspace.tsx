@@ -72,6 +72,7 @@ import {
 } from "./dockLayout";
 import { WorkbenchViewIcon } from "./viewIcons";
 import { projectedDockRect, tabDropTarget, type DockDropTarget } from "./dockDropPlacement";
+import { useResidentDockViews } from "./viewLifetime";
 import "./dockWorkspace.css";
 
 export interface DockViewVisibility {
@@ -87,8 +88,12 @@ export interface DockWorkspaceProps {
   layout: DockLayout;
   onLayoutChange: (update: DockLayoutUpdate) => void;
   renderView: (view: DockView, state: DockViewVisibility) => ReactNode;
-  /** Views in inactive saved layouts remain mounted but hidden. */
+  /** Saved resource inventory; membership does not force a hidden mount. */
   retainedViews?: readonly DockView[];
+  /** Saved layout owner, e.g. the active conversation ID or "shared". */
+  layoutKey?: string;
+  /** Pure safety check: false keeps an already mounted model resident. */
+  canSuspendView?: (view: DockView) => boolean;
   /** Changes remount resources at the account/server/client boundary. */
   scopeKey?: string;
   onBeforeClose?: DockCloseGuard;
@@ -347,6 +352,19 @@ function DockSurface(props: DockWorkspaceProps) {
   const select = (id: string) => onLayoutChange((current) => selectDockView(current, id));
   const allViews = new Map(retainedViews.map((view) => [view.id, view]));
   for (const view of layout.views) allViews.set(view.id, view);
+  const visibleIds = new Set(
+    props.active === false
+      ? []
+      : layout.panes
+          .filter((pane) => !compact || pane.id === layout.focusedPaneId)
+          .flatMap((pane) => (pane.selectedViewId ? [pane.selectedViewId] : [])),
+  );
+  const residentViews = useResidentDockViews(
+    allViews,
+    visibleIds,
+    props.layoutKey ?? "dock",
+    props.canSuspendView,
+  );
 
   return (
     <DndContext
@@ -443,7 +461,7 @@ function DockSurface(props: DockWorkspaceProps) {
             );
           })}
           <div className="dock-surfaces">
-            {[...allViews.values()].map((view) => {
+            {residentViews.map((view) => {
               const pane = dockPaneForView(layout, view.id);
               const focused = pane?.id === layout.focusedPaneId;
               const visible =

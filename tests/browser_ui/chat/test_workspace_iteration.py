@@ -244,13 +244,34 @@ def test_peer_cards_and_orchestration_keep_attribution_and_minimal_controls(
             "title": "Ada",
             "agent_name": "Ada",
             "task_summary": "Check access",
+            "dispatch_id": "ada-dispatch",
+            "result_text": "**Access verified.**\n\n"
+            + "\n".join(
+                f"- Report item {index}: preserve the original scope." for index in range(12)
+            ),
+            "result_ref": {"conversation_id": "child-ada", "item_id": "ada-result"},
             "status": "completed",
+        },
+    }
+    delegated = {
+        **completed,
+        "id": "delegated-agent",
+        "response_id": "agent-start",
+        "created_at": 1704067199,
+        "event_type": "session.subagent.delegated",
+        "resource": {
+            "title": "Ada",
+            "agent_name": "Ada",
+            "dispatch_id": "ada-dispatch",
+            "task_summary": "Check access",
+            "task_input": "Inspect the selected workspace and verify its original access scope.",
         },
     }
     first.set_items(
         [
             completed,
             peer,
+            delegated,
             message_item(
                 "literal-header",
                 "user",
@@ -339,6 +360,15 @@ def test_peer_cards_and_orchestration_keep_attribution_and_minimal_controls(
     expect(task).to_contain_text("Ada: Check access")
     expect(task).to_contain_text("Completed")
     expect(task.get_by_role("button", name="Agent actions", exact=True)).to_have_count(0)
+    expect(task.get_by_text("Inspect the selected workspace", exact=False)).to_have_count(0)
+    reply = chat.get_by_test_id("subagent-reply")
+    expect(reply).to_contain_text("Ada replied")
+    expect(reply.locator('[data-streamdown="strong"]')).to_contain_text("Access verified.")
+    reply.get_by_role("button", name="Show full", exact=True).click()
+    expect(reply).to_contain_text("Report item 11")
+    reply.get_by_role("button", name="Copy", exact=True).click()
+    assert page.evaluate("navigator.clipboard.readText()") == completed["resource"]["result_text"]
+    reply.get_by_role("button", name="Show less", exact=True).click()
     _capture(page, output_path, "desktop-minimal-peer-and-completed-agent")
     task.get_by_role("link", name="Inspect Ada in Orchestration", exact=True).click()
     orchestration = _view(page, "Orchestration")
@@ -359,6 +389,11 @@ def test_peer_cards_and_orchestration_keep_attribution_and_minimal_controls(
         orchestration.get_by_role("group", name="Orchestration filter", exact=True)
     ).to_be_visible()
     expect(orchestration.get_by_role("heading", name="Recent", exact=True)).to_have_count(0)
+    expect(orchestration.get_by_role("button", name="Open Ada", exact=True)).to_have_count(0)
+    orchestration.get_by_role("button", name="Orchestration options", exact=True).click()
+    expect(page.get_by_role("menuitemradio", name="Messages", exact=True)).to_have_count(0)
+    expect(page.get_by_role("menuitem", name="History coverage", exact=True)).to_have_count(0)
+    page.keyboard.press("Escape")
     _capture(page, output_path, "desktop-flat-orchestration")
     page.set_viewport_size({"width": 390, "height": 844})
     if page.get_by_role("button", name="Close navigation", exact=True).is_visible():

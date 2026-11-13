@@ -276,7 +276,11 @@ function ResourceViewBody({
   ) : null;
   return (
     <FileViewerContext.Provider value={context}>
-      <div className="flex h-full min-h-0 flex-col" data-resource-view={viewId}>
+      <div
+        className="flex h-full min-h-0 flex-col"
+        data-resource-view={viewId}
+        data-view-retain={pickerOpen || busy || undefined}
+      >
         {hosts.error && (
           <p role="alert" className="px-2 text-xs text-destructive">
             Could not load hosts: {hosts.error.message}

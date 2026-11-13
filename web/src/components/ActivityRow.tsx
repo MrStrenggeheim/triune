@@ -28,27 +28,34 @@ export function ActivityRow({
   if (onOpen) {
     return (
       <div
-        className={`density-row flex min-w-0 items-center rounded-md text-sm hover:bg-[var(--workspace-hover-on-content)] ${selected ? "bg-[var(--workspace-hover-on-content)] ring-1 ring-ring" : ""}`}
+        className={`density-row flex min-w-0 items-center gap-2 rounded-md px-2 text-sm hover:bg-[var(--workspace-hover-on-content)] ${selected ? "bg-[var(--workspace-hover-on-content)] ring-1 ring-ring" : ""}`}
         onClick={(event) => {
           if (!(event.target instanceof Element) || event.target.closest("button, a")) return;
+          if (window.getSelection()?.isCollapsed === false) return;
           onOpen();
         }}
       >
-        <Button
-          type="button"
-          variant="ghost"
-          aria-label={typeof title === "string" ? title : undefined}
-          aria-description={typeof description === "string" ? description : undefined}
-          className="h-auto min-w-0 flex-1 justify-start gap-2 rounded-none p-0 text-left font-normal hover:bg-transparent"
-          onClick={onOpen}
-        >
-          <span className="shrink-0 text-muted-foreground">{icon}</span>
-          <span className="min-w-0 flex-1">
-            <span className="block truncate font-medium">{title}</span>
-            <span className="block truncate text-xs text-muted-foreground">{description}</span>
+        <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted/60 text-muted-foreground">
+          {icon}
+        </span>
+        <div className="min-w-0 flex-1">
+          <Button
+            type="button"
+            variant="ghost"
+            aria-label={typeof title === "string" ? title : undefined}
+            aria-description={typeof description === "string" ? description : undefined}
+            className="h-auto w-full min-w-0 justify-start rounded-none p-0 text-left font-medium hover:bg-transparent"
+            onClick={onOpen}
+          >
+            <span className="truncate">{title}</span>
+          </Button>
+          <div className="line-clamp-2 min-w-0 text-xs text-muted-foreground">{description}</div>
+        </div>
+        {status && (
+          <span className="grid shrink-0 grid-cols-[8rem_3rem] items-center gap-1.5 text-xs [&>[data-slot=badge]]:justify-self-end">
+            {status}
           </span>
-        </Button>
-        {status && <span className="flex shrink-0 items-center gap-1.5 text-xs">{status}</span>}
+        )}
       </div>
     );
   }

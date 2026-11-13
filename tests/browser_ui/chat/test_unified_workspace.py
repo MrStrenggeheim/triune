@@ -571,7 +571,7 @@ def test_file_deeplink_keeps_explicit_workspace_ownership(
     assert browser_errors == []
 
 
-def test_cancelled_dirty_navigation_can_repeat_the_same_destination(
+def test_retained_dirty_navigation_preserves_editor_and_close_guard(
     page: Page,
     workspace_journey: WorkspaceJourney,
     output_path: str,
@@ -592,8 +592,9 @@ def test_cancelled_dirty_navigation_can_repeat_the_same_destination(
     composer.click()
     journey.reject_writes = True
     original_content = journey.files["notes.py"]
-    editor = preview.get_by_role("textbox", name="Editor content", exact=True)
-    editor.press("Control+End")
+    editor = preview.locator(".monaco-editor").first
+    editor.click()
+    page.keyboard.press("Control+End")
     with page.expect_response(
         lambda response: (
             response.request.method == "PUT" and "/filesystem/notes.py" in response.url
@@ -604,26 +605,29 @@ def test_cancelled_dirty_navigation_can_repeat_the_same_destination(
     expect(preview.locator(".view-lines")).to_contain_text("keep this unsaved change")
     editor_handle = editor.element_handle()
     assert editor_handle
-    target = page.locator(f'aside [data-sidebar-session-id="{second.session_id}"]')
-    target.click()
+    _navigate_chat(page, second)
     dialog = page.get_by_role("dialog", name="Unsaved changes")
-    expect(dialog).to_be_visible()
-    dialog.get_by_role("button", name="Keep editing", exact=True).click()
     expect(dialog).not_to_be_visible()
-    expect(page).to_have_url(first.url)
+    expect(preview).not_to_be_visible()
+    assert editor_handle.evaluate("element => element.isConnected")
+    _navigate_chat(page, first)
     expect(preview.locator(".view-lines")).to_contain_text("keep this unsaved change")
     expect(composer).to_have_value("A draft must not be redirected")
     assert _saved_dock(page)["activeConversationId"] == first.session_id
     assert editor_handle.evaluate("element => element.isConnected")
-    _capture(page, output_path, "cancelled-dirty-navigation-retains-a")
-    target.click()
+    close = page.get_by_role("button", name="Close notes.py", exact=True)
+    close.click()
     expect(dialog).to_be_visible()
-    _capture(page, output_path, "repeated-dirty-navigation-prompts-again")
+    dialog.get_by_role("button", name="Keep editing", exact=True).click()
+    expect(dialog).not_to_be_visible()
+    expect(preview.locator(".view-lines")).to_contain_text("keep this unsaved change")
+    _capture(page, output_path, "retained-dirty-editor-and-close-guard")
+    close.click()
+    expect(dialog).to_be_visible()
     dialog.get_by_role("button", name="Discard changes", exact=True).click()
     expect(dialog).not_to_be_visible()
-    expect(page).to_have_url(second.url)
-    expect(_view(page, "Chat B").get_by_label("Message the agent")).to_be_visible()
-    expect(preview).not_to_be_visible()
+    expect(page.get_by_role("tab", name="notes.py", exact=True)).to_have_count(0)
+    _navigate_chat(page, second)
     assert _saved_dock(page)["activeConversationId"] == second.session_id
     assert journey.files["notes.py"] == original_content
     assert first.event_posts == [] and second.event_posts == []

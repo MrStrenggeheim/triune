@@ -47,21 +47,6 @@ function asError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
 }
 
-/** Only view titles may change while a navigation decision is pending. */
-function navigationSnapshot(state: DockPersistence): string {
-  const withoutTitles = (layout: DockLayout) => ({
-    ...layout,
-    views: layout.views.map((view) => ({ ...view, title: undefined })),
-  });
-  return JSON.stringify({
-    ...state,
-    shared: withoutTitles(state.shared),
-    pins: withoutTitles(state.pins),
-    pinFrame: state.pinFrame ? withoutTitles(state.pinFrame) : undefined,
-    chats: state.chats.map((chat) => ({ ...chat, layout: withoutTitles(chat.layout) })),
-  });
-}
-
 function loadSession(
   key: string,
   initialLayout: DockLayout | undefined,
@@ -124,7 +109,6 @@ export function useDockLayout({
   } else {
     current.current = session;
   }
-  const navigation = useRef(0);
   const closing = useRef(new Map<string, Promise<boolean>>());
 
   const commit = useCallback(
@@ -293,33 +277,13 @@ export function useDockLayout({
     async (id: string | null): Promise<boolean> => {
       if (id === "") throw new Error("A conversation ID is required");
       const captured = current.current;
-      if (captured.key !== scopeKey) return false;
-      const request = ++navigation.current;
-      const next = navigateDockConversation(captured.state, id);
-      if (next === captured.state) return true;
-      const snapshot = navigationSnapshot(captured.state);
-      const isCurrent = () =>
-        alive.current &&
-        request === navigation.current &&
-        current.current.generation === captured.generation &&
-        (current.current === captured || navigationSnapshot(current.current.state) === snapshot);
-      const restored = composeDockLayout(next);
-      for (const view of composeDockLayout(captured.state).views) {
-        if (
-          !restored.views.some((item) => item.id === view.id) &&
-          guard.current &&
-          // Dirty-resource dialogs must run one at a time.
-          // eslint-disable-next-line no-await-in-loop
-          !(await guard.current(view))
-        )
-          return false;
-        if (!isCurrent()) return false;
-      }
-      if (!isCurrent()) return false;
+      if (!alive.current || captured.key !== scopeKey || captured.suppliedStorage !== storage)
+        return false;
+      // Navigation retains every saved resource; only close and replacement need a guard.
       commit((state) => navigateDockConversation(state, id));
       return true;
     },
-    [commit, scopeKey],
+    [commit, scopeKey, storage],
   );
 
   const useSharedLayout = useCallback(() => navigateConversation(null), [navigateConversation]);

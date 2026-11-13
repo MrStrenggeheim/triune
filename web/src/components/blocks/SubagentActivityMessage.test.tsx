@@ -1,189 +1,335 @@
 // Modified for Triune.
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BubbleView } from "@/pages/ChatPage";
 import { useChatStore } from "@/store/chatStore";
 import { buildBubbles } from "@/lib/renderItems";
 import { BlockStream } from "@/lib/blockStream";
 import { itemsToBlocks } from "@/lib/itemsToBlocks";
 import { parseEvent } from "@/lib/sse";
+import { ConversationScopeContext } from "@/components/chat/conversationScope";
 import { WorkbenchProvider } from "@/workbench/WorkbenchContext";
-import { SubagentActivityMessage } from "./SubagentActivityMessage";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { childSessionsQueryKey } from "@/hooks/useChildSessions";
+import { SubagentActivityMessage } from "./SubagentActivityMessage";
 
-afterEach(cleanup);
-beforeEach(() => useChatStore.setState({ sessionStatus: "idle", conversationId: "parent" }));
+const clients: QueryClient[] = [];
+function queryClient(summary: Record<string, unknown>) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, refetchOnMount: false } },
+  });
+  client.setQueryData(childSessionsQueryKey("parent"), [summary]);
+  clients.push(client);
+  return client;
+}
+function activity(
+  phase: "delegated" | "returned",
+  resource: Record<string, unknown> = {},
+  id: string = phase,
+) {
+  return {
+    id,
+    type: "resource_event",
+    status: "completed",
+    response_id: `activity_${id}`,
+    created_at: 1_700_000_000,
+    event_type: `session.subagent.${phase}`,
+    resource_type: "session",
+    resource_id: "child",
+    resource: {
+      agent_name: "Curie",
+      task_summary: "Inspect navigation",
+      dispatch_id: "dispatch-1",
+      ...resource,
+    },
+  };
+}
+const originalInput =
+  "Inspect navigation.\n\nKeep **all instructions** behind deliberate expansion.";
+const summary = {
+  id: "child",
+  agent_name: "Curie",
+  task_summary: "Inspect navigation",
+  current_task_status: "in_progress",
+  busy: true,
+  labels: { "omnigent.subagent.dispatch_id": "dispatch-1" },
+};
+beforeEach(() =>
+  useChatStore.setState({ sessionStatus: "idle", conversationId: "parent", blocks: [] }),
+);
+afterEach(() => {
+  cleanup();
+  clients.splice(0).forEach((client) => client.clear());
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 
-describe("sub-agent activity", () => {
-  it("updates a delegated card from Running to Completed using only its child summary", async () => {
-    const client = new QueryClient();
-    const summary = {
-      id: "child",
-      tool: "James",
-      task_summary: "Current task",
-      current_task_status: "in_progress",
-      busy: true,
-    };
-    client.setQueryData(childSessionsQueryKey("parent"), [summary]);
-    const view = render(
+describe("sub-agent task and reply", () => {
+  it("updates the same dispatch from Running to Completed without showing instructions or an empty reply", async () => {
+    const client = queryClient(summary);
+    const delegated = activity("delegated", { task_input: originalInput });
+    render(
       <MemoryRouter>
         <QueryClientProvider client={client}>
-          <SubagentActivityMessage
-            data={{
-              type: "resource_event",
-              resource_type: "session",
-              event_type: "session.subagent.delegated",
-              resource_id: "child",
-              resource: { task_summary: "Current task" },
-            }}
-          />
+          <SubagentActivityMessage data={delegated} />
+          <SubagentActivityMessage data={activity("returned", { status: "completed" })} />
         </QueryClientProvider>
       </MemoryRouter>,
     );
-    expect(screen.getByText("Running")).toBeVisible();
-    expect(screen.getByTestId("running-dot")).toBeVisible();
-    await act(async () => {
+    const card = screen.getByTestId("subagent-activity");
+    expect(card).toHaveTextContent("Curie: Inspect navigationRunning");
+    expect(screen.queryByText(/Keep/)).not.toBeInTheDocument();
+    await act(async () =>
       client.setQueryData(childSessionsQueryKey("parent"), [
         { ...summary, busy: false, current_task_status: "completed" },
-      ]);
-    });
-    await waitFor(() => expect(screen.getByText("Completed")).toBeVisible());
-    expect(screen.queryByTestId("running-dot")).not.toBeInTheDocument();
-    view.unmount();
-    client.clear();
-  });
-
-  it("keeps a delegated card neutral when the child summary describes a different task", () => {
-    const client = new QueryClient();
-    client.setQueryData(childSessionsQueryKey("parent"), [
-      {
-        id: "child",
-        tool: "James",
-        task_summary: "New task",
-        current_task_status: "in_progress",
-        busy: true,
-      },
-    ]);
-    const view = render(
-      <MemoryRouter>
-        <QueryClientProvider client={client}>
-          <SubagentActivityMessage
-            data={{
-              type: "resource_event",
-              resource_type: "session",
-              event_type: "session.subagent.delegated",
-              resource_id: "child",
-              resource: { task_summary: "Original task" },
-            }}
-          />
-        </QueryClientProvider>
-      </MemoryRouter>,
+      ]),
     );
-    expect(screen.getByTestId("subagent-activity")).toHaveTextContent(
-      "James: Original taskStarted",
-    );
-    expect(screen.queryByTestId("running-dot")).not.toBeInTheDocument();
-    view.unmount();
-    client.clear();
-  });
-  it("keeps the returned task completed when the child is running a different task", () => {
-    const client = new QueryClient();
-    client.setQueryData(childSessionsQueryKey("parent"), [
-      {
-        id: "child",
-        tool: "James",
-        task_summary: "A later task",
-        current_task_status: "in_progress",
-        busy: true,
-      },
-    ]);
-    const view = render(
-      <MemoryRouter>
-        <QueryClientProvider client={client}>
-          <SubagentActivityMessage
-            data={{
-              type: "resource_event",
-              resource_type: "session",
-              event_type: "session.subagent.returned",
-              resource_id: "child",
-              resource: { task_summary: "Original task", status: "completed" },
-            }}
-          />
-        </QueryClientProvider>
-      </MemoryRouter>,
-    );
-    expect(screen.getByTestId("subagent-activity")).toHaveTextContent(
-      "James: Original taskCompleted",
-    );
-    expect(screen.queryByText("Running")).not.toBeInTheDocument();
-    expect(screen.queryByText("A later task")).not.toBeInTheDocument();
-    view.unmount();
-    client.clear();
-  });
-  it.each([
-    ["delegated", undefined, "Started"],
-    ["returned", undefined, "Completed"],
-    ["returned", "failed", "Failed"],
-    ["returned", "cancelled", "Stopped"],
-  ] as const)("renders %s/%s live and after reload as %s", (phase, status, label) => {
-    const item = {
-      id: "activity",
-      type: "resource_event",
-      status: "completed",
-      response_id: "activity_turn",
-      event_type: `session.subagent.${phase}`,
-      resource_type: "session",
-      resource_id: "conv_child",
-      resource: { agent_name: "James", task_summary: "Research public positioning", status },
-    };
-    const event = parseEvent("response.output_item.done", { item });
-    expect(event).not.toBeNull();
-    const live = buildBubbles(new BlockStream().reduceSync([event!]), null);
-    expect(buildBubbles(itemsToBlocks([item]), null)).toEqual(live);
-    expect(live).toHaveLength(1);
-    render(
-      <MemoryRouter
-        initialEntries={["/c/parent?file=README.md&view=terminal&message=msg_parent&debug=1"]}
-      >
-        <BubbleView bubble={live[0]!} />
-      </MemoryRouter>,
-    );
-    expect(screen.getByTestId("subagent-activity")).toHaveTextContent(
-      `James: Research public positioning${label}`,
-    );
-    expect(screen.getByRole("link", { name: "Inspect James in Orchestration" })).toHaveAttribute(
-      "href",
-      "/c/parent?debug=1&panel=activity&focusAgentId=conv_child",
-    );
-    expect(screen.queryByTestId("message-bubble")).not.toBeInTheDocument();
+    await waitFor(() => expect(card).toHaveTextContent("Completed"));
+    expect(screen.getByTestId("subagent-activity")).toBe(card);
+    expect(screen.queryByTestId("subagent-reply")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Copy" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Expand activity" }));
+    expect(screen.getByText("all instructions")).toHaveAttribute("data-streamdown", "strong");
+    fireEvent.click(screen.getByRole("button", { name: "Collapse activity" }));
+    expect(screen.queryByText("all instructions")).not.toBeInTheDocument();
   });
 
-  it("opens the matching completed target in its source Orchestration view with one action", () => {
+  it.each([{ labels: { "omnigent.subagent.dispatch_id": "later" } }, { labels: {} }])(
+    "never borrows a later or unidentified dispatch despite an identical description: %j",
+    (fields) => {
+      const client = queryClient({ ...summary, ...fields, agent_name: "Later name" });
+      render(
+        <MemoryRouter>
+          <QueryClientProvider client={client}>
+            <SubagentActivityMessage data={activity("delegated", { agent_name: undefined })} />
+          </QueryClientProvider>
+        </MemoryRouter>,
+      );
+      expect(screen.getByTestId("subagent-activity")).toHaveTextContent(
+        "Agent: Inspect navigationStarted",
+      );
+      expect(screen.queryByText("Running")).not.toBeInTheDocument();
+      expect(screen.queryByText("Later name")).not.toBeInTheDocument();
+    },
+  );
+
+  it("keeps recorded title and completion after reuse and puts the answer at the returned position", () => {
+    const delegated = activity("delegated", { task_input: originalInput });
+    const returned = activity("returned", {
+      status: "completed",
+      result_text: "The **original result**.",
+    });
+    useChatStore.setState({ blocks: itemsToBlocks([delegated, returned]) });
+    const client = queryClient({
+      ...summary,
+      task_summary: "Later task",
+      labels: { "omnigent.subagent.dispatch_id": "dispatch-2" },
+    });
+    render(
+      <MemoryRouter>
+        <QueryClientProvider client={client}>
+          <SubagentActivityMessage data={delegated} />
+          <p>Parent continued</p>
+          <SubagentActivityMessage data={returned} />
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+    expect(screen.getAllByTestId("subagent-activity")).toHaveLength(1);
+    const card = screen.getByTestId("subagent-activity");
+    const reply = screen.getByTestId("subagent-reply");
+    expect(card).toHaveTextContent("Curie: Inspect navigationCompleted");
+    expect(card).not.toHaveTextContent("original result");
+    expect(reply).toHaveTextContent("Curie replied");
+    expect(reply).not.toHaveTextContent("Inspect navigation");
+    expect(reply.previousElementSibling).toHaveTextContent("Parent continued");
+    expect(screen.getByText("original result")).toHaveAttribute("data-streamdown", "strong");
+    expect(screen.queryByText("Later task")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("peer-message")).not.toBeInTheDocument();
+  });
+
+  it("enriches a late report in place and renders one answer for duplicate returns", () => {
+    const delegated = activity("delegated");
+    const returned = activity("returned", { status: "completed" });
+    useChatStore.setState({ blocks: itemsToBlocks([delegated, returned]) });
+    const view = (data: ReturnType<typeof activity>, duplicate = false) => (
+      <MemoryRouter>
+        <SubagentActivityMessage data={delegated} />
+        <SubagentActivityMessage data={data} />
+        {duplicate && (
+          <SubagentActivityMessage
+            data={activity("returned", { result_text: "Late answer" }, "duplicate")}
+          />
+        )}
+      </MemoryRouter>
+    );
+    const rendered = render(view(returned));
+    expect(screen.queryByTestId("subagent-reply")).not.toBeInTheDocument();
+    const enriched = activity("returned", { status: "completed", result_text: "Late answer" });
+    act(() =>
+      useChatStore.setState({
+        blocks: itemsToBlocks([
+          delegated,
+          enriched,
+          activity("returned", { result_text: "Late answer" }, "duplicate"),
+        ]),
+      }),
+    );
+    rendered.rerender(view(enriched, true));
+    expect(screen.getAllByTestId("subagent-reply")).toHaveLength(1);
+    expect(screen.getByTestId("subagent-activity")).toHaveTextContent("Completed");
+    rendered.rerender(view(enriched, true));
+    expect(screen.getAllByText("Late answer")).toHaveLength(1);
+  });
+
+  it.each([
+    { agent_name: "James", agent_role: "worker", agent_name_source: "native" },
+    { agent_name: "Researcher", agent_role: "researcher", agent_name_source: "role" },
+    { agent_name: "Ada", agent_role: "plugin:reviewer", agent_name_source: "native" },
+  ])(
+    "preserves recorded Codex/managed/Claude attribution through live parsing and reload: %j",
+    (identity) => {
+      const item = activity("returned", {
+        ...identity,
+        result_text: "Exact **answer**",
+        status: "completed",
+      });
+      const event = parseEvent("response.output_item.done", { item });
+      expect(event).not.toBeNull();
+      const live = buildBubbles(new BlockStream().reduceSync([event!]), null);
+      expect(buildBubbles(itemsToBlocks([item]), null)).toEqual(live);
+      expect(live).toHaveLength(1);
+      render(
+        <MemoryRouter>
+          <BubbleView bubble={live[0]!} />
+        </MemoryRouter>,
+      );
+      expect(screen.getByTestId("subagent-reply")).toHaveTextContent(
+        `${identity.agent_name} replied`,
+      );
+      expect(screen.queryByTestId("subagent-activity")).not.toBeInTheDocument();
+      expect(screen.getByTestId("message-timestamp")).toBeInTheDocument();
+    },
+  );
+
+  it.each([undefined, "completed", "failed", "cancelled"])(
+    "status-only %s returns never manufacture an answer",
+    (status) => {
+      render(
+        <MemoryRouter>
+          <SubagentActivityMessage data={activity("returned", { status, result_text: "   " })} />
+        </MemoryRouter>,
+      );
+      expect(screen.queryByTestId("subagent-reply")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("subagent-activity")).not.toBeInTheDocument();
+    },
+  );
+
+  it("bounds a long Markdown preview, expands in place and copies the complete report", async () => {
+    const text = `**Report**\n\n${"Report α🙂 ".repeat(12000)}FINAL_REPORT_MARKER`;
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    render(
+      <MemoryRouter>
+        <SubagentActivityMessage data={activity("returned", { result_text: text })} />
+      </MemoryRouter>,
+    );
+    const reply = screen.getByTestId("subagent-reply");
+    expect(reply).not.toHaveTextContent("FINAL_REPORT_MARKER");
+    expect(reply).not.toHaveTextContent("\uFFFD");
+    fireEvent.click(screen.getByRole("button", { name: "Copy" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(text));
+    fireEvent.click(screen.getByRole("button", { name: "Show full" }));
+    expect(reply).toHaveTextContent("FINAL_REPORT_MARKER");
+    fireEvent.click(screen.getByRole("button", { name: "Show less" }));
+    expect(reply).not.toHaveTextContent("FINAL_REPORT_MARKER");
+  });
+
+  it("expands full Markdown with tables and code while copying the original source", async () => {
+    const text =
+      "Intro\n\n**Details**\n\n| State | Result |\n| --- | --- |\n| Done | Correct |\n\n```ts\nconst result = 1;\n```";
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    render(
+      <MemoryRouter>
+        <SubagentActivityMessage data={activity("returned", { result_text: text })} />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Show full" }));
+    expect(screen.getByRole("table")).toHaveTextContent("DoneCorrect");
+    expect(screen.getByText("Details")).toHaveAttribute("data-streamdown", "strong");
+    expect(screen.getByTestId("subagent-reply").querySelector("pre")).toHaveTextContent(
+      "const result = 1;",
+    );
+    fireEvent.click(
+      within(screen.getByTestId("subagent-reply")).getAllByRole("button", { name: "Copy" }).at(-1)!,
+    );
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(text));
+  });
+
+  it.each(["task_input_ref", "result_ref"])(
+    "uses the exact %s conversation/item for Markdown and Copy link",
+    async (field) => {
+      const fetch = vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ kind: "missing", path: "/original/guide.txt" }), {
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+      const writeText = vi.fn().mockResolvedValue(undefined);
+      vi.stubGlobal("fetch", fetch);
+      vi.stubGlobal("navigator", { clipboard: { writeText } });
+      vi.stubGlobal("location", { href: "https://app.example/c/wrong" });
+      const client = queryClient(summary);
+      const data = activity(field === "task_input_ref" ? "delegated" : "returned", {
+        [field]: { conversation_id: "original", item_id: "captured-item" },
+        task_input: "Read **instructions** and `/original/guide.txt`.",
+        result_text: "Read **answer** and `/original/guide.txt`.",
+      });
+      const view = (scope: string) => (
+        <QueryClientProvider client={client}>
+          <ConversationScopeContext.Provider value={scope}>
+            <MemoryRouter>
+              <SubagentActivityMessage data={data} />
+            </MemoryRouter>
+          </ConversationScopeContext.Provider>
+        </QueryClientProvider>
+      );
+      const rendered = render(view("parent"));
+      if (field === "task_input_ref")
+        fireEvent.click(screen.getByRole("button", { name: "Expand activity" }));
+      const url =
+        "/v1/sessions/original/attachments/references/captured-item/metadata?path=%2Foriginal%2Fguide.txt";
+      await waitFor(() => expect(fetch).toHaveBeenCalledWith(url, expect.anything()));
+      rendered.rerender(view("newly-focused-chat"));
+      fireEvent.click(screen.getByRole("button", { name: "Copy link" }));
+      await waitFor(() =>
+        expect(writeText).toHaveBeenCalledWith(
+          "https://app.example/c/original?message=captured-item",
+        ),
+      );
+      expect(
+        fetch.mock.calls
+          .filter(([requested]) => String(requested).includes("/attachments/"))
+          .every(([requested]) => requested === url),
+      ).toBe(true);
+    },
+  );
+
+  it.each(["delegated", "returned"] as const)("retains both navigation controls on %s", (phase) => {
     const openView = vi.fn();
     render(
-      <MemoryRouter>
+      <MemoryRouter initialEntries={["/c/parent?file=README.md&debug=1"]}>
         <WorkbenchProvider value={{ openView, openConversation: vi.fn() }}>
-          <SubagentActivityMessage
-            data={{
-              type: "resource_event",
-              resource_type: "session",
-              event_type: "session.subagent.returned",
-              resource_id: "child",
-              resource: {
-                agent_name: "Gibbs",
-                task_summary: "Check navigation",
-                status: "completed",
-              },
-            }}
-          />
+          <SubagentActivityMessage data={activity(phase, { result_text: "Answer" })} />
         </WorkbenchProvider>
       </MemoryRouter>,
     );
-    expect(screen.getAllByRole("link")).toHaveLength(2);
-    fireEvent.click(screen.getByRole("link", { name: "Inspect Gibbs in Orchestration" }));
+    expect(screen.getByRole("link", { name: "Inspect Curie in Orchestration" })).toHaveAttribute(
+      "href",
+      "/c/parent?debug=1&panel=activity&focusAgentId=child",
+    );
+    fireEvent.click(screen.getByRole("link", { name: "Inspect Curie in Orchestration" }));
     expect(openView).toHaveBeenCalledWith(
       {
         kind: "activity",
@@ -192,25 +338,22 @@ describe("sub-agent activity", () => {
       },
       { beside: true },
     );
-    fireEvent.click(screen.getByRole("link", { name: "Open Gibbs chat beside" }));
+    fireEvent.click(screen.getByRole("link", { name: "Open Curie chat beside" }));
     expect(openView).toHaveBeenLastCalledWith(
-      { kind: "conversation", conversationId: "child", title: "Gibbs" },
+      { kind: "conversation", conversationId: "child", title: "Curie" },
       { beside: true },
     );
-    expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });
 
-  it("uses the observed phase when a legacy event has no recorded task description", () => {
+  it("keeps an ambiguous legacy title neutral instead of borrowing current child identity", () => {
     render(
       <MemoryRouter>
         <SubagentActivityMessage
-          data={{
-            type: "resource_event",
-            resource_type: "session",
-            event_type: "session.subagent.delegated",
-            resource_id: "child",
-            resource: { title: "Ambiguous old label" },
-          }}
+          data={activity("delegated", {
+            agent_name: null,
+            task_summary: null,
+            title: "Ambiguous old label",
+          })}
         />
       </MemoryRouter>,
     );
@@ -218,65 +361,82 @@ describe("sub-agent activity", () => {
     expect(screen.queryByText("Ambiguous old label")).not.toBeInTheDocument();
   });
 
-  it("keeps dispatch identity and expandable input/result after the child is reused", () => {
-    const client = new QueryClient();
-    client.setQueryData(childSessionsQueryKey("parent"), [
-      {
-        id: "child",
-        agent_name: "Later name",
-        task_summary: "Later task",
-        busy: true,
-        labels: { "omnigent.subagent.dispatch_id": "dispatch-2" },
-      },
-    ]);
-    const fullInput = "Inspect the original navigation task. ".repeat(10);
-    const fullResult = "Original clean result. ".repeat(10);
-    const view = render(
-      <MemoryRouter>
-        <QueryClientProvider client={client}>
-          <SubagentActivityMessage
-            data={{
-              type: "resource_event",
-              resource_type: "session",
-              event_type: "session.subagent.returned",
-              resource_id: "child",
-              resource: {
-                agent_name: "Curie",
-                task_summary: "Original task",
-                dispatch_id: "dispatch-1",
-                task_input: fullInput,
-                result_text: fullResult,
-              },
-            }}
-          />
-        </QueryClientProvider>
-      </MemoryRouter>,
-    );
-    expect(screen.getByTestId("subagent-activity")).toHaveTextContent("Curie: Original task");
-    expect(screen.queryByText("Later name")).not.toBeInTheDocument();
-    expect(screen.queryByText("Later task")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Expand activity" }));
-    expect(screen.getByText(fullInput.trim())).toBeVisible();
-    expect(screen.getByText(fullResult.trim())).toBeVisible();
-    expect(screen.getByRole("button", { name: "Copy" })).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Collapse activity" }));
-    expect(screen.queryByText(fullInput.trim())).not.toBeInTheDocument();
-    view.unmount();
-    client.clear();
-  });
-
   it.each([
     { event_type: "session.resource.created", resource_type: "terminal", resource_id: "term_1" },
     { event_type: "session.subagent.delegated", resource_type: "session", resource_id: "" },
-  ])("ignores unrelated or malformed resource events: %j", (fields) => {
-    const item = {
-      id: "resource",
-      type: "resource_event",
-      response_id: "activity",
-      status: "completed",
-      ...fields,
-    };
+  ])("ignores unrelated or malformed events: %j", (fields) => {
+    const item = { ...activity("delegated"), ...fields };
     expect(itemsToBlocks([item])).toEqual([]);
     expect(parseEvent("response.output_item.done", { item })).toBeNull();
   });
+});
+
+it("resolves each multipart report section against its own exact source item", async () => {
+  const fetch = vi.fn().mockResolvedValue(
+    new Response(JSON.stringify({ kind: "missing", path: "/original/guide.txt" }), {
+      headers: { "Content-Type": "application/json" },
+    }),
+  );
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  vi.stubGlobal("fetch", fetch);
+  vi.stubGlobal("navigator", { clipboard: { writeText } });
+  const first = "First **section** cites `/original/guide.txt`.\n\nContinued.\n\nStill first.";
+  const second = "Second section cites `/original/guide.txt`.";
+  const text = `${first}\n\n${second}`;
+  const data = activity("returned", {
+    result_text: text,
+    result_ref: { conversation_id: "original", item_id: "first" },
+    result_refs: [
+      { conversation_id: "original", item_id: "first" },
+      { conversation_id: "original", item_id: "second" },
+    ],
+    result_parts: [
+      { conversation_id: "original", item_id: "first", text: first },
+      { conversation_id: "original", item_id: "second", text: second },
+    ],
+  });
+  render(
+    <QueryClientProvider client={queryClient(summary)}>
+      <MemoryRouter>
+        <SubagentActivityMessage data={data} />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+  await waitFor(() =>
+    expect(fetch).toHaveBeenCalledWith(
+      "/v1/sessions/original/attachments/references/first/metadata?path=%2Foriginal%2Fguide.txt",
+      expect.anything(),
+    ),
+  );
+  expect(screen.queryByText(/Second section/)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Show full" }));
+  await waitFor(() =>
+    expect(fetch).toHaveBeenCalledWith(
+      "/v1/sessions/original/attachments/references/second/metadata?path=%2Foriginal%2Fguide.txt",
+      expect.anything(),
+    ),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Copy" }));
+  await waitFor(() => expect(writeText).toHaveBeenCalledWith(text));
+});
+
+it("keeps an expanded reply open as late report text enriches the same event", async () => {
+  const original = activity("returned", { result_text: "One\nTwo\nThree\nFour" });
+  const view = (data: ReturnType<typeof activity>) => (
+    <MemoryRouter>
+      <SubagentActivityMessage data={data} />
+    </MemoryRouter>
+  );
+  const rendered = render(view(original));
+  fireEvent.click(screen.getByRole("button", { name: "Show full" }));
+  const article = screen.getByTestId("subagent-reply");
+  rendered.rerender(
+    view(activity("returned", { result_text: "One\nTwo\nThree\nFour\n**Late final part**" })),
+  );
+  expect(screen.getByTestId("subagent-reply")).toBe(article);
+  expect(screen.getByRole("button", { name: "Show less" })).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
+  expect(await screen.findByText("Late final part")).toHaveAttribute("data-streamdown", "strong");
 });

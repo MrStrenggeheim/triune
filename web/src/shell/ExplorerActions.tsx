@@ -1,4 +1,6 @@
+// Modified for Triune.
 import { useExplorerSelection } from "@/lib/explorerSelection";
+import { useResourceViewId, useResourceViewState } from "@/lib/panelFolder";
 import {
   createContext,
   useCallback,
@@ -286,11 +288,22 @@ export function ExplorerActionsProvider({
 }) {
   const workspace = useWorkbenchWorkspace();
   const resourceIdentity = queryIdentity(workspace, conversationId);
+  const viewId = useResourceViewId();
   const queryClient = useContext(QueryClientContext);
   const viewer = useContext(FileViewerContext);
   const { selected, setSelected, anchor } = useExplorerSelection(resourceIdentity, base);
-  const [selectionMode, setSelectionMode] = useState(false);
-  const [focused, setFocused] = useState<string | null>(null);
+  const [selectionMode, setSelectionMode] = useResourceViewState(
+    `${resourceIdentity}:${base}`,
+    viewId,
+    "selectionMode",
+    false,
+  );
+  const [focused, setFocused] = useResourceViewState<string | null>(
+    `${resourceIdentity}:${base}`,
+    viewId,
+    "focusedEntry",
+    null,
+  );
   const tree = useRef<TreeControls>({ entries: [] });
   const root = useRef<HTMLDivElement>(null);
   const [dropTarget, setDropTarget] = useState<HTMLDivElement | null>(null);
@@ -336,9 +349,10 @@ export function ExplorerActionsProvider({
     [entryBase],
   );
   useEffect(() => {
+    if (viewId) return;
     setFocused(null);
     setSelectionMode(false);
-  }, [resourceIdentity, base]);
+  }, [resourceIdentity, base, viewId, setFocused, setSelectionMode]);
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
@@ -1016,6 +1030,7 @@ export function ExplorerActionsProvider({
     <ExplorerContext.Provider value={context}>
       <div
         ref={setRoot}
+        data-view-retain={localBusy || !!dialog || !!upload || !!pasteConflict || undefined}
         className="relative flex min-h-0 flex-1 flex-col"
         onKeyDown={onKeyDown}
         onClick={(event) => {

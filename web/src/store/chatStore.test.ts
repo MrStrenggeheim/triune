@@ -20243,7 +20243,7 @@ describe("chatStore — origin-wide stream slots", () => {
     expect(useChatStore.getState().conversationId).toBe("conv_new_tab");
     expect(useChatStore.getState().abortController).not.toBeNull(); // cancellable slot wait
     expect(slots.heldByTab()).toBe(0);
-    expect(useChatStore.getState().streamBudgetExceeded).toBe(true);
+    expect(useChatStore.getState().streamBudgetExceeded).toBe(false);
     const streamOpens = () =>
       fetchMock.mock.calls.filter(([url]) => String(url).includes("/stream"));
     expect(streamOpens()).toHaveLength(0);
@@ -20290,14 +20290,14 @@ describe("chatStore — origin-wide stream slots", () => {
     release();
   });
 
-  it("re-shows the banner on a fresh over-budget episode after the user dismissed it", async () => {
+  it("keeps capacity automatic across repeated budget exhaustion", async () => {
     const slots = makeFakeSlotManager({ capacity: 2, externallyHeld: 2 });
     setStreamSlotManagerForTest(slots);
     for (const id of ["conv_a", "conv_b", "conv_c"]) seedSession(id, []);
 
     // Fresh tab, every slot held elsewhere → over budget + banner.
     await useChatStore.getState().switchTo("conv_a");
-    expect(useChatStore.getState().streamBudgetExceeded).toBe(true);
+    expect(useChatStore.getState().streamBudgetExceeded).toBe(false);
 
     useChatStore.getState().dismissStreamBudgetBanner();
     expect(useChatStore.getState().streamBudgetBannerDismissed).toBe(true);
@@ -20310,8 +20310,8 @@ describe("chatStore — origin-wide stream slots", () => {
     // Origin saturates again → a NEW episode re-shows the banner (un-dismissed).
     slots.setExternallyHeld(2);
     await useChatStore.getState().switchTo("conv_c");
-    expect(useChatStore.getState().streamBudgetExceeded).toBe(true);
-    expect(useChatStore.getState().streamBudgetBannerDismissed).toBe(false);
+    expect(useChatStore.getState().streamBudgetExceeded).toBe(false);
+    expect(useChatStore.getState().streamBudgetBannerDismissed).toBe(true);
   });
 });
 
@@ -21299,3 +21299,173 @@ describe("pending peer communication", () => {
     },
   );
 });
+
+it("enriches only the exact loaded resource lifecycle item without changing its context or position", () => {
+  const item = {
+    id: "dispatch-item",
+    response_id: "turn-1",
+    type: "resource_event",
+    resource_id: "child-1",
+    resource_type: "session",
+    event_type: "session.subagent.returned",
+    resource: { dispatch_id: "dispatch-1" },
+  };
+  const blocks = itemsToBlocks([
+    userMessage("anchor", "keep this position"),
+    item as unknown as ConversationItem,
+  ]);
+  const { get } = bindConversationForTest("late-report", { blocks });
+  const context = blocks[1]!.ctx;
+  const enriched = { ...item, resource: { ...item.resource, result_text: "Late report" } };
+  for (const patch of [
+    { id: "unknown" },
+    { resource_id: "another-child" },
+    { response_id: "another-turn" },
+    { event_type: "session.subagent.delegated" },
+  ]) {
+    handleSessionEvent(
+      { type: "session_item_updated", item: { ...enriched, ...patch } },
+      "late-report",
+    );
+    expect(get().blocks).toBe(blocks);
+  }
+  handleSessionEvent({ type: "session_item_updated", item: enriched }, "late-report");
+  expect(get().blocks).toHaveLength(2);
+  expect(get().blocks[0]).toBe(blocks[0]);
+  expect(get().blocks[1]!.ctx).toBe(context);
+  expect((get().blocks[1] as NativeToolBlock).data).toBe(enriched);
+  handleSessionEvent({ type: "session_item_updated", item: enriched }, "not-loaded");
+  expect(conversationRegistry.has("not-loaded")).toBe(false);
+});
+
+it("flushes buffered lifecycle blocks before applying a late resource-item update", async () => {
+  const { set, get } = bindConversationForTest("buffered-report", { blocks: [] });
+  const sink = pushableStream();
+  const controller = new AbortController();
+  const scheduler: FrameScheduler = { schedule: () => {}, cancel: () => {} };
+  const pumping = pumpStreamEvents("buffered-report", sink.stream, controller, set, get, scheduler);
+  const item = {
+    id: "buffered-item",
+    response_id: "turn-1",
+    type: "resource_event",
+    resource_id: "child-1",
+    resource_type: "session",
+    event_type: "session.subagent.returned",
+    resource: { dispatch_id: "dispatch-1" },
+  };
+  sink.push(sse("response.created", { id: "turn-1", status: "in_progress", output: [] }));
+  sink.push(sse("response.output_text.delta", { delta: "First content ".repeat(8) }));
+  sink.push(sse("response.output_item.done", { item }));
+  await tick();
+  expect(get().blocks.some((block) => block.ctx.itemId === item.id)).toBe(false);
+  sink.push(
+    sse("response.output_item.updated", {
+      item: { ...item, resource: { ...item.resource, result_text: "Enriched before paint" } },
+    }),
+  );
+  await tick();
+  const block = get().blocks.find((entry) => entry.ctx.itemId === item.id) as NativeToolBlock;
+  expect(block.data.resource).toMatchObject({ result_text: "Enriched before paint" });
+  sink.close();
+  await pumping;
+});
+
+it("catches up a budget-starved pane repeatedly without consuming an equal-text input with another identity", async () => {
+  vi.useFakeTimers();
+  setStreamSlotManagerForTest(makeFakeSlotManager({ capacity: 1, externallyHeld: 1 }));
+  const before = userMessage("before-starvation", "anchor");
+  const activity = {
+    id: "starved-resource",
+    response_id: "turn-1",
+    type: "resource_event",
+    resource_id: "child-1",
+    resource_type: "session",
+    event_type: "session.subagent.returned",
+    resource: { dispatch_id: "dispatch-1" },
+  };
+  seedSession("starved", [before, activity as unknown as ConversationItem]);
+  await useChatStore.getState().switchTo("starved");
+  const entry = conversationRegistry.peek("starved")!;
+  const activityContext = entry.getState().blocks[1]!.ctx;
+  const content = [{ type: "input_text" as const, text: "Same text" }];
+  const pending: PendingUserMessage[] = [
+    { tempId: "draft-one", stableId: "send-one", content },
+    { tempId: "draft-two", stableId: "send-two", content },
+  ];
+  entry.setState({ pendingUserMessages: pending });
+  const delivered = { ...userMessage("delivered", "Same text"), id: "send-two" };
+  seedSessionItems("starved", [
+    before,
+    {
+      ...activity,
+      resource: {
+        ...activity.resource,
+        result_text: "Report captured while observation was yielded",
+      },
+    } as unknown as ConversationItem,
+    delivered,
+  ]);
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(entry.getState().pendingUserMessages).toEqual([pending[0]]);
+  expect(entry.getState().blocks.filter((block) => block.ctx.itemId === "send-two")).toHaveLength(
+    1,
+  );
+  expect(useChatStore.getState().streamBudgetExceeded).toBe(false);
+  expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/stream"))).toHaveLength(0);
+  const activityBlock = entry
+    .getState()
+    .blocks.find((block) => block.ctx.itemId === activity.id) as NativeToolBlock;
+  expect(activityBlock.ctx).toBe(activityContext);
+  expect(activityBlock.data.resource).toMatchObject({
+    result_text: "Report captured while observation was yielded",
+  });
+});
+
+it.each(["idle", "running"] as const)(
+  "updates background-task counts while the %s chat keeps its current turn and queue",
+  (sessionStatus) => {
+    const activeResponse =
+      sessionStatus === "running"
+        ? { responseId: "ongoing-turn", state: "streaming" as const, error: null }
+        : null;
+    const { get } = bindConversationForTest("background-owner", {
+      sessionStatus,
+      status: sessionStatus === "running" ? "streaming" : "idle",
+      activeResponse,
+      sendLatchedAt: 42,
+    });
+    const queuedMessages = [
+      { queueId: "next-input", conversationId: "background-owner", text: "next" },
+    ];
+    useChatStore.setState({ queuedMessages });
+    const before = get();
+    const tasks = [{ description: "Native background command" }];
+    handleSessionEvent(
+      {
+        type: "session_background_tasks",
+        conversationId: "another-chat",
+        backgroundTaskCount: 8,
+        backgroundTasks: tasks,
+      },
+      "background-owner",
+    );
+    expect(get().backgroundTaskCount).toBe(before.backgroundTaskCount);
+    handleSessionEvent(
+      {
+        type: "session_background_tasks",
+        conversationId: "background-owner",
+        backgroundTaskCount: 1,
+        backgroundTasks: tasks,
+      },
+      "background-owner",
+    );
+    expect(get().backgroundTaskCount).toBe(1);
+    expect(get().backgroundTasks).toBe(tasks);
+    expect(get().sessionStatus).toBe(before.sessionStatus);
+    expect(get().status).toBe(before.status);
+    expect(get().activeResponse).toBe(activeResponse);
+    expect(get().sendLatchedAt).toBe(42);
+    expect(get().queuedMessages).toBe(queuedMessages);
+    expect(fetchMock).not.toHaveBeenCalled();
+  },
+);

@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { ChatAttachment, type AttachmentContent } from "@/components/ChatAttachment";
 import { useScopedConversationId } from "@/components/chat/conversationScope";
 // Dispatch from a `RenderItem` to the right component. Pure switch on
@@ -15,8 +16,8 @@ import { useScopedConversationId } from "@/components/chat/conversationScope";
 //    routing/fan-out cards never fold regardless of position.
 //
 // 2. Turn folding: once settled, each work run collapses behind a
-//    "Worked" row, sub-agent notices included. Pending elicitations,
-//    routing cards, the newest notices and assistant messages stay
+//    "Worked" row. Pending elicitations, agent task/reply cards,
+//    routing cards and assistant messages stay
 //    visible (all but the last message with opt-in `foldNarration`).
 
 import type { ReactNode } from "react";
@@ -502,6 +503,7 @@ function partitionTurn(
     const item = settled[i]!;
     if (
       isPendingElicitation(item) ||
+      item.kind === "subagent_activity" ||
       isPersistentToolCard(item) ||
       isInProgressTool(item) ||
       isSlashCommandCard(item)
@@ -515,7 +517,7 @@ function partitionTurn(
     if (previous?.kind === kind) previous.items.push(item);
     else built.push({ kind, items: [item], startIndex: i });
   }
-  const segments = foldNoticeRuns(built);
+  const segments = built;
   if (wrapup.length > 0) {
     const lastWork = segments.findLast((segment) => segment.kind === "work");
     if (lastWork?.kind === "work") lastWork.items.push(...wrapup);
@@ -542,31 +544,6 @@ function latestNewsStart(items: RenderItem[]): number {
 
 function isNoticeOrUncommitted(item: RenderItem): boolean {
   return item.kind === "subagent_activity" || (!isFailureItem(item) && isProvisionalItem(item));
-}
-
-/**
- * A run of only notices folds with the nearest work, earlier first. With no
- * work in the turn there is no row to fold into, so the notices stay visible.
- */
-function foldNoticeRuns(segments: TurnSegment[]): TurnSegment[] {
-  const isNoticeRun = (segment: TurnSegment): boolean =>
-    segment.kind === "work" && segment.items.every((item) => item.kind === "subagent_activity");
-  const workRuns = segments.filter((segment) => segment.kind === "work" && !isNoticeRun(segment));
-  return segments.flatMap((segment, index): TurnSegment[] => {
-    if (segment.kind !== "work" || !isNoticeRun(segment)) return [segment];
-    const earlier = workRuns.findLast((run) => segments.indexOf(run) < index);
-    const target = earlier ?? workRuns[0];
-    if (target?.kind !== "work") {
-      return segment.items.map((item, k) => ({
-        kind: "exempt",
-        item,
-        index: segment.startIndex + k,
-      }));
-    }
-    if (earlier) target.items.push(...segment.items);
-    else target.items.unshift(...segment.items);
-    return [];
-  });
 }
 
 function isPendingElicitation(item: RenderItem): boolean {

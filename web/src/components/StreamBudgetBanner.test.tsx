@@ -1,40 +1,31 @@
-import { toast } from "@/lib/notifications";
-import { Toaster } from "@/components/ui/sonner";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { beforeEach, afterEach, describe, expect, it } from "vitest";
-
+// Modified for Triune.
+import { getNotificationSnapshot, notify, removeNotification } from "@/lib/notifications";
+import { cleanup, render } from "@testing-library/react";
+import { afterEach, expect, it } from "vitest";
 import { StreamBudgetBanner } from "./StreamBudgetBanner";
 import { useChatStore } from "@/store/chatStore";
 
-beforeEach(() => {
-  toast.dismiss();
-  render(<Toaster />);
-});
-
 afterEach(() => {
   cleanup();
-  toast.dismiss();
+  removeNotification("stream-budget");
   useChatStore.setState({ streamBudgetExceeded: false, streamBudgetBannerDismissed: false });
 });
 
-describe("StreamBudgetBanner", () => {
-  it("stays hidden while the tab is within budget", () => {
-    useChatStore.setState({ streamBudgetExceeded: false, streamBudgetBannerDismissed: false });
-    render(<StreamBudgetBanner />);
-    expect(screen.queryByText(/a lot of conversations open across your tabs/i)).toBeNull();
-  });
+it("never publishes a capacity notice, even with a stale exceeded flag", () => {
+  useChatStore.setState({ streamBudgetExceeded: true, streamBudgetBannerDismissed: false });
+  render(<StreamBudgetBanner />);
+  expect(getNotificationSnapshot().entries.some((entry) => entry.id === "stream-budget")).toBe(
+    false,
+  );
+});
 
-  it("warns to close tabs when over budget", () => {
-    useChatStore.setState({ streamBudgetExceeded: true, streamBudgetBannerDismissed: false });
-    render(<StreamBudgetBanner />);
-    expect(screen.getByText(/a lot of conversations open across your tabs/i)).toBeTruthy();
-  });
-
-  it("hides once dismissed and records the dismissal", () => {
-    useChatStore.setState({ streamBudgetExceeded: true, streamBudgetBannerDismissed: false });
-    render(<StreamBudgetBanner />);
-    fireEvent.click(screen.getByRole("button", { name: "Dismiss warning" }));
-    expect(useChatStore.getState().streamBudgetBannerDismissed).toBe(true);
-    expect(screen.queryByText(/a lot of conversations open across your tabs/i)).toBeNull();
-  });
+it("removes the capacity notice saved by an older app", () => {
+  notify({ id: "stream-budget", title: "Conversation stream capacity", type: "warning" });
+  expect(getNotificationSnapshot().entries.some((entry) => entry.id === "stream-budget")).toBe(
+    true,
+  );
+  render(<StreamBudgetBanner />);
+  expect(getNotificationSnapshot().entries.some((entry) => entry.id === "stream-budget")).toBe(
+    false,
+  );
 });

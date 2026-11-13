@@ -1,3 +1,4 @@
+// Modified for Triune.
 // Origin-wide budget for how many conversation streams stay open at once.
 //
 // The cap this enforces is shared across every same-origin tab, because the
@@ -78,6 +79,7 @@ function holdLockIfFree(name: string): Promise<StreamSlot | null> {
 function webLocksSlotManager(count: () => number): StreamSlotManager {
   return {
     async tryAcquire() {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return null;
       const n = Math.max(0, count());
       // Sequential, not parallel: `ifAvailable` in parallel could grant two
       // slots to one caller. Take the first free one.

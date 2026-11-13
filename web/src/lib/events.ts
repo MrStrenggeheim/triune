@@ -1,3 +1,4 @@
+// Modified for Triune.
 import type { MessageCommunication } from "./messageCommunication";
 import type { NativePermissionDelivery } from "./nativePermissionDelivery";
 // Mirrors sdks/python-client/omnigent_client/_events.py.
@@ -555,6 +556,14 @@ export interface SessionStatusEvent {
   error?: ErrorInfo;
 }
 
+/** Native shell inventory can change after the assistant has finished its turn. */
+export interface SessionBackgroundTasksEvent {
+  type: "session_background_tasks";
+  conversationId: string;
+  backgroundTaskCount: number;
+  backgroundTasks: BackgroundTaskInfo[];
+}
+
 /**
  * `session.usage` — token-usage update from a terminal-backed runtime.
  *
@@ -906,6 +915,12 @@ export interface SessionTerminalActivityEvent {
   terminalId: string;
 }
 
+/** A committed lifecycle item gained metadata without changing its transcript position. */
+export interface SessionItemUpdatedEvent {
+  type: "session_item_updated";
+  item: Record<string, unknown>;
+}
+
 /**
  * `session.model_options` — a runner-owned native model catalog just resolved.
  * Consumers refetch the session snapshot and apply its now-populated options.
@@ -1032,6 +1047,7 @@ export type StreamEvent =
   | ElicitationResolved
   | PolicyDenied
   | SessionStatusEvent
+  | SessionBackgroundTasksEvent
   | SessionWorkspaceEvent
   | SessionUsageEvent
   | SessionModelEvent
@@ -1054,6 +1070,7 @@ export type StreamEvent =
   | SessionChildSessionUpdatedEvent
   | SessionChangedFilesInvalidatedEvent
   | SessionTerminalActivityEvent
+  | SessionItemUpdatedEvent
   | SessionModelOptionsEvent
   | SessionPresenceEvent
   | SessionBtwSidechatEvent

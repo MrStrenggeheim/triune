@@ -122,13 +122,21 @@ export class ConversationRegistry {
   private activeId: string | null = null;
   private readonly retainedIds = new Map<string, number>();
   private readonly visibleIds = new Map<string, number>();
+  private readonly focusedIds = new Map<string, number>();
+  /** Scoped models preserve loaded history and client-only state after view retirement. */
+  private readonly rememberedIds = new Set<string>();
 
   /** Retain mounted state; only visible owners protect its live stream. */
-  retain(id: string, visible = true): () => void {
+  retain(id: string, visible = true, focused = visible): () => void {
+    this.rememberedIds.add(id);
     this.retainedIds.set(id, (this.retainedIds.get(id) ?? 0) + 1);
     if (visible) this.visibleIds.set(id, (this.visibleIds.get(id) ?? 0) + 1);
     else if (!this.visibleIds.has(id)) this.detach(id);
+    if (visible && focused) this.focusedIds.set(id, (this.focusedIds.get(id) ?? 0) + 1);
+    let released = false;
     return () => {
+      if (released) return;
+      released = true;
       const count = this.retainedIds.get(id) ?? 0;
       if (count <= 1) this.retainedIds.delete(id);
       else this.retainedIds.set(id, count - 1);
@@ -137,6 +145,11 @@ export class ConversationRegistry {
         if (owners <= 1) this.visibleIds.delete(id);
         else this.visibleIds.set(id, owners - 1);
       }
+      if (visible && focused) {
+        const owners = this.focusedIds.get(id) ?? 0;
+        if (owners <= 1) this.focusedIds.delete(id);
+        else this.focusedIds.set(id, owners - 1);
+      }
       if (!this.visibleIds.has(id)) this.detach(id);
     };
   }
@@ -144,6 +157,10 @@ export class ConversationRegistry {
   /** Whether a scoped view or the standalone route currently displays this chat. */
   isVisible(id: string): boolean {
     return this.visibleIds.has(id) || (this.activeId === id && !this.retainedIds.has(id));
+  }
+
+  isFocused(id: string): boolean {
+    return this.focusedIds.has(id) || (this.activeId === id && !this.retainedIds.has(id));
   }
 
   /** Stop observing without disposing state or cancelling server work. */
@@ -238,6 +255,7 @@ export class ConversationRegistry {
    * unavailable. Replaces the old `evictTranscriptCache`.
    */
   release(id: string): void {
+    this.rememberedIds.delete(id);
     const entry = this.entries.get(id);
     if (entry === undefined) return;
     this.entries.delete(id);
@@ -251,6 +269,8 @@ export class ConversationRegistry {
     this.activeId = null;
     this.retainedIds.clear();
     this.visibleIds.clear();
+    this.focusedIds.clear();
+    this.rememberedIds.clear();
   }
 
   /**
@@ -265,6 +285,7 @@ export class ConversationRegistry {
     const old = this.entries.get(oldId);
     if (old === undefined) return;
     if (oldId === newId) return;
+    if (this.rememberedIds.delete(oldId)) this.rememberedIds.add(newId);
     const existing = this.entries.get(newId);
     if (existing !== undefined) {
       const existingState = existing.getState();
@@ -307,7 +328,7 @@ export class ConversationRegistry {
   evictLruEvictable(exemptId?: string): string | null {
     for (const [id, entry] of this.entries) {
       if (this.isVisible(id) || id === exemptId) continue;
-      if (this.retainedIds.has(id) || hasUnsentWork(entry.getState())) {
+      if (this.rememberedIds.has(id) || hasUnsentWork(entry.getState())) {
         if (!entry.getState().abortController) continue;
         this.detach(id);
         return id;

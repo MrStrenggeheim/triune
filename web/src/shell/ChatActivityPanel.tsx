@@ -3,26 +3,26 @@ import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "rea
 import { BotIcon, EllipsisIcon, TerminalIcon } from "lucide-react";
 import { ActivityRow } from "@/components/ActivityRow";
 import { SubagentTaskStatus } from "@/components/blocks/SubagentTaskRow";
-import { PeerMessage } from "@/components/blocks/PeerMessage";
+import { FilePathAwareMessageResponse } from "@/components/blocks/ChatMarkdown";
 import { ConversationScopeContext } from "@/components/chat/conversationScope";
 import { Button } from "@/components/ui/button";
 import { SegmentedControl, SegmentedControlItem } from "@/components/ui/segmented-control";
 import { useChatActivity, type ChatActivityEntry } from "@/hooks/useChatActivity";
 import { useChildSessionTree, type ChildSessionInfo } from "@/hooks/useChildSessions";
-import { peerActivityKey, usePeerMessages } from "@/hooks/usePeerMessages";
 import { useNativeChildCapabilities } from "@/hooks/useNativeChildCapabilities";
 import { authenticatedFetch } from "@/lib/identity";
 import { apiErrorFromResponse } from "@/lib/sessionsApi";
 import { subagentName, subagentTaskDescription } from "@/lib/subagentActivity";
 import { useWorkbenchActions } from "@/workbench/WorkbenchContext";
-import { childStatus } from "./subagentStatus";
+import { childStatus, type AgentActivity } from "./subagentStatus";
+import { toast } from "@/lib/notifications";
+import { panelFolderKey, useResourceViewState } from "@/lib/panelFolder";
+import { useScrollRestore } from "./useScrollRestore";
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuItem,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
@@ -47,6 +47,7 @@ export interface ChatActivityTerminalTarget {
 }
 
 export interface ChatActivityPanelProps {
+  viewId?: string;
   conversationId: string;
   rootSessionId: string;
   active?: boolean;
@@ -170,10 +171,18 @@ function groupName(group: ShellGroup) {
 
 const STATE_LABELS: Record<ChatActivityEntry["state"], string> = {
   running: "Running",
-  idle: "Idle · shell open",
+  idle: "Shell open",
   exited: "Exited",
-  disconnected: "Disconnected · availability unknown",
-  unknown: "State unknown",
+  disconnected: "Disconnected",
+  unknown: "Unknown",
+};
+
+const STATE_ACTIVITY: Record<ChatActivityEntry["state"], AgentActivity> = {
+  running: "working",
+  idle: "idle",
+  exited: "done",
+  disconnected: "disconnected",
+  unknown: "other",
 };
 
 function groupLastActive(group: ShellGroup): number {
@@ -191,6 +200,7 @@ export function ChatActivityPanel(props: ChatActivityPanelProps) {
 }
 
 function ChatActivityContent({
+  viewId,
   conversationId,
   rootSessionId,
   active = true,
@@ -203,9 +213,18 @@ function ChatActivityContent({
   onStopAgent,
   onOpenTerminal,
 }: ChatActivityPanelProps) {
-  const [filter, setFilter] = useState<ActivityFilter>("All");
-  const [viewMode, setViewMode] = useState("list");
-  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [filter, setFilter] = useResourceViewState<ActivityFilter>(
+    conversationId,
+    viewId,
+    "activity-filter",
+    "All",
+  );
+  const [viewMode, setViewMode] = useResourceViewState<string>(
+    conversationId,
+    viewId,
+    "activity-mode",
+    "list",
+  );
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [highlightedAgent, setHighlightedAgent] = useState<string>();
   const consumedIntent = useRef<string | null>(null);
@@ -214,7 +233,13 @@ function ChatActivityContent({
   const workbench = useWorkbenchActions();
   const agents = useChildSessionTree(rootSessionId, active);
   const activity = useChatActivity(conversationId, { enabled: active });
-  const peers = usePeerMessages(conversationId, { enabled: active && viewMode === "messages" });
+  const handleScroll = useScrollRestore(
+    rowsRef,
+    viewId ? `activity:${panelFolderKey(conversationId, viewId)}:${filter}:${viewMode}` : null,
+    !agents.isLoading && activity.data !== undefined,
+    true,
+    active,
+  );
   const groups = shellGroups(activity.data?.data ?? []).sort(
     (left, right) =>
       groupLastActive(right) - groupLastActive(left) || left.id.localeCompare(right.id),
@@ -232,7 +257,7 @@ function ChatActivityContent({
     setHighlightedAgent(focusAgentId);
     setFilter("Agents");
     setViewMode("list");
-  }, [active, focusAgentId, linkRequestId]);
+  }, [active, focusAgentId, linkRequestId, setFilter, setViewMode]);
   useEffect(() => {
     if (!active || !highlightedAgent || highlightedAgent !== focusAgentId) return;
     const row = [...(rowsRef.current?.querySelectorAll<HTMLElement>("[data-agent-id]") ?? [])].find(
@@ -299,16 +324,11 @@ function ChatActivityContent({
             <DropdownMenuRadioGroup value={viewMode} onValueChange={setViewMode}>
               <DropdownMenuRadioItem value="list">List view</DropdownMenuRadioItem>
               <DropdownMenuRadioItem value="graph">Graph view</DropdownMenuRadioItem>
-              <DropdownMenuRadioItem value="messages">Messages</DropdownMenuRadioItem>
             </DropdownMenuRadioGroup>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={() => setDetailsOpen((value) => !value)}>
-              History coverage
-            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </header>
-      <div ref={rowsRef} className="min-h-0 flex-1 overflow-y-auto">
+      <div ref={rowsRef} onScroll={handleScroll} className="min-h-0 flex-1 overflow-y-auto">
         {agents.error && (
           <p role="alert" className="px-3 py-2 text-sm text-destructive">
             Could not refresh agents: {agents.error.message}
@@ -318,42 +338,6 @@ function ChatActivityContent({
           <p role="alert" className="px-3 py-2 text-sm text-destructive">
             Could not refresh shells: {activity.error.message}
           </p>
-        )}
-        {activity.data?.warning && (
-          <p role="status" className="px-3 py-2 text-xs text-muted-foreground">
-            {activity.data.warning}
-          </p>
-        )}
-        {detailsOpen && (
-          <section
-            aria-label="History coverage"
-            className="px-3 py-2 text-xs text-muted-foreground"
-          >
-            <p>
-              Agents include up to three descendant levels. Older or deeper work may be outside the
-              loaded records.
-            </p>
-            {typeof activity.data?.coverage === "object" ? (
-              <>
-                <p>
-                  Up to {activity.data.coverage.max_entries} retained shell entries;{" "}
-                  {activity.data.coverage.max_output_bytes} bytes per output snapshot.
-                </p>
-                <p>
-                  Shell capture: {activity.data.coverage.terminals}; history:{" "}
-                  {activity.data.coverage.history}; output: {activity.data.coverage.output}.
-                </p>
-                <p>
-                  Commands without a terminal: {activity.data.coverage.non_tty_commands}; native
-                  shells: {activity.data.coverage.native_vendor_shells}.
-                </p>
-              </>
-            ) : (
-              activity.data && (
-                <p>Shell history coverage: {activity.data.coverage || "unavailable"}.</p>
-              )
-            )}
-          </section>
         )}
         {viewMode === "list" && (
           <>
@@ -367,9 +351,18 @@ function ChatActivityContent({
                         icon={<BotIcon aria-hidden="true" className="size-3.5" />}
                         title={subagentName(child)}
                         description={
-                          subagentTaskDescription(child) ??
-                          child.last_message_preview ??
-                          "No task description recorded"
+                          <ConversationScopeContext.Provider value={child.id}>
+                            <FilePathAwareMessageResponse
+                              mode="static"
+                              className="text-xs leading-4 [&>*]:my-0 [&_p]:my-0"
+                            >
+                              {(
+                                subagentTaskDescription(child) ??
+                                child.last_message_preview ??
+                                ""
+                              ).slice(0, 768)}
+                            </FilePathAwareMessageResponse>
+                          </ConversationScopeContext.Provider>
                         }
                         selected={highlightedAgent === child.id}
                         onOpen={() => openAgent(child)}
@@ -379,7 +372,6 @@ function ChatActivityContent({
                             <AgentActions
                               child={child}
                               active={active}
-                              onOpen={() => openAgent(child)}
                               onStopAgent={onStopAgent}
                               canStopAgent={canStopAgent}
                             />
@@ -436,49 +428,6 @@ function ChatActivityContent({
             <SubagentsGraphView conversationId={conversationId} rootSessionId={rootSessionId} />
           </Suspense>
         )}
-        {viewMode === "messages" && (
-          <section aria-label="Messages" className="p-2">
-            {peers.isLoading && (
-              <p role="status" className="p-2 text-sm">
-                Loading messages…
-              </p>
-            )}
-            {peers.error && (
-              <p role="alert" className="p-2 text-sm text-destructive">
-                Could not refresh messages.
-              </p>
-            )}
-            {!peers.messages.length && !peers.isLoading && (
-              <p className="p-2 text-sm text-muted-foreground">No messages in loaded history.</p>
-            )}
-            <ul>
-              {peers.messages.map((message) => (
-                <li
-                  key={peerActivityKey(message)}
-                  className="border-b border-border/50 last:border-b-0"
-                >
-                  <ConversationScopeContext.Provider value={conversationId}>
-                    <PeerMessage
-                      communication={message.communication}
-                      content={message.content}
-                      itemId={message.id}
-                    />
-                  </ConversationScopeContext.Provider>
-                </li>
-              ))}
-            </ul>
-            {peers.hasNextPage && (
-              <Button
-                variant="ghost"
-                size="sm"
-                disabled={peers.isFetchingNextPage}
-                onClick={() => void peers.fetchNextPage()}
-              >
-                Load older outgoing messages
-              </Button>
-            )}
-          </section>
-        )}
       </div>
     </div>
   );
@@ -487,7 +436,6 @@ function ChatActivityContent({
 type AgentActionsProps = Pick<ChatActivityPanelProps, "onStopAgent" | "canStopAgent"> & {
   child: ChildSessionInfo;
   active: boolean;
-  onOpen: () => void;
 };
 
 function AgentActions(props: AgentActionsProps) {
@@ -497,7 +445,6 @@ function AgentActions(props: AgentActionsProps) {
   return (
     <ActivityActions
       name={subagentName(props.child)}
-      onOpen={props.onOpen}
       onStop={
         running && props.active && props.onStopAgent && props.canStopAgent?.(props.child)
           ? () => props.onStopAgent!(props.child)
@@ -507,12 +454,11 @@ function AgentActions(props: AgentActionsProps) {
   );
 }
 
-function NativeAgentActions({ child, active, onOpen, onStopAgent }: AgentActionsProps) {
+function NativeAgentActions({ child, active, onStopAgent }: AgentActionsProps) {
   const capabilities = useNativeChildCapabilities(child.id, active);
   return (
     <ActivityActions
       name={subagentName(child)}
-      onOpen={onOpen}
       onStop={
         active && !capabilities.error && capabilities.data?.can_stop === true && onStopAgent
           ? () => onStopAgent(child)
@@ -522,24 +468,10 @@ function NativeAgentActions({ child, active, onOpen, onStopAgent }: AgentActions
   );
 }
 
-export function ActivityActions({
-  name,
-  onOpen,
-  onStop,
-}: {
-  name: string;
-  onOpen: () => void;
-  onStop?: () => Promise<void>;
-}) {
+export function ActivityActions({ name, onStop }: { name: string; onStop?: () => Promise<void> }) {
   const [stopping, setStopping] = useState(false);
-  const [error, setError] = useState<string>();
   return (
-    <span className="flex items-center gap-1">
-      {error && (
-        <span role="alert" className="max-w-48 text-destructive">
-          {error}
-        </span>
-      )}
+    <span className="flex w-12 shrink-0 items-center justify-end gap-1">
       {onStop && (
         <Button
           variant="ghost"
@@ -548,11 +480,10 @@ export function ActivityActions({
           disabled={stopping}
           onClick={async () => {
             setStopping(true);
-            setError(undefined);
             try {
               await onStop();
             } catch (failure) {
-              setError(failure instanceof Error ? failure.message : String(failure));
+              toast.error(failure instanceof Error ? failure.message : String(failure));
             } finally {
               setStopping(false);
             }
@@ -561,9 +492,6 @@ export function ActivityActions({
           {stopping ? "Stopping…" : "Stop"}
         </Button>
       )}
-      <Button variant="ghost" size="xs" aria-label={`Open ${name}`} onClick={onOpen}>
-        Open
-      </Button>
     </span>
   );
 }
@@ -603,20 +531,16 @@ function ShellRow({
         onOpen={open}
         status={
           <>
-            <span
-              className={
-                state === "running" || state === "idle"
-                  ? "text-session-active"
-                  : state === "exited" && owner.exit_status
-                    ? "text-destructive"
-                    : "text-muted-foreground"
-              }
-            >
-              {STATE_LABELS[state]}
-            </span>
+            <SubagentTaskStatus
+              status={{
+                activity:
+                  state === "exited" && owner.exit_status ? "failed" : STATE_ACTIVITY[state],
+                label: STATE_LABELS[state],
+              }}
+              label={STATE_LABELS[state]}
+            />
             <ActivityActions
               name={groupName(group)}
-              onOpen={open}
               onStop={
                 terminal && isLive(terminal) && terminal.terminal_id
                   ? () => onStop(target)

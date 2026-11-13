@@ -202,7 +202,7 @@ it("uses two-line embedded rows, sorts observed exit activity and stops only an 
     />,
     { wrapper: setup() },
   );
-  await screen.findByRole("button", { name: "Open old" });
+  await screen.findByRole("button", { name: "old" });
   expect(
     screen
       .getAllByRole("button")
@@ -227,7 +227,7 @@ it("uses two-line embedded rows, sorts observed exit activity and stops only an 
     />,
   );
   expect(screen.queryByRole("button", { name: "Stop live" })).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Open old" }));
+  fireEvent.click(screen.getByRole("button", { name: "old" }));
   expect(open).toHaveBeenCalledWith("old");
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Expand activity" })).not.toBeInTheDocument();

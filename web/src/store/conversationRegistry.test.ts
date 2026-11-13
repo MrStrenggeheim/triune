@@ -144,9 +144,11 @@ describe("ConversationRegistry", () => {
     releases[0]();
     expect(registry.evictLruEvictable()).toBeNull();
     releaseSecondOwner();
-    expect(registry.evictLruEvictable()).toBe("a");
+    expect(registry.evictLruEvictable()).toBeNull();
+    expect(registry.has("a")).toBe(true);
     releases.slice(1).forEach((release) => release());
-    expect(registry.evictLruEvictable()).toBe("b");
+    expect(registry.evictLruEvictable()).toBeNull();
+    expect(registry.has("b")).toBe(true);
   });
 
   it("detaches a hidden retained chat without losing its draft or transcript state", () => {

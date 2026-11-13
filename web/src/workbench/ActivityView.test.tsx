@@ -22,7 +22,9 @@ vi.mock("@/hooks/useConversations", () => ({
   useSessionSearch: vi.fn(),
 }));
 vi.mock("@/hooks/useSession", () => ({
-  useSession: () => ({ session: { title: "Captured chat" } }),
+  useSession: () => ({
+    session: { title: "Captured chat", hostId: "host-a", workspace: "/captured-chat" },
+  }),
 }));
 vi.mock("@/shell/ChatActivityPanel", async (importOriginal) => ({
   ...(await importOriginal<typeof ChatActivityModule>()),
@@ -47,10 +49,11 @@ vi.mock("@/shell/ChatActivityPanel", async (importOriginal) => ({
 vi.mock("@/shell/WorkspaceSelectionDialog", () => ({
   WorkspaceSelectionDialog: ({
     hostId,
+    initialPath,
     onConfirm,
     onOpenChange,
   }: WorkspaceSelectionDialogProps) => (
-    <div role="dialog" aria-label="Workspace">
+    <div role="dialog" aria-label="Workspace" data-host={hostId} data-path={initialPath}>
       <button
         type="button"
         onClick={() => void onConfirm({ hostId: hostId ?? "host-a", path: "/chosen" })}
@@ -167,6 +170,22 @@ it("offers chat or the shared combined host/workspace picker with a captured roo
   );
 });
 
+it("prefills the combined workspace selector from its captured chat", () => {
+  const props = {
+    ...defaults(),
+    source: { kind: "chat", conversationId: "captured-chat" } as const,
+  };
+  setup(props);
+  fireEvent.click(screen.getByRole("button", { name: /Choose orchestration source/ }));
+  fireEvent.click(screen.getByRole("option", { name: "Host / workspace" }));
+  const dialog = screen.getByRole("dialog", { name: "Workspace" });
+  expect(dialog).toHaveAttribute("data-host", "host-a");
+  expect(dialog).toHaveAttribute("data-path", "/captured-chat");
+  expect(props.onSourceChange).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Cancel root" }));
+  expect(props.onSourceChange).not.toHaveBeenCalled();
+});
+
 it.each(["account", "server"])("does not expose cached roots after a %s change", async (change) => {
   let resolve!: (response: Response) => void;
   fetchMock.mockImplementation(async (path) =>
@@ -235,7 +254,7 @@ it("limits inventory to the selected host/root and keeps ended shells openable",
   const props = { ...defaults(), source: { kind: "host", hostId: "host-a", workspace } as const };
   const { container } = setup(props);
   const region = await screen.findByRole("region", { name: "Shell inventory · /repo" });
-  fireEvent.click(await within(region).findByRole("button", { name: "Open ended" }));
+  fireEvent.click(await within(region).findByRole("button", { name: "ended" }));
   expect(props.onOpenTerminal).toHaveBeenCalledWith({
     workspaceId: workspace.id,
     sessionId: "",

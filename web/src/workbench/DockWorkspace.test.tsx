@@ -103,7 +103,7 @@ describe("DockWorkspace resource mounts", () => {
         renderView={(item, state) => <div>Updated {renderView(item, state)}</div>}
       />,
     );
-    expect(renders).toHaveBeenCalledTimes(4);
+    expect(renders).toHaveBeenCalledTimes(3);
   });
 
   it("preserves the actual editor DOM, component state, focus and selection through moves, split resize and mobile transitions", () => {
@@ -201,7 +201,7 @@ describe("DockWorkspace resource mounts", () => {
       <DockWorkspace {...props} scopeKey="account-b" layout={createDockLayout([a])} />,
     );
     expect(screen.getByText("a resource")).not.toBe(original);
-    expect(mounted).toHaveBeenCalledTimes(4);
+    expect(mounted).toHaveBeenCalledTimes(3);
   });
 
   it("deactivates resources with the whole workbench and preserves their DOM and drafts on return", () => {
@@ -241,7 +241,7 @@ describe("DockWorkspace resource mounts", () => {
     fireEvent.change(draft, { target: { value: "unsent" } });
     expect(screen.getByTestId("active-a")).toHaveAttribute("data-visible", "true");
     rerender(<DockWorkspace {...props} active={false} />);
-    for (const id of ["a", "b"]) {
+    for (const id of ["a"]) {
       expect(screen.getByTestId(`active-${id}`)).toHaveAttribute("data-visible", "false");
       expect(screen.getByTestId(`active-${id}`)).toHaveAttribute("data-focused", "false");
       expect(screen.getByTestId(`active-${id}`).closest("[data-dock-view]")).toHaveAttribute(
@@ -251,9 +251,9 @@ describe("DockWorkspace resource mounts", () => {
     rerender(<DockWorkspace {...props} active />);
     expect(screen.getByLabelText("Active draft a")).toBe(draft);
     expect(draft).toHaveValue("unsent");
-    expect(mounted).toHaveBeenCalledTimes(2);
+    expect(mounted).toHaveBeenCalledTimes(1);
     expect(screen.getByTestId("active-a")).toHaveAttribute("data-focused", "true");
-    expect(screen.getByTestId("active-b")).toHaveAttribute("data-visible", "false");
+    expect(screen.queryByTestId("active-b")).not.toBeInTheDocument();
   });
 
   it("offers every pane on mobile and preserves selected tabs in unfocused panes", async () => {
@@ -441,15 +441,16 @@ describe("sidebar conversation drops", () => {
       const open = vi.fn((id: string, placement: DockPlacement) => {
         current = addDockView(current, conversationView(id), placement);
       });
-      render(
-        <DockWorkspace
-          layout={initial}
-          onLayoutChange={vi.fn()}
-          onBeforeClose={guard}
-          onOpenConversationAt={open}
-          renderView={(item) => <input aria-label={`Drop resource ${item.id}`} />}
-        />,
+      const props = {
+        onLayoutChange: vi.fn(),
+        onBeforeClose: guard,
+        onOpenConversationAt: open,
+        renderView: (item: DockView) => <input aria-label={`Drop resource ${item.id}`} />,
+      };
+      const mounted = render(
+        <DockWorkspace {...props} layout={selectDockView(initial, "dirty")} />,
       );
+      mounted.rerender(<DockWorkspace {...props} layout={initial} />);
       const original = screen.getByLabelText("Drop resource dirty");
       const transfer = chatTransfer({ id: "B", title: "B" });
       const root = document.querySelector(".dock-workspace")!;
@@ -753,7 +754,9 @@ describe("dock tab controls", () => {
       );
     }
     render(<Workspace />);
+    await user.click(screen.getByRole("tab", { name: "b" }));
     const resource = screen.getByLabelText("Menu b");
+    await user.click(screen.getByRole("tab", { name: "a" }));
     fireEvent.contextMenu(screen.getByRole("tab", { name: "b" }));
     expect(screen.getByRole("menu")).toHaveAttribute("data-slot", "context-menu-content");
     expect(screen.getByRole("menuitem", { name: "Move tab right" })).toHaveAttribute(
@@ -1128,7 +1131,7 @@ describe("useDockLayout", () => {
     expect(result.current.layout.panes[0].selectedViewId).toBe("b");
   });
 
-  it("guards resource replacements and layout navigation, without guarding focus or docking", async () => {
+  it("guards close and replacements while navigation retains dirty resources", async () => {
     const guard = vi.fn(async () => false);
     const { result } = renderHook(() =>
       useDockLayout({
@@ -1142,10 +1145,21 @@ describe("useDockLayout", () => {
     act(() => result.current.addView(view("dirty"), { edge: "right" }));
     act(() => result.current.focusView("a"));
     expect(guard).not.toHaveBeenCalled();
+    const dirty = result.current.retainedViews.find((item) => item.id === "dirty");
     await act(async () => {
-      expect(await result.current.navigateConversation("B")).toBe(false);
+      expect(await result.current.navigateConversation("B")).toBe(true);
     });
-    expect(result.current.activeConversationId).toBe("A");
+    expect(result.current.activeConversationId).toBe("B");
+    expect(result.current.retainedViews.find((item) => item.id === "dirty")).toBe(dirty);
+    await act(async () => {
+      expect(await result.current.useSharedLayout()).toBe(true);
+      expect(await result.current.navigateConversation("A")).toBe(true);
+    });
+    expect(guard).not.toHaveBeenCalled();
+    expect(result.current.layout.views.find((item) => item.id === "dirty")).toBe(dirty);
+    await act(async () => {
+      expect(await result.current.closeView("dirty")).toBe(false);
+    });
     await act(async () => {
       expect(await result.current.updateView("a", { title: "Renamed" })).toBe(true);
     });
@@ -1207,113 +1221,124 @@ describe("useDockLayout", () => {
     expect(guard).toHaveBeenCalledOnce();
   });
 
-  it("does not let stale navigation discard newer layout edits", async () => {
-    const decision = deferred<boolean>();
+  it("retains source resources and keeps immediate destination edits after navigation", async () => {
+    const guard = vi.fn(async () => false);
     const { result } = renderHook(() =>
       useDockLayout({
         scope,
         storage: null,
         initialLayout: createDockLayout([view("a")]),
-        onBeforeClose: () => decision.promise,
+        onBeforeClose: guard,
       }),
     );
     act(() => {
       result.current.saveChatLayout("A");
-      result.current.addView(view("dirty"));
+      result.current.addView(view("dirty", "preview"));
     });
+    const source = result.current.layout;
     let navigation!: Promise<boolean>;
     act(() => {
       navigation = result.current.navigateConversation("B");
+      result.current.addView(view("newer"));
     });
-    act(() => result.current.addView(view("newer")));
     await act(async () => {
-      decision.resolve(true);
-      expect(await navigation).toBe(false);
+      expect(await navigation).toBe(true);
     });
-    expect(result.current.activeConversationId).toBe("A");
-    expect(result.current.layout.views.map((item) => item.id)).toEqual(["a", "dirty", "newer"]);
+    expect(result.current.activeConversationId).toBe("B");
+    expect(result.current.layout.views.map((item) => item.id)).toEqual(["conversation:B", "newer"]);
+    await act(async () => {
+      await result.current.navigateConversation("A");
+    });
+    expect(result.current.layout).toEqual(source);
+    expect(result.current.retainedViews.some((item) => item.id === "newer")).toBe(true);
+    expect(guard).not.toHaveBeenCalled();
   });
 
-  it("accepts title-only updates during guards and persists the latest source and destination titles", async () => {
+  it("preserves title updates while a guarded replacement follows its resource into a retained layout", async () => {
     const storage = memoryStorage();
     const decision = deferred<boolean>();
-    const guard = vi.fn(async () => true);
+    const guard = vi.fn(() => decision.promise);
     const { result } = renderHook(() =>
       useDockLayout({
         scope,
         storage,
-        initialLayout: createDockLayout([conversationView("A")]),
+        initialLayout: createDockLayout([conversationView("A"), view("dirty", "preview")]),
         onBeforeClose: guard,
       }),
     );
     await act(async () => {
       await result.current.navigateConversation("B");
-    });
-    await act(async () => {
       await result.current.navigateConversation("A");
     });
-    guard.mockImplementation(() => decision.promise);
-    let navigation!: Promise<boolean>;
+    expect(guard).not.toHaveBeenCalled();
+    let replacement!: Promise<boolean>;
     act(() => {
-      navigation = result.current.navigateConversation("B");
+      replacement = result.current.updateView("dirty", { resource: { path: "/new" } });
     });
+    expect(guard).toHaveBeenCalledOnce();
     await act(async () => {
+      await result.current.navigateConversation("B");
       await result.current.updateView("conversation:A", { title: "Latest A" });
       await result.current.updateView("conversation:B", { title: "Latest B" });
     });
     await act(async () => {
       decision.resolve(true);
-      expect(await navigation).toBe(true);
+      expect(await replacement).toBe(true);
     });
+    expect(guard).toHaveBeenCalledOnce();
     expect(result.current.activeConversationId).toBe("B");
     expect(result.current.layout.views[0].title).toBe("Latest B");
     const persisted = JSON.parse(storage.getItem(dockStorageKey(scope))!);
     expect(
       persisted.chats.map((chat: { layout: DockLayout }) => chat.layout.views[0].title),
     ).toEqual(["Latest A", "Latest B"]);
+    expect(result.current.retainedViews.find((item) => item.id === "dirty")?.resource.path).toBe(
+      "/new",
+    );
   });
 
-  it.each(["resource", "topology", "owner", "request", "scope"] as const)(
-    "rejects pending navigation after a newer %s change",
-    async (change) => {
-      const decision = deferred<boolean>();
-      const guard = vi.fn().mockReturnValueOnce(decision.promise).mockResolvedValue(true);
-      const { result, rerender } = renderHook(
-        ({ accountId }) =>
-          useDockLayout({
-            scope: { ...scope, accountId },
-            storage: null,
-            initialLayout: createDockLayout([conversationView("A"), view("dirty")]),
-            onBeforeClose: guard,
-          }),
-        { initialProps: { accountId: scope.accountId } },
-      );
-      let navigation!: Promise<boolean>;
-      act(() => {
-        navigation = result.current.navigateConversation("B");
-      });
-      await act(async () => {
-        if (change === "resource")
-          await result.current.updateView("dirty", {
-            resource: { title: "A changed resource, not view metadata" },
-          });
-        else if (change === "topology")
-          result.current.setLayout((layout) =>
-            moveDockView(layout, "dirty", { paneId: "main", edge: "right" }),
-          );
-        else if (change === "owner") await result.current.navigateConversation("C");
-        else if (change === "request") await result.current.navigateConversation("A");
-        else rerender({ accountId: "other" });
-      });
-      const latest = result.current.layout;
-      await act(async () => {
-        decision.resolve(true);
-        expect(await navigation).toBe(false);
-      });
-      expect(result.current.layout).toEqual(latest);
-      expect(result.current.activeConversationId).toBe(change === "owner" ? "C" : "A");
-    },
-  );
+  it.each([
+    ["close", "resource"],
+    ["replace", "resource"],
+    ["close", "scope"],
+    ["replace", "scope"],
+  ] as const)("rejects a pending %s after its captured %s changes", async (operation, change) => {
+    const decision = deferred<boolean>();
+    const guard = vi.fn().mockReturnValueOnce(decision.promise).mockResolvedValue(true);
+    const { result, rerender } = renderHook(
+      ({ accountId }) =>
+        useDockLayout({
+          scope: { ...scope, accountId },
+          storage: null,
+          initialLayout: createDockLayout([conversationView("A"), view("dirty", "preview")]),
+          onBeforeClose: guard,
+        }),
+      { initialProps: { accountId: scope.accountId } },
+    );
+    let pending!: Promise<boolean>;
+    act(() => {
+      pending =
+        operation === "close"
+          ? result.current.closeView("dirty")
+          : result.current.updateView("dirty", { resource: { path: "/pending" } });
+    });
+    await act(async () => {
+      if (change === "resource")
+        expect(await result.current.updateView("dirty", { resource: { path: "/newer" } })).toBe(
+          true,
+        );
+      else rerender({ accountId: "other" });
+    });
+    const latest = result.current.layout;
+    await act(async () => {
+      decision.resolve(true);
+      expect(await pending).toBe(false);
+    });
+    expect(result.current.layout).toEqual(latest);
+    expect(result.current.layout.views.find((item) => item.id === "dirty")?.resource.path).toBe(
+      change === "resource" ? "/newer" : "/dirty",
+    );
+  });
 
   it("restores late legacy views into A while preserving B, pins and A's saved geometry and selection", async () => {
     const storage = memoryStorage();

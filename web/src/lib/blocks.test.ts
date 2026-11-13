@@ -1,12 +1,48 @@
+// Modified for Triune.
 import { describe, expect, it } from "vitest";
-import type { ImageContentBlock, MessageContentBlock } from "./blocks";
+import type { ElicitationBlock, ImageContentBlock, MessageContentBlock } from "./blocks";
 import {
   attachmentLabel,
   imagePreview,
   isTextBlock,
   keyedAttachments,
   structuredErrorFields,
+  hasPendingOwnElicitation,
 } from "./blocks";
+
+describe("pending input gates", () => {
+  const request: ElicitationBlock = {
+    type: "elicitation",
+    elicitationId: "request",
+    message: "Choose coverage",
+    phase: "tool_call",
+    policyName: "native",
+    contentPreview: "",
+    requestedSchema: {},
+    status: "pending",
+    response: null,
+    ctx: { agent: null, depth: 0, turn: 0, timestamp: 0, responseId: "turn", itemId: "request" },
+  };
+  it("keeps native async questions answerable without parking the composer", () => {
+    expect(
+      hasPendingOwnElicitation(
+        [{ ...request, askUserQuestion: { isBlocking: false, questions: [] } }],
+        "chat",
+      ),
+    ).toBe(false);
+    expect(
+      hasPendingOwnElicitation(
+        [{ ...request, askUserQuestion: { isBlocking: true, questions: [] } }],
+        "chat",
+      ),
+    ).toBe(true);
+    expect(hasPendingOwnElicitation([request], "chat")).toBe(true);
+    expect(hasPendingOwnElicitation([{ ...request, targetSessionId: "child" }], "chat")).toBe(
+      false,
+    );
+    expect(hasPendingOwnElicitation([{ ...request, status: "responded" }], "chat")).toBe(false);
+  });
+});
 
 describe("structuredErrorFields", () => {
   it("keeps classified failures and informational notices intact", () => {

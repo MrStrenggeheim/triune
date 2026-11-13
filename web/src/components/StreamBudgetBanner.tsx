@@ -1,21 +1,9 @@
-import { useNotificationNotice } from "@/hooks/useNotificationNotice";
-import { useChatStore } from "@/store/chatStore";
+// Modified for Triune.
+import { useEffect } from "react";
+import { removeNotification } from "@/lib/notifications";
 
+/** Compatibility mount also removes notices retained by older app versions. */
 export function StreamBudgetBanner() {
-  const exceeded = useChatStore((s) => s.streamBudgetExceeded);
-  const dismissed = useChatStore((s) => s.streamBudgetBannerDismissed);
-  const dismiss = useChatStore((s) => s.dismissStreamBudgetBanner);
-  useNotificationNotice(
-    "stream-budget",
-    exceeded && !dismissed
-      ? {
-          title: "Conversation stream capacity",
-          description:
-            "You have a lot of conversations open across your tabs. If you experience any slowness, please close a few tabs.",
-          type: "warning",
-          cancel: { label: "Dismiss warning", onClick: dismiss },
-        }
-      : null,
-  );
+  useEffect(() => removeNotification("stream-budget"), []);
   return null;
 }

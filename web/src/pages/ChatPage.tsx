@@ -687,7 +687,7 @@ export function ChatPage({
   // the flag is unchanged, so `blocks` reference churn on every streaming
   // frame no longer re-renders this root — only an elicitation edge does.
   const hasPendingElicitation = useChatStore((s) =>
-    s.blocks.some((b) => b.type === "elicitation" && b.status === "pending"),
+    hasPendingOwnElicitation(s.blocks, s.conversationId),
   );
 
   // Single-session snapshot (shared cache with chatStore.bindStream).

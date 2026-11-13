@@ -1,3 +1,4 @@
+// Modified for Triune.
 // Vitest cases for `parseEvent` — the raw-SSE-JSON → typed-event mapping —
 // and `withStallGuard` — the byte-level silence watchdog.
 
@@ -160,6 +161,73 @@ describe("parseEvent — response.output_text.delta", () => {
 
   it("returns null when delta is not a string", () => {
     expect(parseEvent("response.output_text.delta", { delta: { text: "bad" } })).toBeNull();
+  });
+});
+
+describe("parseEvent — lifecycle item enrichment", () => {
+  const item = {
+    id: "task-return",
+    type: "resource_event",
+    response_id: "task-response",
+    resource_type: "session",
+    resource_id: "child",
+    event_type: "session.subagent.returned",
+    resource: { dispatch_id: "dispatch", result_text: "**Verified** report" },
+  };
+  it("carries an enriched persisted item without creating another completed item", () => {
+    expect(parseEvent("response.output_item.updated", { item })).toEqual({
+      type: "session_item_updated",
+      item,
+    });
+  });
+  it.each([
+    { ...item, id: "" },
+    { ...item, response_id: undefined },
+    { ...item, resource_id: "" },
+    { ...item, type: "message" },
+  ])("rejects incomplete or unrelated replacement payloads", (invalid) => {
+    expect(parseEvent("response.output_item.updated", { item: invalid })).toBeNull();
+  });
+});
+
+describe("parseEvent — native shell inventory", () => {
+  it("preserves an authoritative live count without implying a turn status", () => {
+    expect(
+      parseEvent("session.background_tasks", {
+        conversation_id: "chat",
+        background_task_count: 1,
+        background_tasks: [
+          { id: "command", type: "shell", command: "sleep 180", status: "running" },
+        ],
+      }),
+    ).toEqual({
+      type: "session_background_tasks",
+      conversationId: "chat",
+      backgroundTaskCount: 1,
+      backgroundTasks: [{ id: "command", type: "shell", command: "sleep 180", status: "running" }],
+    });
+  });
+  it("clears stale details when the authoritative count reaches zero", () => {
+    expect(
+      parseEvent("session.background_tasks", {
+        conversation_id: "chat",
+        background_task_count: 0,
+        background_tasks: [{ id: "old" }],
+      }),
+    ).toEqual({
+      type: "session_background_tasks",
+      conversationId: "chat",
+      backgroundTaskCount: 0,
+      backgroundTasks: [],
+    });
+  });
+  it.each([-1, 1.5, "1", null])("rejects invalid inventory counts", (count) => {
+    expect(
+      parseEvent("session.background_tasks", {
+        conversation_id: "chat",
+        background_task_count: count,
+      }),
+    ).toBeNull();
   });
 });
 

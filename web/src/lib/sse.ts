@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { readMessageCommunication } from "./messageCommunication";
 import { parseNativePermissionDelivery } from "./nativePermissionDelivery";
 // Mirrors sdks/python-client/omnigent_client/_sse.py.
@@ -50,7 +51,9 @@ import type {
   SessionSupersededEvent,
   SessionViewer,
   SessionTerminalActivityEvent,
+  SessionItemUpdatedEvent,
   SessionStatusEvent,
+  SessionBackgroundTasksEvent,
   SessionModelEvent,
   SessionTitleEvent,
   SessionCollaborationModeEvent,
@@ -395,6 +398,25 @@ export function parseBackgroundTasks(raw: unknown): BackgroundTaskInfo[] | undef
 export function parseEvent(rawType: string, data: Record<string, unknown>): StreamEvent | null {
   const eventType = normalizeEventType(rawType);
 
+  if (eventType === "session.background_tasks") {
+    const conversationId = data.conversation_id;
+    const count = data.background_task_count;
+    if (
+      typeof conversationId !== "string" ||
+      !conversationId ||
+      typeof count !== "number" ||
+      !Number.isSafeInteger(count) ||
+      count < 0
+    )
+      return null;
+    return {
+      type: "session_background_tasks",
+      conversationId,
+      backgroundTaskCount: count,
+      backgroundTasks: count > 0 ? (parseBackgroundTasks(data.background_tasks) ?? []) : [],
+    } satisfies SessionBackgroundTasksEvent;
+  }
+
   // Response lifecycle.
   if (eventType === "response.created") {
     return { type: "response_created", response: parseResponse(data) } satisfies ResponseCreated;
@@ -475,6 +497,20 @@ export function parseEvent(rawType: string, data: Record<string, unknown>): Stre
 
   // Output items.
   if (eventType === "response.output_item.done") return parseOutputItem(data);
+  if (eventType === "response.output_item.updated") {
+    const item = data.item;
+    if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+    const record = item as Record<string, unknown>;
+    if (
+      typeof record.id !== "string" ||
+      !record.id ||
+      typeof record.response_id !== "string" ||
+      !record.response_id ||
+      !readSubagentActivity(record)
+    )
+      return null;
+    return { type: "session_item_updated", item: record } satisfies SessionItemUpdatedEvent;
+  }
 
   // File output.
   if (eventType === "response.output_file.done") {

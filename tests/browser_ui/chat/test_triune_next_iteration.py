@@ -2,21 +2,135 @@
 """Shared controls and retained resources for the next Triune iteration."""
 
 import json
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
 import pytest
 from playwright.sync_api import Page, expect
 
-from tests.browser_ui.chat.session_contract import list_payload
+from tests.browser_ui.chat.session_contract import chat_session_handle, list_payload, message_item
 from tests.browser_ui.chat.test_unified_workspace import (
     WorkspaceJourney,
     _capture,
     _navigate_chat,
+    _open,
+    _saved_dock,
     _view,
 )
 from tests.browser_ui.chat.test_unified_workspace import browser_errors as browser_errors
 from tests.browser_ui.chat.test_unified_workspace import workspace_journey as workspace_journey
 from tests.browser_ui.conftest import BrowserContract
+
+
+def test_fifty_layouts_retire_while_preserving_draft_and_editor_undo(
+    page: Page,
+    workspace_journey: WorkspaceJourney,
+    browser_contract: BrowserContract,
+    output_path: str,
+    browser_errors: list[str],
+) -> None:
+    """Real SPA layout retirement preserves saved membership and protected editor models."""
+    journey = workspace_journey
+    first = journey.chats[0]
+    with ExitStack() as stack:
+        for index in range(2, 50):
+            chat = stack.enter_context(
+                contextmanager(chat_session_handle)(
+                    page, browser_contract, session_id=f"retire-{index}"
+                )
+            )
+            chat.update_session(title=f"Cold layout {index}", workspace="/workspace")
+            chat.set_items(
+                [
+                    message_item(
+                        f"retire-answer-{index}",
+                        "assistant",
+                        f"Answer in layout {index}",
+                        response_id=f"retire-turn-{index}",
+                    )
+                ]
+            )
+            for endpoint in ("peer-messages", "branches"):
+                browser_contract.json(
+                    f"/v1/sessions/{chat.session_id}/{endpoint}", list_payload([])
+                )
+            browser_contract.json(f"/v1/sessions/{chat.session_id}/comments", [])
+            journey.chats.append(chat)
+        browser_contract.json("/v1/workbench-workspaces/resolve", journey.workspace, method="POST")
+        browser_contract.json(
+            "/v1/sessions",
+            lambda _: list_payload([chat.session_snapshot() for chat in journey.chats]),
+        )
+        browser_contract.json(
+            "/health",
+            {
+                "sessions": {
+                    chat.session_id: {"runner_online": True, "host_online": True}
+                    for chat in journey.chats
+                }
+            },
+        )
+        page.set_viewport_size({"width": 1440, "height": 1000})
+        page.goto(first.url)
+        _view(page, "Chat A").get_by_label("Message the agent").fill(
+            "Draft retained after fifty layouts"
+        )
+        _open(page, "Explorer")
+        _view(page, "Explorer").get_by_role("button", name="notes.py", exact=True).click()
+        editor = _view(page, "notes.py")
+        edit = editor.locator(".monaco-editor").first
+        expect(edit).to_be_visible(timeout=30_000)
+        journey.reject_writes = True
+        edit.click()
+        page.keyboard.press("Control+End")
+        page.keyboard.press("End")
+        page.keyboard.press("Enter")
+        page.keyboard.insert_text("retained_delta = 42")
+        editor.evaluate("el => { window.__protectedRetiredEditor = el; }")
+        observations = []
+        for index, chat in enumerate(journey.chats[1:], 1):
+            _navigate_chat(page, chat)
+            count = page.locator("[data-dock-view]").count()
+            observations.append({"visited": index + 1, "mounted": count})
+            if index >= 3:
+                assert count <= 4, observations
+        final = journey.chats[-1]
+        final.wait_for_stream()
+        live = message_item(
+            "retirement-live",
+            "assistant",
+            "RETIREMENT_LIVE_UPDATE",
+            response_id="live-after-fifty",
+        )
+        final.emit({"event": "response.output_item.done", "data": {"item": live}})
+        expect(
+            _view(page, final.session_snapshot()["title"]).get_by_text(
+                "RETIREMENT_LIVE_UPDATE", exact=True
+            )
+        ).to_be_visible()
+        assert len(_saved_dock(page)["chats"]) >= 50
+        expect(page.get_by_text("Conversation stream capacity", exact=True)).to_have_count(0)
+        _navigate_chat(page, first)
+        page.get_by_role("tab", name="Chat A", exact=True).click()
+        expect(_view(page, "Chat A").get_by_label("Message the agent")).to_have_value(
+            "Draft retained after fifty layouts"
+        )
+        expect(editor).to_be_visible()
+        assert editor.evaluate("el => el === window.__protectedRetiredEditor")
+        expect(editor.locator(".view-line").filter(has_text="retained_delta = 42")).to_be_visible()
+        edit.click()
+        page.keyboard.press("Control+z")
+        # Monaco may create semantic undo stops within one text insertion.
+        expect(editor.locator(".view-line").filter(has_text="retained_delta = 42")).to_have_count(
+            0
+        )
+        assert "retained_delta" not in journey.files["notes.py"]
+        Path(output_path).mkdir(parents=True, exist_ok=True)
+        (Path(output_path) / "fifty-layout-observations.json").write_text(
+            json.dumps(observations, indent=2)
+        )
+        _capture(page, output_path, "fifty-layouts-draft-and-undo")
+        assert browser_errors == []
 
 
 @pytest.mark.parametrize("width", [390, 1440], ids=["phone", "desktop"])

@@ -94,6 +94,7 @@ export function ActivitySourcePicker({
           aria-haspopup="dialog"
           aria-expanded={open}
           menuOpen={open || workspaceOpen}
+          data-view-retain={open || workspaceOpen || busy || undefined}
           onClick={() => setOpen(true)}
         />
       ) : (
@@ -103,6 +104,7 @@ export function ActivitySourcePicker({
           aria-label={`Choose orchestration source · ${label}`}
           aria-haspopup="dialog"
           aria-expanded={open}
+          data-view-retain={open || workspaceOpen || busy || undefined}
           className="min-w-0 gap-1"
           onClick={() => {
             setError(null);
@@ -200,9 +202,13 @@ export function ActivitySourcePicker({
         <WorkspaceSelectionDialog
           open
           onOpenChange={setWorkspaceOpen}
-          hostId={source?.kind === "host" ? source.hostId : null}
-          initialPath={source?.kind === "host" ? source.workspace?.root : undefined}
-          workspacePath={source?.kind === "host" ? source.workspace?.root : undefined}
+          hostId={source?.kind === "host" ? source.hostId : (session?.hostId ?? null)}
+          initialPath={
+            source?.kind === "host" ? source.workspace?.root : (session?.workspace ?? undefined)
+          }
+          workspacePath={
+            source?.kind === "host" ? source.workspace?.root : (session?.workspace ?? undefined)
+          }
           onConfirm={onChooseWorkspace}
         />
       )}

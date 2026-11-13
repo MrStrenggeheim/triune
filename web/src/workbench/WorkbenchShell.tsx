@@ -95,6 +95,7 @@ import { ActivityView, type ActivitySource } from "./ActivityView";
 import { TerminalResourceView, RetainedActivityView } from "./TerminalResourceView";
 import { ResourceView, inheritResourceViewState } from "./ResourceView";
 import { DockWorkspace, type DockViewVisibility } from "./DockWorkspace";
+import { canSuspendDockView } from "./viewLifetime";
 import { useDockLayout } from "./useDockLayout";
 import {
   sameDockResource,
@@ -263,6 +264,13 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
       if (!allowed) return false;
     }
     return true;
+  }, []);
+  const canSuspendView = useCallback((view: DockView) => {
+    if (!canSuspendDockView(view) || guards.current.get(view.id)?.size) return false;
+    const surface = [...document.querySelectorAll<HTMLElement>("[data-workbench-view]")].find(
+      (element) => element.dataset.workbenchView === view.id,
+    );
+    return !surface?.querySelector('[data-view-retain="true"]');
   }, []);
   const scope = {
     accountId,
@@ -1070,6 +1078,7 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
       else if (view.kind === "activity" || view.kind === "shells")
         content = (
           <ActivityView
+            viewId={view.id}
             focusAgentId={
               typeof resource.focusAgentId === "string" ? resource.focusAgentId : undefined
             }
@@ -1519,6 +1528,8 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
                           }
                         }}
                         scopeKey={dock.scopeKey}
+                        layoutKey={dock.activeConversationId ?? "shared"}
+                        canSuspendView={canSuspendView}
                         layout={dock.layout}
                         retainedViews={dock.retainedViews}
                         onLayoutChange={dock.setLayout}

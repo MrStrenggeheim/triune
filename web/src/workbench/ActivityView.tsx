@@ -1,5 +1,5 @@
 // Modified for Triune.
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { RefreshCwIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -7,6 +7,7 @@ import { useHosts } from "@/hooks/useHosts";
 import { useViewerId } from "@/hooks/useViewerId";
 import { authenticatedFetch } from "@/lib/identity";
 import { resourceViewStorageScope } from "@/lib/resourceViewStorage";
+import { useResourceViewState } from "@/lib/panelFolder";
 import { apiErrorFromResponse } from "@/lib/sessionsApi";
 import type { WorkbenchWorkspace } from "@/lib/workbenchWorkspace";
 import {
@@ -25,6 +26,7 @@ export type ActivitySource =
   | { kind: "host"; hostId: string; workspace?: WorkbenchWorkspace };
 
 export interface ActivityViewProps {
+  viewId?: string;
   source?: ActivitySource | null;
   active?: boolean;
   focusAgentId?: string;
@@ -120,6 +122,7 @@ export function ActivityView(props: ActivityViewProps) {
   if (source.kind === "chat") {
     return (
       <ChatActivityPanel
+        viewId={props.viewId}
         conversationId={source.conversationId}
         rootSessionId={source.conversationId}
         active={props.active}
@@ -147,6 +150,7 @@ export function ActivityView(props: ActivityViewProps) {
 }
 
 function HostActivity({
+  viewId,
   source,
   scope,
   viewerId,
@@ -163,7 +167,12 @@ function HostActivity({
   const hosts = useHosts({ enabled: active });
   const queryClient = useQueryClient();
   const workspacesKey = ["workbench-workspaces", scope] as const;
-  const [filter, setFilter] = useState<ActivityFilter>("All");
+  const [filter, setFilter] = useResourceViewState<ActivityFilter>(
+    source.workspace?.id ?? source.hostId,
+    viewId,
+    "activity-filter",
+    "All",
+  );
   const workspaces = useQuery({
     queryKey: workspacesKey,
     queryFn: fetchWorkspaces,

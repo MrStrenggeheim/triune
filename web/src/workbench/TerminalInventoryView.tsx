@@ -15,6 +15,8 @@ import { authenticatedFetch } from "@/lib/identity";
 import { LEVEL_OWNER } from "@/lib/permissionsApi";
 import { apiErrorFromResponse } from "@/lib/sessionsApi";
 import { ActivityActions } from "@/shell/ChatActivityPanel";
+import { SubagentTaskStatus } from "@/components/blocks/SubagentTaskRow";
+import type { AgentStatus } from "@/shell/subagentStatus";
 import type { WorkbenchWorkspace } from "@/lib/workbenchWorkspace";
 
 export interface ManualTerminalRecord extends TerminalInfo {
@@ -63,6 +65,20 @@ export function terminalStateLabel(terminal: ManualTerminalRecord) {
   if (terminal.connectivity !== "connected")
     return "Connection unknown · process state unconfirmed";
   return terminal.state === "running" ? "Running" : "Process state unknown";
+}
+
+function inventoryStatus(terminal: ManualTerminalRecord): AgentStatus {
+  if (terminal.state === "stopped") return { activity: "other", label: "Stopped" };
+  if (terminal.state === "exited")
+    return {
+      activity: terminal.exitCode ? "failed" : "done",
+      label: terminal.exitCode == null ? "Exited" : `Exited (${terminal.exitCode})`,
+    };
+  if (terminal.connectivity === "disconnected")
+    return { activity: "disconnected", label: "Offline" };
+  if (terminal.connectivity === "connected" && terminal.state === "running")
+    return { activity: "working", label: "Running" };
+  return { activity: "other", label: "Unknown" };
 }
 
 export function RetainedTerminalOutput({
@@ -204,20 +220,12 @@ export function TerminalInventoryView({
               onOpen={() => onOpenTerminal(terminal.id)}
               status={
                 <>
-                  <span
-                    className={
-                      terminal.connectivity === "connected" && terminal.state === "running"
-                        ? "text-session-active"
-                        : terminal.exitCode
-                          ? "text-destructive"
-                          : "text-muted-foreground"
-                    }
-                  >
-                    {terminalStateLabel(terminal)}
-                  </span>
+                  <SubagentTaskStatus
+                    status={inventoryStatus(terminal)}
+                    label={inventoryStatus(terminal).label}
+                  />
                   <ActivityActions
                     name={terminalDisplayLabel(terminal)}
-                    onOpen={() => onOpenTerminal(terminal.id)}
                     onStop={
                       canCreate &&
                       terminal.state === "running" &&

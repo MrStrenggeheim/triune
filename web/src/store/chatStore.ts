@@ -93,6 +93,9 @@ import { randomUUID } from "@/lib/randomUUID";
 import { conversationRegistry, type ConversationEntry } from "./conversationRegistry";
 import { createInitialConversationState, isConversationStateKey } from "./conversationState";
 import { getStreamSlotManager, type StreamSlot } from "./streamSlots";
+import { observeConversationStream } from "./streamObservation";
+import { SnapshotBackfill } from "./snapshotBackfill";
+import { updateLoadedResourceItems } from "./resourceItemUpdates";
 import {
   SSE_STALL_TIMEOUT_MS,
   parseEvent,
@@ -4072,8 +4075,8 @@ const heldStreamSlots = new Map<string, StreamSlot>();
  * slot's release so the freed lock is observable before the re-check, rather
  * than racing it and over-evicting. Returns whether a slot is now held.
  *
- * Returns false when no slot can be reclaimed; the caller waits before opening
- * its stream and raises the existing too-many-tabs banner.
+ * Returns false when no slot can be reclaimed; the caller catches up through
+ * snapshots while retrying without opening another connection.
  */
 async function acquireStreamSlot(id: string, signal?: AbortSignal): Promise<boolean> {
   if (signal?.aborted) return false;
@@ -4099,7 +4102,6 @@ async function acquireStreamSlot(id: string, signal?: AbortSignal): Promise<bool
     return false;
   }
   if (slot !== null) heldStreamSlots.set(id, slot);
-  setStreamBudgetExceeded(slot === null);
   return slot !== null;
 }
 
@@ -4109,20 +4111,6 @@ function releaseStreamSlot(id: string): void {
   if (slot === undefined) return;
   heldStreamSlots.delete(id);
   void slot.release();
-}
-
-/**
- * Raise or clear the too-many-tabs banner. A fresh over-budget episode
- * (false→true) un-dismisses it; clearing leaves the dismissed flag alone since
- * the banner is hidden while within budget regardless.
- */
-function setStreamBudgetExceeded(exceeded: boolean): void {
-  if (useChatStore.getState().streamBudgetExceeded === exceeded) return;
-  rootSetState(
-    exceeded
-      ? { streamBudgetExceeded: true, streamBudgetBannerDismissed: false }
-      : { streamBudgetExceeded: false },
-  );
 }
 
 // ── Conversation entries ─────────────────────────────────
@@ -4927,20 +4915,6 @@ async function bindStream(
   };
   const ignoredNativeMessageIds = new Set<string>();
   nativePreviewTombstonesByController.set(controller, ignoredNativeMessageIds);
-  const hasSlot = await acquireStreamSlot(id, controller.signal);
-  const initialSlot = hasSlot ? heldStreamSlots.get(id) : undefined;
-  if (!current()) {
-    // Switched away / evicted while awaiting the slot — don't open a dead
-    // entry's stream, and hand any slot we took back to the origin.
-    if (initialSlot && heldStreamSlots.get(id) === initialSlot) releaseStreamSlot(id);
-    return;
-  }
-  let ownedSlot = initialSlot;
-  const releaseOwnedSlot = () => {
-    if (ownedSlot && heldStreamSlots.get(id) === ownedSlot) releaseStreamSlot(id);
-  };
-  controller.signal.addEventListener("abort", releaseOwnedSlot, { once: true });
-
   // Opening a conversation URL with no session list loaded yet leaves the
   // session→host map empty, so the SSE stream
   // (and every host-scoped request) would open UNKEYED and route to the default
@@ -4966,28 +4940,44 @@ async function bindStream(
     // (that is the whole feature). Only a dispose (evicted) bails — and then the
     // slot taken above has to go back to the origin.
     if (!current()) {
-      releaseOwnedSlot();
       return;
     }
   }
 
-  // The slot is held for the pump's whole lifetime; released when it exits (a
-  // terminal close, an abort from switchTo/dispose, or eviction).
-  // Denied slots wait without opening an SSE connection; metadata and message
-  // POSTs can still use the reserved ordinary-request capacity.
-  void (async () => {
-    let acquired = hasSlot;
-    /* eslint-disable no-await-in-loop */
-    while (!acquired && current()) {
-      await abortableDelay(1000, controller.signal);
-      if (!current()) return;
-      acquired = await acquireStreamSlot(id, controller.signal);
-      ownedSlot = acquired ? heldStreamSlots.get(id) : undefined;
-    }
-    /* eslint-enable no-await-in-loop */
-    if (!current()) return;
-    await startStreamPump(id, controller, set, get, ignoredNativeMessageIds, !hasSlot);
-  })().finally(releaseOwnedSlot);
+  const mayObserve =
+    typeof document === "undefined" ||
+    (document.visibilityState !== "hidden" && (!navigator.locks || document.hasFocus()));
+  const hasSlot = mayObserve && (await acquireStreamSlot(id, controller.signal));
+  const initialSlot = hasSlot ? heldStreamSlots.get(id) : undefined;
+  if (!current()) {
+    if (initialSlot && heldStreamSlots.get(id) === initialSlot) releaseStreamSlot(id);
+    return;
+  }
+  const observationSlot = (slot: StreamSlot): StreamSlot => ({
+    release: async () => {
+      if (heldStreamSlots.get(id) === slot) heldStreamSlots.delete(id);
+      await slot.release();
+    },
+  });
+
+  // The binding and retained model outlive individual observation attempts.
+  // A hidden browser releases its lock; visible over-budget panes use the same
+  // bounded replay and exact-input dedupe as reconnects.
+  void observeConversationStream({
+    signal: controller.signal,
+    initialSlot: initialSlot ? observationSlot(initialSlot) : undefined,
+    priority: () => (conversationRegistry.isFocused(id) ? 2 : 1),
+    acquire: async () => {
+      if (!(await acquireStreamSlot(id, controller.signal))) return null;
+      return observationSlot(heldStreamSlots.get(id)!);
+    },
+    pump: (observation, resumed) =>
+      startStreamPump(id, controller, set, get, ignoredNativeMessageIds, resumed, observation),
+    catchUp: () => reconcileOnReconnect(id, set, get, ignoredNativeMessageIds, true),
+  }).finally(() => {
+    if (current()) set({ abortController: null });
+    controller.abort();
+  });
 
   // Background tabs can miss the `response.elicitation_resolved` SSE event
   // (browser throttling), so a pending ApprovalCard that was answered on
@@ -5024,7 +5014,7 @@ async function bindStream(
     if (stateBeforeFetch.blocks.length > 0) {
       // Reobserve the existing window without clearing older loaded pages or
       // replaying a send/scroll intent through a loading-state remount.
-      await reconcileOnReconnect(id, set, get, ignoredNativeMessageIds);
+      await reconcileOnReconnect(id, set, get, ignoredNativeMessageIds, !hasSlot);
       set({ loadingConversation: false });
       return;
     }
@@ -6011,6 +6001,11 @@ function reconcilePendingMessages(
     (block): block is UserMessageBlock =>
       block.type === "user_message" && !isSystemUserContent(block.content),
   );
+  const pendingItemIds = new Set(
+    pending
+      .flatMap((message) => [message.stableId, message.pendingId, message.tempId])
+      .filter((id): id is string => id !== undefined),
+  );
   const remaining = pending.filter((message) => {
     if (message.initialDraft) return true;
     const match = receipts.findIndex((receipt) => {
@@ -6020,6 +6015,8 @@ function reconcilePendingMessages(
         receipt.ctx.itemId === message.tempId
       )
         return true;
+      // Equal text must not steal a receipt naming another pending input.
+      if (receipt.ctx.itemId && pendingItemIds.has(receipt.ctx.itemId)) return false;
       if (message.communication || receipt.communication) {
         return (
           message.communication !== undefined &&
@@ -6044,14 +6041,21 @@ function reconcilePendingMessages(
   );
   const replayed: PendingUserMessage[] = [];
   for (const input of session.pendingInputs ?? []) {
-    const matching = unmatched.findIndex(
+    const exact = unmatched.findIndex(
       (message) =>
         message.pendingId === input.pendingId ||
         message.tempId === input.pendingId ||
-        (!message.communication &&
-          !input.communication &&
-          pendingContentsMatch(message, input.content)),
+        message.stableId === input.pendingId,
     );
+    const matching =
+      exact !== -1
+        ? exact
+        : unmatched.findIndex(
+            (message) =>
+              !message.communication &&
+              !input.communication &&
+              pendingContentsMatch(message, input.content),
+          );
     if (matching !== -1) {
       const [message] = unmatched.splice(matching, 1);
       const at = remaining.indexOf(message!);
@@ -6085,17 +6089,31 @@ function reconcilePendingMessages(
 }
 
 const reconnectReconciliations = new WeakMap<AbortController, Promise<void>>();
+const snapshotBackfills = new WeakMap<
+  AbortController,
+  {
+    generation: number;
+    reader: SnapshotBackfill<ConversationItem>;
+  }
+>();
 
 function reconcileOnReconnect(
   id: string,
   set: Setter,
   get: Getter,
   ignoredNativeMessageIds: Set<string> = new Set<string>(),
+  bounded = false,
 ): Promise<void> {
   const controller = get().abortController;
   const existing = controller && reconnectReconciliations.get(controller);
   if (existing) return existing;
-  const reconciliation = backfillOnReconnect(id, set, get, ignoredNativeMessageIds).finally(() => {
+  const reconciliation = backfillOnReconnect(
+    id,
+    set,
+    get,
+    ignoredNativeMessageIds,
+    bounded,
+  ).finally(() => {
     if (controller) reconnectReconciliations.delete(controller);
   });
   if (controller) reconnectReconciliations.set(controller, reconciliation);
@@ -6107,10 +6125,13 @@ async function backfillOnReconnect(
   set: Setter,
   get: Getter,
   ignoredNativeMessageIds: Set<string> = new Set<string>(),
+  bounded = false,
 ): Promise<void> {
   if (queryClient === null) return;
   const bindingController = get().abortController;
   const launchBeforeFetch = mcpStartupBeforeSnapshot(id, get());
+  const blocksBeforeFetch = get().blocks;
+  if (!bounded && bindingController) snapshotBackfills.delete(bindingController);
   // Captured before any await: the ids rendered BEFORE the gap. The overlap
   // check below must not be satisfied by items the reconnected pump appends
   // while we fetch — those are at the new end of the transcript, not proof
@@ -6157,6 +6178,32 @@ async function backfillOnReconnect(
   let hasMore = page.hasMore;
   let usedLargePages = false;
   let covered = !hasMore || items.some((it) => preGapIds.has(it.id));
+  if (bounded && bindingController) {
+    let backfill = snapshotBackfills.get(bindingController);
+    if (!backfill || backfill.generation !== generation) {
+      backfill = { generation, reader: new SnapshotBackfill<ConversationItem>() };
+      snapshotBackfills.set(bindingController, backfill);
+    }
+    try {
+      const progress = await backfill.reader.read(
+        page,
+        preGapIds,
+        (cursor) => fetchSessionItemsPage(id, { olderThan: cursor, limit: INITIAL_WINDOW_ITEMS }),
+        () => !stale(),
+        RECONNECT_BACKFILL_MAX_PAGES,
+      );
+      if (stale()) return;
+      if (!progress.complete) {
+        set((state) => reconnectStatusPatch(session, state, launchBeforeFetch));
+        return;
+      }
+      items = progress.items;
+      hasMore = progress.hasMore;
+      covered = true;
+    } catch {
+      return;
+    }
+  }
   // Each page starts before the cursor returned by the prior page.
   /* oxlint-disable no-await-in-loop */
   for (let fetched = 1; !covered; fetched += 1) {
@@ -6219,7 +6266,12 @@ async function backfillOnReconnect(
   const snapshotPending = pendingElicitationBlocksFromSnapshot(session);
   const snapshotItemIds = new Set(items.map((it) => it.id));
   set((s) => {
-    const currentBlocks = withoutNativePreviews(s.blocks, snapshotNativeMessageIds);
+    const refreshed = updateLoadedResourceItems(
+      s.blocks,
+      snapshotBlocks.filter((block) => block.type === "native_tool").map((block) => block.data),
+      blocksBeforeFetch,
+    );
+    const currentBlocks = withoutNativePreviews(refreshed, snapshotNativeMessageIds);
     const seen = new Set(
       currentBlocks.map((b) => b.ctx.itemId).filter((iid): iid is string => Boolean(iid)),
     );
@@ -6377,6 +6429,7 @@ export async function startStreamPump(
   get: Getter,
   ignoredNativeMessageIds: Set<string> = new Set<string>(),
   reconcileFirstOpen = false,
+  observationController: AbortController = controller,
 ): Promise<void> {
   nativePreviewTombstonesByController.set(controller, ignoredNativeMessageIds);
   let reconcileAfterSlotWait = reconcileFirstOpen;
@@ -6413,7 +6466,7 @@ export async function startStreamPump(
     clearCatchupTimers();
     catchupTimers = RECONNECT_STATUS_CATCHUP_DELAYS_MS.map((delayMs) =>
       window.setTimeout(() => {
-        if (controller.signal.aborted || isConversationDisposed(id)) return;
+        if (observationController.signal.aborted || isConversationDisposed(id)) return;
         if (withStatus) runGuardedStatusReconcile();
         const launch = get().sandboxStatus;
         if (launch !== null && launch.stage !== "failed") void reconcileLaunchStatus(id, set, get);
@@ -6448,28 +6501,28 @@ export async function startStreamPump(
   // so its awaits cannot be parallelized; no-await-in-loop doesn't apply.
   /* eslint-disable no-await-in-loop */
   try {
-    while (!controller.signal.aborted && !isConversationDisposed(id)) {
+    while (!observationController.signal.aborted && !isConversationDisposed(id)) {
       // Back off only between consecutive failed opens. A drop after a
       // healthy connection (the benign ~5-min ingress recycle) leaves
       // failedOpens at 0, so it reconnects instantly with no delay.
       if (failedOpens > 0) {
-        await abortableDelay(nextReconnectDelay(failedOpens), controller.signal);
-        if (controller.signal.aborted || isConversationDisposed(id)) break;
+        await abortableDelay(nextReconnectDelay(failedOpens), observationController.signal);
+        if (observationController.signal.aborted || isConversationDisposed(id)) break;
       } else if (hasConnected && conversationRegistry.getActive()?.id !== id) {
         // Stagger a BACKGROUND conversation's reconnect. The ingress caps every
         // stream at ~5 minutes, and streams opened together recycle together, so
         // without this a tab holding N conversations fires N reconnects — each
         // with a snapshot + items fetch — in one burst. The conversation on
         // screen is never delayed.
-        await abortableDelay(backgroundReconnectJitter(), controller.signal);
-        if (controller.signal.aborted || isConversationDisposed(id)) break;
+        await abortableDelay(backgroundReconnectJitter(), observationController.signal);
+        if (observationController.signal.aborted || isConversationDisposed(id)) break;
       }
 
       // Presence and host-routing changes recycle only this connection.
       // Outer aborts still cancel the live fetch and the whole binding.
       const attempt = new AbortController();
       const onOuterAbort = () => attempt.abort();
-      controller.signal.addEventListener("abort", onOuterAbort);
+      observationController.signal.addEventListener("abort", onOuterAbort);
       presenceAttemptControllers.add(attempt);
       // Stamped from attempt start so the wake fast-path can also recycle
       // an open that has hung past the stale window, not just a dead body.
@@ -6483,7 +6536,7 @@ export async function startStreamPump(
           streamRes = await openSessionStream(id, attempt.signal, { idle });
         } catch (err) {
           if (err instanceof Error && err.name === "AbortError") {
-            if (controller.signal.aborted || isConversationDisposed(id)) break;
+            if (observationController.signal.aborted || isConversationDisposed(id)) break;
             // Only the attempt was aborted; reopen with current presence
             // and host routing without discarding the stream binding.
             continue;
@@ -6494,7 +6547,7 @@ export async function startStreamPump(
           continue;
         }
 
-        if (controller.signal.aborted || isConversationDisposed(id)) break;
+        if (observationController.signal.aborted || isConversationDisposed(id)) break;
         if (!streamRes.ok || !streamRes.body) {
           // Release the unconsumed error-response body so the underlying fetch
           // connection is freed promptly rather than lingering across retries.
@@ -6608,7 +6661,7 @@ export async function startStreamPump(
         const pumpPromise = pumpStreamEvents(
           id,
           guardedBody,
-          controller,
+          observationController,
           set,
           get,
           undefined,
@@ -6633,17 +6686,17 @@ export async function startStreamPump(
 
         // Presence or host changes abort only the attempt; a live outer
         // controller means the pump must reconnect and reconcile the gap.
-        if (reason === "aborted" && !controller.signal.aborted) {
+        if (reason === "aborted" && !observationController.signal.aborted) {
           reason = "dropped";
         }
         // Only a transport drop is reconnectable; everything else ends the loop.
         if (reason !== "dropped") break;
-        if (!controller.signal.aborted && !isConversationDisposed(id)) {
+        if (!observationController.signal.aborted && !isConversationDisposed(id)) {
           markLivePreviewsInterrupted(id, set);
         }
       } finally {
         liveAttempt = null;
-        controller.signal.removeEventListener("abort", onOuterAbort);
+        observationController.signal.removeEventListener("abort", onOuterAbort);
         presenceAttemptControllers.delete(attempt);
         streamAttemptActivity.delete(attempt);
       }
@@ -6652,7 +6705,7 @@ export async function startStreamPump(
     unsubscribeHost?.();
     if (statusReconcileTimer !== null) window.clearInterval(statusReconcileTimer);
     clearCatchupTimers();
-    if (get().abortController === controller) {
+    if (observationController === controller && get().abortController === controller) {
       set({ abortController: null });
     }
   }
@@ -7230,7 +7283,12 @@ export async function pumpStreamEvents(
         if (event.type !== "text_delta" || event.messageId === undefined) flushLiveText();
         // Commit what the stream emitted before a turn edge applies, so the
         // edge's adoption and cleanup (e.g. of a "Compacting…" spinner) see it.
-        if (event.type === "session_status" || event.type === "session_interrupted") flush();
+        if (
+          event.type === "session_status" ||
+          event.type === "session_interrupted" ||
+          event.type === "session_item_updated"
+        )
+          flush();
       },
     ),
     id,
@@ -8242,6 +8300,13 @@ export function handleSessionEvent(event: StreamEvent, streamConversationId?: st
   };
 
   switch (event.type) {
+    case "session_item_updated": {
+      applyToConversation((state) => {
+        const blocks = updateLoadedResourceItems(state.blocks, [event.item]);
+        return blocks === state.blocks ? {} : { blocks };
+      });
+      break;
+    }
     case "response_completed":
     case "response_failed":
       // Prefer contextTokens (last sub-call total) for the context ring — on
@@ -8266,6 +8331,12 @@ export function handleSessionEvent(event: StreamEvent, streamConversationId?: st
       // current list, not a diff.
       applyToConversation({ todos: event.todos });
       return;
+    case "session_background_tasks":
+      applyToNamedConversation(event.conversationId, {
+        backgroundTaskCount: event.backgroundTaskCount,
+        backgroundTasks: event.backgroundTasks,
+      });
+      break;
     case "session_terminal_pending":
       // Toggle the Terminal-pill spinner. The runner sets pending=true
       // before auto-creating the terminal and clears it once the

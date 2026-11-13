@@ -5,6 +5,7 @@ import { MessageCircleIcon, SquareArrowOutUpRightIcon } from "lucide-react";
 import { ConversationScopeContext } from "@/components/chat/conversationScope";
 import { Button } from "@/components/ui/button";
 import { MessageFooter } from "@/components/chat/MessageFooter";
+import { FilePathAwareMessageResponse } from "@/components/blocks/ChatMarkdown";
 import { useChildSessions } from "@/hooks/useChildSessions";
 import { Link, useLocation, useNavigate } from "@/lib/routing";
 import { sessionNavigationSearch } from "@/lib/sessionNavigation";
@@ -12,13 +13,16 @@ import {
   readSubagentActivity,
   subagentEventStatus,
   subagentName,
-  subagentTaskDescription,
+  recordedSubagentReturn,
+  shouldRenderSubagentReply,
+  subagentMatchesChild,
   shortTaskText,
   type SubagentActivity,
 } from "@/lib/subagentActivity";
 import { useConversationChatStore, useConversationChatVisible } from "@/workbench/ScopedChatStore";
 import { useWorkbenchActions } from "@/workbench/WorkbenchContext";
 import { SubagentTaskRow } from "./SubagentTaskRow";
+import { SubagentReply } from "./SubagentReply";
 import { childStatus, type AgentStatus } from "@/shell/subagentStatus";
 
 export function SubagentActivityMessage({ data }: { data: Record<string, unknown> }) {
@@ -27,33 +31,41 @@ export function SubagentActivityMessage({ data }: { data: Record<string, unknown
   const ownerId = useChatStore((state) => state.conversationId);
   const conversationId = scoped ?? ownerId;
   const queryClient = useContext(QueryClientContext);
+  const blocks = useChatStore((state) => state.blocks);
   const activity = readSubagentActivity(data);
   if (!activity) return null;
-  return queryClient && conversationId ? (
-    <RecordedTask activity={activity} conversationId={conversationId} />
+  const ownerBlocks = ownerId === conversationId ? blocks : [];
+  const completion = recordedSubagentReturn(activity, ownerBlocks);
+  if (
+    activity.phase === "returned" &&
+    !shouldRenderSubagentReply(activity, ownerBlocks, conversationId)
+  )
+    return null;
+  const status = completion
+    ? subagentEventStatus(completion)
+    : ["completed", "failed", "cancelled", "killed", "stopped"].includes(activity.status ?? "")
+      ? subagentEventStatus(activity)
+      : undefined;
+  return queryClient && conversationId && activity.phase === "delegated" ? (
+    <RecordedTask activity={activity} conversationId={conversationId} status={status} />
   ) : (
-    <Task activity={activity} conversationId={conversationId} />
+    <Task activity={activity} conversationId={conversationId} status={status} />
   );
 }
 
 function RecordedTask({
   activity,
   conversationId,
+  status,
 }: {
   activity: SubagentActivity;
   conversationId: string;
+  status?: AgentStatus;
 }) {
   const visible = useConversationChatVisible();
   const { children } = useChildSessions(conversationId, undefined, { enabled: visible });
   const child = children.find((candidate) => candidate.id === activity.sessionId);
-  const currentDescription = child ? subagentTaskDescription(child) : null;
-  const currentDispatch =
-    child?.labels?.["omnigent.subagent.dispatch_id"] ??
-    child?.labels?.["omnigent.codex_native.collab_tool_call_id"] ??
-    child?.labels?.["omnigent.claude_native.tool_use_id"];
-  const matchesTask = activity.dispatchId
-    ? activity.dispatchId === currentDispatch
-    : !activity.taskDescription || activity.taskDescription === currentDescription;
+  const matchesTask = !!child && subagentMatchesChild(activity, child);
   const hasCurrentState =
     child &&
     (child.busy ||
@@ -64,16 +76,12 @@ function RecordedTask({
     <Task
       activity={activity}
       conversationId={conversationId}
-      agentName={activity.agentName ?? (child ? subagentName(child) : undefined)}
-      description={
-        child && (!activity.dispatchId || matchesTask)
-          ? (currentDescription ?? undefined)
-          : undefined
-      }
+      agentName={activity.agentName ?? (child && matchesTask ? subagentName(child) : undefined)}
       status={
-        activity.phase === "delegated" && child && hasCurrentState && matchesTask
+        status ??
+        (activity.phase === "delegated" && child && hasCurrentState && matchesTask
           ? childStatus(child)
-          : undefined
+          : undefined)
       }
     />
   );
@@ -83,13 +91,11 @@ function Task({
   activity,
   conversationId,
   agentName,
-  description,
   status,
 }: {
   activity: SubagentActivity;
   conversationId: string | null;
   agentName?: string;
-  description?: string;
   status?: AgentStatus;
 }) {
   const workbench = useWorkbenchActions();
@@ -100,11 +106,79 @@ function Task({
   params.set("panel", "activity");
   params.set("focusAgentId", activity.sessionId);
   const to = { pathname: `/c/${encodeURIComponent(origin)}`, search: `?${params.toString()}` };
-  const name = agentName ?? activity.agentName ?? "Agent";
-  const task = activity.taskDescription ?? description ?? activity.taskInput;
+  const name = agentName ?? activity.agentName ?? activity.agentRole ?? "Agent";
+  const task = activity.taskDescription;
   const input = activity.taskInput;
-  const result = activity.resultText;
-  const preview = result ?? (input && input !== task ? input : null);
+  const action = (
+    <>
+      <Button variant="ghost" size="icon-xs" aria-label={`Open ${name} chat beside`} asChild>
+        <Link
+          to={{ pathname: `/c/${encodeURIComponent(activity.sessionId)}`, search: "" }}
+          onClick={(event) => {
+            if (
+              event.button !== 0 ||
+              event.metaKey ||
+              event.ctrlKey ||
+              event.shiftKey ||
+              event.altKey
+            )
+              return;
+            if (workbench) {
+              event.preventDefault();
+              workbench.openView(
+                { kind: "conversation", conversationId: activity.sessionId, title: name },
+                { beside: true },
+              );
+            }
+          }}
+        >
+          <MessageCircleIcon aria-hidden="true" className="size-3.5" />
+        </Link>
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon-xs"
+        aria-label={`Inspect ${name} in Orchestration`}
+        asChild
+      >
+        <Link
+          to={to}
+          onClick={(event) => {
+            if (
+              event.button !== 0 ||
+              event.metaKey ||
+              event.ctrlKey ||
+              event.shiftKey ||
+              event.altKey
+            )
+              return;
+            event.preventDefault();
+            if (workbench && origin)
+              workbench.openView(
+                {
+                  kind: "activity",
+                  source: { kind: "chat", conversationId: origin },
+                  focusAgentId: activity.sessionId,
+                },
+                { beside: true },
+              );
+            else navigate(to);
+          }}
+        >
+          <SquareArrowOutUpRightIcon aria-hidden="true" className="size-3.5" />
+        </Link>
+      </Button>
+    </>
+  );
+  if (activity.phase === "returned")
+    return (
+      <SubagentReply
+        activity={activity}
+        conversationId={conversationId}
+        agentName={name}
+        action={action}
+      />
+    );
   return (
     <div
       className="not-prose w-full min-w-0 text-sm"
@@ -114,92 +188,27 @@ function Task({
     >
       <SubagentTaskRow
         agentName={name}
-        description={
-          (task ? shortTaskText(task) : null) ??
-          (activity.phase === "delegated" ? "Delegated task" : "Result returned")
-        }
+        description={task ? shortTaskText(task, 80) : "Delegated task"}
         status={status ?? subagentEventStatus(activity)}
-        preview={preview ? shortTaskText(preview, 180) : undefined}
-        action={
-          <>
-            <Button variant="ghost" size="icon-xs" aria-label={`Open ${name} chat beside`} asChild>
-              <Link
-                to={{ pathname: `/c/${encodeURIComponent(activity.sessionId)}`, search: "" }}
-                onClick={(event) => {
-                  if (
-                    event.button !== 0 ||
-                    event.metaKey ||
-                    event.ctrlKey ||
-                    event.shiftKey ||
-                    event.altKey
-                  )
-                    return;
-                  if (workbench) {
-                    event.preventDefault();
-                    workbench.openView(
-                      { kind: "conversation", conversationId: activity.sessionId, title: name },
-                      { beside: true },
-                    );
-                  }
-                }}
-              >
-                <MessageCircleIcon aria-hidden="true" className="size-3.5" />
-              </Link>
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              aria-label={`Inspect ${name} in Orchestration`}
-              asChild
-            >
-              <Link
-                to={to}
-                onClick={(event) => {
-                  if (
-                    event.button !== 0 ||
-                    event.metaKey ||
-                    event.ctrlKey ||
-                    event.shiftKey ||
-                    event.altKey
-                  )
-                    return;
-                  event.preventDefault();
-                  if (workbench && origin)
-                    workbench.openView(
-                      {
-                        kind: "activity",
-                        source: { kind: "chat", conversationId: origin },
-                        focusAgentId: activity.sessionId,
-                      },
-                      { beside: true },
-                    );
-                  else navigate(to);
-                }}
-              >
-                <SquareArrowOutUpRightIcon aria-hidden="true" className="size-3.5" />
-              </Link>
-            </Button>
-          </>
-        }
+        action={action}
       >
-        {input || result ? (
+        {input ? (
           <div className="group space-y-2 py-1 text-sm">
-            {input && (
-              <div>
-                <p className="text-xs text-muted-foreground">Input</p>
-                <p className="whitespace-pre-wrap break-words">{input}</p>
-              </div>
-            )}
-            {result && (
-              <div>
-                <p className="text-xs text-muted-foreground">Result</p>
-                <p className="whitespace-pre-wrap break-words">{result}</p>
-              </div>
-            )}
+            <ConversationScopeContext.Provider
+              value={activity.taskInputRef?.conversationId ?? conversationId}
+            >
+              <FilePathAwareMessageResponse
+                sourceItemId={activity.taskInputRef?.itemId ?? activity.itemId}
+                breaks
+                mode="static"
+              >
+                {input}
+              </FilePathAwareMessageResponse>
+            </ConversationScopeContext.Provider>
             <MessageFooter
-              text={[input, result].filter(Boolean).join("\n\n")}
-              messageId={null}
-              conversationId={conversationId}
+              text={input}
+              messageId={activity.taskInputRef?.itemId ?? activity.itemId}
+              conversationId={activity.taskInputRef?.conversationId ?? conversationId}
             />
           </div>
         ) : undefined}

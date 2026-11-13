@@ -1,10 +1,11 @@
 // Modified for Triune.
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { useChatActivity, type ChatActivityEntry } from "@/hooks/useChatActivity";
 import { useChildSessionTree, type ChildSessionInfo } from "@/hooks/useChildSessions";
-import { usePeerMessages } from "@/hooks/usePeerMessages";
+import { toast } from "@/lib/notifications";
 import { useNativeChildCapabilities } from "@/hooks/useNativeChildCapabilities";
 import { authenticatedFetch } from "@/lib/identity";
 import { ChatActivityPanel, type ChatActivityPanelProps } from "./ChatActivityPanel";
@@ -12,11 +13,11 @@ import { ChatActivityPanel, type ChatActivityPanelProps } from "./ChatActivityPa
 vi.mock("@/hooks/useChatActivity", () => ({ useChatActivity: vi.fn() }));
 vi.mock("@/hooks/useNativeChildCapabilities", () => ({ useNativeChildCapabilities: vi.fn() }));
 vi.mock("@/hooks/useChildSessions", () => ({ useChildSessionTree: vi.fn() }));
-vi.mock("@/hooks/usePeerMessages", () => ({
-  usePeerMessages: vi.fn(),
-  peerActivityKey: (message: { id: string }) => message.id,
+vi.mock("@/lib/notifications", () => ({ toast: { error: vi.fn() } }));
+vi.mock("@/lib/identity", () => ({
+  authenticatedFetch: vi.fn(),
+  getCurrentUserId: () => "activity-test-viewer",
 }));
-vi.mock("@/lib/identity", () => ({ authenticatedFetch: vi.fn() }));
 vi.mock("@/components/blocks/PeerMessage", () => ({ PeerMessage: () => <div>Peer message</div> }));
 vi.mock("./SubagentsGraphView", () => ({
   SubagentsGraphView: ({ rootSessionId }: { rootSessionId: string }) => (
@@ -26,6 +27,7 @@ vi.mock("./SubagentsGraphView", () => ({
 
 const query = vi.mocked(useChatActivity);
 const refetch = vi.fn();
+const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 function entry(overrides: Partial<ChatActivityEntry> = {}): ChatActivityEntry {
   return {
     id: "shell",
@@ -68,9 +70,11 @@ function activity(entries: ChatActivityEntry[], extra: Record<string, unknown> =
 }
 function panel(props: Partial<ChatActivityPanelProps> = {}) {
   return (
-    <MemoryRouter>
-      <ChatActivityPanel conversationId="selected-chat" rootSessionId="root-chat" {...props} />
-    </MemoryRouter>
+    <QueryClientProvider client={client}>
+      <MemoryRouter>
+        <ChatActivityPanel conversationId="selected-chat" rootSessionId="root-chat" {...props} />
+      </MemoryRouter>
+    </QueryClientProvider>
   );
 }
 function options() {
@@ -91,17 +95,11 @@ beforeEach(() => {
     error: null,
   } as ReturnType<typeof useNativeChildCapabilities>);
   activity([]);
-
-  vi.mocked(usePeerMessages).mockReturnValue({
-    messages: [],
-    isLoading: false,
-    error: null,
-    hasNextPage: false,
-    refetch: vi.fn(),
-    fetchNextPage: vi.fn(),
-  } as unknown as ReturnType<typeof usePeerMessages>);
 });
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  client.clear();
+});
 
 it("shows settled history in separate sections ordered by observed activity", () => {
   agents([
@@ -124,20 +122,20 @@ it("shows settled history in separate sections ordered by observed activity", ()
   const { container } = render(panel());
   const agentRows = within(screen.getByRole("list", { name: "Agents" })).getAllByRole("listitem");
   expect(agentRows.map((row) => row.querySelector("button")?.textContent)).toEqual([
-    "Failed agentCheck navigation",
-    "JamesCheck navigation",
-    "OlderCheck navigation",
+    "Failed agent",
+    "James",
+    "Older",
   ]);
   expect(agentRows[0]).toHaveTextContent("Failed");
   expect(agentRows[1]).toHaveTextContent("Completed");
   const shellRows = within(screen.getByRole("list", { name: "Shells" })).getAllByRole("listitem");
   expect(shellRows.map((row) => row.querySelector("button")?.textContent)).toEqual([
-    "old shellold shell",
-    "idle shellidle shell",
-    "bashbash",
-    "lost shelllost shell",
+    "old shell",
+    "idle shell",
+    "bash",
+    "lost shell",
   ]);
-  expect(shellRows[3]).toHaveTextContent("Disconnected · availability unknown");
+  expect(shellRows[3]).toHaveTextContent("Disconnected");
   expect(container.querySelectorAll(".workspace-control-header")).toHaveLength(1);
   expect(container.querySelectorAll(".density-row")).toHaveLength(7);
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -161,15 +159,45 @@ it("uses the shared header control for All, Agents and Shells", () => {
   expect(screen.queryByRole("region", { name: "Shells" })).not.toBeInTheDocument();
 });
 
-it("opens the same named child through its row and Open action without an inspector", () => {
+it("renders Markdown descriptions outside the opening button", async () => {
+  agents([
+    child({
+      task_summary:
+        "Inspect **dispatches** and `reports` with [context](https://example.test/context).",
+    }),
+  ]);
+  const open = vi.fn();
+  render(panel({ onOpenAgent: open }));
+  const row = screen.getByRole("listitem");
+  expect(within(row).getByText("dispatches")).toHaveClass("font-semibold");
+  expect(within(row).getByText("reports").closest("code")).not.toBeNull();
+  const link = within(row).getByRole("link", { name: "context" });
+  expect(link.closest("button")).toBeNull();
+  fireEvent.click(link);
+  expect(open).not.toHaveBeenCalled();
+  fireEvent.click(within(row).getByRole("button", { name: "James" }));
+  expect(open).toHaveBeenCalledOnce();
+});
+
+it("restores the selected category after retirement without sharing it with another view", () => {
+  const first = render(panel({ viewId: "retirement-category" }));
+  fireEvent.click(screen.getByRole("button", { name: "Shells" }));
+  first.unmount();
+  const restored = render(panel({ viewId: "retirement-category" }));
+  expect(screen.getByRole("button", { name: "Shells" })).toHaveAttribute("aria-pressed", "true");
+  restored.rerender(panel({ viewId: "separate-category" }));
+  expect(screen.getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "true");
+});
+
+it("opens the named child through its row without a redundant Open action or inspector", () => {
   const agent = child({ busy: false, current_task_status: "completed" });
   agents([agent]);
   const open = vi.fn();
   render(panel({ onOpenAgent: open }));
   fireEvent.click(screen.getByRole("button", { name: "James" }));
-  fireEvent.click(screen.getByRole("button", { name: "Open James" }));
+  expect(screen.queryByRole("button", { name: "Open James" })).toBeNull();
   fireEvent.click(screen.getByRole("listitem").firstElementChild!);
-  expect(open.mock.calls).toEqual([[agent], [agent], [agent]]);
+  expect(open.mock.calls).toEqual([[agent], [agent]]);
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });
 
@@ -205,19 +233,17 @@ it("reports an out-of-history target honestly without inventing an agent record"
   expect(screen.queryByRole("listitem")).not.toBeInTheDocument();
 });
 
-it("gates all queries by visibility and peer polling by the explicit Messages option", () => {
+it("gates activity queries by visibility and removes unrelated menu entries", () => {
   const view = render(panel());
-  expect(usePeerMessages).toHaveBeenLastCalledWith("selected-chat", { enabled: false });
-  choose("Messages");
-  expect(usePeerMessages).toHaveBeenLastCalledWith("selected-chat", { enabled: true });
+  const menu = options();
+  expect(menu.queryByRole("menuitemradio", { name: "Messages" })).toBeNull();
+  expect(menu.queryByRole("menuitem", { name: "History coverage" })).toBeNull();
+  fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
   view.rerender(panel({ active: false }));
   expect(query).toHaveBeenLastCalledWith("selected-chat", { enabled: false });
   expect(useChildSessionTree).toHaveBeenLastCalledWith("root-chat", false);
-  expect(usePeerMessages).toHaveBeenLastCalledWith("selected-chat", { enabled: false });
   view.rerender(panel());
-  expect(usePeerMessages).toHaveBeenLastCalledWith("selected-chat", { enabled: true });
-  fireEvent.click(screen.getByRole("button", { name: "All" }));
-  expect(usePeerMessages).toHaveBeenLastCalledWith("selected-chat", { enabled: false });
+  expect(query).toHaveBeenLastCalledWith("selected-chat", { enabled: true });
 });
 
 it.each(["running", "idle", "exited", "unknown", "disconnected"] as const)(
@@ -233,7 +259,7 @@ it.each(["running", "idle", "exited", "unknown", "disconnected"] as const)(
     activity([record]);
     const open = vi.fn();
     render(panel({ onOpenTerminal: open }));
-    fireEvent.click(screen.getByRole("button", { name: "Open bash" }));
+    fireEvent.click(screen.getByRole("button", { name: "bash" }));
     expect(open).toHaveBeenCalledWith({
       sessionId: "origin-chat",
       terminalId: "terminal_bash_a",
@@ -265,7 +291,7 @@ it("retains command-only history and sends its output without a live attach targ
   const open = vi.fn();
   render(panel({ onOpenTerminal: open }));
   expect(screen.getByText("pnpm test")).toBeVisible();
-  fireEvent.click(screen.getByRole("button", { name: "Open Commands without a terminal" }));
+  fireEvent.click(screen.getByRole("button", { name: "Commands without a terminal" }));
   expect(open).toHaveBeenCalledWith(
     expect.objectContaining({
       terminalId: "",
@@ -305,17 +331,17 @@ it("assigns commands by launch time and keeps reused terminal IDs isolated by se
   expect(
     within(screen.getByRole("list", { name: "Shells" })).getAllByRole("listitem")[0],
   ).toHaveTextContent("new command");
-  fireEvent.click(screen.getByRole("button", { name: "Open previous bash" }));
+  fireEvent.click(screen.getByRole("button", { name: "previous bash" }));
   expect(open).toHaveBeenLastCalledWith(
     expect.objectContaining({ activity: expect.objectContaining({ entries: [old, oldCommand] }) }),
   );
-  fireEvent.click(screen.getByRole("button", { name: "Open bash" }));
+  fireEvent.click(screen.getByRole("button", { name: "bash" }));
   expect(open).toHaveBeenLastCalledWith(
     expect.objectContaining({
       activity: expect.objectContaining({ entries: [recent, newCommand] }),
     }),
   );
-  fireEvent.click(screen.getByRole("button", { name: "Open other bash" }));
+  fireEvent.click(screen.getByRole("button", { name: "other bash" }));
   expect(open).toHaveBeenLastCalledWith(
     expect.objectContaining({
       sessionId: "another-chat",
@@ -324,7 +350,7 @@ it("assigns commands by launch time and keeps reused terminal IDs isolated by se
   );
 });
 
-it("uses exact advisories and exposes bounded coverage inline", () => {
+it("keeps internal capture diagnostics out of the view and menu", () => {
   activity([], {
     data: {
       data: [],
@@ -341,12 +367,10 @@ it("uses exact advisories and exposes bounded coverage inline", () => {
     },
   });
   render(panel());
-  expect(screen.getByText("Exit timestamps are unavailable.")).toBeVisible();
+  expect(screen.queryByText("Exit timestamps are unavailable.")).toBeNull();
   expect(screen.queryByText("History incomplete")).not.toBeInTheDocument();
-  fireEvent.click(options().getByRole("menuitem", { name: "History coverage" }));
-  expect(screen.getByRole("region", { name: "History coverage" })).toHaveTextContent(
-    "128 retained shell entries; 8192 bytes",
-  );
+  expect(options().queryByRole("menuitem", { name: "History coverage" })).toBeNull();
+  expect(screen.queryByRole("region", { name: "History coverage" })).toBeNull();
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });
 
@@ -371,7 +395,7 @@ it("stops only capability-approved running agents and keeps failures visible", a
   view.rerender(panel({ onOpenAgent: open, onStopAgent: stop, canStopAgent: () => true }));
   expect(screen.queryByRole("button", { name: "Stop Done agent" })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Stop James" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent("Native stop unavailable");
+  await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Native stop unavailable"));
   expect(stop).toHaveBeenCalledWith(running);
   expect(open).not.toHaveBeenCalled();
 });
@@ -427,5 +451,5 @@ it("queries controls only for running native children and requires an affirmativ
   } as ReturnType<typeof useNativeChildCapabilities>);
   view.rerender(panel(props));
   expect(screen.queryByRole("button", { name: "Stop James" })).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Open James" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "James" })).toBeVisible();
 });
