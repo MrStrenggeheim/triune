@@ -315,16 +315,20 @@ def test_forwarder_streams_codex_command_output_before_completed_item(tmp_path: 
     asyncio.run(run())
 
     assert [payload["type"] for payload in posted] == [
+        "external_session_background_tasks",
         "external_conversation_item",
         "external_tool_output_delta",
+        "external_session_background_tasks",
         "external_conversation_item",
     ]
-    assert posted[0]["data"]["item_type"] == "function_call"
-    assert posted[1] == {
+    assert posted[0]["data"]["background_task_count"] == 1
+    assert posted[3]["data"] == {"background_task_count": 0, "background_tasks": []}
+    assert posted[1]["data"]["item_type"] == "function_call"
+    assert posted[2] == {
         "type": "external_tool_output_delta",
         "data": {"call_id": "call_abc123", "delta": "collecting tests..."},
     }
-    assert posted[2]["data"] == {
+    assert posted[4]["data"] == {
         "item_type": "function_call_output",
         "item_data": {
             "call_id": "call_abc123",

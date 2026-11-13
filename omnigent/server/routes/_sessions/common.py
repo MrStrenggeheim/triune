@@ -123,6 +123,7 @@ _EXTERNAL_ELICITATION_RESOLVED_TYPE: str = "external_elicitation_resolved"
 
 
 _EXTERNAL_SESSION_STATUS_TYPE: str = "external_session_status"
+_EXTERNAL_SESSION_BACKGROUND_TASKS_TYPE: str = "external_session_background_tasks"
 
 
 _SUBAGENT_STATUS_TYPE: str = "subagent.status"
@@ -580,6 +581,7 @@ _ALLOWED_EVENT_TYPES: frozenset[str] = frozenset(ITEM_TYPE_TO_DATA_CLS.keys()) |
     _EXTERNAL_BTW_DISMISS_TYPE,
     _EXTERNAL_ELICITATION_RESOLVED_TYPE,
     _EXTERNAL_SESSION_STATUS_TYPE,
+    _EXTERNAL_SESSION_BACKGROUND_TASKS_TYPE,
     _SUBAGENT_STATUS_TYPE,
     _EXTERNAL_SESSION_USAGE_TYPE,
     _EXTERNAL_COMPACTION_STATUS_TYPE,
@@ -641,6 +643,9 @@ _session_active_response_cache: WorkspaceScopedCache[str, str] = WorkspaceScoped
 
 
 _session_background_task_count_cache: WorkspaceScopedCache[str, int] = WorkspaceScopedCache()
+
+# Count-only producers own command exit independently of assistant turn failure.
+_session_background_task_inventory_sources: WorkspaceScopedSet[str] = WorkspaceScopedSet()
 
 
 # Per-shell detail behind the tally above, kept sticky in lockstep with it (see
@@ -1160,6 +1165,7 @@ __all__ = [
     "_EXTERNAL_OUTPUT_TEXT_DELTA_TYPE",
     "_EXTERNAL_PERMISSION_MODE_CHANGE_TYPE",
     "_EXTERNAL_REASONING_EFFORT_CHANGE_TYPE",
+    "_EXTERNAL_SESSION_BACKGROUND_TASKS_TYPE",
     "_EXTERNAL_SESSION_INTERRUPTED_TYPE",
     "_EXTERNAL_SESSION_STATUS_TYPE",
     "_EXTERNAL_SESSION_STATUS_VALUES",
@@ -1266,6 +1272,7 @@ __all__ = [
     "_server_runner_router",
     "_session_active_response_cache",
     "_session_background_task_count_cache",
+    "_session_background_task_inventory_sources",
     "_session_background_tasks_cache",
     "_session_mcp_startup_cache",
     "_session_sandbox_status_cache",

@@ -8,7 +8,7 @@ import copy
 import os
 import re
 import tempfile
-from collections.abc import Sequence
+from collections.abc import MutableMapping, Sequence
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
@@ -506,6 +506,24 @@ def materialize_codex_config_profile(
     _write_private_config(state_path, pending_state)
     _write_private_config(config_path, rendered)
     _write_private_config(state_path, final_state)
+
+
+def enable_codex_plan_tool_default(codex_home: Path) -> None:
+    """Enable native task plans in a private home unless explicitly configured."""
+    config_path = codex_home / "config.toml"
+    document = (
+        tomlkit.parse(config_path.read_text(encoding="utf-8"))
+        if config_path.exists()
+        else tomlkit.document()
+    )
+    tools = document.setdefault("tools", tomlkit.table())
+    if not isinstance(tools, MutableMapping):
+        return
+    plan = tools.setdefault("update_plan", tomlkit.table())
+    if not isinstance(plan, MutableMapping) or "enabled" in plan:
+        return
+    plan["enabled"] = True
+    _write_private_config(config_path, tomlkit.dumps(document))
 
 
 def redact_codex_launch_args(args: Sequence[str]) -> list[str]:

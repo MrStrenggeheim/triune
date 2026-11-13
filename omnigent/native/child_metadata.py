@@ -29,7 +29,9 @@ def child_metadata(child: Conversation) -> dict[str, str]:
         "omnigent.claude_native.prompt"
     )
     summary = (
-        child.task_summary
+        labels.get("omnigent.subagent.task_summary")
+        or labels.get("omnigent.codex_native.task_name")
+        or child.task_summary
         or labels.get("omnigent.claude_native.description")
         or (short_task(prompt) if prompt else None)
     )
@@ -45,7 +47,8 @@ def child_metadata(child: Conversation) -> dict[str, str]:
         ("native_task_id", labels.get("omnigent.claude_native.subagent_id")),
         (
             "dispatch_id",
-            labels.get("omnigent.codex_native.collab_tool_call_id")
+            labels.get("omnigent.subagent.dispatch_id")
+            or labels.get("omnigent.codex_native.collab_tool_call_id")
             or labels.get("omnigent.claude_native.tool_use_id"),
         ),
     ):

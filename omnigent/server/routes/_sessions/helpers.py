@@ -242,6 +242,7 @@ from omnigent.server.routes._sessions.common import (  # noqa: F401
     _read_last_seen,
     _session_active_response_cache,
     _session_background_task_count_cache,
+    _session_background_task_inventory_sources,
     _session_background_tasks_cache,
     _session_mcp_startup_cache,
     _session_sandbox_status_cache,
@@ -275,6 +276,7 @@ from omnigent.server.schemas import (
     ResponseObject,
     RetryErrorDetail,
     SandboxStatus,
+    SessionBackgroundTasksEvent,
     SessionBtwSidechatEvent,
     SessionChildSessionUpdatedEvent,
     SessionCodexApprovalModeEvent,
@@ -4959,6 +4961,38 @@ def _failure_log_detail(error: ErrorDetail | None) -> str:
     return f"{message[:_FAILURE_LOG_DETAIL_MAX_CHARS]}… (+{dropped} chars)"
 
 
+def _cache_background_tasks(
+    session_id: str,
+    count: int,
+    tasks: list[BackgroundTaskInfo] | None,
+) -> None:
+    """Keep session snapshot inventory fields in lockstep."""
+    if count > 0:
+        _session_background_task_count_cache[session_id] = count
+        _session_background_tasks_cache[session_id] = tasks or []
+    else:
+        _session_background_task_count_cache.pop(session_id, None)
+        _session_background_tasks_cache.pop(session_id, None)
+        _session_background_task_inventory_sources.discard(session_id)
+
+
+def _publish_background_tasks(
+    session_id: str,
+    count: int,
+    tasks: list[BackgroundTaskInfo] | None,
+) -> None:
+    """Update and broadcast inventory without touching status or active response."""
+    _cache_background_tasks(session_id, count, tasks)
+    if count > 0:
+        _session_background_task_inventory_sources.add(session_id)
+    event = SessionBackgroundTasksEvent(
+        conversation_id=session_id,
+        background_task_count=count,
+        background_tasks=tasks or [] if count > 0 else [],
+    )
+    session_stream.publish(session_id, event.model_dump())
+
+
 def _publish_status(
     session_id: str,
     status: str,
@@ -5110,23 +5144,21 @@ def _publish_status(
     # count the Stop hook just published. A new ``running`` turn does NOT clear
     # it either — background shells outlive turn boundaries, so the tally
     # persists across the turn (the composer pill stays lit alongside the
-    # working shimmer) until the next authoritative count. Only a failure
-    # clears it: a dead session may never post another count to drop a stale
-    # tally.
+    # working shimmer) until the next authoritative count. A failure clears
+    # legacy Stop-hook tallies; independent command inventories own their exits.
     # The per-shell detail rides in lockstep with the count: they arrive on the
     # same Stop edge, so an authoritative count owns both caches (a positive
     # count stores the detail — possibly empty when a runner sent count-only —
     # and a ``0`` / failure clears it). ``None`` leaves both untouched.
     if background_task_count is not None:
-        if background_task_count > 0:
-            _session_background_task_count_cache[session_id] = background_task_count
-            _session_background_tasks_cache[session_id] = background_tasks or []
-        else:
-            _session_background_task_count_cache.pop(session_id, None)
-            _session_background_tasks_cache.pop(session_id, None)
+        _session_background_task_inventory_sources.discard(session_id)
+        _cache_background_tasks(session_id, background_task_count, background_tasks)
     elif status == "failed":
-        _session_background_task_count_cache.pop(session_id, None)
-        _session_background_tasks_cache.pop(session_id, None)
+        if session_id in _session_background_task_inventory_sources:
+            background_task_count = _session_background_task_count_cache.get(session_id, 0)
+            background_tasks = _session_background_tasks_cache.get(session_id, [])
+        else:
+            _cache_background_tasks(session_id, 0, None)
     event = SessionStatusEvent(
         type="session.status",
         conversation_id=session_id,
@@ -12328,6 +12360,7 @@ __all__ = [
     "_prune_pre_resolved_harness_elicitations",
     "_prune_session_read_state",
     "_publish_and_persist_resource_event",
+    "_publish_background_tasks",
     "_publish_btw_sidechat",
     "_publish_changed_files_invalidated",
     "_publish_codex_approval_mode",

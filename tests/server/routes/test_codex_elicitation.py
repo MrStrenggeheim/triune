@@ -64,6 +64,65 @@ def test_question_blocking_flags_and_native_answer_correlation(blocking, request
     }
 
 
+@pytest.mark.parametrize(
+    "questions", [[{"title": "Free text"}], [{"title": "Pick", "options": ["Blue", "Green"]}]]
+)
+def test_async_agent_message_questions_use_durable_item_identity(questions) -> None:
+    request = parse_codex_elicitation_request(
+        {
+            "id": "native-question",
+            "method": "item/completed",
+            "params": {
+                "threadId": "thread",
+                "turnId": "turn",
+                "item": {
+                    "type": "agentMessage",
+                    "id": "native-question",
+                    "delivery": "async",
+                    "questions": questions,
+                },
+            },
+        }
+    )
+    params = request.params.model_dump()
+    assert params["codex_method"] == "item/completed"
+    assert params["item_id"] == "native-question"
+    assert params["isBlocking"] is False
+    assert request.build_response(
+        ElicitationResult(action="accept", content={"question_0": "Blue"})
+    ) == {"input": [{"type": "text", "text": f"{questions[0]['title']}\nBlue"}]}
+    assert request.build_response(ElicitationResult(action="cancel")) == {"input": []}
+
+
+@pytest.mark.parametrize(
+    "item",
+    [
+        {"type": "agentMessage", "text": "request_user_input_async({questions: []})"},
+        {"type": "agentMessage", "delivery": "async", "questions": []},
+        {
+            "type": "agentMessage",
+            "delivery": "async",
+            "questions": [{"title": "Pick", "options": [7]}],
+        },
+        {
+            "type": "agentMessage",
+            "delivery": "async",
+            "questions": [{"title": "Pick"}],
+            "id": "different",
+        },
+    ],
+)
+def test_async_questions_require_native_structured_fields_and_matching_identity(item) -> None:
+    with pytest.raises(OmnigentError, match="structured message"):
+        parse_codex_elicitation_request(
+            {
+                "id": "native-question",
+                "method": "item/completed",
+                "params": {"threadId": "thread", "item": item},
+            }
+        )
+
+
 class TestParseCodexElicitationRequest:
     """Tests for the top-level request parser."""
 

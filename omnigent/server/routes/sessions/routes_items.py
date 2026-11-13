@@ -1,3 +1,5 @@
+# Modified for Triune.
+
 """Items and child-session routes."""
 
 from __future__ import annotations
@@ -10,6 +12,7 @@ from fastapi import (
     Request,
 )
 
+from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.runtime.policies.approval import _ELICITATION_MODE
 from omnigent.server._elicitation_registry import (
     _harness_elicitation_owners,
@@ -44,6 +47,7 @@ from omnigent.server.schemas import (
     ChildSessionList,
     PaginatedList,
 )
+from omnigent.server.subagent_activity import recover_subagent_activity
 from omnigent.stores import AgentStore, ConversationStore
 from omnigent.stores.permission_store import PermissionStore
 
@@ -114,7 +118,22 @@ def register_items_routes(
             before=before,
             order=order,
         )
-        data = [m.to_api_dict() for m in page.data]
+
+        async def can_read(source_id: str) -> bool:
+            try:
+                await _require_access_and_level(
+                    user_id, source_id, LEVEL_READ, permission_store, conversation_store
+                )
+                return True
+            except OmnigentError as exc:
+                if exc.code in {ErrorCode.FORBIDDEN, ErrorCode.NOT_FOUND}:
+                    return False
+                raise
+
+        items = await recover_subagent_activity(
+            session_id, page.data, conversation_store, can_read
+        )
+        data = [m.to_api_dict() for m in items]
         return PaginatedList(
             data=data,
             first_id=page.first_id,

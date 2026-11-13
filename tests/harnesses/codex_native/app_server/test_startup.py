@@ -1,3 +1,4 @@
+# Modified for Triune.
 """Startup tests for Codex app server."""
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from unittest.mock import AsyncMock, Mock
 
 import psutil
 import pytest
+import tomlkit
 
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.harnesses.codex_egress import CertificateFailure
@@ -77,6 +79,55 @@ async def test_start_reuses_initialized_readiness_client_for_hook_trust(
     try:
         assert trusted_with == [startup_client]
         assert startup_client.close_calls == 1
+    finally:
+        await server.close()
+
+
+@pytest.mark.parametrize(
+    "base_enabled,profile_enabled,version,expected",
+    [
+        (None, None, (0, 164, 0), True),
+        (False, None, (0, 164, 0), False),
+        (True, False, (0, 164, 0), False),
+        (None, True, (0, 164, 0), True),
+        (None, None, (0, 163, 0), None),
+        (None, None, None, None),
+    ],
+)
+async def test_start_defaults_native_plan_tool_after_profile_without_overwriting_user_choice(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    base_enabled: bool | None,
+    profile_enabled: bool | None,
+    version: tuple[int, int, int] | None,
+    expected: bool | None,
+) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    source_config = "# Retain source configuration.\n"
+    if base_enabled is not None:
+        source_config += f"[tools.update_plan]\nenabled = {str(base_enabled).lower()}\n"
+    (source / "config.toml").write_text(source_config)
+    if profile_enabled is not None:
+        (source / "quiet.config.toml").write_text(
+            f"[tools.update_plan]\nenabled = {str(profile_enabled).lower()}\n"
+        )
+    monkeypatch.setenv("CODEX_HOME", str(source))
+    _set_codex_version(monkeypatch, version)
+    _disable_codex_startup_rpc(monkeypatch)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    private = tmp_path / "private"
+    server = _test_app_server(tmp_path, private, tmp_path / "bridge", workspace)
+    server.config_profile = "quiet" if profile_enabled is not None else None
+    # CLI settings remain the highest-precedence layer; defaults add no -c flag.
+    server.config_overrides = ["tools.update_plan.enabled=false"]
+    await server.start()
+    try:
+        config = tomlkit.parse((private / "config.toml").read_text()).unwrap()
+        assert config.get("tools", {}).get("update_plan", {}).get("enabled") is expected
+        assert server.config_overrides == ["tools.update_plan.enabled=false"]
+        assert (source / "config.toml").read_text() == source_config
     finally:
         await server.close()
 

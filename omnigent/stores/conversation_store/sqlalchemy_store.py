@@ -1,3 +1,5 @@
+# Modified for Triune.
+
 """SQLAlchemy-backed conversation store."""
 
 from __future__ import annotations
@@ -90,6 +92,7 @@ from omnigent.entities import (
     MessageData,
     NewConversationItem,
     PagedList,
+    ResourceEventData,
     parse_item_data,
 )
 from omnigent.entities.branch import (
@@ -2510,6 +2513,75 @@ class SqlAlchemyConversationStore(ConversationStore):
                 return None
             [data] = self._decode_item_data_batch([row.data])
             return _to_item(row, data)
+
+    def enrich_resource_event(
+        self, conversation_id: str, item_id: str, data: dict[str, Any]
+    ) -> ConversationItem | None:
+        def write(session: Session) -> ConversationItem | None:
+            self._lock_conversation(session, conversation_id)
+            row = session.execute(
+                select(SqlConversationItem).where(
+                    SqlConversationItem.workspace_id == current_workspace_id(),
+                    SqlConversationItem.conversation_id == conversation_id,
+                    SqlConversationItem.id == item_id,
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                return None
+            [decoded] = self._decode_item_data_batch([row.data])
+            item = _to_item(row, decoded)
+            if not isinstance(item.data, ResourceEventData) or not isinstance(
+                item.data.resource, dict
+            ):
+                return None
+            resource = dict(item.data.resource)
+            if resource.get("dispatch_id") != data.get("dispatch_id"):
+                return None
+            if (
+                data.get("agent_name_source") == "native"
+                and resource.get("agent_name_source") != "native"
+            ):
+                resource["agent_name"] = data.get("agent_name", resource.get("agent_name"))
+                resource["agent_name_source"] = "native"
+            if data.get("task_summary") and not resource.get("task_summary"):
+                resource["title"] = data["task_summary"]
+            for key, value in data.items():
+                if not value:
+                    continue
+                if (
+                    key in {"result_text", "result_ref", "result_refs", "result_parts"}
+                    and resource.get("turn_id")
+                    and data.get("turn_id") != resource["turn_id"]
+                ):
+                    continue
+                previous = resource.get(key)
+                if not previous or (
+                    key in {"result_text", "task_input"}
+                    and isinstance(value, str)
+                    and isinstance(previous, str)
+                    and len(value) > len(previous)
+                ):
+                    resource[key] = value
+                elif (
+                    key == "result_refs" and isinstance(value, list) and isinstance(previous, list)
+                ):
+                    resource[key] = [*previous, *[ref for ref in value if ref not in previous]][
+                        :32
+                    ]
+                elif (
+                    key == "result_parts"
+                    and isinstance(value, list)
+                    and isinstance(previous, list)
+                    and len(json.dumps(value)) > len(json.dumps(previous))
+                ):
+                    resource[key] = value
+            if resource == item.data.resource:
+                return None
+            updated = item.data.model_copy(update={"resource": resource})
+            row.data = self._encode_item_data(updated.model_dump_json())
+            return item.model_copy(update={"data": updated})
+
+        return run_write_transaction(self._conv_session_immediate, "enrich_resource_event", write)
 
     def list_items(
         self,

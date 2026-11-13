@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Any, cast
 
 from omnigent.errors import ErrorCode, OmnigentError
+from omnigent.harnesses.codex_native.async_questions import async_question_params
 from omnigent.harnesses.codex_native.elicitation import is_codex_request_id
 from omnigent.server.schemas import ElicitationRequestParams, ElicitationResult
 
@@ -639,6 +640,41 @@ def _codex_tool_request_user_input_params(
     )
 
 
+def _codex_async_question_params(
+    request_id: Any, method: str, params: dict[str, Any]
+) -> ElicitationRequestParams:
+    """Publish the actual structured question on a native async agent message."""
+    normalized = async_question_params(params)
+    if (
+        normalized is None
+        or not normalized.get("threadId")
+        or normalized.get("itemId") != request_id
+    ):
+        raise OmnigentError(
+            "Codex async questions require a structured message and matching item identity.",
+            code=ErrorCode.INVALID_INPUT,
+        )
+    return _codex_tool_request_user_input_params(request_id, method, normalized)
+
+
+def _codex_async_question_response(
+    result: ElicitationResult, method: str, params: dict[str, Any]
+) -> dict[str, Any]:
+    """Translate an answer into subsequent user input rather than an RPC reply."""
+    normalized = async_question_params(params)
+    if normalized is None:
+        return {"input": []}
+    answers = _codex_request_user_input_response(result, method, normalized)["answers"]
+    lines = []
+    for question in cast(list[dict[str, Any]], normalized["questions"]):
+        values = answers.get(question["id"], {}).get("answers", [])
+        if values:
+            lines.append(f"{question['question']}\n{', '.join(values)}")
+    if not lines:
+        return {"input": []}
+    return {"input": [{"type": "text", "text": "\n\n".join(lines)}]}
+
+
 def _codex_command_approval_params(
     request_id: Any,
     method: str,
@@ -872,6 +908,10 @@ def _json_preview(value: Any) -> str:
 
 
 _CODEX_ELICITATION_ADAPTERS: dict[str, _CodexElicitationAdapter] = {
+    "item/completed": _CodexElicitationAdapter(
+        build_params=_codex_async_question_params,
+        build_response=_codex_async_question_response,
+    ),
     _CODEX_MCP_ELICITATION_REQUEST_METHOD: _CodexElicitationAdapter(
         build_params=_codex_mcp_elicitation_params,
         build_response=_codex_mcp_elicitation_response,

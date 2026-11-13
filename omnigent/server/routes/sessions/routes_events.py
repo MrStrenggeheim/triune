@@ -145,6 +145,7 @@ from omnigent.server.routes._sessions.common import (
     _EXTERNAL_OUTPUT_TEXT_DELTA_TYPE,
     _EXTERNAL_PERMISSION_MODE_CHANGE_TYPE,
     _EXTERNAL_REASONING_EFFORT_CHANGE_TYPE,
+    _EXTERNAL_SESSION_BACKGROUND_TASKS_TYPE,
     _EXTERNAL_SESSION_INTERRUPTED_TYPE,
     _EXTERNAL_SESSION_STATUS_TYPE,
     _EXTERNAL_SESSION_STATUS_VALUES,
@@ -208,6 +209,7 @@ from omnigent.server.routes._sessions.helpers import (
     _persist_policy_deny_sentinel,
     _persist_session_status_error_labels,
     _prune_session_read_state,
+    _publish_background_tasks,
     _publish_btw_sidechat,
     _publish_compaction_completed,
     _publish_compaction_failed,
@@ -755,6 +757,7 @@ _RUNNER_EVENT_TYPES = frozenset(
         _EXTERNAL_CONVERSATION_ITEM_TYPE,
         _EXTERNAL_OUTPUT_TEXT_DELTA_TYPE,
         _EXTERNAL_SESSION_STATUS_TYPE,
+        _EXTERNAL_SESSION_BACKGROUND_TASKS_TYPE,
         _EXTERNAL_SESSION_USAGE_TYPE,
     }
 )
@@ -1127,6 +1130,7 @@ def register_events_routes(
             in (
                 _EXTERNAL_CONVERSATION_ITEM_TYPE,
                 _EXTERNAL_ASSISTANT_MESSAGE_TYPE,
+                _EXTERNAL_SESSION_BACKGROUND_TASKS_TYPE,
             ),
         )
         if body.type == "message":
@@ -1350,6 +1354,7 @@ def register_events_routes(
             _EXTERNAL_BTW_DISMISS_TYPE,
             _EXTERNAL_ELICITATION_RESOLVED_TYPE,
             _EXTERNAL_SESSION_STATUS_TYPE,
+            _EXTERNAL_SESSION_BACKGROUND_TASKS_TYPE,
             _SUBAGENT_STATUS_TYPE,
             _EXTERNAL_SESSION_USAGE_TYPE,
             _EXTERNAL_COMPACTION_STATUS_TYPE,
@@ -2360,6 +2365,18 @@ def register_events_routes(
                     session_id,
                     elicitation_id,
                 )
+            return {"queued": False}
+        if body.type == _EXTERNAL_SESSION_BACKGROUND_TASKS_TYPE:
+            count = body.data.get("background_task_count")
+            if type(count) is not int or count < 0:
+                raise OmnigentError(
+                    "external_session_background_tasks requires a nonnegative integer "
+                    "data.background_task_count.",
+                    code=ErrorCode.INVALID_INPUT,
+                )
+            _publish_background_tasks(
+                session_id, count, _parse_background_tasks(body.data.get("background_tasks"))
+            )
             return {"queued": False}
         if body.type in (_EXTERNAL_SESSION_STATUS_TYPE, _SUBAGENT_STATUS_TYPE):
             status = body.data.get("status")

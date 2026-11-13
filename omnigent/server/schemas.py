@@ -3386,6 +3386,15 @@ class SessionStatusEvent(_SSEEventBase):
     blocked_on: str | None = None
 
 
+class SessionBackgroundTasksEvent(_SSEEventBase):
+    """A shell inventory update independent of the assistant turn lifecycle."""
+
+    type: Literal["session.background_tasks"] = "session.background_tasks"
+    conversation_id: str
+    background_task_count: int = Field(ge=0)
+    background_tasks: list[BackgroundTaskInfo]
+
+
 class SessionUsageEvent(_SSEEventBase):
     """
     Token-usage update from a terminal-backed integration.
@@ -4104,6 +4113,13 @@ class ReasoningSummaryTextDeltaEvent(_SSEEventBase):
 
     type: Literal["response.reasoning_summary_text.delta"]
     delta: str
+
+
+class OutputItemUpdatedEvent(_SSEEventBase):
+    """Replace the existing persisted item with this ID, preserving its position."""
+
+    type: Literal["response.output_item.updated"]
+    item: dict[str, Any]
 
 
 class OutputItemDoneEvent(_SSEEventBase):
@@ -5000,6 +5016,7 @@ class TurnCancelledEvent(_SSEEventBase):
 ServerStreamEvent = Annotated[
     # ── Transient (SSE-only) — session.* lifecycle ─────────────
     SessionStatusEvent
+    | SessionBackgroundTasksEvent
     | SessionWorkspaceEvent
     | SessionUsageEvent
     | SessionModelEvent
@@ -5034,6 +5051,7 @@ ServerStreamEvent = Annotated[
     | ReasoningSummaryTextDeltaEvent
     # ── Persistent (POST + SSE replay) — wraps conv-store items
     | OutputItemDoneEvent
+    | OutputItemUpdatedEvent
     # ── Transient (SSE-only) — file annotations / keepalive ────
     | OutputFileDoneEvent
     | HeartbeatEvent

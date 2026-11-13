@@ -1,3 +1,4 @@
+# Modified for Triune.
 """Background-shell tally: cache stickiness and the sidebar-list rollup.
 
 A claude-native turn can settle to ``idle`` while background shells keep
@@ -18,12 +19,19 @@ from __future__ import annotations
 
 import logging
 import types
+from unittest.mock import Mock
 
+import httpx
 import pytest
+from pydantic import TypeAdapter
 
 from omnigent.debug_logging import record_to_row
+from omnigent.runner.identity import RUNNER_TUNNEL_TOKEN_HEADER, token_bound_runner_id
 from omnigent.runtime import session_stream
+from omnigent.server.auth import LEVEL_EDIT, LEVEL_OWNER, LEVEL_READ
 from omnigent.server.routes import sessions as _sessions_mod
+from omnigent.server.routes._sessions.common import _session_background_task_inventory_sources
+from omnigent.server.routes._sessions.helpers import _publish_background_tasks
 from omnigent.server.routes.sessions import (
     _CLAUDE_NATIVE_WRAPPER_LABEL_KEY,
     _CODEX_NATIVE_SUBAGENT_WRAPPER_LABEL_VALUE,
@@ -31,8 +39,11 @@ from omnigent.server.routes.sessions import (
     _publish_status,
     _session_status_with_child_rollup,
 )
-from omnigent.server.schemas import BackgroundTaskInfo, ErrorDetail
+from omnigent.server.schemas import BackgroundTaskInfo, ErrorDetail, ServerStreamEvent
+from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
+from omnigent.stores.permission_store.sqlalchemy_store import SqlAlchemyPermissionStore
 from tests.debug_log_helpers import capture_debug_rows
+from tests.server.routes.test_sessions_crud import session_id as session_id
 
 _SID = "conv_bg_test"
 
@@ -53,11 +64,13 @@ def _clear_caches() -> None:
     _sessions_mod._session_status_cache.pop(_SID, None)
     _sessions_mod._session_background_task_count_cache.pop(_SID, None)
     _sessions_mod._session_background_tasks_cache.pop(_SID, None)
+    _session_background_task_inventory_sources.discard(_SID)
     _sessions_mod._session_active_response_cache.pop(_SID, None)
     yield
     _sessions_mod._session_status_cache.pop(_SID, None)
     _sessions_mod._session_background_task_count_cache.pop(_SID, None)
     _sessions_mod._session_background_tasks_cache.pop(_SID, None)
+    _session_background_task_inventory_sources.discard(_SID)
     _sessions_mod._session_active_response_cache.pop(_SID, None)
 
 
@@ -72,6 +85,128 @@ def test_background_task_turn_end_closes_the_active_response() -> None:
     _publish_status(_SID, "idle", response_id="resp_1", background_task_count=2)
     assert _SID not in _sessions_mod._session_active_response_cache
     assert _sessions_mod._session_background_task_count_cache.get(_SID) == 2
+
+
+@pytest.mark.parametrize("status", ["idle", "running", "waiting", "failed"])
+async def test_count_only_event_preserves_turn_and_rehydrates_snapshot(
+    client: httpx.AsyncClient,
+    db_uri: str,
+    session_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+    status: str,
+) -> None:
+    store = SqlAlchemyConversationStore(db_uri)
+    conv = store.get_conversation(session_id)
+    assert conv is not None
+    store.set_session_live_status(conv.id, status)
+    _sessions_mod._session_status_cache[conv.id] = status
+    if status in {"running", "waiting"}:
+        _sessions_mod._session_active_response_cache[conv.id] = "active-response"
+    publish = Mock()
+    monkeypatch.setattr(session_stream, "publish", publish)
+    task = {"id": "native-call", "type": "shell", "status": "running", "command": "sleep 30"}
+    for count, tasks in ((1, [task]), (0, [])):
+        previous_status = _sessions_mod._session_status_cache.get(conv.id)
+        previous_response = _sessions_mod._session_active_response_cache.get(conv.id)
+        previous_live = store.get_conversation(conv.id).live_status
+        response = await client.post(
+            f"/v1/sessions/{conv.id}/events",
+            json={
+                "type": "external_session_background_tasks",
+                "data": {
+                    "background_task_count": count,
+                    "background_tasks": tasks,
+                    "status": "idle",
+                    "response_id": "must-not-apply",
+                },
+            },
+        )
+        assert response.status_code == 202, response.text
+        assert response.json() == {"queued": False}
+        event = publish.call_args.args[1]
+        TypeAdapter(ServerStreamEvent).validate_python(event)
+        assert event == {
+            "type": "session.background_tasks",
+            "conversation_id": conv.id,
+            "background_task_count": count,
+            "background_tasks": [BackgroundTaskInfo(**row).model_dump() for row in tasks],
+            "sequence_number": None,
+        }
+        assert _sessions_mod._session_status_cache.get(conv.id) == previous_status
+        assert _sessions_mod._session_active_response_cache.get(conv.id) == previous_response
+        assert store.get_conversation(conv.id).live_status == previous_live
+        snapshot = await client.get(f"/v1/sessions/{conv.id}")
+        assert snapshot.status_code == 200, snapshot.text
+        assert (snapshot.json()["background_task_count"] or 0) == count
+        assert (snapshot.json()["background_tasks"] or []) == event["background_tasks"]
+    assert store.list_items(conv.id).data == []
+    assert publish.call_count == 2
+
+
+@pytest.mark.parametrize("count", [True, -1, "1", None])
+async def test_count_only_event_rejects_invalid_counts_without_changing_inventory(
+    client: httpx.AsyncClient, db_uri: str, count: object
+) -> None:
+    conv = SqlAlchemyConversationStore(db_uri).create_conversation()
+    response = await client.post(
+        f"/v1/sessions/{conv.id}/events",
+        json={
+            "type": "external_session_background_tasks",
+            "data": {"background_task_count": count},
+        },
+    )
+    assert response.status_code == 400
+    assert conv.id not in _sessions_mod._session_background_task_count_cache
+
+
+@pytest.mark.parametrize(
+    "actor,token,expected",
+    [
+        ("owner@example.test", None, 202),
+        ("editor@example.test", None, 403),
+        ("reader@example.test", None, 403),
+        ("stranger@example.test", None, 404),
+        ("editor@example.test", "bound-native-runner", 202),
+        ("editor@example.test", "different-runner", 403),
+    ],
+)
+async def test_native_inventory_requires_owner_or_bound_runner(
+    auth_client: httpx.AsyncClient, db_uri: str, actor: str, token: str | None, expected: int
+) -> None:
+    store = SqlAlchemyConversationStore(db_uri)
+    conv = store.create_conversation()
+    store.replace_runner_id(conv.id, token_bound_runner_id("bound-native-runner"))
+    permissions = SqlAlchemyPermissionStore(db_uri)
+    for user, level in (
+        ("owner@example.test", LEVEL_OWNER),
+        ("editor@example.test", LEVEL_EDIT),
+        ("reader@example.test", LEVEL_READ),
+    ):
+        permissions.ensure_user(user)
+        permissions.grant(user, conv.id, level)
+    headers = {"X-Forwarded-Email": actor}
+    if token is not None:
+        headers[RUNNER_TUNNEL_TOKEN_HEADER] = token
+    response = await auth_client.post(
+        f"/v1/sessions/{conv.id}/events",
+        headers=headers,
+        json={"type": "external_session_background_tasks", "data": {"background_task_count": 1}},
+    )
+    assert response.status_code == expected, response.text
+    assert _sessions_mod._session_background_task_count_cache.get(conv.id) == (
+        1 if expected == 202 else None
+    )
+
+
+def test_native_inventory_does_not_expire_when_an_assistant_turn_fails() -> None:
+    _publish_background_tasks(_SID, 1, _tasks("sleep 30"))
+    _publish_status(_SID, "running", response_id="turn")
+    _publish_status(_SID, "failed")
+    assert _sessions_mod._session_status_cache[_SID] == "failed"
+    assert _SID not in _sessions_mod._session_active_response_cache
+    assert _sessions_mod._session_background_task_count_cache[_SID] == 1
+    _publish_background_tasks(_SID, 0, [])
+    assert _SID not in _sessions_mod._session_background_task_count_cache
 
 
 def test_idle_with_positive_count_sets_sticky_tally_but_list_stays_idle() -> None:

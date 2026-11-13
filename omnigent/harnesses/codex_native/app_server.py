@@ -58,6 +58,7 @@ from omnigent.harnesses.codex_native.launch_args import (
     canonical_codex_launch_args,
     codex_config_profile,
     codex_workspace_roots,
+    enable_codex_plan_tool_default,
     materialize_codex_config_profile,
     read_codex_mcp_servers,
     reject_reserved_codex_transport_args,
@@ -2252,6 +2253,10 @@ class CodexNativeAppServer:
             codex_version=codex_version,
             agent_instructions=self.developer_instructions,
         )
+        # This configuration shape is verified against Codex 0.164. Older or
+        # unidentified CLIs retain their own defaults rather than risk startup.
+        if codex_version is not None and codex_version >= (0, 164, 0):
+            enable_codex_plan_tool_default(self.codex_home)
         if self.trust_project:
             _trust_codex_project(self.codex_home, self.cwd)
         _add_codex_writable_roots(self.codex_home, self.writable_roots)

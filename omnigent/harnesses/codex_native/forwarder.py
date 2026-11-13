@@ -35,6 +35,10 @@ from omnigent.harnesses.codex_native.app_server import (
     CodexMessage,
     client_for_transport,
 )
+from omnigent.harnesses.codex_native.async_questions import (
+    async_question_params,
+    submit_async_question_answer,
+)
 from omnigent.harnesses.codex_native.bridge import (
     CODEX_NATIVE_BRIDGE_ID_LABEL_KEY,
     CODEX_NATIVE_DIRECT_THREAD_START_TIMEOUT_SECONDS,
@@ -59,6 +63,7 @@ from omnigent.harnesses.codex_native.bridge import (
     update_thread_id,
     write_bridge_state,
 )
+from omnigent.harnesses.codex_native.command_processes import CodexCommandProcesses
 from omnigent.harnesses.codex_native.elicitation import (
     codex_elicitation_id,
 )
@@ -323,6 +328,9 @@ class _CodexChildStream:
 
     state: _CodexForwarderState
     delta_coalescer: _OutputTextDeltaCoalescer
+    elicitation_tracker: _CodexElicitationTaskTracker = field(
+        default_factory=lambda: _CodexElicitationTaskTracker()
+    )
     active_turn_id: str | None = None
     terminal_turn_ids: set[str] = field(default_factory=set)
 
@@ -559,6 +567,7 @@ class _CodexForwarderState:
     # thread rotation), so a settled round stays settled and later items
     # can skip re-reading the bridge file for the life of the session.
     mcp_startup_settled: bool = False
+    command_processes: CodexCommandProcesses = field(default_factory=CodexCommandProcesses)
 
     def note_resume_response(self, response: CodexMessage) -> None:
         """
@@ -692,7 +701,8 @@ class _CodexForwarderState:
     async def close_child_streams(self) -> None:
         """Drain child output while the forwarder's HTTP client is still open."""
         await asyncio.gather(
-            *(stream.delta_coalescer.close() for stream in self.child_streams.values())
+            *(stream.delta_coalescer.close() for stream in self.child_streams.values()),
+            *(stream.elicitation_tracker.close() for stream in self.child_streams.values()),
         )
         self.child_streams.clear()
 
@@ -1864,6 +1874,7 @@ class _PendingCodexElicitation:
     turn_id: str | None
     request_id: int | str
     elicitation_id: str
+    resolve_on_turn_end: bool = True
 
 
 class _CodexElicitationTaskTracker:
@@ -1886,6 +1897,7 @@ class _CodexElicitationTaskTracker:
         """
         self._pending: dict[asyncio.Task[None], _PendingCodexElicitation] = {}
         self._posted_resolutions: set[str] = set()
+        self._async_questions: set[tuple[str, int | str]] = set()
 
     def start(
         self,
@@ -1912,6 +1924,12 @@ class _CodexElicitationTaskTracker:
         if not isinstance(method, str) or not _is_codex_request_id(request_id):
             _logger.warning("Codex forwarder cannot track malformed elicitation request")
             return
+        is_async_message = method == "item/completed" and async_question_params(params) is not None
+        if is_async_message:
+            identity = (session_id, request_id)
+            if identity in self._async_questions:
+                return
+            self._async_questions.add(identity)
         task = asyncio.create_task(
             self._run_one(
                 client,
@@ -1930,6 +1948,7 @@ class _CodexElicitationTaskTracker:
                 method,
                 request_id,
             ),
+            resolve_on_turn_end=not is_async_message and params.get("isBlocking") is not False,
         )
         task.add_done_callback(self._discard_done)
 
@@ -1986,7 +2005,7 @@ class _CodexElicitationTaskTracker:
         thread_id = _thread_id_from_params(params)
         turn_id = _turn_id_from_payload(params.get("turn")) or _turn_id_from_payload(params)
         for _task, pending in list(self._pending.items()):
-            if _pending_elicitation_matches_terminal_turn(
+            if pending.resolve_on_turn_end and _pending_elicitation_matches_terminal_turn(
                 pending,
                 thread_id=thread_id,
                 turn_id=turn_id,
@@ -2010,6 +2029,7 @@ class _CodexElicitationTaskTracker:
 
         :returns: None after all background hook tasks have finished.
         """
+        self._async_questions.clear()
         if not self._pending:
             return
         tasks = list(self._pending)
@@ -2018,6 +2038,7 @@ class _CodexElicitationTaskTracker:
         await asyncio.gather(*tasks, return_exceptions=True)
         self._pending.clear()
         self._posted_resolutions.clear()
+        self._async_questions.clear()
 
     async def _run_one(
         self,
@@ -3125,6 +3146,7 @@ async def _handle_event(
     if route_session_id is None:
         return
     event_state = forwarder_state
+    question_tracker = elicitation_tracker
     event_bridge_dir = bridge_dir if not is_child else None
     if is_child and forwarder_state is not None:
         child_thread_id = _thread_id_from_params(params)
@@ -3134,6 +3156,7 @@ async def _handle_event(
             return
         event_state = child_stream.state
         delta_coalescer = child_stream.delta_coalescer
+        question_tracker = child_stream.elicitation_tracker
     # First model-produced item settles the synthesized MCP startup round
     # mid-turn — codex defers turn execution until the round ends, so
     # assistant-side output proves startup is over before the idle edge.
@@ -3177,6 +3200,7 @@ async def _handle_event(
             # resume-backfill path, which replays only ``item/completed``.
             await _ensure_user_message_posted(client, route_session_id, params, event_state)
         elif isinstance(item, dict) and item.get("type") == "commandExecution":
+            await _sync_command_processes(client, route_session_id, item, event_state)
             call_id = await _post_tool_call_item(client, route_session_id, params, item)
             if call_id is not None and event_state is not None:
                 event_state.note_tool_call_posted(call_id)
@@ -3242,6 +3266,19 @@ async def _handle_event(
         return
     if method == "item/completed":
         item = params.get("item")
+        native_client = codex_client or (
+            event_state.codex_client if event_state is not None else None
+        )
+        if async_question_params(params) is not None and isinstance(item, dict):
+            if native_client is not None and _is_codex_request_id(item.get("id")):
+                question_tracker.start(
+                    client,
+                    native_client,
+                    session_id=route_session_id,
+                    event={**event, "id": item["id"]},
+                )
+            else:
+                _logger.warning("Native async question has no app-server client or item identity")
         # Nested-spawn registration uses the connection's complete child map.
         # Transcript dedup and partial text belong only to the routed child.
         item_state = (
@@ -4590,7 +4627,11 @@ async def _handle_codex_elicitation_request(
     )
     if result is None:
         return
-    await codex_client.respond(request_id, result)
+    params = event.get("params")
+    if event.get("method") == "item/completed" and isinstance(params, dict):
+        await submit_async_question_answer(codex_client, params, result)
+    else:
+        await codex_client.respond(request_id, result)
 
 
 async def _codex_elicitation_hook_result(
@@ -5340,6 +5381,8 @@ async def _handle_completed_item_inner(
         return
     item_type = item.get("type")
     turn_id = _turn_id_from_payload(params)
+    if item_type == "commandExecution":
+        await _sync_command_processes(client, session_id, item, forwarder_state)
     if item_type in {"agentMessage", "plan"} and forwarder_state is not None and turn_id:
         item_id = item.get("id")
         forwarder_state.discard_partial_text_item(
@@ -5715,7 +5758,7 @@ async def _ensure_child_session(
         if child_session_id is None:
             return
         forwarder_state.note_child_thread(child_thread_id, child_session_id)
-    elif isinstance(item.get("prompt"), str) and item["prompt"]:
+    elif any(item.get(key) for key in ("prompt", "taskName", "task_name", "agentPath")):
         # thread/started can arrive before the collaboration call's full input.
         await _register_child_session(
             client,
@@ -5761,6 +5804,15 @@ async def _register_child_session(
     tool_call_id = item.get("id")
     if isinstance(tool_call_id, str) and tool_call_id:
         data["tool_call_id"] = tool_call_id
+        data["dispatch_id"] = tool_call_id
+    task_name = item.get("taskName") or item.get("task_name")
+    agent_path = item.get("agentPath")
+    if isinstance(agent_path, str) and agent_path:
+        data["agent_path"] = agent_path
+        # Native v2 defines agentPath as the canonical task name.
+        task_name = task_name or agent_path.rsplit("/", 1)[-1]
+    if isinstance(task_name, str) and task_name:
+        data["task_name"] = task_name
     # Display name for the child. Without it the server stamps its fixed
     # fallback and the title keeps the raw thread id, which surfaces as a UUID
     # in the sub-agent rail and the composer tray.
@@ -7204,6 +7256,31 @@ async def _post_external_elicitation_resolved(
     )
     _log_failed_session_event_post(_EXTERNAL_ELICITATION_RESOLVED_TYPE, response)
     return response is not None and response.status_code < 400
+
+
+async def _sync_command_processes(
+    client: httpx.AsyncClient,
+    session_id: str,
+    item: _JsonObject,
+    forwarder_state: _CodexForwarderState | None,
+) -> None:
+    """Publish shell inventory changes independently of agent turn status."""
+    if forwarder_state is None:
+        return
+    processes = forwarder_state.command_processes
+    async with processes.sync_lock:
+        snapshot = processes.observe(item)
+        if snapshot is None:
+            return
+        response = await _post_session_event(
+            client,
+            session_id,
+            event_type="external_session_background_tasks",
+            data=snapshot,
+        )
+        _log_failed_session_event_post("external_session_background_tasks", response)
+        if response is not None and response.status_code < 400:
+            processes.posted = snapshot
 
 
 async def _post_external_session_todos(

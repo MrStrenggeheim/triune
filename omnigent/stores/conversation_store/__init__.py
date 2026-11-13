@@ -1,3 +1,5 @@
+# Modified for Triune.
+
 """Conversation store — manages conversations and their items."""
 
 import hashlib
@@ -734,6 +736,17 @@ class ConversationStore(ABC):
         :param conversation_id: The conversation to look in, e.g. ``"conv_abc123"``.
         :param item_id: The item id, e.g. a source-derived ``stable_id``.
         :returns: The item, or ``None``.
+        """
+        ...
+
+    @abstractmethod
+    def enrich_resource_event(
+        self, conversation_id: str, item_id: str, data: dict[str, Any]
+    ) -> ConversationItem | None:
+        """Fill missing resource fields and extend reports on one existing event.
+
+        Preserve event identity, chronology and dispatch provenance.
+        Return the updated item only when its payload changed.
         """
         ...
 

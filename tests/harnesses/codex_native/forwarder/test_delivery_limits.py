@@ -1,3 +1,4 @@
+# Modified for Triune.
 """Oversized events must not block Codex completion forwarding."""
 
 from __future__ import annotations
@@ -58,7 +59,7 @@ async def test_large_tool_output_is_capped_before_upload() -> None:
     mirrored = json.loads(requests[0].content)["data"]["item_data"]
     assert mirrored["call_id"] == "call_1"
     assert mirrored["output"].startswith("x" * MAX_TOOL_OUTPUT_BYTES)
-    assert "[output truncated by omnigent:" in mirrored["output"]
+    assert "[output truncated by triune:" in mirrored["output"]
     assert item["output"] == output
     assert json.loads(requests[1].content)["data"]["status"] == "idle"
 

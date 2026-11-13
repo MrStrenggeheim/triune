@@ -97,6 +97,44 @@ async def test_explicit_empty_plan_is_published_to_clear_the_shared_plan() -> No
     ]
 
 
+@pytest.mark.asyncio
+async def test_native_v2_task_path_preserves_name_and_dispatch_without_prompt() -> None:
+    posts = []
+
+    async def receive(request):
+        posts.append(json.loads(request.content)["data"])
+        return httpx.Response(200, json={"child_session_id": "child"})
+
+    state = fwd._CodexForwarderState(parent_session_id="parent")
+    # Discovery may have registered the child before its native activity arrives.
+    state.note_child_thread("child-thread", "child")
+    async with httpx.AsyncClient(
+        base_url="http://test", transport=httpx.MockTransport(receive)
+    ) as client:
+        await fwd._handle_subagent_activity(
+            client,
+            {"threadId": "parent-thread", "turnId": "turn"},
+            {
+                "type": "subAgentActivity",
+                "id": "call-native-spawn",
+                "kind": "started",
+                "agentThreadId": "child-thread",
+                "agentPath": "/root/sleep_three_minutes",
+            },
+            state,
+        )
+    assert posts == [
+        {
+            "thread_id": "child-thread",
+            "parent_thread_id": "parent-thread",
+            "tool_call_id": "call-native-spawn",
+            "dispatch_id": "call-native-spawn",
+            "agent_path": "/root/sleep_three_minutes",
+            "task_name": "sleep_three_minutes",
+        }
+    ]
+
+
 def _make_thread_started(thread: dict) -> dict:
     """Wrap a thread dict in a ``thread/started`` envelope."""
     return {"method": "thread/started", "params": {"thread": thread}}

@@ -2835,15 +2835,40 @@ async def _persist_external_codex_subagent_start(
         _find_codex_native_subagent_child, conversation_store, parent_id, thread_id
     )
     labels = _codex_subagent_labels_from_body(thread_id, body)
+    task_name = body.data.get("task_name")
+    if isinstance(task_name, str) and task_name.strip():
+        labels["omnigent.codex_native.task_name"] = task_name
+    prompt = body.data.get("prompt")
+    task_input = prompt if isinstance(prompt, str) and prompt.strip() else None
     if existing is not None:
+        original_call = existing.labels.get("omnigent.codex_native.collab_tool_call_id")
+        if original_call and body.data.get("tool_call_id") != original_call:
+            task_input = None
+            labels.pop("omnigent.codex_native.prompt", None)
+        for key in (
+            "omnigent.codex_native.prompt",
+            "omnigent.codex_native.collab_tool_call_id",
+            "omnigent.codex_native.task_name",
+        ):
+            if existing.labels.get(key):
+                labels.pop(key, None)
         await asyncio.to_thread(conversation_store.set_labels, existing.id, labels)
         await record_subagent_activity(
-            existing.id, "delegated", conversation_store, parent_id=parent_id
+            existing.id,
+            "delegated",
+            conversation_store,
+            parent_id=parent_id,
+            task_input=task_input,
         )
         return existing.id
-    return await _create_and_publish_codex_child(
+    child_id = await _create_and_publish_codex_child(
         parent_id, parent_conv, thread_id, labels, conversation_store
     )
+    if task_input:
+        await record_subagent_activity(
+            child_id, "delegated", conversation_store, parent_id=parent_id, task_input=task_input
+        )
+    return child_id
 
 
 async def _persist_external_devin_subagent_start(

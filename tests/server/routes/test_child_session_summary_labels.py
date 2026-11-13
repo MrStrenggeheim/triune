@@ -63,3 +63,19 @@ def test_native_child_summary_separates_name_from_task_and_dispatch() -> None:
     assert summary.task_summary == "Inspect the original task"
     assert summary.current_task_id == "dispatch-1"
     assert summary.labels["omnigent.codex_native.prompt"] == "Inspect the original task"
+
+
+def test_child_summary_prefers_captured_identity_over_latest_task_labels() -> None:
+    conv = _child(
+        {
+            "omnigent.wrapper": "codex-native-ui-subagent",
+            "omnigent.codex_native.task_name": "original_task",
+            "omnigent.codex_native.collab_tool_call_id": "steering-call",
+            "omnigent.subagent.dispatch_id": "original-dispatch",
+            "omnigent.subagent.task_summary": "Original task title",
+        }
+    )
+    conv.task_summary = "Follow-up instruction"
+    summary = _child_session_summary_from_conversation(conv, "conv_parent", None)
+    assert summary.task_summary == "Original task title"
+    assert summary.current_task_id == "original-dispatch"
