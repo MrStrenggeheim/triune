@@ -1,12 +1,5 @@
-// Per-conversation state + stream ownership, and the LRU registry that holds
-// them.
-//
-// Each entry owns ONE conversation: its `ConversationState` and its SSE stream
-// (including the reconnect loop). An entry is either **live** — state plus an
-// open stream — or **absent**. There is deliberately no third "retained but
-// detached" state: a detached entry holding stale state that must be reconciled
-// on revisit is a transcript cache in a different shape, which is what keeping
-// streams open replaces. Live-or-gone is the simplification.
+// Conversation state outlives network observation in remembered layouts.
+// Detaching a stream preserves drafts, pending sends and the reader's window.
 
 import { getCachedServerInfo, isFeatureEnabled } from "@/lib/capabilities";
 import type { ConversationState } from "./chatStore";
@@ -32,17 +25,15 @@ const MULTIPLEXED_ALPN_IDS = new Set(["h2", "h2c", "h3"]);
  * HTTPS deployments still negotiate HTTP/1.1, and treating those as multiplexed
  * would deadlock the connection pool exactly like the dev server does.
  *
- * Falls back to the scheme only when the timing entry is unavailable (no
- * `performance` in the environment, an old browser, or a navigation the entry
- * doesn't cover), where `https:` is the better guess than `http:`.
+ * Missing timing information uses the serial budget to preserve fetch capacity.
  */
 export function getConnectionProtocol(): ConnectionProtocol {
   const nextHop = readNextHopProtocol();
   if (nextHop !== null && nextHop !== "") {
     return MULTIPLEXED_ALPN_IDS.has(nextHop) ? "multiplexed" : "serial";
   }
-  const scheme = typeof location === "undefined" ? undefined : location.protocol;
-  return scheme === "https:" ? "multiplexed" : "serial";
+  // An unavailable ALPN value cannot justify spending HTTP/1's fetch capacity.
+  return "serial";
 }
 
 /** The document navigation's negotiated ALPN id, or `null` when unavailable. */
@@ -128,15 +119,37 @@ export class ConversationRegistry {
   /** Conversation currently on screen; exempt from eviction. */
   private activeId: string | null = null;
   private readonly retainedIds = new Map<string, number>();
+  private readonly visibleIds = new Map<string, number>();
 
-  /** Keep a visible secondary pane live until its owner unmounts. */
-  retain(id: string): () => void {
+  /** Retain mounted state; only visible owners protect its live stream. */
+  retain(id: string, visible = true): () => void {
     this.retainedIds.set(id, (this.retainedIds.get(id) ?? 0) + 1);
+    if (visible) this.visibleIds.set(id, (this.visibleIds.get(id) ?? 0) + 1);
+    else if (!this.visibleIds.has(id)) this.detach(id);
     return () => {
       const count = this.retainedIds.get(id) ?? 0;
       if (count <= 1) this.retainedIds.delete(id);
       else this.retainedIds.set(id, count - 1);
+      if (visible) {
+        const owners = this.visibleIds.get(id) ?? 0;
+        if (owners <= 1) this.visibleIds.delete(id);
+        else this.visibleIds.set(id, owners - 1);
+      }
+      if (!this.visibleIds.has(id)) this.detach(id);
     };
+  }
+
+  /** Whether a scoped view or the standalone route currently displays this chat. */
+  isVisible(id: string): boolean {
+    return this.visibleIds.has(id) || (this.activeId === id && !this.retainedIds.has(id));
+  }
+
+  /** Stop observing without disposing state or cancelling server work. */
+  detach(id: string): void {
+    const entry = this.entries.get(id);
+    if (!entry) return;
+    entry.getState().abortController?.abort();
+    entry.setState({ abortController: null, loadingConversation: false });
   }
 
   /**
@@ -235,6 +248,7 @@ export class ConversationRegistry {
     this.entries.clear();
     this.activeId = null;
     this.retainedIds.clear();
+    this.visibleIds.clear();
   }
 
   /**
@@ -284,24 +298,18 @@ export class ConversationRegistry {
   }
 
   /**
-   * Dispose the least-recently-viewed *evictable* entry to free its stream slot,
-   * returning the id disposed (so the caller can release that entry's slot) or
-   * `null` when nothing was evictable.
-   *
-   * The slot layer calls this when it can't take a free origin-wide slot, so a
-   * tab reclaims one of ITS OWN background streams before it either gives up
-   * (leaving the new conversation cold) or opens over budget.
-   *
-   * Never evicts: the conversation on screen, `exemptId` (the one being bound —
-   * disposing it would hand back a dead entry), or an entry holding work the
-   * server has no record of yet (`hasUnsentWork` — evicting that loses the
-   * user's message). When nothing is evictable, returns `null` and the caller
-   * decides what to do with a saturated origin.
+   * Reclaim the oldest background stream, returning its id for slot release.
+   * Mounted views and unsent work keep their state after detachment.
+   * Visible entries and the binding candidate are protected.
    */
   evictLruEvictable(exemptId?: string): string | null {
     for (const [id, entry] of this.entries) {
-      if (id === this.activeId || id === exemptId || this.retainedIds.has(id)) continue;
-      if (hasUnsentWork(entry.getState())) continue;
+      if (this.isVisible(id) || id === exemptId) continue;
+      if (this.retainedIds.has(id) || hasUnsentWork(entry.getState())) {
+        if (!entry.getState().abortController) continue;
+        this.detach(id);
+        return id;
+      }
       this.entries.delete(id);
       entry.dispose();
       return id;

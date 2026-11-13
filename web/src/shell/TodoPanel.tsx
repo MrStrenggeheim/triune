@@ -1,5 +1,5 @@
 import { CheckCircle2Icon, CircleIcon, CircleDotIcon } from "lucide-react";
-import { useChatStore } from "@/store/chatStore";
+import { useConversationChatStore } from "@/workbench/ScopedChatStore";
 import { cn } from "@/lib/utils";
 
 interface TodoItem {
@@ -29,6 +29,7 @@ function TodoIcon({ status }: { status: TodoItem["status"] }) {
  * `session.todos` SSE updates. Renders nothing while the list is empty.
  */
 export function TodoPanel({ frameless = false }: TodoPanelProps) {
+  const useChatStore = useConversationChatStore();
   const todos = useChatStore((s) => s.todos);
 
   if (todos.length === 0) return null;

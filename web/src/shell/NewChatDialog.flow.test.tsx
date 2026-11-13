@@ -1,4 +1,5 @@
 import type * as SandboxModelOptionsModule from "@/hooks/useSandboxModelOptions";
+import { IDBFactory } from "fake-indexeddb";
 
 vi.mock("@/hooks/useSandboxModelOptions", async (importOriginal) => ({
   ...(await importOriginal<typeof SandboxModelOptionsModule>()),
@@ -38,7 +39,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 
-import { authenticatedFetch } from "@/lib/identity";
+import { authenticatedFetch, getCurrentUserId } from "@/lib/identity";
+import { readQueuedMessages } from "@/lib/queuedMessagePersistence";
 import { authorizeRegistryService, registryRequest } from "@/lib/mcpRegistry";
 import { readLastMcpServices, writeLastMcpServices } from "@/lib/mcpPreferences";
 
@@ -399,6 +401,7 @@ function closeAgentConfig(): void {
 }
 
 beforeEach(() => {
+  vi.mocked(getCurrentUserId).mockReturnValue(null);
   navigateMock.mockReset();
   setPendingInitialPromptMock.mockReset();
   beginLocalConversationMock.mockReset();
@@ -439,9 +442,76 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   localStorage.clear();
+  sessionStorage.clear();
+  vi.unstubAllGlobals();
 });
 
 describe("NewChatLandingScreen create flow", () => {
+  it("restores a failed startup's text, attachment bytes and create token after reload", async () => {
+    vi.stubGlobal("indexedDB", new IDBFactory());
+    vi.mocked(getCurrentUserId).mockReturnValue("owner@example.test");
+    vi.mocked(authenticatedFetch).mockResolvedValue(new Response("offline", { status: 503 }));
+    renderLanding([], { durable_host_initial_input: true } as Partial<ServerInfo>);
+    await waitForWorkspaceSeed();
+    typeMessage("recover without retyping");
+    const file = new File(["startup context"], "context.txt", { type: "text/plain" });
+    fireEvent.change(screen.getByTestId("new-chat-landing-file-input"), {
+      target: { files: [file] },
+    });
+    fireEvent.click(screen.getByTestId("new-chat-landing-submit"));
+    await waitFor(() => expect(authenticatedFetch).toHaveBeenCalledOnce());
+    const form = vi.mocked(authenticatedFetch).mock.calls[0]![1]!.body as FormData;
+    const metadata = JSON.parse(form.get("metadata") as string);
+    const scope = [...Array(sessionStorage.length)]
+      .map((_, i) => sessionStorage.key(i)!)
+      .find((key) => key.startsWith("initial-input:"))!;
+    const saved = await readQueuedMessages(scope);
+    expect(saved[0]?.files?.[0]?.name).toBe("context.txt");
+    expect(saved[0]?.files?.[0]?.size).toBe(file.size);
+    await waitFor(() => expect(screen.getByTestId("new-chat-landing-error")).toBeInTheDocument());
+    cleanup();
+    resetLandingDraft(true);
+    renderLanding([], { durable_host_initial_input: true } as Partial<ServerInfo>);
+    expect(screen.getByTestId("new-chat-landing-input")).toHaveValue("recover without retyping");
+    expect(screen.getByTestId("new-chat-landing-error")).toBeInTheDocument();
+    await screen.findByText("context.txt");
+    expect(JSON.parse(sessionStorage.getItem(scope)!).createToken).toBe(
+      metadata.labels["omnigent.client_create_token"],
+    );
+  });
+
+  it("waits for durable host acceptance before dropping the landing recovery copy", async () => {
+    vi.mocked(getCurrentUserId).mockReturnValue("owner@example.test");
+    let accepted!: (response: Response) => void;
+    vi.mocked(authenticatedFetch).mockReturnValue(
+      new Promise((resolve) => {
+        accepted = resolve;
+      }),
+    );
+    renderLanding([], { durable_host_initial_input: true } as Partial<ServerInfo>);
+    await waitForWorkspaceSeed();
+    typeMessage("save before work");
+    fireEvent.click(screen.getByTestId("new-chat-landing-submit"));
+    await waitFor(() => expect(authenticatedFetch).toHaveBeenCalledOnce());
+    const request = vi.mocked(authenticatedFetch).mock.calls[0]![1]!;
+    expect(JSON.parse(request.body as string).initial_input).toMatchObject({
+      type: "message",
+      data: { content: [{ type: "input_text", text: "save before work" }] },
+    });
+    const savedKeys = () =>
+      [...Array(sessionStorage.length)]
+        .map((_, i) => sessionStorage.key(i)!)
+        .filter((key) => key.startsWith("initial-input:"));
+    expect(savedKeys()).toHaveLength(1);
+    expect(pushMatchers).toHaveLength(0);
+    await act(async () => {
+      accepted(new Response(JSON.stringify({ id: "accepted" })));
+    });
+    await waitFor(() => expect(navigateMock).toHaveBeenCalledWith("/c/accepted"));
+    expect(savedKeys()).toHaveLength(0);
+    expect(setPendingInitialPromptMock).not.toHaveBeenCalled();
+  });
+
   it.each([
     { query: "canvas=main", canvasId: "main", project: undefined },
     {
@@ -766,6 +836,7 @@ describe("NewChatLandingScreen create flow", () => {
         expect.any(Function),
         project,
         false,
+        expect.any(Function),
       ),
     );
   });
@@ -874,6 +945,7 @@ describe("NewChatLandingScreen create flow", () => {
         expect.any(Function),
         undefined,
         false,
+        expect.any(Function),
       ),
     );
     expect(resolveCreate).toBeTypeOf("function");
@@ -921,6 +993,7 @@ describe("NewChatLandingScreen create flow", () => {
         expect.any(Function),
         undefined,
         false,
+        expect.any(Function),
       ),
     );
   });
@@ -1132,6 +1205,7 @@ describe("NewChatLandingScreen create flow", () => {
         expect.any(Function),
         undefined,
         false,
+        expect.any(Function),
       ),
     );
 
@@ -1395,6 +1469,8 @@ describe("NewChatLandingScreen create flow", () => {
     // control-char-stripped with list indentation intact, for ChatPage to send.
     await waitFor(() =>
       expect(setPendingInitialPromptMock).toHaveBeenCalledWith("conv_new", {
+        stableId: expect.stringMatching(/^[a-f0-9]{32}$/),
+        onAccepted: expect.any(Function),
         text: "  - read the README\n  - refactor",
         skill: null,
         files: [],
@@ -1443,6 +1519,8 @@ describe("NewChatLandingScreen create flow", () => {
     // body (same reason as the prompt text: initial_items never fire a turn).
     await waitFor(() =>
       expect(setPendingInitialPromptMock).toHaveBeenCalledWith("conv_new", {
+        stableId: expect.stringMatching(/^[a-f0-9]{32}$/),
+        onAccepted: expect.any(Function),
         text: "what is in this image?",
         skill: null,
         files: [file],
@@ -1472,6 +1550,8 @@ describe("NewChatLandingScreen create flow", () => {
 
     await waitFor(() =>
       expect(setPendingInitialPromptMock).toHaveBeenCalledWith("conv_new", {
+        stableId: expect.stringMatching(/^[a-f0-9]{32}$/),
+        onAccepted: expect.any(Function),
         text: "",
         skill: null,
         files: [file],
@@ -1501,6 +1581,8 @@ describe("NewChatLandingScreen create flow", () => {
     // "/review-pr 123 focus on auth" text — the original bug.
     await waitFor(() =>
       expect(setPendingInitialPromptMock).toHaveBeenCalledWith("conv_new", {
+        stableId: expect.stringMatching(/^[a-f0-9]{32}$/),
+        onAccepted: expect.any(Function),
         text: "/review-pr 123 focus on auth",
         skill: { name: "review-pr", args: "123 focus on auth" },
         files: [],
@@ -1527,6 +1609,8 @@ describe("NewChatLandingScreen create flow", () => {
 
     await waitFor(() =>
       expect(setPendingInitialPromptMock).toHaveBeenCalledWith("conv_new", {
+        stableId: expect.stringMatching(/^[a-f0-9]{32}$/),
+        onAccepted: expect.any(Function),
         text: "/typo do something",
         skill: null,
         files: [],
@@ -1559,6 +1643,8 @@ describe("NewChatLandingScreen create flow", () => {
 
     await waitFor(() =>
       expect(setPendingInitialPromptMock).toHaveBeenCalledWith("conv_new", {
+        stableId: expect.stringMatching(/^[a-f0-9]{32}$/),
+        onAccepted: expect.any(Function),
         text: "/review-pr 123",
         skill: null,
         files: [],

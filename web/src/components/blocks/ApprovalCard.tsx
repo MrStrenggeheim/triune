@@ -956,9 +956,11 @@ export function ApprovalCard({
 export function ElicitationCard({
   item,
   onSubmit,
+  className,
 }: {
   item: Extract<RenderItem, { kind: "elicitation" }>;
   onSubmit?: SubmitApprovalFn;
+  className?: string;
 }) {
   // A sub-agent's prompt is mirrored into its ancestors' streams with
   // ``targetSessionId`` naming the sub-agent that asked.
@@ -969,6 +971,7 @@ export function ElicitationCard({
       : null;
   return (
     <ApprovalCard
+      className={className}
       elicitationId={item.elicitationId}
       nativeDelivery={item.nativeDelivery}
       message={item.message}

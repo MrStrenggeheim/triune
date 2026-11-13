@@ -32,6 +32,7 @@ import {
 } from "./sessionsApi";
 import { BACKGROUND_SESSION_TITLES_STORAGE_KEY } from "./backgroundSessionTitlesPreferences";
 import { getSessionHost, setSessionHost } from "./sessionHost";
+import type { SessionEventInput } from "./types";
 
 function mockJsonResponse(
   body: unknown,
@@ -432,6 +433,25 @@ describe("createSession", () => {
 });
 
 describe("createBundledSession", () => {
+  it("sends bundled initial input and attachments in one multipart create", async () => {
+    fetchMock.mockResolvedValueOnce(mockJsonResponse({ session_id: "saved-bundle" }));
+    const bundle = new File(["agent"], "agent.tar.gz", { type: "application/gzip" });
+    const file = new File(["context"], "context.txt", { type: "text/plain" });
+    const initialInput: SessionEventInput = {
+      type: "message",
+      data: { role: "user", content: [{ type: "input_text", text: "use context" }] },
+    };
+    await createBundledSession(bundle, { host_id: "host", initial_input: initialInput }, [file]);
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const form = init.body as FormData;
+    expect(form.get("bundle")).toBe(bundle);
+    expect(form.getAll("initial_files")).toEqual([file]);
+    expect(JSON.parse(form.get("metadata") as string)).toEqual({
+      host_id: "host",
+      initial_input: initialInput,
+    });
+    expect(new Headers(init.headers).has("Content-Type")).toBe(false);
+  });
   it("sends the local opt-out header when background titles are disabled", async () => {
     localStorage.setItem(BACKGROUND_SESSION_TITLES_STORAGE_KEY, "off");
     fetchMock.mockResolvedValueOnce(

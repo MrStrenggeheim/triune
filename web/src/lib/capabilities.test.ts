@@ -91,6 +91,14 @@ describe("sandboxProviderOptions", () => {
 
 describe("resolveServerInfo sandbox_providers", () => {
   it.each([undefined, false, "true", true])(
+    "parses host initial-input support explicitly (%s)",
+    async (value) => {
+      expect((await probe({ durable_host_initial_input: value })).durable_host_initial_input).toBe(
+        value === true,
+      );
+    },
+  );
+  it.each([undefined, false, "true", true])(
     "requires an explicit durable-input capability (%s)",
     async (value) => {
       expect((await probe({ durable_initial_input: value })).durable_initial_input).toBe(

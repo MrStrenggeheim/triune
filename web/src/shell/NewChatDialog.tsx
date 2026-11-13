@@ -357,6 +357,7 @@ import { buildAgentBundle, type AgentBundleInput } from "@/lib/agentBundle";
 import { installAgentBundle } from "@/lib/agentsApi";
 import { createBundledSession, launchRunner } from "@/lib/sessionsApi";
 import { promoteSessionDraft, recoverFailedSessionDraft } from "@/lib/sessionDrafts";
+import { readQueuedMessages, writeQueuedMessages } from "@/lib/queuedMessagePersistence";
 
 // Short picker-row blurbs — the spec descriptions are long paragraphs that
 // truncate badly in the dropdown; other dialogs keep the server values.
@@ -2070,11 +2071,10 @@ export function AgentHarnessPicker({
   );
 }
 
-// In-memory draft for the new-session landing screen, so a half-composed
-// message, attachments and picker selections survive the unmount that happens
-// when the user navigates into an existing session and back. Module-scoped,
-// not persisted to storage (a page refresh starts clean); cleared on create.
+// Keep startup recovery until acceptance, including attachment bytes on reload.
 interface LandingDraft {
+  createToken?: string;
+  startupError?: string;
   mcpRegistryServices: string[];
   // `?project=` context the draft was composed under ("" = plain visit).
   // A draft restored under a DIFFERENT project only brings back its text and
@@ -2110,21 +2110,101 @@ interface LandingDraft {
 }
 
 let landingDraft: LandingDraft | null = null;
+let landingDraftOwner: string | null = null;
 let landingDraftRevision = 0;
+let landingDraftWrites = Promise.resolve();
 
-function writeLandingDraft(draft: LandingDraft | null): void {
+function landingDraftKey(draft: LandingDraft): string {
+  return JSON.stringify({
+    ...draft,
+    createToken: undefined,
+    startupError: undefined,
+    files: draft.files.map((file) => [file.name, file.size, file.type, file.lastModified]),
+  });
+}
+
+function landingDraftScope(): string | null {
+  const userId = getCurrentUserId();
+  if (!userId) return null;
+  let tabId = sessionStorage.getItem("omnigent.landingDraftTab");
+  if (!tabId) {
+    tabId = newTempConversation().token;
+    sessionStorage.setItem("omnigent.landingDraftTab", tabId);
+  }
+  return `initial-input:${location.origin}:${userId}:${tabId}`;
+}
+
+function writeLandingDraft(draft: LandingDraft | null): Promise<void> {
   landingDraft = draft;
+  landingDraftOwner = getCurrentUserId();
   landingDraftRevision += 1;
+  try {
+    const scope = landingDraftScope();
+    if (scope === null) return Promise.resolve();
+    if (draft) sessionStorage.setItem(scope, JSON.stringify({ ...draft, files: [] }));
+    else sessionStorage.removeItem(scope);
+    if (typeof indexedDB === "undefined") return Promise.resolve();
+    landingDraftWrites = landingDraftWrites
+      .then(() =>
+        writeQueuedMessages(
+          scope,
+          draft
+            ? [
+                {
+                  queueId: "initial-input",
+                  conversationId: "landing",
+                  text: draft.message,
+                  files: draft.files,
+                },
+              ]
+            : [],
+        ),
+      )
+      .catch(() => {
+        showToast(
+          "Couldn't save the startup draft for reload. Keep this tab open until it is accepted.",
+        );
+      });
+    return landingDraftWrites;
+  } catch {
+    showToast(
+      "Couldn't save the startup draft for reload. Keep this tab open until it is accepted.",
+    );
+    return Promise.resolve();
+  }
+}
+
+function restoreLandingDraft(): void {
+  if (landingDraftOwner !== getCurrentUserId()) {
+    landingDraft = null;
+    landingDraftOwner = getCurrentUserId();
+  }
+  if (landingDraft) return;
+  try {
+    const scope = landingDraftScope();
+    const saved = scope && sessionStorage.getItem(scope);
+    if (!saved) return;
+    const draft = JSON.parse(saved) as LandingDraft;
+    if (typeof draft.message === "string" && Array.isArray(draft.files)) landingDraft = draft;
+  } catch {
+    showToast("Couldn't restore the saved startup draft.");
+  }
 }
 
 // Test-only: clears the preserved landing draft so each case starts from a
 // clean module state (the draft is module-scoped and survives unmount by
 // design, which would otherwise leak between tests).
-export function resetLandingDraft(): void {
-  writeLandingDraft(null);
+export function resetLandingDraft(preserveStorage = false): void {
+  if (preserveStorage) {
+    landingDraft = null;
+    landingDraftRevision += 1;
+  } else {
+    void writeLandingDraft(null);
+  }
 }
 
 export function NewChatLandingScreen() {
+  restoreLandingDraft();
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams] = useSearchParams();
@@ -2285,6 +2365,7 @@ export function NewChatLandingScreen() {
       ? landingDraft
       : {
           ...landingDraft,
+          createToken: undefined,
           pickedAgentId: null,
           agentExplicitlySelected: false,
           pickedHarness: null,
@@ -2662,7 +2743,9 @@ export function NewChatLandingScreen() {
   const [dbcertRequired, setDbcertRequired] = useState(false);
   const createAttemptRef = useRef<symbol | null>(null);
   const skipDbcertCheckRef = useRef<(() => void) | null>(null);
-  const [createError, setCreateError] = useState<string | null>(null);
+  const [createError, setCreateError] = useState<string | null>(
+    restoredDraft?.startupError ?? null,
+  );
   const [offlineHostLimit, setOfflineHostLimit] = useState(0);
   // Harness "Set up" dialog target, opened from the composer notice or a picker
   // row; null when closed. One dialog serves every entry point.
@@ -2684,12 +2767,14 @@ export function NewChatLandingScreen() {
   // snapshot is dropped instead of resurrected.
   const submittedRef = useRef(false);
   const submittedDraftRevisionRef = useRef<number | null>(null);
+  const submittedDraftRef = useRef<LandingDraft | null>(restoredDraft);
   // Whether this composer is still on screen. The create POST can outlive
   // it — the user opens another session while the session bootstraps — and
   // the post-create navigation must not follow them there.
   const onScreenRef = useRef(true);
   const draftRef = useRef<LandingDraft>(null as unknown as LandingDraft);
   draftRef.current = {
+    startupError: createError ?? undefined,
     mcpRegistryServices,
     project: projectParam,
     message,
@@ -2716,6 +2801,40 @@ export function NewChatLandingScreen() {
     agentFromConfig: agentFromConfigRef.current,
     workspaceFromConfig: workspaceFromConfigRef.current,
   };
+  if (
+    submittedDraftRef.current &&
+    landingDraftKey(submittedDraftRef.current) === landingDraftKey(draftRef.current)
+  ) {
+    draftRef.current.createToken = submittedDraftRef.current.createToken;
+  }
+  useEffect(() => {
+    const restore = draftRef.current;
+    let cancelled = false;
+    let scope: string | null = null;
+    try {
+      scope = landingDraftScope();
+    } catch {
+      showToast("Couldn't restore the saved startup draft.");
+    }
+    if (scope && restore.files.length === 0 && typeof indexedDB !== "undefined") {
+      void landingDraftWrites
+        .then(() => readQueuedMessages(scope))
+        .then((saved) => {
+          if (
+            cancelled ||
+            draftRef.current.message !== restore.message ||
+            draftRef.current.files.length > 0
+          )
+            return;
+          const draft = saved[0];
+          if (draft?.text === restore.message && draft.files?.length) restoreFiles(draft.files);
+        })
+        .catch(() => showToast("Couldn't restore the startup attachments."));
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [restoreFiles]);
   useEffect(() => {
     // Re-set on setup so StrictMode's setup→cleanup→setup double-invoke
     // doesn't leave the screen marked gone.
@@ -2727,8 +2846,6 @@ export function NewChatLandingScreen() {
           ...draftRef.current,
           agentExplicitlySelected: agentExplicitlySelectedRef.current,
         });
-      } else if (submittedDraftRevisionRef.current === landingDraftRevision) {
-        writeLandingDraft(null);
       }
     };
   }, []);
@@ -5477,7 +5594,7 @@ export function NewChatLandingScreen() {
   // No session was created after all, so the draft is the user's again —
   // including when they navigated away and the unmount cleanup already
   // dropped it on the strength of the submit.
-  function returnDraftToUser(temporaryConversationId?: string) {
+  function returnDraftToUser(temporaryConversationId?: string, error?: string) {
     submittedRef.current = false;
     submittedDraftRevisionRef.current = null;
     const originalDraft =
@@ -5485,13 +5602,19 @@ export function NewChatLandingScreen() {
         ? { ...draftRef.current, message: "", files: [] }
         : draftRef.current;
     const returnedDraft = recoverFailedSessionDraft(originalDraft, temporaryConversationId);
+    returnedDraft.startupError = error;
+    if (
+      submittedDraftRef.current &&
+      landingDraftKey(submittedDraftRef.current) !== landingDraftKey(returnedDraft)
+    ) {
+      delete returnedDraft.createToken;
+    }
+    void writeLandingDraft(returnedDraft);
     if (onScreenRef.current) {
       setMessage(returnedDraft.message);
       // The draft's files were validated when the user attached them, so
       // they come back verbatim rather than through a re-validating replace.
       restoreFiles(returnedDraft.files);
-    } else {
-      writeLandingDraft(returnedDraft);
     }
   }
 
@@ -5581,6 +5704,14 @@ export function NewChatLandingScreen() {
         if (needsDbcert) return;
       }
       // Spend the draft only once provisioning starts, after the laptop credential check.
+      const previous = submittedDraftRef.current;
+      const createToken =
+        previous?.createToken && landingDraftKey(previous) === landingDraftKey(draftRef.current)
+          ? previous.createToken
+          : newTempConversation().token;
+      const submittedDraft = { ...draftRef.current, createToken, startupError: undefined };
+      submittedDraftRef.current = submittedDraft;
+      await writeLandingDraft(submittedDraft);
       submittedDraftRevisionRef.current = landingDraftRevision;
       submittedRef.current = true;
       trackClick("new_chat.start_session", "button");
@@ -5725,20 +5856,25 @@ export function NewChatLandingScreen() {
       // "Sessions" section while the search-indexed session list catches up to
       // the move. A `project_id` create needs no label: the row is born with
       // first-class membership (and a label would go stale on project rename).
-      const createLabels =
-        selectedProject && createProjectId === null
+      const createLabels = {
+        ...(selectedProject && createProjectId === null
           ? {
               ...(baseLabels ?? {}),
               [PROJECT_LABEL_KEY]: selectedProject,
               ...composerContextLabels,
             }
-          : { ...(baseLabels ?? {}), ...composerContextLabels };
+          : { ...(baseLabels ?? {}), ...composerContextLabels }),
+        [CLIENT_CREATE_TOKEN_LABEL]: createToken,
+      };
 
       const skill = isNativeTerminalAgent
         ? null
         : matchSkillInvocation(initialPrompt, availableSkills);
       const serverOwnsInitialInput =
-        sandboxSelected && info !== "loading" && info.durable_initial_input === true;
+        info !== "loading" &&
+        (sandboxSelected
+          ? info.durable_initial_input === true
+          : info.durable_host_initial_input === true);
       const initialInput =
         skill !== null
           ? {
@@ -5755,6 +5891,19 @@ export function NewChatLandingScreen() {
         // Custom agents upload their bundle with the session, then launch on the host below.
         const bundle = await buildAgentBundle(pendingAgent);
         const metadata: Record<string, unknown> = { labels: createLabels };
+        if (serverOwnsInitialInput) metadata.initial_input = initialInput;
+        if (serverOwnsInitialInput && !sandboxSelected) {
+          metadata.host_id = selectedHostId;
+          if (shouldCreateWorktree) {
+            metadata.git = {
+              branch_name: trimmedBranch,
+              base_branch: baseBranch.trim() || undefined,
+            };
+          } else if (startInExistingWorktree) {
+            metadata.git = { branch_name: activeWorktree!.branch!, existing_worktree: true };
+          }
+        }
+        if (sandboxSelected) metadata.host_type = "managed";
         if (mcpServicesForLaunch.length) {
           metadata.mcp_registry_services = mcpServicesForLaunch;
         }
@@ -5772,6 +5921,7 @@ export function NewChatLandingScreen() {
         const bundled = await createBundledSession(
           bundle,
           metadata as Parameters<typeof createBundledSession>[1],
+          serverOwnsInitialInput ? files : [],
         );
         data = { id: bundled.id };
         // Register create_session for the custom-agent (bundled) path too —
@@ -5780,7 +5930,7 @@ export function NewChatLandingScreen() {
         markSessionCreated(data.id, sandboxSelected ? "sandbox" : "computer");
         // Launch the runner on the selected host. The multipart create
         // only stores DB rows — launchRunner binds + starts the runner.
-        if (!sandboxSelected && selectedHostId && workspaceTrimmed) {
+        if (!serverOwnsInitialInput && !sandboxSelected && selectedHostId && workspaceTrimmed) {
           // Create a new worktree, bind an existing one (records the branch
           // for the sidebar + delete flow without creating anything), or
           // neither — mirrored on the `git` block.
@@ -5795,7 +5945,7 @@ export function NewChatLandingScreen() {
         setPendingAgent(null);
       } else {
         // Normal path: bind to an existing registered agent.
-        const provisional = newTempConversation();
+        const provisional = { ...newTempConversation(), token: createToken };
         try {
           localConv = beginLocalConversation(initialPrompt, files, provisional, localProject, {
             // Seed the temp session with the NORMALIZED create identity so the
@@ -5823,10 +5973,10 @@ export function NewChatLandingScreen() {
         } catch {
           /* non-fatal: the response still opens the server session */
         }
-        const createToken = localConv?.createToken ?? provisional.token;
+        const requestCreateToken = localConv?.createToken ?? provisional.token;
         const matchOwnCreate = (item: SessionListWireItem) =>
           item.parent_session_id == null &&
-          item.labels?.[CLIENT_CREATE_TOKEN_LABEL] === createToken;
+          item.labels?.[CLIENT_CREATE_TOKEN_LABEL] === requestCreateToken;
         const createPayload = JSON.stringify({
           ...(serverOwnsInitialInput ? { initial_input: initialInput } : {}),
           // Config-seeded agent on a `project_id` create: omitted so the
@@ -5887,7 +6037,7 @@ export function NewChatLandingScreen() {
           // server stamps the routed wrapper's labels once it has rebound.
           labels: {
             ...(smartRoutingHarnessSelected ? {} : createLabels),
-            [CLIENT_CREATE_TOKEN_LABEL]: createToken,
+            [CLIENT_CREATE_TOKEN_LABEL]: requestCreateToken,
           },
           // Permission / approval / cursor mode → CLI flag pair, persisted as
           // terminal_launch_args. Omitted for the default and non-native agents.
@@ -5940,9 +6090,10 @@ export function NewChatLandingScreen() {
         // Managed launch validation continues after the row is announced, so
         // only its HTTP response can resolve the temp chat.
         const abortPush = new AbortController();
-        const pushedRow = sandboxSelected
-          ? Promise.resolve(null)
-          : nextPushedSession(matchOwnCreate, abortPush.signal);
+        const pushedRow =
+          sandboxSelected || serverOwnsInitialInput
+            ? Promise.resolve(null)
+            : nextPushedSession(matchOwnCreate, abortPush.signal);
         const confirmed = (async (): Promise<{ id: string } | { error: string }> => {
           const response = await createRequest;
           if (!response.ok) {
@@ -5984,7 +6135,7 @@ export function NewChatLandingScreen() {
         // the workspace and agent, so winning on the push can't skip past an
         // error the user needed to see on this screen.
         if ("error" in created) {
-          returnDraftToUser(localConv?.tempConvId);
+          returnDraftToUser(localConv?.tempConvId, created.error);
           // On the navigate-first path the landing screen is unmounted, so tear
           // down the phantom chat, return to landing, and surface the error as a
           // toast (survives the remount); inline error only when still on landing.
@@ -6074,9 +6225,10 @@ export function NewChatLandingScreen() {
       appendPromptHistoryEntry(initialPrompt, data.id);
       // The session was created — drop any draft a detour back to this
       // screen stashed, so the next visit starts clean.
-      if (submittedDraftRevisionRef.current === landingDraftRevision) {
-        writeLandingDraft(null);
-      }
+      const clearAcceptedDraft = () => {
+        if (submittedDraftRevisionRef.current === landingDraftRevision) writeLandingDraft(null);
+      };
+      if (serverOwnsInitialInput) clearAcceptedDraft();
 
       // `localConv` is set only when a real agent id was resolved up front.
       if (localConv !== null && effectiveAgentId !== null) {
@@ -6095,6 +6247,7 @@ export function NewChatLandingScreen() {
           () => stillViewingLocalSession(tempConvId),
           localProject,
           serverOwnsInitialInput,
+          clearAcceptedDraft,
         );
         void queryClient.refetchQueries({ queryKey: ["conversations"] });
       } else {
@@ -6103,14 +6256,20 @@ export function NewChatLandingScreen() {
         recordOptimisticTitle(data.id, initialPrompt);
         void queryClient.refetchQueries({ queryKey: ["conversations"] });
         if (!serverOwnsInitialInput)
-          setPendingInitialPrompt(data.id, { text: initialPrompt, skill, files });
+          setPendingInitialPrompt(data.id, {
+            text: initialPrompt,
+            skill,
+            files,
+            stableId: createToken,
+            onAccepted: clearAcceptedDraft,
+          });
         if (onScreenRef.current && window.location.href === createLocation) {
           navigate(sessionLocation(data.id));
         }
       }
     } catch {
       const msg = "Couldn't reach the server. Check your connection and try again.";
-      returnDraftToUser(localConv?.tempConvId);
+      returnDraftToUser(localConv?.tempConvId, msg);
       tearDownLocalConversation();
       // Toast when the landing screen is gone (navigate-first); inline otherwise.
       if (localConv !== null) showToast(msg);

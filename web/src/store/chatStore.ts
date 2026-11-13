@@ -176,6 +176,8 @@ import type { ReplyQuote, StoredReplyDraft } from "@/lib/replyDraft";
 import { toast } from "@/lib/notifications";
 
 export interface SendOptions {
+  nativeChildAction?: "steer";
+  nativeChildTurnId?: string;
   /** Compact is a control event, not a user-message turn. */
   command?: "compact";
   /** Client-only quote provenance, retained if the composer needs to retry. */
@@ -216,6 +218,8 @@ export interface SendOptions {
    * status still settles.
    */
   onError?: (message: string) => void;
+  /** HTTP acceptance; this does not imply model consumption. */
+  onAccepted?: () => void;
 }
 
 /**
@@ -369,6 +373,7 @@ export function beginLocalConversation(
   const selfAuthor = getCurrentAuthorId();
   const bubble: PendingUserMessage = {
     tempId: pendingMsgTempId,
+    stableId: createToken,
     content,
     initialDraft: { text, files: files ?? [] },
     createdAtS: Math.floor(Date.now() / 1000),
@@ -457,6 +462,7 @@ export function hydrateLocalConversation(
   isStillViewing: () => boolean = () => true,
   project?: LocalConversationProject,
   initialInputAccepted = false,
+  onAccepted?: () => void,
 ): void {
   const shouldSend = !initialInputAccepted && hasPendingLocalMessage(tempConvId);
   const restoredDraft = conversationRegistry.peek(tempConvId)?.getState().failedSendDraft;
@@ -485,7 +491,7 @@ export function hydrateLocalConversation(
         startupPending: true,
         pendingUserMessages: state.pendingUserMessages.map((message) =>
           message.tempId === pendingMsgTempId
-            ? { ...message, posted: true, initialDraft: undefined }
+            ? { ...message, posted: true, initialDraft: undefined, serverOwnedInitial: true }
             : message,
         ),
       }));
@@ -523,7 +529,10 @@ export function hydrateLocalConversation(
       status: "idle",
       sendLatchedAt: null,
     }));
-    void store.sendSlashCommand(skill.name, skill.args, agentId, { pinnedConversationId: realId });
+    void store.sendSlashCommand(skill.name, skill.args, agentId, {
+      pinnedConversationId: realId,
+      onAccepted,
+    });
     return;
   }
   // Plain message: reuse the bubble already on the entry. `send` →
@@ -532,6 +541,7 @@ export function hydrateLocalConversation(
   void store.send(text, agentId, files, {
     pinnedConversationId: realId,
     reusePendingTempId: pendingMsgTempId,
+    onAccepted,
   });
 }
 
@@ -569,6 +579,10 @@ export function removeLocalConversation(tempConvId: string): boolean {
  */
 export interface PendingUserMessage {
   tempId: string;
+  /** Idempotency identity sent with this input, also used by persisted receipts. */
+  stableId?: string;
+  /** The create accepted this placeholder before returning uploaded file ids. */
+  serverOwnedInitial?: boolean;
   content: MessageContentBlock[];
   communication?: MessageCommunication;
   /** Unsent draft awaiting session/model readiness, including unuploaded files. */
@@ -2013,6 +2027,8 @@ function scheduleWorkspaceFilesystemInvalidation(sessionId: string): void {
  * the vendor CLI interprets slash commands itself.
  */
 export interface PendingInitialPrompt {
+  stableId?: string;
+  onAccepted?: () => void;
   /** Sanitized full text the user typed, e.g. `"/review-pr 123"`. */
   text: string;
   /** Matched bundled-skill invocation, or `null` for a plain message. */
@@ -2632,7 +2648,13 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
       restoredDraft !== null &&
       restoredDraft.stableId === reusableRetryId &&
       restoredDraft.serverRefused === true;
-    const stableId = opts?.stableId ?? reusableRetryId ?? randomUUID().replace(/-/g, "");
+    const initialStableId = opts?.reusePendingTempId
+      ? pinnedState?.pendingUserMessages.find(
+          (message) => message.tempId === opts.reusePendingTempId,
+        )?.stableId
+      : undefined;
+    const stableId =
+      opts?.stableId ?? initialStableId ?? reusableRetryId ?? randomUUID().replace(/-/g, "");
     // Sending while a response is already streaming is allowed — the
     // session API queues item-typed events and the server delivers them
     // into the running task's inbox. Keep `activeResponse` untouched in
@@ -2663,6 +2685,7 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
     // Nothing may overtake a first message still held for startup: queue behind it.
     if (
       !compacts &&
+      opts?.nativeChildAction !== "steer" &&
       !opts?.reusePendingTempId &&
       targetState !== null &&
       holdsInitialDraft(targetState)
@@ -2762,6 +2785,7 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
               ...s.pendingUserMessages,
               {
                 tempId,
+                stableId,
                 content,
                 ...(initialDraft ? { initialDraft } : {}),
                 createdAtS: Math.floor(Date.now() / 1000),
@@ -2777,6 +2801,12 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
         // authoritatively. Only the parked-dialog reason clears — a fresh send is
         // not parked on a dialog.
         blockedOn: null,
+      }));
+    } else {
+      pinnedSetter((s) => ({
+        pendingUserMessages: s.pendingUserMessages.map((message) =>
+          message.tempId === tempId ? { ...message, stableId } : message,
+        ),
       }));
     }
 
@@ -2886,9 +2916,13 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
             role: "user",
             content: serverContent,
             stable_id: stableId,
+            ...(opts?.nativeChildAction ? { native_child_action: opts.nativeChildAction } : {}),
+            ...(opts?.nativeChildTurnId !== undefined
+              ? { response_id: opts.nativeChildTurnId }
+              : {}),
           },
         },
-        { holdWhenHostOffline: true },
+        { holdWhenHostOffline: opts?.nativeChildAction !== "steer" },
       );
       // Policy denied the input — the server returned immediately
       // without starting a turn or persisting the user message, so
@@ -2934,6 +2968,7 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
               : entry,
           ),
         }));
+        opts?.onAccepted?.();
       }
       // Note: native-terminal messages return a `pending_id`, but the
       // optimistic bubble deliberately keeps its client temp id as its
@@ -2964,7 +2999,10 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
       // ahead of this conversation's others and send it once the host is back.
       const holdTarget = postedSessionId ?? submitConversationId;
       const heldForHost =
-        err instanceof ApiError && err.code === HOST_OFFLINE_CODE && holdTarget !== null;
+        opts?.nativeChildAction !== "steer" &&
+        err instanceof ApiError &&
+        err.code === HOST_OFFLINE_CODE &&
+        holdTarget !== null;
       if (heldForHost) {
         holdSendForHost(holdTarget, message, {
           text,
@@ -3166,8 +3204,8 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
           kind: "skill",
           name,
           arguments: args,
-          ...(setterForState(sessionId)?.startupPending
-            ? { stable_id: randomUUID().replace(/-/g, "") }
+          ...(opts?.stableId || setterForState(sessionId)?.startupPending
+            ? { stable_id: opts?.stableId ?? randomUUID().replace(/-/g, "") }
             : {}),
         },
       });
@@ -3201,6 +3239,7 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
             p.tempId === tempId ? { ...p, posted: true } : p,
           ),
         }));
+        opts?.onAccepted?.();
       }
       queryClient?.invalidateQueries({ queryKey: ["conversations"] });
     } catch (err) {
@@ -3305,7 +3344,10 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
   },
 
   switchTo: async (conversationId) => {
-    if (get().conversationId === conversationId) return;
+    if (get().conversationId === conversationId) {
+      if (conversationId !== null) await ensureConversationStreamed(conversationId);
+      return;
+    }
 
     // Whether this conversation is already live AND current decides everything
     // below, so read it before anything can create the entry. A retained entry
@@ -3355,22 +3397,6 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
       return;
     }
 
-    // Sends the server hasn't acknowledged, carried across the re-bind below.
-    let unsentOnRebind: PendingUserMessage[] = [];
-    if (!wasLive) {
-      // Drop any retained-but-dead entry so `acquire` builds a fresh one. A
-      // re-bind has to start from the initial state: `bindStream` PREPENDS its
-      // snapshot to whatever `blocks` already holds, so re-binding onto a dead
-      // entry's stale transcript would duplicate and mis-order it. Unsent
-      // bubbles are the one thing worth keeping — the server can't replay what
-      // it was never told about.
-      unsentOnRebind =
-        conversationRegistry
-          .peek(conversationId)
-          ?.getState()
-          .pendingUserMessages.filter((p) => p.posted !== true) ?? [];
-      conversationRegistry.release(conversationId);
-    }
     const entry = conversationRegistry.acquire(conversationId);
     if (!wasLive) {
       // Cold entry: nothing is hydrated yet, so the page must show the
@@ -3380,8 +3406,8 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
       // A live entry deliberately skips this — painting it instantly, with no
       // placeholder, is the whole point of keeping streams open.
       entry.setState({
-        loadingConversation: true,
-        ...(unsentOnRebind.length > 0 ? { pendingUserMessages: unsentOnRebind } : {}),
+        loadingConversation: entry.getState().blocks.length === 0,
+        conversationLoadError: null,
       });
     }
     // Paint whatever the entry already holds. For a live entry that is the
@@ -4046,17 +4072,18 @@ const heldStreamSlots = new Map<string, StreamSlot>();
  * slot's release so the freed lock is observable before the re-check, rather
  * than racing it and over-evicting. Returns whether a slot is now held.
  *
- * Returns false only when a fresh tab finds every slot held by OTHER tabs and
- * has nothing of its own to reclaim; the active conversation then opens over
- * budget (the caller proceeds anyway) and the too-many-tabs banner is raised.
+ * Returns false when no slot can be reclaimed; the caller waits before opening
+ * its stream and raises the existing too-many-tabs banner.
  */
-async function acquireStreamSlot(id: string): Promise<boolean> {
+async function acquireStreamSlot(id: string, signal?: AbortSignal): Promise<boolean> {
+  if (signal?.aborted) return false;
   if (heldStreamSlots.has(id)) return true; // rebinding a still-slotted stream
   let slot = await getStreamSlotManager().tryAcquire();
   // Inherently sequential: each iteration must fully release a reclaimed slot
   // (so the freed lock is observable) before re-checking, or we'd over-evict.
   /* eslint-disable no-await-in-loop */
   while (slot === null) {
+    if (signal?.aborted) return false;
     const evictedId = conversationRegistry.evictLruEvictable(id);
     if (evictedId === null) break;
     const evictedSlot = heldStreamSlots.get(evictedId);
@@ -4067,6 +4094,10 @@ async function acquireStreamSlot(id: string): Promise<boolean> {
     slot = await getStreamSlotManager().tryAcquire();
   }
   /* eslint-enable no-await-in-loop */
+  if (signal?.aborted) {
+    await slot?.release();
+    return false;
+  }
   if (slot !== null) heldStreamSlots.set(id, slot);
   setStreamBudgetExceeded(slot === null);
   return slot !== null;
@@ -4139,7 +4170,11 @@ function isConversationStreamCurrent(id: string): boolean {
   const entry = conversationRegistry.peek(id);
   if (entry === undefined || entry.disposed) return false;
   const state = entry.getState();
-  return state.abortController !== null && state.conversationLoadError === null;
+  return (
+    state.abortController !== null &&
+    !state.abortController.signal.aborted &&
+    state.conversationLoadError === null
+  );
 }
 
 /**
@@ -4360,7 +4395,7 @@ function mirrorActiveEntry(): void {
  * @param id Conversation id to stream, e.g. a side-chat child.
  */
 export async function ensureConversationStreamed(id: string): Promise<void> {
-  if (id === "" || isTempConvId(id)) return;
+  if (queryClient === null || id === "" || isTempConvId(id)) return;
   const existing = conversationRegistry.peek(id);
   if (existing !== undefined) {
     // Reuse only while a load is in flight (guards a double-bind) or the stream
@@ -4369,11 +4404,13 @@ export async function ensureConversationStreamed(id: string): Promise<void> {
     // be dead — reusing it would strand a remounted pane on stale state. This
     // mirrors switchTo's `isConversationStreamCurrent` liveness gate.
     if (existing.getState().loadingConversation || isConversationStreamCurrent(id)) return;
-    // Dead or failed: drop the entry so the acquire below rebinds.
-    conversationRegistry.release(id);
+    abortConversationStream(existing);
   }
   const entry = conversationRegistry.acquire(id);
-  entry.setState({ loadingConversation: true, conversationLoadError: null });
+  entry.setState({
+    loadingConversation: entry.getState().blocks.length === 0,
+    conversationLoadError: null,
+  });
   await bindStream(id, entrySetter(entry), entryGetter(entry), true);
 }
 
@@ -4735,6 +4772,13 @@ function mcpStartupSnapshotPatch(
  * `pendingUserMessages`, `blocks`) and usage counters — those are owned
  * by their own SSE events and must not be clobbered by a late snapshot.
  */
+function sessionStartupPending(session: Session): boolean {
+  return (
+    session.labels?.["omnigent.startup"] === "pending" ||
+    (session.labels?.["omnigent.startup"] === "ready" && (session.pendingInputs ?? []).length > 0)
+  );
+}
+
 function sessionBindingPatch(
   session: Session,
   state: Pick<
@@ -4810,10 +4854,7 @@ function sessionBindingPatch(
       session.sandboxStatus?.stage === "action_required" ? state.sandboxActionDismissed : null,
     // "ready" with saved inputs left: a native first input awaits its transcript
     // receipt, and the server still saves new messages behind it.
-    startupPending:
-      session.labels?.["omnigent.startup"] === "pending" ||
-      (session.labels?.["omnigent.startup"] === "ready" &&
-        (session.pendingInputs ?? []).length > 0),
+    startupPending: sessionStartupPending(session),
     ...mcpStartupSnapshotPatch(session, state, launchBeforeFetch),
   };
 }
@@ -4869,25 +4910,36 @@ async function refreshSessionBinding(id: string): Promise<void> {
  */
 async function bindStream(
   id: string,
-  set: Setter,
+  write: Setter,
   get: Getter,
   hydratePending = false,
 ): Promise<void> {
   racedNativeModelOptions.delete(id);
+  get().abortController?.abort();
   const controller = new AbortController();
+  write({ abortController: controller });
+  const current = () =>
+    !controller.signal.aborted &&
+    !isConversationDisposed(id) &&
+    get().abortController === controller;
+  const set: Setter = (patch) => {
+    if (current()) write(patch);
+  };
   const ignoredNativeMessageIds = new Set<string>();
   nativePreviewTombstonesByController.set(controller, ignoredNativeMessageIds);
-  // Take an origin-wide stream slot before opening the connection, evicting our
-  // own LRU background stream to make room. A fresh tab that finds every slot
-  // held by other tabs opens over budget (no slot) and raises the banner.
-  await acquireStreamSlot(id);
-  if (isConversationDisposed(id)) {
+  const hasSlot = await acquireStreamSlot(id, controller.signal);
+  const initialSlot = hasSlot ? heldStreamSlots.get(id) : undefined;
+  if (!current()) {
     // Switched away / evicted while awaiting the slot — don't open a dead
     // entry's stream, and hand any slot we took back to the origin.
-    releaseStreamSlot(id);
+    if (initialSlot && heldStreamSlots.get(id) === initialSlot) releaseStreamSlot(id);
     return;
   }
-  set({ abortController: controller });
+  let ownedSlot = initialSlot;
+  const releaseOwnedSlot = () => {
+    if (ownedSlot && heldStreamSlots.get(id) === ownedSlot) releaseStreamSlot(id);
+  };
+  controller.signal.addEventListener("abort", releaseOwnedSlot, { once: true });
 
   // Opening a conversation URL with no session list loaded yet leaves the
   // session→host map empty, so the SSE stream
@@ -4913,17 +4965,29 @@ async function bindStream(
     // Liveness, not the visible id: a background bind must survive a switch away
     // (that is the whole feature). Only a dispose (evicted) bails — and then the
     // slot taken above has to go back to the origin.
-    if (isConversationDisposed(id)) {
-      releaseStreamSlot(id);
+    if (!current()) {
+      releaseOwnedSlot();
       return;
     }
   }
 
   // The slot is held for the pump's whole lifetime; released when it exits (a
   // terminal close, an abort from switchTo/dispose, or eviction).
-  void startStreamPump(id, controller, set, get, ignoredNativeMessageIds).finally(() =>
-    releaseStreamSlot(id),
-  );
+  // Denied slots wait without opening an SSE connection; metadata and message
+  // POSTs can still use the reserved ordinary-request capacity.
+  void (async () => {
+    let acquired = hasSlot;
+    /* eslint-disable no-await-in-loop */
+    while (!acquired && current()) {
+      await abortableDelay(1000, controller.signal);
+      if (!current()) return;
+      acquired = await acquireStreamSlot(id, controller.signal);
+      ownedSlot = acquired ? heldStreamSlots.get(id) : undefined;
+    }
+    /* eslint-enable no-await-in-loop */
+    if (!current()) return;
+    await startStreamPump(id, controller, set, get, ignoredNativeMessageIds, !hasSlot);
+  })().finally(releaseOwnedSlot);
 
   // Background tabs can miss the `response.elicitation_resolved` SSE event
   // (browser throttling), so a pending ApprovalCard that was answered on
@@ -4957,6 +5021,13 @@ async function bindStream(
   const stateBeforeFetch = get();
   const launchBeforeFetch = mcpStartupBeforeSnapshot(id, stateBeforeFetch);
   try {
+    if (stateBeforeFetch.blocks.length > 0) {
+      // Reobserve the existing window without clearing older loaded pages or
+      // replaying a send/scroll intent through a loading-state remount.
+      await reconcileOnReconnect(id, set, get, ignoredNativeMessageIds);
+      set({ loadingConversation: false });
+      return;
+    }
     // One larger page, so opening a session is a single round trip that then
     // stays still — rather than a small page followed by background growth
     // the reader sees as the transcript shifting seconds after it settled.
@@ -5077,7 +5148,7 @@ async function bindStream(
               candidate.tempId === p.pendingId ||
               (!candidate.communication &&
                 !p.communication &&
-                contentKeyOf(candidate.content) === contentKeyOf(p.content)),
+                pendingContentsMatch(p, candidate.content)),
           );
           if (i === -1) return true;
           unmatchedServer.splice(i, 1);
@@ -5139,8 +5210,9 @@ async function bindStream(
           : null;
       return {
         ...effectiveBindingPatch,
+        ...reconnectStatusPatch(session, state, launchBeforeFetch),
         blocks: syntheticError !== null ? [...allBlocks, syntheticError] : allBlocks,
-        pendingUserMessages: snapshotPending,
+        pendingUserMessages: reconcilePendingMessages(snapshotPending, snapshotBlocks, session),
         ...(unsentDraft !== null && state.failedSendDraft === null
           ? { failedSendDraft: unsentDraft }
           : {}),
@@ -5427,6 +5499,7 @@ function reconnectStatusPatch(
 ): Partial<ChatState> {
   const patch: Partial<ChatState> = {
     sessionStatus: session.status,
+    startupPending: sessionStartupPending(session),
     workspaceSwitching: session.workspaceSwitching ?? false,
     ...mcpStartupSnapshotPatch(session, s, launchBeforeFetch),
     ...launchSnapshotPatch(session, s),
@@ -5488,6 +5561,18 @@ function reconnectStatusPatch(
     };
     patch.status = "streaming";
   }
+  if (
+    (session.status === "idle" || session.status === "failed") &&
+    !sessionStartupPending(session) &&
+    s.status === "streaming" &&
+    !holdsInitialDraft(s) &&
+    !s.pendingUserMessages.some(
+      (message) => message.stableId && inFlightSends.has(message.stableId),
+    )
+  ) {
+    patch.status = "idle";
+    patch.sendLatchedAt = null;
+  }
   return patch;
 }
 
@@ -5523,7 +5608,7 @@ async function reconcileActiveSessionStatus(
   if (
     queryClient === null ||
     controller.signal.aborted ||
-    conversationRegistry.getActive()?.id !== id ||
+    !conversationRegistry.isVisible(id) ||
     get().abortController !== controller
   ) {
     return;
@@ -5552,7 +5637,7 @@ async function reconcileActiveSessionStatus(
   if (
     controller.signal.aborted ||
     isConversationDisposed(id) ||
-    conversationRegistry.getActive()?.id !== id ||
+    !conversationRegistry.isVisible(id) ||
     get().abortController !== controller ||
     (streamEventRevisions.get(id) ?? 0) !== revisionBeforeFetch ||
     current.sessionStatus !== stateBeforeFetch.sessionStatus ||
@@ -5801,13 +5886,20 @@ async function rehydrateWindowOnReconnect(
 ): Promise<void> {
   // Pinned at entry (still the caller's generation — its guards just passed).
   const generation = get().historyGeneration;
+  const controller = get().abortController;
   let fresh: SessionItemsPage;
   try {
     fresh = await fetchSessionItemsPage(id, { limit: INITIAL_WINDOW_ITEMS });
   } catch {
     return;
   }
-  if (isConversationDisposed(id) || get().historyGeneration !== generation) return;
+  if (
+    isConversationDisposed(id) ||
+    controller?.signal.aborted ||
+    get().abortController !== controller ||
+    get().historyGeneration !== generation
+  )
+    return;
   const snapshotNativeMessageIds = nativeCompletedMessageIds(fresh.items);
   snapshotNativeMessageIds.forEach((messageId) => ignoredNativeMessageIds.add(messageId));
   const freshBlocks = itemsToBlocks(fresh.items);
@@ -5852,6 +5944,11 @@ async function rehydrateWindowOnReconnect(
       // Same persisted-item evidence as the reconnect path: a rehydrated item
       // can be a send whose POST died in the gap.
       ...reconcileSendDraftWithSnapshot(s, freshItemIds, session),
+      pendingUserMessages: reconcilePendingMessages(
+        s.pendingUserMessages,
+        freshBlocks.filter((block) => block.ctx.itemId && !preGapIds.has(block.ctx.itemId)),
+        session,
+      ),
       blocks:
         snapshotCompactionSpinners(blocks, s.activeResponse, statusPatch.activeResponse) ?? blocks,
       hasMoreHistory: fresh.hasMore,
@@ -5872,9 +5969,9 @@ async function rehydrateWindowOnReconnect(
  * dead socket. Pages backwards (newest-first) until a fetched page overlaps
  * an already-rendered item — or the conversation start — so a gap longer
  * than one page can't leave an unreachable hole between the window and the
- * live tail; if `RECONNECT_BACKFILL_MAX_PAGES` is hit without overlap, the
- * window is re-hydrated wholesale instead (see
- * `rehydrateWindowOnReconnect`). Dedupes by `itemId` and runs concurrently
+ * live tail. Long gaps use larger pages while retaining the reader's window.
+ * A deleted pagination cursor falls back to a fresh window.
+ * Dedupes by `itemId` and runs concurrently
  * with the live pump — the same race-safe "stream-then-snapshot" shape
  * `bindStream` uses, so a turn that completes between the fetch and the
  * reopen is still caught by one or the other.
@@ -5890,13 +5987,129 @@ async function rehydrateWindowOnReconnect(
  * failure just means the next reconnect retries. All writes are
  * `historyGeneration`-guarded so a window reset mid-fetch voids them.
  */
-async function reconcileOnReconnect(
+function pendingContentsMatch(
+  message: PendingUserMessage,
+  content: MessageContentBlock[],
+): boolean {
+  if (!message.serverOwnedInitial) return contentKeyOf(message.content) === contentKeyOf(content);
+  const uploaded = (blocks: MessageContentBlock[]) =>
+    blocks.map((block) =>
+      block.type === "input_image" || block.type === "input_file"
+        ? { type: block.type, filename: block.filename }
+        : block,
+    );
+  return contentKeyOf(uploaded(message.content)) === contentKeyOf(uploaded(content));
+}
+
+/** Match receipts individually; terminal input must not consume an unrelated web draft. */
+function reconcilePendingMessages(
+  pending: PendingUserMessage[],
+  committed: AnyBlock[],
+  session: Session,
+): PendingUserMessage[] {
+  const receipts = committed.filter(
+    (block): block is UserMessageBlock =>
+      block.type === "user_message" && !isSystemUserContent(block.content),
+  );
+  const remaining = pending.filter((message) => {
+    if (message.initialDraft) return true;
+    const match = receipts.findIndex((receipt) => {
+      if (
+        receipt.ctx.itemId === message.stableId ||
+        receipt.ctx.itemId === message.pendingId ||
+        receipt.ctx.itemId === message.tempId
+      )
+        return true;
+      if (message.communication || receipt.communication) {
+        return (
+          message.communication !== undefined &&
+          receipt.communication?.message_id === message.communication.message_id
+        );
+      }
+      if (message.author && receipt.ctx.createdBy && message.author !== receipt.ctx.createdBy)
+        return false;
+      const text = withoutAttachedMarkers(messageContentText(message.content));
+      return text !== ""
+        ? withoutAttachedMarkers(messageContentText(receipt.content)).endsWith(text)
+        : pendingContentsMatch(message, receipt.content);
+    });
+    if (match === -1) return true;
+    receipts.splice(match, 1);
+    return false;
+  });
+  const unmatched = [...remaining];
+  const serverReceipts = committed.filter(
+    (block): block is UserMessageBlock =>
+      block.type === "user_message" && !isSystemUserContent(block.content),
+  );
+  const replayed: PendingUserMessage[] = [];
+  for (const input of session.pendingInputs ?? []) {
+    const matching = unmatched.findIndex(
+      (message) =>
+        message.pendingId === input.pendingId ||
+        message.tempId === input.pendingId ||
+        (!message.communication &&
+          !input.communication &&
+          pendingContentsMatch(message, input.content)),
+    );
+    if (matching !== -1) {
+      const [message] = unmatched.splice(matching, 1);
+      const at = remaining.indexOf(message!);
+      remaining[at] = { ...message!, pendingId: input.pendingId, content: input.content };
+      continue;
+    }
+    if (committed.some((block) => block.ctx.itemId === input.pendingId)) continue;
+    const committedInput = serverReceipts.findIndex((block) => {
+      if (input.communication || block.communication) {
+        return input.communication?.message_id === block.communication?.message_id;
+      }
+      const text = withoutAttachedMarkers(messageContentText(input.content));
+      return (
+        text !== "" && withoutAttachedMarkers(messageContentText(block.content)).endsWith(text)
+      );
+    });
+    if (committedInput !== -1) {
+      serverReceipts.splice(committedInput, 1);
+      continue;
+    }
+    replayed.push({
+      tempId: input.pendingId,
+      pendingId: input.pendingId,
+      posted: true,
+      content: input.content,
+      ...(input.communication ? { communication: input.communication } : {}),
+      ...(input.createdBy ? { author: input.createdBy } : {}),
+    });
+  }
+  return [...remaining, ...replayed];
+}
+
+const reconnectReconciliations = new WeakMap<AbortController, Promise<void>>();
+
+function reconcileOnReconnect(
+  id: string,
+  set: Setter,
+  get: Getter,
+  ignoredNativeMessageIds: Set<string> = new Set<string>(),
+): Promise<void> {
+  const controller = get().abortController;
+  const existing = controller && reconnectReconciliations.get(controller);
+  if (existing) return existing;
+  const reconciliation = backfillOnReconnect(id, set, get, ignoredNativeMessageIds).finally(() => {
+    if (controller) reconnectReconciliations.delete(controller);
+  });
+  if (controller) reconnectReconciliations.set(controller, reconciliation);
+  return reconciliation;
+}
+
+async function backfillOnReconnect(
   id: string,
   set: Setter,
   get: Getter,
   ignoredNativeMessageIds: Set<string> = new Set<string>(),
 ): Promise<void> {
   if (queryClient === null) return;
+  const bindingController = get().abortController;
   const launchBeforeFetch = mcpStartupBeforeSnapshot(id, get());
   // Captured before any await: the ids rendered BEFORE the gap. The overlap
   // check below must not be satisfied by items the reconnected pump appends
@@ -5913,7 +6126,11 @@ async function reconcileOnReconnect(
   const preGapElicitations = captureElicitationIdsByStatus(get().blocks);
   // A window reset mid-fetch (A→B→A revisit, rebind) defeats the id check alone.
   const generation = get().historyGeneration;
-  const stale = (): boolean => isConversationDisposed(id) || get().historyGeneration !== generation;
+  const stale = (): boolean =>
+    isConversationDisposed(id) ||
+    bindingController?.signal.aborted === true ||
+    get().abortController !== bindingController ||
+    get().historyGeneration !== generation;
   let session: Session;
   let page: SessionItemsPage;
   try {
@@ -5938,15 +6155,22 @@ async function reconcileOnReconnect(
   // fetch (loadMoreHistory only pages older than the pre-gap window top).
   let items = page.items;
   let hasMore = page.hasMore;
+  let usedLargePages = false;
   let covered = !hasMore || items.some((it) => preGapIds.has(it.id));
   // Each page starts before the cursor returned by the prior page.
   /* oxlint-disable no-await-in-loop */
-  for (let fetched = 1; !covered && fetched < RECONNECT_BACKFILL_MAX_PAGES; fetched += 1) {
+  for (let fetched = 1; !covered; fetched += 1) {
     const cursor = items[0]?.id;
     if (!cursor) break;
     let older: SessionItemsPage;
     try {
-      older = await fetchSessionItemsPage(id, { olderThan: cursor });
+      usedLargePages ||= fetched >= RECONNECT_BACKFILL_MAX_PAGES;
+      older = await fetchSessionItemsPage(id, {
+        olderThan: cursor,
+        // Long gaps use larger pages rather than discarding the reader's
+        // already-loaded history when the small-page budget is exhausted.
+        ...(fetched >= RECONNECT_BACKFILL_MAX_PAGES ? { limit: INITIAL_WINDOW_ITEMS } : {}),
+      });
     } catch (error) {
       // A cursor whose item was deleted can never be paged past. Stop the
       // backfill with the gap still uncovered so the full rehydrate below
@@ -5961,6 +6185,20 @@ async function reconcileOnReconnect(
     if (older.items.length === 0) break; // no progress; avoid refetching the same cursor
   }
   /* oxlint-enable no-await-in-loop */
+  if (covered && usedLargePages) {
+    // A long backfill can outlive a final native commit whose live frame was
+    // missed; refresh its tail once without replacing the retained window.
+    try {
+      const latest = await fetchSessionItemsPage(id, { limit: INITIAL_WINDOW_ITEMS });
+      if (stale()) return;
+      const seen = new Set(items.map((item) => item.id));
+      items = [...items, ...latest.items.filter((item) => !seen.has(item.id))];
+    } catch {
+      return;
+    }
+  }
+  const firstOverlap = items.findIndex((item) => preGapIds.has(item.id));
+  if (firstOverlap > 0) items = items.slice(firstOverlap);
   const snapshotNativeMessageIds = nativeCompletedMessageIds(items);
   snapshotNativeMessageIds.forEach((messageId) => ignoredNativeMessageIds.add(messageId));
   if (!covered) {
@@ -5999,12 +6237,7 @@ async function reconcileOnReconnect(
     };
     // `session.input.consumed` is not replayed, so recovered user blocks are
     // the durable equivalent of its FIFO acknowledgement.
-    const recoveredUserInputs = unseen.filter(
-      (b) => b.type === "user_message" && !isSystemUserContent(b.content),
-    ).length;
-    if (recoveredUserInputs > 0) {
-      patch.pendingUserMessages = s.pendingUserMessages.slice(recoveredUserInputs);
-    }
+    patch.pendingUserMessages = reconcilePendingMessages(s.pendingUserMessages, unseen, session);
     let nextBlocks = reconciledBlocks;
     if (unseen.length > 0) {
       // Splice the gap's committed items ahead of the active turn's
@@ -6143,8 +6376,10 @@ export async function startStreamPump(
   set: Setter,
   get: Getter,
   ignoredNativeMessageIds: Set<string> = new Set<string>(),
+  reconcileFirstOpen = false,
 ): Promise<void> {
   nativePreviewTombstonesByController.set(controller, ignoredNativeMessageIds);
+  let reconcileAfterSlotWait = reconcileFirstOpen;
   let failedOpens = 0;
   let statusReconcileInFlight = false;
   // Shared by the periodic reconcile and the post-reconnect catch-up burst so
@@ -6316,7 +6551,8 @@ export async function startStreamPump(
           continue;
         }
 
-        const reconnecting = hasConnected || hostReaddressed;
+        const reconnecting = hasConnected || hostReaddressed || reconcileAfterSlotWait;
+        reconcileAfterSlotWait = false;
         const streamEpoch = streamRes.headers.get("x-omnigent-stream-epoch");
         if (!hasConnected) clearSseLog(id);
         hasConnected = true;

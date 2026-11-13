@@ -9,7 +9,11 @@ import { Link, useLocation } from "@/lib/routing";
 import { sessionNavigationSearch } from "@/lib/sessionNavigation";
 import { cn } from "@/lib/utils";
 import { childStatus } from "@/shell/subagentStatus";
-import { COMPOSER_COLLAPSED_LABEL_CLASS } from "./ChatComposer";
+import { useWorkbenchActions } from "@/workbench/WorkbenchContext";
+import {
+  COMPOSER_COLLAPSED_LABEL_CLASS,
+  COMPOSER_WORKSPACE_COLLAPSED_LABEL_CLASS,
+} from "./ChatComposer";
 
 /**
  * Direct-child attention tally beside the composer's model selector and
@@ -109,6 +113,7 @@ function SubagentNavigationRow({
 }) {
   const search = sessionNavigationSearch(useLocation().search);
   const label = subagentLabel(child);
+  const workbench = useWorkbenchActions();
   const tool = child.tool?.trim();
   const showTool = !!tool && tool !== label;
 
@@ -117,7 +122,20 @@ function SubagentNavigationRow({
       <Link
         to={{ pathname: `/c/${child.id}`, search }}
         componentId="composer-subagent-indicator-row"
-        onClick={onNavigate}
+        onClick={(event) => {
+          onNavigate(event);
+          if (workbench && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
+            event.preventDefault();
+            workbench.openView(
+              {
+                kind: "conversation",
+                conversationId: child.id,
+                title: child.session_name ?? child.title ?? "Sub-agent",
+              },
+              { beside: true },
+            );
+          }
+        }}
         className="flex items-start gap-2 rounded-lg px-1 py-2 hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
       >
         <span className="flex h-5 w-5 shrink-0 items-center justify-center text-muted-foreground">
@@ -141,7 +159,13 @@ function SubagentNavigationRow({
   );
 }
 
-export function SubagentTaskIndicator({ conversationId }: { conversationId: string | null }) {
+export function SubagentTaskIndicator({
+  conversationId,
+  shelf = false,
+}: {
+  conversationId: string | null;
+  shelf?: boolean;
+}) {
   const { children } = useChildSessions(conversationId);
   const items = children
     .map(indicatorChild)
@@ -214,7 +238,15 @@ export function SubagentTaskIndicator({ conversationId }: { conversationId: stri
             )}
           >
             <BotIcon className="size-3.5" strokeWidth={1.5} aria-hidden="true" />
-            <span className={COMPOSER_COLLAPSED_LABEL_CLASS}>{count}</span>
+            {shelf && (
+              <span
+                data-workspace-collapse-label=""
+                className={COMPOSER_WORKSPACE_COLLAPSED_LABEL_CLASS}
+              >
+                Agents
+              </span>
+            )}
+            <span className={shelf ? undefined : COMPOSER_COLLAPSED_LABEL_CLASS}>{count}</span>
           </Button>
         </PopoverTrigger>
         <PopoverContent

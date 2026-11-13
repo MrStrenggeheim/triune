@@ -1,4 +1,5 @@
 import type { ConversationBranch } from "./conversationBranches";
+import type { NativeChildCapabilities } from "./nativeChildControls";
 // Mirrors the response/error/usage types in
 // sdks/python-client/omnigent_client/_types.py.
 //
@@ -277,6 +278,7 @@ export interface BackgroundTaskInfo {
 }
 
 export interface Session {
+  nativeChildCapabilities?: NativeChildCapabilities | null;
   branch?: ConversationBranch | null;
   projectId?: string | null;
   id: string;

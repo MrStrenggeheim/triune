@@ -25,6 +25,30 @@ afterEach(() => {
 });
 
 describe("scoped chat store", () => {
+  it("detaches when a remembered layout hides while preserving its scoped state", () => {
+    const entry = conversationRegistry.acquire("remembered");
+    const controller = new AbortController();
+    const draft = { conversationId: "remembered", text: "still typing", files: [] };
+    entry.setState({ abortController: controller, failedSendDraft: draft, oldestItemId: "reader" });
+    const view = render(
+      <ScopedChatStoreProvider conversationId="remembered" focused visible>
+        <span>remembered editor</span>
+      </ScopedChatStoreProvider>,
+    );
+    view.rerender(
+      <ScopedChatStoreProvider conversationId="remembered" focused={false} visible={false}>
+        <span>remembered editor</span>
+      </ScopedChatStoreProvider>,
+    );
+    expect(controller.signal.aborted).toBe(true);
+    expect(conversationRegistry.peek("remembered")).toBe(entry);
+    expect(createScopedChatStore("remembered").getState()).toMatchObject({
+      failedSendDraft: draft,
+      oldestItemId: "reader",
+    });
+    expect(screen.getByText("remembered editor")).toBeInTheDocument();
+  });
+
   it("does not notify other scopes for primary fields but still shares globals and queues", () => {
     const first = conversationRegistry.acquire("first");
     conversationRegistry.acquire("second");

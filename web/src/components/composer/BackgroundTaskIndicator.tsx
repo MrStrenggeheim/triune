@@ -5,8 +5,11 @@ import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import type { BackgroundTaskInfo } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import { useChatStore } from "@/store/chatStore";
-import { COMPOSER_COLLAPSED_LABEL_CLASS } from "./ChatComposer";
+import { useConversationChatStore } from "@/workbench/ScopedChatStore";
+import {
+  COMPOSER_COLLAPSED_LABEL_CLASS,
+  COMPOSER_WORKSPACE_COLLAPSED_LABEL_CLASS,
+} from "./ChatComposer";
 
 function taskLabel(task: BackgroundTaskInfo): string {
   const description = task.description?.trim();
@@ -74,7 +77,8 @@ function TaskCommand({ command, label }: { command: string; label: string }) {
 }
 
 /** Running shells and monitors, independent of foreground work; the count is authoritative. */
-export function BackgroundTaskIndicator() {
+export function BackgroundTaskIndicator({ shelf = false }: { shelf?: boolean }) {
+  const useChatStore = useConversationChatStore();
   const bgCount = useChatStore((s) => s.backgroundTaskCount);
   const bgTasks = useChatStore((s) => s.backgroundTasks);
   const conversationId = useChatStore((s) => s.conversationId);
@@ -130,7 +134,15 @@ export function BackgroundTaskIndicator() {
             className="shrink-0 gap-1 px-1 font-normal tabular-nums text-muted-foreground md:px-2"
           >
             <SquareTerminalIcon className="size-3.5" strokeWidth={1.5} aria-hidden="true" />
-            <span className={COMPOSER_COLLAPSED_LABEL_CLASS}>{bgCount}</span>
+            {shelf && (
+              <span
+                data-workspace-collapse-label=""
+                className={COMPOSER_WORKSPACE_COLLAPSED_LABEL_CLASS}
+              >
+                Shells
+              </span>
+            )}
+            <span className={shelf ? undefined : COMPOSER_COLLAPSED_LABEL_CLASS}>{bgCount}</span>
           </Button>
         </PopoverTrigger>
         <PopoverContent

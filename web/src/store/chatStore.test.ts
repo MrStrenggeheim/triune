@@ -72,6 +72,7 @@ import {
   ACTIVE_SESSION_STATUS_RECONCILE_INTERVAL_MS,
   ACTIVE_SESSION_STATUS_RECONCILE_TIMEOUT_MS,
   beginLocalConversation,
+  ensureConversationStreamed,
   committedItemProvesDelivery,
   takeFailedSendDraft,
   restoredSendDraftUnchanged,
@@ -2521,6 +2522,40 @@ describe("chatStore — switchTo", () => {
 });
 
 describe("chatStore — send (first-send ordering)", () => {
+  it("does not turn rejected native child steering into an ordinary offline queue entry", async () => {
+    useChatStore.setState({ conversationId: "child", abortController: new AbortController() });
+    fetchMock.mockImplementation((input, init) =>
+      String(input) === "/v1/sessions/child/events"
+        ? mockResponse(
+            { error: { code: "host_offline", message: "Host is offline" } },
+            { ok: false, status: 503 },
+          )
+        : defaultFetchHandler(input, init),
+    );
+    await useChatStore.getState().send("steer this turn", "agent_xyz", undefined, {
+      nativeChildAction: "steer",
+      nativeChildTurnId: "captured-turn",
+    });
+    expect(useChatStore.getState().queuedMessages).toEqual([]);
+    expect(useChatStore.getState().failedSendDraft?.text).toBe("steer this turn");
+  });
+  it.each([undefined, "turn-captured-at-submit"])(
+    "forwards native child steering with captured turn %s",
+    async (turnId) => {
+      useChatStore.setState({ conversationId: "child", abortController: new AbortController() });
+      await useChatStore.getState().send("adjust the task", "agent_xyz", undefined, {
+        nativeChildAction: "steer",
+        nativeChildTurnId: turnId,
+      });
+      const [, init] = fetchMock.mock.calls.find(
+        ([url]) => String(url) === "/v1/sessions/child/events",
+      )!;
+      const body = JSON.parse(init!.body as string);
+      expect(body.data.native_child_action).toBe("steer");
+      expect(body.data.response_id).toBe(turnId);
+      expect(body.data.content).toEqual([{ type: "input_text", text: "adjust the task" }]);
+    },
+  );
   it("creates session → binds stream → posts message (in order)", async () => {
     seedSession("conv_new");
     const invalidateSpy = vi.spyOn(client, "invalidateQueries");
@@ -3441,6 +3476,66 @@ describe("chatStore — navigate-first first send (B1/B2 regressions)", () => {
     await tick();
     await tick();
   }
+
+  it("keeps the create token as the first send's id and reports acceptance once", async () => {
+    seedSession("conv_real");
+    const begun = beginLocalConversation("send once", undefined)!;
+    const accepted = vi.fn();
+    hydrateLocalConversation(
+      begun.tempConvId,
+      "conv_real",
+      "agent_xyz",
+      "send once",
+      undefined,
+      begun.pendingMsgTempId,
+      null,
+      noopNavigate,
+      undefined,
+      undefined,
+      false,
+      accepted,
+    );
+    await settle();
+    const post = fetchMock.mock.calls.find(
+      ([url, init]) => String(url) === "/v1/sessions/conv_real/events" && init?.method === "POST",
+    )!;
+    expect(JSON.parse(post[1]!.body as string).data.stable_id).toBe(begun.createToken);
+    expect(accepted).toHaveBeenCalledOnce();
+  });
+
+  it("adopts durable attachment ids without duplicating an image-only initial bubble", async () => {
+    seedSession("conv_real");
+    seedPendingInputs("conv_real", [
+      {
+        pending_id: "saved-input",
+        content: [{ type: "input_image", file_id: "uploaded-image", filename: "image.png" }],
+      },
+    ]);
+    const file = new File(["png bytes"], "image.png", { type: "image/png" });
+    const begun = beginLocalConversation("", [file])!;
+    hydrateLocalConversation(
+      begun.tempConvId,
+      "conv_real",
+      "agent_xyz",
+      "",
+      [file],
+      begun.pendingMsgTempId,
+      null,
+      noopNavigate,
+      undefined,
+      undefined,
+      true,
+    );
+    await settle();
+    expect(conversationRegistry.peek("conv_real")!.getState().pendingUserMessages).toMatchObject([
+      {
+        tempId: begun.pendingMsgTempId,
+        pendingId: "saved-input",
+        content: [{ file_id: "uploaded-image" }],
+      },
+    ]);
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
+  });
 
   it.each([
     {
@@ -4865,6 +4960,19 @@ describe("chatStore — sending during a model switch", () => {
 });
 
 describe("chatStore — sendSlashCommand", () => {
+  it("forwards a stable first-skill id and acceptance callback", async () => {
+    useChatStore.setState({ conversationId: "skills", abortController: new AbortController() });
+    const accepted = vi.fn();
+    const stableId = "a".repeat(32);
+    await useChatStore
+      .getState()
+      .sendSlashCommand("review", "123", "agent_xyz", { stableId, onAccepted: accepted });
+    const [, init] = fetchMock.mock.calls.find(
+      ([url]) => String(url) === "/v1/sessions/skills/events",
+    )!;
+    expect(JSON.parse(init!.body as string).data.stable_id).toBe(stableId);
+    expect(accepted).toHaveBeenCalledOnce();
+  });
   /** Parse the JSON body of the single POST /events call. */
   function lastEventBody(): { type: string; data: Record<string, unknown> } {
     const post = fetchMock.mock.calls.find(
@@ -14086,6 +14194,46 @@ describe("chatStore — startStreamPump reconnect loop", () => {
     await loop;
   });
 
+  it("matches reconnect receipts without consuming unrelated drafts or repeated new input", async () => {
+    const before = userMessage("matching_pre", "old record");
+    seedSession("conv_matching", [before]);
+    const sinks = routeStreamOpens();
+    const controller = new AbortController();
+    const held: PendingUserMessage = {
+      tempId: "held",
+      content: [{ type: "input_text", text: "terminal text" }],
+      initialDraft: { text: "terminal text", files: [] },
+    };
+    const pending: PendingUserMessage = {
+      tempId: "browser",
+      stableId: "browser-stable",
+      content: [{ type: "input_text", text: "web text" }],
+      posted: true,
+    };
+    useChatStore.setState({
+      conversationId: "conv_matching",
+      abortController: controller,
+      blocks: itemsToBlocks([before]),
+      pendingUserMessages: [held, pending],
+    });
+    const loop = startStreamPump("conv_matching", controller, setState, getState);
+    await drainAsync();
+    const terminal = userMessage("terminal", "terminal text");
+    seedSessionItems("conv_matching", [before, terminal]);
+    sinks[0]!.error();
+    await drainAsync();
+    expect(useChatStore.getState().pendingUserMessages).toEqual([held, pending]);
+    const receipt = { ...userMessage("web", "web text"), id: "browser-stable" };
+    seedSessionItems("conv_matching", [before, terminal, receipt]);
+    sinks[1]!.error();
+    await drainAsync();
+    expect(useChatStore.getState().pendingUserMessages).toEqual([held]);
+    sinks[2]!.push("data: [DONE]\n\n");
+    sinks[2]!.close();
+    await drainAsync(2);
+    await loop;
+  });
+
   /** The card a send leaves when its POST gets no answer. */
   function unansweredSendCard(send: NonNullable<ErrorBlock["unansweredSend"]>): ErrorBlock {
     return {
@@ -15115,7 +15263,7 @@ describe("chatStore — startStreamPump reconnect loop", () => {
     await loop;
   });
 
-  it("re-hydrates the window when the gap outruns the backfill page cap", async () => {
+  it("preserves the reader's window when the gap outruns the small-page budget", async () => {
     const preGap = Array.from({ length: 30 }, (_, i) => gapUser("pre", i));
     const windowItems = preGap.slice(-SESSION_HISTORY_PAGE_SIZE);
     seedSession("conv_bigap", preGap);
@@ -15133,8 +15281,7 @@ describe("chatStore — startStreamPump reconnect loop", () => {
     await drainAsync();
     expect(sinks).toHaveLength(1);
 
-    // 100 gap items: 4 backfill pages (80) can't reach the rendered
-    // transcript, so reconcile must fall back to a fresh window.
+    // A gap longer than the small-page budget must retain the reader's window.
     const gap = Array.from({ length: 100 }, (_, i) => gapUser("gap", i));
     seedSessionItems("conv_bigap", [...preGap, ...gap]);
     sinks[0]!.error();
@@ -15142,22 +15289,18 @@ describe("chatStore — startStreamPump reconnect loop", () => {
     expect(sinks).toHaveLength(2);
 
     const state = useChatStore.getState();
-    // The window was replaced wholesale with one fresh window fetch, exactly
-    // as a cold bind loads it — not left with a mid-transcript hole, and not
-    // paged in over several requests (which would shift the transcript under
-    // a reader who never asked for this).
+    // Recovery fills the gap without replacing the existing reader anchor.
     expect(state.blocks.map((b) => b.ctx.itemId)).toEqual(
-      gap.slice(-INITIAL_WINDOW_ITEMS).map((item) => item.id),
+      [...windowItems, ...gap].map((item) => item.id),
     );
-    // The cursor was rewound to the fresh window's top, so everything older
-    // (the pre-gap transcript included) is reachable again by paging up.
-    expect(state.oldestItemId).toBe(gap.at(-INITIAL_WINDOW_ITEMS)!.id);
+    // History paging still starts from the same retained cursor.
+    expect(state.oldestItemId).toBe(windowItems[0]!.id);
     expect(state.hasMoreHistory).toBe(true);
 
     // Scroll-up still pages from the window's top, one page at a time.
     await useChatStore.getState().loadMoreHistory();
     expect(useChatStore.getState().blocks.map((b) => b.ctx.itemId)).toEqual(
-      [...preGap.slice(-SESSION_HISTORY_PAGE_SIZE), ...gap].map((item) => item.id),
+      [...preGap, ...gap].map((item) => item.id),
     );
 
     const last = sinks[1]!;
@@ -15222,11 +15365,11 @@ describe("chatStore — startStreamPump reconnect loop", () => {
   );
 
   it.each([
-    { path: "ordinary backfill", gapLength: 5, refreshesWindow: false },
-    { path: "the fresh-window fallback", gapLength: 100, refreshesWindow: true },
+    { path: "ordinary backfill", gapLength: 5 },
+    { path: "large-page backfill", gapLength: 100 },
   ])(
     "clears the open turn's compaction spinner when reconnect recovers through $path",
-    async ({ gapLength, refreshesWindow }) => {
+    async ({ gapLength }) => {
       const id = `conv_spinner_gap_${gapLength}`;
       const preGap = Array.from({ length: 30 }, (_, i) => gapUser("pre", i));
       const windowItems = preGap.slice(-SESSION_HISTORY_PAGE_SIZE);
@@ -15289,10 +15432,8 @@ describe("chatStore — startStreamPump reconnect loop", () => {
       /* oxlint-enable no-await-in-loop */
 
       const state = useChatStore.getState();
-      // The intended recovery path ran: only the fallback replaces the window.
-      expect(state.oldestItemId).toBe(
-        refreshesWindow ? gap.at(-INITIAL_WINDOW_ITEMS)!.id : windowItems[0]!.id,
-      );
+      // Both backfill sizes retain the same history cursor.
+      expect(state.oldestItemId).toBe(windowItems[0]!.id);
       expect(state.activeResponse?.state).toBe("completed");
       expect(state.blocks.some((b) => b.type === "compaction_loading")).toBe(false);
 
@@ -15303,7 +15444,7 @@ describe("chatStore — startStreamPump reconnect loop", () => {
     },
   );
 
-  it("tombstones native previews found only by capped re-hydration", async () => {
+  it("tombstones native previews found by the long-backfill tail refresh", async () => {
     const preGap = Array.from({ length: 30 }, (_, i) => gapUser("npre", i));
     const windowItems = preGap.slice(-SESSION_HISTORY_PAGE_SIZE);
     const gap = Array.from({ length: 100 }, (_, i) => gapUser("ngap", i));
@@ -15474,12 +15615,10 @@ describe("chatStore — startStreamPump reconnect loop", () => {
     expect(useChatStore.getState().blocks).toEqual([]);
     // ...and conv_stale picked up the items it missed during the gap, so
     // returning to it shows a current transcript rather than one frozen at the
-    // moment the stream dropped. The 100-item gap exceeds the backfill cap, so
-    // the window is replaced wholesale rather than extended — what matters is
-    // that it now ends at the newest item, not at the pre-gap tail.
+    // moment the stream dropped, while retaining its older loaded anchor.
     const staleIds = getStale().blocks.map((b) => b.ctx.itemId);
     expect(staleIds.at(-1)).toBe(gap.at(-1)!.id);
-    expect(staleIds).not.toContain(windowItems.at(-1)!.id);
+    expect(staleIds).toContain(windowItems.at(-1)!.id);
 
     // Release the conversation so the reconnect loop stops: a live entry keeps
     // reconnecting by design, which is exactly what this test asserts.
@@ -20092,10 +20231,9 @@ describe("chatStore — origin-wide stream slots", () => {
     expect(useChatStore.getState().streamBudgetExceeded).toBe(false);
   });
 
-  it("opens the active conversation over budget, with the banner, when a fresh tab finds every slot held by others", async () => {
-    // Every slot held by other tabs; this fresh tab has nothing of its own to
-    // reclaim. The conversation must still open (you have to be able to use
-    // what you're looking at), and the too-many-tabs banner is raised.
+  it("hydrates without opening over budget, then observes when a slot becomes available", async () => {
+    vi.useFakeTimers();
+    // The transcript remains readable while another tab holds every slot.
     const slots = makeFakeSlotManager({ capacity: 3, externallyHeld: 3 });
     setStreamSlotManagerForTest(slots);
     seedSession("conv_new_tab", []);
@@ -20103,9 +20241,53 @@ describe("chatStore — origin-wide stream slots", () => {
     await useChatStore.getState().switchTo("conv_new_tab");
 
     expect(useChatStore.getState().conversationId).toBe("conv_new_tab");
-    expect(useChatStore.getState().abortController).not.toBeNull(); // stream opened
-    expect(slots.heldByTab()).toBe(0); // over budget — no slot held
+    expect(useChatStore.getState().abortController).not.toBeNull(); // cancellable slot wait
+    expect(slots.heldByTab()).toBe(0);
     expect(useChatStore.getState().streamBudgetExceeded).toBe(true);
+    const streamOpens = () =>
+      fetchMock.mock.calls.filter(([url]) => String(url).includes("/stream"));
+    expect(streamOpens()).toHaveLength(0);
+    slots.setExternallyHeld(2);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(streamOpens()).toHaveLength(1);
+    expect(slots.heldByTab()).toBe(1);
+    expect(useChatStore.getState().streamBudgetExceeded).toBe(false);
+  });
+
+  it("preserves a retained transcript window and draft while recovering each missed item once", async () => {
+    const before = userMessage("before", "older reader anchor");
+    seedSession("remembered", [before]);
+    const slots = makeFakeSlotManager({ capacity: 1 });
+    setStreamSlotManagerForTest(slots);
+    await useChatStore.getState().switchTo("remembered");
+    const entry = conversationRegistry.peek("remembered")!;
+    const oldController = entry.getState().abortController!;
+    const blocks = entry.getState().blocks;
+    const release = conversationRegistry.retain("remembered", false);
+    const draft = { conversationId: "remembered", text: "not submitted", files: [] };
+    entry.setState({ failedSendDraft: draft, oldestItemId: before.id, hasMoreHistory: true });
+    expect(oldController.signal.aborted).toBe(true);
+    expect(slots.heldByTab()).toBe(0);
+    const missed = assistantMessage("missed", "arrived while hidden");
+    seedSessionItems("remembered", [before, missed]);
+    await ensureConversationStreamed("remembered");
+    expect(conversationRegistry.peek("remembered")).toBe(entry);
+    expect(entry.getState()).toMatchObject({
+      failedSendDraft: draft,
+      oldestItemId: before.id,
+      hasMoreHistory: true,
+    });
+    expect(entry.getState().blocks[0]).toBe(blocks[0]);
+    expect(entry.getState().blocks.map((block) => block.ctx.itemId)).toEqual([
+      before.id,
+      missed.id,
+    ]);
+    await ensureConversationStreamed("remembered");
+    expect(entry.getState().blocks.map((block) => block.ctx.itemId)).toEqual([
+      before.id,
+      missed.id,
+    ]);
+    release();
   });
 
   it("re-shows the banner on a fresh over-budget episode after the user dismissed it", async () => {

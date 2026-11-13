@@ -104,6 +104,7 @@ interface ModelUsageWire {
  * camelCase `Session` type at the parse boundary.
  */
 interface SessionResponseWire {
+  native_child_capabilities?: Session["nativeChildCapabilities"];
   branch?: Session["branch"];
   id: string;
   agent_id: string;
@@ -327,6 +328,7 @@ function sessionFromWire(wire: SessionResponseWire): Session {
   return {
     id: wire.id,
     branch: wire.branch ?? null,
+    nativeChildCapabilities: wire.native_child_capabilities ?? null,
     agentId: wire.agent_id,
     agentName: wire.agent_name ?? null,
     runnerId: wire.runner_id,
@@ -757,11 +759,14 @@ export async function createBundledSession(
     terminal_launch_args?: string[];
     git?: { branch_name: string; base_branch?: string };
     mcp_registry_services?: string[];
+    initial_input?: SessionEventInput;
   } = {},
+  initialFiles: File[] = [],
 ): Promise<{ id: string }> {
   const form = new FormData();
   form.append("metadata", JSON.stringify(metadata));
   form.append("bundle", bundle);
+  for (const file of initialFiles) form.append("initial_files", file, file.name);
   const res = await authenticatedFetch("/v1/sessions", {
     method: "POST",
     headers: {

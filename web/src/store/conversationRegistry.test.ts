@@ -57,18 +57,13 @@ describe("getConnectionProtocol", () => {
     expect(withNextHop("http/1.1", getConnectionProtocol)).toBe("serial");
   });
 
-  it("falls back to the scheme when no navigation entry is available", () => {
-    // Old browsers, non-navigation contexts: `https:` is the better guess.
-    expect(withNextHop(undefined, getConnectionProtocol)).toBe(
-      location.protocol === "https:" ? "multiplexed" : "serial",
-    );
+  it("reserves serial fetch capacity when navigation timing is unavailable", () => {
+    expect(withNextHop(undefined, getConnectionProtocol)).toBe("serial");
   });
 
   it("treats an empty nextHopProtocol as unknown", () => {
     // Cross-origin and cached navigations report "" — not a serial transport.
-    expect(withNextHop("", getConnectionProtocol)).toBe(
-      location.protocol === "https:" ? "multiplexed" : "serial",
-    );
+    expect(withNextHop("", getConnectionProtocol)).toBe("serial");
   });
 });
 
@@ -150,6 +145,34 @@ describe("ConversationRegistry", () => {
     expect(registry.evictLruEvictable()).toBe("a");
     releases.slice(1).forEach((release) => release());
     expect(registry.evictLruEvictable()).toBe("b");
+  });
+
+  it("detaches a hidden retained chat without losing its draft or transcript state", () => {
+    const entry = registry.acquire("remembered");
+    const controller = new AbortController();
+    const draft = { conversationId: "remembered", text: "retry with context", files: [] };
+    entry.setState({ abortController: controller, failedSendDraft: draft, oldestItemId: "anchor" });
+    registry.setActive("remembered");
+    const release = registry.retain("remembered", false);
+    expect(controller.signal.aborted).toBe(true);
+    expect(registry.isVisible("remembered")).toBe(false);
+    expect(registry.peek("remembered")).toBe(entry);
+    expect(entry.getState()).toMatchObject({ failedSendDraft: draft, oldestItemId: "anchor" });
+    expect(entry.disposed).toBe(false);
+    release();
+  });
+
+  it("reclaims observation from unsent work while preserving its only copy", () => {
+    const entry = registry.acquire("unsent");
+    const controller = new AbortController();
+    entry.setState({ abortController: controller, pendingUserMessages: [unsentBubble()] });
+    registry.acquire("visible");
+    registry.setActive("visible");
+    expect(registry.evictLruEvictable()).toBe("unsent");
+    expect(controller.signal.aborted).toBe(true);
+    expect(registry.peek("unsent")).toBe(entry);
+    expect(entry.getState().pendingUserMessages).toEqual([unsentBubble()]);
+    expect(registry.evictLruEvictable()).toBeNull();
   });
 
   it("treats acquire as a recency touch, so a revisited entry is not the victim", () => {
