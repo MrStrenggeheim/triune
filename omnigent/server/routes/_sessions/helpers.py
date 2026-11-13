@@ -11259,21 +11259,23 @@ def _child_session_summary_from_conversation(
             collapsed = " ".join(raw_prompt.split())
             last_message_preview = collapsed[:_CHILD_PREVIEW_LIMIT] or None
 
+    from omnigent.native.child_metadata import child_metadata
+
+    metadata = child_metadata(conv)
     routing_decision_id = conv.labels.get(ROUTING_DECISION_LABEL_KEY)
     return ChildSessionSummary(
         id=conv.id,
         parent_session_id=parent_session_id,
         title=display_title,
-        task_summary=conv.task_summary,
+        task_summary=labels.get("omnigent.subagent.task_summary") or metadata.get("task_summary"),
         tool=tool,
         session_name=session_name,
         created_at=conv.created_at,
         updated_at=conv.updated_at,
-        # agent_id comes from the conversation row; agent_name and task_id
-        # are no longer available from the (removed) tasks table.
+        # Project identity and dispatch independently of task-derived display labels.
         agent_id=conv.agent_id,
-        agent_name=None,
-        current_task_id=None,
+        agent_name=metadata["agent_name"],
+        current_task_id=labels.get("omnigent.subagent.dispatch_id") or metadata.get("dispatch_id"),
         current_task_status=current_task_status,
         busy=busy,
         labels=labels,

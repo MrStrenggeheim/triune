@@ -1273,6 +1273,8 @@ def register_core_routes(
                     _publish_terminal_pending(resp.id, False)
                 resp.runner_id = runner_id
                 resp.host_id = launch_host_id
+            if body.initial_input is not None:
+                request.app.state.startup_inputs.host_changed(request.app, launch_host_id)
 
         # Default-public grant only once every launch step has been accepted, so a
         # rejected request never leaves a public session behind. Sub-agent
@@ -1526,6 +1528,8 @@ def register_core_routes(
                 workspace=parsed_metadata.workspace,
                 harness=canonicalize_harness(raw_harness) or raw_harness,
             )
+            if parsed_metadata.initial_input is not None:
+                request.app.state.startup_inputs.host_changed(request.app, parsed_metadata.host_id)
         # Default-public grant only after the launch steps were accepted (see the
         # JSON path). Sub-agent children follow their parent's grants, whether or
         # not they inherited its runner.

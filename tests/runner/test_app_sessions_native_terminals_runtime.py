@@ -3963,6 +3963,9 @@ async def test_codex_forwarder_auth_keeps_tunnel_pings_responsive(
     client = Client()
     real_async_client = httpx.AsyncClient
     monkeypatch.setattr(_entry, "_make_auth_token_factory", make_factory)
+    monkeypatch.setattr(
+        _entry, "_runner_tunnel_binding_token_from_env", lambda: "mock-runner-binding"
+    )
     monkeypatch.setattr(forwarder, "supervise_forwarder", forward)
     monkeypatch.setattr(
         forwarder,
@@ -4009,7 +4012,10 @@ async def test_codex_forwarder_auth_keeps_tunnel_pings_responsive(
 
     assert ping_during_auth == [True], f"{dependency} blocked the runner event loop"
     assert decode_frame(sent[0]) == PongFrame(ts=123)
-    assert forwarded[0]["headers"] == {"Authorization": "Bearer mock-forwarder-token"}
+    assert forwarded[0]["headers"] == {
+        "Authorization": "Bearer mock-forwarder-token",
+        "X-Omnigent-Runner-Tunnel-Token": "mock-runner-binding",
+    }
     assert forwarded[0]["client"] is client
     assert forwarded[0]["auth"]._factory is token
 

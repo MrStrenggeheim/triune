@@ -294,7 +294,7 @@ class ManagedStartupInputs:
                 wake.set()
                 return
             worker.cancel()
-        if connection is None or not connection.registered_with_managed_token:
+        if connection is None:
             return
         wake = asyncio.Event()
 

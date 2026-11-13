@@ -919,6 +919,30 @@ def register_events_routes(
 
     router.include_router(event_router)
 
+    @router.get("/sessions/{session_id}/native-child-capabilities")
+    async def get_native_child_capabilities(request: Request, session_id: str) -> dict[str, Any]:
+        """Read current child controls without fetching transcript or launching a runtime."""
+        from omnigent.native.child_controls import unavailable_child_capabilities
+        from omnigent.server.routes._sessions.orchestration import (
+            _native_child_capabilities_for_snapshot,
+        )
+
+        await _require_access(
+            _get_user_id(request, auth_provider),
+            session_id,
+            LEVEL_READ,
+            permission_store,
+            conversation_store,
+        )
+        conv = await asyncio.to_thread(conversation_store.get_conversation, session_id)
+        if conv is None:
+            raise _session_not_found()
+        return await _native_child_capabilities_for_snapshot(
+            conv,
+            conversation_store,
+            runner_router,
+        ) or unavailable_child_capabilities("not_native_child")
+
     from .peer_messages import register_peer_message_routes
 
     register_peer_message_routes(
@@ -1782,6 +1806,49 @@ def register_events_routes(
             await _require_access(
                 user_id, session_id, LEVEL_OWNER, permission_store, conversation_store
             )
+        if body.type in {"message", _INTERRUPT_TYPE, _STOP_SESSION_TYPE}:
+            from omnigent.native.child_controls import native_child_provider
+            from omnigent.server.routes._sessions.orchestration import _forward_native_child_event
+
+            if native_child_provider(conv.kind, conv.labels) is not None:
+                if not conv.parent_conversation_id:
+                    raise OmnigentError("native_child_mapping_missing", code=ErrorCode.CONFLICT)
+                await _require_access(
+                    user_id,
+                    conv.parent_conversation_id,
+                    LEVEL_EDIT,
+                    permission_store,
+                    conversation_store,
+                )
+                if is_session_closed(conv.labels, conv.title):
+                    raise OmnigentError("native_child_closed", code=ErrorCode.CONFLICT)
+                if await _codex_side_chat_fork_lost(
+                    conv,
+                    conversation_store,
+                    runner_router,
+                    getattr(request.app.state, "host_registry", None),
+                ):
+                    raise OmnigentError("native_child_runtime_lost", code=ErrorCode.CONFLICT)
+                parent_client = await _get_runner_client(
+                    conv.parent_conversation_id, runner_router
+                )
+                if parent_client is None:
+                    raise OmnigentError(
+                        "parent_runtime_unavailable", code=ErrorCode.RUNNER_UNAVAILABLE
+                    )
+                dispatch = await _forward_native_child_event(
+                    conv,
+                    body,
+                    parent_client,
+                    created_by=created_by,
+                    conversation_store=conversation_store,
+                )
+                child_response: dict[str, bool | str] = {"queued": body.type == "message"}
+                if dispatch.pending_id is not None:
+                    child_response["pending_id"] = dispatch.pending_id
+                if dispatch.item_id is not None:
+                    child_response["item_id"] = dispatch.item_id
+                return child_response
         if body.type in (_INTERRUPT_TYPE, _STOP_SESSION_TYPE):
             from omnigent.server.session_orchestration import PEER_STOP_LABEL
 

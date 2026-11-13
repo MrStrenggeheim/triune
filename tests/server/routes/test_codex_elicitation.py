@@ -22,6 +22,46 @@ from omnigent.server.schemas import ElicitationResult
 # ── parse_codex_elicitation_request ──────────────────────────────────
 
 
+@pytest.mark.parametrize("blocking", [False, True])
+@pytest.mark.parametrize("request_id", [7, "request-7"])
+def test_question_blocking_flags_and_native_answer_correlation(blocking, request_id) -> None:
+    request = parse_codex_elicitation_request(
+        {
+            "id": request_id,
+            "method": "item/tool/requestUserInput",
+            "params": {
+                "threadId": "thread-child",
+                "turnId": "turn-1",
+                "itemId": "item-1",
+                "isBlocking": blocking,
+                "autoResolutionMs": 0,
+                "questions": [
+                    {
+                        "id": "stable-question",
+                        "question": "Pick",
+                        "isOther": True,
+                        "isSecret": True,
+                        "options": None,
+                    }
+                ],
+            },
+        }
+    )
+    params = request.params.model_dump()
+    assert params["isBlocking"] is blocking
+    assert params["ask_user_question"]["isBlocking"] is blocking
+    assert params["autoResolutionMs"] == 0
+    assert params["codex_request_id"] == request_id
+    assert params["thread_id"] == "thread-child"
+    assert params["turn_id"] == "turn-1"
+    assert params["item_id"] == "item-1"
+    assert request.build_response(
+        ElicitationResult(action="accept", content={"stable-question": "Answer"})
+    ) == {
+        "answers": {"stable-question": {"answers": ["Answer"]}},
+    }
+
+
 class TestParseCodexElicitationRequest:
     """Tests for the top-level request parser."""
 

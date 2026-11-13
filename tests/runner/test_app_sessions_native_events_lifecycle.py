@@ -2532,89 +2532,24 @@ async def test_events_interrupt_on_codex_native_uses_turn_interrupt_without_mark
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("case", ["running", "idle", "newer_turn", "missing_turn", "rpc_failure"])
-async def test_events_interrupt_codex_side_chat_leaves_parent_turn_running(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    case: str,
-) -> None:
-    from omnigent.harnesses.codex_native import app_server as codex_native_app_server
-
-    conv_id = "acbeddbbce38421b921a7abbe82f7176"
-    monkeypatch.setattr(codex_native_bridge, "_BRIDGE_ROOT", tmp_path / "codex-bridge")
-    bridge_dir = codex_native_bridge.bridge_dir_for_bridge_id(conv_id)
-    codex_native_bridge.write_bridge_state(
-        bridge_dir,
-        codex_native_bridge.CodexNativeBridgeState(
-            session_id=conv_id,
-            socket_path="ws://127.0.0.1:43210",
-            thread_id="thread_parent",
-            codex_home=str(tmp_path / "codex-home"),
-            active_turn_id="turn_parent",
-        ),
-    )
-    fake_client = _RecordingCodexAppServerClient(
-        transport="ws://127.0.0.1:43210", client_name="omnigent-codex-native-runner"
-    )
-    original_request = fake_client.request
-
-    async def request(method: str, params: dict[str, Any]) -> dict[str, Any]:
-        result = await original_request(method, params)
-        message = {
-            "idle": "no active turn to interrupt",
-            "newer_turn": "expected active turn id turn_side but found turn_new",
-            "rpc_failure": "thread-store internal error",
-        }.get(case)
-        if message is not None:
-            raise codex_native_app_server.CodexAppServerResponseError(
-                {"code": -32603 if case == "rpc_failure" else -32600, "message": message}
-            )
-        return result
-
-    monkeypatch.setattr(fake_client, "request", request)
-    monkeypatch.setattr(
-        codex_native_app_server, "client_for_transport", lambda *_args, **_kwargs: fake_client
-    )
-    spec = _harness_spec("codex-native")
-
-    async def resolver(agent_id: str, session_id: str | None = None) -> AgentSpec:
-        return spec
-
+@pytest.mark.parametrize("event_type", ["message", "interrupt"])
+async def test_events_reject_unmapped_codex_side_chat_controls(event_type: str) -> None:
+    """A raw native thread id cannot bypass the server child mapping."""
     pm = _FakeProcessManager(_ScriptedHarnessClient([]))
-    app = create_runner_app(
-        process_manager=pm,  # type: ignore[arg-type]
-        spec_resolver=resolver,
-        server_client=NullServerClient(),  # type: ignore[arg-type]
-    )
-    payload = {"type": "interrupt", "codex_side_thread_id": "thread_side"}
-    if case != "missing_turn":
-        payload["codex_side_turn_id"] = "turn_side"
+    app = create_runner_app(process_manager=pm, server_client=NullServerClient())
     async with _runner_client(app) as client:
-        created = await client.post(
-            "/v1/sessions", json={"session_id": conv_id, "agent_id": "agent_side"}
+        response = await client.post(
+            "/v1/sessions/parent/events",
+            json={
+                "type": event_type,
+                "codex_side_thread_id": "thread_side",
+                "codex_side_turn_id": "turn_side",
+                "content": [{"type": "input_text", "text": "target"}],
+            },
         )
-        assert created.status_code == 201, created.text
-        if case == "rpc_failure":
-            response = await client.post(f"/v1/sessions/{conv_id}/events", json=payload)
-            assert response.status_code == 409, response.text
-            assert response.json()["error"] == "codex_side_chat_rejected"
-            assert response.json()["detail"] == "thread-store internal error"
-        else:
-            response = await client.post(f"/v1/sessions/{conv_id}/events", json=payload)
-            assert response.status_code == (400 if case == "missing_turn" else 202), response.text
-
-    assert fake_client.connected == (case != "missing_turn")
-    assert fake_client.closed == (case != "missing_turn")
-    assert fake_client.requests == (
-        []
-        if case == "missing_turn"
-        else [("turn/interrupt", {"threadId": "thread_side", "turnId": "turn_side"})]
-    )
-    parent_state = codex_native_bridge.read_bridge_state(bridge_dir)
-    assert parent_state is not None and parent_state.active_turn_id == "turn_parent"
-    assert pm.cancelled == []
-    assert pm.released == []
-    assert conv_id not in app.state.interrupted_sessions
+    assert response.status_code == 409
+    assert response.json()["error"] == "native_child_mapping_required"
+    assert pm.get_client_calls == []
 
 
 @pytest.mark.asyncio
@@ -5460,9 +5395,8 @@ async def test_events_stop_session_on_kiro_native_503_when_kill_fails(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("command", [False, True], ids=["follow-up", "side-command"])
 async def test_events_codex_side_chat_preserves_indentation(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, command: bool
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     from omnigent.harnesses.codex_native import app_server as codex_native_app_server
     from omnigent.harnesses.codex_native import side_chat
@@ -5493,12 +5427,8 @@ async def test_events_codex_side_chat_preserves_indentation(
     question = "  - First\n  - Second"
     payload: dict[str, Any] = {
         "type": "message",
-        "content": [
-            {"type": "input_text", "text": f" \n /side {question}" if command else question}
-        ],
+        "content": [{"type": "input_text", "text": f" \n /side {question}"}],
     }
-    if not command:
-        payload["codex_side_thread_id"] = "thread_side"
     async with _runner_client(app) as client:
         created = await client.post(
             "/v1/sessions", json={"session_id": conv_id, "agent_id": "agent_side"}
@@ -5506,19 +5436,10 @@ async def test_events_codex_side_chat_preserves_indentation(
         assert created.status_code == 201, created.text
         response = await client.post(f"/v1/sessions/{conv_id}/events", json=payload)
     assert response.status_code == 202, response.text
-    if command:
-        assert [request.question for request in side_chat.peek_side_chat_requests(bridge_dir)] == [
-            question
-        ]
-        assert fake_client.requests == []
-    else:
-        assert fake_client.requests == [
-            (
-                "turn/start",
-                {"threadId": "thread_side", "input": [{"type": "text", "text": question}]},
-            )
-        ]
-        assert fake_client.closed
+    assert [request.question for request in side_chat.peek_side_chat_requests(bridge_dir)] == [
+        question
+    ]
+    assert fake_client.requests == []
 
 
 @pytest.mark.parametrize(
@@ -5601,90 +5522,3 @@ async def test_events_rotated_codex_side_chat_uses_the_launch_directory(
     ]
     for unused_dir in {default_dir, rotated_dir, wrong_dir} - {expected_dir}:
         assert side_chat.peek_side_chat_requests(unused_dir) == []
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("failure", "status", "error", "detail"),
-    [
-        (
-            {
-                "code": -32600,
-                "message": "direct app-server input is not allowed for multi-agent v2 sub-agents",
-            },
-            409,
-            "codex_side_chat_rejected",
-            "direct app-server input is not allowed for multi-agent v2 sub-agents",
-        ),
-        (
-            {"code": -32600, "message": "thread not found: 0199-abc"},
-            404,
-            "codex_side_chat_not_found",
-            "thread not found: 0199-abc",
-        ),
-        (ConnectionError("websocket closed 1011"), 503, "codex_side_chat_unavailable", None),
-    ],
-)
-async def test_events_codex_side_chat_message_failure_is_structured(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    failure: Any,
-    status: int,
-    error: str,
-    detail: str | None,
-) -> None:
-    from omnigent.harnesses.codex_native import app_server as codex_native_app_server
-
-    conv_id = "acbeddbbce38421b921a7abbe82f7176"
-    monkeypatch.setattr(codex_native_bridge, "_BRIDGE_ROOT", tmp_path / "codex-bridge")
-    bridge_dir = codex_native_bridge.bridge_dir_for_bridge_id(conv_id)
-    codex_native_bridge.write_bridge_state(
-        bridge_dir,
-        codex_native_bridge.CodexNativeBridgeState(
-            session_id=conv_id,
-            socket_path="ws://127.0.0.1:43210",
-            thread_id="thread_parent",
-            codex_home=str(tmp_path / "codex-home"),
-        ),
-    )
-    fake_client = _RecordingCodexAppServerClient(
-        transport="ws://127.0.0.1:43210", client_name="omnigent-codex-native-runner"
-    )
-
-    async def request(method: str, params: dict[str, Any]) -> dict[str, Any]:
-        if isinstance(failure, dict):
-            raise codex_native_app_server.CodexAppServerResponseError(failure)
-        raise failure
-
-    monkeypatch.setattr(fake_client, "request", request)
-    monkeypatch.setattr(
-        codex_native_app_server, "client_for_transport", lambda *_args, **_kwargs: fake_client
-    )
-    spec = _harness_spec("codex-native")
-
-    async def resolver(agent_id: str, session_id: str | None = None) -> AgentSpec:
-        return spec
-
-    app = create_runner_app(
-        process_manager=_FakeProcessManager(_ScriptedHarnessClient([])),  # type: ignore[arg-type]
-        spec_resolver=resolver,
-        server_client=NullServerClient(),  # type: ignore[arg-type]
-    )
-    async with _runner_client(app) as client:
-        created = await client.post(
-            "/v1/sessions", json={"session_id": conv_id, "agent_id": "agent_side"}
-        )
-        assert created.status_code == 201, created.text
-        response = await client.post(
-            f"/v1/sessions/{conv_id}/events",
-            json={
-                "type": "message",
-                "content": [{"type": "input_text", "text": "hi"}],
-                "codex_side_thread_id": "thread_side",
-            },
-        )
-    assert response.status_code == status, response.text
-    assert response.json()["error"] == error
-    if detail is not None:
-        assert response.json()["detail"] == detail
-    assert fake_client.closed

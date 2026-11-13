@@ -25,6 +25,76 @@ from tests.harnesses.codex_native.forwarder._support import (
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["completed", "interrupted"])
+async def test_collaboration_prompt_and_wait_result_keep_native_identity(status: str) -> None:
+    posts = []
+
+    async def receive(request):
+        posts.append((request.url.path, json.loads(request.content)))
+        return httpx.Response(200, json={"child_session_id": "child"})
+
+    state = fwd._CodexForwarderState(parent_session_id="parent")
+    async with httpx.AsyncClient(
+        base_url="http://test", transport=httpx.MockTransport(receive)
+    ) as client:
+        await fwd._handle_collab_item(
+            client,
+            {"threadId": "parent-thread"},
+            {
+                "id": "spawn-1",
+                "tool": "spawnAgent",
+                "receiverThreadIds": ["thread-child"],
+                "prompt": "Full delegation input",
+                "agentNickname": "Curie",
+                "agentRole": "worker",
+            },
+            state,
+        )
+        await fwd._handle_collab_item(
+            client,
+            {"threadId": "parent-thread"},
+            {
+                "id": "wait-1",
+                "tool": "wait",
+                "agentsStates": {
+                    "thread-child": {"status": status, "message": "Clean result"},
+                },
+            },
+            state,
+        )
+    registration = posts[0][1]["data"]
+    assert registration["prompt"] == "Full delegation input"
+    assert registration["agent_nickname"] == "Curie"
+    assert registration["agent_role"] == "worker"
+    assert registration["tool_call_id"] == "spawn-1"
+    result = next(
+        body["data"] for path, body in posts if body["type"] == "external_conversation_item"
+    )
+    assert result["item_data"]["resource"]["result_text"] == "Clean result"
+    assert result["item_data"]["resource_id"] == "child"
+    assert posts[-1][1]["data"]["output"] == "Clean result"
+    assert posts[-1][1]["data"].get("turn_outcome") == (
+        "cancelled" if status == "interrupted" else None
+    )
+    assert "prompt" not in fwd._codex_child_name_data(
+        "thread-child",
+        {
+            "preview": "truncated",
+            "source": {"subAgent": {"thread_spawn": {"parent_thread_id": "parent-thread"}}},
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_explicit_empty_plan_is_published_to_clear_the_shared_plan() -> None:
+    client = _RecordingClient()
+    await fwd._handle_turn_plan_updated(client, "child", {"plan": []})
+    assert client.posts == [
+        ("/v1/sessions/child/events", {"type": "external_session_todos", "data": {"todos": []}})
+    ]
+
+
 def _make_thread_started(thread: dict) -> dict:
     """Wrap a thread dict in a ``thread/started`` envelope."""
     return {"method": "thread/started", "params": {"thread": thread}}

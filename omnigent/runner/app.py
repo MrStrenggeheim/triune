@@ -6371,6 +6371,25 @@ def create_runner_app(
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
+    from omnigent.runner.native.child_controls import NativeChildControls
+
+    native_child_controls = NativeChildControls(
+        server_client, _codex_native_bridge_state_for_session
+    )
+
+    @app.get("/v1/sessions/{parent_id}/native-children/{child_id}/capabilities")
+    async def get_native_child_capabilities(parent_id: str, child_id: str) -> Response:
+        return await native_child_controls.handle(parent_id, child_id)
+
+    @app.post("/v1/sessions/{parent_id}/native-children/{child_id}/control")
+    async def post_native_child_control(
+        parent_id: str, child_id: str, request: Request
+    ) -> Response:
+        body = await request.json()
+        if not isinstance(body, dict):
+            return JSONResponse(status_code=400, content={"detail": "invalid_child_control"})
+        return await native_child_controls.handle(parent_id, child_id, body)
+
     @app.post("/v1/sessions/{conversation_id}/events")
     async def post_session_events(
         conversation_id: str,
@@ -6407,102 +6426,13 @@ def create_runner_app(
         )
         _side_thread_id = body.get("codex_side_thread_id") if isinstance(body, dict) else None
         if _side_thread_id:
-            # Side-chat controls use the parent's bridge but target the child's
-            # thread, leaving the parent's turn and message buffer untouched.
-            from websockets.exceptions import WebSocketException
-
-            from omnigent.harnesses.codex_native import side_chat
-            from omnigent.harnesses.codex_native.app_server import (
-                CodexAppServerResponseError,
-                client_for_transport,
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "error": "native_child_mapping_required",
+                    "detail": "Use the mapped native-child control endpoint.",
+                },
             )
-
-            _side_turn_id = body.get("codex_side_turn_id")
-            _side_text = ""
-            if body_type == "interrupt":
-                if not isinstance(_side_turn_id, str) or not _side_turn_id:
-                    return JSONResponse(
-                        status_code=400,
-                        content={
-                            "error": "invalid_request",
-                            "detail": "Missing side-chat turn id.",
-                        },
-                    )
-            else:
-                _side_text = _side_chat_text_from_content(
-                    body.get("content") if isinstance(body, dict) else None
-                )
-                if not _side_text:
-                    return JSONResponse(
-                        status_code=400,
-                        content={
-                            "error": "invalid_request",
-                            "detail": "side chat message had no text",
-                        },
-                    )
-            _side_state = await _codex_native_bridge_state_for_session(
-                conversation_id, action="side chat turn"
-            )
-            if _side_state is None:
-                return JSONResponse(
-                    status_code=503,
-                    content={
-                        "error": "codex_side_chat_no_bridge",
-                        "detail": "Codex /side follow-up requires a loaded parent Codex bridge.",
-                    },
-                )
-            _side_client = client_for_transport(
-                _side_state.socket_path, client_name="omnigent-codex-native-runner"
-            )
-            try:
-                await _side_client.connect()
-                if body_type == "interrupt":
-                    await side_chat.interrupt_side_turn(
-                        _side_client, str(_side_thread_id), _side_turn_id
-                    )
-                else:
-                    await side_chat.submit_side_turn(
-                        _side_client, str(_side_thread_id), _side_text
-                    )
-            except CodexAppServerResponseError as exc:
-                # Codex refused the turn (e.g. typing into a multi-agent-v2
-                # sub-agent, or a thread that no longer exists).
-                _rpc_message = exc.message or str(exc)
-                _missing = "thread not found" in _rpc_message.casefold()
-                _logger.warning(
-                    "Codex side-chat turn rejected: conv=%s thread=%s error=%s",
-                    conversation_id,
-                    _side_thread_id,
-                    exc,
-                    extra={"session_id": conversation_id},
-                )
-                return JSONResponse(
-                    status_code=404 if _missing else 409,
-                    content={
-                        "error": "codex_side_chat_not_found"
-                        if _missing
-                        else "codex_side_chat_rejected",
-                        "detail": _rpc_message,
-                    },
-                )
-            except (ConnectionError, OSError, TimeoutError, WebSocketException) as exc:
-                _logger.warning(
-                    "Codex side-chat app-server unreachable: conv=%s thread=%s error=%r",
-                    conversation_id,
-                    _side_thread_id,
-                    exc,
-                    extra={"session_id": conversation_id},
-                )
-                return JSONResponse(
-                    status_code=503,
-                    content={
-                        "error": "codex_side_chat_unavailable",
-                        "detail": "The Codex app-server connection was lost; try again.",
-                    },
-                )
-            finally:
-                await _side_client.close()
-            return Response(status_code=202)
         if body_type == "message" and isinstance(body, dict):
             # A codex /side command opens a side chat; it must not run a turn
             # here. Starting one publishes a "running" edge for this session,

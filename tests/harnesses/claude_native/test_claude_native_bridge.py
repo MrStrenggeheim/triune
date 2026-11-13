@@ -1458,6 +1458,61 @@ def test_internal_scaffolding_does_not_split_parent_response(
         assert response_id == "active"
 
 
+@pytest.mark.parametrize(
+    "queued,as_blocks",
+    [(None, False), (None, True), ("prompt", False), ("task-notification", False)],
+)
+def test_native_peer_preserves_trusted_name_and_clean_report(
+    tmp_path: Path,
+    queued: str | None,
+    as_blocks: bool,
+) -> None:
+    origin = {
+        "kind": "peer",
+        "handback": True,
+        "senderTaskId": "agent-1",
+        "name": "Fermat",
+        "handbackReportText": "Clean handback report.",
+    }
+    content = [{"type": "text", "text": _TEAMMATE_MESSAGE}] if as_blocks else _TEAMMATE_MESSAGE
+    _, response_id, items = _read_native_user(
+        tmp_path,
+        content,
+        queued=queued,
+        isMeta=True,
+        origin=origin,
+    )
+    [item] = items
+    assert item.data["content"] == [{"type": "input_text", "text": "Clean handback report."}]
+    assert item.data["communication"]["source_agent_name"] == "Fermat"
+    assert item.data["communication"]["task_id"] == "agent-1"
+    assert item.subagent_return_id == "agent-1" and response_id == "active"
+
+
+@pytest.mark.parametrize(
+    "queued,as_blocks",
+    [(None, False), (None, True), ("prompt", False), ("task-notification", False)],
+)
+def test_native_task_notification_stays_metadata_with_structured_origin(
+    tmp_path: Path,
+    queued: str | None,
+    as_blocks: bool,
+) -> None:
+    content = [{"type": "text", "text": _TASK_COMPLETION}] if as_blocks else _TASK_COMPLETION
+    _, response_id, items = _read_native_user(
+        tmp_path,
+        content,
+        queued=queued,
+        isMeta=True,
+        origin={"kind": "task-notification"},
+    )
+    [item] = items
+    assert item.data.get("is_meta") is True
+    assert "communication" not in item.data
+    assert item.data["content"] == [{"type": "input_text", "text": _TASK_COMPLETION}]
+    assert response_id == "active"
+
+
 @pytest.mark.parametrize("queued", [None, "prompt", "task-notification"])
 @pytest.mark.parametrize("handback", [False, True])
 def test_completion_preserves_hidden_provenance(

@@ -34,18 +34,36 @@ def peer_model_content(
 
 def native_peer_metadata(origin: object, message_id: str) -> dict[str, object]:
     """Keep provider identities distinct from unresolved Omnigent conversation IDs."""
+    if isinstance(origin, dict) and origin.get("kind") == "task-notification":
+        return {"is_meta": True}
     if not isinstance(origin, dict) or origin.get("kind") != "peer":
         return {}
-    sender = origin.get("senderAgentId") or origin.get("senderTaskId")
+    sender = origin.get("senderAgentId") or origin.get("senderTaskId") or origin.get("from")
     task = origin.get("senderTaskId")
+    name = origin.get("name")
     return {
         "communication": MessageCommunication(
             kind="native_agent",
             message_id=message_id,
             source_agent_id=sender if isinstance(sender, str) else None,
+            source_agent_name=name.strip()[:256]
+            if isinstance(name, str) and name.strip()
+            else None,
             destination_conversation_id="",
             task_id=task if isinstance(task, str) else None,
             delivery_state="confirmed",
             receipt="transcript",
         ).model_dump()
     }
+
+
+def native_message_text(origin: object, text: str) -> str:
+    """Use a trusted clean handback report; literal human markup stays untouched."""
+    if isinstance(origin, dict) and origin.get("kind") == "peer":
+        report = origin.get("handbackReportText")
+        if origin.get("handback") is True and isinstance(report, str) and report.strip():
+            return report
+        body = origin.get("body")
+        if isinstance(body, str) and body.strip():
+            return body
+    return text

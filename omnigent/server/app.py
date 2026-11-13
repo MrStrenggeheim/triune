@@ -213,6 +213,7 @@ class ServerInfoResponse(BaseModel):
     databricks_features: bool
     managed_sandboxes_enabled: bool
     durable_initial_input: bool = False
+    durable_host_initial_input: bool = False
     sandbox_provider: str | None
     sandbox_providers: list[str]
     # UI-relevant capability flags per launchable provider, e.g.
@@ -3348,6 +3349,7 @@ def create_app(
                 "durable_initial_input": bool(
                     sandbox_config is not None and sandbox_config.managed_launch_supported
                 ),
+                "durable_host_initial_input": app.state.startup_inputs is not None,
                 "sandbox_provider": sandbox_provider,
                 "sandbox_providers": sandbox_providers,
                 "sandbox_provider_capabilities": sandbox_provider_capabilities,

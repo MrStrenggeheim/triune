@@ -73,6 +73,7 @@ from omnigent.host.frames import (
 from omnigent.llms.context_window import resolve_effective_context_window
 from omnigent.mcp_selection import mcp_selection_revision
 from omnigent.models.model_metadata import concrete_reported_model
+from omnigent.native.child_controls import native_child_provider, unavailable_child_capabilities
 from omnigent.native.failure_telemetry import (
     FailureContext,
     normalize_failure_context,
@@ -1382,6 +1383,7 @@ def _build_session_response(
     agent_store: AgentStore | None = None,
     agent_cache: AgentCache | None = None,
     side_chat_sealed: bool = False,
+    native_child_capabilities: dict[str, Any] | None = None,
     resolved_harness: str | EllipsisType | None = ...,
 ) -> SessionResponse:
     """
@@ -1595,6 +1597,7 @@ def _build_session_response(
         # is not replayed on the SSE stream). Populated for native-terminal
         # sessions whose forwarder stamps a turn id; ``None`` otherwise.
         active_response_id=_session_active_response_cache.get(conv.id),
+        native_child_capabilities=native_child_capabilities,
         project_id=conv.project_id,
     )
 
@@ -7809,47 +7812,159 @@ def _codex_side_chat_thread_id(conv: Conversation) -> str | None:
     return (conv.labels or {}).get(_CODEX_NATIVE_SUBAGENT_THREAD_ID_LABEL_KEY) or None
 
 
+async def _forward_native_child_event(
+    conv: Conversation,
+    body: SessionEventInput,
+    runner_client: httpx.AsyncClient,
+    *,
+    created_by: str | None = None,
+    conversation_store: ConversationStore | None = None,
+) -> _SessionEventDispatchResult:
+    """Retain accepted input until a native echo proves consumption on this child."""
+    from omnigent.harnesses.claude_native.bridge import url_component
+
+    if not conv.parent_conversation_id:
+        raise OmnigentError("native_child_mapping_missing", code=ErrorCode.CONFLICT)
+    content = body.data.get("content")
+    is_message = body.type == "message"
+    if is_message and (
+        body.data.get("role", "user") != "user"
+        or body.data.get("communication") is not None
+        or not isinstance(content, list)
+        or not content
+        or any(
+            not isinstance(block, dict)
+            or block.get("type") != "input_text"
+            or not isinstance(block.get("text"), str)
+            for block in content
+        )
+        or not any(block["text"].strip() for block in content)
+    ):
+        raise OmnigentError("native_child_requires_text", code=ErrorCode.INVALID_INPUT)
+    stable_id = body.data.get("stable_id")
+    if not isinstance(stable_id, str) or re.fullmatch(r"[0-9a-f]{32}", stable_id) is None:
+        stable_id = None
+    async with _native_mirror_lock(conv.id):
+        if is_message and stable_id is not None:
+            if conversation_store is not None:
+                committed = await asyncio.to_thread(
+                    conversation_store.get_item, conv.id, stable_id
+                )
+                if committed is not None:
+                    if (
+                        committed.created_by != created_by
+                        or committed.data.model_dump().get("content") != content
+                    ):
+                        raise OmnigentError("input_stable_id_conflict", code=ErrorCode.CONFLICT)
+                    return _SessionEventDispatchResult(item_id=committed.id, pending_id=None)
+            repeated = pending_inputs.pending_id_for_stable_id(conv.id, stable_id)
+            if repeated is not None:
+                entry = next(
+                    (
+                        entry
+                        for entry in pending_inputs.snapshot_for(conv.id)
+                        if entry["pending_id"] == repeated
+                    ),
+                    None,
+                )
+                if (
+                    entry is None
+                    or entry.get("content") != content
+                    or entry.get("created_by") != created_by
+                ):
+                    raise OmnigentError("input_stable_id_conflict", code=ErrorCode.CONFLICT)
+                return _SessionEventDispatchResult(item_id=None, pending_id=repeated)
+        pending_id = (
+            pending_inputs.record(
+                conv.id,
+                cast(list[dict[str, Any]], content),
+                created_by=created_by,
+                stable_id=stable_id,
+            )
+            if is_message
+            else None
+        )
+        action = body.data.get("native_child_action", "message") if is_message else "stop"
+        if action not in {"message", "reply", "steer", "stop"} or (
+            is_message and action == "stop"
+        ):
+            if pending_id is not None:
+                pending_inputs.resolve(conv.id, pending_id)
+            raise OmnigentError("invalid_child_action", code=ErrorCode.INVALID_INPUT)
+        payload: dict[str, Any] = {"action": action}
+        if is_message:
+            payload.update(content=content, stable_id=stable_id)
+        response_id = body.data.get("response_id")
+        if isinstance(response_id, str):
+            payload["expected_turn_id"] = response_id.removeprefix("codex_")
+        accepted = False
+        try:
+            if pending_id is not None:
+                pending_inputs.mark_delivery_stage(conv.id, pending_id, "forward_requested")
+            response = await runner_client.post(
+                f"/v1/sessions/{url_component(conv.parent_conversation_id)}/native-children/"
+                f"{url_component(conv.id)}/control",
+                json=payload,
+                timeout=8.0,
+            )
+            if response.status_code >= 400:
+                raise _codex_side_chat_runner_error(response)
+            accepted = True
+            if pending_id is not None:
+                pending_inputs.mark_delivery_stage(conv.id, pending_id, "forward_accepted")
+        finally:
+            if not accepted and pending_id is not None:
+                pending_inputs.resolve(conv.id, pending_id)
+        return _SessionEventDispatchResult(item_id=None, pending_id=pending_id)
+
+
 async def _forward_codex_side_chat_turn(
     conv: Conversation,
     body: SessionEventInput,
     runner_client: httpx.AsyncClient,
 ) -> _SessionEventDispatchResult | None:
-    """
-    Forward a Codex ``/side`` child's user turn to the PARENT runner.
+    """Compatibility seam for native child sends; target the mapped child session."""
+    return await _forward_native_child_event(conv, body, runner_client)
 
-    A side-chat child (``kind == "sub_agent"`` + ``_is_codex_native_subagent``) has
-    no Codex process of its own: its thread lives in the parent's app-server. Forward
-    the message to the parent runner's ``/events`` tagged with the child Codex thread
-    id (``codex_side_thread_id``) so the runner drives it via ``turn/start`` on that
-    thread. Not persisted AP-side: the transcript forwarder mirrors the child thread's
-    echo, staying the single writer (same invariant as the native message bypass).
 
-    :param conv: The side-chat child conversation row.
-    :param body: The user message event.
-    :param runner_client: The child's runner client (== the parent's runner).
-    :returns: A no-persist dispatch result, or ``None`` to fall through when the
-        child lacks a parent id or a Codex thread-id label.
-    """
-    from omnigent.harnesses.claude_native.bridge import url_component
-    from omnigent.server.routes._sessions.common import (
-        _CODEX_NATIVE_SUBAGENT_THREAD_ID_LABEL_KEY,
-    )
-
-    parent_id = conv.parent_conversation_id
-    child_thread_id = (conv.labels or {}).get(_CODEX_NATIVE_SUBAGENT_THREAD_ID_LABEL_KEY)
-    if not parent_id or not child_thread_id:
+async def _native_child_capabilities_for_snapshot(
+    conv: Conversation,
+    conv_store: ConversationStore,
+    runner_router: RunnerRouter | None,
+) -> dict[str, Any] | None:
+    """Availability is read from the parent's live runtime, never inferred by the browser."""
+    provider = native_child_provider(conv.kind, conv.labels)
+    if provider is None:
         return None
-    resp = await runner_client.post(
-        f"/v1/sessions/{url_component(parent_id)}/events",
-        json={
-            "type": "message",
-            "content": body.data.get("content"),
-            "codex_side_thread_id": child_thread_id,
-        },
-    )
-    if resp.status_code >= 400:
-        raise _codex_side_chat_runner_error(resp)
-    return _SessionEventDispatchResult(item_id=None, pending_id=None)
+    if provider == "claude":
+        from omnigent.harnesses.claude_native.bridge import child_control_capabilities
+
+        return child_control_capabilities(conv.sub_agent_name)
+    if not conv.parent_conversation_id:
+        return unavailable_child_capabilities("native_child_mapping_missing")
+    parent = await asyncio.to_thread(conv_store.get_conversation, conv.parent_conversation_id)
+    if parent is None or not parent.runner_id:
+        return unavailable_child_capabilities("parent_runtime_unavailable")
+    if await _codex_side_chat_fork_sealed(conv, conv_store):
+        return unavailable_child_capabilities("native_child_runtime_lost")
+    client = await _get_runner_client(parent.id, runner_router)
+    if client is None:
+        return unavailable_child_capabilities("parent_runtime_unavailable")
+    from omnigent.harnesses.claude_native.bridge import url_component
+
+    try:
+        response = await client.get(
+            f"/v1/sessions/{url_component(parent.id)}/native-children/"
+            f"{url_component(conv.id)}/capabilities",
+            timeout=6.0,
+        )
+        if response.status_code == 200:
+            capabilities = response.json()
+            if isinstance(capabilities, dict) and capabilities.get("version") == 1:
+                return capabilities
+    except (httpx.HTTPError, ConnectionError, ValueError):
+        _logger.debug("Native child capability probe failed for %s", conv.id, exc_info=True)
+    return unavailable_child_capabilities("parent_control_unavailable")
 
 
 def _codex_side_chat_runner_error(resp: httpx.Response) -> OmnigentError:
@@ -7866,7 +7981,9 @@ def _codex_side_chat_runner_error(resp: httpx.Response) -> OmnigentError:
             detail = payload["detail"]
     except ValueError:
         pass
-    if resp.status_code == 404:
+    if resp.status_code == 400:
+        code = ErrorCode.INVALID_INPUT
+    elif resp.status_code == 404:
         code = ErrorCode.NOT_FOUND
     elif resp.status_code == 409:
         code = ErrorCode.CONFLICT
@@ -7990,7 +8107,9 @@ async def _dispatch_session_event_to_runner_impl(
         # Codex /side follow-up: drive the child on its own Codex thread via the
         # parent's runner/bridge; do not persist AP-side (the forwarder mirrors
         # the child thread echo, staying the single writer).
-        side_result = await _forward_codex_side_chat_turn(conv, body, runner_client)
+        side_result = await _forward_native_child_event(
+            conv, body, runner_client, created_by=created_by, conversation_store=conversation_store
+        )
         if side_result is not None:
             return side_result
     if body.type == "message" and _is_native_terminal_session(conv):
@@ -13676,6 +13795,9 @@ async def _get_session_snapshot(
         status,
         permission_level,
         side_chat_sealed=await _codex_side_chat_fork_sealed(conv, conv_store),
+        native_child_capabilities=await _native_child_capabilities_for_snapshot(
+            conv, conv_store, runner_router
+        ),
         background_task_count=_session_background_task_count_cache.get(session_id),
         background_tasks=_session_background_tasks_cache.get(session_id),
         llm_model=llm_model,

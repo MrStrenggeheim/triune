@@ -5622,21 +5622,20 @@ async def _handle_collab_item(
     :param forwarder_state: Mutable state for child-thread mappings.
     :returns: None.
     """
-    if item.get("tool") != _CODEX_COLLAB_SPAWN_TOOL:
-        return
     parent_session_id = _parent_session_id_from_forwarder_state(forwarder_state)
     if parent_session_id is None:
         return
     parent_thread_id = _collab_parent_thread_id(params, item)
-    for child_thread_id in _collab_receiver_thread_ids(item):
-        await _ensure_child_session(
-            client,
-            parent_session_id=parent_session_id,
-            parent_thread_id=parent_thread_id,
-            child_thread_id=child_thread_id,
-            item=item,
-            forwarder_state=forwarder_state,
-        )
+    if item.get("tool") in {_CODEX_COLLAB_SPAWN_TOOL, "sendInput"}:
+        for child_thread_id in _collab_receiver_thread_ids(item):
+            await _ensure_child_session(
+                client,
+                parent_session_id=parent_session_id,
+                parent_thread_id=parent_thread_id,
+                child_thread_id=child_thread_id,
+                item=item,
+                forwarder_state=forwarder_state,
+            )
     await _post_collab_agent_statuses(client, item=item, forwarder_state=forwarder_state)
 
 
@@ -5716,6 +5715,15 @@ async def _ensure_child_session(
         if child_session_id is None:
             return
         forwarder_state.note_child_thread(child_thread_id, child_session_id)
+    elif isinstance(item.get("prompt"), str) and item["prompt"]:
+        # thread/started can arrive before the collaboration call's full input.
+        await _register_child_session(
+            client,
+            parent_session_id=parent_session_id,
+            parent_thread_id=parent_thread_id,
+            child_thread_id=child_thread_id,
+            item=item,
+        )
     # Backfill is done via the codex_client stored on the state.
     codex_client = forwarder_state.codex_client
     if codex_client is not None and forwarder_state.needs_child_thread_backfill(child_thread_id):
@@ -5756,9 +5764,13 @@ async def _register_child_session(
     # Display name for the child. Without it the server stamps its fixed
     # fallback and the title keeps the raw thread id, which surfaces as a UUID
     # in the sub-agent rail and the composer tray.
-    nickname = item.get("agent_nickname")
-    if isinstance(nickname, str) and nickname:
-        data["agent_nickname"] = nickname
+    for key, value in (
+        ("agent_nickname", item.get("agentNickname") or item.get("agent_nickname")),
+        ("agent_role", item.get("agentRole") or item.get("agent_role")),
+        ("prompt", item.get("prompt")),
+    ):
+        if isinstance(value, str) and value:
+            data[key] = value
     response = await _post_session_event(
         client,
         parent_session_id,
@@ -5981,9 +5993,7 @@ def _codex_child_name_data(
         parent_thread_id = source.get("parent_thread_id")
         if isinstance(parent_thread_id, str) and parent_thread_id:
             data["parent_thread_id"] = parent_thread_id
-        prompt = thread.get("preview") or source.get("prompt")
-        if isinstance(prompt, str) and prompt:
-            data["prompt"] = prompt
+    # A resumed preview or inherited turn must not replace a full dispatch input.
     return data
 
 
@@ -6065,7 +6075,34 @@ async def _post_collab_agent_statuses(
             continue
         ap_status = _omnigent_status_from_collab_state(state)
         if ap_status is not None:
-            await _post_status(client, child_session_id, ap_status)
+            message = state.get("message")
+            response_id = None
+            if ap_status in {"idle", "failed"} and isinstance(message, str) and message:
+                source_id = f"codex-collab:{item.get('id')}:{thread_id}:result"
+                response_id = source_id
+                await _post_external_item(
+                    client,
+                    child_session_id,
+                    item_type="resource_event",
+                    item_data={
+                        "event_type": "session.subagent.result",
+                        "resource_type": "session",
+                        "resource_id": child_session_id,
+                        "resource": {"result_text": message, "native_thread_id": thread_id},
+                    },
+                    response_id=response_id,
+                    source_id=source_id,
+                )
+            await _post_status(
+                client,
+                child_session_id,
+                ap_status,
+                response_id=response_id,
+                output=message if isinstance(message, str) else None,
+                turn_outcome="cancelled"
+                if state.get("status") in {"interrupted", "shutdown"}
+                else None,
+            )
 
 
 def _omnigent_status_from_collab_state(state: _JsonObject) -> str | None:
@@ -7037,6 +7074,7 @@ async def _post_status(
     reauth_required: bool = False,
     compaction_model: str | None = None,
     selected_model: str | None = None,
+    turn_outcome: str | None = None,
 ) -> None:
     """
     Publish a native Codex status edge.
@@ -7062,6 +7100,8 @@ async def _post_status(
         data["response_id"] = response_id
     if output is not None:
         data["output"] = output
+    if turn_outcome is not None:
+        data["turn_outcome"] = turn_outcome
     if reauth_required:
         data["reauth_required"] = True
     if compaction_model is not None and selected_model is not None:
@@ -8671,11 +8711,13 @@ def _plan_todos_from_update(params: _JsonObject) -> list[_JsonObject] | None:
 
     :param params: Codex plan update params.
     :returns: List of ``{"content", "status", "activeForm"}`` items, or
-        ``None`` when no valid plan steps are present.
+        ``[]`` for an explicit empty snapshot; ``None`` for malformed input.
     """
     plan = params.get("plan")
-    if not isinstance(plan, list) or not plan:
+    if not isinstance(plan, list):
         return None
+    if not plan:
+        return []
     todos: list[_JsonObject] = []
     for entry in plan:
         if not isinstance(entry, dict):

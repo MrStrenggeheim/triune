@@ -909,6 +909,19 @@ async def _shutdown_session_router_async(
     await asyncio.to_thread(shutdown_session_router, session_id, router)
 
 
+def _native_forwarder_headers(server_url: str, auth_token: str | None) -> dict[str, str]:
+    """Keep native event posts on their authorized runner and server deployment."""
+    from omnigent.cli_auth import databricks_request_headers
+    from omnigent.runner._entry import _runner_tunnel_binding_token_from_env
+    from omnigent.runner.identity import RUNNER_TUNNEL_TOKEN_HEADER
+
+    headers = databricks_request_headers(server_url, bearer_token=auth_token)
+    binding_token = _runner_tunnel_binding_token_from_env()
+    if binding_token:
+        headers[RUNNER_TUNNEL_TOKEN_HEADER] = binding_token
+    return headers
+
+
 def _required_runner_env(name: str) -> str:
     """
     Return a required runner environment variable.
@@ -4675,9 +4688,8 @@ async def _auto_create_kimi_terminal(
     # The hook subprocess replays these static headers from its config (no
     # refresh-capable httpx.Auth of its own); the helper pairs the bearer with
     # the workspace-routing header so neither is dropped.
-    from omnigent.cli_auth import databricks_request_headers
 
-    _runner_headers = databricks_request_headers(server_url, bearer_token=_auth_token)
+    _runner_headers = _native_forwarder_headers(server_url, _auth_token)
     write_hook_config(
         bridge_dir,
         server_url=server_url,
@@ -6402,7 +6414,7 @@ async def _codex_discover_thread_and_forward(
         server_url = _required_runner_env("RUNNER_SERVER_URL")
         auth_factory = await asyncio.to_thread(_make_auth_token_factory)
         auth_token = await asyncio.to_thread(auth_factory) if auth_factory is not None else None
-        headers: dict[str, str] = {"Authorization": f"Bearer {auth_token}"} if auth_token else {}
+        headers = _native_forwarder_headers(server_url, auth_token)
 
         # Mirror the discovered Codex thread id onto the Omnigent session as its
         # external_session_id, the same way claude-native records its
@@ -6536,7 +6548,7 @@ async def _codex_forward_known_thread(
         server_url = _required_runner_env("RUNNER_SERVER_URL")
         auth_factory = await asyncio.to_thread(_make_auth_token_factory)
         auth_token = await asyncio.to_thread(auth_factory) if auth_factory is not None else None
-        headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else {}
+        headers = _native_forwarder_headers(server_url, auth_token)
         await supervise_forwarder(
             base_url=server_url,
             headers=headers,
@@ -6858,7 +6870,7 @@ async def _auto_create_antigravity_terminal(
     server_url = _required_runner_env("RUNNER_SERVER_URL")
     auth_factory = await asyncio.to_thread(_make_auth_token_factory)
     auth_token = await asyncio.to_thread(auth_factory) if auth_factory is not None else None
-    runner_headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else {}
+    runner_headers = _native_forwarder_headers(server_url, auth_token)
 
     # Seed bridge state with the id known so far (the real id on resume; on a
     # fresh launch a placeholder the cold-start below replaces with agy's real
@@ -8907,9 +8919,8 @@ async def _auto_create_claude_terminal(
     # The hook subprocess replays these static headers from its config (no
     # refresh-capable auth of its own); the helper pairs the bearer with the
     # workspace-routing header so neither is dropped.
-    from omnigent.cli_auth import databricks_request_headers
 
-    _runner_headers = databricks_request_headers(server_url, bearer_token=_auth_token)
+    _runner_headers = _native_forwarder_headers(server_url, _auth_token)
     _runner_auth = _RunnerDatabricksAuth(_auth_factory)
 
     from omnigent.harnesses.claude_native.main import (

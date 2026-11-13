@@ -4712,6 +4712,16 @@ def _unknown_command_rejection_appeared(
     return False
 
 
+def child_control_capabilities(agent_type: str | None) -> dict[str, Any]:
+    """Report the TUI bridge's actual controls independently of provider features."""
+    from omnigent.native.child_controls import unavailable_child_capabilities
+
+    one_shot = (agent_type or "").casefold() in {"explore", "plan"}
+    return unavailable_child_capabilities(
+        "native_child_one_shot" if one_shot else "native_parent_send_message_unavailable"
+    )
+
+
 def inject_interrupt(
     bridge_dir: Path,
     *,
@@ -8908,7 +8918,12 @@ def _attachment_transcript_items_from_entry(
                 item_type="message",
                 data={
                     "role": "user",
-                    "content": [{"type": "input_text", "text": prompt}],
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": _native_peer_text(attachment.get("origin"), prompt),
+                        }
+                    ],
                     **peer_data,
                 },
                 response_id=_response_id_from_source(source_key),
@@ -9379,7 +9394,13 @@ def _slash_command_item_from_echo(
 
 def _is_trusted_agent_notification_text(_text: str, *, origin: object = None) -> bool:
     """Only native structured provenance establishes agent authorship."""
-    return isinstance(origin, dict) and origin.get("kind") == "peer"
+    return isinstance(origin, dict) and origin.get("kind") in {"peer", "task-notification"}
+
+
+def _native_peer_text(origin: object, text: str) -> str:
+    from omnigent.native.communication import native_message_text
+
+    return native_message_text(origin, text)
 
 
 def _native_peer_data(origin: object, source_id: str) -> dict[str, object]:
@@ -9609,6 +9630,7 @@ def _user_transcript_items_from_entry(
     if (
         entry.get("isMeta") is True
         and return_id is None
+        and not _is_trusted_agent_notification_text("", origin=entry.get("origin"))
         and not any(_is_task_completion_text(text) for text in notification_texts)
     ):
         return current_response_id, []
@@ -9661,7 +9683,12 @@ def _user_transcript_items_from_entry(
                         **_native_peer_data(
                             entry.get("origin"), _source_id(source_key, 0, "message")
                         ),
-                        "content": [{"type": "input_text", "text": content}],
+                        "content": [
+                            {
+                                "type": "input_text",
+                                "text": _native_peer_text(entry.get("origin"), content),
+                            }
+                        ],
                     },
                     response_id=fallback_response_id,
                     subagent_return_id=return_id,
@@ -9670,6 +9697,7 @@ def _user_transcript_items_from_entry(
             return (
                 None
                 if content.lstrip().startswith("<task-notification>")
+                and not _is_trusted_agent_notification_text(content, origin=entry.get("origin"))
                 else current_response_id,
                 items,
             )
@@ -9759,14 +9787,22 @@ def _user_transcript_items_from_entry(
                             **_native_peer_data(
                                 entry.get("origin"), _source_id(source_key, item_index, "message")
                             ),
-                            "content": [{"type": "input_text", "text": text}],
+                            "content": [
+                                {
+                                    "type": "input_text",
+                                    "text": _native_peer_text(entry.get("origin"), text),
+                                }
+                            ],
                         },
                         response_id=fallback_response_id,
                         subagent_return_id=return_id,
                     )
                 )
                 item_index += 1
-                saw_user_text = saw_user_text or text.lstrip().startswith("<task-notification>")
+                saw_user_text = saw_user_text or (
+                    text.lstrip().startswith("<task-notification>")
+                    and not _is_trusted_agent_notification_text(text, origin=entry.get("origin"))
+                )
                 continue
             # Claude may emit CLI scaffolding as text blocks; never render it
             # as user input when the transcript shape changes.

@@ -6643,14 +6643,14 @@ def test_plan_todos_from_update_maps_steps_and_statuses() -> None:
 
 def test_plan_todos_from_update_skips_malformed_and_empty() -> None:
     """
-    ``_plan_todos_from_update`` drops malformed steps and empty plans.
+    ``_plan_todos_from_update`` drops malformed steps and preserves explicit empty snapshots.
 
     Non-dict entries and steps without a usable ``step`` string are
     skipped; a plan that is missing, not a list, or yields no valid
     items returns ``None`` so the caller posts nothing.
     """
     assert codex_native_forwarder._plan_todos_from_update({}) is None
-    assert codex_native_forwarder._plan_todos_from_update({"plan": []}) is None
+    assert codex_native_forwarder._plan_todos_from_update({"plan": []}) == []
     assert codex_native_forwarder._plan_todos_from_update({"plan": "nope"}) is None
     assert (
         codex_native_forwarder._plan_todos_from_update(

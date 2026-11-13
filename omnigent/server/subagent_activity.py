@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import logging
 import re
 from typing import Literal
@@ -11,14 +12,15 @@ from typing import Literal
 from omnigent.entities import (
     Conversation,
     ConversationItem,
+    FunctionCallData,
     FunctionCallOutputData,
     MessageData,
     NewConversationItem,
     ResourceEventData,
-    SlashCommandData,
 )
 from omnigent.harness_aliases import is_native_harness
 from omnigent.harnesses.codex_native.side_chat import is_side_chat_child
+from omnigent.native.child_metadata import child_metadata, short_task
 from omnigent.runtime import session_stream
 from omnigent.server.schemas import OutputItemDoneEvent
 from omnigent.stores import ConversationStore
@@ -29,6 +31,7 @@ _TERMINAL_TASK_STATUS_RE = re.compile(
     r"<status>\s*(completed|failed|cancelled|killed)\s*</status>"
 )
 _TASK_ID_RE = re.compile(r"<(task-id|tool-use-id)>\s*([^<]+?)\s*</\1>")
+_TASK_REPORT_RE = re.compile(r"<(summary|result)>(.*?)</\1>", re.DOTALL)
 _COMPLETION_EVENT_TYPE = "session.subagent.completion-observed"
 _COMPLETION_RESOURCE_TYPE = "subagent_completion"
 _TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled"})
@@ -80,7 +83,9 @@ def _completion_marker_id(kind: str, native_id: str) -> str:
     return hashlib.sha256(key.encode()).hexdigest()[:32]
 
 
-def _completion_marker(kind: str, native_id: str, status: str) -> NewConversationItem:
+def _completion_marker(
+    kind: str, native_id: str, status: str, metadata: dict[str, object]
+) -> NewConversationItem:
     stable_id = _completion_marker_id(kind, native_id)
     return NewConversationItem(
         type="resource_event",
@@ -90,7 +95,7 @@ def _completion_marker(kind: str, native_id: str, status: str) -> NewConversatio
             event_type=_COMPLETION_EVENT_TYPE,
             resource_id=native_id,
             resource_type=_COMPLETION_RESOURCE_TYPE,
-            resource={"kind": kind, "status": status},
+            resource={"kind": kind, "status": status, **metadata},
         ),
     )
 
@@ -136,26 +141,150 @@ async def _recorded_completion_status(
     return None
 
 
-def _native_request_id(child_id: str, turn_id: str, store: ConversationStore) -> str | None:
-    """Find the request preceding this response, skipping native context turns."""
-    after: str | None = None
-    found_response = False
+def _completion_result(
+    parent_id: str, child: Conversation, store: ConversationStore
+) -> dict[str, object]:
+    for kind, label in (
+        ("task", "omnigent.claude_native.subagent_id"),
+        ("call", "omnigent.claude_native.tool_use_id"),
+    ):
+        native_id = child.labels.get(label)
+        if not native_id or _completion_status(parent_id, kind, native_id, store) is None:
+            continue
+        marker = store.get_item(parent_id, _completion_marker_id(kind, native_id))
+        if marker is not None and isinstance(marker.data, ResourceEventData):
+            resource = marker.data.resource
+            if isinstance(resource, dict):
+                metadata = {
+                    key: resource[key]
+                    for key in ("result_text", "agent_name", "result_item_id")
+                    if resource.get(key)
+                }
+                item_id = metadata.pop("result_item_id", None)
+                if item_id:
+                    metadata["result_ref"] = {"conversation_id": parent_id, "item_id": item_id}
+                if metadata.get("agent_name"):
+                    metadata["agent_name_source"] = "native"
+                return metadata
+    return {}
+
+
+def _dispatch_metadata(
+    child: Conversation, turn_id: str | None, store: ConversationStore, *, returned: bool
+) -> dict[str, object]:
+    """Capture the request and result belonging to this dispatch, before labels change."""
+    metadata: dict[str, object] = dict(child_metadata(child))
+    if not returned and metadata.get("native_thread_id") and metadata.get("task_input"):
+        metadata.setdefault("dispatch_id", child.id)
+        return metadata
+    found_response = not returned or turn_id is None
+    request = None
+    reached_input = False
+    after = None
     while True:
-        page = store.list_items(child_id, order="desc", limit=100, after=after)
+        page = store.list_items(child.id, order="desc", limit=100, after=after)
         for row in page.data:
-            found_response = found_response or row.response_id == turn_id
-            if found_response and (
-                isinstance(row.data, SlashCommandData)
-                or (
-                    isinstance(row.data, MessageData)
-                    and row.data.role == "user"
-                    and not row.data.is_meta
-                )
+            found_response = found_response or row.response_id == turn_id or row.id == turn_id
+            if not found_response:
+                continue
+            if returned and row.response_id == turn_id and "result_text" not in metadata:
+                result = None
+                if isinstance(row.data, MessageData) and row.data.role == "assistant":
+                    result = "\n".join(
+                        block["text"]
+                        for block in row.data.content
+                        if isinstance(block.get("text"), str)
+                    )
+                elif (
+                    isinstance(row.data, ResourceEventData)
+                    and row.data.event_type == "session.subagent.result"
+                    and isinstance(row.data.resource, dict)
+                ):
+                    result = row.data.resource.get("result_text")
+                if isinstance(result, str) and result.strip():
+                    metadata["result_text"] = result
+                    metadata["result_ref"] = {"conversation_id": child.id, "item_id": row.id}
+            if (
+                isinstance(row.data, MessageData)
+                and row.data.role == "user"
+                and not row.data.is_meta
+                and not row.data.subagent_return_id
             ):
-                return row.id
-        if not page.has_more or page.last_id is None:
-            return None
+                reached_input = True
+                # Native forks can carry inherited human turns; only a peer
+                # origin proves a mirrored native delegating input.
+                if child.labels.get("omnigent.wrapper", "").endswith("-subagent") and (
+                    row.data.communication is None or row.data.communication.kind != "native_agent"
+                ):
+                    break
+                request = row
+                break
+        if reached_input or not page.has_more or page.last_id is None:
+            break
         after = page.last_id
+    if request is not None and isinstance(request.data, MessageData):
+        prompt = "\n".join(
+            block["text"]
+            for block in request.data.content
+            if block.get("type") == "input_text" and isinstance(block.get("text"), str)
+        )
+        if metadata.get("task_input") != prompt:
+            metadata["dispatch_id"] = request.id
+        else:
+            metadata.setdefault("dispatch_id", request.id)
+        metadata["task_input_ref"] = {"conversation_id": child.id, "item_id": request.id}
+        if prompt:
+            metadata["task_input"] = prompt
+            metadata["task_summary"] = short_task(prompt)
+    call_id = child.labels.get("omnigent.claude_native.tool_use_id")
+    if call_id and child.parent_conversation_id:
+        after = None
+        while True:
+            page = store.list_items(
+                child.parent_conversation_id,
+                type="function_call",
+                order="desc",
+                limit=100,
+                after=after,
+            )
+            call = next(
+                (
+                    row
+                    for row in page.data
+                    if isinstance(row.data, FunctionCallData) and row.data.call_id == call_id
+                ),
+                None,
+            )
+            if call is not None and isinstance(call.data, FunctionCallData):
+                try:
+                    arguments = json.loads(call.data.arguments)
+                except (ValueError, TypeError):
+                    _logger.warning("Invalid native delegation arguments for %s", call_id)
+                    break
+                if isinstance(arguments, dict):
+                    for key, field in (
+                        ("name", "agent_name"),
+                        ("description", "task_summary"),
+                        ("prompt", "task_input"),
+                    ):
+                        value = arguments.get(key)
+                        if isinstance(value, str) and value.strip():
+                            metadata[field] = value
+                            if key == "name":
+                                metadata["agent_name_source"] = "native"
+                    metadata["task_input_ref"] = {
+                        "conversation_id": child.parent_conversation_id,
+                        "item_id": call.id,
+                    }
+                break
+            if not page.has_more or page.last_id is None:
+                break
+            after = page.last_id
+    if "dispatch_id" not in metadata:
+        metadata["dispatch_id"] = turn_id or child.id
+    if turn_id:
+        metadata["turn_id"] = turn_id
+    return metadata
 
 
 async def record_subagent_activity(
@@ -219,12 +348,37 @@ async def record_subagent_activity(
                     return
                 # A runner can die before producing any transcript for its first turn.
                 turn_id = child.id
-        if native_completion and turn_id is not None:
-            # Native notifications can finish new responses for the same request.
-            request_id = await asyncio.to_thread(_native_request_id, child.id, turn_id, store)
-            if request_id is not None:
-                turn_id = request_id
-        key = f"{child.id}:{phase}:{turn_id or ''}"
+        metadata = await asyncio.to_thread(
+            _dispatch_metadata, child, turn_id, store, returned=phase == "returned"
+        )
+        if (
+            phase == "delegated"
+            and child.labels.get("omnigent.wrapper") == "codex-native-ui-subagent"
+            and not metadata.get("task_input")
+        ):
+            return
+        if phase == "returned":
+            metadata.update(await asyncio.to_thread(_completion_result, parent_id, child, store))
+        else:
+            labels = {
+                f"omnigent.subagent.{key}": value
+                for key in ("dispatch_id", "task_summary", "task_input")
+                if isinstance(value := metadata.get(key), str)
+                and child.labels.get(f"omnigent.subagent.{key}") != value
+            }
+            if labels:
+                await asyncio.to_thread(store.set_labels, child.id, labels)
+        if child.labels.get("omnigent.claude_native.tool_use_id"):
+            labels = {
+                f"omnigent.claude_native.{label}": value
+                for label, field in (("prompt", "task_input"), ("agent_name", "agent_name"))
+                if isinstance(value := metadata.get(field), str)
+                and (field != "agent_name" or metadata.get("agent_name_source") == "native")
+                and child.labels.get(f"omnigent.claude_native.{label}") != value
+            }
+            if labels:
+                await asyncio.to_thread(store.set_labels, child.id, labels)
+        key = f"{child.id}:{phase}:{metadata['dispatch_id']}"
         stable_id = hashlib.sha256(key.encode()).hexdigest()[:32]
         item = NewConversationItem(
             type="resource_event",
@@ -234,7 +388,11 @@ async def record_subagent_activity(
                 event_type=f"session.subagent.{phase}",
                 resource_id=child.id,
                 resource_type="session",
-                resource={"title": _title(child), **({"status": status} if status else {})},
+                resource={
+                    "title": _title(child),
+                    **metadata,
+                    **({"status": status} if status else {}),
+                },
             ),
         )
         persisted = (await asyncio.to_thread(store.append, parent_id, [item]))[0]
@@ -283,7 +441,8 @@ def _claude_completion_ids(
     task_ids: dict[str, str] = {}
     call_ids: dict[str, str] = {}
     if isinstance(item.data, FunctionCallOutputData) or (
-        isinstance(item.data, MessageData) and item.data.is_meta
+        isinstance(item.data, MessageData)
+        and (item.data.is_meta or item.data.communication is not None)
     ):
         if item.data.subagent_return_id:
             task_ids[item.data.subagent_return_id] = "completed"
@@ -310,8 +469,30 @@ def claude_subagent_completion_markers(
 ) -> list[NewConversationItem]:
     """Build stable markers to commit in the same transaction as the result."""
     task_ids, call_ids = _claude_completion_ids(item)
+    metadata: dict[str, object] = {}
+    if isinstance(item.data, FunctionCallOutputData):
+        metadata["result_text"] = item.data.output
+    elif isinstance(item.data, MessageData):
+        result_text = "\n".join(
+            block["text"] for block in item.data.content if isinstance(block.get("text"), str)
+        )
+        notifications = _TASK_NOTIFICATION_RE.findall(result_text) if item.data.is_meta else []
+        metadata["result_text"] = (
+            "\n".join(
+                report.strip()
+                for notification in notifications
+                for _, report in _TASK_REPORT_RE.findall(notification)
+            )
+            if notifications
+            else result_text
+        )
+        if item.data.communication and item.data.communication.source_agent_name:
+            metadata["agent_name"] = item.data.communication.source_agent_name
+    item_id = item.id if isinstance(item, ConversationItem) else item.stable_id
+    if item_id:
+        metadata["result_item_id"] = item_id
     return [
-        _completion_marker(kind, native_id, status)
+        _completion_marker(kind, native_id, status, metadata)
         for kind, completions in (("task", task_ids), ("call", call_ids))
         for native_id, status in completions.items()
     ]

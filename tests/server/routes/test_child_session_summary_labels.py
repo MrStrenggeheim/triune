@@ -44,3 +44,20 @@ def test_child_summary_strips_per_user_pin_keys() -> None:
     assert not any(k.startswith("omnigent.pinned") for k in summary.labels)
     # Unrelated labels are preserved.
     assert summary.labels.get("omni_project") == "Moonshot"
+
+
+def test_native_child_summary_separates_name_from_task_and_dispatch() -> None:
+    conv = _child(
+        {
+            "omnigent.wrapper": "codex-native-ui-subagent",
+            "omnigent.codex_native.agent_nickname": "Curie",
+            "omnigent.codex_native.agent_role": "worker",
+            "omnigent.codex_native.prompt": "Inspect the original task",
+            "omnigent.codex_native.collab_tool_call_id": "dispatch-1",
+        }
+    )
+    summary = _child_session_summary_from_conversation(conv, "conv_parent", None)
+    assert summary.agent_name == "Curie"
+    assert summary.task_summary == "Inspect the original task"
+    assert summary.current_task_id == "dispatch-1"
+    assert summary.labels["omnigent.codex_native.prompt"] == "Inspect the original task"

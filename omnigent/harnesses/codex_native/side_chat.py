@@ -181,6 +181,7 @@ async def submit_side_turn(
     text: str,
     *,
     collaboration_mode: _JsonObject | None = None,
+    stable_id: str | None = None,
 ) -> str | None:
     """
     Submit one user turn to a side-chat thread over the app-server.
@@ -202,6 +203,10 @@ async def submit_side_turn(
     }
     if collaboration_mode is not None:
         params["collaborationMode"] = collaboration_mode
+    if stable_id is not None:
+        from omnigent.native.communication import NATIVE_INPUT_CLIENT_ID_PREFIX
+
+        params["clientUserMessageId"] = f"{NATIVE_INPUT_CLIENT_ID_PREFIX}{stable_id}"
     response = await codex_client.request("turn/start", params)
     result = response.get("result")
     turn = result.get("turn") if isinstance(result, dict) else None
@@ -312,6 +317,127 @@ async def interrupt_side_turn(
     except CodexAppServerResponseError as exc:
         if not is_stale_active_turn_error(exc):
             raise
+
+
+async def child_control_capabilities(
+    codex_client: CodexAppServerClient,
+    child_thread_id: str,
+    parent_thread_id: str,
+) -> dict[str, Any]:
+    """Inspect a loaded native child without resuming or starting any work."""
+    from omnigent.native.child_controls import unavailable_child_capabilities
+
+    response = await codex_client.request(
+        "thread/read", {"threadId": child_thread_id, "includeTurns": False}
+    )
+    result = response.get("result")
+    thread = result.get("thread") if isinstance(result, dict) else None
+    if not isinstance(thread, dict) or thread.get("id") != child_thread_id:
+        return unavailable_child_capabilities("native_identity_unknown", state="unknown")
+    source = thread.get("source")
+    subagent = source.get("subAgent") if isinstance(source, dict) else None
+    spawn = subagent.get("thread_spawn") if isinstance(subagent, dict) else None
+    native_parent = thread.get("parentThreadId") or (
+        spawn.get("parent_thread_id") if isinstance(spawn, dict) else None
+    )
+    side_fork = thread.get("ephemeral") is True and thread.get("forkedFromId") == parent_thread_id
+    if child_thread_id == parent_thread_id or not (side_fork or native_parent == parent_thread_id):
+        return unavailable_child_capabilities("native_parent_mismatch")
+    status = thread.get("status")
+    state = status.get("type") if isinstance(status, dict) else None
+    if state not in {"active", "idle"}:
+        return unavailable_child_capabilities("native_child_not_loaded", state=state or "unknown")
+    active_turn_id = None
+    if state == "active":
+        turns = await codex_client.request(
+            "thread/turns/list",
+            {"threadId": child_thread_id, "limit": 1, "itemsView": "summary"},
+        )
+        turn_result = turns.get("result")
+        data = turn_result.get("data", []) if isinstance(turn_result, dict) else []
+        for turn in data if isinstance(data, list) else []:
+            if isinstance(turn, dict) and turn.get("status") == "inProgress":
+                active_turn_id = turn.get("id")
+        if not isinstance(active_turn_id, str) or not active_turn_id:
+            return unavailable_child_capabilities("active_turn_unknown", state="active")
+    direct_input = side_fork
+    direct_reason = None
+    if not side_fork:
+        direct_input = thread.get("canAcceptDirectInput")
+        version = await asyncio.to_thread(_child_multi_agent_version, thread)
+        if not isinstance(direct_input, bool):
+            direct_input = version == "v1"
+        direct_reason = (
+            "native_v2_targeted_input_unavailable"
+            if version == "v2"
+            else "native_direct_input_unavailable"
+            if thread.get("canAcceptDirectInput") is False
+            else "native_input_support_unknown"
+        )
+    capabilities = unavailable_child_capabilities(direct_reason or "no_active_turn", state=state)
+    capabilities.update(
+        can_reply=direct_input and state == "idle",
+        can_steer=direct_input and state == "active",
+        can_stop=state == "active",
+        active_turn_id=active_turn_id,
+        provider="codex",
+        protocol="codex-app-server/v2",
+        native_version=thread.get("cliVersion"),
+        stop_semantics="interrupt_current_turn",
+    )
+    capabilities["reasons"] = {
+        "reply": None if capabilities["can_reply"] else direct_reason or "child_is_working",
+        "steer": None if capabilities["can_steer"] else direct_reason or "no_active_turn",
+        "stop": None if capabilities["can_stop"] else "no_active_turn",
+    }
+    capabilities["reason"] = None if direct_input else direct_reason
+    return capabilities
+
+
+def _child_multi_agent_version(thread: Mapping[str, Any]) -> str | None:
+    """Read the bounded native metadata header; feature defaults cannot prove child policy."""
+    path = thread.get("path")
+    if not isinstance(path, str) or not path:
+        return None
+    try:
+        with Path(path).open("rb") as rollout:
+            header = rollout.readline(65537)
+        if len(header) > 65536:
+            return None
+        record = json.loads(header)
+    except (OSError, ValueError):
+        return None
+    payload = record.get("payload") if isinstance(record, dict) else None
+    if (
+        not isinstance(record, dict)
+        or record.get("type") != "session_meta"
+        or not isinstance(payload, dict)
+        or payload.get("id") != thread.get("id")
+    ):
+        return None
+    version = payload.get("multi_agent_version")
+    return version if isinstance(version, str) and version in {"v1", "v2"} else None
+
+
+async def steer_child_turn(
+    codex_client: CodexAppServerClient,
+    child_thread_id: str,
+    turn_id: str,
+    text: str,
+    *,
+    stable_id: str | None = None,
+) -> None:
+    """Steer exactly the observed child turn; a race must never start another turn."""
+    params: _JsonObject = {
+        "threadId": child_thread_id,
+        "expectedTurnId": turn_id,
+        "input": [{"type": "text", "text": text}],
+    }
+    if stable_id is not None:
+        from omnigent.native.communication import NATIVE_INPUT_CLIENT_ID_PREFIX
+
+        params["clientUserMessageId"] = f"{NATIVE_INPUT_CLIENT_ID_PREFIX}{stable_id}"
+    await codex_client.request("turn/steer", params)
 
 
 def is_omnigent_side_fork(event: _JsonObject) -> bool:

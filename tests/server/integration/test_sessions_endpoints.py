@@ -10450,7 +10450,13 @@ async def test_interrupt_codex_side_chat_targets_its_turn_on_parent_runner(
 
         def handler(request: httpx.Request) -> httpx.Response:
             forwarded.append((request.url.path, json.loads(request.content)))
-            return httpx.Response(503 if case == "failure" else 204)
+            return httpx.Response(
+                503
+                if case == "failure"
+                else 409
+                if case in {"idle", "request_idle", "missing", "invalid"}
+                else 204
+            )
 
         async with httpx.AsyncClient(
             transport=httpx.MockTransport(handler), base_url="http://runner"
@@ -10468,38 +10474,26 @@ async def test_interrupt_codex_side_chat_targets_its_turn_on_parent_runner(
                 )
             publish_interrupted.assert_not_called()
 
-        expected_status = {"missing": 409, "invalid": 400, "failure": 503}.get(case, 202)
+        expected_status = (
+            503
+            if case == "failure"
+            else 409
+            if case in {"idle", "request_idle", "missing", "invalid"}
+            else 202
+        )
         assert response.status_code == expected_status, response.text
-        if case in ("request", "request_idle", "cache", "failure"):
-            assert get_runner.await_args.args[0] == parent["id"]
-            assert forwarded == [
-                (
-                    f"/v1/sessions/{parent['id']}/events",
-                    {
-                        "type": "interrupt",
-                        "codex_side_thread_id": "thread_side",
-                        "codex_side_turn_id": "turn_side",
-                    },
-                )
-            ]
-        else:
-            get_runner.assert_not_awaited()
-            assert forwarded == []
-        if case == "idle":
-            assert response.json() == {"queued": False}
+        assert get_runner.await_args.args[0] == parent["id"]
+        payload = {"action": "stop"}
+        if "response_id" in data:
+            payload["expected_turn_id"] = data["response_id"].removeprefix("codex_")
+        assert forwarded == [
+            (f"/v1/sessions/{parent['id']}/native-children/{child_id}/control", payload)
+        ]
         assert parent["id"] not in _interrupt_fenced_sessions
         assert child_id not in _interrupt_fenced_sessions
         child = (await client.get(f"/v1/sessions/{child_id}")).json()
-        closed = event_type == "stop_session" and expected_status == 202
-        assert (child["labels"].get("omnigent.closed") == "true") is closed
+        assert child["labels"].get("omnigent.closed") != "true"
         assert (await client.get(f"/v1/sessions/{child_id}/items")).json() == transcript
-        if closed:
-            with patch.object(routes_events, "_get_runner_client") as get_runner:
-                repeated = await client.post(
-                    f"/v1/sessions/{child_id}/events", json={"type": "stop_session", "data": {}}
-                )
-            assert repeated.status_code == 202, repeated.text
-            get_runner.assert_not_called()
     finally:
         _interrupt_fenced_sessions.discard(child_id)
         _session_active_response_cache.pop(child_id, None)
@@ -10555,8 +10549,8 @@ async def test_codex_side_chat_message_drives_parent_thread_without_child_init(
     initialize.assert_not_awaited()
     assert forwarded == [
         (
-            f"/v1/sessions/{parent['id']}/events",
-            {"type": "message", "content": content, "codex_side_thread_id": "thread_side"},
+            f"/v1/sessions/{parent['id']}/native-children/{child_id}/control",
+            {"action": "message", "content": content, "stable_id": None},
         )
     ]
 

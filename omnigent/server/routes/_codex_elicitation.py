@@ -617,6 +617,14 @@ def _codex_tool_request_user_input_params(
         extras["turn_id"] = turn_id
     if isinstance(item_id, str) and item_id:
         extras["item_id"] = item_id
+    is_blocking = params.get("isBlocking")
+    if isinstance(is_blocking, bool):
+        extras["isBlocking"] = is_blocking
+        ask_payload["isBlocking"] = is_blocking
+    auto_resolution_ms = params.get("autoResolutionMs")
+    if type(auto_resolution_ms) is int and auto_resolution_ms >= 0:
+        extras["autoResolutionMs"] = auto_resolution_ms
+        ask_payload["autoResolutionMs"] = auto_resolution_ms
     return ElicitationRequestParams(
         mode="form",
         message="Codex needs input",

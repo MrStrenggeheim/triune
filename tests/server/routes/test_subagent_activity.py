@@ -62,7 +62,11 @@ async def test_lifecycle_publishes_once_per_child_turn(
         assert call.args[1]["type"] == "response.output_item.done"
         assert call.args[1]["item"]["id"] == item.id
         assert item.data.resource_id == child.id
-        assert item.data.resource == {"title": "Audit"}
+        assert item.data.resource["title"] == "Audit"
+        assert item.data.resource["agent_name"] == "researcher"
+        assert item.data.resource["agent_name_source"] == "role"
+        if item.data.event_type.endswith("returned"):
+            assert item.data.resource["result_text"] == "Done"
 
 
 @pytest.mark.asyncio
@@ -112,6 +116,14 @@ def _message(text: str) -> dict[str, Any]:
             "failed",
         ),
         (
+            _message(
+                "<task-notification><task-id>agent-1</task-id><status>completed</status>"
+                "<summary>Clean summary</summary></task-notification>"
+            ),
+            None,
+            "completed",
+        ),
+        (
             {"call_id": "tool-1", "output": "Async agent launched successfully. agentId: agent-1"},
             None,
             None,
@@ -119,7 +131,16 @@ def _message(text: str) -> dict[str, Any]:
         ({"call_id": "tool-1", "output": '{"status":"failed","agentId":"agent-1"}'}, None, None),
         (_message('<teammate-message teammate_id="reviewer">Hi</teammate-message>'), None, None),
     ],
-    ids=["tool", "handback", "notification", "failure", "launch", "unconfirmed", "chatter"],
+    ids=[
+        "tool",
+        "handback",
+        "notification",
+        "failure",
+        "summary",
+        "launch",
+        "unconfirmed",
+        "chatter",
+    ],
 )
 @pytest.mark.asyncio
 async def test_claude_completion_survives_retries_and_late_child_discovery(
@@ -215,7 +236,144 @@ async def test_claude_completion_survives_retries_and_late_child_discovery(
         ["session.subagent.returned"] if expected else []
     )
     assert all(row.data.resource_id == child_id for row in activity)
-    assert activity[-1].data.resource == {
-        "title": "Inspect authentication",
-        **({"status": expected} if expected else {}),
+    resource = activity[-1].data.resource
+    assert resource["title"] == "Inspect authentication"
+    assert resource["task_summary"] == "Inspect authentication"
+    assert resource["dispatch_id"] == "tool-1"
+    if expected:
+        assert resource["status"] == expected
+        if return_id:
+            assert resource["result_text"]
+        else:
+            assert "<task-notification>" not in resource.get("result_text", "")
+            if "Clean summary" in str(data):
+                assert resource["result_text"] == "Clean summary"
+        assert resource["result_ref"] == {"conversation_id": parent.id, "item_id": persisted.id}
+
+
+@pytest.mark.asyncio
+async def test_reused_managed_child_keeps_each_dispatch_input_and_result(db_uri: str) -> None:
+    store = SqlAlchemyConversationStore(db_uri)
+    parent = store.create_conversation()
+    child = store.create_conversation(parent_conversation_id=parent.id, title="researcher:Audit")
+    requests = []
+    for index, prompt in enumerate(("Inspect navigation", "Inspect permissions")):
+        request = store.append(
+            child.id,
+            [
+                NewConversationItem(
+                    type="message",
+                    response_id=f"input-{index}",
+                    data=MessageData(
+                        role="user", content=[{"type": "input_text", "text": prompt}]
+                    ),
+                )
+            ],
+        )[0]
+        requests.append(request)
+        await record_subagent_activity(child.id, "delegated", store)
+        store.append(
+            child.id,
+            [
+                NewConversationItem(
+                    type="message",
+                    response_id=f"answer-{index}",
+                    data=MessageData(
+                        role="assistant",
+                        agent="researcher",
+                        content=[{"type": "output_text", "text": f"Result {index}"}],
+                    ),
+                )
+            ],
+        )
+        await record_subagent_activity(child.id, "returned", store, turn_id=f"answer-{index}")
+    # A late repeated completion must still describe the old input.
+    await record_subagent_activity(child.id, "returned", store, turn_id="answer-0")
+    activities = store.list_items(parent.id).data
+    assert len(activities) == 4
+    for index in range(2):
+        delegated, returned = activities[index * 2 : index * 2 + 2]
+        for activity in (delegated, returned):
+            assert activity.data.resource["dispatch_id"] == requests[index].id
+            assert activity.data.resource["task_input"] == requests[index].data.content[0]["text"]
+            assert activity.data.resource["task_input_ref"]["item_id"] == requests[index].id
+        assert returned.data.resource["result_text"] == f"Result {index}"
+
+
+@pytest.mark.asyncio
+async def test_claude_original_call_and_clean_peer_return_project_into_cards(db_uri: str) -> None:
+    import json
+
+    from omnigent.entities import FunctionCallData
+    from omnigent.native.communication import native_message_text, native_peer_metadata
+
+    store = SqlAlchemyConversationStore(db_uri)
+    parent = store.create_conversation()
+    call = store.append(
+        parent.id,
+        [
+            NewConversationItem(
+                type="function_call",
+                response_id="parent-turn",
+                data=FunctionCallData(
+                    agent="Claude",
+                    name="Agent",
+                    call_id="tool-1",
+                    arguments=json.dumps(
+                        {
+                            "name": "Curie",
+                            "description": "Inspect auth",
+                            "prompt": "Full original task",
+                        }
+                    ),
+                ),
+            )
+        ],
+    )[0]
+    child = store.create_conversation(
+        parent_conversation_id=parent.id,
+        title="general-purpose:agent-1",
+        labels={
+            "omnigent.claude_native.subagent_id": "agent-1",
+            "omnigent.claude_native.tool_use_id": "tool-1",
+        },
+    )
+    await record_subagent_activity(child.id, "delegated", store)
+    origin = {
+        "kind": "peer",
+        "name": "Curie",
+        "senderTaskId": "agent-1",
+        "handback": True,
+        "handbackReportText": "Clean result",
     }
+    body = SessionEventInput(
+        type="external_conversation_item",
+        data={
+            "source_id": "handback",
+            "response_id": "parent-turn",
+            "item_type": "message",
+            "item_data": {
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": native_message_text(origin, "wrapper")}
+                ],
+                **native_peer_metadata(origin, "handback"),
+            },
+            "subagent_return_id": "agent-1",
+        },
+    )
+    await _persist_external_conversation_item(parent.id, parent, body, store)
+    activities = [
+        row
+        for row in store.list_items(parent.id, type="resource_event").data
+        if row.data.event_type in {"session.subagent.delegated", "session.subagent.returned"}
+    ]
+    assert len(activities) == 2
+    for activity in activities:
+        assert activity.data.resource["agent_name"] == "Curie"
+        assert activity.data.resource["task_input"] == "Full original task"
+        assert activity.data.resource["task_input_ref"] == {
+            "conversation_id": parent.id,
+            "item_id": call.id,
+        }
+    assert activities[-1].data.resource["result_text"] == "Clean result"

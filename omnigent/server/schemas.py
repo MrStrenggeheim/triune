@@ -1697,9 +1697,11 @@ class _SessionCreateRequestBase(BaseModel):
             for item in supplied
         ):
             raise ValueError("communication metadata is reserved for trusted delivery")
-        if self.initial_input is not None and (self.host_type != "managed" or self.initial_items):
+        if self.initial_input is not None and (
+            (self.host_type != "managed" and self.host_id is None) or self.initial_items
+        ):
             raise ValueError(
-                "initial_input requires host_type=managed "
+                "initial_input requires host_type=managed or host_id "
                 "and cannot be combined with initial_items"
             )
         return self
@@ -1932,8 +1934,8 @@ class SessionCreateMetadata(BaseModel):
 
     @model_validator(mode="after")
     def _check_startup_input(self) -> Self:
-        if self.initial_input is not None and self.host_type != "managed":
-            raise ValueError("initial_input requires host_type=managed")
+        if self.initial_input is not None and self.host_type != "managed" and self.host_id is None:
+            raise ValueError("initial_input requires host_type=managed or host_id")
         return self
 
     @model_validator(mode="after")
@@ -2406,6 +2408,7 @@ class SessionResponse(BaseModel):
     agent_id: str
     agent_name: str | None = None
     status: Literal["idle", "running", "waiting", "failed"]
+    native_child_capabilities: dict[str, Any] | None = None
     background_task_count: int | None = None
     background_tasks: list[BackgroundTaskInfo] | None = None
     created_at: int

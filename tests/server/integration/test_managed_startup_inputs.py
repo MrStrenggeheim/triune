@@ -21,7 +21,7 @@ from starlette.datastructures import Headers
 
 from omnigent.entities.conversation import ErrorData
 from omnigent.harness_plugins import CLAUDE_NATIVE_CODING_AGENT, CODEX_NATIVE_CODING_AGENT
-from omnigent.host.frames import HostHelloFrame
+from omnigent.host.frames import HostHelloFrame, HostLaunchRunnerFrame, decode_host_frame
 from omnigent.runtime import pending_inputs
 from omnigent.runtime.agent_cache import AgentCache
 from omnigent.server.app import create_app
@@ -294,6 +294,110 @@ async def test_invalid_startup_input_is_refused(
         json={"agent_id": agent["id"], "host_type": "managed", "initial_input": _INPUT, **options},
     )
     assert response.status_code == 422, response.text
+
+
+@pytest.mark.parametrize("shape", ["json", "multipart", "bundle"])
+async def test_external_host_initial_input_is_saved_and_delivered_over_http(
+    startup_env: _Env,
+    db_uri: str,
+    monkeypatch: pytest.MonkeyPatch,
+    shape: str,
+) -> None:
+    env = startup_env
+    host_id = uuid4().hex
+    env.host_store.upsert_on_connect(host_id, "external-startup", "local")
+    registry = env.app.state.host_registry
+    connection = registry.register(
+        host_id,
+        AsyncMock(),
+        HostHelloFrame(
+            version="test", frame_protocol_version=1, name="external-startup", runners=[]
+        ),
+        owner=None,
+        registered_with_managed_token=False,
+    )
+    monkeypatch.setattr(
+        "omnigent.server.routes._workspace_validation._ask_host_stat",
+        AsyncMock(
+            return_value={
+                "status": "ok",
+                "exists": True,
+                "type": "directory",
+                "canonical_path": "/tmp/external-workspace",
+            }
+        ),
+    )
+
+    def host_reply(conn: Any, text: str) -> None:
+        frame = decode_host_frame(text)
+        assert isinstance(frame, HostLaunchRunnerFrame)
+        conn.pending_launches[frame.request_id].set_result({"status": "ok"})
+
+    monkeypatch.setattr(registry, "send_text", host_reply)
+    dispatched = asyncio.Event()
+    release = asyncio.Event()
+    original_dispatch = env.app.state.startup_inputs.dispatch
+
+    async def wait_for_browser_close(*args: Any, **kwargs: Any):
+        dispatched.set()
+        await release.wait()
+        return await original_dispatch(*args, **kwargs)
+
+    env.app.state.startup_inputs.dispatch = wait_for_browser_close
+    agent = await create_test_agent(env.client)
+    metadata = {
+        "host_id": host_id,
+        "workspace": "/tmp/external-workspace",
+        "initial_input": _INPUT,
+    }
+    files = [("initial_files", ("context.txt", b"atomic external attachment", "text/plain"))]
+    if shape == "bundle":
+        files.append(
+            ("bundle", ("agent.tar.gz", build_agent_bundle("bundled"), "application/gzip"))
+        )
+    else:
+        metadata["agent_id"] = agent["id"]
+    forwarded: list[dict[str, Any]] = []
+    runner = _stub_runner(monkeypatch, forwarded)
+    try:
+        response = await env.client.post(
+            "/v1/sessions",
+            **(
+                {"json": metadata}
+                if shape == "json"
+                else {
+                    "data": {"metadata": json.dumps(metadata)},
+                    "files": files,
+                }
+            ),
+        )
+        assert response.status_code == 201, response.text
+        session_id = response.json()["session_id" if shape == "bundle" else "id"]
+        await asyncio.wait_for(dispatched.wait(), timeout=2)
+        [pending] = env.conv_store.list_pending_inputs(session_id)
+        assert pending.status == "in_progress"
+        assert env.conv_store.get_conversation(session_id).host_id == host_id
+        assert not connection.registered_with_managed_token
+        if shape != "json":
+            blocks = pending.data.content
+            assert blocks[0]["filename"] == "context.txt"
+            assert SqlAlchemyFileStore(db_uri).get(blocks[0]["file_id"], session_id=session_id)
+        release.set()
+        for _ in range(100):
+            if any(
+                event.get("type") == "message" for event in forwarded
+            ) and not env.conv_store.list_pending_inputs(session_id):
+                break
+            await asyncio.sleep(0.01)
+        assert env.conv_store.list_pending_inputs(session_id) == []
+        turns = [event for event in forwarded if event.get("type") == "message"]
+        assert len(turns) == 1 and _TEXT in json.dumps(turns[0])
+        if shape != "json":
+            data = turns[0]["content"][0]["file_data"]
+            assert base64.b64decode(data.split(",", 1)[1]) == b"atomic external attachment"
+    finally:
+        release.set()
+        await runner.aclose()
 
 
 async def test_deleting_provisioning_session_discards_saved_input(startup_env: _Env) -> None:
