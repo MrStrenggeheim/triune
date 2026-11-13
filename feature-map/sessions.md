@@ -34,6 +34,11 @@ the header menu), and each place is a separate entry point.
   Session archive shows a brief Undo notification, then Restore in notification history; project archive retains its own Undo action in the same center.
 - `stop`: Stop session on a hosted parent ends its runner, including side chats
   and sub-agents sharing that runner. Conversation histories are kept.
+- `deployment-restart`: local activation records live runtimes, stops services,
+  validates the new release and restores the same conversations through recovery.
+  Running work may continue; unanswered requests remain human-controlled.
+  Shared native children restore through their owner, while independently hosted
+  child conversations retain their own restart entry.
 - `side-chat-lifecycle`: generic side chats reuse their parent's live runner;
   closing one stops only that chat. Starting one from a stopped generic hosted
   parent relaunches the parent first, then shares its replacement runner. An
@@ -387,6 +392,7 @@ doctor`), the built web UI, and at least one session (the `seeded_session`
 fixture creates one). Run each test through the instance:
 
 - Project archive/restore, independent filtering, reload persistence and unchanged member sessions/settings on desktop and phone: `tests/e2e_ui/sessions/test_sidebar_project_context_menu.py::test_project_archive_filter_restore_preserves_members`.
+- Local deployment/session recovery (plain pytest): `tests/deploy/test_local_release.py`, `tests/deploy/test_session_restart.py` and `tests/server/routes/test_side_chat_runner_recovery.py` cover active-session restart, rollback, owner-only continuation and preserved human gates.
 
 ```sh
 verify-env run -- python -m pytest <test> --ui-skip-build --video=on \

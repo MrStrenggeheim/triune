@@ -43,6 +43,9 @@ Historical upstream design notes retain Omnigent names and commands as context; 
 `deploy/local/` contains the original operator's VPS release-management tools.
 They are not required by either quickstart and still assume that operator's systemd installation.
 Portable release automation, additional platform certification and the wider productionization audit are deferred.
+Local activation snapshots live session runtimes, stops the services, verifies the new release and restores those conversations instead of waiting for them to become idle.
+Running tasks request continuation through the existing recovery path; unanswered questions and approvals are never automatically accepted.
+Session recovery retries retain the healthy release without repeating its service restart, while code/startup failures keep the existing backup and rollback behavior.
 
 ## Development
 

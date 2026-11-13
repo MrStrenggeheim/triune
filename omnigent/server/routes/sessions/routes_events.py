@@ -330,9 +330,9 @@ from omnigent.util.session_lifecycle import (
 _retry_recovery_locks: weakref.WeakValueDictionary[str, asyncio.Lock] = (
     weakref.WeakValueDictionary()
 )
-# One shared Resume attempt per session, split by caller for side chats; see
+# One shared Resume attempt per session and intent, split by caller for side chats; see
 # _retry_session_single_flight.
-_RetryFlight = tuple[str, str | None]
+_RetryFlight = tuple[str, str | None, bool]
 _retry_recovery_tasks: WorkspaceScopedCache[_RetryFlight, asyncio.Task[dict[str, bool | str]]] = (
     WorkspaceScopedCache()
 )
@@ -604,12 +604,16 @@ async def _recover_retry_session(
     runner_router: RunnerRouter | None,
     user_id: str | None,
     permission_store: PermissionStore | None,
+    resume_interrupted_turn: bool = False,
 ) -> dict[str, bool | str]:
-    """Recover runner/terminal readiness without creating transcript input."""
+    """Recover readiness, optionally continuing interrupted work through session init."""
     conv = await asyncio.to_thread(conversation_store.get_conversation, session_id)
     if conv is None:
         raise _session_not_found()
 
+    had_pending_request = bool(
+        conv.pending_elicitation_count or pending_elicitations.count_for(session_id)
+    )
     original_runner_id = conv.runner_id
     runner_client = await _get_runner_client(session_id, runner_router)
     was_connected = runner_client is not None
@@ -644,8 +648,17 @@ async def _recover_retry_session(
     startup = getattr(request.app.state, "startup_inputs", None)
     saved_inputs = (
         await asyncio.to_thread(conversation_store.list_pending_inputs, session_id)
-        if startup
+        if startup or resume_interrupted_turn
         else []
+    )
+    # A retry must not bypass a human gate or race accepted input with a recovery prompt.
+    continue_turn = (
+        resume_interrupted_turn
+        and not was_connected
+        and not saved_inputs
+        and not had_pending_request
+        and not conv.pending_elicitation_count
+        and not pending_elicitations.count_for(session_id)
     )
     terminal_ready_from_init = await _ensure_runner_session_initialized(
         session_id,
@@ -653,7 +666,10 @@ async def _recover_retry_session(
         runner_client,
         conversation_store,
         initializer=getattr(request.app.state, "runner_session_initializer", None),
-        suppress_recovery_turn=was_connected or bool(saved_inputs),
+        suppress_recovery_turn=was_connected
+        or bool(saved_inputs)
+        or (resume_interrupted_turn and not continue_turn),
+        resume_interrupted_turn=continue_turn,
         require_success=True,
         trigger="retry_session",
     )
@@ -708,6 +724,7 @@ async def _retry_session_single_flight(
     runner_router: RunnerRouter | None,
     user_id: str | None,
     permission_store: PermissionStore | None,
+    resume_interrupted_turn: bool = False,
 ) -> dict[str, bool | str]:
     """Share one in-flight recovery attempt across concurrent callers.
 
@@ -716,7 +733,11 @@ async def _retry_session_single_flight(
     concurrent requests.
     """
     is_side_chat = conversation is not None and _side_chat_source_id(conversation) is not None
-    flight: _RetryFlight = (session_id, user_id if is_side_chat else None)
+    flight: _RetryFlight = (
+        session_id,
+        user_id if is_side_chat else None,
+        resume_interrupted_turn,
+    )
     lock = _retry_recovery_lock(session_id)
     async with lock:
         task = _retry_recovery_tasks.get(flight)
@@ -729,6 +750,7 @@ async def _retry_session_single_flight(
                     runner_router=runner_router,
                     user_id=user_id,
                     permission_store=permission_store,
+                    resume_interrupted_turn=resume_interrupted_turn,
                 )
             )
             _retry_recovery_tasks[flight] = task
@@ -1099,6 +1121,8 @@ def register_events_routes(
           the normal message-dispatch relaunch path.
         - ``"retry_session"`` reconnects or relaunches the existing runner
           and retries a failed saved startup input, if one is present.
+          Owner-only ``data.resume_interrupted_turn=true`` also requests
+          continuation after relaunch when no input or human prompt is pending.
         - ``"message"`` on an ``omnigent claude`` terminal session
           is forwarded to the bound runner for tmux injection only;
           the accepted prompt is persisted later when Claude records
@@ -1311,6 +1335,18 @@ def register_events_routes(
                 f"Allowed types: {sorted(_ALLOWED_EVENT_TYPES)}",
                 code=ErrorCode.INVALID_INPUT,
             )
+        resume_interrupted_turn = False
+        if body.type == _RETRY_SESSION_TYPE:
+            resume_interrupted_turn = body.data.get("resume_interrupted_turn", False)
+            if not isinstance(resume_interrupted_turn, bool):
+                raise OmnigentError(
+                    "retry_session data.resume_interrupted_turn must be a boolean",
+                    code=ErrorCode.INVALID_INPUT,
+                )
+            if resume_interrupted_turn:
+                await _require_access(
+                    user_id, session_id, LEVEL_OWNER, permission_store, conversation_store
+                )
         # Tag the audit envelope end-event with the event kind so a message,
         # interrupt, approval, stop, … are distinguishable in the audit table.
         # Transient per-chunk echoes suppress the row entirely (they are the
@@ -1480,6 +1516,7 @@ def register_events_routes(
                 runner_router=runner_router,
                 user_id=user_id,
                 permission_store=permission_store,
+                resume_interrupted_turn=resume_interrupted_turn,
             )
             if startup is not None and await startup.retry(session_id):
                 if conv.host_id is not None:

@@ -158,13 +158,13 @@ def deployment(tmp_path: Path):
         '    if [[ "$payload" == *"original.backup"* ]]; then\n'
         '        echo backup >> "$COMMAND_LOG"\n'
         '        if [[ "$MODE" == backup-fail ]]; then\n'
-        '            mkdir -p "${@: -1}"\n'
-        '            : > "${@: -1}/chat.db"\n'
+        '            mkdir -p "${@: -2:1}"\n'
+        '            : > "${@: -2:1}/chat.db"\n'
         "            exit 1\n"
         "        fi\n"
         '    elif [[ "$payload" == *"expected = json.loads"* ]]; then\n'
         '        echo health-check >> "$COMMAND_LOG"\n'
-        '        [[ "$MODE" == success ]]\n'
+        '        [[ "$MODE" == success || "$MODE" == busy || "$MODE" == resume-fail ]]\n'
         "        exit $?\n"
         "    else\n"
         '        echo restore >> "$COMMAND_LOG"\n'
@@ -195,19 +195,24 @@ def deployment(tmp_path: Path):
         "    fi ;;\n"
         "esac\n",
     )
-    _executable(
-        fake_bin / "idle-check",
-        '#!/bin/bash\necho idle >> "$COMMAND_LOG"\n[[ "$MODE" != busy ]] || exit 75\n',
-    )
+    for runtime in (previous, candidate):
+        _executable(
+            runtime / "venv/bin/python",
+            "#!/bin/bash\n"
+            'echo "sessions $2" >> "$COMMAND_LOG"\n'
+            'if [[ "$2" == capture ]]; then\n'
+            '    [[ "$MODE" != capture-fail ]] || exit 1\n'
+            '    printf \'{"version":1,"sessions":[{"id":"busy","running":true}]}\\n\' > "$3"\n'
+            'elif [[ "$2" == resume && "$MODE" == resume-fail ]]; then\n'
+            "    exit 75\n"
+            "fi\n",
+        )
     _executable(source / ".venv/bin/python", "#!/bin/bash\nexit 0\n")
     original = (_ROOT / "deploy/local/omnigent-stable-update").read_text()
     script = tmp_path / "deploy"
     original = original.replace("/home/agent/apps/omnigent", str(app))
     original = original.replace(str(_ROOT), str(source))
     original = original.replace("/home/agent", str(home))
-    original = original.replace(
-        "/usr/local/sbin/omnigent-idle-check", str(fake_bin / "idle-check")
-    )
     lines = original.splitlines()
     lines = [
         f"export PATH={fake_bin}:/usr/bin:/bin" if line.startswith("export PATH=") else line
@@ -217,17 +222,53 @@ def deployment(tmp_path: Path):
     return app, database, log, env, script
 
 
-def test_busy_deployment_defers_before_mutating_code_or_state(deployment) -> None:
+def test_busy_deployment_restarts_sessions_instead_of_deferring(deployment) -> None:
     app, database, log, env, script = deployment
     result = subprocess.run(
         [str(script)], env=dict(env, MODE="busy"), capture_output=True, text=True
     )
-    assert result.returncode == 75, result.stderr
-    assert (app / "current").resolve().name == "previous"
-    assert not (app / "backups").exists()
-    assert "systemctl stop" not in log.read_text()
+    assert result.returncode == 0, result.stderr
+    assert (app / "current").resolve().name == "candidate"
+    commands = log.read_text().splitlines()
+    assert commands.index("sessions capture") < commands.index(
+        "systemctl stop omnigent.target omnigent-host.service omnigent-server.service"
+    )
+    assert commands.index("health-check") < commands.index("sessions resume")
+    assert next((app / "backups").glob("*/session-restart.json")).exists()
     with sqlite3.connect(database) as connection:
         assert connection.execute("SELECT value FROM state").fetchone() == ("original",)
+
+
+def test_failed_capture_leaves_live_services_and_code_untouched(deployment) -> None:
+    app, _database, log, env, script = deployment
+    result = subprocess.run(
+        [str(script)], env=dict(env, MODE="capture-fail"), capture_output=True, text=True
+    )
+    assert result.returncode == 1
+    assert (app / "current").resolve().name == "previous"
+    assert "systemctl stop" not in log.read_text()
+    assert not (app / "backups").exists()
+
+
+def test_failed_session_recovery_retries_without_restarting_healthy_release(deployment) -> None:
+    app, _database, log, env, script = deployment
+    result = subprocess.run(
+        [str(script)], env=dict(env, MODE="resume-fail"), capture_output=True, text=True
+    )
+    assert result.returncode == 75
+    assert (app / "current").resolve().name == "candidate"
+    assert (app / "pending").exists()
+    assert "restore" not in log.read_text()
+    before = log.read_text()
+    result = subprocess.run(
+        [str(script)], env=dict(env, MODE="success"), capture_output=True, text=True
+    )
+    assert result.returncode == 0, result.stderr
+    assert not (app / "pending").exists()
+    added = log.read_text()[len(before) :]
+    assert "sessions resume" in added
+    assert "systemctl stop" not in added
+    assert "sessions capture" not in added
 
 
 def test_failed_start_stops_services_before_restoring_database(deployment) -> None:

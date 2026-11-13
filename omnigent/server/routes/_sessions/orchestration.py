@@ -5794,6 +5794,7 @@ async def _ensure_runner_session_initialized(
     initializer: RunnerSessionInitializer | None = None,
     *,
     suppress_recovery_turn: bool = False,
+    resume_interrupted_turn: bool = False,
     require_success: bool = False,
     trigger: str = "session_ensure",
 ) -> bool:
@@ -5846,6 +5847,8 @@ async def _ensure_runner_session_initialized(
         finishes.
     :param require_success: Raise ``runner_unavailable`` when the handshake
         fails instead of using the message path's best-effort fallback.
+    :param resume_interrupted_turn: Request the initializer's continuation of
+        interrupted work, unless ``suppress_recovery_turn`` is set.
     :returns: ``True`` when a current runner explicitly confirmed its native
         terminal is ready; ``False`` for legacy or non-native responses.
     """
@@ -5856,6 +5859,7 @@ async def _ensure_runner_session_initialized(
                 runner_client,
                 timeout=_RUNNER_SESSION_INIT_TIMEOUT_S,
                 suppress_recovery_turn=suppress_recovery_turn,
+                resume_interrupted_turn=resume_interrupted_turn,
                 trigger=trigger,
             )
         else:
@@ -5867,6 +5871,7 @@ async def _ensure_runner_session_initialized(
                     conv,
                     server_version=VERSION,
                     suppress_recovery_turn=suppress_recovery_turn,
+                    resume_interrupted_turn=resume_interrupted_turn,
                 ),
                 timeout=_RUNNER_SESSION_INIT_TIMEOUT_S,
             )

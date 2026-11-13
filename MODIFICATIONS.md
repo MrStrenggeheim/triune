@@ -40,6 +40,7 @@ Those previously Apache-licensed features retain their original permissions.
 - Simplify Orchestration rows, keep routine diagnostics internal, prefill captured Host/workspace and align natural-width semantic status badges.
 - Bridge native asynchronous questions and long-running command lifecycle into the composer shelf, enable supported plan tools and capture named native delegations.
 - Verify actual Codex and Claude capabilities through isolated CLI-to-browser journeys and preserve explicit-close guards while switching retained layouts.
+- Replace idle-only activation with a durable session restart inventory and owner-authorized recovery of interrupted work after release health checks.
 
 [LICENSING.md](LICENSING.md) defines scope and the required notice.
 Git diffs against the imported baseline identify exact modified paths and lines.

@@ -2,22 +2,30 @@
 
 import asyncio
 import dataclasses
+import json
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, Mock
 
 import httpx
 import pytest
+from fastapi import Request
 
 from omnigent.db.utils import generate_agent_id
-from omnigent.entities import Conversation
+from omnigent.entities import Conversation, MessageData, NewConversationItem
 from omnigent.errors import ErrorCode, OmnigentError
+from omnigent.runner.transports.ws_tunnel.registry import TunnelRegistry
 from omnigent.server.auth import LEVEL_EDIT, LEVEL_OWNER, LEVEL_READ
 from omnigent.server.routes import sessions
 from omnigent.server.routes._sessions import orchestration
 from omnigent.server.routes.sessions import routes_events
+from omnigent.server.runner_session_init import RunnerSessionInitializer
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
-from omnigent.stores.conversation_store import SIDE_CHAT_LABEL_KEY, SIDE_CHAT_SOURCE_LABEL_KEY
+from omnigent.stores.conversation_store import (
+    PENDING_INPUT_RESPONSE_ID,
+    SIDE_CHAT_LABEL_KEY,
+    SIDE_CHAT_SOURCE_LABEL_KEY,
+)
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
 from omnigent.stores.permission_store.sqlalchemy_store import SqlAlchemyPermissionStore
 from tests.budgets import budget
@@ -83,6 +91,7 @@ async def test_side_chat_rebinds_to_source_runner(
 
     assert client is runner_client
     assert recovered.runner_id == "runner-replacement"
+    assert ensure.await_args is not None
     assert ensure.await_args.kwargs["session_id"] == source.id
     saved = store.get_conversation(side.id)
     assert saved is not None and saved.runner_id == "runner-replacement"
@@ -371,8 +380,9 @@ async def test_side_chat_recovery_errors_reach_both_routes(
     assert store.list_items(side.id).data == []
 
 
+@pytest.mark.parametrize("resume_interrupted_turn", [False, True])
 async def test_resume_single_flight_is_shared_only_within_one_caller(
-    db_uri: str, monkeypatch: pytest.MonkeyPatch
+    db_uri: str, monkeypatch: pytest.MonkeyPatch, resume_interrupted_turn: bool
 ) -> None:
     """Concurrent Resume calls on a side chat share an attempt only within one caller.
 
@@ -410,13 +420,14 @@ async def test_resume_single_flight_is_shared_only_within_one_caller(
     def _resume(user_id: str) -> asyncio.Task[dict[str, bool | str]]:
         return asyncio.create_task(
             routes_events._retry_session_single_flight(
-                request=None,
+                request=Request({"type": "http"}),
                 session_id=side.id,
                 conversation=side,
                 conversation_store=store,
                 runner_router=None,
                 user_id=user_id,
                 permission_store=permissions,
+                resume_interrupted_turn=resume_interrupted_turn,
             )
         )
 
@@ -448,6 +459,228 @@ async def test_resume_single_flight_is_shared_only_within_one_caller(
             event.set()
         await asyncio.gather(*tasks, return_exceptions=True)
     assert recoveries == [_OTHER, _OWNER]
+
+
+@pytest.mark.parametrize(
+    ("caller", "data", "status"),
+    [
+        (_OWNER, {"resume_interrupted_turn": True}, 202),
+        (_OTHER, {"resume_interrupted_turn": True}, 403),
+        (_OTHER, {}, 202),
+        (_OTHER, {"resume_interrupted_turn": False}, 202),
+        (_OWNER, {"resume_interrupted_turn": "true"}, 400),
+        (_OWNER, {"resume_interrupted_turn": 1}, 400),
+        (_OWNER, {"resume_interrupted_turn": None}, 400),
+    ],
+)
+async def test_retry_continuation_flag_requires_owner_and_boolean(
+    auth_client: httpx.AsyncClient,
+    client: httpx.AsyncClient,
+    db_uri: str,
+    monkeypatch: pytest.MonkeyPatch,
+    caller: str,
+    data: dict[str, Any],
+    status: int,
+) -> None:
+    store = SqlAlchemyConversationStore(db_uri)
+    permissions = SqlAlchemyPermissionStore(db_uri)
+    agent = await create_test_agent(client, name="retry-continuation-owner")
+    conv = store.create_conversation(agent_id=agent["id"])
+    for user, level in ((_OWNER, LEVEL_OWNER), (_OTHER, LEVEL_EDIT)):
+        permissions.ensure_user(user)
+        permissions.grant(user, conv.id, level)
+    recover = AsyncMock(return_value={"queued": False, "recovered": True})
+    monkeypatch.setattr(routes_events, "_retry_session_single_flight", recover)
+
+    response = await auth_client.post(
+        f"/v1/sessions/{conv.id}/events",
+        json={"type": "retry_session", "data": data},
+        headers={"X-Forwarded-Email": caller},
+    )
+
+    assert response.status_code == status, response.text
+    if status == 202:
+        recover.assert_awaited_once()
+        assert recover.await_args is not None
+        assert recover.await_args.kwargs["resume_interrupted_turn"] is data.get(
+            "resume_interrupted_turn", False
+        )
+    else:
+        recover.assert_not_awaited()
+    assert store.list_items(conv.id).data == []
+
+
+@pytest.mark.parametrize("native", [False, True], ids=["managed", "native"])
+@pytest.mark.parametrize("shared_initializer", [False, True], ids=["legacy", "shared"])
+@pytest.mark.parametrize(
+    ("explicit", "connected", "pending"),
+    [
+        (False, False, "none"),
+        (False, True, "none"),
+        (True, False, "none"),
+        (True, True, "none"),
+        (True, False, "stored_prompt"),
+        (True, False, "live_prompt"),
+        (True, False, "in_progress"),
+        (True, False, "incomplete"),
+        (True, False, "failed"),
+    ],
+)
+async def test_retry_initializer_continuation_preserves_pending_work(
+    db_uri: str,
+    monkeypatch: pytest.MonkeyPatch,
+    native: bool,
+    shared_initializer: bool,
+    explicit: bool,
+    connected: bool,
+    pending: str,
+) -> None:
+    store = SqlAlchemyConversationStore(db_uri)
+    source, _ = _source_and_side_chat(store, db_uri)
+    store.set_external_session_id(source.id, "thread-before-restart")
+    if pending == "stored_prompt":
+        store.set_pending_elicitation_count(source.id, 1)
+    if pending in {"in_progress", "incomplete", "failed"}:
+        store.append(
+            source.id,
+            [
+                NewConversationItem(
+                    type="message",
+                    response_id=PENDING_INPUT_RESPONSE_ID,
+                    status=pending,
+                    data=MessageData(
+                        role="user", content=[{"type": "input_text", "text": "Run once"}]
+                    ),
+                )
+            ],
+        )
+    before = store.list_items(source.id).data
+    payloads: list[dict[str, Any]] = []
+
+    def initialized(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST" and request.url.path == "/v1/sessions"
+        payloads.append(json.loads(request.content))
+        return httpx.Response(
+            201, json={"session_init_protocol_version": 2, "terminal_ready": native}
+        )
+
+    async with httpx.AsyncClient(
+        base_url="http://runner", transport=httpx.MockTransport(initialized)
+    ) as runner_client:
+        initializer = RunnerSessionInitializer(TunnelRegistry(), server_version="test")
+        startup = SimpleNamespace(cancel=AsyncMock())
+        request = Request(
+            {
+                "type": "http",
+                "app": SimpleNamespace(
+                    state=SimpleNamespace(
+                        runner_session_initializer=initializer if shared_initializer else None,
+                        startup_inputs=startup,
+                    )
+                ),
+            }
+        )
+        monkeypatch.setattr(
+            routes_events,
+            "_get_runner_client",
+            AsyncMock(return_value=runner_client if connected else None),
+        )
+        saved = store.get_conversation(source.id)
+        assert saved is not None
+        recovered = dataclasses.replace(saved, runner_id="runner-after-restart")
+        ensure = AsyncMock(return_value=(runner_client, recovered))
+        monkeypatch.setattr(routes_events, "ensure_runner_connected", ensure)
+        monkeypatch.setattr(routes_events, "_raise_if_runner_on_another_replica", AsyncMock())
+        monkeypatch.setattr(routes_events, "_is_native_terminal_session", lambda _conv: native)
+        monkeypatch.setattr(
+            routes_events.pending_elicitations,
+            "count_for",
+            lambda _id: int(pending == "live_prompt"),
+        )
+        monkeypatch.setattr(sessions, "_publish_runner_recovered_status", AsyncMock())
+        monkeypatch.setattr(sessions, "_ensure_runner_relay_ready", AsyncMock())
+        monkeypatch.setattr(routes_events, "_ensure_runner_relay_ready", AsyncMock())
+        monkeypatch.setattr(
+            "omnigent.server.child_session_recovery.restore_active_children", AsyncMock()
+        )
+        monkeypatch.setattr(
+            routes_events,
+            "_ensure_native_terminal_ready",
+            AsyncMock(return_value=SimpleNamespace(error=None)),
+        )
+
+        async def retry() -> dict[str, bool | str]:
+            return await routes_events._retry_session_single_flight(
+                request=request,
+                session_id=source.id,
+                conversation=saved,
+                conversation_store=store,
+                runner_router=None,
+                user_id=None,
+                permission_store=None,
+                resume_interrupted_turn=explicit,
+            )
+
+        if shared_initializer:
+            first, second = await asyncio.gather(retry(), retry())
+            assert first == second
+            # A later duplicate also reuses the generation's initializer/recovery id.
+            assert await retry() == first
+        else:
+            await retry()
+
+    assert len(payloads) == 1
+    envelope = payloads[0]["session_init"]
+    should_continue = explicit and not connected and pending == "none"
+    assert envelope["resume_interrupted_turn"] is should_continue
+    assert bool(envelope["recovery_id"]) is should_continue
+    assert envelope["suppress_recovery_turn"] is (connected or pending != "none")
+    assert envelope["snapshot"]["external_session_id"] == "thread-before-restart"
+    assert store.list_items(source.id).data == before
+    startup.cancel.assert_not_awaited()
+
+
+async def test_retry_single_flight_keeps_continuation_intent(
+    db_uri: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = SqlAlchemyConversationStore(db_uri)
+    source, _ = _source_and_side_chat(store, db_uri)
+    started = {False: asyncio.Event(), True: asyncio.Event()}
+    release = asyncio.Event()
+    intents: list[bool] = []
+
+    async def recover(*, resume_interrupted_turn: bool, **_kwargs: Any) -> dict[str, bool | str]:
+        intents.append(resume_interrupted_turn)
+        started[resume_interrupted_turn].set()
+        await release.wait()
+        return {"queued": False, "recovered": True}
+
+    monkeypatch.setattr(routes_events, "_recover_retry_session", recover)
+
+    async def retry(explicit: bool) -> dict[str, bool | str]:
+        return await routes_events._retry_session_single_flight(
+            request=Request({"type": "http"}),
+            session_id=source.id,
+            conversation=source,
+            conversation_store=store,
+            runner_router=None,
+            user_id=None,
+            permission_store=None,
+            resume_interrupted_turn=explicit,
+        )
+
+    tasks = [asyncio.create_task(retry(False))]
+    try:
+        await asyncio.wait_for(started[False].wait(), timeout=budget(5))
+        tasks.append(asyncio.create_task(retry(True)))
+        await asyncio.wait_for(started[True].wait(), timeout=budget(5))
+        tasks.append(asyncio.create_task(retry(True)))
+        for _ in range(5):
+            await asyncio.sleep(0)
+    finally:
+        release.set()
+        await asyncio.gather(*tasks)
+    assert intents == [False, True]
 
 
 @pytest.mark.parametrize(

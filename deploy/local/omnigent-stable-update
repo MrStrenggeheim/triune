@@ -1,6 +1,6 @@
 #!/bin/bash
 # Modified for Triune: preserve verified deployment and rollback.
-# Deploy only prepared custom builds. Keep the existing systemd lock and idle guard.
+# Deploy verified builds and restore interrupted sessions under the systemd lock.
 set -euo pipefail
 export PATH=/home/agent/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
@@ -39,7 +39,7 @@ candidate=$(readlink -f "$app/pending")
 [[ "$(dirname "$candidate")" == "$app/releases" ]] || { echo "Invalid pending release." >&2; exit 1; }
 as_agent "$source/.venv/bin/python" "$source/deploy/local/manage.py" verify "$(basename "$candidate")"
 if [[ "${1:-}" == --check ]]; then
-    echo "Would deploy $candidate after the idle guard passes."
+    echo "Would restart sessions and deploy $candidate."
     exit 0
 fi
 
@@ -49,7 +49,27 @@ if ! systemctl is-active --quiet omnigent.target \
     echo "Omnigent is intentionally stopped or unhealthy; refusing automatic deployment." >&2
     exit 1
 fi
-/usr/local/sbin/omnigent-idle-check --quiet-seconds 30
+sessions="$app/session-restart.json"
+restart_sessions() {
+    as_agent "$tool_python" "$source/deploy/local/session_restart.py" resume "$sessions" \
+        --candidate "$(basename "$candidate")"
+}
+finish_deployment() {
+    if [[ "$(readlink -f "$app/pending")" == "$candidate" ]]; then
+        as_agent rm "$app/pending"
+    fi
+}
+
+# A healthy deployment with delayed session recovery must not restart again.
+if [[ "$(readlink -f "$app/current")" == "$candidate" && -f "$sessions" ]]; then
+    restart_sessions
+    finish_deployment
+    echo "Session recovery finished for $(basename "$candidate")."
+    exit 0
+fi
+
+as_agent "$tool_python" "$source/deploy/local/session_restart.py" capture "$sessions" \
+    --candidate "$(basename "$candidate")"
 
 previous=$(readlink -f "$app/current")
 backup="$app/backups/$(date -u +%Y%m%dT%H%M%SZ)"
@@ -79,6 +99,7 @@ if (backup / "complete").exists():
         (state / ("chat.db" + suffix)).unlink(missing_ok=True)
 PY
         systemctl start omnigent.target omnigent-server.service omnigent-host.service || echo "Service recovery needs attention." >&2
+        restart_sessions || echo "Saved sessions need another recovery attempt." >&2
     fi
     exit "$result"
 }
@@ -88,13 +109,13 @@ trap recover EXIT
 # propagated service jobs are still queued, and a subsequent start cancels them.
 systemctl stop omnigent.target omnigent-host.service omnigent-server.service
 stopped=1
-as_agent /usr/bin/python3 - "$app" "$candidate" "$previous" "$backup" <<'PY'
+as_agent /usr/bin/python3 - "$app" "$candidate" "$previous" "$backup" "$sessions" <<'PY'
 import shutil
 import sqlite3
 import sys
 from pathlib import Path
 
-app, candidate, previous, backup = map(Path, sys.argv[1:])
+app, candidate, previous, backup, sessions = map(Path, sys.argv[1:])
 backup.mkdir(parents=True, mode=0o700)
 state = Path.home() / ".omnigent"
 with sqlite3.connect(state / "chat.db") as original:
@@ -104,6 +125,7 @@ for name in ("config.yaml", "auth_tokens.json"):
     path = state / name
     if path.exists():
         shutil.copy2(path, backup / name)
+shutil.copy2(sessions, backup / "session-restart.json")
 (backup / "complete").touch()
 for name, target in (("previous", previous), ("current", candidate)):
     temporary = app / (name + ".new")
@@ -139,9 +161,9 @@ for unit in ("omnigent-server.service", "omnigent-host.service"):
     assert argv[0].startswith(str(candidate / "venv/bin/python").encode()), unit
 PY
     then
-        if [[ "$(readlink -f "$app/pending")" == "$candidate" ]]; then
-            as_agent rm "$app/pending"
-        fi
+        stopped=0
+        restart_sessions
+        finish_deployment
         echo "Deployed $(basename "$candidate"). Previous release: $previous. Backup: $backup."
         exit 0
     fi
