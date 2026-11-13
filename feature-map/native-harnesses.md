@@ -27,6 +27,9 @@ implements them separately, so a fix for one harness does not reach the others.
   composer or native terminal; a tool turn and follow-up retain history.
 - `approvals`: tool calls the harness gates show an approval card in chat, and
   the answer reaches the harness.
+- `composer-capabilities`: native shell lifecycle, structured questions, approvals,
+  supported plan updates and delegation populate the shared composer shelf.
+  Nonblocking questions remain answerable after the turn ends without disabling Send.
 - `resume`: resume a previous conversation from the CLI (`--resume`, or a bare
   `--resume` picker that lists only this host's sessions) or by reopening it.
 - `pi-rebuilt-tool-names`: Pi forks and cold resumes keep matching tool names
@@ -216,6 +219,23 @@ and record each harness's missing or blocked checks, not just its passing ones.
 verify-env run -- python -m pytest <test> --ui-skip-build --video=on \
   --output="$VERIFY_EVIDENCE/native-harnesses"
 ```
+
+**Native composer capabilities:**
+`tests/e2e_ui/agents/test_native_capability_shelf.py` drives real Codex and Claude
+CLIs against the isolated scripted provider.
+Codex cases cover command exit, approved file effects, native delegation and
+returns, blocking and asynchronous questions, and nested native plan updates.
+The V2 named-task case explicitly enables the native V2 feature and verifies a
+task name without stored full instructions, same-turn steering and one attributed
+child reply surviving reload.
+The Claude case covers TaskCreate/TaskUpdate, AskUserQuestion and an approved
+Write effect.
+These journeys assert native results and browser state rather than injecting
+the shelf's arrays; record the CLI version and advertised tool schema with each run.
+New private managed Codex homes enable the supported native plan tool only when
+the user has not set its enabled option explicitly.
+Other harnesses retain their existing capability-driven behavior; these tests
+do not establish support for untested vendor tools.
 
 **Pi Smart Routing (own environment):**
 `tests/e2e/test_pi_native_smart_routing.py::test_pi_native_smart_routing_applies_pick`

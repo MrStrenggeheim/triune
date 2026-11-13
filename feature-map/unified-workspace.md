@@ -10,7 +10,7 @@ Conversation and tool views share resizable, dockable panes while keeping their 
 - `hierarchy`: durable branches preserve their captured fork boundary independently from delegated-agent parentage.
 - `communication`: structured attribution distinguishes agent messages from human input and separates acceptance from consumption.
 - `references`: whole chats, completed answers, selected messages and quotes enter drafts with stable source snapshots.
-- `activity`: retained shell history and the dedicated Orchestration view expose actual activity; the composer dock is disabled.
+- `activity`: Orchestration presents agents and shells; the original conditional composer shelf exposes questions, approvals and task progress, while the custom activity dock stays disabled.
 - `navigation`: global commands, contextual find, explicit conversation sources and mobile view switching retain existing workflows.
 - `appearance`: shared content surfaces, primary bottom tab strips, consistent switches and list density follow `design-system/triune/MASTER.md`.
 - `migration`: existing conversation, file and shell references remain accessible without starting or stopping resources.
@@ -26,7 +26,7 @@ Conversation and tool views share resizable, dockable panes while keeping their 
 - Type `@` in a composer, or select text and choose Send to…, to inspect and insert captured context.
 - Use the application search field or Ctrl/Cmd+K for commands; it opens below the trigger without a blurred backdrop.
 - The sidebar Search entry is hidden; contextual Ctrl/Cmd+F still searches the last interacted region.
-- Open Orchestration and choose a Host to reattach independent shells or inspect retained output; choose a Chat for its agents, messages and shell use.
+- Open Orchestration and choose Host/workspace for independent shells or Chat for its agents and shell use; location starts from the captured source.
 - Use the grouped Host/Chat source picker in Orchestration or a Preview's Comments control to choose its owner explicitly.
 - Use the combined workspace selector in the composer or resource-view toolbar; Host and Path are both directly reachable in its modal.
 - Use Up before the Explorer workspace path to make its parent folder the root.
@@ -43,6 +43,8 @@ Preconditions: follow the [verification skill](skills/verify-omnigent/SKILL.md),
 - Host/Chat Orchestration and temporary Settings navigation: `web/src/workbench/ActivityView.test.tsx` and `web/src/hooks/useSettingsNavigationVisibility.test.tsx`.
 - Integrated desktop/mobile shell, drafts, layout controls and commands: `tests/browser_ui/chat/test_unified_workspace.py`.
 - Pane movement, retained editor nodes, resizing, scope changes and A/B/A pins: `web/src/workbench/DockWorkspace.test.tsx` and `web/src/workbench/dockLayout.test.ts`.
+- Fifty saved layouts, bounded mounts and protected editor Undo: `tests/browser_ui/chat/test_triune_next_iteration.py::test_fifty_layouts_retire_while_preserving_draft_and_editor_undo` and `web/src/workbench/DockWorkspace.retirement.test.tsx`.
+- Retained dirty editors switch layouts without discard prompts, while explicit file close keeps its guard: `tests/browser_ui/chat/test_unified_workspace.py::test_retained_dirty_navigation_preserves_editor_and_close_guard`.
 - Independent file targets and captured writes: `web/src/workbench/ResourceView.test.tsx`.
 - Durable composer branching and keyboard resource reuse: `web/src/workbench/durableSubchat.test.ts` and `web/src/workbench/resourceShortcuts.test.ts`.
 - Scoped chat actions, initial sends and draft migration: `web/src/workbench/ScopedChatStore.test.tsx`, `web/src/workbench/useScopedInitialPrompt.test.tsx` and `web/src/workbench/conversationDraft.test.ts`.
@@ -128,6 +130,7 @@ Hidden-measurement and scrollbar tests count avoided work; they do not establish
 ### Retained-view performance
 
 - Switching chats and adding file tabs keep unrelated retained resources behind stable render and context boundaries.
+- Old hidden layouts retire automatically while saved membership remains; recent views stay warm briefly and unsafe local models remain resident.
 - Inactive file, comparison, expanded-directory and Activity queries pause; revealing a view restores observation using its existing keys and cached state.
 - Hidden 3D/PDF viewers pause rendering without discarding camera, zoom or document position; agent and terminal lifecycles stay independent of tab visibility.
 - A live-file tab shows preparation immediately, then enables its editor after the original snapshot commits; Retry preserves its captured source.
@@ -144,13 +147,13 @@ Compare the same two/four/twelve-chat scenarios when measuring latency; browser/
 - Incoming peer cards show the actual trusted agent name and source chat, up to three compact lines, and Show full/less.
 - The shared user-message footer copies complete text and creates links for the owning conversation, independently of focus.
 - Ordinary human quotations of peer transport headers retain their human presentation.
-- Task rows show dispatch-specific name/task/input/result, semantic state and separate child-chat and originating-Orchestration shortcuts.
+- One task card retains each dispatch's name/instructions and updates status; returned text is a distinct attributed Markdown reply with compact expansion.
 - Orchestration uses Workflow, current-chat origin by default, separate Agents/Shells sections and a shared category filter, including settled work.
 - Source selection chooses Chat or combined Host/workspace; the selected root constrains host inventory.
 - Agent and shell rows open named tabs; historical output never attaches or launches a process.
 - Native child input and steering require current runtime capabilities, independently of transcript readability.
 - Hidden chats detach streams while retaining state; denied stream slots wait instead of exhausting HTTP/1 connections.
-- Filters, graph, peer history and details remain available in its menu; a completed/failed card can open its exact inspector repeatedly.
+- Orchestration rows open resources in tabs, with no redundant Open button; graph remains available without internal history-coverage or Messages entries.
 - Native Codex inputs retain their canonical identity through start/steer and echo; unresolved historical messages are not reclassified by text.
 - Peer file references resolve their captured sender target and retain recipient/source ACL and host/runner ownership checks.
 - Pane-plus hit targets follow shared density; updating a captured-original menu does not discard or replace a dirty document.

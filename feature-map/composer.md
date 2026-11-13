@@ -21,7 +21,7 @@ and steers messages while the agent is busy.
 - `file-annotations`: Ask in chat from a file selection adds a source-annotated quote to the current draft without sending it.
 
 - `single-surface-controls`: both composers place workspace selection between machine and permissions inside the input card; context usage sits between model selection and Send, with no top workspace shelf.
-- `retained-status`: worktree and PR controls remain inside the composer; task, subagent-attention and goal controls sit immediately left of model selection without adding a row; queued messages and child context dock directly onto the card.
+- `retained-status`: workspace and PR controls remain inside the composer; shell/agent/plan attention uses the original conditional shelf, while the goal control remains beside the model selector.
 
 - `empty-enter-steer`: the configured send key with an empty composer sends the next queued item immediately, preserving FIFO data and existing newline/permission behavior.
 - `selection-menu`: chat Reply and Ask in side chat share the file-preview selection-menu surface; file menus offer Add comment and Ask in chat.
@@ -336,6 +336,7 @@ doctor`), the built web UI, and mock replies configured for any journey that
 sends a message. Run e2e tests through the instance:
 
 - Attention shelf and real question/plan forms: `tests/browser_ui/chat/test_triune_next_iteration.py::test_original_composer_shelf_requests_and_counts` covers desktop/mobile and retained drafts.
+- Real Codex and Claude CLI tool execution through the isolated server and browser: `tests/e2e_ui/agents/test_native_capability_shelf.py` covers questions, plans, approvals, live shells and delegation.
 - Direct quote subchat, held host launch, clean drafts and history toggle: `tests/browser_ui/chat/test_workspace_iteration.py::test_quote_subchat_opens_before_launch_and_hides_inherited_history`.
 - Existing destination drafts retain their text before the quote: `tests/browser_ui/chat/test_workspace_iteration.py::test_selected_quote_menu_reuses_app_controls_and_retains_destination_draft`.
 - History boundaries and explicit-fork defaults: `web/src/lib/inheritedHistory.test.ts` and `web/src/components/chat/Transcript.virtualList.test.tsx`.

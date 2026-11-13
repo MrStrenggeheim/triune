@@ -62,6 +62,9 @@ See the unified-workspace feature map for source mappings and desktop/mobile acc
 
 Views retain drafts, buffers, undo state and terminal lifecycles while inactive presentation and view-owned polling pause.
 Hidden chat streams detach without discarding their retained state; live streams obey the origin connection budget and reconcile missed items when shown again.
+Visible panes and two recent hidden layout groups stay mounted briefly; older recoverable views retire while their saved layouts remain intact.
+Editors, terminals and other views with local state remain resident until they can be restored safely.
+Browser windows yield stream slots on blur or hide, and visible panes without a live slot catch up through bounded snapshots without capacity notices.
 Stable resource boundaries and scoped subscriptions avoid updating unrelated chats when switching layouts or opening files.
 File links add their tab before original capture completes; editing starts after the original is retained through the authenticated capture route.
 Snapshots use binary artifacts with small versioned metadata, while existing captures remain readable.
@@ -76,7 +79,14 @@ Peer cards show the trusted sender and source chat, a compact expandable message
 Orchestration defaults to the current chat and separates agents from shells, including completed work, with a shared category filter and supported Stop controls.
 Its alternative Host/workspace source uses the existing combined selector and limits inventory to the chosen root.
 Task rows retain dispatch-specific names, instructions and results; their buttons open the child or its originating Orchestration in tabs.
+One task card tracks each dispatch, while a captured child report appears separately as an attributed Markdown reply with expansion and the shared footer.
+Late report capture updates the existing stored item and loaded transcript; steering preserves the original task identity.
+Orchestration rows open on click, render scoped Markdown and align natural-width status badges outside the colored surface.
+Routine coverage diagnostics stay internal, and choosing Host/workspace starts from the selected chat's captured location.
 The original composer shelf reuses existing question, approval, shell, agent and plan components without dropdown chevrons.
+Native Codex command lifecycle events populate Shells, and structured asynchronous questions remain answerable after the turn ends or the page reloads without blocking a new message.
+New managed Codex homes enable the native plan tool unless the user already configured it explicitly; actual plan updates populate the shelf.
+Real Codex and Claude CLI journeys verify questions, approvals, task updates and delegation with an isolated scripted provider; this is transport/browser evidence, not a live-model claim.
 Native child composers and steering are gated by current parent-runtime capabilities; readable history alone never enables input.
 Claude native children and Codex runtimes without an external targeted-input API remain read-only rather than silently launching a replacement conversation.
 Codex inputs carry their canonical message identity through the native echo so agent messages retain provenance and human quotations remain ordinary messages.

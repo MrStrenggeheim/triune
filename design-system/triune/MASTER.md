@@ -158,9 +158,16 @@ Capture errors use the notification system and an explicit Retry action in that 
 Peer messages use a slim accent edge and one header: bubble icon, actual agent name, source chat and message menu.
 Show at most three compact message lines with Show full/less, then reuse the user-message timestamp, Copy and Copy link footer.
 Task rows use the robot icon, recorded name/task, compact expandable input/result and semantic status icons.
+Keep one task card per dispatch and update its status in place; steering instructions do not rename the originating task.
+Returned answers use a distinct attributed Markdown reply at their chronological arrival, with the existing compact expansion and message footer.
+Do not repeat the task prompt as both title and preview or add an empty completion reply.
 A chat button opens the named child beside its parent; square-arrow-out opens the spawning chat's Orchestration and consumes its focus request.
 Use Orchestration with the Workflow icon for the view, while retaining internal compatibility identifiers.
 Its default list contains separate Agents and Shells sections, including settled work, each ordered by observed activity.
 Use the shared All/Agents/Shells control in the header and two-line resource entries with state and supported controls on the right.
-Open resources in tabs; retain graph and messages in the existing menu, without inspector modals or status-group hierarchies.
+Resource entries reuse semantic status pills with an icon and label in a stable trailing column; the whole row opens without a redundant Open action.
+Colored status pills fit their icon and text; any width reserved for alignment belongs to the uncolored outer column.
+Open resources in tabs; retain graph in the existing menu, without inspector modals or status-group hierarchies.
+Routine capture diagnostics, History coverage and Messages do not appear in Orchestration.
+Workspace selection starts from the captured source chat's Host and path; confirmation alone changes its source.
 Real errors remain visible; source attribution comes from trusted records, never from a text prefix.

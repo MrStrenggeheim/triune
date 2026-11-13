@@ -35,6 +35,11 @@ Those previously Apache-licensed features retain their original permissions.
 - Keep tab overflow, close and pin controls usable at narrow widths.
 - Open quote subchats before runner readiness, keep internal snapshots outside drafts, and fold inherited history on request.
 - Replace per-frame text-background painting with opacity-based working highlights while preserving reduced motion.
+- Retire older recoverable layout views, preserve protected editors and saved layouts, and schedule browser stream ownership with bounded snapshot catch-up.
+- Render one stable task card and a distinct attributed Markdown reply, enriching late reports and preserving dispatch-specific source references.
+- Simplify Orchestration rows, keep routine diagnostics internal, prefill captured Host/workspace and align natural-width semantic status badges.
+- Bridge native asynchronous questions and long-running command lifecycle into the composer shelf, enable supported plan tools and capture named native delegations.
+- Verify actual Codex and Claude capabilities through isolated CLI-to-browser journeys and preserve explicit-close guards while switching retained layouts.
 
 [LICENSING.md](LICENSING.md) defines scope and the required notice.
 Git diffs against the imported baseline identify exact modified paths and lines.
