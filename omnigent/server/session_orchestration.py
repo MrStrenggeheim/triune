@@ -7,7 +7,7 @@ from typing import Any
 from fastapi import Request
 
 from omnigent.db.db_models import normalize_uuid
-from omnigent.entities import Conversation, ConversationItem, MessageData
+from omnigent.entities import Conversation, ConversationItem, MessageData, NewConversationItem
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.runner.identity import (
     ORCHESTRATION_SOURCE_HEADER,
@@ -222,6 +222,71 @@ def peer_acknowledgement(item: ConversationItem) -> dict[str, bool | str]:
     }
 
 
+def correlate_native_peer_input(
+    conversations: ConversationStore,
+    session_id: str,
+    item: NewConversationItem,
+    input_id: object,
+) -> NewConversationItem:
+    """Resolve a bound runner's structured input identity against durable provenance."""
+    import re
+
+    from omnigent.native.communication import peer_model_content
+    from omnigent.stores.conversation_store import PENDING_INPUT_RESPONSE_ID
+
+    if not isinstance(input_id, str) or re.fullmatch(r"[0-9a-f]{32}", input_id) is None:
+        raise OmnigentError("Invalid native input identity", code=ErrorCode.INVALID_INPUT)
+    saved = conversations.get_item(session_id, input_id)
+    origin = saved.data.communication if saved and isinstance(saved.data, MessageData) else None
+    if origin is None or origin.kind != "peer":
+        return item
+    assert saved is not None and isinstance(saved.data, MessageData)
+    text_parts = [block["text"] for block in peer_model_content(saved.data.content, origin)]
+    # Codex versions may combine the input blocks before emitting the user item.
+    expected_content = [
+        [{"type": "input_text", "text": separator.join(text_parts)}]
+        for separator in ("\n", "\n\n")
+    ]
+    if (
+        origin.message_id != input_id
+        or origin.destination_conversation_id != session_id
+        or saved.data.role != "user"
+        or item.type != "message"
+        or not isinstance(item.data, MessageData)
+        or item.data.role != "user"
+        or item.data.communication is not None
+        or item.data.is_meta
+        or item.data.content not in expected_content
+        or (saved.response_id == PENDING_INPUT_RESPONSE_ID and saved.status != "incomplete")
+        or (
+            saved.response_id != PENDING_INPUT_RESPONSE_ID
+            and (
+                saved.response_id != item.response_id
+                or origin.receipt != "transcript"
+                or origin.delivery_state != "confirmed"
+            )
+        )
+    ):
+        raise OmnigentError("Native input does not match the saved peer", code=ErrorCode.CONFLICT)
+    return item.model_copy(
+        update={
+            "stable_id": saved.id,
+            "replaces_pending_id": (
+                saved.id if saved.response_id == PENDING_INPUT_RESPONSE_ID else None
+            ),
+            "created_by": None,
+            "data": item.data.model_copy(
+                update={
+                    "content": saved.data.content,
+                    "communication": origin.model_copy(
+                        update={"delivery_state": "confirmed", "receipt": "transcript"}
+                    ),
+                }
+            ),
+        }
+    )
+
+
 async def accept_peer_message(
     request: Request,
     source: Conversation,
@@ -240,6 +305,11 @@ async def accept_peer_message(
         require_peer_replay, source.id, target.id, user_id, conversations, permissions
     )
     event = await asyncio.to_thread(_peer_message_input, source, target.id, data, conversations)
+    agent_store = getattr(request.app.state, "agent_store", None)
+    if agent_store is not None and source.agent_id:
+        agent = await asyncio.to_thread(agent_store.get, source.agent_id)
+        if agent is not None and agent.name:
+            event.data["communication"]["source_agent_name"] = agent.name
     message_id = event.data["stable_id"]
     existing = await asyncio.to_thread(conversations.get_item, target.id, message_id)
     if existing is not None:
@@ -248,7 +318,15 @@ async def accept_peer_message(
         if (
             origin is None
             or not isinstance(existing.data, MessageData)
-            or existing.created_by != user_id
+            or (
+                existing.created_by != user_id
+                and not (
+                    existing.created_by is None
+                    and origin.kind == "peer"
+                    and origin.delivery_state == "confirmed"
+                    and origin.receipt == "transcript"
+                )
+            )
             or existing.data.content != event.data["content"]
             or any(
                 getattr(origin, key) != expected[key]
@@ -316,6 +394,8 @@ async def accept_peer_message(
         )
     if not outgoing.deduplicated:
         _publish_external_conversation_item(source.id, outgoing)
+    if outgoing.data.resource_scope is not None:
+        event.data["communication"]["source_resource_scope"] = outgoing.data.resource_scope
     saved = await startup.enqueue(
         target.id, event, user_id=user_id, headers=request.headers, first=False
     )

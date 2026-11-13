@@ -23,6 +23,7 @@ from omnigent.db.db_models import current_workspace_id
 from omnigent.entities.conversation import MessageData
 from omnigent.server.auth import LEVEL_OWNER
 from omnigent.server.routes._auth_helpers import require_access, require_user
+from omnigent.server.routes._host_launch import resolve_host_owner
 from omnigent.server.routes._origin import require_trusted_origin
 from omnigent.server.workbench_resources import HostWorkspaceResources, relative_path
 from omnigent.server.workbench_workspace_service import WorkbenchWorkspaceService
@@ -46,13 +47,22 @@ def create_chat_attachments_router(
     router = APIRouter(prefix="/sessions/{session_id}/attachments")
     capture_locks: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
 
-    def reference_snapshot_id(user: str | None, session_id: str, item_id: str, path: str) -> str:
+    def reference_snapshot_id(
+        user: str | None,
+        session_id: str,
+        item_id: str,
+        path: str,
+        source_session_id: str,
+        scope: dict[str, Any],
+    ) -> str:
         # Preserve the original exact-path and reader-private capture identity.
+        identity: list[Any] = [current_workspace_id(), user, session_id, item_id, path]
+        if source_session_id != session_id:
+            # Older peer captures may have read the recipient's workspace.
+            identity.extend(["peer-source-v1", source_session_id, scope])
         return (
             "chat-reference-"
-            + hashlib.sha256(
-                json.dumps([current_workspace_id(), user, session_id, item_id, path]).encode()
-            ).hexdigest()
+            + hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
         )
 
     async def stored_snapshot(snapshot_id: str, *, download: bool):
@@ -94,7 +104,7 @@ def create_chat_attachments_router(
 
     async def reference_scope(
         request: Request, session_id: str, item_id: str
-    ) -> tuple[str | None, dict[str, Any]]:
+    ) -> tuple[str | None, str, dict[str, Any]]:
         user = require_user(request, service.auth_provider)
         await require_access(
             user, session_id, LEVEL_OWNER, service.permission_store, service.conversation_store
@@ -102,12 +112,44 @@ def create_chat_attachments_router(
         item = await asyncio.to_thread(service.conversation_store.get_item, session_id, item_id)
         if item is None or not isinstance(item.data, MessageData):
             raise HTTPException(404, "Source message not found")
+        source_session_id = session_id
         scope = item.data.resource_scope
+        origin = item.data.communication
+        if origin is not None:
+            if origin.kind != "peer" or not origin.source_conversation_id:
+                raise HTTPException(409, "This agent message has no captured source workspace")
+            source_session_id = origin.source_conversation_id
+            if source_session_id != session_id:
+                if origin.destination_conversation_id != session_id:
+                    raise HTTPException(409, "Peer message destination does not match this chat")
+                await require_access(
+                    user,
+                    source_session_id,
+                    LEVEL_OWNER,
+                    service.permission_store,
+                    service.conversation_store,
+                )
+                scope = origin.source_resource_scope
         if not scope or not scope.get("workspace"):
             raise HTTPException(
                 409, "This message has no captured workspace; attach the file explicitly"
             )
-        return user, scope
+        if source_session_id != session_id:
+            # Cached peer bytes still require the source target's ownership.
+            if scope.get("host_id"):
+                if service.host_store is None:
+                    raise HTTPException(503, "Host workspace support is unavailable")
+                await asyncio.to_thread(
+                    resolve_host_owner,
+                    user_id=user,
+                    host_id=scope["host_id"],
+                    host_store=service.host_store,
+                )
+            elif service.tunnel_registry is not None and isinstance(scope.get("runner_id"), str):
+                connection = service.tunnel_registry.get(scope["runner_id"])
+                if connection is not None and user is not None and connection.owner != user:
+                    raise HTTPException(403, "Workspace runner is not owned by caller")
+        return user, source_session_id, scope
 
     async def resolve_reference_location(
         request: Request, session_id: str, scope: dict[str, Any], path: str
@@ -125,14 +167,16 @@ def create_chat_attachments_router(
         request: Request, session_id: str, item_id: str, path: str
     ) -> dict[str, Any]:
         """Classify an authorized reference without transferring its file contents."""
-        user, scope = await reference_scope(request, session_id, item_id)
-        snapshot_id = reference_snapshot_id(user, session_id, item_id, path)
+        user, source_session_id, scope = await reference_scope(request, session_id, item_id)
+        snapshot_id = reference_snapshot_id(
+            user, session_id, item_id, path, source_session_id, scope
+        )
         captured = artifact_store is not None and (
             await asyncio.to_thread(artifact_store.exists, snapshot_id)
             or await asyncio.to_thread(artifact_store.exists, snapshot_id + ".v2")
         )
         try:
-            workspace = await service.resolve_session(request, session_id, captured=scope)
+            workspace = await service.resolve_session(request, source_session_id, captured=scope)
             if scope.get("generation") and workspace.generation != scope["generation"]:
                 raise HTTPException(
                     409, "The original workspace generation is no longer available"
@@ -193,17 +237,19 @@ def create_chat_attachments_router(
     async def reference_location(
         request: Request, session_id: str, item_id: str, path: str
     ) -> dict[str, Any]:
-        _, scope = await reference_scope(request, session_id, item_id)
-        workspace, path = await resolve_reference_location(request, session_id, scope, path)
+        _, source_session_id, scope = await reference_scope(request, session_id, item_id)
+        workspace, path = await resolve_reference_location(request, source_session_id, scope, path)
         return {"workspace": await service.metadata(workspace), "path": path}
 
     async def capture_reference(
         request: Request, session_id: str, item_id: str, path: str, *, download: bool
     ):
-        user, scope = await reference_scope(request, session_id, item_id)
+        user, source_session_id, scope = await reference_scope(request, session_id, item_id)
         if not download and artifact_store is None:
             raise HTTPException(503, "Attachment snapshot storage is unavailable")
-        snapshot_id = reference_snapshot_id(user, session_id, item_id, path)
+        snapshot_id = reference_snapshot_id(
+            user, session_id, item_id, path, source_session_id, scope
+        )
         # Share one live read within this router; conditional publication also
         # protects the first original across processes and server replicas.
         async with capture_locks.setdefault(snapshot_id, asyncio.Lock()):
@@ -216,7 +262,9 @@ def create_chat_attachments_router(
                 raise HTTPException(502, "Attachment snapshot could not be read") from exc
             if stored is not None:
                 return stored
-            return await capture_source(request, session_id, scope, path, snapshot_id, download)
+            return await capture_source(
+                request, source_session_id, scope, path, snapshot_id, download
+            )
 
     async def capture_source(
         request: Request,

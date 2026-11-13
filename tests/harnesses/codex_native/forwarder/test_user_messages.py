@@ -1,3 +1,4 @@
+# Modified for Triune.
 """User messages tests for Codex forwarder."""
 
 from __future__ import annotations
@@ -90,3 +91,28 @@ async def test_post_user_message_truly_empty_is_skipped() -> None:
     await fwd._post_user_message(client, "conv_x", {"turnId": "t1"}, item)
 
     assert client.posts == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "client_id,expected",
+    [
+        ("omnigent-input:" + "a" * 32, "a" * 32),
+        ("a" * 32, None),
+        ("omnigent-input:invalid", None),
+        (None, None),
+    ],
+)
+async def test_user_message_preserves_only_structured_input_identity(client_id, expected):
+    client = _RecordingClient()
+    text = "Peer message from conversation source; message_id=" + "a" * 32
+    item = {
+        "type": "userMessage",
+        "clientId": client_id,
+        "content": [{"type": "text", "text": text}],
+    }
+    await fwd._post_user_message(client, "conv_x", {"turnId": "t1"}, item)
+    [(_, body)] = client.posts
+    assert body["data"].get("input_stable_id") == expected
+    assert "communication" not in body["data"]["item_data"]
+    assert body["data"]["item_data"]["content"] == [{"type": "input_text", "text": text}]

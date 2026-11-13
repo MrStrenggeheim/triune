@@ -1,5 +1,7 @@
 """Executor that bridges Omnigent messages into a native Codex TUI thread."""
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import asyncio
@@ -76,6 +78,7 @@ from omnigent.inner.native_attachments import (
     uses_filesystem_delivery,
 )
 from omnigent.native.input_diagnostics import (
+    current_input_attributes,
     log_input_event,
     with_input_attributes,
 )
@@ -271,6 +274,11 @@ async def _native_delivery_request_once(
     state: CodexNativeBridgeState,
 ) -> CodexMessage:
     """Pair each RPC attempt with its result, including a rejected stale steer."""
+    from omnigent.native.communication import NATIVE_INPUT_CLIENT_ID_PREFIX
+
+    stable_id = current_input_attributes().get("input_stable_id")
+    if isinstance(stable_id, str):
+        params = {**params, "clientUserMessageId": NATIVE_INPUT_CLIENT_ID_PREFIX + stable_id}
     attempt_id = uuid.uuid4().hex
     stage = "turn_start" if method == "turn/start" else "turn_steer"
     expected = params.get("expectedTurnId") if method == "turn/steer" else None

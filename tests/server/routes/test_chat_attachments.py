@@ -112,8 +112,9 @@ async def test_capture_returns_only_metadata_and_commits_binary_original(
         assert frames == []
 
 
+@pytest.mark.parametrize("peer", [False, True])
 async def test_runneronly_post_capture_uses_get_and_keeps_runner_acl(
-    workspace_stack, tmp_path, monkeypatch
+    workspace_stack, tmp_path, monkeypatch, peer
 ):
     make_app, root, conversations, permissions, _, host_frames, _ = workspace_stack
     app, service = make_app()
@@ -140,7 +141,33 @@ async def test_runneronly_post_capture_uses_get_and_keeps_runner_acl(
         ],
     )[0]
     app.include_router(create_chat_attachments_router(service, artifact_store), prefix="/v1")
-    url = f"/v1/sessions/{chat.id}/attachments/references/{message.id}"
+    recipient = chat
+    received = message
+    if peer:
+        recipient = conversations.create_conversation(host_id=HOST, workspace=str(root))
+        permissions.grant("alice", recipient.id, LEVEL_OWNER)
+        permissions.grant("bob", recipient.id, LEVEL_OWNER)
+        [received] = conversations.append(
+            recipient.id,
+            [
+                NewConversationItem(
+                    type="message",
+                    response_id="peer-turn",
+                    data=MessageData(
+                        role="user",
+                        content=[],
+                        communication={
+                            "kind": "peer",
+                            "message_id": message.id,
+                            "source_conversation_id": chat.id,
+                            "destination_conversation_id": recipient.id,
+                            "source_resource_scope": message.data.resource_scope,
+                        },
+                    ),
+                )
+            ],
+        )
+    url = f"/v1/sessions/{recipient.id}/attachments/references/{received.id}"
     name = "runner ü space.svg"
     original = b"<svg>runner original</svg>"
     requests = []
@@ -179,6 +206,12 @@ async def test_runneronly_post_capture_uses_get_and_keeps_runner_acl(
         denied = await client.get(url, params={"path": name}, headers=BOB)
         assert denied.status_code == 403, denied.text
         assert requests == []
+        if peer:
+            conn.owner = "bob"
+            denied = await client.get(url, params={"path": name})
+            assert denied.status_code == 403, denied.text
+            assert requests == []
+            conn.owner = "alice"
         registry.deregister(runner_id)
         assert (
             await client.post(url + "/capture", params={"path": name})
@@ -500,6 +533,191 @@ async def test_reference_metadata_classifies_without_reading_file_bytes(workspac
     reads = [frame for _, frame in frames if getattr(frame, "op", None) == "list_or_read"]
     assert reads
     assert all(frame.params["path"] == "" for frame in reads)
+
+
+@pytest.fixture
+def peer_reference_capture(reference_capture, workspace_stack):
+    app, service, artifacts, source, source_message, _ = reference_capture
+    _, root, conversations, permissions, _, _, _ = workspace_stack
+    recipient_root = root.parent / "peer-recipient"
+    recipient_root.mkdir()
+    (recipient_root / "file.txt").write_text("WRONG RECIPIENT BYTES")
+    (recipient_root / "report.md").mkdir()
+    (root / "report.md").write_text("source report")
+    recipient = conversations.create_conversation(
+        host_id=OTHER_HOST, workspace=str(recipient_root)
+    )
+    permissions.grant("alice", recipient.id, LEVEL_OWNER)
+    [received] = conversations.append(
+        recipient.id,
+        [
+            NewConversationItem(
+                type="message",
+                response_id="peer-turn",
+                data=MessageData(
+                    role="user",
+                    content=[{"type": "input_text", "text": "[report](report.md)"}],
+                    communication={
+                        "kind": "peer",
+                        "message_id": source_message.id,
+                        "source_conversation_id": source.id,
+                        "destination_conversation_id": recipient.id,
+                        "source_resource_scope": source_message.data.resource_scope,
+                    },
+                ),
+            )
+        ],
+    )
+    url = f"/v1/sessions/{recipient.id}/attachments/references/{received.id}"
+    return app, service, artifacts, source, recipient, received, url
+
+
+async def test_peer_reference_uses_source_scope_and_ignores_old_recipient_capture(
+    peer_reference_capture, workspace_stack
+):
+    app, _, artifacts, source, recipient, received, url = peer_reference_capture
+    _, root, conversations, _, registry, frames, _ = workspace_stack
+    assert received.data.resource_scope["workspace"] == recipient.workspace
+    old_snapshot = (
+        "chat-reference-"
+        + hashlib.sha256(
+            json.dumps(
+                [current_workspace_id(), "alice", recipient.id, received.id, "file.txt"]
+            ).encode()
+        ).hexdigest()
+    )
+    artifacts.put(
+        old_snapshot,
+        json.dumps(
+            {"filename": "file.txt", "content": base64.b64encode(b"WRONG").decode()}
+        ).encode(),
+    )
+    conversations.set_host_id(source.id, OTHER_HOST, recipient.workspace)
+    frames.clear()
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test", headers=ALICE
+    ) as client:
+        metadata = await client.get(url + "/metadata", params={"path": "report.md"})
+        assert metadata.status_code == 200, metadata.text
+        assert metadata.json()["kind"] == "file"
+        assert metadata.json()["workspace"]["root"] == str(root)
+        location = await client.get(url + "/location", params={"path": "file.txt"})
+        assert location.status_code == 200, location.text
+        assert location.json()["workspace"]["host_id"] == HOST
+        assert location.json()["workspace"]["root"] == str(root)
+        captured = await client.post(url + "/capture", params={"path": "file.txt"})
+        assert captured.status_code == 200, captured.text
+        assert captured.json()["bytes"] == len(b"before\n")
+        assert (await client.get(url, params={"path": "file.txt"})).content == b"before\n"
+        assert frames and all(host_id == HOST for host_id, _ in frames)
+        registry.deregister(HOST)
+        frames.clear()
+        assert (await client.get(url, params={"path": "file.txt"})).content == b"before\n"
+        assert (await client.get(url + "/metadata", params={"path": "file.txt"})).json()[
+            "kind"
+        ] == "captured"
+        assert frames == []
+
+
+@pytest.mark.parametrize("side", ["source", "recipient"])
+@pytest.mark.parametrize("grant", [None, LEVEL_READ, LEVEL_EDIT])
+async def test_peer_reference_rechecks_both_session_acls_before_cached_bytes(
+    peer_reference_capture, workspace_stack, side, grant
+):
+    app, _, _, source, recipient, _, url = peer_reference_capture
+    _, _, _, permissions, _, frames, _ = workspace_stack
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test", headers=ALICE
+    ) as client:
+        assert (
+            await client.post(url + "/capture", params={"path": "file.txt"})
+        ).status_code == 200
+        session_id = source.id if side == "source" else recipient.id
+        permissions.revoke("alice", session_id)
+        if grant is not None:
+            permissions.grant("alice", session_id, grant)
+        frames.clear()
+        for suffix in ("/metadata", "/location", "/capture", ""):
+            denied = await client.request(
+                "POST" if suffix == "/capture" else "GET",
+                url + suffix,
+                params={"path": "file.txt"},
+            )
+            assert denied.status_code in {403, 404}, denied.text
+        assert frames == []
+
+
+async def test_peer_reference_rechecks_source_host_ownership_before_cached_bytes(
+    peer_reference_capture, workspace_stack, monkeypatch
+):
+    app, service, _, _, _, _, url = peer_reference_capture
+    _, _, _, _, _, frames, _ = workspace_stack
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test", headers=ALICE
+    ) as client:
+        assert (
+            await client.post(url + "/capture", params={"path": "file.txt"})
+        ).status_code == 200
+        get_host = service.host_store.get_host
+        monkeypatch.setattr(
+            service.host_store,
+            "get_host",
+            lambda host_id: replace(get_host(host_id), user_id="bob"),
+        )
+        frames.clear()
+        for suffix in ("/metadata", "/location", "/capture", ""):
+            denied = await client.request(
+                "POST" if suffix == "/capture" else "GET",
+                url + suffix,
+                params={"path": "file.txt"},
+            )
+            assert denied.status_code == 403, denied.text
+        assert frames == []
+
+
+@pytest.mark.parametrize("missing", ["scope", "source", "native", "destination"])
+async def test_peer_reference_without_trusted_source_never_uses_recipient_scope(
+    peer_reference_capture, workspace_stack, monkeypatch, missing
+):
+    app, service, _, _, _, received, url = peer_reference_capture
+    _, _, _, _, _, frames, _ = workspace_stack
+    changes = {
+        "scope": {"source_resource_scope": None},
+        "source": {"source_conversation_id": None},
+        "native": {"kind": "native_agent"},
+        "destination": {"destination_conversation_id": "0" * 32},
+    }
+    unavailable = received.model_copy(
+        update={
+            "data": received.data.model_copy(
+                update={
+                    "communication": received.data.communication.model_copy(
+                        update=changes[missing]
+                    )
+                }
+            )
+        }
+    )
+    get_item = service.conversation_store.get_item
+    monkeypatch.setattr(
+        service.conversation_store,
+        "get_item",
+        lambda session_id, item_id: (
+            unavailable if item_id == received.id else get_item(session_id, item_id)
+        ),
+    )
+    frames.clear()
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test", headers=ALICE
+    ) as client:
+        for suffix in ("/metadata", "/location", "/capture", ""):
+            response = await client.request(
+                "POST" if suffix == "/capture" else "GET",
+                url + suffix,
+                params={"path": "file.txt"},
+            )
+            assert response.status_code == 409, response.text
+        assert frames == []
 
 
 @pytest.mark.parametrize(

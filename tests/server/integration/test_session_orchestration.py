@@ -1298,6 +1298,7 @@ async def test_native_provenance_requires_runner_and_survives_sse(
         "native-item-1",
     )
     origin["communication"]["source_title"] = "Private source title"
+    origin["communication"]["source_resource_scope"] = {"workspace": "/unresolved"}
     event = {
         "type": "external_conversation_item",
         "data": {
@@ -1330,10 +1331,183 @@ async def test_native_provenance_requires_runner_and_survives_sse(
     assert metadata["destination_conversation_id"] == target["id"]
     assert metadata["receipt"] == "transcript"
     assert "source_title" not in metadata
+    assert "source_resource_scope" not in metadata
     consumed = [payload for payload in published if payload["type"] == "session.input.consumed"]
     assert len(consumed) == 1
     assert consumed[0]["data"]["data"]["communication"]["message_id"] == "native-item-1"
     assert consumed[0]["data"]["created_by"] is None
+
+
+@pytest.fixture
+async def submitted_peer(auth_client, peers, db_uri):
+    from omnigent.harnesses.codex_native.forwarder import _post_user_message
+    from omnigent.native.communication import peer_model_content
+    from omnigent.runtime import pending_inputs
+    from omnigent.server.startup_inputs import STARTUP_LABEL, restore_pending_inputs
+    from tests.harnesses.codex_native.forwarder._support import _RecordingClient
+
+    source, target, _ = peers
+    store = SqlAlchemyConversationStore(db_uri)
+    store.set_host_id(source["id"], uuid4().hex, "/source-workspace")
+    store.set_labels(target["id"], {STARTUP_LABEL: "pending"})
+    accepted = await _send(auth_client, source, target)
+    saved = store.get_item(target["id"], accepted["message_id"])
+    assert saved is not None
+    # Model the successful handoff whose receipt must come from the native transcript.
+    assert store.transition_pending_input(
+        target["id"], saved.id, expected="in_progress", status="incomplete"
+    )
+    await restore_pending_inputs(store, target["id"])
+    recorder = _RecordingClient()
+    await _post_user_message(
+        recorder,
+        target["id"],
+        {"threadId": "thread-peer", "turnId": "turn-peer"},
+        {
+            "type": "userMessage",
+            "id": "native-peer",
+            "clientId": "omnigent-input:" + saved.id,
+            "content": [
+                {"type": "text", "text": block["text"]}
+                for block in peer_model_content(saved.data.content, saved.data.communication)
+            ],
+        },
+    )
+    [(_, event)] = recorder.posts
+    try:
+        yield source, target, store, saved, event
+    finally:
+        pending_inputs.reset_for_tests()
+
+
+@pytest.mark.parametrize("restart", [False, True])
+@pytest.mark.parametrize("separator", ["\n", "\n\n"])
+async def test_native_peer_identity_folds_exact_saved_input(
+    auth_client, submitted_peer, db_uri, monkeypatch, restart, separator
+):
+    from omnigent.runtime import pending_inputs
+    from omnigent.server.routes import sessions
+    from omnigent.stores.conversation_store import PENDING_INPUT_RESPONSE_ID
+
+    source, target, store, saved, event = submitted_peer
+    event["data"]["item_data"]["content"][0]["text"] = event["data"]["item_data"]["content"][0][
+        "text"
+    ].replace("\n\n", separator, 1)
+    auth_client.headers.update(_bind_runner(db_uri, target["id"]))
+    if restart:
+        pending_inputs.reset_for_tests()
+    other = pending_inputs.record(target["id"], [{"type": "input_text", "text": "Human input"}])
+    published = []
+    monkeypatch.setattr(sessions.session_stream, "publish", lambda _, data: published.append(data))
+    path = f"/v1/sessions/{target['id']}/events"
+    accepted = await auth_client.post(path, json=event)
+    assert accepted.status_code == 202, accepted.text
+    assert accepted.json()["item_id"] == saved.id
+    duplicate = await auth_client.post(path, json=[event])
+    assert duplicate.status_code == 202, duplicate.text
+    received = store.get_item(target["id"], saved.id)
+    assert received.response_id != PENDING_INPUT_RESPONSE_ID
+    assert received.created_at == saved.created_at
+    assert received.data.content == saved.data.content
+    assert received.created_by is None
+    origin = received.data.communication
+    assert origin.message_id == saved.id and origin.source_conversation_id == source["id"]
+    assert origin.sent_at == saved.data.communication.sent_at
+    assert origin.source_agent_name == "test-agent"
+    assert origin.source_resource_scope["workspace"] == "/source-workspace"
+    assert received.data.resource_scope is None
+    assert origin.delivery_state == "confirmed" and origin.receipt == "transcript"
+    assert store.list_pending_inputs(target["id"]) == []
+    assert pending_inputs.pending_ids(target["id"]) == [other]
+    consumed = [p for p in published if p["type"] == "session.input.consumed"]
+    assert len(consumed) == 1
+    assert consumed[0]["data"]["data"]["communication"]["message_id"] == saved.id
+    snapshot = (await auth_client.get(f"/v1/sessions/{target['id']}/items")).json()["data"]
+    assert len(snapshot) == 1 and snapshot[0]["communication"]["source_agent_name"] == "test-agent"
+    outbox = (await auth_client.get(f"/v1/sessions/{source['id']}/peer-messages")).json()["data"]
+    assert outbox[0]["communication"]["delivery_state"] == "confirmed"
+    retry = await auth_client.post(
+        path,
+        headers={ORCHESTRATION_SOURCE_HEADER: source["id"]},
+        json={
+            "type": "session_message",
+            "data": {"message_id": saved.id, "message": saved.data.content[0]["text"]},
+        },
+    )
+    assert retry.status_code == 202 and retry.json()["delivery_state"] == "confirmed"
+    files = await auth_client.get(
+        f"/v1/sessions/{target['id']}/attachments/references/{saved.id}/metadata",
+        params={"path": "private.txt"},
+    )
+    assert files.status_code == 404
+    assert files.json()["detail"] == "host not found"
+
+
+@pytest.mark.parametrize("batch", [False, True])
+async def test_native_peer_identity_requires_bound_runner(auth_client, submitted_peer, batch):
+    _, target, store, saved, event = submitted_peer
+    response = await auth_client.post(
+        f"/v1/sessions/{target['id']}/events", json=[event] if batch else event
+    )
+    assert response.status_code == 403
+    assert store.get_item(target["id"], saved.id).status == "incomplete"
+
+
+async def test_native_peer_identity_append_failure_keeps_receipt_pending(
+    auth_client, submitted_peer, monkeypatch
+):
+    from omnigent.runtime import pending_inputs
+    from omnigent.server.routes.sessions import _persist_external_conversation_item
+    from omnigent.server.schemas import SessionEventInput
+
+    _, target, store, saved, event = submitted_peer
+    queued = pending_inputs.pending_ids(target["id"])
+    append = store.append
+
+    def fail_append(*args, **kwargs):
+        raise RuntimeError("injected append failure")
+
+    monkeypatch.setattr(store, "append", fail_append)
+    with pytest.raises(RuntimeError, match="injected append failure"):
+        await _persist_external_conversation_item(
+            target["id"], store.get_conversation(target["id"]), SessionEventInput(**event), store
+        )
+    assert pending_inputs.pending_ids(target["id"]) == queued
+    assert store.get_item(target["id"], saved.id).status == "incomplete"
+    monkeypatch.setattr(store, "append", append)
+    item_id = await _persist_external_conversation_item(
+        target["id"], store.get_conversation(target["id"]), SessionEventInput(**event), store
+    )
+    assert item_id == saved.id
+    assert store.get_item(target["id"], item_id).data.communication.receipt == "transcript"
+
+
+@pytest.mark.parametrize("case", ["literal", "unknown", "other_destination", "different_text"])
+async def test_native_peer_identity_never_uses_text_or_account_alone(
+    auth_client, submitted_peer, db_uri, case
+):
+    _, target, store, saved, event = submitted_peer
+    original_target_id = target["id"]
+    auth_client.headers.update(_bind_runner(db_uri, target["id"]))
+    if case == "literal":
+        del event["data"]["input_stable_id"]
+    elif case == "unknown":
+        event["data"]["input_stable_id"] = uuid4().hex
+    elif case == "other_destination":
+        other = await _create_session_as(auth_client, "", "alice")
+        target = other
+        auth_client.headers.update(_bind_runner(db_uri, target["id"]))
+    else:
+        event["data"]["item_data"]["content"][0]["text"] += " altered"
+    response = await auth_client.post(f"/v1/sessions/{target['id']}/events", json=event)
+    if case == "different_text":
+        assert response.status_code == 409
+    else:
+        assert response.status_code == 202, response.text
+        received = store.get_item(target["id"], response.json()["item_id"])
+        assert received.data.communication is None
+        assert received.data.content == event["data"]["item_data"]["content"]
+    assert store.get_item(original_target_id, saved.id).status == "incomplete"
 
 
 @pytest.mark.parametrize("field", ["initial_items", "initial_input"])

@@ -3066,6 +3066,21 @@ async def _persist_external_conversation_item_unlocked(
     :returns: Store-assigned conversation item id.
     """
     item = _new_external_conversation_item(session_id, body)
+    if body.data.get("input_stable_id") is not None:
+        from omnigent.server.session_orchestration import correlate_native_peer_input
+
+        item = await asyncio.to_thread(
+            correlate_native_peer_input,
+            conversation_store,
+            session_id,
+            item,
+            body.data["input_stable_id"],
+        )
+    peer_pending_id = (
+        pending_inputs.make_pending_id(session_id, item.replaces_pending_id)
+        if item.replaces_pending_id is not None
+        else None
+    )
     if item.stable_id is not None and _drains_pending_inputs(item):
         # A forwarder retry of a mirror already persisted under its source-derived
         # id: nothing to drain, persist or publish. Draining again could match a
@@ -3095,7 +3110,7 @@ async def _persist_external_conversation_item_unlocked(
     # The vendor CLI's own interrupt record is exempt: it is synthesized by
     # Claude (not a queued web message) and has no pending entry, so
     # draining for it would hand the queued message's uploads to the marker.
-    cleared_pending_id: str | None = None
+    cleared_pending_id: str | None = peer_pending_id
     drained: pending_inputs.DrainedInput | None = None
     match_method: str | None = None
     # Every drain below holds its entries in place (``hold=True``): they keep
@@ -3237,6 +3252,8 @@ async def _persist_external_conversation_item_unlocked(
         )
         await record_claude_subagent_return(session_id, persisted, conversation_store)
         return persisted.id
+    if peer_pending_id is not None:
+        pending_inputs.resolve(session_id, peer_pending_id)
     # Landed: the drained entries are settled (uncertain ones leave without a
     # record — their mirror may already have been attributed by position);
     # older messages a slash command jumped over are still on their way and
@@ -3333,6 +3350,7 @@ def _new_external_conversation_item(
                         "destination_conversation_id": session_id,
                         "source_conversation_id": None,
                         "source_title": None,
+                        "source_resource_scope": None,
                     }
                 )
             }

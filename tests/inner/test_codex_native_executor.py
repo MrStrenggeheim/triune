@@ -1,3 +1,4 @@
+# Modified for Triune.
 """Tests for the native Codex TUI executor bridge."""
 
 from __future__ import annotations
@@ -847,6 +848,12 @@ def test_codex_delivery_records_input_and_accepted_native_turn(
     with input_delivery_scope(identity, response_id="resp_delivery"):
         events = _collect_turn_events(CodexNativeExecutor(bridge_dir=tmp_path), "private prompt")
     assert isinstance(events[0], TurnComplete)
+    [delivery] = [
+        params
+        for method, params in _FakeCodexNativeClient.requests
+        if method in {"turn/start", "turn/steer"}
+    ]
+    assert delivery["clientUserMessageId"] == "omnigent-input:" + identity["input_stable_id"]
     [record] = [
         r
         for r in caplog.records

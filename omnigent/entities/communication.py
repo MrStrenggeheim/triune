@@ -1,6 +1,7 @@
+# Modified for Triune.
 """Trusted message provenance, independent of model role and account identity."""
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -16,6 +17,8 @@ class MessageCommunication(BaseModel):
     message_id: str = Field(min_length=1, max_length=256)
     source_conversation_id: str | None = None
     source_agent_id: str | None = None
+    source_agent_name: str | None = Field(default=None, min_length=1, max_length=256)
+    source_resource_scope: dict[str, Any] | None = None
     source_title: str | None = None
     destination_conversation_id: str
     sent_at: int | None = None

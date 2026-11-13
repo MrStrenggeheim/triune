@@ -1,3 +1,4 @@
+# Modified for Triune.
 """Events, stream, and delete session routes."""
 
 from __future__ import annotations
@@ -370,6 +371,7 @@ def _is_batchable_external_item(event: SessionEventInput) -> bool:
         event.type != _EXTERNAL_CONVERSATION_ITEM_TYPE
         or event.created_by is not None
         or event.tools
+        or event.data.get("input_stable_id") is not None
     ):
         return False
     item_type = event.data.get("item_type")
@@ -1117,7 +1119,10 @@ def register_events_routes(
         if (
             body.type == _EXTERNAL_CONVERSATION_ITEM_TYPE
             and isinstance(external_data, dict)
-            and external_data.get("communication") is not None
+            and (
+                external_data.get("communication") is not None
+                or body.data.get("input_stable_id") is not None
+            )
             and not _has_bound_runner_authority(request, conv)
         ):
             raise OmnigentError(

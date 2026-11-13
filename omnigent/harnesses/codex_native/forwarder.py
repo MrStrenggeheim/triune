@@ -6397,7 +6397,7 @@ async def _post_user_message(
         "role": "user",
         "content": content,
     }
-    from omnigent.native.communication import native_peer_metadata
+    from omnigent.native.communication import native_input_stable_id, native_peer_metadata
 
     item_data.update(
         native_peer_metadata(item.get("origin"), source_id or _source_id(params, item))
@@ -6416,6 +6416,7 @@ async def _post_user_message(
         item_data=item_data,
         response_id=_response_id(params),
         source_id=source_id or _source_id(params, item),
+        input_stable_id=native_input_stable_id(item.get("clientId")),
     )
 
 
@@ -6958,6 +6959,7 @@ async def _post_external_item(
     response_id: str,
     message_id: str | None = None,
     source_id: str | None = None,
+    input_stable_id: str | None = None,
 ) -> bool:
     """
     Post one external conversation item to AP.
@@ -6973,6 +6975,7 @@ async def _post_external_item(
     :param response_id: Response id for the mirrored Codex turn.
     :param message_id: Optional live-preview stream finalized by this item.
     :param source_id: Stable native source id for server-side idempotency.
+    :param input_stable_id: Structured client identity echoed from the native input RPC.
     :returns: Whether the item was accepted by the server.
     """
     data: _JsonObject = {
@@ -6984,6 +6987,8 @@ async def _post_external_item(
         data["message_id"] = message_id
     if source_id is not None:
         data["source_id"] = _bounded_source_id(source_id)
+    if input_stable_id is not None:
+        data["input_stable_id"] = input_stable_id
 
     async def _post() -> httpx.Response | None:
         return await _post_session_event(

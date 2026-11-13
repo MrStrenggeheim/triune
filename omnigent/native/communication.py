@@ -1,8 +1,20 @@
+# Modified for Triune.
 """Translate structured native peer origins without inspecting message text."""
 
+import re
 from typing import Any
 
 from omnigent.entities.communication import MessageCommunication
+
+NATIVE_INPUT_CLIENT_ID_PREFIX = "omnigent-input:"
+
+
+def native_input_stable_id(client_id: object) -> str | None:
+    """Decode the structured client ID echoed by Codex, never message text."""
+    if not isinstance(client_id, str):
+        return None
+    match = re.fullmatch(r"omnigent-input:([0-9a-f]{32})", client_id)
+    return match.group(1) if match else None
 
 
 def peer_model_content(
