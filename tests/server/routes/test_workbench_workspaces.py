@@ -1,3 +1,4 @@
+# Modified for Triune.
 """Workspace identities survive chat changes, authorization and service recreation."""
 
 from __future__ import annotations
@@ -6,11 +7,11 @@ import asyncio
 import subprocess
 from contextlib import suppress
 from pathlib import Path
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import httpx
 import pytest
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from omnigent.errors import OmnigentError
@@ -27,7 +28,9 @@ from omnigent.runner.transports.ws_tunnel.registry import TunnelRegistry
 from omnigent.runtime.agent_cache import AgentCache
 from omnigent.server.auth import LEVEL_EDIT, LEVEL_OWNER, LEVEL_READ, UnifiedAuthProvider
 from omnigent.server.host_registry import HostRegistry
+from omnigent.server.routes._gzip_route import GZipJSONMiddleware
 from omnigent.server.routes.workbench_workspaces import create_workbench_workspaces_router
+from omnigent.server.workbench_resources import HostWorkspaceResources
 from omnigent.server.workbench_workspace_service import WorkbenchWorkspaceService
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.artifact_store.local import LocalArtifactStore
@@ -126,6 +129,7 @@ async def workspace_stack(db_uri, tmp_path):
             permission_store=permissions,
         )
         app = FastAPI()
+        app.add_middleware(GZipJSONMiddleware)
         app.include_router(create_workbench_workspaces_router(service), prefix="/v1")
 
         @app.exception_handler(OmnigentError)
@@ -174,9 +178,11 @@ async def test_independent_resources_survive_chat_delete_and_restart(workspace_s
         (root / "large.bin").write_bytes(payload)
         capped = await client.get(base + "/filesystem/large.bin")
         assert capped.json()["truncated"] is True
+        assert "content-encoding" not in capped.headers
         downloaded = await client.get(base + "/filesystem/large.bin", params={"download": "true"})
         assert downloaded.status_code == 200, downloaded.text[:100]
         assert downloaded.content == payload
+        assert "content-encoding" not in downloaded.headers
         git = await client.get(base + "/git", params={"operation": "repository"})
         assert git.status_code == 200, git.text
         await conversations.delete_conversation(conv.id)
@@ -195,15 +201,117 @@ async def test_independent_resources_survive_chat_delete_and_restart(workspace_s
         assert (await client.get(base + "/filesystem/file.txt")).json()["content"] == "after\n"
 
 
+async def test_raw_download_validates_file_and_root_without_content_preread(workspace_stack):
+    make_app, root, _, _, _, frames, _ = workspace_stack
+    app, _ = make_app()
+    (root / "directory").mkdir()
+    outside = root.parent / "secret.txt"
+    outside.write_text("secret")
+    (root / "escape").symlink_to(outside)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test", headers=ALICE
+    ) as client:
+        workspace = (
+            await client.post(
+                "/v1/workbench-workspaces", json={"host_id": HOST, "root": str(root)}
+            )
+        ).json()
+        base = (
+            f"/v1/workbench-workspaces/{workspace['id']}/resources/"
+            "environments/default/filesystem/"
+        )
+        frames.clear()
+        for path, status in (
+            ("file.txt", 200),
+            ("directory", 400),
+            ("missing", 404),
+            ("escape", 403),
+        ):
+            response = await client.get(base + path, params={"download": "true"})
+            assert response.status_code == status, response.text
+            if status == 200:
+                assert response.content == b"before\n"
+        assert (
+            await client.get(base + "file.txt", params={"download": "true"}, headers=BOB)
+        ).status_code == 404
+        assert (
+            await client.get(base + "etc/passwd", params={"download": "true", "base": "host"})
+        ).status_code == 403
+        assert not any(getattr(frame, "op", None) == "list_or_read" for _, frame in frames)
+        requests = [
+            frame.params
+            for _, frame in frames
+            if getattr(frame, "op", None) == "filesystem_operation"
+        ]
+        assert requests
+        assert all(params["_unconfined"] is False for params in requests)
+        assert all(params["_owner"] == "alice" for params in requests)
+        assert all(
+            params["_roots"] == [{"path": str(root), "kind": "tree", "access": "write"}]
+            for params in requests
+        )
+
+
+@pytest.mark.parametrize("failure", ["invalid_base64", "empty", "overrun", "changed", "cancel"])
+async def test_raw_download_cancels_on_invalid_or_interrupted_read(
+    workspace_stack, monkeypatch, failure
+):
+    make_app, root, _, _, _, frames, _ = workspace_stack
+    app, service = make_app()
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test", headers=ALICE
+    ) as client:
+        resolved = (
+            await client.post(
+                "/v1/workbench-workspaces", json={"host_id": HOST, "root": str(root)}
+            )
+        ).json()
+    workspace = service.store.get(resolved["id"], "alice")
+    adapter = HostWorkspaceResources(service, workspace)
+    operation = adapter.filesystem_operation
+
+    async def faulty(body):
+        if body["operation"] == "download_read":
+            if failure == "cancel":
+                raise asyncio.CancelledError()
+            if failure != "changed":
+                return {
+                    "content_base64": {
+                        "invalid_base64": "!",
+                        "empty": "",
+                        "overrun": "eHh4eHh4eHg=",
+                    }[failure]
+                }
+        return await operation(body)
+
+    monkeypatch.setattr(adapter, "filesystem_operation", faulty)
+    response = await adapter.download_file("file.txt")
+    if failure == "changed":
+        (root / "file.txt").write_text("changed during capture")
+    expected_error = asyncio.CancelledError if failure == "cancel" else HTTPException
+    with pytest.raises(expected_error) as error:
+        async for _ in response.body_iterator:
+            pass
+    if isinstance(error.value, HTTPException):
+        assert error.value.status_code == (409 if failure == "changed" else 502)
+    operations = [frame.params.get("operation") for _, frame in frames if hasattr(frame, "params")]
+    assert operations.count("download_cancel") == 1
+
+
 @pytest.mark.parametrize("grant", [LEVEL_READ, LEVEL_EDIT])
-async def test_chat_share_does_not_grant_workspace_or_host(workspace_stack, grant):
+@pytest.mark.parametrize("accept_encoding", ["gzip", "identity"])
+async def test_chat_share_does_not_grant_workspace_or_host(
+    workspace_stack, grant, accept_encoding
+):
     make_app, root, conversations, permissions, _, frames, _ = workspace_stack
     app, _ = make_app()
     conv = conversations.create_conversation(host_id=HOST, workspace=str(root))
     permissions.grant("alice", conv.id, LEVEL_OWNER)
     permissions.grant("bob", conv.id, grant)
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://test"
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://test",
+        headers={"Accept-Encoding": accept_encoding},
     ) as client:
         owner = await client.post(
             "/v1/workbench-workspaces/resolve", json={"session_id": conv.id}, headers=ALICE
@@ -232,6 +340,52 @@ async def test_chat_share_does_not_grant_workspace_or_host(workspace_stack, gran
         assert (await client.get("/v1/workbench-workspaces", headers=BOB)).json()["data"] == []
         assert (await client.get("/v1/workbench-workspaces")).status_code == 401
         assert frames == []
+
+
+async def test_workspace_listing_reuses_targets_only_within_request(workspace_stack, monkeypatch):
+    make_app, root, _, _, registry, _, hosts = workspace_stack
+    app, service = make_app()
+    host = hosts.get_host(HOST)
+    generation = f"{host.created_at}:{host.account_generation or 'external'}"
+    workspaces = [
+        service.store.resolve(
+            owner_user_id="alice",
+            host_id=HOST,
+            target_kind="host",
+            target_id=HOST,
+            generation=generation,
+            root=str(root / str(index)),
+        )
+        for index in range(4)
+    ]
+    stale = service.store.resolve(
+        owner_user_id="alice",
+        host_id=HOST,
+        target_kind="host",
+        target_id=HOST,
+        generation="stale",
+        root=str(root),
+    )
+    get_host = Mock(wraps=hosts.get_host)
+    monkeypatch.setattr(hosts, "get_host", get_host)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test", headers=ALICE
+    ) as client:
+        first = await client.get("/v1/workbench-workspaces", headers={"Accept-Encoding": "gzip"})
+        assert first.status_code == 200, first.text
+        assert first.headers["content-encoding"] == "gzip"
+        by_id = {item["id"]: item for item in first.json()["data"]}
+        assert all(by_id[item.id]["available"] for item in workspaces)
+        assert by_id[stale.id]["available"] is False
+        assert get_host.call_count == 2
+        registry.deregister(HOST)
+        get_host.reset_mock()
+        second = await client.get("/v1/workbench-workspaces")
+        assert all(item["available"] is False for item in second.json()["data"])
+        assert get_host.call_count == 2
+        hidden = await client.get("/v1/workbench-workspaces", headers=BOB)
+        assert hidden.json()["data"] == []
+        assert get_host.call_count == 2
 
 
 async def test_same_path_on_other_host_has_different_identity_and_no_fallback(workspace_stack):

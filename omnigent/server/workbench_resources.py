@@ -1,3 +1,4 @@
+# Modified for Triune.
 """A small host adapter over the existing file, search, Git and provider services."""
 
 from __future__ import annotations
@@ -172,7 +173,12 @@ class HostWorkspaceResources:
                             "offset": offset,
                         }
                     )
-                    data = base64.b64decode(chunk["content_base64"], validate=True)
+                    try:
+                        data = base64.b64decode(chunk["content_base64"], validate=True)
+                    except (KeyError, TypeError, ValueError) as exc:
+                        raise HTTPException(
+                            502, "Workspace download returned an invalid chunk"
+                        ) from exc
                     if not data or offset + len(data) > begun["size"]:
                         raise HTTPException(502, "Workspace download returned an invalid chunk")
                     offset += len(data)
@@ -253,12 +259,9 @@ class HostWorkspaceResources:
         path = relative_path(self.workspace, path)
         if kind == "filesystem":
             if method == "GET":
-                result = await self.call("list_or_read", {**query, "path": path})
                 if query.get("download") == "true":
-                    if result.get("object") == "list":
-                        raise HTTPException(400, "Raw download requires a regular file")
                     return await self.download_file(path)
-                return result
+                return await self.call("list_or_read", {**query, "path": path})
             if method == "PUT":
                 if not isinstance(body.get("content"), str):
                     raise HTTPException(400, "Expected text content")

@@ -1,30 +1,12 @@
-"""Per-route gzip for endpoints that inline a whole file in their JSON body.
-
-Most JSON responses are bounded metadata, where compression buys little. The
-workspace-file reads are the exception: they return the file's entire contents
-in a ``content`` field, so an uncompressed response costs a full file transfer
-on every click. Source text compresses 70-300x, which turns a
-multi-hundred-millisecond download into a few milliseconds.
-
-This is a route class rather than an app- or router-level middleware so the
-route table stays the single source of truth for *which* endpoints compress.
-A middleware would have to re-derive that from the request path, duplicating
-the router's matching and — because a path alone says nothing about the method
-— wrapping the ``PUT``/``PATCH``/``DELETE`` handlers that share these paths.
-Starlette's ``Route.handle`` rejects a mismatched method before it reaches
-``self.app``, so a route class only ever wraps the methods its route declares.
-
-FastAPI's decorators expose neither Starlette's per-route ``middleware=`` nor a
-per-route class, so a custom :class:`~fastapi.routing.APIRoute` on a dedicated
-router is the supported equivalent; ``include_router`` preserves it.
-"""
+# Modified for Triune.
+"""Negotiated gzip for complete JSON responses, with handler-controlled opt-outs."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 
 from fastapi.routing import APIRoute
-from starlette.datastructures import Headers
+from starlette.datastructures import Headers, MutableHeaders
 from starlette.middleware.gzip import GZipResponder
 from starlette.requests import Request
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -74,22 +56,26 @@ def _client_accepts_gzip(accept_encoding: str) -> bool:
     a client that explicitly declined.
 
     :param accept_encoding: Raw header value, e.g. ``"gzip, deflate, br"``.
-    :returns: True when gzip is listed with a non-zero quality value.
+    :returns: True when gzip or a wildcard permits the coding.
     """
+    wildcard = False
     for part in accept_encoding.split(","):
         token, _, params = part.strip().partition(";")
-        if token.strip().lower() != "gzip":
+        token = token.strip().lower()
+        if token not in {"gzip", "*"}:
             continue
+        quality = 1.0
         for param in params.split(";"):
             key, _, value = param.partition("=")
             if key.strip().lower() == "q":
                 try:
-                    return float(value.strip()) > 0
+                    quality = float(value.strip())
                 except ValueError:
-                    # Malformed q value — treat as unqualified acceptance.
-                    return True
-        return True
-    return False
+                    quality = 0.0
+        if token == "gzip":
+            return 0 < quality <= 1
+        wildcard = 0 < quality <= 1
+    return wildcard
 
 
 class _StateAwareGZipResponder(GZipResponder):
@@ -115,10 +101,12 @@ class _StateAwareGZipResponder(GZipResponder):
         minimum_size: int,
         compresslevel: int,
         state: Mapping[str, object],
+        accepts_gzip: bool = True,
     ) -> None:
         super().__init__(app, minimum_size, compresslevel=compresslevel)
         self._state = state
         self._skip_compression = False
+        self._accepts_gzip = accepts_gzip
 
     async def send_with_compression(self, message: Message) -> None:
         """
@@ -128,11 +116,77 @@ class _StateAwareGZipResponder(GZipResponder):
         :returns: None.
         """
         if message["type"] == "http.response.start":
-            self._skip_compression = bool(self._state.get(SKIP_GZIP_STATE_KEY))
+            headers = Headers(raw=message["headers"])
+            content_type = headers.get("content-type", "").split(";", 1)[0].strip().lower()
+            cache_control = {
+                directive.strip().lower()
+                for value in headers.getlist("cache-control")
+                for directive in value.split(",")
+            }
+            self._skip_compression = (
+                bool(self._state.get(SKIP_GZIP_STATE_KEY))
+                or not (
+                    content_type == "application/json"
+                    or (content_type.startswith("application/") and content_type.endswith("+json"))
+                )
+                or "content-encoding" in headers
+                or "content-range" in headers
+                or "content-disposition" in headers
+                or "no-transform" in cache_control
+                or message["status"] < 200
+                or message["status"] in {204, 206, 304}
+            )
+            if not self._skip_compression:
+                self.initial_message = message
+                return
         if self._skip_compression:
             await self.send(message)
             return
-        await super().send_with_compression(message)
+        # A streamed response passes through from its first chunk, without
+        # collecting chunks or delaying the producer until the stream ends.
+        if message["type"] == "http.response.body":
+            body = message.get("body", b"")
+            if not message.get("more_body", False) and len(body) >= self.minimum_size:
+                headers = MutableHeaders(raw=self.initial_message["headers"])
+                vary_values = headers.getlist("vary")
+                vary = {
+                    token.strip().lower() for value in vary_values for token in value.split(",")
+                }
+                if "*" not in vary and "accept-encoding" not in vary:
+                    headers["Vary"] = ", ".join([*vary_values, "Accept-Encoding"])
+                if self._accepts_gzip:
+                    body = self.apply_compression(body, more_body=False)
+                    headers["Content-Encoding"] = "gzip"
+                    headers["Content-Length"] = str(len(body))
+                    if "etag" in headers and not headers["etag"].startswith("W/"):
+                        headers["etag"] = "W/" + headers["etag"]
+                    message["body"] = body
+        self._skip_compression = True
+        await self.send(self.initial_message)
+        await self.send(message)
+
+
+class GZipJSONMiddleware:
+    """Compress large JSON bodies while preserving streams and raw downloads."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http" or scope.get("method") == "HEAD":
+            await self.app(scope, receive, send)
+            return
+        headers = Headers(scope=scope)
+        if "range" in headers:
+            await self.app(scope, receive, send)
+            return
+        await _StateAwareGZipResponder(
+            self.app,
+            GZIP_MINIMUM_SIZE,
+            GZIP_COMPRESSLEVEL,
+            scope.setdefault("state", {}),
+            accepts_gzip=_client_accepts_gzip(",".join(headers.getlist("accept-encoding"))),
+        )(scope, receive, send)
 
 
 class GZipFileContentRoute(APIRoute):
@@ -167,23 +221,7 @@ class GZipFileContentRoute(APIRoute):
         :param send: ASGI send callable.
         :returns: None.
         """
-        if scope["type"] != "http":
-            await super().handle(scope, receive, send)
-            return
-        headers = Headers(scope=scope)
-        if not _client_accepts_gzip(headers.get("Accept-Encoding", "")) or "range" in headers:
-            await super().handle(scope, receive, send)
-            return
-
-        # The base ``handle`` already has the ASGI signature the responder
-        # calls, so it can serve as the wrapped app directly.
-        responder = _StateAwareGZipResponder(
-            super().handle,
-            GZIP_MINIMUM_SIZE,
-            GZIP_COMPRESSLEVEL,
-            scope.setdefault("state", {}),
-        )
-        await responder(scope, receive, send)
+        await GZipJSONMiddleware(super().handle)(scope, receive, send)
 
 
 __all__ = [
@@ -191,5 +229,6 @@ __all__ = [
     "GZIP_MINIMUM_SIZE",
     "SKIP_GZIP_STATE_KEY",
     "GZipFileContentRoute",
+    "GZipJSONMiddleware",
     "skip_gzip",
 ]

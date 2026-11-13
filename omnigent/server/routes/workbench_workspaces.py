@@ -1,3 +1,4 @@
+# Modified for Triune.
 """Independent workspace metadata and resource endpoints."""
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ from starlette.datastructures import UploadFile
 
 from omnigent.server.feature_flags import Feature, resolve_feature_flags
 from omnigent.server.routes._auth_helpers import require_user
+from omnigent.server.routes._gzip_route import skip_gzip
 from omnigent.server.routes._origin import require_trusted_origin
 from omnigent.server.workbench_resources import HostWorkspaceResources, RunnerWorkspaceResources
 from omnigent.server.workbench_workspace_service import WorkbenchWorkspaceService
@@ -38,7 +40,7 @@ def create_workbench_workspaces_router(service: WorkbenchWorkspaceService) -> AP
         workspaces = await asyncio.to_thread(service.store.list, user_id)
         return {
             "object": "list",
-            "data": [await service.metadata(item) for item in workspaces],
+            "data": await service.metadata_many(workspaces),
             "has_more": False,
         }
 
@@ -104,6 +106,9 @@ def create_workbench_workspaces_router(service: WorkbenchWorkspaceService) -> AP
             if workspace.target_kind == "runneronly"
             else HostWorkspaceResources
         )
-        return await adapter(service, workspace).dispatch(request, resource, body)
+        result = await adapter(service, workspace).dispatch(request, resource, body)
+        if isinstance(result, dict) and result.get("encoding") == "base64":
+            skip_gzip(request)
+        return result
 
     return router

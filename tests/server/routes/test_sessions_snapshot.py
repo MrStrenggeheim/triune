@@ -1,9 +1,11 @@
+# Modified for Triune.
 """Tests for Sessions API snapshot item pagination."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
@@ -253,15 +255,26 @@ async def test_session_snapshot_reads_latest_items_then_returns_chronological() 
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "child_harness,override,expected_harness",
+    [
+        ("claude-sdk", None, "claude-sdk"),
+        (None, None, "codex"),
+        ("claude-sdk", "pi-native", "pi-native"),
+    ],
+)
 async def test_session_snapshot_uses_child_spec_metadata(
     monkeypatch: pytest.MonkeyPatch,
+    child_harness: str | None,
+    override: str | None,
+    expected_harness: str,
 ) -> None:
     """Child snapshots expose their selected spec while parents keep the root spec."""
     child_spec = AgentSpec(
         spec_version=1,
         name="executor",
         executor=ExecutorSpec(
-            config={"harness": "codex"},
+            config={"harness": child_harness} if child_harness else {},
             model="openai-codex/gpt-5.6-sol:medium",
             context_window=100_000,
         ),
@@ -293,15 +306,20 @@ async def test_session_snapshot_uses_child_spec_metadata(
             agent_id="ag_advisor",
             kind="sub_agent",
             sub_agent_name="executor",
+            harness_override=override,
         ),
     }
     conv_store = _ConversationStore([], conversations=conversations)
     cache_loads: list[bool] = []
+    agent_reads: list[str] = []
+    event_loop_thread = threading.get_ident()
 
     class _AgentStore:
         @staticmethod
         def get(agent_id: str) -> Any:
             assert agent_id == "ag_advisor"
+            assert threading.get_ident() != event_loop_thread
+            agent_reads.append(agent_id)
             return type(
                 "StoredAgent",
                 (),
@@ -317,6 +335,7 @@ async def test_session_snapshot_uses_child_spec_metadata(
     class _AgentCache:
         @staticmethod
         def load(agent_id: str, bundle_location: str, *, expand_env: bool = False) -> Any:
+            assert threading.get_ident() != event_loop_thread
             assert (agent_id, bundle_location) == ("ag_advisor", "bundle")
             cache_loads.append(expand_env)
             return type("LoadedAgent", (), {"spec": parent_spec})()
@@ -344,8 +363,29 @@ async def test_session_snapshot_uses_child_spec_metadata(
     assert child.agent_name == "executor"
     assert child.llm_model == "openai-codex/gpt-5.6-sol:medium"
     assert child.context_window == 100_000
-    assert child.harness == "codex"
-    assert cache_loads == [True, True, True, True]
+    assert child.harness == expected_harness
+    assert agent_reads == ["ag_advisor", "ag_advisor"]
+    assert cache_loads == [True, True]
+
+
+async def test_snapshot_unavailable_harness_is_not_resolved_again(monkeypatch):
+    event_loop_thread = threading.get_ident()
+    reads = []
+
+    class MissingAgentStore:
+        def get(self, agent_id):
+            assert threading.get_ident() != event_loop_thread
+            reads.append(agent_id)
+            return
+
+    snapshot = await _get_session_snapshot(
+        _ConversationStore([]),
+        "conv_missing_agent",
+        agent_store=MissingAgentStore(),
+        agent_cache=SimpleNamespace(),
+    )
+    assert snapshot.harness is None
+    assert reads == ["087b7cb7ac30abf4debfaa578d052ec6"]
 
 
 @pytest.mark.asyncio

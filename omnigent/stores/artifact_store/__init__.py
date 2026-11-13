@@ -1,3 +1,4 @@
+# Modified for Triune.
 """Artifact store — blob storage for agent bundles and user files."""
 
 from abc import ABC, abstractmethod
@@ -44,6 +45,17 @@ class ArtifactStore(ABC):
         :param data: Raw bytes to store.
         """
         ...
+
+    def put_if_absent(self, key: str, data: bytes) -> bool:
+        """Atomically publish a complete blob, returning False if the key exists.
+
+        True means the complete blob is visible to all readers.
+        False leaves the existing blob unchanged.
+        A failed remote response may require checking whether publication committed.
+        Older custom backends retain their existing API; capture publication
+        requires an implementation that can guarantee atomic creation.
+        """
+        raise NotImplementedError("Artifact backend does not support atomic publication")
 
     @abstractmethod
     def get(self, key: str) -> bytes:

@@ -1,3 +1,4 @@
+# Modified for Triune.
 """S3-compatible implementation of ArtifactStore.
 
 Stores artifact blobs in any S3-compatible object store — AWS S3,
@@ -180,6 +181,20 @@ class S3ArtifactStore(ArtifactStore):
         :param data: Raw bytes to store.
         """
         self._client.put_object(Bucket=self._bucket, Key=self._resolve(key), Body=data)
+
+    def put_if_absent(self, key: str, data: bytes) -> bool:
+        """Use the object store's conditional write to preserve the first capture."""
+        from botocore.exceptions import ClientError
+
+        try:
+            self._client.put_object(
+                Bucket=self._bucket, Key=self._resolve(key), Body=data, IfNoneMatch="*"
+            )
+        except ClientError as exc:
+            if exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode") == 412:
+                return False
+            raise
+        return True
 
     def get(self, key: str) -> bytes:
         """

@@ -1,3 +1,4 @@
+# Modified for Triune.
 """Databricks UC Volumes implementation of ArtifactStore.
 
 Uses the Databricks SDK ``WorkspaceClient.files`` API for all
@@ -161,6 +162,16 @@ class DatabricksVolumesArtifactStore(ArtifactStore):
         """
         path = self._resolve(key)
         self._client.files.upload(path, io.BytesIO(data), overwrite=True)
+
+    def put_if_absent(self, key: str, data: bytes) -> bool:
+        """Publish without replacing an existing volume file."""
+        from databricks.sdk.errors import AlreadyExists, ResourceAlreadyExists
+
+        try:
+            self._client.files.upload(self._resolve(key), io.BytesIO(data), overwrite=False)
+        except (AlreadyExists, ResourceAlreadyExists):
+            return False
+        return True
 
     def get(self, key: str) -> bytes:
         """

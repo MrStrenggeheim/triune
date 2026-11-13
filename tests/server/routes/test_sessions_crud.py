@@ -1,3 +1,4 @@
+# Modified for Triune.
 """Tests for Sessions API CRUD endpoints (list, get, delete, patch).
 
 Exercises the core session management routes through the ``client``
@@ -20,7 +21,7 @@ import pytest
 import pytest_asyncio
 
 from omnigent.db.utils import generate_agent_id
-from omnigent.entities import USER_SESSION_TITLE_MAX_CHARS
+from omnigent.entities import USER_SESSION_TITLE_MAX_CHARS, MessageData, NewConversationItem
 from omnigent.harnesses.opencode_native.app_server import OpenCodeNativeServer
 from omnigent.runner import create_runner_app
 from omnigent.server.routes import sessions as sessions_module
@@ -98,6 +99,38 @@ async def test_get_session(
     assert resp.status_code == 200
     body = resp.json()
     assert body["id"] == session_id
+
+
+@pytest.mark.parametrize(
+    "path", ["/v1/sessions", "/v1/sessions/{session_id}", "/v1/sessions/{session_id}/items"]
+)
+async def test_large_session_json_uses_negotiated_gzip(client, session_id, db_uri, path):
+    store = SqlAlchemyConversationStore(db_uri)
+    conversation = store.get_conversation(session_id)
+    for _ in range(2):
+        store.create_conversation(agent_id=conversation.agent_id)
+    store.append(
+        session_id,
+        [
+            NewConversationItem(
+                type="message",
+                response_id="gzip-test",
+                data=MessageData(
+                    role="user", content=[{"type": "input_text", "text": "hello " * 1000}]
+                ),
+            )
+        ],
+    )
+    path = path.format(session_id=session_id)
+    identity = await client.get(path, headers={"Accept-Encoding": "identity"})
+    compressed = await client.get(path, headers={"Accept-Encoding": "gzip"})
+    assert identity.status_code == compressed.status_code == 200
+    assert compressed.json() == identity.json()
+    assert "content-encoding" not in identity.headers
+    assert compressed.headers["content-encoding"] == "gzip"
+    assert "Accept-Encoding" in identity.headers["vary"]
+    assert "Accept-Encoding" in compressed.headers["vary"]
+    assert int(compressed.headers["content-length"]) < len(compressed.content)
 
 
 async def test_get_session_not_found(client: httpx.AsyncClient) -> None:

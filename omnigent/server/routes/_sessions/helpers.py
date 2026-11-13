@@ -1991,7 +1991,6 @@ def _resolve_harness_impl(
     if conv.agent_id is None:
         return None
     try:
-        from omnigent.harness_aliases import canonicalize_harness
         from omnigent.runtime import get_agent_cache
 
         if agents_by_id is not None:
@@ -2011,23 +2010,7 @@ def _resolve_harness_impl(
         loaded = agent_cache.load(
             agent.id, agent.bundle_location, expand_env=agent.operator_authored
         )
-        executor = loaded.spec.executor
-        # For a bundled-agent head sub-agent, report the HEAD's own harness,
-        # not the bundle brain's — `harness` is this session's provider family
-        # (a gpt head runs codex, not the claude-sdk brain). Falls back to the
-        # brain harness when the head declares none or can't be matched.
-        if conv.sub_agent_name:
-            from omnigent.runtime.workflow import _find_spec_by_name
-
-            sub = _find_spec_by_name(loaded.spec, conv.sub_agent_name)
-            if sub is not None:
-                executor = sub.executor
-        harness = (
-            executor.config.get("harness")
-            or loaded.spec.executor.config.get("harness")
-            or executor.type
-        )
-        return canonicalize_harness(harness) or harness
+        return _harness_from_spec(conv, loaded.spec)
     # UUID bind failures are wrapped by SQLAlchemy; do not hide broader DB errors.
     except (
         KeyError,
@@ -2042,6 +2025,24 @@ def _resolve_harness_impl(
         OmnigentError,
     ):
         return None
+
+
+def _harness_from_spec(conv: Conversation, spec: AgentSpec) -> str | None:
+    """Resolve a session's harness from an already loaded root spec."""
+    from omnigent.harness_aliases import canonicalize_harness
+    from omnigent.runtime.workflow import _find_spec_by_name
+
+    if conv.harness_override:
+        return conv.harness_override
+    executor = spec.executor
+    if conv.sub_agent_name:
+        sub = _find_spec_by_name(spec, conv.sub_agent_name)
+        if sub is not None:
+            executor = sub.executor
+    harness = (
+        executor.config.get("harness") or spec.executor.config.get("harness") or executor.type
+    )
+    return canonicalize_harness(harness) or harness
 
 
 def _validated_harness_override(value: str | None, agent: Agent) -> str | None:

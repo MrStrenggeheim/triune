@@ -19,6 +19,7 @@ import secrets
 import time
 import uuid
 from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
+from types import EllipsisType
 from typing import Any, Literal, cast
 
 import httpx
@@ -281,6 +282,7 @@ from omnigent.server.routes._sessions.helpers import (
     _forward_session_change_to_runner,
     _get_runner_client,
     _handle_advise_models_mcp,
+    _harness_from_spec,
     _HostRunnerStopAttempt,
     _invalidate_runner_backed_snapshot_state,
     _is_codex_native_subagent,
@@ -1380,6 +1382,7 @@ def _build_session_response(
     agent_store: AgentStore | None = None,
     agent_cache: AgentCache | None = None,
     side_chat_sealed: bool = False,
+    resolved_harness: str | EllipsisType | None = ...,
 ) -> SessionResponse:
     """
     Build a :class:`SessionResponse` from store-side entities.
@@ -1447,6 +1450,8 @@ def _build_session_response(
         ``None`` is treated as ``[]``.
     :param agent_store: Optional store used to resolve the session harness.
     :param agent_cache: Optional cache used to load the session harness spec.
+    :param resolved_harness: Precomputed harness, including an unavailable ``None``.
+        Omitted by legacy callers that still need synchronous resolution.
     :returns: The :class:`SessionResponse` for the API.
     :raises OmnigentError: If ``conv.agent_id`` is ``None``.
     """
@@ -1460,7 +1465,11 @@ def _build_session_response(
     # usage. Shared by the cost indicator and the per-model breakdown so
     # both read the same numbers.
     display_usage = subtree_usage if subtree_usage is not None else (conv.session_usage or {})
-    harness = _resolve_harness(conv, agent_store=agent_store, agent_cache=agent_cache)
+    harness = (
+        _resolve_harness(conv, agent_store=agent_store, agent_cache=agent_cache)
+        if isinstance(resolved_harness, EllipsisType)
+        else resolved_harness
+    )
     native_usage_baseline = None
     if harness == "pi-native":
         own_usage = conv.session_usage or {}
@@ -12883,6 +12892,8 @@ async def _fetch_model_options(
     session_id: str,
     conv: Conversation,
     agent_store: AgentStore | None = None,
+    *,
+    resolved_harness: str | EllipsisType | None = ...,
 ) -> list[dict[str, Any]]:
     """
     Resolve the Web UI model-picker options for a native session.
@@ -12915,6 +12926,7 @@ async def _fetch_model_options(
     :param conv: Conversation row whose labels identify the wrapper.
     :param agent_store: Optional store for the ACP spec lookup; resolves
         from the runtime globals when ``None``.
+    :param resolved_harness: Harness already resolved by the snapshot, when available.
     :returns: Model options, or ``[]`` when the session has no model picker or
         the runner-owned options are not yet available.
     """
@@ -12932,7 +12944,14 @@ async def _fetch_model_options(
         # Generic ACP sessions carry no native wrapper label; their picker
         # serves the deployment's curated provider ``models:`` shortlist
         # resolved from the spec instead of a runner-owned catalog.
-        if _resolve_harness_impl_is_acp(conv, agent_store):
+        from omnigent.harness_aliases import canonicalize_harness
+
+        is_acp = (
+            await asyncio.to_thread(_resolve_harness_impl_is_acp, conv, agent_store)
+            if isinstance(resolved_harness, EllipsisType)
+            else canonicalize_harness(resolved_harness) == "acp"
+        )
+        if is_acp:
             return await _load_acp_model_options(session_id, conv, agent_store)
         return []
     cached = _model_options_cache.get(session_id)
@@ -13502,6 +13521,7 @@ async def _get_session_snapshot(
     llm_model: str | None = None
     context_window: int | None = None
     agent_name: str | None = None
+    harness = conv.harness_override
     if agent_store is not None and agent_cache is not None and conv.agent_id is not None:
         try:
             agent = await asyncio.to_thread(agent_store.get, conv.agent_id)
@@ -13518,6 +13538,7 @@ async def _get_session_snapshot(
                         agent.bundle_location,
                         expand_env=agent.operator_authored,
                     )
+                    harness = _harness_from_spec(conv, loaded.spec)
                     resolved_spec: AgentSpec | None = loaded.spec
                     if conv.sub_agent_name:
                         _sub_spec = _find_spec_by_name(loaded.spec, conv.sub_agent_name)
@@ -13556,6 +13577,10 @@ async def _get_session_snapshot(
                         )
         except Exception:  # noqa: BLE001
             pass
+    else:
+        harness = await asyncio.to_thread(
+            _resolve_harness, conv, agent_store=agent_store, agent_cache=agent_cache
+        )
     # The harness's own report is the display authority: when a session has
     # a verbatim ``reported_model``, it supersedes the spec-derived value on
     # the wire's ``llm_model`` field (the web renders and highlights only
@@ -13581,7 +13606,9 @@ async def _get_session_snapshot(
         if not conv.reported_model:
             llm_model = conv.model_override or catalog.get("default_model")
     else:
-        model_options = await _fetch_model_options(runner_client, session_id, conv, agent_store)
+        model_options = await _fetch_model_options(
+            runner_client, session_id, conv, agent_store, resolved_harness=harness
+        )
     # Dynamic override from the forwarder (real Claude Code window).
     # Only present after the first statusLine tick; before that the
     # spec default applies.
@@ -13651,6 +13678,7 @@ async def _get_session_snapshot(
         viewer_id=viewer_id,
         agent_store=agent_store,
         agent_cache=agent_cache,
+        resolved_harness=harness,
     )
     response.inference_configured = inference_configured
     response.inference_error = inference_error

@@ -6,22 +6,37 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import io
 import json
+import logging
 import mimetypes
 import posixpath
-from typing import Any
+import uuid
+from typing import Any, TypedDict
 from urllib.parse import quote, urlencode
+from weakref import WeakValueDictionary
 
 from fastapi import APIRouter, HTTPException, Request, Response
+from starlette.responses import JSONResponse
 
 from omnigent.db.db_models import current_workspace_id
 from omnigent.entities.conversation import MessageData
 from omnigent.server.auth import LEVEL_OWNER
 from omnigent.server.routes._auth_helpers import require_access, require_user
+from omnigent.server.routes._origin import require_trusted_origin
 from omnigent.server.workbench_resources import HostWorkspaceResources, relative_path
 from omnigent.server.workbench_workspace_service import WorkbenchWorkspaceService
 from omnigent.stores.artifact_store import ArtifactStore
 from omnigent.stores.workbench_workspace_store import WorkbenchWorkspace
+
+_MAX_CAPTURE_BYTES = 50 * 1024 * 1024
+_logger = logging.getLogger(__name__)
+
+
+class SnapshotMetadata(TypedDict):
+    filename: str
+    mime: str | None
+    bytes: int
 
 
 def create_chat_attachments_router(
@@ -29,6 +44,53 @@ def create_chat_attachments_router(
     artifact_store: ArtifactStore | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/sessions/{session_id}/attachments")
+    capture_locks: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
+
+    def reference_snapshot_id(user: str | None, session_id: str, item_id: str, path: str) -> str:
+        # Preserve the original exact-path and reader-private capture identity.
+        return (
+            "chat-reference-"
+            + hashlib.sha256(
+                json.dumps([current_workspace_id(), user, session_id, item_id, path]).encode()
+            ).hexdigest()
+        )
+
+    async def stored_snapshot(snapshot_id: str, *, download: bool):
+        if artifact_store is None:
+            return None
+        try:
+            raw = await asyncio.to_thread(artifact_store.get, snapshot_id)
+        except KeyError:
+            try:
+                raw = await asyncio.to_thread(artifact_store.get, snapshot_id + ".v2")
+            except KeyError:
+                return None
+        cached = json.loads(raw)
+        metadata: SnapshotMetadata
+        if cached.get("version") == 2:
+            metadata = {
+                "filename": cached["filename"],
+                "mime": cached["mime"],
+                "bytes": cached["bytes"],
+            }
+            content = (
+                await asyncio.to_thread(artifact_store.get, cached["content_key"])
+                if download
+                else None
+            )
+            if content is not None and len(content) != metadata["bytes"]:
+                raise HTTPException(502, "Stored attachment is incomplete")
+        else:
+            # Existing captures stored the original bytes inline as base64 JSON.
+            content = base64.b64decode(cached["content"], validate=True)
+            metadata = {
+                "filename": cached["filename"],
+                "mime": cached["mime"],
+                "bytes": len(content),
+            }
+        if metadata["bytes"] > _MAX_CAPTURE_BYTES:
+            raise HTTPException(413, "Attachment exceeds 50 MiB")
+        return metadata, content if download else None
 
     async def reference_scope(
         request: Request, session_id: str, item_id: str
@@ -64,14 +126,10 @@ def create_chat_attachments_router(
     ) -> dict[str, Any]:
         """Classify an authorized reference without transferring its file contents."""
         user, scope = await reference_scope(request, session_id, item_id)
-        snapshot_id = (
-            "chat-reference-"
-            + hashlib.sha256(
-                json.dumps([current_workspace_id(), user, session_id, item_id, path]).encode()
-            ).hexdigest()
-        )
-        captured = artifact_store is not None and await asyncio.to_thread(
-            artifact_store.exists, snapshot_id
+        snapshot_id = reference_snapshot_id(user, session_id, item_id, path)
+        captured = artifact_store is not None and (
+            await asyncio.to_thread(artifact_store.exists, snapshot_id)
+            or await asyncio.to_thread(artifact_store.exists, snapshot_id + ".v2")
         )
         try:
             workspace = await service.resolve_session(request, session_id, captured=scope)
@@ -139,39 +197,39 @@ def create_chat_attachments_router(
         workspace, path = await resolve_reference_location(request, session_id, scope, path)
         return {"workspace": await service.metadata(workspace), "path": path}
 
-    @router.get("/references/{item_id}")
-    async def reference(request: Request, session_id: str, item_id: str, path: str):
+    async def capture_reference(
+        request: Request, session_id: str, item_id: str, path: str, *, download: bool
+    ):
         user, scope = await reference_scope(request, session_id, item_id)
-        # Reference snapshots stay private to the reader; they must not turn a
-        # private workspace path into a file shared with every chat participant.
-        snapshot_id = (
-            "chat-reference-"
-            + hashlib.sha256(
-                json.dumps([current_workspace_id(), user, session_id, item_id, path]).encode()
-            ).hexdigest()
-        )
+        if not download and artifact_store is None:
+            raise HTTPException(503, "Attachment snapshot storage is unavailable")
+        snapshot_id = reference_snapshot_id(user, session_id, item_id, path)
+        # Share one live read within this router; conditional publication also
+        # protects the first original across processes and server replicas.
+        async with capture_locks.setdefault(snapshot_id, asyncio.Lock()):
+            try:
+                stored = await stored_snapshot(snapshot_id, download=download)
+            except HTTPException:
+                raise
+            except Exception as exc:
+                _logger.exception("Attachment snapshot read failed")
+                raise HTTPException(502, "Attachment snapshot could not be read") from exc
+            if stored is not None:
+                return stored
+            return await capture_source(request, session_id, scope, path, snapshot_id, download)
 
-        def stored_response(filename, mime, content):
-            return Response(
-                content,
-                media_type=mime or "application/octet-stream",
-                headers={
-                    "Content-Disposition": "attachment; filename*=UTF-8''"
-                    + quote(filename, safe=""),
-                    "X-Content-Type-Options": "nosniff",
-                    "Cache-Control": "private, no-store",
-                },
-            )
+    async def capture_source(
+        request: Request,
+        session_id: str,
+        scope: dict[str, Any],
+        path: str,
+        snapshot_id: str,
+        download: bool,
+    ):
+        """Write immutable .bin bytes and commit metadata at <legacy-key>.v2.
 
-        if artifact_store is not None and await asyncio.to_thread(
-            artifact_store.exists, snapshot_id
-        ):
-            cached = json.loads(await asyncio.to_thread(artifact_store.get, snapshot_id))
-            return stored_response(
-                cached["filename"],
-                cached["mime"],
-                base64.b64decode(cached["content"], validate=True),
-            )
+        The unsuffixed legacy key keeps its inline base64 JSON format.
+        """
         workspace, path = await resolve_reference_location(request, session_id, scope, path)
         if workspace.target_kind == "runneronly":
             # Keep the runner's original identity; never fall back to the host.
@@ -179,7 +237,7 @@ def create_chat_attachments_router(
 
             from omnigent.server.workbench_resources import RunnerWorkspaceResources
 
-            scope_copy = dict(request.scope, query_string=b"download=true")
+            scope_copy = dict(request.scope, method="GET", query_string=b"download=true")
             response = await RunnerWorkspaceResources(service, workspace).dispatch(
                 StarletteRequest(scope_copy),
                 "environments/default/filesystem/" + path,
@@ -192,39 +250,116 @@ def create_chat_attachments_router(
             response.headers["Cache-Control"] = "private, no-store"
         else:
             adapter = HostWorkspaceResources(service, workspace)
-            response = await adapter.download_file(path, max_bytes=50 * 1024 * 1024)
+            response = await adapter.download_file(path, max_bytes=_MAX_CAPTURE_BYTES)
             response.headers["Content-Type"] = (
                 mimetypes.guess_type(path)[0] or "application/octet-stream"
             )
             response.headers["X-Content-Type-Options"] = "nosniff"
             response.headers["Cache-Control"] = "private, no-store"
-        if artifact_store is None or response.status_code >= 400:
+        if response.status_code >= 400:
             return response
-        if hasattr(response, "body_iterator"):
-            data = bytearray()
-            iterator = response.body_iterator.__aiter__()
+        iterator = (
+            response.body_iterator.__aiter__() if hasattr(response, "body_iterator") else None
+        )
+        try:
             try:
+                length = response.headers.get("Content-Length")
+                expected = int(length) if length is not None else None
+                if expected is not None and expected < 0:
+                    raise ValueError("Negative content length")
+            except ValueError as exc:
+                raise HTTPException(502, "Attachment download returned an invalid length") from exc
+            if expected is not None and expected > _MAX_CAPTURE_BYTES:
+                raise HTTPException(413, "Attachment exceeds 50 MiB")
+            if iterator is not None:
+                data = io.BytesIO()
                 async for chunk in iterator:
-                    data.extend(chunk.encode() if isinstance(chunk, str) else chunk)
-                    if len(data) > 50 * 1024 * 1024:
-                        raise HTTPException(413, "Attachment exceeds 50 MB")
-            finally:
+                    chunk = chunk.encode() if isinstance(chunk, str) else chunk
+                    if data.tell() + len(chunk) > _MAX_CAPTURE_BYTES:
+                        raise HTTPException(413, "Attachment exceeds 50 MiB")
+                    data.write(chunk)
+                content = data.getvalue()
+            else:
+                content = bytes(response.body)
+            if len(content) > _MAX_CAPTURE_BYTES:
+                raise HTTPException(413, "Attachment exceeds 50 MiB")
+            if expected is not None and len(content) != expected:
+                raise HTTPException(502, "Attachment download is incomplete")
+        finally:
+            if iterator is not None:
                 close = getattr(iterator, "aclose", None)
                 if close is not None:
                     await close()
-            content = bytes(data)
-        else:
-            content = bytes(response.body)
-        if len(content) > 50 * 1024 * 1024:
-            raise HTTPException(413, "Attachment exceeds 50 MB")
         filename = path.replace("\\", "/").split("/")[-1]
         mime = response.headers.get("Content-Type", "application/octet-stream")
-        cached = {
-            "filename": filename,
-            "mime": mime,
-            "content": base64.b64encode(content).decode("ascii"),
-        }
-        await asyncio.to_thread(artifact_store.put, snapshot_id, json.dumps(cached).encode())
-        return stored_response(filename, mime, content)
+        metadata: SnapshotMetadata = {"filename": filename, "mime": mime, "bytes": len(content)}
+        if artifact_store is not None:
+
+            def publish():
+                content_key = snapshot_id + "-" + uuid.uuid4().hex + ".bin"
+                published = False
+                try:
+                    artifact_store.put(content_key, content)
+                    captured = {**metadata, "version": 2, "content_key": content_key}
+                    try:
+                        published = artifact_store.put_if_absent(
+                            snapshot_id + ".v2", json.dumps(captured).encode()
+                        )
+                    except Exception:
+                        # A remote write can commit before losing its response.
+                        try:
+                            committed = json.loads(artifact_store.get(snapshot_id + ".v2"))
+                            published = committed.get("content_key") == content_key
+                        except KeyError:
+                            pass
+                        except Exception:
+                            published = True
+                            _logger.exception("Could not verify attachment snapshot publication")
+                        raise
+                    return published
+                finally:
+                    if not published:
+                        try:
+                            artifact_store.delete(content_key)
+                        except Exception:
+                            _logger.exception("Unpublished attachment cleanup failed")
+
+            try:
+                published = await asyncio.to_thread(publish)
+                if not published:
+                    stored = await stored_snapshot(snapshot_id, download=download)
+                    if stored is None:
+                        raise RuntimeError("Published attachment disappeared")
+                    return stored
+            except Exception as exc:
+                _logger.exception("Attachment snapshot publication failed")
+                raise HTTPException(502, "Attachment snapshot could not be saved") from exc
+        return metadata, content if download else None
+
+    @router.post("/references/{item_id}/capture")
+    async def capture(request: Request, session_id: str, item_id: str, path: str):
+        require_trusted_origin(request)
+        result = await capture_reference(request, session_id, item_id, path, download=False)
+        if isinstance(result, Response):
+            return result
+        metadata, _ = result
+        return JSONResponse(metadata, headers={"Cache-Control": "private, no-store"})
+
+    @router.get("/references/{item_id}")
+    async def reference(request: Request, session_id: str, item_id: str, path: str):
+        result = await capture_reference(request, session_id, item_id, path, download=True)
+        if isinstance(result, Response):
+            return result
+        metadata, content = result
+        return Response(
+            content,
+            headers={
+                "Content-Type": metadata["mime"] or "application/octet-stream",
+                "Content-Disposition": "attachment; filename*=UTF-8''"
+                + quote(metadata["filename"], safe=""),
+                "X-Content-Type-Options": "nosniff",
+                "Cache-Control": "private, no-store",
+            },
+        )
 
     return router

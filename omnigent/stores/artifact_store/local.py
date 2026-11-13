@@ -1,3 +1,4 @@
+# Modified for Triune.
 """Local filesystem implementation of ArtifactStore."""
 
 from __future__ import annotations
@@ -96,6 +97,21 @@ class LocalArtifactStore(ArtifactStore):
         except BaseException:
             tmp_path.unlink(missing_ok=True)
             raise
+
+    def put_if_absent(self, key: str, data: bytes) -> bool:
+        """Publish a complete sibling file without replacing an earlier capture."""
+        path = self._resolve(key)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = path.with_name(f"{path.name}.{uuid.uuid4().hex}.tmp")
+        try:
+            tmp_path.write_bytes(data)
+            try:
+                os.link(tmp_path, path)
+            except FileExistsError:
+                return False
+            return True
+        finally:
+            tmp_path.unlink(missing_ok=True)
 
     def get(self, key: str) -> bytes:
         """

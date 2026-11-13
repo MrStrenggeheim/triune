@@ -1,3 +1,4 @@
+# Modified for Triune.
 """Workspace authorization and target resolution independent of chat lifetime."""
 
 from __future__ import annotations
@@ -282,7 +283,24 @@ class WorkbenchWorkspaceService:
             raise HTTPException(response.status_code, response.text)
         return response
 
-    async def metadata(self, workspace: WorkbenchWorkspace) -> dict[str, Any]:
+    async def metadata_many(self, workspaces: list[WorkbenchWorkspace]) -> list[dict[str, Any]]:
+        """Reuse availability checks for identical targets within one listing."""
+        availability: dict[tuple[str | None, str, str, str, str | None], bool] = {}
+        result = []
+        for workspace in workspaces:
+            key = (
+                workspace.owner_user_id,
+                workspace.target_kind,
+                workspace.target_id,
+                workspace.generation,
+                workspace.host_id,
+            )
+            if key not in availability:
+                availability[key] = await self._available(workspace)
+            result.append(self._metadata(workspace, availability[key]))
+        return result
+
+    async def _available(self, workspace: WorkbenchWorkspace) -> bool:
         available = False
         try:
             if workspace.target_kind == "runneronly":
@@ -293,6 +311,13 @@ class WorkbenchWorkspaceService:
         except HTTPException as exc:
             if exc.status_code not in {403, 404, 409, 503}:
                 raise
+        return available
+
+    async def metadata(self, workspace: WorkbenchWorkspace) -> dict[str, Any]:
+        return self._metadata(workspace, await self._available(workspace))
+
+    @staticmethod
+    def _metadata(workspace: WorkbenchWorkspace, available: bool) -> dict[str, Any]:
         return {
             **asdict(workspace),
             "roots": [workspace.root],
