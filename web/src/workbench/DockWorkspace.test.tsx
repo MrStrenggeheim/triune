@@ -1118,6 +1118,46 @@ describe("useDockLayout", () => {
     expect(dockPaneForView(result.current.layout, "dirty")).toBeUndefined();
   });
 
+  it("persists captured-original menu changes without discarding a dirty preview", async () => {
+    const guard = vi.fn(async () => false);
+    const storage = memoryStorage();
+    const preview = view("file", "preview");
+    const initialLayout = createDockLayout([preview]);
+    const { result, unmount } = renderHook(() =>
+      useDockLayout({ scope, storage, initialLayout, onBeforeClose: guard }),
+    );
+    act(() => result.current.saveChatLayout("A"));
+    act(() => result.current.saveChatLayout("B"));
+    const originalAttachment = { sessionId: "source", itemId: "message", reference: "/file" };
+    await act(async () => {
+      expect(
+        await result.current.updateView("file", {
+          resource: { ...preview.resource, originalAttachment },
+        }),
+      ).toBe(true);
+    });
+    expect(guard).not.toHaveBeenCalled();
+    expect(
+      result.current.retainedViews.find((entry) => entry.id === "file")?.resource
+        .originalAttachment,
+    ).toEqual(originalAttachment);
+    unmount();
+    const restored = renderHook(() =>
+      useDockLayout({ scope, storage, initialLayout, onBeforeClose: guard }),
+    );
+    expect(restored.result.current.layout.views[0].resource.originalAttachment).toEqual(
+      originalAttachment,
+    );
+    await act(async () => {
+      expect(
+        await restored.result.current.updateView("file", {
+          resource: { ...preview.resource, path: "/another-file", originalAttachment },
+        }),
+      ).toBe(false);
+    });
+    expect(guard).toHaveBeenCalledOnce();
+  });
+
   it("does not let stale navigation discard newer layout edits", async () => {
     const decision = deferred<boolean>();
     const { result } = renderHook(() =>

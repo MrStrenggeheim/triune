@@ -21,6 +21,8 @@ export type ActivitySource =
 export interface ActivityViewProps {
   source?: ActivitySource | null;
   active?: boolean;
+  focusAgentId?: string;
+  linkRequestId?: string;
   onSourceChange: (source: ActivitySource) => void | Promise<void>;
   onOpenTerminal: (target: ChatActivityTerminalTarget) => void;
   onNewTerminal: (workspace: WorkbenchWorkspace) => void;
@@ -80,6 +82,8 @@ export function ActivityView(props: ActivityViewProps) {
         conversationId={source.conversationId}
         rootSessionId={source.conversationId}
         active={props.active}
+        focusAgentId={props.focusAgentId}
+        linkRequestId={props.linkRequestId}
         sourceControl={<ActivitySourcePicker source={source} onChange={changeSource} />}
         onOpenTerminal={onOpenTerminal}
       />

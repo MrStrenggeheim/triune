@@ -296,8 +296,8 @@ def test_unified_chat_draft_layout_and_global_commands(
     composer.fill("A draft retained through layout changes")
     expect(composer).to_have_value("A draft retained through layout changes")
     page.get_by_role("button", name="Search or run a command").click()
-    page.get_by_test_id("command-palette-input").fill("Activity")
-    expect(page.get_by_role("option", name="Activity", exact=True)).to_be_visible()
+    page.get_by_test_id("command-palette-input").fill("Orchestration")
+    expect(page.get_by_role("option", name="Orchestration", exact=True)).to_be_visible()
     _capture(page, output_path, "palette-before-escape")
     page.get_by_test_id("command-palette-input").press("Escape")
     expect(page.get_by_role("dialog", name="Command palette")).to_have_count(0)
@@ -497,9 +497,9 @@ def test_closing_shell_view_detaches_without_stopping_process(
     expect(terminal).to_have_count(0)
     expect(page.get_by_role("dialog")).to_have_count(0)
     assert journey.stops == []
-    _open(page, "Activity")
-    history = _view(page, "Activity")
-    history.get_by_role("button", name="Choose activity source", exact=False).click()
+    _open(page, "Orchestration")
+    history = _view(page, "Orchestration")
+    history.get_by_role("button", name="Choose orchestration source", exact=False).click()
     page.get_by_role("option", name="Browser host", exact=True).click()
     expect(history.get_by_role("button", name="shell · fixture", exact=True)).to_be_visible()
     assert journey.stops == []

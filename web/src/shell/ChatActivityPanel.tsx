@@ -1,12 +1,11 @@
 // Modified for Triune.
+import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
+import { BotIcon, EllipsisIcon, InfoIcon, TerminalIcon } from "lucide-react";
 import { TooltipButton } from "@/components/ui/tooltip";
-import { useState, type ReactNode } from "react";
-import { ChevronDownIcon, ChevronRightIcon, TerminalIcon } from "lucide-react";
-import { ActivityRow } from "@/components/ActivityRow";
+import { SubagentTaskStatus } from "@/components/blocks/SubagentTaskRow";
 import { PeerMessage } from "@/components/blocks/PeerMessage";
 import { ConversationScopeContext } from "@/components/chat/conversationScope";
 import { Button } from "@/components/ui/button";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   Dialog,
   DialogContent,
@@ -15,8 +14,28 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useChatActivity, type ChatActivityEntry } from "@/hooks/useChatActivity";
+import { useChildSessionTree, type ChildSessionInfo } from "@/hooks/useChildSessions";
+import { useSession } from "@/hooks/useSession";
 import { peerActivityKey, usePeerMessages } from "@/hooks/usePeerMessages";
-import { AgentsViewModeControls, SubagentsPanel, type AgentsViewMode } from "./SubagentsPanel";
+import { subagentName, subagentTaskDescription } from "@/lib/subagentActivity";
+import { useWorkbenchActions } from "@/workbench/WorkbenchContext";
+import { Link } from "@/lib/routing";
+import { childStatus, sessionStatus, type AgentStatus } from "./subagentStatus";
+import type { AgentsViewMode } from "./SubagentsPanel";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+
+const SubagentsGraphView = lazy(() =>
+  import("./SubagentsGraphView").then((module) => ({ default: module.SubagentsGraphView })),
+);
 
 export interface ChatActivityTerminalTarget {
   sessionId: string;
@@ -28,6 +47,8 @@ export interface ChatActivityPanelProps {
   conversationId: string;
   rootSessionId: string;
   active?: boolean;
+  focusAgentId?: string;
+  linkRequestId?: string;
   sourceControl?: ReactNode;
   /** Open this exact existing resource, even when it belongs to another chat. */
   onOpenTerminal?: (target: ChatActivityTerminalTarget) => void;
@@ -124,8 +145,21 @@ const STATE_LABELS: Record<ChatActivityEntry["state"], string> = {
   unknown: "State unknown",
 };
 
+function groupLastActive(group: ShellGroup): number {
+  return Math.max(
+    0,
+    ...[...(group.terminal ? [group.terminal] : []), ...group.commands].flatMap((entry) => [
+      timestamp(entry.started_at) ?? 0,
+      timestamp(entry.ended_at) ?? 0,
+    ]),
+  );
+}
+
+function isActiveAgent(child: ChildSessionInfo) {
+  return ["launching", "working", "awaiting"].includes(childStatus(child).activity);
+}
+
 export function ChatActivityPanel(props: ChatActivityPanelProps) {
-  // A chat switch must close retained output from the previous chat immediately.
   return <ChatActivityContent key={props.conversationId} {...props} />;
 }
 
@@ -133,190 +167,352 @@ function ChatActivityContent({
   conversationId,
   rootSessionId,
   active = true,
+  focusAgentId,
+  linkRequestId,
   sourceControl,
   onOpenTerminal,
 }: ChatActivityPanelProps) {
-  const activity = useChatActivity(conversationId, { enabled: active });
-  const peers = usePeerMessages(conversationId, { enabled: active });
   const [filter, setFilter] = useState<ActivityFilter>("All");
   const [viewMode, setViewMode] = useState<AgentsViewMode>("list");
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [optionsOpen, setOptionsOpen] = useState(false);
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(focusAgentId ?? null);
+  useEffect(() => {
+    if (active && focusAgentId) setSelectedAgentId(focusAgentId);
+  }, [active, focusAgentId, linkRequestId]);
+  const agents = useChildSessionTree(rootSessionId, active);
+  const activity = useChatActivity(conversationId, { enabled: active });
+  const peers = usePeerMessages(conversationId, { enabled: active && filter === "Messages" });
   const groups = shellGroups(activity.data?.data ?? []);
-  const live = groups.filter((group) => ["running", "idle"].includes(groupState(group)));
-  const past = groups.filter((group) => groupState(group) === "exited");
-  const unavailable = groups.filter((group) =>
-    ["unknown", "disconnected"].includes(groupState(group)),
-  );
   const selected = groups.find((group) => group.id === selectedGroupId);
+  const rows = [
+    ...agents.children.filter(isActiveAgent).map((child) => ({
+      kind: "agent" as const,
+      id: child.id,
+      lastActive: (child.updated_at ?? child.created_at ?? 0) * 1000,
+      child,
+    })),
+    ...groups
+      .filter((group) => group.terminal && isLive(group.terminal))
+      .map((group) => ({
+        kind: "shell" as const,
+        id: group.id,
+        lastActive: groupLastActive(group),
+        group,
+      })),
+  ]
+    .filter(
+      (row) =>
+        filter === "All" ||
+        (filter === "Agents" && row.kind === "agent") ||
+        (filter === "Shells" && row.kind === "shell"),
+    )
+    .sort((left, right) => right.lastActive - left.lastActive || left.id.localeCompare(right.id));
 
-  const renderGroup = (group: ShellGroup) => (
+  const renderShell = (group: ShellGroup) => (
     <ShellRow
       key={group.id}
       group={group}
       onOpenTerminal={onOpenTerminal}
-      onInspect={() => setSelectedGroupId(group.id)}
+      onInspect={() => {
+        setDetailsOpen(false);
+        setSelectedGroupId(group.id);
+      }}
     />
   );
-
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden bg-[var(--workspace-content)]">
-      <div className="workspace-control-header flex items-center gap-1 border-b bg-[var(--workspace-content)] px-2">
-        {sourceControl ?? <h2 className="pl-1 font-medium text-ui">Activity</h2>}
-        <div
-          role="group"
-          aria-label="Activity filter"
-          className="ml-auto flex items-center gap-0.5"
-        >
-          {(["All", "Agents", "Messages", "Shells"] as const).map((value) => (
-            <Button
-              key={value}
-              variant={filter === value ? "secondary" : "ghost"}
-              size="sm"
-              className={filter === value ? "bg-[var(--workspace-selected)] px-2" : "px-2"}
-              aria-pressed={filter === value}
-              onClick={() => setFilter(value)}
-            >
-              {value}
-            </Button>
-          ))}
-        </div>
-        {(filter === "All" || filter === "Agents") && (
-          <AgentsViewModeControls viewMode={viewMode} onViewModeChange={setViewMode} />
+      <header className="workspace-control-header flex min-w-0 shrink-0 items-center gap-1 border-b bg-[var(--workspace-content)] px-2">
+        {sourceControl ?? (
+          <h2 className="min-w-0 truncate pl-1 font-medium text-ui">Orchestration</h2>
         )}
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        <section aria-label="Agents" hidden={filter !== "All" && filter !== "Agents"}>
-          <SubagentsPanel
-            conversationId={conversationId}
-            rootSessionId={rootSessionId}
-            embedded
-            viewMode={viewMode}
-          />
-        </section>
-        <section
-          aria-label="Messages"
-          hidden={filter !== "All" && filter !== "Messages"}
-          className="p-2"
-        >
-          <h3 className="px-2 text-sm font-medium">Messages</h3>
-          {peers.isLoading && (
-            <p className="px-2 text-sm text-muted-foreground">Loading outgoing messages…</p>
-          )}
-          {peers.error && (
-            <div role="status" className="px-2 text-sm text-muted-foreground">
-              <p>
-                Outgoing messages could not be refreshed. Incoming messages reflect loaded
-                conversation history.
-              </p>
-              <Button variant="ghost" size="sm" onClick={() => void peers.refetch()}>
-                Retry messages
-              </Button>
-            </div>
-          )}
-          {peers.messages.length === 0 && !peers.isLoading && (
-            <p className="px-2 text-sm text-muted-foreground">No messages in loaded history.</p>
-          )}
-          <ul>
-            {peers.messages.map((message) => (
-              <li
-                key={peerActivityKey(message)}
-                className="border-b border-border/50 last:border-b-0"
-              >
-                <ConversationScopeContext.Provider value={conversationId}>
-                  <PeerMessage
-                    communication={message.communication}
-                    content={message.content}
-                    itemId={message.id}
-                  />
-                </ConversationScopeContext.Provider>
-              </li>
-            ))}
-          </ul>
-          {peers.hasNextPage && (
+        <DropdownMenu open={active && optionsOpen} onOpenChange={setOptionsOpen}>
+          <DropdownMenuTrigger asChild>
             <Button
               variant="ghost"
-              size="sm"
-              disabled={peers.isFetchingNextPage}
-              onClick={() => void peers.fetchNextPage()}
+              size="icon-sm"
+              className="ml-auto"
+              aria-label="Orchestration options"
             >
-              Load older outgoing messages
+              <EllipsisIcon className="size-3.5" />
             </Button>
-          )}
-        </section>
-        <section
-          aria-label="Shell activity"
-          hidden={filter !== "All" && filter !== "Shells"}
-          className="space-y-2 p-2"
-        >
-          <h3 className="px-2 text-sm font-medium">Shells</h3>
-          {activity.isLoading && (
-            <p className="px-2 text-sm text-muted-foreground">Loading shell activity…</p>
-          )}
-          {activity.error && (
-            <div role="status" className="px-2 text-sm text-muted-foreground">
-              <p>
-                {activity.data
-                  ? "Shell activity could not be refreshed; showing the last recorded state."
-                  : "Shell activity unavailable."}
-              </p>
-              <Button variant="ghost" size="sm" onClick={() => void activity.refetch()}>
-                Retry
-              </Button>
-            </div>
-          )}
-          {activity.data?.warning && (
-            <p role="status" className="px-2 text-sm text-muted-foreground">
-              {activity.data.warning}
-            </p>
-          )}
-          {activity.data && activity.data.coverage !== "complete" && (
-            <p className="px-2 text-xs text-muted-foreground">
-              {typeof activity.data.coverage === "string"
-                ? `History coverage: ${activity.data.coverage || "unavailable"}. Older shell activity may not have been recorded.`
-                : `Up to ${activity.data.coverage.max_entries} retained entries; ${activity.data.coverage.max_output_bytes} bytes per output snapshot.`}
-            </p>
-          )}
-          {typeof activity.data?.coverage === "object" &&
-            activity.data.coverage.terminals === "unavailable" && (
-              <p className="px-2 text-sm text-muted-foreground">
-                Current terminal activity unavailable.
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuLabel>Show</DropdownMenuLabel>
+            <DropdownMenuRadioGroup
+              value={filter}
+              onValueChange={(value) => setFilter(value as ActivityFilter)}
+            >
+              {(["All", "Agents", "Messages", "Shells"] as const).map((value) => (
+                <DropdownMenuRadioItem key={value} value={value}>
+                  {value}
+                </DropdownMenuRadioItem>
+              ))}
+            </DropdownMenuRadioGroup>
+            <DropdownMenuSeparator />
+            <DropdownMenuRadioGroup
+              value={viewMode}
+              onValueChange={(value) => {
+                setViewMode(value as AgentsViewMode);
+                if (filter === "Messages" || filter === "Shells") setFilter("Agents");
+              }}
+            >
+              <DropdownMenuRadioItem value="list">List view</DropdownMenuRadioItem>
+              <DropdownMenuRadioItem value="graph">Graph view</DropdownMenuRadioItem>
+            </DropdownMenuRadioGroup>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={() => setDetailsOpen(true)}>Details</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </header>
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        {(agents.error || activity.error) && (
+          <p role="alert" className="px-3 py-2 text-sm text-destructive">
+            {agents.error ? "Could not refresh agents." : "Could not refresh shells."}
+          </p>
+        )}
+        {activity.data?.warning && (
+          <p role="status" className="px-3 text-xs">
+            History incomplete
+          </p>
+        )}
+        {filter !== "Messages" && (
+          <>
+            {viewMode === "graph" && filter !== "Shells" && active ? (
+              <Suspense
+                fallback={
+                  <p role="status" className="p-3 text-sm">
+                    Loading graph…
+                  </p>
+                }
+              >
+                <SubagentsGraphView conversationId={conversationId} rootSessionId={rootSessionId} />
+              </Suspense>
+            ) : (
+              <ul aria-label="Orchestration" className="density-list flex flex-col px-2">
+                {rows.map((row) =>
+                  row.kind === "agent" ? (
+                    <AgentRow
+                      key={row.id}
+                      child={row.child}
+                      onInspect={() => setSelectedAgentId(row.id)}
+                    />
+                  ) : (
+                    renderShell(row.group)
+                  ),
+                )}
+              </ul>
+            )}
+            {rows.length === 0 && viewMode === "list" && (
+              <p role="status" className="p-4 text-center text-sm text-muted-foreground">
+                {agents.isLoading || activity.isLoading
+                  ? "Loading orchestration…"
+                  : "No active agents or open shells."}
               </p>
             )}
-          {activity.data && groups.length === 0 && (
-            <p className="px-2 text-sm text-muted-foreground">
-              No shell activity recorded for this chat.
-            </p>
-          )}
-          {live.length > 0 && (
-            <section aria-label="Live shells">
-              <h4 className="px-2 py-1 text-xs text-muted-foreground">Live</h4>
-              <ul>{live.map(renderGroup)}</ul>
-            </section>
-          )}
-          {unavailable.length > 0 && (
-            <section aria-label="Unavailable shells">
-              <h4 className="px-2 py-1 text-xs text-muted-foreground">Unavailable</h4>
-              <ul>{unavailable.map(renderGroup)}</ul>
-            </section>
-          )}
-          {past.length > 0 && (
-            <Collapsible>
-              <CollapsibleTrigger asChild>
-                <Button variant="ghost" size="sm" className="group w-full justify-start">
-                  <ChevronRightIcon className="size-3.5 group-data-[state=open]:hidden" />
-                  <ChevronDownIcon className="hidden size-3.5 group-data-[state=open]:block" />
-                  Past ({past.length})
-                </Button>
-              </CollapsibleTrigger>
-              <CollapsibleContent>
-                <ul>{past.map(renderGroup)}</ul>
-              </CollapsibleContent>
-            </Collapsible>
-          )}
-        </section>
+          </>
+        )}
+        {filter === "Messages" && (
+          <section aria-label="Messages" className="p-2">
+            {peers.isLoading && (
+              <p role="status" className="p-2 text-sm">
+                Loading messages…
+              </p>
+            )}
+            {peers.error && (
+              <p role="alert" className="p-2 text-sm text-destructive">
+                Could not refresh messages.
+              </p>
+            )}
+            {peers.messages.length === 0 && !peers.isLoading && (
+              <p className="p-2 text-sm text-muted-foreground">No messages in loaded history.</p>
+            )}
+            <ul>
+              {peers.messages.map((message) => (
+                <li
+                  key={peerActivityKey(message)}
+                  className="border-b border-border/50 last:border-b-0"
+                >
+                  <ConversationScopeContext.Provider value={conversationId}>
+                    <PeerMessage
+                      communication={message.communication}
+                      content={message.content}
+                      itemId={message.id}
+                    />
+                  </ConversationScopeContext.Provider>
+                </li>
+              ))}
+            </ul>
+            {peers.hasNextPage && (
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={peers.isFetchingNextPage}
+                onClick={() => void peers.fetchNextPage()}
+              >
+                Load older outgoing messages
+              </Button>
+            )}
+          </section>
+        )}
       </div>
-      {selected && <ShellOutputDialog group={selected} onClose={() => setSelectedGroupId(null)} />}
+      {active && detailsOpen && (
+        <Dialog open onOpenChange={setDetailsOpen}>
+          <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>Orchestration details</DialogTitle>
+              <DialogDescription>
+                Recorded agents and shell activity for this chat.
+              </DialogDescription>
+            </DialogHeader>
+            {agents.error && (
+              <p role="alert" className="text-sm text-destructive">
+                {agents.error.message}
+              </p>
+            )}
+            {activity.error && (
+              <>
+                <p role="alert" className="text-sm text-destructive">
+                  {activity.error.message}
+                </p>
+                <Button variant="ghost" size="sm" onClick={() => void activity.refetch()}>
+                  Retry shells
+                </Button>
+              </>
+            )}
+            {activity.data?.warning && <p className="text-sm">{activity.data.warning}</p>}
+            {activity.data && activity.data.coverage !== "complete" && (
+              <p className="text-xs text-muted-foreground">
+                {typeof activity.data.coverage === "string"
+                  ? `History coverage: ${activity.data.coverage || "unavailable"}. Older shell activity may not have been recorded.`
+                  : `Up to ${activity.data.coverage.max_entries} retained entries; ${activity.data.coverage.max_output_bytes} bytes per output snapshot.`}
+              </p>
+            )}
+            {typeof activity.data?.coverage === "object" &&
+              activity.data.coverage.terminals === "unavailable" && (
+                <p className="text-sm">Current terminal activity unavailable.</p>
+              )}
+            <ul aria-label="Recorded activity" className="density-list flex flex-col">
+              {[...agents.children]
+                .sort((a, b) => (b.updated_at ?? 0) - (a.updated_at ?? 0))
+                .map((child) => (
+                  <AgentRow
+                    key={child.id}
+                    child={child}
+                    onInspect={() => {
+                      setDetailsOpen(false);
+                      setSelectedAgentId(child.id);
+                    }}
+                  />
+                ))}
+              {[...groups].sort((a, b) => groupLastActive(b) - groupLastActive(a)).map(renderShell)}
+            </ul>
+          </DialogContent>
+        </Dialog>
+      )}
+      {active && selected && (
+        <ShellOutputDialog group={selected} onClose={() => setSelectedGroupId(null)} />
+      )}
+      {active && selectedAgentId && (
+        <AgentDetails
+          agentId={selectedAgentId}
+          child={agents.children.find((child) => child.id === selectedAgentId)}
+          onClose={() => setSelectedAgentId(null)}
+        />
+      )}
     </div>
+  );
+}
+
+function AgentRow({ child, onInspect }: { child: ChildSessionInfo; onInspect: () => void }) {
+  const status = childStatus(child);
+  return (
+    <li data-agent-id={child.id} className="border-b border-border/50 last:border-b-0">
+      <TooltipButton
+        className="density-row flex w-full min-w-0 items-center text-left hover:bg-[var(--workspace-hover-on-content)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        onClick={onInspect}
+      >
+        <BotIcon aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 flex-1 truncate text-sm">
+          <strong className="font-medium">{subagentName(child)}</strong>:{" "}
+          {subagentTaskDescription(child) ?? status.label}
+        </span>
+        <SubagentTaskStatus status={status} />
+      </TooltipButton>
+    </li>
+  );
+}
+
+function AgentDetails({
+  agentId,
+  child,
+  onClose,
+}: {
+  agentId: string;
+  child?: ChildSessionInfo;
+  onClose: () => void;
+}) {
+  // Explicit inspection can resolve a completed target outside the overview/tree cache.
+  const { session, isLoading, error } = useSession(child ? null : agentId);
+  const workbench = useWorkbenchActions();
+  const name = child
+    ? subagentName(child)
+    : (session?.subAgentName ?? session?.agentName ?? "Agent");
+  const status: AgentStatus = child
+    ? childStatus(child)
+    : sessionStatus(session?.status, session?.lastTaskError);
+  return (
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+    >
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{name}</DialogTitle>
+          <DialogDescription>
+            {child
+              ? (subagentTaskDescription(child) ?? "No task description recorded.")
+              : "Recorded agent details."}
+          </DialogDescription>
+        </DialogHeader>
+        {isLoading ? (
+          <p role="status">Loading agent…</p>
+        ) : error ? (
+          <p role="alert" className="text-sm text-destructive">
+            Could not load this agent.
+          </p>
+        ) : (
+          <SubagentTaskStatus status={status} />
+        )}
+        {child?.last_task_error && (
+          <p className="whitespace-pre-wrap text-sm">{child.last_task_error.message}</p>
+        )}
+        <p className="break-all text-xs text-muted-foreground">Session: {agentId}</p>
+        <Button variant="secondary" asChild>
+          <Link
+            to={`/c/${encodeURIComponent(agentId)}`}
+            onClick={(event) => {
+              if (
+                !workbench ||
+                event.button !== 0 ||
+                event.metaKey ||
+                event.ctrlKey ||
+                event.shiftKey ||
+                event.altKey
+              )
+                return;
+              event.preventDefault();
+              workbench.openConversation(agentId);
+            }}
+          >
+            Open conversation
+          </Link>
+        </Button>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -330,7 +526,6 @@ function ShellRow({
   onInspect: () => void;
 }) {
   const terminal = group.terminal;
-  const state = groupState(group);
   const live = terminal && isLive(terminal);
   const target =
     live && terminal.terminal_id
@@ -344,76 +539,25 @@ function ShellRow({
       : undefined;
   const openTerminal = target && onOpenTerminal ? () => onOpenTerminal(target) : undefined;
   return (
-    <li className="border-b border-border/50 px-2 last:border-b-0">
-      <ActivityRow
-        icon={<TerminalIcon aria-hidden="true" className="size-3.5" />}
-        title={
-          <TooltipButton
-            type="button"
-            className="min-w-0 truncate text-left text-sm hover:underline"
-            onClick={openTerminal ?? onInspect}
-          >
-            {groupName(group)}
-          </TooltipButton>
-        }
-        status={
-          <>
-            {STATE_LABELS[state]}
-            {terminal?.exit_status != null ? ` · exit ${terminal.exit_status}` : ""}
-          </>
-        }
+    <li className="density-row flex min-w-0 items-center border-b border-border/50 last:border-b-0">
+      <TerminalIcon aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
+      <TooltipButton
+        className="min-w-0 flex-1 truncate text-left text-sm hover:underline"
+        onClick={openTerminal ?? onInspect}
       >
-        <Button
-          variant="ghost"
-          size="sm"
-          aria-label={`Inspect ${groupName(group)}`}
-          onClick={onInspect}
-        >
-          Inspect output
-        </Button>
-        {terminal && (
-          <p className="text-xs text-muted-foreground">
-            Source conversation: {terminal.session_id}
-          </p>
-        )}
-        {terminal?.owner_kind === "workspace" && (
-          <p className="pl-6 text-xs text-muted-foreground">
-            Workspace terminal · used by this chat
-          </p>
-        )}
-        {terminal?.parent_agent_id && (
-          <p className="truncate pl-6 text-xs text-muted-foreground">
-            Agent: {terminal.parent_agent_id}
-          </p>
-        )}
-        {live && !openTerminal && (
-          <p className="pl-6 text-xs text-muted-foreground">Live terminal unavailable here.</p>
-        )}
-        {group.commands.length > 0 && (
-          <Collapsible>
-            <CollapsibleTrigger asChild>
-              <Button variant="ghost" size="sm">
-                Commands ({group.commands.length})
-              </Button>
-            </CollapsibleTrigger>
-            <CollapsibleContent>
-              <ul className="space-y-1 border-l pl-3">
-                {group.commands.map((command) => (
-                  <li key={command.id}>
-                    <TooltipButton
-                      type="button"
-                      className="w-full truncate text-left font-mono text-xs hover:underline"
-                      onClick={onInspect}
-                    >
-                      {command.name}
-                    </TooltipButton>
-                  </li>
-                ))}
-              </ul>
-            </CollapsibleContent>
-          </Collapsible>
-        )}
-      </ActivityRow>
+        {groupName(group)}
+      </TooltipButton>
+      <span className="shrink-0 text-xs text-muted-foreground">
+        {STATE_LABELS[groupState(group)]}
+      </span>
+      <Button
+        variant="ghost"
+        size="icon-xs"
+        aria-label={`Inspect ${groupName(group)}`}
+        onClick={onInspect}
+      >
+        <InfoIcon className="size-3.5" />
+      </Button>
     </li>
   );
 }

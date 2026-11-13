@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { useEffect, useState } from "react";
 import { CheckIcon, ChevronDownIcon, MessageSquareIcon, ServerIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -81,7 +82,7 @@ export function ActivitySourcePicker({
       <Button
         variant="ghost"
         size="sm"
-        aria-label={`Choose activity source · ${label}`}
+        aria-label={`Choose orchestration source · ${label}`}
         aria-haspopup="dialog"
         aria-expanded={open}
         className="min-w-0 gap-1"
@@ -106,7 +107,7 @@ export function ActivitySourcePicker({
             if (!next) setQuery("");
           }
         }}
-        title="Activity source"
+        title="Orchestration source"
         description="Choose a host's independent shells or a chat's agents, messages and shell use."
       >
         <Command shouldFilter={false}>
@@ -121,7 +122,7 @@ export function ActivitySourcePicker({
               {error}
             </p>
           )}
-          <CommandList aria-label="Activity sources">
+          <CommandList aria-label="Orchestration sources">
             <CommandGroup heading="Hosts">
               {hosts.isLoading && (
                 <p role="status" className="px-2 text-sm">

@@ -71,4 +71,8 @@ Rich editor/preview modules load when used, and substantial JSON responses negot
 Cross-chat agent communication and independent workers are enabled by default.
 Settings → General → Agent communication stores a personal choice on the server and applies it to new actions immediately.
 It does not disable ordinary subagents or cancel accepted work.
+Peer cards show the trusted sender and source chat, a compact expandable message, and the shared message footer.
+Orchestration shows active agents and open shells in a flat list; lifecycle rows link directly to their activity entry, including completed agents.
+Codex inputs carry their canonical message identity through the native echo so agent messages retain provenance and human quotations remain ordinary messages.
+Peer file references require the captured sender scope and access to both chats and the source filesystem.
 Administrators can set `OMNIGENT_FEATURES=-session_orchestration` to disable the capability for the deployment; that startup override requires a restart.

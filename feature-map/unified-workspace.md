@@ -10,14 +10,14 @@ Conversation and tool views share resizable, dockable panes while keeping their 
 - `hierarchy`: durable branches preserve their captured fork boundary independently from delegated-agent parentage.
 - `communication`: structured attribution distinguishes agent messages from human input and separates acceptance from consumption.
 - `references`: whole chats, completed answers, selected messages and quotes enter drafts with stable source snapshots.
-- `activity`: retained shell history and the dedicated Activity view expose actual activity; the composer dock is disabled.
+- `activity`: retained shell history and the dedicated Orchestration view expose actual activity; the composer dock is disabled.
 - `navigation`: global commands, contextual find, explicit conversation sources and mobile view switching retain existing workflows.
 - `appearance`: shared content surfaces, primary bottom tab strips, consistent switches and list density follow `design-system/triune/MASTER.md`.
 - `migration`: existing conversation, file and shell references remain accessible without starting or stopping resources.
 
 ## How to get to it (user POV)
 
-- Use + Open beside desktop application Search, or the subtle plus after the last tab, to add Explorer, Changes, Search, a manual terminal, Agent CLI, Activity or Automations.
+- Use + Open beside desktop application Search, or the subtle plus after the last tab, to add Explorer, Changes, Search, a manual terminal, Agent CLI, Orchestration or Automations.
 - Drag a tab to a pane edge to split; use its own close button to close it, use the tab pin before its close control to keep a view across chats.
 - Click a chat to restore its layout; choose Open to side or drag a sidebar chat into a tab group or split edge to add it to the current layout.
 - The app bar has no Layout control; a new chat starts in its own arrangement.
@@ -26,8 +26,8 @@ Conversation and tool views share resizable, dockable panes while keeping their 
 - Type `@` in a composer, or select text and choose Send to…, to inspect and insert captured context.
 - Use the application search field or Ctrl/Cmd+K for commands; it opens below the trigger without a blurred backdrop.
 - The sidebar Search entry is hidden; contextual Ctrl/Cmd+F still searches the last interacted region.
-- Open Activity and choose a Host to reattach independent shells or inspect retained output; choose a Chat for its agents, messages and shell use.
-- Use the grouped Host/Chat source picker in Activity or a Preview's Comments control to choose its owner explicitly.
+- Open Orchestration and choose a Host to reattach independent shells or inspect retained output; choose a Chat for its agents, messages and shell use.
+- Use the grouped Host/Chat source picker in Orchestration or a Preview's Comments control to choose its owner explicitly.
 - Use the combined workspace selector in the composer or resource-view toolbar; Host and Path are both directly reachable in its modal.
 - Use Up before the Explorer workspace path to make its parent folder the root.
 - Opening Settings temporarily reveals desktop navigation; its mobile section chooser stays reachable when navigation is closed.
@@ -38,9 +38,9 @@ Conversation and tool views share resizable, dockable panes while keeping their 
 Preconditions: follow the [verification skill](skills/verify-omnigent/SKILL.md), build the checkout and use an isolated environment or the sealed browser-contract lane.
 
 - Compact composer, mobile tabs, density-aware headers/sidebar padding and single safe-area inset: `tests/browser_ui/chat/test_workspace_selection_design.py::test_mobile_composer_keeps_tabs_and_follows_appearance_density`.
-- Approved palette, root confirmation, Settings and Activity sources: `tests/browser_ui/chat/test_workspace_selection_design.py`.
+- Approved palette, root confirmation, Settings and Orchestration sources: `tests/browser_ui/chat/test_workspace_selection_design.py`.
 - Combined picker and controlled chat switching: `web/src/shell/WorkspaceSelectionDialog.test.tsx` and `web/src/components/composer/WorkspaceSwitchControl.test.tsx`.
-- Host/Chat Activity and temporary Settings navigation: `web/src/workbench/ActivityView.test.tsx` and `web/src/hooks/useSettingsNavigationVisibility.test.tsx`.
+- Host/Chat Orchestration and temporary Settings navigation: `web/src/workbench/ActivityView.test.tsx` and `web/src/hooks/useSettingsNavigationVisibility.test.tsx`.
 - Integrated desktop/mobile shell, drafts, layout controls and commands: `tests/browser_ui/chat/test_unified_workspace.py`.
 - Pane movement, retained editor nodes, resizing, scope changes and A/B/A pins: `web/src/workbench/DockWorkspace.test.tsx` and `web/src/workbench/dockLayout.test.ts`.
 - Independent file targets and captured writes: `web/src/workbench/ResourceView.test.tsx`.
@@ -64,7 +64,7 @@ Preconditions: follow the [verification skill](skills/verify-omnigent/SKILL.md),
 - Neutral hairlines separate equal-colored viewports; distinct surface colors provide their own boundary.
 - App bar is medium-light accent, sidebar pale accent, tabs/view headers/content neutral; active tabs have a primary bottom strip and primary controls use white foregrounds.
 - Tab/disclosure hover feedback changes instantly, and selected entries retain their selected appearance.
-- Shell inventory is integrated into Activity; legacy saved inventory views restore there without stopping their processes.
+- Shell inventory is integrated into Orchestration; legacy saved inventory views restore there without stopping their processes.
 - Chat workspace changes retain execution confirmation/recovery; browsing-view root changes only retarget that view.
 - Conversation hover cards and per-row loading/empty-child labels are removed; hierarchy metadata preloads without transcript downloads.
 - Global pins retain their exact pane size and position across chats; resizing updates the global reservation, while other layouts fill the remaining regions.
@@ -80,7 +80,7 @@ Preconditions: follow the [verification skill](skills/verify-omnigent/SKILL.md),
 
 - Select chat text: Reply has one icon; Ask subchat… creates a durable child with an unsent quote; Send to… preserves the chosen chat's draft.
 - In an existing or new composer, microphone follows Add; control labels share typography and foreground, with effort secondary.
-- The workspace control reads computer icon and Host:/path; narrow composers still collapse its text.
+- The workspace control reads computer icon and Host · /path; narrow composers still collapse its text.
 - Open a live workspace-file chip into the File Editor, edit/comment normally, and download its captured original from the three-dot menu.
 - Open rendered previews and stored attachments in the existing preview/lightbox; their bytes remain independent of the current chat and temporary source.
 - Change Appearance density on desktop and mobile; headers and sidebar spacing update consistently, and scrollbar treatment remains slim.
@@ -138,3 +138,18 @@ Hidden-measurement and scrollbar tests count avoided work; they do not establish
 Verification: `web/src/workbench/WorkbenchContext.test.tsx`, `web/src/workbench/CapturedFileActions.test.tsx`, `web/src/workbench/DockWorkspace.test.tsx`, `web/src/workbench/ScopedChatStore.test.tsx`, `web/src/workbench/CapturedFileGate.test.tsx`, `web/src/hooks/useConversationEntryState.test.tsx`, the owning resource/query/viewer suites and `tests/browser_ui/chat/test_workspace_iteration.py`.
 Transport and persistence: `tests/server/routes/test_chat_attachments.py`, `tests/server/routes/test_gzip_route.py`, `tests/server/routes/test_workbench_workspaces.py` and artifact-store tests.
 Compare the same two/four/twelve-chat scenarios when measuring latency; browser/host timings are not interchangeable with a user's desktop.
+
+### Minimal communication UI
+
+- Incoming peer cards show the actual trusted agent name and source chat, up to three compact lines, and Show full/less.
+- The shared user-message footer copies complete text and creates links for the owning conversation, independently of focus.
+- Ordinary human quotations of peer transport headers retain their human presentation.
+- Task rows show their recorded agent/task, spinner or success/error status and one square-arrow-out shortcut; there is no task ellipsis.
+- The Orchestration tab uses Workflow; its default flat list combines active agents and open shells by observed last activity.
+- Filters, graph, peer history and details remain available in its menu; a completed/failed card can open its exact inspector repeatedly.
+- Native Codex inputs retain their canonical identity through start/steer and echo; unresolved historical messages are not reclassified by text.
+- Peer file references resolve their captured sender target and retain recipient/source ACL and host/runner ownership checks.
+- Pane-plus hit targets follow shared density; updating a captured-original menu does not discard or replace a dirty document.
+
+Verification: `tests/browser_ui/chat/test_workspace_iteration.py::test_peer_cards_and_orchestration_keep_attribution_and_minimal_controls`, `web/src/components/blocks/PeerMessage.test.tsx`, `web/src/components/chat/MessageFooter.test.tsx`, `web/src/components/blocks/SubagentActivityMessage.test.tsx`, `web/src/shell/ChatActivityPanel.test.tsx` and `web/src/workbench/DockWorkspace.test.tsx`.
+Attribution and file boundaries: `tests/server/integration/test_session_orchestration.py`, `tests/server/routes/test_chat_attachments.py`, `tests/harnesses/codex_native/forwarder/test_user_messages.py` and `tests/inner/test_codex_native_executor.py`.

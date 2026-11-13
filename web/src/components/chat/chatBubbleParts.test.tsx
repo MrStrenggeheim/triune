@@ -863,7 +863,9 @@ it("renders a restored pending peer with attribution instead of a human bubble",
       </ConversationScopeContext.Provider>
     </MemoryRouter>,
   );
-  expect(screen.getByTestId("peer-message")).toHaveTextContent("From Reviewer");
-  expect(screen.getByTestId("peer-message")).toHaveTextContent("Unconfirmed");
+  expect(screen.getByText("Agent", { selector: "strong" })).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Reviewer" })).toHaveAttribute("href", "/c/source");
+  expect(screen.queryByText(/Unconfirmed|accepted/)).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Copy link" })).toBeDisabled();
   expect(screen.queryByText("human-account")).not.toBeInTheDocument();
 });

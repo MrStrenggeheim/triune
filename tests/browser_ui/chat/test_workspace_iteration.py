@@ -87,9 +87,15 @@ def test_inline_attachment_opens_captured_tab_downloads_and_reveals_original_wor
     )
     route = f"/v1/sessions/{first.session_id}/attachments/references/{item_id}"
     captured = "name,value\noriginal,1\n"
+    captured_alias = "name,value\nalias-original,9\n"
     browser_contract.route(
         browser_contract._matcher(route),
-        lambda request: request.fulfill(body=captured, content_type="text/csv"),
+        lambda request: request.fulfill(
+            body=captured_alias
+            if "/./" in parse_qs(urlparse(request.request.url).query)["path"][0]
+            else captured,
+            content_type="text/csv",
+        ),
     )
     pending_captures: list[Route] = []
 
@@ -151,6 +157,7 @@ def test_inline_attachment_opens_captured_tab_downloads_and_reveals_original_wor
         json={"filename": "guide.csv", "mime": "text/csv", "bytes": len(captured)}
     )
     expect(preview.locator(".view-lines")).to_contain_text("live", timeout=30000)
+    editor = preview.locator(".monaco-editor").element_handle()
     with page.expect_request(
         lambda request: (
             request.method == "POST"
@@ -160,6 +167,14 @@ def test_inline_attachment_opens_captured_tab_downloads_and_reveals_original_wor
     ):
         chat.get_by_role("button", name="guide.csv", exact=True).last.click()
     expect(page.get_by_role("tab", name="guide.csv", exact=True)).to_have_count(1)
+    page.wait_for_function("""() => Object.keys(localStorage)
+        .filter(key => key.startsWith('omnigent:dock:v1:'))
+        .some(key => localStorage.getItem(key).includes('/workspace/./guide.csv'))""")
+    assert editor and editor.evaluate("element => element.isConnected")
+    preview.get_by_role("button", name="View settings", exact=True).click()
+    with page.expect_download() as latest_original:
+        page.get_by_role("menuitem", name="Download captured original", exact=True).click()
+    assert Path(latest_original.value.path()).read_text() == captured_alias
     expect(chat.get_by_label("Message the agent")).to_be_visible()
     panes = page.locator(".dock-pane:not([hidden])").count()
     chat.get_by_role("button", name="next.csv", exact=True).click()
@@ -184,6 +199,174 @@ def test_inline_attachment_opens_captured_tab_downloads_and_reveals_original_wor
     page.get_by_role("tab", name="guide.csv", exact=True).click()
     page.reload()
     expect(preview.locator(".view-lines")).to_contain_text("live", timeout=30000)
+    assert browser_errors == []
+
+
+def test_peer_cards_and_orchestration_keep_attribution_and_minimal_controls(
+    page: Page,
+    workspace_journey: WorkspaceJourney,
+    browser_contract: BrowserContract,
+    output_path: str,
+    browser_errors: list[str],
+) -> None:
+    first, source = workspace_journey.chats
+    source.update_session(sub_agent_name="James", agent_name="James")
+    body = "\n".join(
+        f"Check {index}: preserve the file editor and original downloads." for index in range(12)
+    )
+    peer = message_item("peer-card", "user", body, response_id="peer-response")
+    peer.update(
+        created_at=1704067200,
+        communication={
+            "kind": "peer",
+            "message_id": "peer-communication",
+            "source_conversation_id": source.session_id,
+            "source_agent_id": source.agent_id,
+            "source_agent_name": "James",
+            "source_title": "Chat B",
+            "destination_conversation_id": first.session_id,
+            "delivery_state": "confirmed",
+            "receipt": "transcript",
+            "sent_at": 1704067200,
+        },
+    )
+    completed = {
+        "id": "completed-agent",
+        "type": "resource_event",
+        "status": "completed",
+        "response_id": "agent-return",
+        "created_at": 1704067201,
+        "event_type": "session.subagent.returned",
+        "resource_type": "session",
+        "resource_id": "child-ada",
+        "resource": {
+            "title": "Ada",
+            "agent_name": "Ada",
+            "task_summary": "Check access",
+            "status": "completed",
+        },
+    }
+    first.set_items(
+        [
+            completed,
+            peer,
+            message_item(
+                "literal-header",
+                "user",
+                "Peer message from conversation example; this is my quotation.",
+                response_id="human-quote",
+            ),
+        ]
+    )
+    children = [
+        {
+            "id": f"child-{name.lower()}",
+            "title": name,
+            "agent_name": name,
+            "task_summary": "Verify editing" if name == "James" else "Check access",
+            "tool": name,
+            "session_name": name,
+            "kind": "sub_agent",
+            "current_task_status": "in_progress" if name == "James" else "completed",
+            "busy": name == "James",
+            "last_message_preview": None,
+            "pending_elicitations_count": 0,
+            "created_at": 1704067200,
+            "updated_at": 1704067220,
+            "labels": {"omnigent.codex_native.agent_nickname": name},
+        }
+        for name in ("James", "Ada")
+    ]
+    browser_contract.json(
+        f"/v1/sessions/{first.session_id}/child_sessions", list_payload(children)
+    )
+    for child in children:
+        browser_contract.json(f"/v1/sessions/{child['id']}/child_sessions", list_payload([]))
+        browser_contract.json(
+            f"/v1/sessions/{child['id']}",
+            {
+                **first.session_snapshot(),
+                "id": child["id"],
+                "title": child["title"],
+                "agent_name": child["agent_name"],
+                "sub_agent_name": child["agent_name"],
+                "status": "running" if child["busy"] else "idle",
+            },
+        )
+    browser_contract.json(
+        f"/v1/sessions/{first.session_id}/activity",
+        {
+            "coverage": "complete",
+            "data": [
+                {
+                    "id": "shell-tests",
+                    "kind": "terminal",
+                    "session_id": first.session_id,
+                    "terminal_id": "tests",
+                    "name": "tests",
+                    "state": "running",
+                    "started_at": 1704067230,
+                }
+            ],
+        },
+    )
+    page.context.grant_permissions(["clipboard-read", "clipboard-write"])
+    page.set_viewport_size({"width": 1440, "height": 1000})
+    page.goto(first.url)
+    chat = _view(page, "Chat A")
+    card = chat.get_by_test_id("peer-message")
+    expect(card.locator("header")).to_contain_text("James from Chat B")
+    expect(
+        chat.get_by_text(
+            "Peer message from conversation example; this is my quotation.", exact=True
+        )
+    ).to_be_visible()
+    assert chat.get_by_text(
+        "Peer message from conversation example; this is my quotation.", exact=True
+    ).evaluate("element => !!element.closest('.is-user')")
+    expect(card.get_by_text("In transcript", exact=True)).to_have_count(0)
+    card.hover()
+    card.get_by_role("button", name="Copy", exact=True).click()
+    assert page.evaluate("navigator.clipboard.readText()") == body
+    card.get_by_role("button", name="Copy link", exact=True).click()
+    copied = page.evaluate("navigator.clipboard.readText()")
+    assert f"/c/{first.session_id}" in copied and "peer-card" in copied
+    card.get_by_role("button", name="Show full", exact=True).click()
+    expect(card.get_by_role("button", name="Show less", exact=True)).to_be_visible()
+    card.get_by_role("button", name="Show less", exact=True).click()
+    task = chat.get_by_test_id("subagent-activity")
+    expect(task).to_contain_text("Ada: Check access")
+    expect(task).to_contain_text("Completed")
+    expect(task.get_by_role("button", name="Agent actions", exact=True)).to_have_count(0)
+    _capture(page, output_path, "desktop-minimal-peer-and-completed-agent")
+    task.get_by_role("link", name="Inspect Ada in Orchestration", exact=True).click()
+    orchestration = _view(page, "Orchestration")
+    inspector = page.get_by_role("dialog", name="Ada", exact=True)
+    expect(inspector).to_be_visible()
+    page.keyboard.press("Escape")
+    expect(inspector).to_have_count(0)
+    task.get_by_role("link", name="Inspect Ada in Orchestration", exact=True).click()
+    expect(inspector).to_be_visible()
+    page.keyboard.press("Escape")
+    expect(page.get_by_role("tab", name="Orchestration", exact=True)).to_have_count(1)
+    expect(
+        page.get_by_role("tab", name="Orchestration", exact=True).locator("svg.lucide-workflow")
+    ).to_have_count(1)
+    entries = orchestration.get_by_role("list", name="Orchestration", exact=True)
+    expect(entries).to_contain_text("James")
+    expect(entries).to_contain_text("tests")
+    expect(entries).not_to_contain_text("Ada")
+    expect(entries.get_by_role("listitem").first).to_contain_text("tests")
+    expect(orchestration.get_by_role("heading", name="Recent", exact=True)).to_have_count(0)
+    _capture(page, output_path, "desktop-flat-orchestration")
+    page.set_viewport_size({"width": 390, "height": 844})
+    if page.get_by_role("button", name="Close navigation", exact=True).is_visible():
+        page.keyboard.press("Control+b")
+    page.get_by_role("tab", name="Chat A", exact=True).click()
+    expect(card).to_be_visible()
+    _capture(page, output_path, "mobile-minimal-peer-and-agent")
+    page.locator("html").evaluate("element => element.classList.add('dark')")
+    _capture(page, output_path, "mobile-dark-peer-and-agent")
     assert browser_errors == []
 
 

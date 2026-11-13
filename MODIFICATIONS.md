@@ -24,6 +24,8 @@ Those previously Apache-licensed features retain their original permissions.
 - Reuse shared density, notifications, workspace pickers and view-opening controls, and recover subchat quote creation without duplicating a failed child.
 - Isolate retained-view updates, scope conversation subscriptions, batch native text, and pause hidden resource observation while retaining user state.
 - Defer specialized viewers, retain reference originals as binary artifacts, and negotiate substantial JSON compression without changing streaming transports.
+- Present attributed peer cards and compact lifecycle rows, with a flat Orchestration view and shared message actions.
+- Preserve peer identity through native Codex echoes and resolve peer file references through their authorized source scope.
 
 [LICENSING.md](LICENSING.md) defines scope and the required notice.
 Git diffs against the imported baseline identify exact modified paths and lines.

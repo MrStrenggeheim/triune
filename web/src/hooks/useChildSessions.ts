@@ -1,4 +1,5 @@
-import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
+// Modified for Triune.
+import { useQueries, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { useCallback, useSyncExternalStore } from "react";
 import { authenticatedFetch } from "@/lib/identity";
 import { setSessionParent } from "@/lib/sessionHost";
@@ -26,6 +27,9 @@ export interface ChildSessionError {
  * tolerated and ignored.
  */
 export interface ChildSessionInfo {
+  created_at?: number;
+  updated_at?: number;
+  agent_name?: string | null;
   /** Child conversation/session identifier, e.g. ``"conv_child123"``. */
   id: string;
   /** Full title, ``"{tool}:{session_name}"``, e.g. ``"researcher:auth"``. */
@@ -70,6 +74,9 @@ export interface ChildSessionInfo {
  * model. Extra wire fields are silently ignored.
  */
 interface ChildSessionWire {
+  created_at?: number;
+  updated_at?: number;
+  agent_name?: string | null;
   id: string;
   title: string | null;
   task_summary?: string | null;
@@ -87,6 +94,8 @@ interface ChildSessionWire {
 interface ChildSessionsResponse {
   object: "list";
   data: ChildSessionWire[];
+  has_more?: boolean;
+  last_id?: string | null;
 }
 
 /**
@@ -204,16 +213,32 @@ interface UseChildSessionsResult {
  * code should call ``useChildSessions``.
  */
 export async function fetchChildSessions(sessionId: string): Promise<ChildSessionInfo[]> {
-  const res = await authenticatedFetch(
-    `/v1/sessions/${encodeURIComponent(sessionId)}/child_sessions`,
-  );
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-  const json = (await res.json()) as ChildSessionsResponse;
+  const rows: ChildSessionWire[] = [];
+  const cursors = new Set<string>();
+  let after: string | undefined;
+  do {
+    // eslint-disable-next-line no-await-in-loop -- Each cursor comes from the preceding page.
+    const res = await authenticatedFetch(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/child_sessions${after ? `?after=${encodeURIComponent(after)}` : ""}`,
+    );
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+    // eslint-disable-next-line no-await-in-loop -- Read this page before choosing the next cursor.
+    const page = (await res.json()) as ChildSessionsResponse;
+    rows.push(...page.data);
+    if (!page.has_more) break;
+    if (!page.last_id || cursors.has(page.last_id))
+      throw new Error("Child session history returned an invalid cursor.");
+    after = page.last_id;
+    cursors.add(after);
+  } while (after);
   // Children run on this session's runner: record the link so their
   // session-scoped requests key by this session's host before their own
   // snapshot loads.
-  for (const row of json.data) setSessionParent(row.id, sessionId);
-  return json.data.map((row) => ({
+  for (const row of rows) setSessionParent(row.id, sessionId);
+  return rows.map((row) => ({
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+    agent_name: row.agent_name,
     id: row.id,
     title: row.title,
     task_summary: row.task_summary ?? null,
@@ -248,6 +273,7 @@ export async function fetchChildSessions(sessionId: string): Promise<ChildSessio
 export function useChildSessions(
   conversationId: string | null,
   pollMs?: number | null,
+  options: { enabled?: boolean } = {},
 ): UseChildSessionsResult {
   const sessionId = isTempConvId(conversationId) ? null : conversationId;
   const { data, isLoading, error } = useQuery({
@@ -256,16 +282,49 @@ export function useChildSessions(
         ? ["conversation", null, "child_sessions"]
         : childSessionsQueryKey(sessionId),
     queryFn: () => fetchChildSessions(sessionId as string),
-    enabled: sessionId !== null,
+    enabled: sessionId !== null && options.enabled !== false,
     staleTime: 60_000,
     retry: false,
     refetchOnMount: false,
-    refetchInterval: pollMs ?? false,
+    refetchInterval: options.enabled === false ? false : (pollMs ?? false),
   });
   return {
     children: data ?? [],
     isLoading,
     error: (error as Error | null) ?? null,
+  };
+}
+
+function useChildLevel(parents: ChildSessionInfo[], enabled: boolean) {
+  return useQueries({
+    queries: parents.map((parent) => ({
+      queryKey: childSessionsQueryKey(parent.id),
+      queryFn: () => fetchChildSessions(parent.id),
+      enabled,
+      staleTime: 60_000,
+      retry: false,
+      refetchOnMount: false,
+      refetchInterval: enabled ? 5_000 : false,
+    })),
+  });
+}
+
+/** Flat projection of the existing three-level tree; hidden views retain cached rows. */
+export function useChildSessionTree(rootId: string, enabled: boolean): UseChildSessionsResult {
+  const root = useChildSessions(rootId, 5_000, { enabled });
+  const second = useChildLevel(root.children, enabled);
+  const grandchildren = second.flatMap((query) => query.data ?? []);
+  const third = useChildLevel(grandchildren, enabled);
+  const queries = [...second, ...third];
+  const children = [...root.children, ...grandchildren, ...third.flatMap((q) => q.data ?? [])];
+  return {
+    children: [
+      ...new Map(
+        children.filter((child) => child.id !== rootId).map((child) => [child.id, child]),
+      ).values(),
+    ],
+    isLoading: root.isLoading || queries.some((query) => query.isLoading),
+    error: root.error ?? queries.find((query) => query.error)?.error ?? null,
   };
 }
 

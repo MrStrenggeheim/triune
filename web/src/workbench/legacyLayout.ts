@@ -1,3 +1,4 @@
+// Modified for Triune.
 import type { SessionWorkspaceState } from "@/lib/sessionWorkspaceState";
 import type { WorkbenchWorkspace } from "@/lib/workbenchWorkspace";
 import type { DockView } from "./dockLayout";
@@ -52,7 +53,7 @@ export function legacyWorkspaceViews(
       files: "Explorer",
       changes: "Changes",
       pr: "Pull requests",
-      activity: "Activity",
+      activity: "Orchestration",
       search: "Search",
     };
     if (kind) append(panel, kind, labels[kind] ?? kind);

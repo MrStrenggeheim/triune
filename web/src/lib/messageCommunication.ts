@@ -1,8 +1,10 @@
+// Modified for Triune.
 export interface MessageCommunication {
   kind: "peer" | "native_agent";
   message_id: string;
   source_conversation_id?: string | null;
   source_agent_id?: string | null;
+  source_agent_name?: string | null;
   source_title?: string | null;
   destination_conversation_id: string;
   sent_at?: number | null;
@@ -29,6 +31,7 @@ export function readMessageCommunication(value: unknown): MessageCommunication |
   for (const key of [
     "source_conversation_id",
     "source_agent_id",
+    "source_agent_name",
     "source_title",
     "reply_to_message_id",
     "task_id",

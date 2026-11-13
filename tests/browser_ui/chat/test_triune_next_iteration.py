@@ -26,6 +26,19 @@ def test_pane_add_empty_state_and_mobile_search(
     page.goto(first.url)
     chat = _view(page, "Chat A")
     chat.get_by_label("Message the agent").fill("Keep this draft")
+    add_view = page.get_by_role("button", name="Add view to pane", exact=True)
+    for density, size in (("compact", 32), ("comfortable", 44)):
+        page.evaluate("value => document.documentElement.dataset.listDensity = value", density)
+        page.wait_for_function(
+            """expected => {
+          const control = document.querySelector('[aria-label="Add view to pane"]');
+          const box = control.getBoundingClientRect();
+          return Math.abs(box.width - expected) <= 1 && Math.abs(box.height - expected) <= 1;
+        }""",
+            arg=size,
+        )
+        bounds = add_view.bounding_box()
+        assert bounds and abs(bounds["width"] - size) <= 1 and abs(bounds["height"] - size) <= 1
     page.get_by_role("button", name="Add view to pane", exact=True).click()
     page.get_by_role("menuitem", name="Explorer", exact=True).click()
     expect(page.get_by_role("tab", name="Explorer", exact=True)).to_be_visible()

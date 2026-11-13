@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { useState, type ReactNode } from "react";
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -20,7 +21,7 @@ export function ActivityRow({
   return (
     <div className="activity-row min-w-0 py-1 text-sm">
       <div className="flex min-h-7 items-center gap-1.5">
-        {children ? (
+        {children && (
           <Button
             size="icon-xs"
             variant="ghost"
@@ -34,15 +35,15 @@ export function ActivityRow({
               <ChevronRightIcon className="size-3.5" />
             )}
           </Button>
-        ) : (
-          <span className="w-6 shrink-0" />
         )}
         <span className="shrink-0 text-muted-foreground">{icon}</span>
         <span className="min-w-0 flex-1 truncate">{title}</span>
         {status && <span className="shrink-0 text-xs text-muted-foreground">{status}</span>}
       </div>
       {!expanded && preview && (
-        <p className="ml-8 line-clamp-3 whitespace-pre-wrap break-words text-foreground">
+        <p
+          className={`${children ? "ml-8" : "ml-5"} line-clamp-3 whitespace-pre-wrap break-words text-foreground`}
+        >
           {preview}
         </p>
       )}

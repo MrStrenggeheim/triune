@@ -1,5 +1,6 @@
+// Modified for Triune.
 import {
-  ActivityIcon,
+  WorkflowIcon,
   CalendarClockIcon,
   FileIcon,
   FolderIcon,
@@ -21,8 +22,8 @@ const viewIcons = {
   search: SearchIcon,
   terminal: TerminalIcon,
   "agent-terminal": HatGlassesIcon,
-  activity: ActivityIcon,
-  shells: ActivityIcon,
+  activity: WorkflowIcon,
+  shells: WorkflowIcon,
   automations: CalendarClockIcon,
   pr: GitPullRequestIcon,
   browser: GlobeIcon,

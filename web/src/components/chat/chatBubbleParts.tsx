@@ -86,13 +86,15 @@ import { useForkDialog } from "@/shell/ForkDialogContext";
 import { useTerminalFirst } from "@/shell/TerminalFirstContext";
 import { DisabledActionTooltip } from "@/components/DisabledActionTooltip";
 import { InlineImage } from "@/components/SessionImage";
-import { buildMessageDeepLink } from "@/lib/messageDeepLink";
-import { copyText } from "@/lib/clipboard";
 import { copyMarkdown } from "@/lib/copyMarkdown";
-import { showToast } from "@/components/ui/toast";
-import { useIsMobileViewport } from "@/hooks/useIsMobileViewport";
 import { useFoldAssistantNarration } from "@/lib/foldNarrationPreferences";
 import type { SessionStatus } from "@/lib/types";
+import {
+  MessageFooter,
+  formatBubbleTimestamp,
+  useCopyMessage,
+  useCopyMessageLink,
+} from "./MessageFooter";
 import {
   TRANSCRIPT_SCROLLBAR_DRAG_EVENT,
   type TranscriptScrollbarDragDetail,
@@ -567,25 +569,6 @@ function CompactionLoadingIndicator({ createdAtS }: { createdAtS?: number }) {
   );
 }
 
-function formatBubbleTimestamp(epochSeconds: number | undefined): string | null {
-  if (epochSeconds === undefined || epochSeconds === 0) return null;
-  const d = new Date(epochSeconds * 1000);
-  const now = new Date();
-  const time = d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
-  if (
-    d.getFullYear() === now.getFullYear() &&
-    d.getMonth() === now.getMonth() &&
-    d.getDate() === now.getDate()
-  ) {
-    return time;
-  }
-  const date = d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-  if (d.getFullYear() !== now.getFullYear()) {
-    return `${d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}, ${time}`;
-  }
-  return `${date}, ${time}`;
-}
-
 // Memoized so a streaming delta (which rebuilds the whole bubble array) only
 // re-renders the bubble that actually changed, not every prior message's
 // markdown/syntax-highlighting subtree. See `bubblesEqual`.
@@ -610,6 +593,8 @@ export const BubbleView = memo(
           communication={bubble.communication}
           content={bubble.content}
           itemId={bubble.itemId}
+          createdAtS={bubble.createdAtS}
+          pending={bubble.pending}
         />
       ) : (
         <UserBubble bubble={bubble} />
@@ -650,49 +635,6 @@ export const BubbleView = memo(
     bubblesEqual(prev.bubble, next.bubble),
 );
 
-/**
- * Copy-to-clipboard handler for a message bubble's "Copy" action.
- *
- * @param getText - Produces the text to copy at click time.
- * @param copy - Clipboard writer; assistant bubbles pass {@link copyMarkdown}
- *   so the paste keeps its formatting.
- * @returns `{ isCopied, handleCopy }` for the action button.
- */
-function useCopyMessage(
-  getText: () => string,
-  copy: (value: string) => Promise<void> = copyText,
-): {
-  isCopied: boolean;
-  handleCopy: () => void;
-} {
-  const [isCopied, setIsCopied] = useState(false);
-  const timeoutRef = useRef<number>(0);
-  const isMobile = useIsMobileViewport();
-
-  useEffect(() => () => window.clearTimeout(timeoutRef.current), []);
-
-  const handleCopy = useCallback(() => {
-    if (isCopied) return;
-    const text = getText();
-    if (!text) return;
-    copy(text).then(
-      () => {
-        setIsCopied(true);
-        window.clearTimeout(timeoutRef.current);
-        timeoutRef.current = window.setTimeout(() => setIsCopied(false), 2000);
-        if (isMobile) {
-          showToast(<span className="text-ui">Copied to clipboard</span>, { duration: 1500 });
-        }
-      },
-      (error) => {
-        console.warn("Failed to copy message", error);
-      },
-    );
-  }, [copy, getText, isCopied, isMobile]);
-
-  return { isCopied, handleCopy };
-}
-
 /** Pill for an attachment with no preview of its own: a non-image file, an
  *  upload still in flight, or an image block carrying nothing renderable. */
 function AttachmentChip({ icon: Icon, label }: { icon: LucideIcon; label: string }) {
@@ -719,42 +661,6 @@ const USER_MESSAGE_REMARK_REHYPE_OPTIONS: MessageResponseProps["remarkRehypeOpti
   },
 };
 
-/**
- * Copy a deep link to this message (``?message=<id>`` on the session URL).
- * Same confirmation UX as {@link useCopyMessage}.
- *
- * @param messageId - Stable id stamped on the bubble (user itemId / assistant responseId).
- */
-function useCopyMessageLink(messageId: string | null): {
-  isLinkCopied: boolean;
-  handleCopyLink: () => void;
-} {
-  const [isLinkCopied, setIsLinkCopied] = useState(false);
-  const timeoutRef = useRef<number>(0);
-  const isMobile = useIsMobileViewport();
-
-  useEffect(() => () => window.clearTimeout(timeoutRef.current), []);
-
-  const handleCopyLink = useCallback(() => {
-    if (!messageId || isLinkCopied) return;
-    copyText(buildMessageDeepLink(messageId)).then(
-      () => {
-        setIsLinkCopied(true);
-        window.clearTimeout(timeoutRef.current);
-        timeoutRef.current = window.setTimeout(() => setIsLinkCopied(false), 2000);
-        if (isMobile) {
-          showToast(<span className="text-ui">Link copied</span>, { duration: 1500 });
-        }
-      },
-      (error) => {
-        console.warn("Failed to copy message link", error);
-      },
-    );
-  }, [messageId, isLinkCopied, isMobile]);
-
-  return { isLinkCopied, handleCopyLink };
-}
-
 function UserBubble({ bubble }: { bubble: Extract<Bubble, { kind: "user" }> }) {
   const useChatStore = useConversationChatStore();
   // Scoped so a side-chat bubble builds attachment URLs against the CHILD, not
@@ -778,11 +684,6 @@ function UserBubble({ bubble }: { bubble: Extract<Bubble, { kind: "user" }> }) {
   const mentionedChips = isShellCommand ? [] : extractAttachedPaths(bubble.content);
   // Equality selector so Zustand only re-renders the matching bubble.
   const flashing = useChatStore((s) => s.flashItemId === bubble.itemId);
-  const { isCopied, handleCopy } = useCopyMessage(() => text);
-  const ts = formatBubbleTimestamp(bubble.createdAtS);
-  const { isLinkCopied, handleCopyLink } = useCopyMessageLink(
-    bubble.pending ? null : bubble.itemId,
-  );
   // Collapse long prompts by default to avoid expensive Markdown parsing and
   // a large DOM for text the user hasn't asked to read yet.
   const isLong = text.length > COLLAPSE_THRESHOLD;
@@ -957,38 +858,12 @@ function UserBubble({ bubble }: { bubble: Extract<Bubble, { kind: "user" }> }) {
             The agent will read this after its current step
           </div>
         )}
-        {/* 40%-visible on touch, hover/focus-reveal on desktop. */}
-        <div className="flex items-center justify-end gap-3 py-1 opacity-40 transition-opacity md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100">
-          {ts && (
-            <span
-              className="select-none text-[11px] leading-4 text-foreground/56"
-              data-testid="message-timestamp"
-            >
-              {ts}
-            </span>
-          )}
-          <MessageActions>
-            {text && (
-              <MessageAction
-                tooltip="Copy"
-                size="icon-xxs"
-                onClick={handleCopy}
-                componentId="chat.message.copy_user"
-              >
-                {isCopied ? <CheckIcon size={14} /> : <CopyIcon size={14} />}
-              </MessageAction>
-            )}
-            <MessageAction
-              tooltip={isLinkCopied ? "Copied!" : "Copy link"}
-              size="icon-xxs"
-              data-testid="copy-message-link"
-              disabled={bubble.pending}
-              onClick={handleCopyLink}
-            >
-              {isLinkCopied ? <CheckIcon size={14} /> : <Link2Icon size={14} />}
-            </MessageAction>
-          </MessageActions>
-        </div>
+        <MessageFooter
+          text={text}
+          messageId={bubble.pending ? null : bubble.itemId}
+          conversationId={sessionId}
+          createdAtS={bubble.createdAtS}
+        />
       </div>
     </Message>
   );
@@ -1040,7 +915,7 @@ function AssistantBubble({
     () => collectBubbleMarkdown(bubble.items),
     copyMarkdown,
   );
-  const { isLinkCopied, handleCopyLink } = useCopyMessageLink(bubble.responseId);
+  const { isLinkCopied, handleCopyLink } = useCopyMessageLink(bubble.responseId, conversationId);
   const flashing = useChatStore((s) => s.flashItemId === bubble.responseId);
   const foldNarration = useFoldAssistantNarration();
   // null outside AppShell's provider (isolated tests) → hide the action.

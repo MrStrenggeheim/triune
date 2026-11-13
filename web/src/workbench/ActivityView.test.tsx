@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -23,8 +24,20 @@ vi.mock("@/hooks/useSession", () => ({
   useSession: () => ({ session: { title: "Captured chat" } }),
 }));
 vi.mock("@/shell/ChatActivityPanel", () => ({
-  ChatActivityPanel: ({ conversationId, rootSessionId, sourceControl }: ChatActivityPanelProps) => (
-    <div data-testid="chat-activity" data-conversation={conversationId} data-root={rootSessionId}>
+  ChatActivityPanel: ({
+    conversationId,
+    rootSessionId,
+    sourceControl,
+    focusAgentId,
+    linkRequestId,
+  }: ChatActivityPanelProps) => (
+    <div
+      data-testid="chat-activity"
+      data-conversation={conversationId}
+      data-root={rootSessionId}
+      data-focus-agent={focusAgentId}
+      data-link-request={linkRequestId}
+    >
       {sourceControl}
     </div>
   ),
@@ -107,13 +120,25 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+it("forwards an explicit completed-agent target and repeated-open request to the captured chat", () => {
+  setup({
+    ...defaults(),
+    source: { kind: "chat", conversationId: "captured-chat" },
+    focusAgentId: "done-agent",
+    linkRequestId: "open-again",
+  });
+  expect(screen.getByTestId("chat-activity")).toHaveAttribute("data-conversation", "captured-chat");
+  expect(screen.getByTestId("chat-activity")).toHaveAttribute("data-focus-agent", "done-agent");
+  expect(screen.getByTestId("chat-activity")).toHaveAttribute("data-link-request", "open-again");
+});
+
 it("starts unselected and offers real host/chat groups, capturing an authorized root on selection", async () => {
   fetchMock.mockResolvedValue(list([workspace]));
   const props = defaults();
   setup(props);
   expect(screen.getByText("Choose a host or chat to view its activity.")).toBeVisible();
   expect(fetchMock).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole("button", { name: /Choose activity source/ }));
+  fireEvent.click(screen.getByRole("button", { name: /Choose orchestration source/ }));
   expect(screen.getByRole("group", { name: "Hosts" })).toBeVisible();
   expect(screen.getByRole("group", { name: "Chats" })).toBeVisible();
   expect(useSessionSearch).toHaveBeenLastCalledWith("", "title", {
@@ -169,7 +194,7 @@ it("keeps a captured chat until persistence succeeds and displays rejected sourc
   vi.mocked(props.onSourceChange).mockRejectedValueOnce(new Error("Layout changed; retry"));
   const view = setup(props);
   expect(screen.getByTestId("chat-activity")).toHaveAttribute("data-root", "captured-chat");
-  fireEvent.click(screen.getByRole("button", { name: /Choose activity source/ }));
+  fireEvent.click(screen.getByRole("button", { name: /Choose orchestration source/ }));
   fireEvent.click(screen.getByRole("option", { name: "Permitted chat" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("Layout changed; retry");
   expect(screen.getByRole("dialog")).toBeVisible();

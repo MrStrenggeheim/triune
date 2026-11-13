@@ -25,6 +25,7 @@ export type WorkbenchViewKind =
 export interface OpenWorkbenchView {
   kind: WorkbenchViewKind;
   source?: ActivitySource;
+  focusAgentId?: string;
   conversationId?: string;
   workspace?: WorkbenchWorkspace;
   workspaceId?: string;

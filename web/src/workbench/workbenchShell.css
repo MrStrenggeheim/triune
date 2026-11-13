@@ -1,3 +1,4 @@
+/* Modified for Triune. */
 .unified-workbench {
   --workbench-header-height: var(--density-header-height, 48px);
   --background: var(--workspace-content);
@@ -91,7 +92,9 @@ html[data-electron-mac] .unified-workbench .sidebar-header-row {
   height: var(--workbench-header-height);
 }
 
-.unified-workbench :is(.workbench-app-bar, .workspace-control-header) [data-header-action-button] {
+.unified-workbench
+  :is(.workbench-app-bar, .workspace-control-header, .dock-tab-add)
+  [data-header-action-button] {
   width: calc(var(--workbench-header-height) - 4px);
   height: calc(var(--workbench-header-height) - 4px);
 }

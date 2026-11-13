@@ -36,7 +36,7 @@ import { Pin, X, PlusIcon } from "lucide-react";
 import { TooltipButton } from "@/components/ui/tooltip";
 import { OpenViewMenu } from "./OpenViewMenu";
 import type { WorkbenchOpenAction } from "./WorkbenchAppBar";
-import { Button } from "@/components/ui/button";
+import { HeaderActionButton } from "@/components/HeaderActionButton";
 import { FileDropSurface } from "@/components/FileDropOverlay";
 import {
   ContextMenu,
@@ -741,15 +741,9 @@ function DockPaneChrome({
                 actions={openActions}
                 onSelect={(action) => (onOpenAction ? onOpenAction(pane.id, action) : action.run())}
               >
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-xs"
-                  aria-label="Add view to pane"
-                  className="text-muted-foreground"
-                >
+                <HeaderActionButton aria-label="Add view to pane" className="text-muted-foreground">
                   <PlusIcon className="size-3.5" />
-                </Button>
+                </HeaderActionButton>
               </OpenViewMenu>
             </div>
           )}

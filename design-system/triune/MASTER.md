@@ -148,3 +148,13 @@ Visibility controls presentation work and view-owned observation; it never impli
 Shared navigation, search and file-action contexts keep their identity until their meaning changes.
 Show a file tab and shared loading feedback while retaining its original, then mount the editable viewer after capture succeeds.
 Capture errors use the notification system and an explicit Retry action in that view.
+
+## Agent communication
+
+Peer messages use a slim accent edge and one header: bubble icon, actual agent name, source chat and message menu.
+Show at most three compact message lines with Show full/less, then reuse the user-message timestamp, Copy and Copy link footer.
+Task rows use the robot icon, actual agent name, short recorded task and semantic status icons; one square-arrow-out action opens the activity entry.
+Use Orchestration with the Workflow icon for the view, while retaining internal compatibility identifiers.
+Its default list contains active agents and open agent-triggered shells ordered by observed activity, with state on the right.
+Keep filters, graph, messages and history details in the existing menu; no permanent status groups, root banner or explanatory paragraphs.
+Real errors remain visible; source attribution comes from trusted records, never from a text prefix.

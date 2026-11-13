@@ -36,7 +36,7 @@ import {
   Undo2Icon,
   PlusIcon,
   XIcon,
-  ActivityIcon,
+  WorkflowIcon,
   CalendarClockIcon,
   FolderIcon,
   GitCompareIcon,
@@ -118,7 +118,7 @@ const VIEW_TYPES: { kind: WorkbenchViewKind; label: string; icon: typeof FolderI
   { kind: "search", label: "Search and replace", icon: SearchIcon },
   { kind: "terminal", label: "Manual terminal", icon: TerminalIcon },
   { kind: "agent-terminal", label: "Agent CLI", icon: HatGlassesIcon },
-  { kind: "activity", label: "Activity", icon: ActivityIcon },
+  { kind: "activity", label: "Orchestration", icon: WorkflowIcon },
   { kind: "pr", label: "Pull requests", icon: GitPullRequestIcon },
   { kind: "automations", label: "Automations", icon: CalendarClockIcon },
   { kind: "browser", label: "Browser", icon: GlobeIcon },
@@ -367,12 +367,14 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
         );
         void dock.updateView(view.id, {
           kind: "activity",
-          title: "Activity",
+          title: "Orchestration",
           resource: JSON.parse(JSON.stringify({ ...view.resource, source })) as Record<
             string,
             unknown
           >,
         });
+      } else if (view.kind === "activity" && view.title === "Activity") {
+        void dock.updateView(view.id, { title: "Orchestration" });
       } else if (view.kind === "agent-terminal" && view.title === "Agent terminal") {
         void dock.updateView(view.id, { title: "Agent CLI" });
       }
@@ -539,7 +541,15 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
         openConversation(request.conversationId, options);
         return;
       }
-      const captured = { ...request };
+      const captured = {
+        ...request,
+        conversationId:
+          request.conversationId ??
+          (request.kind === "activity" && request.source?.kind === "chat"
+            ? request.source.conversationId
+            : undefined),
+        ...(request.focusAgentId ? { linkRequestId: randomUUID() } : {}),
+      };
       const overridePane = openPaneOverride.current;
       const targetPane =
         options?.paneId ?? overridePane ?? dockRef.current.layout.focusedPaneId ?? undefined;
@@ -566,10 +576,20 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
               dockRef.current.focusView(existing.id);
               ensureVisible();
             };
-            if (resource.fileOptions) {
+            if (resource.fileOptions || resource.focusAgentId) {
               void dockRef.current
                 .updateView(existing.id, {
-                  resource: JSON.parse(JSON.stringify(resource)) as Record<string, unknown>,
+                  resource: JSON.parse(
+                    JSON.stringify(
+                      resource.focusAgentId
+                        ? {
+                            ...existing.resource,
+                            focusAgentId: resource.focusAgentId,
+                            linkRequestId: resource.linkRequestId,
+                          }
+                        : resource,
+                    ),
+                  ) as Record<string, unknown>,
                 })
                 .then((allowed) => {
                   if (allowed) focus();
@@ -1039,11 +1059,19 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
       else if (view.kind === "activity" || view.kind === "shells")
         content = (
           <ActivityView
+            focusAgentId={
+              typeof resource.focusAgentId === "string" ? resource.focusAgentId : undefined
+            }
+            linkRequestId={
+              typeof resource.linkRequestId === "string" ? resource.linkRequestId : undefined
+            }
             active={showDock && visibility.visible}
             source={activitySource(resource, workspace, sessionId, view.kind === "shells")}
             onSourceChange={async (source) => {
               const accepted = await updateResource(view, {
                 source,
+                focusAgentId: undefined,
+                linkRequestId: undefined,
                 ...(source.kind === "chat"
                   ? { conversationId: source.conversationId, workspace: undefined }
                   : { conversationId: undefined, workspace: source.workspace }),
@@ -1289,6 +1317,12 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
             if (!stillCurrent()) return;
             const reused = dockRef.current.layout.views.find((view) => view.id === existing.id);
             if (!reused || !sameDockResource(existing, reused)) return;
+            const originalAttachment = JSON.parse(JSON.stringify(request));
+            const resource = { ...reused.resource, originalAttachment };
+            if (!sameDockResource(reused, { ...reused, resource })) {
+              await dockRef.current.updateView(reused.id, { resource });
+              if (!stillCurrent()) return;
+            }
           }
           const latest = dockRef.current;
           const latestOrigin = dockPaneForView(latest.layout, origin.id);

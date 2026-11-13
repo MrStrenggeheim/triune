@@ -382,11 +382,11 @@ def test_activity_sources_group_hosts_and_chats_and_agent_cli_is_discoverable(
     expect(agent_cli).to_be_visible()
     expect(agent_cli.locator("svg.lucide-hat-glasses")).to_have_count(1)
     _capture(page, output_path, "desktop-open-menu-agent-cli")
-    page.get_by_role("menuitem", name="Activity", exact=True).click()
-    activity = _view(page, "Activity")
-    source = activity.get_by_role("button", name="Choose activity source", exact=False)
+    page.get_by_role("menuitem", name="Orchestration", exact=True).click()
+    activity = _view(page, "Orchestration")
+    source = activity.get_by_role("button", name="Choose orchestration source", exact=False)
     source.click()
-    dialog = page.get_by_role("dialog", name="Activity source", exact=True)
+    dialog = page.get_by_role("dialog", name="Orchestration source", exact=True)
     for group, option in (("Hosts", "Browser host"), ("Chats", "Chat B")):
         expect(
             dialog.get_by_role("group", name=group, exact=True).get_by_role(

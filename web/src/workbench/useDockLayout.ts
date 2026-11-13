@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   addDockView,
@@ -249,7 +250,18 @@ export function useDockLayout({
       if (!view) return false;
       const updated = { ...view, ...patch, id };
       const replacing = !sameDockResource(view, updated);
-      if (replacing && guard.current && !(await guard.current(view))) return false;
+      // Download provenance changes the menu, not the editable document.
+      const onlyOriginalChanged =
+        view.kind === "preview" &&
+        sameDockResource(
+          {
+            ...view,
+            resource: { ...view.resource, originalAttachment: updated.resource.originalAttachment },
+          },
+          updated,
+        );
+      if (replacing && !onlyOriginalChanged && guard.current && !(await guard.current(view)))
+        return false;
       const latest = current.current;
       if (!alive.current || latest.generation !== captured.generation) return false;
       const latestView = retainedDockViews(latest.state).find((item) => item.id === id);
