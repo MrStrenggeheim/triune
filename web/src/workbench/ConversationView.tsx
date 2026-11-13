@@ -1,4 +1,5 @@
-import { useCallback, useContext, useMemo, useState, type ReactNode } from "react";
+// Modified for Triune.
+import { memo, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
 import { ChevronRightIcon, ShareIcon, InfoIcon, GitForkIcon, SquareIcon } from "lucide-react";
 import { ScopedConversationSurface } from "./ScopedConversationSurface";
 import { ScopedConversationTerminal } from "./ScopedConversationTerminal";
@@ -24,7 +25,7 @@ import { ForkDialogContextProvider } from "@/shell/ForkDialogContext";
 import { ForkSessionDialog } from "@/shell/ForkSessionDialog";
 import { ContextSearchBar } from "@/shell/ContextSearchBar";
 import { useContextSearch } from "@/shell/ContextSearchContext";
-import { useWorkbench } from "./WorkbenchContext";
+import { useWorkbench, useWorkbenchActions } from "./WorkbenchContext";
 import { ScopedChatStoreProvider, useConversationChatStore } from "./ScopedChatStore";
 import { useViewCommands } from "./viewCommands";
 import type { ActionCommand } from "@/shell/contextSearch/actions";
@@ -45,7 +46,7 @@ export function conversationBranchSource(
 
 function Ancestor({ id, seen }: { id: string; seen: string[] }) {
   const { session } = useSession(id);
-  const workbench = useWorkbench();
+  const workbench = useWorkbenchActions();
   if (!session || seen.includes(id) || seen.length >= 16) return null;
   const parent = conversationBranchSource(session);
   return (
@@ -63,7 +64,16 @@ function Ancestor({ id, seen }: { id: string; seen: string[] }) {
   );
 }
 
-export function ConversationView({
+const ConversationSurface = memo(ScopedConversationSurface);
+
+function ConversationSearchBar({ conversationId }: { conversationId: string }) {
+  const search = useContextSearch();
+  return search?.open && search.activeSessionId === conversationId ? (
+    <ContextSearchBar contained />
+  ) : null;
+}
+
+export const ConversationView = memo(function ConversationView({
   conversationId,
   visible = true,
   focused,
@@ -75,32 +85,38 @@ export function ConversationView({
   children?: ReactNode;
 }) {
   const workbench = useWorkbench();
+  const isFocused = visible && (focused ?? workbench?.focusedConversationId === conversationId);
   return (
     <ScopedChatStoreProvider
       key={conversationId}
       conversationId={conversationId}
       visible={visible}
-      focused={visible && (focused ?? workbench?.focusedConversationId === conversationId)}
+      focused={isFocused}
     >
       <ScopedConversationTerminal key={conversationId} conversationId={conversationId}>
-        <ConversationViewContent conversationId={conversationId} visible={visible}>
+        <ConversationViewContent
+          conversationId={conversationId}
+          visible={visible}
+          focused={isFocused}
+        >
           {children}
         </ConversationViewContent>
       </ScopedConversationTerminal>
     </ScopedChatStoreProvider>
   );
-}
+});
 
-function ConversationViewContent({
+const ConversationViewContent = memo(function ConversationViewContent({
   conversationId,
   visible,
+  focused,
   children,
 }: {
   conversationId: string;
   visible: boolean;
+  focused: boolean;
   children?: ReactNode;
 }) {
-  const workbench = useWorkbench();
   const useChatStore = useConversationChatStore();
   const { session, error } = useSession(conversationId);
   const { data: agent } = useSessionAgent(conversationId);
@@ -130,7 +146,6 @@ function ConversationViewContent({
   const [fork, setFork] = useState<{ upToResponseId?: string; workspaceRecovery?: boolean } | null>(
     null,
   );
-  const search = useContextSearch();
   const parent = session ? conversationBranchSource(session) : null;
   const canShare = isOwnerLevel(session?.permissionLevel ?? null);
   const shareDisabled = workspaceSharingBlocked(session?.workspace);
@@ -138,11 +153,21 @@ function ConversationViewContent({
     if (canShare && !shareDisabled) setShareOpen(true);
   }, [canShare, shareDisabled]);
   const openInfo = useCallback(() => setInfoOpen(true), []);
+  const hasSession = !!session;
   const openFork = useCallback(
     (options?: { upToResponseId?: string; workspaceRecovery?: boolean }) => {
-      if (session && !restrictions.forkDisabledReason) setFork(options ?? {});
+      if (hasSession && !restrictions.forkDisabledReason) setFork(options ?? {});
     },
-    [session, restrictions.forkDisabledReason],
+    [hasSession, restrictions.forkDisabledReason],
+  );
+  const forkContext = useMemo(
+    () => ({
+      currentSessionId: conversationId,
+      canFork: hasSession,
+      disabledReason: restrictions.forkDisabledReason,
+      openForkDialog: openFork,
+    }),
+    [conversationId, hasSession, restrictions.forkDisabledReason, openFork],
   );
   const working = useChatStore(
     (state) =>
@@ -233,10 +258,7 @@ function ConversationViewContent({
           {session?.title || (error ? "Conversation unavailable" : "Conversation")}
         </span>
       </nav>
-      <ViewModeToggle
-        hotkeyEnabled={visible && workbench?.focusedConversationId === conversationId}
-        alwaysVisible
-      />
+      <ViewModeToggle hotkeyEnabled={focused} alwaysVisible />
       {conversation && (
         <HeaderConversationMenu
           conversation={conversation}
@@ -257,27 +279,16 @@ function ConversationViewContent({
 
   return (
     <ConversationScopeContext.Provider value={conversationId}>
-      <ForkDialogContextProvider
-        value={{
-          currentSessionId: conversationId,
-          canFork: !!session,
-          disabledReason: restrictions.forkDisabledReason,
-          openForkDialog: openFork,
-        }}
-      >
+      <ForkDialogContextProvider value={forkContext}>
         <section
           className="workbench-conversation relative flex h-full min-h-0 flex-col"
           data-context-search-region="chat"
           data-session-id={conversationId}
         >
           {header}
-          {search?.open && search.activeSessionId === conversationId && (
-            <ContextSearchBar contained />
-          )}
+          <ConversationSearchBar conversationId={conversationId} />
           <div className="relative min-h-0 flex-1 overflow-hidden flex flex-col">
-            {children ?? (
-              <ScopedConversationSurface conversationId={conversationId} visible={visible} />
-            )}
+            {children ?? <ConversationSurface conversationId={conversationId} visible={visible} />}
           </div>
         </section>
         <PermissionsModal
@@ -315,4 +326,4 @@ function ConversationViewContent({
       </ForkDialogContextProvider>
     </ConversationScopeContext.Provider>
   );
-}
+});

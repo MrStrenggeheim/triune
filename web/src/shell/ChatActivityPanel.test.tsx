@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -47,12 +48,13 @@ function activity(entries: ChatActivityEntry[], extra: Record<string, unknown> =
     ...extra,
   } as unknown as ReturnType<typeof useChatActivity>);
 }
-function panel(conversationId = "selected-chat", onOpenTerminal = vi.fn()) {
+function panel(conversationId = "selected-chat", onOpenTerminal = vi.fn(), active = true) {
   return (
     <MemoryRouter>
       <ChatActivityPanel
         conversationId={conversationId}
         rootSessionId="root-chat"
+        active={active}
         onOpenTerminal={onOpenTerminal}
       />
     </MemoryRouter>
@@ -74,11 +76,24 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
+it("retains its filter while polling is disabled across A/B/A", () => {
+  activity([entry({ output: "Retained command output" })]);
+  const open = vi.fn();
+  const view = render(panel("selected-chat", open));
+  fireEvent.click(screen.getByRole("button", { name: "Shells" }));
+  view.rerender(panel("selected-chat", open, false));
+  expect(query).toHaveBeenLastCalledWith("selected-chat", { enabled: false });
+  expect(usePeerMessages).toHaveBeenLastCalledWith("selected-chat", { enabled: false });
+  view.rerender(panel("selected-chat", open, true));
+  expect(screen.getByRole("button", { name: "Shells" })).toHaveAttribute("aria-pressed", "true");
+  expect(query).toHaveBeenLastCalledWith("selected-chat", { enabled: true });
+});
+
 it("uses one shared header and filters while preserving the main agent navigation", () => {
   activity([entry()]);
   const { container } = render(panel());
   expect(container.querySelectorAll(".workspace-control-header")).toHaveLength(1);
-  expect(query).toHaveBeenCalledWith("selected-chat");
+  expect(query).toHaveBeenCalledWith("selected-chat", { enabled: true });
   expect(screen.getByTestId("subagent-main-row")).toHaveAttribute("href", "/c/root-chat");
   fireEvent.click(screen.getByRole("button", { name: "Shells" }));
   expect(screen.queryByRole("region", { name: "Agents" })).not.toBeInTheDocument();

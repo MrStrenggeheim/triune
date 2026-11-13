@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { FileSelectionMenu } from "./FileSelectionMenu";
 // Render a PDF file inline via react-pdf (pdf.js). Mirrors ImageViewer's blob
 // lifecycle: build an object URL from the file response, revoke on cleanup, and
@@ -69,6 +70,7 @@ interface FloatingAnchor {
 export interface PdfViewerProps {
   data: FileContentResponse;
   conversationId: string;
+  active?: boolean;
   comments?: Comment[];
   activeSelection?: ActiveSelection | null;
   onSetActiveSelection?: (sel: ActiveSelection | null) => void;
@@ -129,6 +131,7 @@ function PdfCommentHighlights({
 export function PdfViewer({
   data,
   conversationId,
+  active = true,
   comments = EMPTY_COMMENTS,
   activeSelection = null,
   onSetActiveSelection,
@@ -140,6 +143,9 @@ export function PdfViewer({
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState<number | null>(null);
   const [floating, setFloating] = useState<FloatingAnchor | null>(null);
+  const [opened, setOpened] = useState(active);
+  if (active && !opened) setOpened(true);
+  const [pageSizes, setPageSizes] = useState<Record<number, { width: number; height: number }>>({});
 
   const commentsRef = useRef(comments);
   commentsRef.current = comments;
@@ -147,6 +153,7 @@ export function PdfViewer({
   onSetActiveSelectionRef.current = onSetActiveSelection;
   const activeSelectionRef = useRef(activeSelection);
   activeSelectionRef.current = activeSelection;
+  const scrolledSelectionRef = useRef<ActiveSelection | null>(null);
 
   // Hand pdf.js a Blob rather than an object URL. A URL string makes pdf.js run
   // its own fetch on the main thread and build request Headers — under the
@@ -164,18 +171,19 @@ export function PdfViewer({
   useEffect(() => {
     setErrored(!!data.truncated);
     setNumPages(0);
+    setPageSizes({});
   }, [data]);
 
   // Measure the container so pages fit its width (minus padding) at scale 1.
   useEffect(() => {
     const el = containerRef.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
+    if (!active || !el || typeof ResizeObserver === "undefined") return;
     const measure = () => setContainerWidth(el.clientWidth);
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+  }, [active]);
 
   // 32px accounts for the horizontal padding around the page column.
   const pageWidth = useMemo(
@@ -199,6 +207,8 @@ export function PdfViewer({
 
   // Scroll the page containing the active comment into view.
   useEffect(() => {
+    if (!active || scrolledSelectionRef.current === activeSelection) return;
+    scrolledSelectionRef.current = activeSelection;
     if (!activeSelection) return;
     const anchor = decodePdfAnchor(activeSelection.anchor_content);
     if (!anchor) return;
@@ -206,20 +216,20 @@ export function PdfViewer({
       `[data-page-number="${anchor.page}"]`,
     ) as HTMLElement | null;
     pageEl?.scrollIntoView({ block: "center" });
-  }, [activeSelection]);
+  }, [active, activeSelection]);
 
   // Drop the native selection once our overlay covers it — otherwise the app
   // theme's ::selection highlight stacks underneath and looks misaligned.
   useEffect(() => {
-    if (!activeSelection) return;
+    if (!active || !activeSelection) return;
     const sel = window.getSelection();
     if (sel && !sel.isCollapsed) sel.removeAllRanges();
-  }, [activeSelection]);
+  }, [active, activeSelection]);
 
   // Capture text-layer selections and show the floating "Add comment" button.
   useEffect(() => {
     const container = containerRef.current;
-    if (!container || !onSetActiveSelection) return;
+    if (!active || !container || !onSetActiveSelection) return;
 
     const handleMouseUp = (e: MouseEvent) => {
       const sel = window.getSelection();
@@ -272,10 +282,11 @@ export function PdfViewer({
 
     container.addEventListener("mouseup", handleMouseUp);
     return () => container.removeEventListener("mouseup", handleMouseUp);
-  }, [canEdit, onSetActiveSelection]);
+  }, [active, canEdit, onSetActiveSelection]);
 
   // Dismiss the floating button on mousedown outside or scroll.
   useEffect(() => {
+    if (!active) return;
     const handleMouseDown = (e: MouseEvent) => {
       if (!(e.target as HTMLElement).closest("[data-add-comment-btn]")) setFloating(null);
     };
@@ -286,7 +297,7 @@ export function PdfViewer({
       document.removeEventListener("mousedown", handleMouseDown);
       window.removeEventListener("scroll", handleScroll, true);
     };
-  }, []);
+  }, [active]);
 
   useEffect(() => {
     setFloating(null);
@@ -351,7 +362,7 @@ export function PdfViewer({
       </div>
 
       <div ref={containerRef} className="pdf-viewer min-h-0 flex-1 overflow-auto bg-muted/30 p-4">
-        {pdfFile && (
+        {opened && pdfFile && (
           <Document
             file={pdfFile}
             onLoadSuccess={(doc) => setNumPages(doc.numPages)}
@@ -362,28 +373,49 @@ export function PdfViewer({
           >
             {Array.from({ length: numPages }, (_, i) => {
               const pageNumber = i + 1;
+              const size = pageSizes[pageNumber];
+              const width = pageWidth ?? size?.width;
               return (
-                <Page
+                <div
                   key={pageNumber}
-                  pageNumber={pageNumber}
-                  width={pageWidth}
-                  className="shadow-md"
-                  loading=""
+                  // Retain page geometry when hidden canvas/text tasks are cancelled.
+                  style={
+                    size && width
+                      ? { width, height: (width * size.height) / size.width }
+                      : undefined
+                  }
                 >
-                  <PdfCommentHighlights
-                    page={pageNumber}
-                    comments={comments}
-                    activeSelection={activeSelection}
-                    onCommentClick={handleCommentClick}
-                  />
-                </Page>
+                  <Page
+                    pageNumber={pageNumber}
+                    width={pageWidth}
+                    renderMode={active ? "canvas" : "none"}
+                    renderTextLayer={active}
+                    renderAnnotationLayer={active}
+                    onLoadSuccess={(page) => {
+                      const viewport = page.getViewport({ scale: 1 });
+                      setPageSizes((previous) => ({
+                        ...previous,
+                        [pageNumber]: { width: viewport.width, height: viewport.height },
+                      }));
+                    }}
+                    className="shadow-md"
+                    loading=""
+                  >
+                    <PdfCommentHighlights
+                      page={pageNumber}
+                      comments={comments}
+                      activeSelection={activeSelection}
+                      onCommentClick={handleCommentClick}
+                    />
+                  </Page>
+                </div>
               );
             })}
           </Document>
         )}
       </div>
 
-      {floating && canEdit && onSetActiveSelection && (
+      {active && floating && canEdit && onSetActiveSelection && (
         <FileSelectionMenu
           x={floating.x}
           y={floating.y}

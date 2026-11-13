@@ -1,9 +1,12 @@
+// Modified for Triune.
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { Profiler } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ConversationScopeContext } from "@/components/chat/conversationScope";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Bubble } from "@/lib/renderItems";
 import { useChatStore, type ChatState } from "@/store/chatStore";
+import { conversationRegistry } from "@/store/conversationRegistry";
 import { ForkDialogContextProvider } from "@/shell/ForkDialogContext";
 import { BubbleView, buildPendingBubbles, containsMermaidDiagram } from "./chatBubbleParts";
 import { MemoryRouter } from "react-router-dom";
@@ -89,6 +92,48 @@ it("places explicit user attachments after the message text", async () => {
   expect(text.compareDocumentPosition(attachment) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   await waitFor(() => expect(attachment).toHaveTextContent("text/plain · 12 B"));
   expect(screen.getByRole("button", { name: "Download notes.txt" })).toBeEnabled();
+});
+
+it("keeps scoped assistant bubbles unchanged for unrelated text and primary updates", () => {
+  const first = conversationRegistry.acquire("first");
+  const second = conversationRegistry.acquire("second");
+  const commits = { first: vi.fn(), second: vi.fn() };
+  const bubble = errorBubble();
+  try {
+    render(
+      <>
+        {(["first", "second"] as const).map((id) => (
+          <ConversationScopeContext.Provider key={id} value={id}>
+            <Profiler id={id} onRender={commits[id]}>
+              <BubbleView bubble={bubble} isLastAssistant />
+            </Profiler>
+          </ConversationScopeContext.Provider>
+        ))}
+      </>,
+    );
+    const initial = {
+      first: commits.first.mock.calls.length,
+      second: commits.second.mock.calls.length,
+    };
+    const text = {
+      type: "text_done" as const,
+      ctx: { agent: null, depth: 0, turn: 0, timestamp: 0, responseId: "another", itemId: "text" },
+      fullText: "another bubble's text",
+      hasCodeBlocks: false,
+    };
+    act(() => first.setState({ blocks: [text], tokensUsed: 20 }));
+    act(() => second.setState({ blocks: [{ ...text, fullText: "second conversation" }] }));
+    act(() => useChatStore.setState({ conversationId: "third", sessionStatus: "running" }));
+    expect(commits.first).toHaveBeenCalledTimes(initial.first);
+    expect(commits.second).toHaveBeenCalledTimes(initial.second);
+
+    act(() => first.setState({ sessionStatus: "waiting" }));
+    expect(commits.first.mock.calls.length).toBeGreaterThan(initial.first);
+    expect(commits.second).toHaveBeenCalledTimes(initial.second);
+  } finally {
+    cleanup();
+    conversationRegistry.clear();
+  }
 });
 
 describe("Mermaid diagram width", () => {

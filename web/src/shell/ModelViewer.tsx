@@ -1,3 +1,4 @@
+// Modified for Triune.
 // Interactive 3D preview for STL / 3MF / OBJ files.
 //
 // Mirrors the ImageViewer pattern in CodeViewer: it takes the already-fetched
@@ -167,6 +168,7 @@ interface SceneResources {
   object: THREE.Object3D | null;
   rafId: number;
   resizeObserver: ResizeObserver | null;
+  setActive: ((active: boolean) => void) | null;
   // Theme-driven handles, kept so a live theme toggle can recolor the scene
   // without reparsing the model. null until the scene is built.
   ambient: THREE.HemisphereLight | null;
@@ -220,9 +222,21 @@ function teardownScene(res: SceneResources): void {
   }
 }
 
-export function ModelViewer({ data, path }: { data: FileContentResponse; path: string }) {
+export function ModelViewer({
+  data,
+  path,
+  active = true,
+}: {
+  data: FileContentResponse;
+  path: string;
+  active?: boolean;
+}) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [errored, setErrored] = useState(false);
+  const activeRef = useRef(active);
+  activeRef.current = active;
+  const [opened, setOpened] = useState(active);
+  if (active && !opened) setOpened(true);
 
   // Theme comes from the app's shared next-themes source (same hook Monaco and
   // the terminal use). `mode` is a stable "light"|"dark" string, so the theme
@@ -234,6 +248,10 @@ export function ModelViewer({ data, path }: { data: FileContentResponse; path: s
   // theme (which would reparse the model on every toggle).
   const resRef = useRef<SceneResources | null>(null);
   const themeRef = useRef<ModelViewerTheme>(modelViewerTheme(mode));
+
+  useEffect(() => {
+    resRef.current?.setActive?.(active);
+  }, [active]);
 
   // A theme toggle while a model is open updates the live scene in place —
   // clear color, light intensities, and the STL material — with no reload.
@@ -248,7 +266,7 @@ export function ModelViewer({ data, path }: { data: FileContentResponse; path: s
     // The container is always mounted (even in the error state, the canvas host
     // sits under the overlay), so this ref is populated on every effect run —
     // which is what lets an invalid → valid prop change recover.
-    if (!container) return;
+    if (!opened || !container) return;
 
     // A truncated model is a partial byte stream that won't parse into a valid
     // mesh — skip the scene and go straight to the error UI.
@@ -274,6 +292,7 @@ export function ModelViewer({ data, path }: { data: FileContentResponse; path: s
       object: null,
       rafId: 0,
       resizeObserver: null,
+      setActive: null,
       ambient: null,
       key: null,
       stlMaterial: null,
@@ -332,8 +351,6 @@ export function ModelViewer({ data, path }: { data: FileContentResponse; path: s
         // Canvas background follows the theme so it sits flush with the panel.
         renderer.setClearColor(theme.background, 1);
         renderer.setPixelRatio(window.devicePixelRatio);
-        const rect = container.getBoundingClientRect();
-        renderer.setSize(rect.width || 1, rect.height || 1);
         container.appendChild(renderer.domElement);
 
         const controls = new OrbitControls(camera, renderer.domElement);
@@ -343,21 +360,39 @@ export function ModelViewer({ data, path }: { data: FileContentResponse; path: s
         fitToObject(object, box, camera, controls);
 
         const render = () => {
+          if (!activeRef.current || disposed) {
+            res.rafId = 0;
+            return;
+          }
           res.rafId = requestAnimationFrame(render);
           controls.update();
           renderer.render(res.scene, camera);
         };
-        render();
-
         const onResize = () => {
+          if (!activeRef.current || disposed) return;
           const r = container.getBoundingClientRect();
           if (r.width === 0 || r.height === 0) return;
           camera.aspect = r.width / r.height;
           camera.updateProjectionMatrix();
           renderer.setSize(r.width, r.height);
         };
-        res.resizeObserver = new ResizeObserver(onResize);
-        res.resizeObserver.observe(container);
+        res.setActive = (visible) => {
+          controls.enabled = visible;
+          if (visible) {
+            onResize();
+            if (!res.resizeObserver) {
+              res.resizeObserver = new ResizeObserver(onResize);
+              res.resizeObserver.observe(container);
+            }
+            if (!res.rafId) render();
+          } else {
+            cancelAnimationFrame(res.rafId);
+            res.rafId = 0;
+            res.resizeObserver?.disconnect();
+            res.resizeObserver = null;
+          }
+        };
+        res.setActive(activeRef.current);
       })
       .catch(() => {
         fail();
@@ -368,7 +403,7 @@ export function ModelViewer({ data, path }: { data: FileContentResponse; path: s
       teardownScene(res);
       if (resRef.current === res) resRef.current = null;
     };
-  }, [data, path]);
+  }, [data, path, opened]);
 
   const filename = path.split("/").pop() ?? path;
   const errorMessage = data.truncated

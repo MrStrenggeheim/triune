@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { getFindContext } from "@/lib/findContext";
 import { TooltipButton } from "@/components/ui/tooltip";
 import { previewSourceMarkers, renderedMarkdownSelection } from "./markdownPreviewSelection";
@@ -46,7 +47,6 @@ import { rehypeGithubAlerts } from "rehype-github-alerts";
 import rehypeSlug from "rehype-slug";
 import { createMathPlugin } from "@streamdown/math";
 import { ExternalPreviewLink } from "./ExternalPreviewLink";
-import { MermaidPreview } from "./MermaidPreview";
 import type { Comment } from "@/hooks/useComments";
 import {
   type FileContentResponse,
@@ -55,7 +55,6 @@ import {
 } from "@/hooks/useFileContent";
 import { useCanEdit } from "@/hooks/usePermissions";
 import { cn } from "@/lib/utils";
-import { MarkdownRichTextViewer } from "./MarkdownRichTextViewer";
 import { isWorkspaceRelativeSrc, resolveWorkspacePath } from "./TipTapWorkspaceImage";
 import {
   type ActiveSelection,
@@ -70,11 +69,9 @@ import {
   isPdfFile,
   lineOverlapsSelection,
 } from "./codeViewerHelpers";
-import { NotebookPreview } from "./NotebookPreview";
 import { useScrollRestore } from "./useScrollRestore";
 import { PreviewSearchBar } from "./PreviewSearchBar";
 import { renderLineTokens } from "./codeViewerRendering";
-import { HtmlCommentViewer } from "./HtmlCommentViewer";
 import { TruncatedBanner } from "./TruncatedBanner";
 import { useLightbox } from "@/components/ImageLightbox";
 import { hasCommandModifier } from "@/lib/hotkeys";
@@ -85,6 +82,23 @@ import { isVideoFile } from "@/lib/video";
 // Lazy-load Monaco so small Markdown and preview surfaces avoid its bundle.
 const MonacoCodeEditor = lazy(() =>
   import("./MonacoCodeEditor").then((m) => ({ default: m.MonacoCodeEditor })),
+);
+const MarkdownRichTextViewer = lazy(() =>
+  import("./MarkdownRichTextViewer").then((m) => ({ default: m.MarkdownRichTextViewer })),
+);
+const NotebookPreview = lazy(() =>
+  import("./NotebookPreview").then((m) => ({ default: m.NotebookPreview })),
+);
+const HtmlCommentViewer = lazy(() =>
+  import("./HtmlCommentViewer").then((m) => ({ default: m.HtmlCommentViewer })),
+);
+const MermaidPreview = lazy(() =>
+  import("./MermaidPreview").then((m) => ({ default: m.MermaidPreview })),
+);
+const VIEWER_LOADING = (
+  <div role="status" className="flex items-center justify-center p-8 text-muted-foreground text-ui">
+    Loading…
+  </div>
 );
 
 // react-pdf + pdf.js (worker) is heavy; load it only when a PDF is actually
@@ -239,7 +253,11 @@ const MARKDOWN_COMPONENTS: Components = {
       // in the read-only preview too, matching the editor's detection.
       child.props.className?.split(/\s+/).some((c) => c.toLowerCase() === "language-mermaid")
     ) {
-      return <MermaidPreview source={String(child.props.children ?? "")} />;
+      return (
+        <Suspense fallback={VIEWER_LOADING}>
+          <MermaidPreview source={String(child.props.children ?? "")} />
+        </Suspense>
+      );
     }
     return <pre {...props}>{children}</pre>;
   },
@@ -574,7 +592,9 @@ export function CodeViewer(props: Parameters<typeof CodeViewerContent>[0]) {
   );
   return (
     <FileSelectionScope value={value}>
-      <CodeViewerContent {...props} />
+      <Suspense fallback={VIEWER_LOADING}>
+        <CodeViewerContent {...props} />
+      </Suspense>
     </FileSelectionScope>
   );
 }
@@ -980,6 +1000,7 @@ function CodeViewerContent({
         }
       >
         <PdfViewer
+          active={mediaActive}
           data={fileQuery.data}
           conversationId={conversationId}
           comments={previewComments}
@@ -998,7 +1019,7 @@ function CodeViewerContent({
           </div>
         }
       >
-        <ModelViewer data={fileQuery.data} path={path} />
+        <ModelViewer data={fileQuery.data} path={path} active={mediaActive} />
       </Suspense>
     );
   }

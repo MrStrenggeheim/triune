@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
@@ -123,6 +124,37 @@ it("polls for newly recorded usage even when initially empty and stops on unmoun
   unmount();
   await act(async () => {
     await vi.advanceTimersByTimeAsync(10_000);
+  });
+  expect(fetch).toHaveBeenCalledTimes(2);
+});
+
+it("pauses a retained hidden view for fifteen seconds and resumes its cached activity", async () => {
+  vi.useFakeTimers();
+  const { result, rerender } = renderHook(
+    ({ active }) => useChatActivity("chat", { enabled: active }),
+    { initialProps: { active: false }, wrapper },
+  );
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(15_000);
+  });
+  expect(fetch).not.toHaveBeenCalled();
+  rerender({ active: true });
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(10);
+  });
+  const cached = result.current.data;
+  expect(cached).toEqual(payload());
+  rerender({ active: false });
+  await act(async () => {
+    await client.invalidateQueries({ queryKey: ["chat-activity", "chat"] });
+    await vi.advanceTimersByTimeAsync(15_000);
+  });
+  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(result.current.data).toBe(cached);
+  rerender({ active: true });
+  expect(result.current.data).toBe(cached);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(10);
   });
   expect(fetch).toHaveBeenCalledTimes(2);
 });

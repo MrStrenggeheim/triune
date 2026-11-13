@@ -1,4 +1,6 @@
-import { useMemo, type ReactNode } from "react";
+// Modified for Triune.
+import { useMemo, useRef, type ReactNode } from "react";
+import { useStableCallback } from "@/hooks/useStableCallback";
 import { authenticatedFetch } from "@/lib/identity";
 import { apiErrorFromResponse } from "@/lib/sessionsApi";
 import { toast } from "@/lib/notifications";
@@ -13,8 +15,8 @@ import type { WorkbenchActions } from "./WorkbenchContext";
 export function CapturedFileActions({
   conversationId,
   workspace,
-  openView,
-  registerGuard,
+  openView: openViewProp,
+  registerGuard: registerGuardProp,
   viewId,
   children,
 }: {
@@ -25,19 +27,33 @@ export function CapturedFileActions({
   viewId: string;
   children: ReactNode;
 }) {
+  const workspaceRef = useRef(workspace);
+  workspaceRef.current = workspace;
+  const workspaceRoot = workspace?.root ?? null;
+  const workspaceHome = workspace?.home ?? null;
+  const sessionHostId = workspace?.host_id;
+  const openView = useStableCallback(openViewProp);
+  const registerGuard = useStableCallback(registerGuardProp);
   const value = useMemo(
     () => ({
       conversationId,
-      workspaceRoot: workspace?.root ?? null,
-      workspaceHome: workspace?.home ?? null,
-      sessionHostId: workspace?.host_id,
+      workspaceRoot,
+      workspaceHome,
+      sessionHostId,
       isChangedPath: () => false,
-      openGithubTab: () => openView({ kind: "pr", workspace, conversationId }),
+      openGithubTab: () =>
+        openView({ kind: "pr", workspace: workspaceRef.current, conversationId }),
       openContentSearch: (path: string, replaceOpen?: boolean) =>
-        openView({ kind: "search", workspace, conversationId, path, replaceOpen }),
+        openView({
+          kind: "search",
+          workspace: workspaceRef.current,
+          conversationId,
+          path,
+          replaceOpen,
+        }),
       openFile: (path: string, options?: OpenFileOptions) => {
         const launch = async () => {
-          let target = workspace;
+          let target = workspaceRef.current;
           if (options?.workspaceId && options.workspaceId !== target?.id) {
             const response = await authenticatedFetch(
               `/v1/workbench-workspaces/${encodeURIComponent(options.workspaceId)}`,
@@ -59,7 +75,7 @@ export function CapturedFileActions({
       },
       registerNavigationGuard: (guard: FileNavigationGuard) => registerGuard(viewId, guard),
     }),
-    [conversationId, workspace, openView, registerGuard, viewId],
+    [conversationId, workspaceRoot, workspaceHome, sessionHostId, openView, registerGuard, viewId],
   );
   return <FileViewerContext.Provider value={value}>{children}</FileViewerContext.Provider>;
 }

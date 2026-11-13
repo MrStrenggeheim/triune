@@ -74,6 +74,7 @@ import { ApiError, continueFailedTurn, retrySession } from "@/lib/sessionsApi";
 import type { PendingUserMessage } from "@/store/chatStore";
 import { conversationRegistry } from "@/store/conversationRegistry";
 import { useConversationEntryState } from "@/hooks/useConversationEntryState";
+import { useShallow } from "zustand/react/shallow";
 import {
   ConversationScopeContext,
   useScopedConversationId,
@@ -413,13 +414,6 @@ export function computeIsTurnActive(sessionStatus: SessionStatus, localSending: 
   return computeIsWorking(sessionStatus) || localSending;
 }
 
-function useAgentTurnActive(): boolean {
-  const useChatStore = useConversationChatStore();
-  const sessionStatus = useChatStore((s) => s.sessionStatus);
-  const localSending = useChatStore((s) => s.status === "streaming");
-  return computeIsTurnActive(sessionStatus, localSending);
-}
-
 /** Whether any elicitation card is still awaiting the user's answer. */
 function hasPendingElicitationBlock(blocks: readonly AnyBlock[]): boolean {
   return blocks.some((b) => b.type === "elicitation" && b.status === "pending");
@@ -457,22 +451,30 @@ export function workingIndicatorLabel(
 export function WorkingIndicator() {
   const useChatStore = useConversationChatStore();
   const scopedConversationId = useContext(ConversationScopeContext);
-  const scopedState = useConversationEntryState(scopedConversationId);
-  const rootBgCount = useChatStore((s) => s.backgroundTaskCount);
-  const rootBlockedOn = useChatStore((s) => s.blockedOn);
-  const rootHasOwnPendingElicitation = useChatStore((s) =>
-    hasPendingOwnElicitation(s.blocks, s.conversationId),
+  const scopedState = useConversationEntryState(
+    scopedConversationId,
+    useShallow((s) => ({
+      backgroundTaskCount: s.backgroundTaskCount,
+      blockedOn: s.blockedOn,
+      hasOwnPendingElicitation: hasPendingOwnElicitation(s.blocks, scopedConversationId),
+      agentWorking: computeIsTurnActive(s.sessionStatus, s.status === "streaming"),
+    })),
   );
-  const rootAgentWorking = useAgentTurnActive();
+  const rootBgCount = useChatStore((s) => (scopedConversationId ? 0 : s.backgroundTaskCount));
+  const rootBlockedOn = useChatStore((s) => (scopedConversationId ? null : s.blockedOn));
+  const rootHasOwnPendingElicitation = useChatStore((s) =>
+    scopedConversationId ? false : hasPendingOwnElicitation(s.blocks, s.conversationId),
+  );
+  const rootAgentWorking = useChatStore((s) =>
+    scopedConversationId ? false : computeIsTurnActive(s.sessionStatus, s.status === "streaming"),
+  );
   const terminalFirst = useTerminalFirst();
   const bgCount = scopedConversationId ? scopedState.backgroundTaskCount : rootBgCount;
   const blockedOn = scopedConversationId ? scopedState.blockedOn : rootBlockedOn;
   const hasOwnPendingElicitation = scopedConversationId
-    ? hasPendingOwnElicitation(scopedState.blocks, scopedConversationId)
+    ? scopedState.hasOwnPendingElicitation
     : rootHasOwnPendingElicitation;
-  const agentWorking = scopedConversationId
-    ? computeIsTurnActive(scopedState.sessionStatus, scopedState.status === "streaming")
-    : rootAgentWorking;
+  const agentWorking = scopedConversationId ? scopedState.agentWorking : rootAgentWorking;
   const tick = useWorkingLabelTick();
   // Once the turn ends but background shells outlive it, BackgroundTaskPill owns
   // the state and the shimmer stays off (it would misread as the agent still
@@ -1015,16 +1017,23 @@ function AssistantBubble({
   // main transcript) reads the root store exactly as before; `useConversationEntryState(null)`
   // is inert (no subscription, stable empty snapshot).
   const scopedConversationId = useContext(ConversationScopeContext);
-  const scopedState = useConversationEntryState(scopedConversationId);
-  const activeConversationId = useChatStore((s) => s.conversationId);
-  const conversationId = scopedConversationId ?? activeConversationId;
-  const rootSessionStatus = useChatStore((s) => s.sessionStatus);
-  const rootHasPendingElicitation = useChatStore((s) => hasPendingElicitationBlock(s.blocks));
+  const scopedState = useConversationEntryState(
+    scopedConversationId,
+    useShallow((s) => ({
+      sessionStatus: s.sessionStatus,
+      hasPendingElicitation: hasPendingElicitationBlock(s.blocks),
+    })),
+  );
+  const conversationId = useChatStore((s) => scopedConversationId ?? s.conversationId);
+  const rootSessionStatus = useChatStore((s) => (scopedConversationId ? "idle" : s.sessionStatus));
+  const rootHasPendingElicitation = useChatStore((s) =>
+    scopedConversationId ? false : hasPendingElicitationBlock(s.blocks),
+  );
   const sessionStatus = scopedConversationId ? scopedState.sessionStatus : rootSessionStatus;
   // A pending elicitation means the turn is parked awaiting the user — still in
   // flight even when its lifecycle or the session status reads settled.
   const hasPendingElicitation = scopedConversationId
-    ? hasPendingElicitationBlock(scopedState.blocks)
+    ? scopedState.hasPendingElicitation
     : rootHasPendingElicitation;
   // Getter computes the markdown lazily at click time.
   const { isCopied, handleCopy } = useCopyMessage(

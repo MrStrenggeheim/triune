@@ -5,7 +5,7 @@ import re
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from playwright.sync_api import Page, expect
+from playwright.sync_api import Page, Route, expect
 
 from tests.browser_ui.chat.session_contract import list_payload, message_item
 from tests.browser_ui.chat.test_unified_workspace import (
@@ -80,7 +80,7 @@ def test_inline_attachment_opens_captured_tab_downloads_and_reveals_original_wor
                 item_id,
                 "assistant",
                 "Files: [first](/workspace/guide.csv), [next](/workspace/next.csv). "
-                "Folder: [root](/workspace/docs).",
+                "Folder: [root](/workspace/docs). Again: [same file](/workspace/./guide.csv).",
                 response_id="artifact-turn",
             )
         ]
@@ -91,6 +91,15 @@ def test_inline_attachment_opens_captured_tab_downloads_and_reveals_original_wor
         browser_contract._matcher(route),
         lambda request: request.fulfill(body=captured, content_type="text/csv"),
     )
+    pending_captures: list[Route] = []
+
+    def capture_original(request: Route) -> None:
+        if not pending_captures:
+            pending_captures.append(request)
+            return
+        request.fulfill(json={"filename": "next.csv", "mime": "text/csv", "bytes": len(captured)})
+
+    browser_contract.route(browser_contract._matcher(route + "/capture"), capture_original)
 
     def metadata(request):
         name = parse_qs(urlparse(request.url).query)["path"][0].rsplit("/", 1)[-1]
@@ -130,17 +139,33 @@ def test_inline_attachment_opens_captured_tab_downloads_and_reveals_original_wor
     page.set_viewport_size({"width": 1440, "height": 1000})
     page.goto(first.url)
     chat = _view(page, "Chat A")
-    expect(chat.get_by_role("button", name="guide.csv", exact=True)).to_be_visible()
+    expect(chat.get_by_role("button", name="guide.csv", exact=True).first).to_be_visible()
     expect(chat.locator("code").filter(has_text="/workspace/docs")).to_be_visible()
-    chat.get_by_role("button", name="guide.csv", exact=True).click()
+    chat.get_by_role("button", name="guide.csv", exact=True).first.click()
     preview = _view(page, "guide.csv")
+    expect(preview.get_by_role("status")).to_contain_text("Preparing file")
+    expect(preview.locator(".monaco-editor")).to_have_count(0)
+    _capture(page, output_path, "file-tab-prepares-original-before-editing")
+    assert pending_captures
+    pending_captures[0].fulfill(
+        json={"filename": "guide.csv", "mime": "text/csv", "bytes": len(captured)}
+    )
     expect(preview.locator(".view-lines")).to_contain_text("live", timeout=30000)
+    with page.expect_request(
+        lambda request: (
+            request.method == "POST"
+            and "/capture?" in request.url
+            and parse_qs(urlparse(request.url).query).get("path") == ["/workspace/./guide.csv"]
+        )
+    ):
+        chat.get_by_role("button", name="guide.csv", exact=True).last.click()
+    expect(page.get_by_role("tab", name="guide.csv", exact=True)).to_have_count(1)
     expect(chat.get_by_label("Message the agent")).to_be_visible()
     panes = page.locator(".dock-pane:not([hidden])").count()
     chat.get_by_role("button", name="next.csv", exact=True).click()
     expect(_view(page, "next.csv").locator(".view-lines")).to_contain_text("live", timeout=30000)
     assert page.locator(".dock-pane:not([hidden])").count() == panes
-    chat.get_by_role("button", name="guide.csv", exact=True).click()
+    chat.get_by_role("button", name="guide.csv", exact=True).first.click()
     expect(preview).to_be_visible()
     assert page.locator(".dock-pane:not([hidden])").count() == panes
     preview.get_by_role("button", name="View settings", exact=True).click()

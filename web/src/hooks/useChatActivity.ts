@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { useQuery } from "@tanstack/react-query";
 import { authenticatedFetch } from "@/lib/identity";
 import { apiErrorFromResponse } from "@/lib/sessionsApi";
@@ -37,7 +38,10 @@ export interface ChatActivityResponse {
 }
 
 /** Chat provenance only; workspace terminal inventory is intentionally separate. */
-export function useChatActivity(conversationId: string | null) {
+export function useChatActivity(
+  conversationId: string | null,
+  options: { enabled?: boolean } = {},
+) {
   const sessionId = isTempConvId(conversationId) ? null : conversationId;
   return useQuery<ChatActivityResponse>({
     queryKey: ["chat-activity", sessionId],
@@ -49,7 +53,7 @@ export function useChatActivity(conversationId: string | null) {
       if (!response.ok) throw await apiErrorFromResponse(response);
       return response.json();
     },
-    enabled: !!sessionId,
+    enabled: options.enabled !== false && !!sessionId,
     staleTime: 5_000,
     refetchInterval: 5_000,
     retry: false,

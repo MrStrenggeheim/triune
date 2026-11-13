@@ -1,10 +1,11 @@
+// Modified for Triune.
 import {
   WorkbenchWorkspaceProvider,
   queryIdentity,
   type WorkbenchWorkspace,
 } from "@/lib/workbenchWorkspace";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, renderHook, waitFor } from "@testing-library/react";
+import { act, cleanup, render, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 import type * as HostModule from "@/lib/host";
@@ -116,6 +117,35 @@ afterEach(() => {
   // `document.createElement` spy is recaptured as the "original" by the next
   // test and recurses infinitely.
   vi.restoreAllMocks();
+});
+
+it("keeps the file query identity and cached content while a retained viewer is disabled", async () => {
+  stubChatStore();
+  onlineMock.mockReturnValue(true);
+  hostOnlineMock.mockReturnValue(true);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const wrapper = ({ children }: { children: ReactNode }) => (
+    <QueryClientProvider client={client}>{children}</QueryClientProvider>
+  );
+  const { result, rerender, unmount } = renderHook(
+    ({ enabled }) => useFileContent("chat", "a.txt", { enabled }),
+    { initialProps: { enabled: false }, wrapper },
+  );
+  expect(fetchMock).not.toHaveBeenCalled();
+  rerender({ enabled: true });
+  await waitFor(() => expect(result.current.isSuccess).toBe(true));
+  const cached = result.current.data;
+  rerender({ enabled: false });
+  await act(async () => {
+    await client.invalidateQueries({ queryKey: ["file-content", "chat", "a.txt"] });
+  });
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  expect(result.current.data).toBe(cached);
+  rerender({ enabled: true });
+  expect(result.current.data).toBe(cached);
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+  unmount();
+  client.clear();
 });
 
 // ---------------------------------------------------------------------------

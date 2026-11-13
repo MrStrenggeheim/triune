@@ -22,6 +22,8 @@ Those previously Apache-licensed features retain their original permissions.
 - Route live workspace-file references to the File Editor with configurable pane reuse, captured-original downloads and compact comment controls.
 - Retain Explorer and transcript geometry through layout changes, reduce scrollbar rescans, and restore sidebar hierarchy and Git indicator consistency.
 - Reuse shared density, notifications, workspace pickers and view-opening controls, and recover subchat quote creation without duplicating a failed child.
+- Isolate retained-view updates, scope conversation subscriptions, batch native text, and pause hidden resource observation while retaining user state.
+- Defer specialized viewers, retain reference originals as binary artifacts, and negotiate substantial JSON compression without changing streaming transports.
 
 [LICENSING.md](LICENSING.md) defines scope and the required notice.
 Git diffs against the imported baseline identify exact modified paths and lines.

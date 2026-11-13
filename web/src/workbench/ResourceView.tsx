@@ -123,7 +123,7 @@ function ResourceViewBody({
   const inheritedContext = useContext(FileViewerContext);
   const { session } = useSession(conversationId);
   const owningHostId = workspace?.host_id ?? session?.hostId;
-  const hosts = useHosts({ enabled: !!owningHostId, includeSandbox: true });
+  const hosts = useHosts({ enabled: active && !!owningHostId, includeSandbox: true });
   const owner = workspace?.id ?? conversationId;
   const root = workspace?.root ?? session?.workspace ?? null;
   const folder = usePanelFolder(owner, root, viewId);
@@ -352,6 +352,7 @@ function ResourceViewBody({
                 comparisonScope={comparisonScope}
                 permissionLevel={workspace?.permission_level ?? session?.permissionLevel}
                 open
+                active={active}
                 mediaActive={active}
                 syncUrl={false}
                 frameless

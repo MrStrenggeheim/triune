@@ -1,3 +1,4 @@
+// Modified for Triune.
 // Vitest cases for the chat store.
 //
 // `switchTo` opens the session SSE stream and hydrates session
@@ -16410,23 +16411,28 @@ describe("chatStore — live delta streaming (claude-native)", () => {
     });
   }
 
-  function startPump(conversationId: string): {
+  function startPump(
+    conversationId: string,
+    ignoredMessages = new Set<string>(),
+  ): {
     sink: ReturnType<typeof pushableStream>;
     controller: AbortController;
     manual: ReturnType<typeof manualScheduler>;
+    done: ReturnType<typeof pumpStreamEvents>;
   } {
     const sink = pushableStream();
     const controller = new AbortController();
     const manual = manualScheduler();
-    void pumpStreamEvents(
+    const done = pumpStreamEvents(
       conversationId,
       sink.stream,
       controller,
       setState,
       getState,
       manual.scheduler,
+      ignoredMessages,
     );
-    return { sink, controller, manual };
+    return { sink, controller, manual, done };
   }
 
   /** The single provisional `live:*` preview block, or undefined. */
@@ -16438,6 +16444,136 @@ describe("chatStore — live delta streaming (claude-native)", () => {
           b.type === "text_done" && b.ctx.itemId?.startsWith("live:") === true,
       );
   }
+
+  it("coalesces 100 native chunks into first paint plus one ordered frame write", async () => {
+    useChatStore.setState({
+      conversationId: "conv_native_batch",
+      blocks: [],
+      isNativeTerminalSession: true,
+    });
+    const { sink, manual, done } = startPump("conv_native_batch");
+    const writes = vi.fn();
+    const unsubscribe = useChatStore.subscribe((state, previous) => {
+      if (state.blocks !== previous.blocks) writes();
+    });
+    onTestFinished(unsubscribe);
+    const chunks = Array.from({ length: 100 }, (_, index) => `${index},`);
+    chunks.forEach((chunk, index) => sink.push(nativeDelta("m1", index, chunk, false)));
+    await tick();
+    expect(writes).toHaveBeenCalledOnce();
+    expect(provisional()?.fullText).toBe(chunks[0]);
+    manual.fire();
+    expect(writes).toHaveBeenCalledTimes(2);
+    expect(provisional()).toMatchObject({ fullText: chunks.join(""), streamIndex: 99 });
+    sink.close();
+    expect(await done).toBe("dropped");
+    manual.fire();
+    expect(writes).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(["final chunk", "server close", "transport close", "transport error"])(
+    "flushes pending native text on %s without a later duplicate frame",
+    async (ending) => {
+      useChatStore.setState({
+        conversationId: "conv_native_tail",
+        blocks: [],
+        isNativeTerminalSession: true,
+      });
+      const { sink, manual, done } = startPump("conv_native_tail");
+      sink.push(nativeDelta("m1", 0, "first ", false));
+      sink.push(nativeDelta("m1", 1, "second ", false));
+      sink.push(nativeDelta("m1", 2, "third", false));
+      await tick();
+      expect(provisional()?.fullText).toBe("first ");
+      if (ending === "final chunk") {
+        sink.push(nativeDelta("m1", 3, "!", true));
+        await tick();
+        expect(provisional()?.fullText).toBe("first second third!");
+      }
+      if (ending === "server close") sink.push("data: [DONE]\n\n");
+      if (ending === "transport error") sink.error();
+      else sink.close();
+      expect(await done).toBe(ending === "server close" ? "server_closed" : "dropped");
+      const text = provisional();
+      expect(text?.fullText).toBe(`first second third${ending === "final chunk" ? "!" : ""}`);
+      manual.fire();
+      expect(provisional()).toBe(text);
+    },
+  );
+
+  it.each(["aborted", "disposed", "persisted"])(
+    "does not replay a pending native frame after the message is %s",
+    async (state) => {
+      useChatStore.setState({
+        conversationId: "conv_native_stale",
+        blocks: [],
+        isNativeTerminalSession: true,
+      });
+      const ignored = new Set<string>();
+      const { sink, controller, manual, done } = startPump("conv_native_stale", ignored);
+      sink.push(nativeDelta("m1", 0, "first ", false));
+      sink.push(nativeDelta("m1", 1, "pending", false));
+      await tick();
+      expect(provisional()?.fullText).toBe("first ");
+      if (state === "aborted") controller.abort();
+      if (state === "disposed") conversationRegistry.release("conv_native_stale");
+      if (state === "persisted") {
+        // Reconnect reconciliation marks the preview retired when its
+        // canonical item appears in a snapshot before the queued frame.
+        ignored.add("m1");
+        useChatStore.setState({
+          blocks: itemsToBlocks([assistantMessage("turn", "first pending")]),
+        });
+      }
+      const before = useChatStore.getState().blocks;
+      manual.fire();
+      expect(useChatStore.getState().blocks).toBe(before);
+      sink.close();
+      await done;
+      expect(useChatStore.getState().blocks).toBe(before);
+    },
+  );
+
+  it("keeps batched previews, approvals and persisted messages in stream order", async () => {
+    useChatStore.setState({
+      conversationId: "conv_native_order",
+      blocks: [],
+      isNativeTerminalSession: true,
+    });
+    const { sink, manual, done } = startPump("conv_native_order");
+    sink.push(nativeDelta("m1", 0, "first ", false));
+    sink.push(nativeDelta("m1", 1, "answer", false));
+    sink.push(elicitationReq("approval"));
+    sink.push(nativeDelta("m2", 0, "second ", false));
+    sink.push(nativeDelta("m2", 1, "answer", false));
+    sink.push(sse("response.elicitation_resolved", { elicitation_id: "approval" }));
+    await tick();
+    const preview = useChatStore.getState().blocks;
+    expect(
+      preview.map((block) =>
+        block.type === "elicitation" ? block.elicitationId : block.ctx.itemId,
+      ),
+    ).toEqual(["live:m1", "approval", "live:m2"]);
+    expect(
+      preview.filter((block) => block.type === "text_done").map((block) => block.fullText),
+    ).toEqual(["first answer", "second answer"]);
+    expect(preview[1]).toMatchObject({ type: "elicitation", status: "responded" });
+    sink.push(messageDone("ci_1", "turn", "first answer", "m1"));
+    sink.push(messageDone("ci_2", "turn", "second answer", "m2"));
+    sink.push(nativeDelta("m1", 2, " stale", true));
+    sink.close();
+    await done;
+    manual.fire();
+    const blocks = useChatStore.getState().blocks;
+    expect(
+      blocks.map((block) =>
+        block.type === "elicitation" ? block.elicitationId : block.ctx.itemId,
+      ),
+    ).toEqual(["approval", "ci_1", "ci_2"]);
+    expect(
+      blocks.filter((block) => block.type === "text_done").map((block) => block.fullText),
+    ).toEqual(["first answer", "second answer"]);
+  });
 
   it("streams into a provisional block in `blocks`, not a separate lane", async () => {
     useChatStore.setState({

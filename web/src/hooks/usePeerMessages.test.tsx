@@ -1,3 +1,4 @@
+// Modified for Triune.
 import type { ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
@@ -65,6 +66,43 @@ afterEach(() => {
   cleanup();
   client.clear();
   conversationRegistry.clear();
+  vi.useRealTimers();
+});
+
+it("pauses both hidden history polls without discarding pages or live messages", async () => {
+  vi.useFakeTimers();
+  outbox.mockImplementation(async () => page([message("outgoing")]));
+  const { result, rerender } = renderHook(
+    ({ active }) => usePeerMessages("chat", { enabled: active }),
+    { initialProps: { active: false }, wrapper },
+  );
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(15_000);
+  });
+  expect(fetch).not.toHaveBeenCalled();
+  rerender({ active: true });
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(10);
+  });
+  const outgoing = result.current.data;
+  const incomingPages = result.current.incomingHistory.data;
+  expect(result.current.messages.map((item) => item.id)).toEqual(["outgoing"]);
+  rerender({ active: false });
+  await act(async () => {
+    await client.invalidateQueries({ queryKey: ["peer-messages"] });
+    await vi.advanceTimersByTimeAsync(15_000);
+  });
+  expect(outbox).toHaveBeenCalledTimes(1);
+  expect(history).toHaveBeenCalledTimes(1);
+  expect(result.current.data).toBe(outgoing);
+  expect(result.current.incomingHistory.data).toBe(incomingPages);
+  rerender({ active: true });
+  expect(result.current.messages.map((item) => item.id)).toEqual(["outgoing"]);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(10);
+  });
+  expect(outbox).toHaveBeenCalledTimes(2);
+  expect(history).toHaveBeenCalledTimes(2);
 });
 
 it.each([null, "", "temp:pending"])("does not fetch for %s", (id) => {

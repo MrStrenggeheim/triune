@@ -754,15 +754,18 @@ function FolderTreeInner({
   // all the way down, and it converges the same whether listings arrive async
   // or are already cached.
   const [lazyPaths, setLazyPaths] = useState<string[]>([]);
-  const dirData = useWorkspaceDirectories(conversationId, lazyPaths, browseLocation);
+  const dirData = useWorkspaceDirectories(conversationId, lazyPaths, browseLocation, {
+    enabled: active,
+  });
   useEffect(() => {
+    if (!active) return;
     const next = visibleTree
       ? expandedLazyPaths(visibleTree, expandedPaths, showHidden, sort, dirData)
       : [];
     setLazyPaths((prev) =>
       prev.length === next.length && prev.every((p, i) => p === next[i]) ? prev : next,
     );
-  }, [visibleTree, expandedPaths, showHidden, sort, dirData]);
+  }, [active, visibleTree, expandedPaths, showHidden, sort, dirData]);
 
   // Flatten the visible tree into linear rows for the virtualizer.
   const flatRows = useMemo<FlatRow[]>(
@@ -786,7 +789,7 @@ function FolderTreeInner({
   const scrollElementRef = scrollParentRef ?? ownScrollRef;
   const rowVirtualizer = useVirtualizer({
     count: flatRows.length,
-    getScrollElement: () => scrollElementRef.current,
+    getScrollElement: () => (active ? scrollElementRef.current : null),
     estimateSize: () => 25,
     overscan: 12,
     getItemKey: (index) => flatRows[index]?.key ?? index,
@@ -928,7 +931,7 @@ function FolderTreeInner({
   // re-fire the scroll or restart the 800ms flash).
   useEffect(() => {
     const pending = pendingRevealRef.current;
-    if (!pending) return;
+    if (!active || !pending) return;
     const index = flatRows.findIndex((r) => r.kind === "node" && r.key === pending);
     if (index === -1) return; // row not materialized yet; a later level is loading
     pendingRevealRef.current = null; // handled — don't scroll/flash again
@@ -936,7 +939,7 @@ function FolderTreeInner({
     // Clear once the shared flash animation (800ms) has played out.
     clearTimeout(revealFlashTimer.current ?? undefined);
     revealFlashTimer.current = setTimeout(() => setRevealedPath(null), 800);
-  }, [flatRows, rowVirtualizer]);
+  }, [active, flatRows, rowVirtualizer]);
 
   // When a search query is active, render a flat filtered list instead of the tree.
   if (searchQuery.trim().length > 0) {

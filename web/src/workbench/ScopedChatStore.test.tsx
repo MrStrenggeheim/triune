@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useChatStore } from "@/store/chatStore";
@@ -24,6 +25,66 @@ afterEach(() => {
 });
 
 describe("scoped chat store", () => {
+  it("does not notify other scopes for primary fields but still shares globals and queues", () => {
+    const first = conversationRegistry.acquire("first");
+    conversationRegistry.acquire("second");
+    const stores = [createScopedChatStore("first"), createScopedChatStore("second")];
+    const snapshots = stores.map((store) => store.getState());
+    const listeners = stores.map(() => vi.fn());
+    const unsubscribe = stores.map((store, index) => store.subscribe(listeners[index]!));
+    try {
+      useChatStore.setState({ conversationId: "third", blocks: [], sessionStatus: "running" });
+      stores.forEach((store, index) => {
+        expect(store.getState()).toBe(snapshots[index]);
+        expect(listeners[index]).not.toHaveBeenCalled();
+      });
+
+      first.setState({ sessionStatus: "waiting" });
+      expect(listeners[0]).toHaveBeenCalledOnce();
+      expect(listeners[1]).not.toHaveBeenCalled();
+
+      stores[0]!.setState({ streamBudgetExceeded: true });
+      useChatStore.getState().enqueueMessage("later", undefined, undefined, "second");
+      stores.forEach((store, index) => {
+        expect(store.getState().streamBudgetExceeded).toBe(true);
+        expect(store.getState().queuedMessages).toBe(useChatStore.getState().queuedMessages);
+        expect(store.getState().queuedMessages.at(-1)).toMatchObject({ conversationId: "second" });
+        expect(listeners[index]).toHaveBeenCalledTimes(index === 0 ? 3 : 2);
+      });
+    } finally {
+      unsubscribe.forEach((stop) => stop());
+    }
+  });
+
+  it("rerenders only consumers whose selected conversation field changes", () => {
+    const first = conversationRegistry.acquire("first");
+    const second = conversationRegistry.acquire("second");
+    const renders = { first: vi.fn(), second: vi.fn() };
+    function Status({ id }: { id: "first" | "second" }) {
+      const useStore = useConversationChatStore();
+      const status = useStore((state) => state.sessionStatus);
+      renders[id]();
+      return <div data-testid={id}>{status}</div>;
+    }
+    render(
+      <>
+        <ScopedChatStoreProvider conversationId="first" focused>
+          <Status id="first" />
+        </ScopedChatStoreProvider>
+        <ScopedChatStoreProvider conversationId="second" focused={false}>
+          <Status id="second" />
+        </ScopedChatStoreProvider>
+      </>,
+    );
+    act(() => first.setState({ blocks: [] }));
+    act(() => second.setState({ sessionStatus: "running" }));
+    act(() => useChatStore.setState({ conversationId: "third", sessionStatus: "waiting" }));
+    expect(renders.first).toHaveBeenCalledOnce();
+    expect(renders.second).toHaveBeenCalledTimes(2);
+    expect(screen.getByTestId("first")).toHaveTextContent("idle");
+    expect(screen.getByTestId("second")).toHaveTextContent("running");
+  });
+
   it("settles a model change on its original conversation after primary focus changes", async () => {
     let finish!: (session: Session) => void;
     const update = vi.spyOn(sessionsApi, "updateSession").mockReturnValue(

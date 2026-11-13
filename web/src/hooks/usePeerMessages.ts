@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { useViewerId } from "@/hooks/useViewerId";
@@ -149,7 +150,10 @@ export function peerActivityKey(message: PeerActivityMessage): string {
 }
 
 /** Outbox pages are explicit; empty transcript pages may still have a next cursor. */
-export function usePeerMessages(conversationId: string | null) {
+export function usePeerMessages(
+  conversationId: string | null,
+  options: { enabled?: boolean } = {},
+) {
   const accountId = useViewerId();
   const serverId = getOmnigentServerIdentity();
   const sessionId = conversationId && !isTempConvId(conversationId) ? conversationId : null;
@@ -180,7 +184,7 @@ export function usePeerMessages(conversationId: string | null) {
       page.has_more && !pages.slice(0, -1).some((older) => older.last_id === page.last_id)
         ? page.last_id
         : undefined,
-    enabled: authorizedScope,
+    enabled: options.enabled !== false && authorizedScope,
     staleTime: 5_000,
     refetchInterval: 5_000,
     retry: false,
@@ -193,7 +197,7 @@ export function usePeerMessages(conversationId: string | null) {
       page.has_more && !pages.slice(0, -1).some((older) => older.last_id === page.last_id)
         ? page.last_id
         : undefined,
-    enabled: !!sessionId && !!accountId && !!serverId,
+    enabled: options.enabled !== false && authorizedScope,
     staleTime: 5_000,
     refetchInterval: 5_000,
     retry: false,

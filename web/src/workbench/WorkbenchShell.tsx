@@ -9,6 +9,7 @@ import { focusedResourceTarget } from "./resourceTarget";
 import { OpenViewMenu } from "./OpenViewMenu";
 import { Button } from "@/components/ui/button";
 import { CapturedFileActions } from "./CapturedFileActions";
+import { CapturedFileGate, capturedFileQuery } from "./CapturedFileGate";
 import { fetchChatFileLocation } from "@/lib/chatFileReferences";
 import { readFileOpening } from "@/lib/fileOpeningPreferences";
 import { downloadBlob } from "@/lib/explorerOperations";
@@ -428,18 +429,20 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
     };
   }, [migrationSource]);
   const skipLayoutForRoute = useRef<string | null>(null);
+  const routeConversationRef = useRef(conversationId);
+  routeConversationRef.current = conversationId;
   const openConversation = useCallback(
     (id: string, options?: { beside?: boolean; messageId?: string }) => {
       const current = dockRef.current;
       if (options?.beside) {
-        current.addView(conversationView(id, titles.get(id)), {
+        current.addView(conversationView(id, titlesRef.current.get(id)), {
           paneId: current.layout.focusedPaneId ?? undefined,
           edge: "right",
         });
         setLastConversation(id);
         return;
       }
-      if (id === conversationId && !options?.messageId) {
+      if (id === routeConversationRef.current && !options?.messageId) {
         const capturedScopeKey = current.scopeKey;
         void current
           .navigateConversation(id)
@@ -463,7 +466,7 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
         `/c/${encodeURIComponent(id)}${options?.messageId ? `?message=${encodeURIComponent(options.messageId)}` : ""}`,
       );
     },
-    [navigate, titles, conversationId],
+    [navigate],
   );
   const openConversationAt = useCallback((id: string, placement: DockPlacement) => {
     dockRef.current.addView(conversationView(id, titlesRef.current.get(id)), placement);
@@ -820,7 +823,7 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
       run: () => openFocused(entry.kind),
     })),
   ];
-  const closeView = async (id: string) => {
+  const closeView = useCallback(async (id: string) => {
     const view = dockRef.current.layout.views.find((entry) => entry.id === id);
     const closed = await dockRef.current.closeView(id);
     if (closed && view && mounted.current)
@@ -828,7 +831,7 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
         [...previous.filter((entry) => entry.id !== id), view].slice(-20),
       );
     return closed;
-  };
+  }, []);
   const actions: ActionCommand[] = [
     ...focusedCommands,
     ...(focusedView
@@ -888,7 +891,7 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
       if (!set.size) guards.current.delete(viewId);
     };
   }, []);
-  const updateResource = async (view: DockView, patch: Record<string, unknown>) => {
+  const updateResource = useCallback(async (view: DockView, patch: Record<string, unknown>) => {
     const current = dockRef.current.retainedViews.find((entry) => entry.id === view.id);
     if (!current || !sameDockResource(current, view))
       throw new Error(
@@ -900,223 +903,237 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
         unknown
       >,
     });
-  };
-  const renderView = (view: DockView, visibility: DockViewVisibility) => {
-    const resource = view.resource;
-    const sessionId =
-      typeof resource.conversationId === "string" ? resource.conversationId : undefined;
-    const workspace = viewWorkspace(view);
-    const path = typeof resource.path === "string" ? resource.path : undefined;
-    let content;
-    if (typeof resource.unavailableReason === "string")
-      content = (
-        <p role="alert" className="p-4 text-sm">
-          {resource.unavailableReason} The linked location has been retained.
-        </p>
-      );
-    else if (
-      view.kind === "attachment-preview" &&
-      resource.request &&
-      typeof resource.request === "object" &&
-      "sessionId" in resource.request &&
-      typeof resource.request.sessionId === "string"
-    )
-      content = <AttachmentPreviewView request={resource.request as AttachmentPreviewRequest} />;
-    else if (view.kind === "conversation" && sessionId)
-      content = (
-        <ConversationView
-          conversationId={sessionId}
-          visible={showDock && visibility.visible}
-          focused={visibility.focused}
-        />
-      );
-    else if (
-      ["files", "changes", "preview", "search", "pr"].includes(view.kind) &&
-      (workspace || (sessionId && resource.legacySessionResource === true))
-    )
-      content = (
-        <ResourceView
-          revealRequest={
-            typeof resource.revealPath === "string" && typeof resource.revealToken === "string"
-              ? { path: resource.revealPath, token: resource.revealToken }
-              : undefined
-          }
-          originalDownload={
-            resource.originalAttachment
-              ? () => {
-                  const original = resource.originalAttachment as AttachmentPreviewRequest;
-                  const url = `/v1/sessions/${encodeURIComponent(original.sessionId)}/attachments/references/${encodeURIComponent(original.itemId ?? "")}?${new URLSearchParams({ path: original.reference ?? "" })}`;
-                  void authenticatedFetch(url)
-                    .then(async (response) => {
-                      if (!response.ok) throw await apiErrorFromResponse(response);
-                      downloadBlob(await response.blob(), original.filename ?? "Attachment");
-                    })
-                    .catch((error) =>
-                      toast.error("Could not download captured original", {
-                        description: String(error),
-                      }),
-                    );
-                }
-              : undefined
-          }
-          viewId={view.id}
-          kind={view.kind as "files" | "changes" | "preview" | "search" | "pr"}
-          workspace={workspace}
-          conversationId={sessionId}
-          path={path}
-          commentId={typeof resource.commentId === "string" ? resource.commentId : undefined}
-          initialDiff={typeof resource.initialDiff === "boolean" ? resource.initialDiff : undefined}
-          linkRequestId={
-            typeof resource.linkRequestId === "string" ? resource.linkRequestId : undefined
-          }
-          active={showDock && visibility.visible}
-          autoFocus={showDock && visibility.focused && explicitSearchViews.current.has(view.id)}
-          replaceOpen={resource.replaceOpen === true}
-          initialQuery={typeof resource.searchQuery === "string" ? resource.searchQuery : undefined}
-          annotationControl={
-            view.kind === "preview" ? (
-              <ConversationSourcePicker
-                conversationId={sessionId}
-                label="Comments"
-                onChange={(id) => {
-                  void dockRef.current.updateView(view.id, {
-                    resource: { ...resource, conversationId: id },
-                  });
-                }}
-              />
-            ) : undefined
-          }
-          position={
-            typeof (resource.fileOptions as OpenFileOptions | undefined)?.line === "number"
-              ? (resource.fileOptions as FilePosition)
-              : undefined
-          }
-          comparisonScope={
-            (resource.fileOptions as OpenWorkbenchView["fileOptions"])?.comparisonScope
-          }
-          onOpenFile={(file, options) =>
-            openView({
-              kind: "preview",
-              workspace: options.workspace,
-              conversationId: sessionId,
-              path: file,
-              fileOptions: options,
-              sourceViewId: options.sourceViewId,
-            })
-          }
-          onWorkspaceChange={(next) => updateResource(view, { workspace: next })}
-          registerNavigationGuard={(guard) => registerGuard(view.id, guard)}
-          onClose={() => {
-            void closeView(view.id);
-          }}
-        />
-      );
-    else if (view.kind === "terminal" && typeof resource.terminalId === "string")
-      content = (
-        <TerminalResourceView
-          workspace={workspace}
-          conversationId={sessionId}
-          terminalId={resource.terminalId}
-          manual={resource.terminalOwner !== "conversation"}
-          active={showDock && visibility.visible && visibility.focused}
-        />
-      );
-    else if (view.kind === "agent-terminal" && sessionId)
-      content = (
-        <AgentTerminal
-          conversationId={sessionId}
-          active={showDock && visibility.visible && visibility.focused}
-        />
-      );
-    else if (view.kind === "activity" || view.kind === "shells")
-      content = (
-        <ActivityView
-          active={showDock && visibility.visible}
-          source={activitySource(resource, workspace, sessionId, view.kind === "shells")}
-          onSourceChange={async (source) => {
-            const accepted = await updateResource(view, {
-              source,
-              ...(source.kind === "chat"
-                ? { conversationId: source.conversationId, workspace: undefined }
-                : { conversationId: undefined, workspace: source.workspace }),
-            });
-            if (!accepted)
-              throw new Error(
-                "The Activity source changed before this selection could be applied. Please retry.",
-              );
-          }}
-          onNewTerminal={(target) =>
-            openView({ kind: "terminal", workspace: target, terminalOwner: "workspace" })
-          }
-          onOpenTerminal={(target) => {
-            const launch = async () => {
-              let terminalWorkspace: WorkbenchWorkspace | undefined;
-              if (target.workspaceId) {
-                const response = await authenticatedFetch(
-                  `/v1/workbench-workspaces/${encodeURIComponent(target.workspaceId)}`,
-                );
-                if (!response.ok) throw await apiErrorFromResponse(response);
-                terminalWorkspace = await response.json();
-              }
-              if (mounted.current)
-                openView({
-                  kind: "terminal",
-                  conversationId: target.sessionId,
-                  terminalId: target.terminalId,
-                  terminalOwner: target.workspaceId ? "workspace" : "conversation",
-                  workspace: terminalWorkspace,
-                });
-            };
-            void launch().catch((error) =>
-              toast.error(error instanceof Error ? error.message : "Could not open shell"),
-            );
-          }}
-        />
-      );
-    else if (view.kind === "automations") content = <TasksPage />;
-    else if (view.kind === "browser" && sessionId && supportsBrowser())
-      content = (
-        <BrowserPane
-          conversationId={sessionId}
-          active={showDock && visibility.visible}
-          className="h-full"
-        />
-      );
-    else if (view.kind === "logs" && sessionId && debug)
-      content = (
-        <ExecutionLogsPanel
-          contained
-          active={showDock && visibility.visible && visibility.focused}
-          open
-          conversationId={sessionId}
-          initialKey="executionLog:main"
-          onClose={() => {
-            void closeView(view.id);
-          }}
-        />
-      );
-    else
-      content = (
-        <p role="status" className="p-4 text-sm">
-          This view’s resource is unavailable. Its saved location has been retained.
-        </p>
-      );
-    return (
-      <div className="h-full min-h-0" data-workbench-view={view.id}>
-        <ViewCommandScope viewId={view.id}>
-          <CapturedFileActions
+  }, []);
+  const renderView = useCallback(
+    (view: DockView, visibility: DockViewVisibility) => {
+      const resource = view.resource;
+      const sessionId =
+        typeof resource.conversationId === "string" ? resource.conversationId : undefined;
+      const workspace = viewWorkspace(view);
+      const path = typeof resource.path === "string" ? resource.path : undefined;
+      let content;
+      if (typeof resource.unavailableReason === "string")
+        content = (
+          <p role="alert" className="p-4 text-sm">
+            {resource.unavailableReason} The linked location has been retained.
+          </p>
+        );
+      else if (
+        view.kind === "attachment-preview" &&
+        resource.request &&
+        typeof resource.request === "object" &&
+        "sessionId" in resource.request &&
+        typeof resource.request.sessionId === "string"
+      )
+        content = <AttachmentPreviewView request={resource.request as AttachmentPreviewRequest} />;
+      else if (view.kind === "conversation" && sessionId)
+        content = (
+          <ConversationView
             conversationId={sessionId}
-            workspace={workspace}
-            openView={openView}
-            registerGuard={registerGuard}
+            visible={showDock && visibility.visible}
+            focused={visibility.focused}
+          />
+        );
+      else if (
+        ["files", "changes", "preview", "search", "pr"].includes(view.kind) &&
+        (workspace || (sessionId && resource.legacySessionResource === true))
+      )
+        content = (
+          <ResourceView
+            revealRequest={
+              typeof resource.revealPath === "string" && typeof resource.revealToken === "string"
+                ? { path: resource.revealPath, token: resource.revealToken }
+                : undefined
+            }
+            originalDownload={
+              resource.originalAttachment
+                ? () => {
+                    const original = resource.originalAttachment as AttachmentPreviewRequest;
+                    const url = `/v1/sessions/${encodeURIComponent(original.sessionId)}/attachments/references/${encodeURIComponent(original.itemId ?? "")}?${new URLSearchParams({ path: original.reference ?? "" })}`;
+                    void authenticatedFetch(url)
+                      .then(async (response) => {
+                        if (!response.ok) throw await apiErrorFromResponse(response);
+                        downloadBlob(await response.blob(), original.filename ?? "Attachment");
+                      })
+                      .catch((error) =>
+                        toast.error("Could not download captured original", {
+                          description: String(error),
+                        }),
+                      );
+                  }
+                : undefined
+            }
             viewId={view.id}
-          >
+            kind={view.kind as "files" | "changes" | "preview" | "search" | "pr"}
+            workspace={workspace}
+            conversationId={sessionId}
+            path={path}
+            commentId={typeof resource.commentId === "string" ? resource.commentId : undefined}
+            initialDiff={
+              typeof resource.initialDiff === "boolean" ? resource.initialDiff : undefined
+            }
+            linkRequestId={
+              typeof resource.linkRequestId === "string" ? resource.linkRequestId : undefined
+            }
+            active={showDock && visibility.visible}
+            autoFocus={showDock && visibility.focused && explicitSearchViews.current.has(view.id)}
+            replaceOpen={resource.replaceOpen === true}
+            initialQuery={
+              typeof resource.searchQuery === "string" ? resource.searchQuery : undefined
+            }
+            annotationControl={
+              view.kind === "preview" ? (
+                <ConversationSourcePicker
+                  conversationId={sessionId}
+                  label="Comments"
+                  onChange={(id) => {
+                    void dockRef.current.updateView(view.id, {
+                      resource: { ...resource, conversationId: id },
+                    });
+                  }}
+                />
+              ) : undefined
+            }
+            position={
+              typeof (resource.fileOptions as OpenFileOptions | undefined)?.line === "number"
+                ? (resource.fileOptions as FilePosition)
+                : undefined
+            }
+            comparisonScope={
+              (resource.fileOptions as OpenWorkbenchView["fileOptions"])?.comparisonScope
+            }
+            onOpenFile={(file, options) =>
+              openView({
+                kind: "preview",
+                workspace: options.workspace,
+                conversationId: sessionId,
+                path: file,
+                fileOptions: options,
+                sourceViewId: options.sourceViewId,
+              })
+            }
+            onWorkspaceChange={(next) => updateResource(view, { workspace: next })}
+            registerNavigationGuard={(guard) => registerGuard(view.id, guard)}
+            onClose={() => {
+              void closeView(view.id);
+            }}
+          />
+        );
+      else if (view.kind === "terminal" && typeof resource.terminalId === "string")
+        content = (
+          <TerminalResourceView
+            workspace={workspace}
+            conversationId={sessionId}
+            terminalId={resource.terminalId}
+            manual={resource.terminalOwner !== "conversation"}
+            active={showDock && visibility.visible && visibility.focused}
+          />
+        );
+      else if (view.kind === "agent-terminal" && sessionId)
+        content = (
+          <AgentTerminal
+            conversationId={sessionId}
+            active={showDock && visibility.visible && visibility.focused}
+          />
+        );
+      else if (view.kind === "activity" || view.kind === "shells")
+        content = (
+          <ActivityView
+            active={showDock && visibility.visible}
+            source={activitySource(resource, workspace, sessionId, view.kind === "shells")}
+            onSourceChange={async (source) => {
+              const accepted = await updateResource(view, {
+                source,
+                ...(source.kind === "chat"
+                  ? { conversationId: source.conversationId, workspace: undefined }
+                  : { conversationId: undefined, workspace: source.workspace }),
+              });
+              if (!accepted)
+                throw new Error(
+                  "The Activity source changed before this selection could be applied. Please retry.",
+                );
+            }}
+            onNewTerminal={(target) =>
+              openView({ kind: "terminal", workspace: target, terminalOwner: "workspace" })
+            }
+            onOpenTerminal={(target) => {
+              const launch = async () => {
+                let terminalWorkspace: WorkbenchWorkspace | undefined;
+                if (target.workspaceId) {
+                  const response = await authenticatedFetch(
+                    `/v1/workbench-workspaces/${encodeURIComponent(target.workspaceId)}`,
+                  );
+                  if (!response.ok) throw await apiErrorFromResponse(response);
+                  terminalWorkspace = await response.json();
+                }
+                if (mounted.current)
+                  openView({
+                    kind: "terminal",
+                    conversationId: target.sessionId,
+                    terminalId: target.terminalId,
+                    terminalOwner: target.workspaceId ? "workspace" : "conversation",
+                    workspace: terminalWorkspace,
+                  });
+              };
+              void launch().catch((error) =>
+                toast.error(error instanceof Error ? error.message : "Could not open shell"),
+              );
+            }}
+          />
+        );
+      else if (view.kind === "automations") content = <TasksPage />;
+      else if (view.kind === "browser" && sessionId && supportsBrowser())
+        content = (
+          <BrowserPane
+            conversationId={sessionId}
+            active={showDock && visibility.visible}
+            className="h-full"
+          />
+        );
+      else if (view.kind === "logs" && sessionId && debug)
+        content = (
+          <ExecutionLogsPanel
+            contained
+            active={showDock && visibility.visible && visibility.focused}
+            open
+            conversationId={sessionId}
+            initialKey="executionLog:main"
+            onClose={() => {
+              void closeView(view.id);
+            }}
+          />
+        );
+      else
+        content = (
+          <p role="status" className="p-4 text-sm">
+            This view’s resource is unavailable. Its saved location has been retained.
+          </p>
+        );
+      if (view.kind === "preview" && resource.originalAttachment && !resource.unavailableReason) {
+        content = (
+          <CapturedFileGate request={resource.originalAttachment as AttachmentPreviewRequest}>
             {content}
-          </CapturedFileActions>
-        </ViewCommandScope>
-      </div>
-    );
-  };
+          </CapturedFileGate>
+        );
+      }
+      return (
+        <div className="h-full min-h-0" data-workbench-view={view.id}>
+          <ViewCommandScope viewId={view.id}>
+            <CapturedFileActions
+              conversationId={sessionId}
+              workspace={workspace}
+              openView={openView}
+              registerGuard={registerGuard}
+              viewId={view.id}
+            >
+              {content}
+            </CapturedFileActions>
+          </ViewCommandScope>
+        </div>
+      );
+    },
+    [showDock, debug, openView, updateResource, registerGuard, closeView],
+  );
   const referenceNavigation = useMemo(
     () => ({ openConversation, createSubchat: createQuoteSubchat }),
     [openConversation],
@@ -1193,7 +1210,6 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
           dockRef.current.scopeKey === capturedScope &&
           dockRef.current.activeConversationId === capturedOwner;
         let live: { workspace: WorkbenchWorkspace; path: string } | undefined;
-        let originalCaptured = false;
         try {
           if (
             request.reference &&
@@ -1220,32 +1236,6 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
             if (resolved.kind === "file") live = resolved;
             else if (resolved.kind !== "captured")
               throw new Error("This reference is not an available regular file");
-            if (live) {
-              // Capture before the editor can change the live file; metadata inspection stays byte-free.
-              const originalUrl = `/v1/sessions/${encodeURIComponent(request.sessionId)}/attachments/references/${encodeURIComponent(request.itemId)}?${new URLSearchParams({ path: request.reference })}`;
-              try {
-                await queryClient.fetchQuery({
-                  queryKey: [
-                    "chat-attachment-bytes",
-                    request.sessionId,
-                    request.itemId,
-                    request.reference,
-                    undefined,
-                  ],
-                  queryFn: async ({ signal }) => {
-                    const response = await authenticatedFetch(originalUrl, { signal });
-                    if (!response.ok) throw await apiErrorFromResponse(response);
-                    return response.blob();
-                  },
-                  staleTime: Infinity,
-                  gcTime: 30_000,
-                });
-                originalCaptured = true;
-              } catch (error) {
-                if (stillCurrent())
-                  toast.error("Could not retain the original file", { description: String(error) });
-              }
-            }
           }
         } catch (error) {
           if (stillCurrent())
@@ -1288,13 +1278,34 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
             : view.kind === "attachment-preview" && view.resource.identity === identity,
         );
         if (existing) {
-          const pane = dockPaneForView(current.layout, existing.id);
+          if (live) {
+            try {
+              await queryClient.fetchQuery(capturedFileQuery(request));
+            } catch (error) {
+              if (stillCurrent())
+                toast.error("Could not prepare file", { description: String(error) });
+              return;
+            }
+            if (!stillCurrent()) return;
+            const reused = dockRef.current.layout.views.find((view) => view.id === existing.id);
+            if (!reused || !sameDockResource(existing, reused)) return;
+          }
+          const latest = dockRef.current;
+          const latestOrigin = dockPaneForView(latest.layout, origin.id);
+          if (!latestOrigin) return;
+          const destination = filePlacement(
+            latest.layout,
+            latestOrigin.id,
+            mode,
+            latest.pinnedViewIds,
+          );
+          const pane = dockPaneForView(latest.layout, existing.id);
           if (
             (options?.placement === "tab" || options?.placement === "beside") &&
-            (pane?.id !== placement.paneId || placement.edge)
+            (pane?.id !== destination.paneId || destination.edge)
           )
-            current.setLayout((layout) => moveDockView(layout, existing.id, placement));
-          else current.focusView(existing.id);
+            latest.setLayout((layout) => moveDockView(layout, existing.id, destination));
+          else latest.focusView(existing.id);
         } else
           current.addView(
             {
@@ -1310,9 +1321,7 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
                     workspace: live.workspace,
                     path: live.path,
                     conversationId: request.sessionId,
-                    ...(originalCaptured
-                      ? { originalAttachment: JSON.parse(JSON.stringify(request)) }
-                      : {}),
+                    originalAttachment: JSON.parse(JSON.stringify(request)),
                   }
                 : { request: JSON.parse(JSON.stringify(request)), identity },
             },
@@ -1409,6 +1418,7 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
                       inert={!showDock}
                     >
                       <DockWorkspace
+                        active={showDock}
                         openActions={openActions}
                         onOpenAction={(paneId, action) => {
                           openPaneOverride.current = paneId;

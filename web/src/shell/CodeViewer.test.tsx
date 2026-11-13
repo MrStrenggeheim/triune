@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { useFileContent } from "@/hooks/useFileContent";
@@ -835,14 +836,14 @@ describe("CodeViewer HTML preview sandbox", () => {
   // untrusted (agent/user-generated), so these assertions lock in the iframe's
   // isolation. A regression here (e.g. adding `allow-same-origin`) would let
   // artifact JS reach the host app's cookies, storage, and credentialed API.
-  it("enables scripts but withholds same-origin, and forces links to a new tab", () => {
-    const { container } = renderViewer(
+  it("enables scripts but withholds same-origin, and forces links to a new tab", async () => {
+    renderViewer(
       "<html><head></head><body><a href='https://example.com'>link</a></body></html>",
       true,
       "page.html",
       { viewMode: "preview" },
     );
-    const iframe = container.querySelector('iframe[title="HTML preview"]');
+    const iframe = await screen.findByTitle("HTML preview");
     expect(iframe).not.toBeNull();
     const sandbox = iframe!.getAttribute("sandbox") ?? "";
     // Full-string lock: any change to the sandbox flags must be deliberate.
@@ -860,15 +861,12 @@ describe("CodeViewer rendered previews skip Shiki highlighting", () => {
   // Rendered previews use their own surfaces and never consume Shiki tokens, so
   // tokenizing the whole file is wasted work that can freeze a large file.
 
-  it("does not tokenize the file when rendering the HTML preview", () => {
+  it("does not tokenize the file when rendering the HTML preview", async () => {
     vi.mocked(highlightCode).mockClear();
-    const { container } = renderViewer(
-      "<!doctype html><html><body><p>hello</p></body></html>",
-      true,
-      "report.html",
-      { viewMode: "preview" },
-    );
-    expect(container.querySelector('iframe[title="HTML preview"]')).not.toBeNull();
+    renderViewer("<!doctype html><html><body><p>hello</p></body></html>", true, "report.html", {
+      viewMode: "preview",
+    });
+    expect(await screen.findByTitle("HTML preview")).not.toBeNull();
     expect(highlightCode).not.toHaveBeenCalled();
   });
 
@@ -943,13 +941,16 @@ describe("CodeViewer image rendering", () => {
 
   beforeEach(() => {
     createdBlob = null;
-    vi.stubGlobal("URL", {
-      createObjectURL: vi.fn((blob: Blob) => {
-        createdBlob = blob;
-        return "blob:mock-object-url";
+    vi.stubGlobal(
+      "URL",
+      Object.assign(class extends URL {}, {
+        createObjectURL: vi.fn((blob: Blob) => {
+          createdBlob = blob;
+          return "blob:mock-object-url";
+        }),
+        revokeObjectURL: vi.fn(),
       }),
-      revokeObjectURL: vi.fn(),
-    });
+    );
   });
 
   afterEach(() => {
@@ -1175,9 +1176,9 @@ describe("CodeViewer 3D model routing", () => {
 });
 
 describe("CodeViewer .ipynb routing", () => {
-  it("renders the notebook preview in preview mode", () => {
+  it("renders the notebook preview in preview mode", async () => {
     renderViewer(MINIMAL_NB, true, "analysis.ipynb", { viewMode: "preview" });
-    expect(screen.getByRole("heading", { name: "Notebook Title" })).toBeDefined();
+    expect(await screen.findByRole("heading", { name: "Notebook Title" })).toBeDefined();
     expect(screen.queryByTestId("monaco-editor-stub")).toBeNull();
   });
 
@@ -1186,13 +1187,13 @@ describe("CodeViewer .ipynb routing", () => {
     expect(screen.getByTestId("monaco-editor-stub")).toBeDefined();
   });
 
-  it("warns about truncated notebooks instead of rendering silently-incomplete cells", () => {
+  it("warns about truncated notebooks instead of rendering silently-incomplete cells", async () => {
     renderViewer(MINIMAL_NB.slice(0, 40), true, "analysis.ipynb", {
       viewMode: "preview",
       truncated: true,
     });
     // Truncated JSON cannot parse — the preview shows its parse-error state…
-    expect(screen.getByText(/Cannot render notebook/)).toBeDefined();
+    expect(await screen.findByText(/Cannot render notebook/)).toBeDefined();
     // …and the shared truncation banner is stacked above it.
     expect(screen.getByText(/truncated/i)).toBeDefined();
   });

@@ -1,3 +1,4 @@
+// Modified for Triune.
 import {
   createContext,
   useContext,
@@ -8,6 +9,7 @@ import {
   type RefObject,
 } from "react";
 import { useStore, type StoreApi, type UseBoundStore } from "zustand";
+import { shallow } from "zustand/vanilla/shallow";
 import {
   ensureConversationStreamed,
   useChatStore,
@@ -69,7 +71,10 @@ export function createScopedChatStore(conversationId: string): BoundChatStore {
     if (app !== previousRoot || entry !== previousEntry) {
       previousRoot = app;
       previousEntry = entry;
-      snapshot = { ...app, ...entry, ...actions, conversationId };
+      const next = { ...app, ...entry, ...actions, conversationId };
+      // Primary-conversation fields are masked by this entry, so their
+      // root-store updates must not notify every other mounted chat.
+      if (!snapshot || !shallow(snapshot, next)) snapshot = next;
     }
     return snapshot;
   };

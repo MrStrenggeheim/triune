@@ -1,3 +1,4 @@
+// Modified for Triune.
 import {
   act,
   cleanup,
@@ -71,7 +72,7 @@ function useSearchHarness(initiallyOpen = false, activeSessionId = "chat") {
     onToggleRightSidebar: toggle,
     isMobile,
   });
-  return { ...search, sidebarOpen, setSidebarOpen };
+  return { ...search, controller: search, sidebarOpen, setSidebarOpen };
 }
 function queryWrapper() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -136,6 +137,69 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("context search navigation and lifecycle", () => {
+  it("keeps idle context stable while saved actions use the latest navigation implementation", () => {
+    const navigated = vi.fn();
+    const toggled = vi.fn();
+    const { wrapper } = queryWrapper();
+    const { result, rerender } = renderHook(
+      ({ version }) =>
+        useContextSearchController({
+          activeSessionId: "chat",
+          sidebarOpen: false,
+          setSidebarOpen: () => {},
+          navigate: (path, done) => {
+            navigated(version, path);
+            done();
+          },
+          onToggleLeftSidebar: () => {},
+          onToggleRightSidebar: () => toggled(version),
+          isMobile: () => false,
+        }),
+      { wrapper, initialProps: { version: 1 } },
+    );
+    const idle = result.current;
+    rerender({ version: 2 });
+    expect(result.current).toBe(idle);
+    act(() => {
+      idle.actions.find((action) => action.id === "go-settings")!.run();
+      idle.actions.find((action) => action.id === "toggle-right-sidebar")!.run();
+      idle.goToTitle("latest-chat");
+    });
+    expect(navigated.mock.calls).toEqual([
+      [2, "/settings"],
+      [2, "/c/latest-chat"],
+    ]);
+    expect(toggled).toHaveBeenCalledWith(2);
+    expect(result.current.open).toBe(false);
+  });
+
+  it("keeps settled search stable on unrelated renders and follows Current matches through A/B/A", async () => {
+    fetchMock.mockImplementation((url: string) => {
+      const session = new URL(url, "http://test").searchParams.get("session_id") ?? "chat";
+      return Promise.resolve(response(page([hit(`message-${session}`, session)])));
+    });
+    const { result, rerender } = setup();
+    await typeQuery(result);
+    await waitFor(() => expect(result.current.highlightTarget?.conversationId).toBe("chat"));
+    const before = result.current;
+    rerender({ activeSessionId: "chat" });
+    expect(result.current.controller).toBe(before.controller);
+    expect(result.current.messages).toBe(before.messages);
+    expect(result.current.activeMessages).toBe(before.activeMessages);
+    expect(result.current.move).toBe(before.move);
+    rerender({ activeSessionId: "other" });
+    await waitFor(() => expect(result.current.highlightTarget?.conversationId).toBe("other"));
+    expect(result.current.highlightTarget?.itemId).toBe("message-other");
+    act(() => result.current.move(1));
+    expect(result.current.highlightTarget?.range).toEqual({ start: 7, end: 13 });
+    rerender({ activeSessionId: "chat" });
+    await waitFor(() => expect(result.current.highlightTarget?.conversationId).toBe("chat"));
+    expect(result.current.highlightTarget?.itemId).toBe("message-chat");
+    expect(result.current.currentIndex).toBe(0);
+    expect(result.current.query).toBe("needle");
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
   it("includes archived content only for the explicitly selected chat", async () => {
     const { result } = setup();
     await typeQuery(result, "all");
@@ -376,7 +440,7 @@ describe("integrated search sidebar and match bar", () => {
     fireEvent.change(input, { target: { value: "settings" } });
     await screen.findByText("Go to Settings");
     expect(navigate).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("tab", { name: "Actions", selected: false }));
+    fireEvent.click(screen.getByRole("button", { name: "Actions", pressed: false }));
     expect(navigate).not.toHaveBeenCalled();
     fireEvent.keyDown(input, { key: "Enter" });
     expect(navigate).toHaveBeenCalledWith("/settings", expect.any(Function));

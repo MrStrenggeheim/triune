@@ -2490,6 +2490,7 @@ describe("FilesPanel header copy path", () => {
       "conv_refresh_files",
       expect.any(Array),
       "",
+      { enabled: true },
     );
   });
 

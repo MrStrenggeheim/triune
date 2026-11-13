@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { TooltipButton } from "@/components/ui/tooltip";
 import { useState, type ReactNode } from "react";
 import { ChevronDownIcon, ChevronRightIcon, TerminalIcon } from "lucide-react";
@@ -26,6 +27,7 @@ export interface ChatActivityTerminalTarget {
 export interface ChatActivityPanelProps {
   conversationId: string;
   rootSessionId: string;
+  active?: boolean;
   sourceControl?: ReactNode;
   /** Open this exact existing resource, even when it belongs to another chat. */
   onOpenTerminal?: (target: ChatActivityTerminalTarget) => void;
@@ -130,11 +132,12 @@ export function ChatActivityPanel(props: ChatActivityPanelProps) {
 function ChatActivityContent({
   conversationId,
   rootSessionId,
+  active = true,
   sourceControl,
   onOpenTerminal,
 }: ChatActivityPanelProps) {
-  const activity = useChatActivity(conversationId);
-  const peers = usePeerMessages(conversationId);
+  const activity = useChatActivity(conversationId, { enabled: active });
+  const peers = usePeerMessages(conversationId, { enabled: active });
   const [filter, setFilter] = useState<ActivityFilter>("All");
   const [viewMode, setViewMode] = useState<AgentsViewMode>("list");
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);

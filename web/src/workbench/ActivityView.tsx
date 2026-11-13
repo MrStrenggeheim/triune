@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { FolderIcon, RefreshCwIcon } from "lucide-react";
@@ -78,6 +79,7 @@ export function ActivityView(props: ActivityViewProps) {
       <ChatActivityPanel
         conversationId={source.conversationId}
         rootSessionId={source.conversationId}
+        active={props.active}
         sourceControl={<ActivitySourcePicker source={source} onChange={changeSource} />}
         onOpenTerminal={onOpenTerminal}
       />
@@ -108,7 +110,7 @@ function HostActivity({
   scope: string;
   viewerId: string | null;
 }) {
-  const hosts = useHosts();
+  const hosts = useHosts({ enabled: active });
   const queryClient = useQueryClient();
   const workspacesKey = ["workbench-workspaces", scope] as const;
   const [pickerOpen, setPickerOpen] = useState(false);

@@ -32,7 +32,10 @@ import { readFilesPanelPreferences, writeFilesPanelPreferences } from "@/lib/fil
 import type { Comment } from "@/hooks/useComments";
 import { isFilePositionPending } from "./filePositionState";
 
-const codeViewerRenders = vi.hoisted(() => vi.fn());
+const { codeViewerRenders, codeViewerImports } = vi.hoisted(() => ({
+  codeViewerRenders: vi.fn(),
+  codeViewerImports: vi.fn(),
+}));
 const { changedFilesFixture, agentFileDiffMock } = vi.hoisted(() => ({
   changedFilesFixture: [
     { path: "file1.py", bytes: 10, modified_at: null, name: "file1.py", status: "modified" },
@@ -50,60 +53,69 @@ vi.mock("@/lib/notifications", async (original) => ({
 
 // ── Mock heavy child components ───────────────────────────────────────────────
 
-vi.mock("./CodeViewer", () => ({
-  // Expose the resolved viewMode so tests can assert which surface FileViewer
-  // routed to (preview / editor / source) without mounting the real viewer.
-  // The "make dirty" button lets a test drive the editor's unsaved-edits signal
-  // (onDirtyChange) so the mode-switch / navigation guard can be exercised.
-  CodeViewer: ({
-    path,
-    position,
-    viewMode,
-    markdownSourceFallback,
-    searchOpen,
-    onDirtyChange,
-    onSetActiveSelection,
-  }: {
-    path: string;
-    position?: { line: number };
-    viewMode: string;
-    markdownSourceFallback?: boolean;
-    searchOpen?: boolean;
-    onDirtyChange?: (dirty: boolean) => void;
-    onSetActiveSelection?: (selection: {
-      start_index: number;
-      end_index: number;
-      anchor_content: string;
-    }) => void;
-  }) => {
-    useFileContentReader(useCallback(() => `current buffer for ${path}`, [path]));
-    codeViewerRenders({ path, position });
-    return (
-      <div
-        data-testid="code-viewer"
-        data-view-mode={viewMode}
-        data-markdown-source={String(!!markdownSourceFallback)}
-        data-search-open={String(!!searchOpen)}
-      >
-        <button type="button" aria-label="make dirty" onClick={() => onDirtyChange?.(true)} />
-        <button
-          type="button"
-          aria-label="Select comment range"
-          onClick={() =>
-            onSetActiveSelection?.({
-              start_index: 10,
-              end_index: 20,
-              anchor_content: "selected text",
-            })
-          }
-        />
-        {viewMode === "editor" && (
-          <textarea aria-label="Draft text" onChange={() => onDirtyChange?.(true)} />
-        )}
-      </div>
-    );
-  },
-}));
+vi.mock("./CodeViewer", () => {
+  codeViewerImports();
+  return {
+    // Expose the resolved viewMode so tests can assert which surface FileViewer
+    // routed to (preview / editor / source) without mounting the real viewer.
+    // The "make dirty" button lets a test drive the editor's unsaved-edits signal
+    // (onDirtyChange) so the mode-switch / navigation guard can be exercised.
+    CodeViewer: ({
+      path,
+      position,
+      viewMode,
+      markdownSourceFallback,
+      searchOpen,
+      panelOpen,
+      mediaActive,
+      onDirtyChange,
+      onSetActiveSelection,
+    }: {
+      path: string;
+      position?: { line: number };
+      viewMode: string;
+      markdownSourceFallback?: boolean;
+      searchOpen?: boolean;
+      panelOpen?: boolean;
+      mediaActive?: boolean;
+      onDirtyChange?: (dirty: boolean) => void;
+      onSetActiveSelection?: (selection: {
+        start_index: number;
+        end_index: number;
+        anchor_content: string;
+      }) => void;
+    }) => {
+      useFileContentReader(useCallback(() => `current buffer for ${path}`, [path]));
+      codeViewerRenders({ path, position });
+      return (
+        <div
+          data-testid="code-viewer"
+          data-view-mode={viewMode}
+          data-markdown-source={String(!!markdownSourceFallback)}
+          data-search-open={String(!!searchOpen)}
+          data-panel-open={String(!!panelOpen)}
+          data-media-active={String(!!mediaActive)}
+        >
+          <button type="button" aria-label="make dirty" onClick={() => onDirtyChange?.(true)} />
+          <button
+            type="button"
+            aria-label="Select comment range"
+            onClick={() =>
+              onSetActiveSelection?.({
+                start_index: 10,
+                end_index: 20,
+                anchor_content: "selected text",
+              })
+            }
+          />
+          {viewMode === "editor" && (
+            <textarea aria-label="Draft text" onChange={() => onDirtyChange?.(true)} />
+          )}
+        </div>
+      );
+    },
+  };
+});
 
 vi.mock("./CommentsPanel", () => ({
   // Render a sentinel so tests can assert panel visibility without
@@ -339,6 +351,7 @@ interface RenderProps {
   mobileOverlay?: boolean;
   position?: { line: number; column?: number };
   open?: boolean;
+  active?: boolean;
   mediaActive?: boolean;
   path?: string;
   /**
@@ -380,6 +393,7 @@ function viewerTree({
   mobileOverlay,
   position,
   open = false,
+  active,
   mediaActive,
   path = "file1.py",
   initialSearch = "",
@@ -406,6 +420,7 @@ function viewerTree({
           mobileOverlay={mobileOverlay}
           position={position}
           open={open}
+          active={active}
           mediaActive={mediaActive}
           workspaceId={workspaceId}
           comparisonScope={comparisonScope}
@@ -494,6 +509,38 @@ async function chooseRevisionType(label: string) {
   });
   fireEvent.click(await screen.findByRole("option", { name: label }));
 }
+
+it("loads CodeViewer only after opening and retains the dirty editor through A/B/A visibility", async () => {
+  useCommentsMock.mockReturnValue(makeCommentsQuery([]));
+  const props = { frameless: true, syncUrl: false, path: "notes.md" };
+  const view = renderViewer({ ...props, open: false });
+  expect(codeViewerImports).not.toHaveBeenCalled();
+  expect(screen.queryByTestId("code-viewer")).toBeNull();
+  view.rerender(viewerTree({ ...props, open: true }));
+  const draft = await screen.findByRole("textbox", { name: "Draft text" });
+  fireEvent.change(draft, { target: { value: "Unsaved A draft" } });
+  fireEvent.click(screen.getByRole("button", { name: "Select comment range" }));
+  view.rerender(viewerTree({ ...props, open: true, active: false }));
+  expect(useFileContent).toHaveBeenLastCalledWith("conv_1", "notes.md", { enabled: false });
+  expect(useWorkspaceGitChanges).toHaveBeenLastCalledWith(
+    "conv_1",
+    expect.objectContaining({ enabled: false }),
+  );
+  expect(useWorkspaceComparisonChanges).toHaveBeenLastCalledWith(
+    "conv_1",
+    expect.objectContaining({ enabled: false }),
+  );
+  expect(screen.getByTestId("code-viewer")).toHaveAttribute("data-panel-open", "true");
+  expect(screen.getByTestId("code-viewer")).toHaveAttribute("data-media-active", "false");
+  view.rerender(viewerTree({ ...props, open: true, active: true }));
+  expect(screen.getByRole("textbox", { name: "Draft text" })).toBe(draft);
+  expect(draft).toHaveValue("Unsaved A draft");
+  expect(screen.getByTestId("comments-panel")).toHaveAttribute("data-selection-start", "10");
+  await userEvent.click(screen.getByRole("button", { name: "View mode: Edit" }));
+  await userEvent.click(screen.getByRole("menuitem", { name: /Source/ }));
+  expect(screen.getByRole("dialog")).toHaveTextContent("Unsaved changes");
+  expect(codeViewerImports).toHaveBeenCalledTimes(1);
+});
 
 describe("FileViewer comparison sources", () => {
   beforeEach(() => useCommentsMock.mockReturnValue(makeCommentsQuery([])));
@@ -685,6 +732,8 @@ describe("FileViewer comparison sources", () => {
       turnId: "turn-2",
     });
     expect(useWorkspaceComparisonChanges).toHaveBeenLastCalledWith("conv_1", {
+      enabled: true,
+      viewId: undefined,
       path: "repo",
       directories: ["repo"],
     });
@@ -2822,7 +2871,7 @@ describe("FileViewer video files", () => {
       },
     } as ReturnType<typeof useWorkspaceGitChanges>);
     renderViewer({ open: true, path: "demo.webm" });
-    expect(useFileContent).toHaveBeenCalledWith("conv_1", null);
+    expect(useFileContent).toHaveBeenCalledWith("conv_1", null, { enabled: true });
     expect(useGitFileDiff).toHaveBeenCalledWith("conv_1", null, {
       enabled: false,
       base: "HEAD",

@@ -1,8 +1,11 @@
+// Modified for Triune.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getOmnigentServerIdentity } from "@/lib/host";
 import { useViewerId } from "./useViewerId";
 import { useSessionSearch } from "./useConversations";
 import { useMessageSearch } from "./useMessageSearch";
+import { useStableCallback } from "./useStableCallback";
+import { useShallowStable } from "./useShallowStable";
 import { filterSearchActions, searchActions } from "@/shell/contextSearch/actions";
 import {
   occurrenceKey,
@@ -20,11 +23,11 @@ export const CONTEXT_SEARCH_DEBOUNCE_MS = 300;
 export function useContextSearchController({
   activeSessionId,
   sidebarOpen,
-  setSidebarOpen,
-  navigate,
-  onToggleLeftSidebar,
-  onToggleRightSidebar,
-  isMobile,
+  setSidebarOpen: setSidebarOpenProp,
+  navigate: navigateProp,
+  onToggleLeftSidebar: onToggleLeftSidebarProp,
+  onToggleRightSidebar: onToggleRightSidebarProp,
+  isMobile: isMobileProp,
 }: {
   activeSessionId?: string;
   sidebarOpen: boolean;
@@ -34,6 +37,11 @@ export function useContextSearchController({
   onToggleRightSidebar: () => void;
   isMobile: () => boolean;
 }) {
+  const setSidebarOpen = useStableCallback(setSidebarOpenProp);
+  const navigate = useStableCallback(navigateProp);
+  const onToggleLeftSidebar = useStableCallback(onToggleLeftSidebarProp);
+  const onToggleRightSidebar = useStableCallback(onToggleRightSidebarProp);
+  const isMobile = useStableCallback(isMobileProp);
   const viewerId = useViewerId();
   const identity = `${getOmnigentServerIdentity() ?? ""}:${viewerId ?? ""}`;
   const [owner, setOwner] = useState(identity);
@@ -116,24 +124,30 @@ export function useContextSearchController({
     [scope],
   );
 
-  const messages = useMessageSearch(
-    settledQuery,
-    scope === "current" ? activeSessionId : undefined,
-    open && queryReady && (scope === "all" || !!activeSessionId),
-    identity,
+  const messages = useShallowStable(
+    useMessageSearch(
+      settledQuery,
+      scope === "current" ? activeSessionId : undefined,
+      open && queryReady && (scope === "all" || !!activeSessionId),
+      identity,
+    ),
   );
   // All-chat results stay mounted while the active chat gets its own bounded match list.
-  const activeMessages = useMessageSearch(
-    settledQuery,
-    activeSessionId,
-    open && queryReady && !!activeSessionId,
-    identity,
+  const activeMessages = useShallowStable(
+    useMessageSearch(
+      settledQuery,
+      activeSessionId,
+      open && queryReady && !!activeSessionId,
+      identity,
+    ),
   );
-  const titles = useSessionSearch(settledQuery, "title", {
-    enabled: open && queryReady,
-    limit: 8,
-    cacheIdentity: identity,
-  });
+  const titles = useShallowStable(
+    useSessionSearch(settledQuery, "title", {
+      enabled: open && queryReady,
+      limit: 8,
+      cacheIdentity: identity,
+    }),
+  );
   const loadedHits = useMemo(() => {
     const seen = new Set<string>();
     return (messages.data?.pages ?? [])
@@ -297,7 +311,7 @@ export function useContextSearchController({
       });
   }, [titles.data]);
 
-  return {
+  return useShallowStable({
     open,
     query: owner === identity ? query : "",
     settledQuery: owner === identity ? settledQuery : "",
@@ -325,5 +339,5 @@ export function useContextSearchController({
     goToTitle,
     queryReady,
     activeSessionId,
-  };
+  });
 }

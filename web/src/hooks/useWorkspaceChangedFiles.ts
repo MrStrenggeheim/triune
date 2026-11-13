@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { joinBrowseLocation } from "@/lib/workspacePaths";
 // TanStack Query hooks for the runner's filesystem resources API.
 //
@@ -1131,6 +1132,7 @@ export function useWorkspaceDirectory(
   conversationId: string | undefined,
   dirPath: string | null,
   location = "",
+  options: { enabled?: boolean } = {},
 ) {
   const contextWorkspace = useWorkbenchWorkspace(undefined);
   const workspace = contextWorkspace;
@@ -1139,7 +1141,7 @@ export function useWorkspaceDirectory(
   return useQuery({
     queryKey: ["workspace-dir", identity, dirPath, location],
     queryFn: () => fetchWorkspaceDirectory(conversationId!, dirPath!, location, workspace),
-    enabled: !!identity && !!dirPath && serveable !== false,
+    enabled: options.enabled !== false && !!identity && !!dirPath && serveable !== false,
     refetchInterval: workspace ? 5_000 : false,
     staleTime: 5_000,
   });
@@ -1167,12 +1169,13 @@ export function useWorkspaceDirectories(
   conversationId: string | undefined,
   dirPaths: string[],
   location = "",
+  options: { enabled?: boolean } = {},
 ): Map<string, DirectoryResult> {
   const contextWorkspace = useWorkbenchWorkspace(undefined);
   const workspace = contextWorkspace;
   const identity = queryIdentity(workspace, conversationId);
   const serveable = useWorkspaceServeable(conversationId, workspace);
-  const enabled = !!identity && serveable !== false;
+  const enabled = options.enabled !== false && !!identity && serveable !== false;
   // `combine` lets TanStack memoize the assembled Map. Its recompute gate is a
   // reference check on the combine fn (`combine !== lastCombine`), so the
   // callback must be stable — an inline closure is a fresh fn every render and

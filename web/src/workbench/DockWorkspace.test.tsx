@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { useEffect, useState } from "react";
 import { act, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -57,6 +58,54 @@ function deferred<T>() {
 }
 
 describe("DockWorkspace resource mounts", () => {
+  it("does not render unchanged retained resources for resizing, pin chrome or a new file", () => {
+    const renders = vi.fn();
+    const renderView: DockWorkspaceProps["renderView"] = (item, state) => {
+      renders(item.id);
+      return <span data-testid={`resource-${item.id}`}>{JSON.stringify({ item, state })}</span>;
+    };
+    const a = view("a");
+    const hidden = view("hidden");
+    let layout = addDockView(createDockLayout([a]), view("b"), { edge: "right" });
+    const props = { renderView, retainedViews: [hidden], onLayoutChange: vi.fn() };
+    const rendered = render(<DockWorkspace {...props} layout={layout} />);
+    renders.mockClear();
+    layout = resizeDockSplit(layout, [], 0.7);
+    rendered.rerender(<DockWorkspace {...props} layout={layout} pinnedViewIds={["a"]} />);
+    expect(renders).not.toHaveBeenCalled();
+    expect(screen.getByRole("separator", { name: "Resize panes" })).toHaveAttribute(
+      "aria-valuenow",
+      "70",
+    );
+    layout = addDockView(layout, view("new-file"));
+    rendered.rerender(<DockWorkspace {...props} layout={layout} />);
+    expect(renders.mock.calls.map(([id]) => id)).toEqual(["b", "new-file"]);
+    renders.mockClear();
+    layout = { ...layout, views: structuredClone(layout.views) };
+    rendered.rerender(
+      <DockWorkspace {...props} retainedViews={structuredClone([hidden])} layout={layout} />,
+    );
+    expect(renders).not.toHaveBeenCalled();
+    layout = {
+      ...layout,
+      views: layout.views.map((item) =>
+        item.id === "a" ? { ...item, resource: { ...item.resource, line: 42 } } : item,
+      ),
+    };
+    rendered.rerender(<DockWorkspace {...props} layout={layout} />);
+    expect(renders.mock.calls.map(([id]) => id)).toEqual(["a"]);
+    expect(screen.getByTestId("resource-a")).toHaveTextContent('"line":42');
+    renders.mockClear();
+    rendered.rerender(
+      <DockWorkspace
+        {...props}
+        layout={layout}
+        renderView={(item, state) => <div>Updated {renderView(item, state)}</div>}
+      />,
+    );
+    expect(renders).toHaveBeenCalledTimes(4);
+  });
+
   it("preserves the actual editor DOM, component state, focus and selection through moves, split resize and mobile transitions", () => {
     const mounted = vi.fn();
     const unmounted = vi.fn();
@@ -153,6 +202,58 @@ describe("DockWorkspace resource mounts", () => {
     );
     expect(screen.getByText("a resource")).not.toBe(original);
     expect(mounted).toHaveBeenCalledTimes(4);
+  });
+
+  it("deactivates resources with the whole workbench and preserves their DOM and drafts on return", () => {
+    const mounted = vi.fn();
+    function Resource({ id }: { id: string }) {
+      const [draft, setDraft] = useState("");
+      useEffect(() => {
+        mounted(id);
+      }, [id]);
+      return (
+        <input
+          aria-label={`Active draft ${id}`}
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+        />
+      );
+    }
+    const a = view("a");
+    const b = view("b");
+    const renderView: DockWorkspaceProps["renderView"] = (item, state) => (
+      <div
+        data-testid={`active-${item.id}`}
+        data-visible={state.visible}
+        data-focused={state.focused}
+      >
+        <Resource id={item.id} />
+      </div>
+    );
+    const props = {
+      layout: createDockLayout([a]),
+      retainedViews: [b],
+      renderView,
+      onLayoutChange: vi.fn(),
+    };
+    const { rerender } = render(<DockWorkspace {...props} />);
+    const draft = screen.getByLabelText("Active draft a");
+    fireEvent.change(draft, { target: { value: "unsent" } });
+    expect(screen.getByTestId("active-a")).toHaveAttribute("data-visible", "true");
+    rerender(<DockWorkspace {...props} active={false} />);
+    for (const id of ["a", "b"]) {
+      expect(screen.getByTestId(`active-${id}`)).toHaveAttribute("data-visible", "false");
+      expect(screen.getByTestId(`active-${id}`)).toHaveAttribute("data-focused", "false");
+      expect(screen.getByTestId(`active-${id}`).closest("[data-dock-view]")).toHaveAttribute(
+        "inert",
+      );
+    }
+    rerender(<DockWorkspace {...props} active />);
+    expect(screen.getByLabelText("Active draft a")).toBe(draft);
+    expect(draft).toHaveValue("unsent");
+    expect(mounted).toHaveBeenCalledTimes(2);
+    expect(screen.getByTestId("active-a")).toHaveAttribute("data-focused", "true");
+    expect(screen.getByTestId("active-b")).toHaveAttribute("data-visible", "false");
   });
 
   it("offers every pane on mobile and preserves selected tabs in unfocused panes", async () => {

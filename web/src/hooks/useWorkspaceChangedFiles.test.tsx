@@ -1,3 +1,4 @@
+// Modified for Triune.
 import {
   WorkbenchWorkspaceProvider,
   queryIdentity,
@@ -1982,6 +1983,48 @@ describe("selected workspace resource boundary", () => {
       </QueryClientProvider>
     );
   }
+  it("pauses expanded directory polls while retaining listings and resuming the same keys", async () => {
+    vi.useFakeTimers();
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+    });
+    const paths = ["src"];
+    const { result, rerender, unmount } = renderHook(
+      ({ active }) => ({
+        single: useWorkspaceDirectory(undefined, "src", "", { enabled: active }),
+        batch: useWorkspaceDirectories(undefined, paths, "", { enabled: active }),
+      }),
+      { initialProps: { active: false }, wrapper: wrapper(client) },
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15_000);
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+    rerender({ active: true });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10);
+    });
+    const cached = result.current.single.data;
+    expect(cached).toEqual([]);
+    expect(result.current.batch.get("src")?.data).toBe(cached);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    rerender({ active: false });
+    await act(async () => {
+      await client.invalidateQueries({ queryKey: ["workspace-dir"] });
+      await vi.advanceTimersByTimeAsync(15_000);
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(result.current.single.data).toBe(cached);
+    expect(result.current.batch.get("src")?.data).toBe(cached);
+    rerender({ active: true });
+    expect(result.current.single.data).toBe(cached);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10);
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    unmount();
+    client.clear();
+  });
   beforeEach(() => {
     onlineMock.mockReturnValue(false);
     hostOnlineMock.mockReturnValue(false);

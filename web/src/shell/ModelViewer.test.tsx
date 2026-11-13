@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FileContentResponse } from "@/hooks/useFileContent";
@@ -278,6 +279,40 @@ afterEach(() => {
 });
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
+
+it("defers a hidden model and pauses frames and resize observation without replacing its scene", async () => {
+  const observe = vi.fn();
+  const disconnect = vi.fn();
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe = observe;
+      disconnect = disconnect;
+    },
+  );
+  const data = makeData();
+  const { container, rerender } = render(
+    <ModelViewer data={data} path="part.stl" active={false} />,
+  );
+  expect(parseCalls).toEqual([]);
+  expect(requestAnimationFrame).not.toHaveBeenCalled();
+  rerender(<ModelViewer data={data} path="part.stl" active />);
+  await waitFor(() => expect(lastRenderer).not.toBeNull());
+  const canvas = container.querySelector("canvas");
+  const renderer = lastRenderer;
+  expect(requestAnimationFrame).toHaveBeenCalledTimes(1);
+  expect(observe).toHaveBeenCalledTimes(1);
+  rerender(<ModelViewer data={data} path="part.stl" active={false} />);
+  expect(cancelAnimationFrame).toHaveBeenCalledWith(1);
+  expect(disconnect).toHaveBeenCalledTimes(1);
+  expect(renderer?.disposed).toBe(false);
+  expect(container.querySelector("canvas")).toBe(canvas);
+  rerender(<ModelViewer data={data} path="part.stl" active />);
+  expect(requestAnimationFrame).toHaveBeenCalledTimes(2);
+  expect(observe).toHaveBeenCalledTimes(2);
+  expect(parseCalls).toEqual(["stl"]);
+  expect(lastRenderer).toBe(renderer);
+});
 
 describe("ModelViewer loader selection (unified with dispatch)", () => {
   it("selects the loader by MIME when the extension is unknown", async () => {

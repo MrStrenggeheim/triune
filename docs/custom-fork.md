@@ -58,6 +58,14 @@ File headers keep one copyable Host/path, Comments, Diff and the three-dot menu;
 Notification and workspace-picker density follows Appearance, and notifications can hide read entries while preserving active Undo actions.
 See the unified-workspace feature map for source mappings and desktop/mobile acceptance checks.
 
+## Performance and retained views
+
+Views retain drafts, buffers, undo state and terminal lifecycles while inactive presentation and view-owned polling pause.
+Stable resource boundaries and scoped subscriptions avoid updating unrelated chats when switching layouts or opening files.
+File links add their tab before original capture completes; editing starts after the original is retained through the authenticated capture route.
+Snapshots use binary artifacts with small versioned metadata, while existing captures remain readable.
+Rich editor/preview modules load when used, and substantial JSON responses negotiate gzip without changing streaming or download protocols.
+
 ## Agent communication
 
 Cross-chat agent communication and independent workers are enabled by default.

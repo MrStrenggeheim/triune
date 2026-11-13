@@ -140,3 +140,11 @@ Every implementation report includes action/expected-result acceptance steps and
 - Notifications and workspace-picker headers and entries follow the same density tokens; read-notification visibility is an explicit saved filter.
 - Keep mobile search centered on the app and expand its text within the measured space between controls.
 - The tab add control is a subtle shared icon button after the last tab; empty content centers larger muted guidance and a primary Open view button.
+
+## Retained resource behavior
+
+Keep resource identity, drafts, undo, selection and process ownership stable when views hide or move.
+Visibility controls presentation work and view-owned observation; it never implies stopping an agent, terminal or pending save.
+Shared navigation, search and file-action contexts keep their identity until their meaning changes.
+Show a file tab and shared loading feedback while retaining its original, then mount the editable viewer after capture succeeds.
+Capture errors use the notification system and an explicit Retry action in that view.

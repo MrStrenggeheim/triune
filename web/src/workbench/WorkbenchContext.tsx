@@ -1,5 +1,8 @@
+// Modified for Triune.
 import type { ActivitySource } from "./ActivityView";
-import { createContext, useContext, type ReactNode } from "react";
+import { createContext, useContext, useMemo, type ReactNode } from "react";
+import { useStableCallback } from "@/hooks/useStableCallback";
+import { useShallowStable } from "@/hooks/useShallowStable";
 import type { WorkbenchWorkspace } from "@/lib/workbenchWorkspace";
 import type { OpenFileOptions } from "@/shell/FileViewerContext";
 
@@ -48,6 +51,8 @@ export interface WorkbenchActions {
 }
 
 const WorkbenchContext = createContext<WorkbenchActions | null>(null);
+type WorkbenchNavigationActions = Pick<WorkbenchActions, "openConversation" | "openView">;
+const WorkbenchActionsContext = createContext<WorkbenchNavigationActions | null>(null);
 
 export function WorkbenchProvider({
   value,
@@ -56,9 +61,27 @@ export function WorkbenchProvider({
   value: WorkbenchActions;
   children: ReactNode;
 }) {
-  return <WorkbenchContext.Provider value={value}>{children}</WorkbenchContext.Provider>;
+  const openConversation = useStableCallback(value.openConversation);
+  const openView = useStableCallback(value.openView);
+  const actions = useMemo(() => ({ openConversation, openView }), [openConversation, openView]);
+  const openConversationIds = useShallowStable(value.openConversationIds);
+  const focusedConversationId = value.focusedConversationId;
+  const selection = useMemo(
+    () => ({ ...actions, focusedConversationId, openConversationIds }),
+    [actions, focusedConversationId, openConversationIds],
+  );
+  return (
+    <WorkbenchActionsContext.Provider value={actions}>
+      <WorkbenchContext.Provider value={selection}>{children}</WorkbenchContext.Provider>
+    </WorkbenchActionsContext.Provider>
+  );
 }
 
 export function useWorkbench() {
   return useContext(WorkbenchContext);
+}
+
+/** Navigation consumers do not subscribe to focused/open conversation changes. */
+export function useWorkbenchActions() {
+  return useContext(WorkbenchActionsContext);
 }

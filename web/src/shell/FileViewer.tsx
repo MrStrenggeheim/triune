@@ -139,7 +139,6 @@ import { useIsMobileViewport } from "@/hooks/useIsMobileViewport";
 import { readFileViewPreferences, writeFileViewPreferences } from "@/lib/fileViewPreferences";
 import { hasCommandModifier } from "@/lib/hotkeys";
 import { type ChangedSort, compareChangedFiles } from "./FlatFileList";
-import { CodeViewer } from "./CodeViewer";
 import {
   MONACO_SPLIT_BREAKPOINT,
   type SaveStatus,
@@ -157,6 +156,7 @@ import { useScrollRestore } from "./useScrollRestore";
 import { isPdfAnchor } from "./pdfCommentHelpers";
 
 // Load the editor on diff intent, in parallel with the file requests.
+const CodeViewer = lazy(() => import("./CodeViewer").then((m) => ({ default: m.CodeViewer })));
 const loadMonacoDiffViewer = () => import("./MonacoDiffViewer");
 const MonacoDiffViewer = lazy(() =>
   loadMonacoDiffViewer().then((m) => ({ default: m.MonacoDiffViewer })),
@@ -296,7 +296,10 @@ const TOOLBAR_MAX_TITLE_PX = 280;
  * the toggle, so either would move the threshold and the toggle would get
  * stuck. The offscreen clone has no such coupling.
  */
-function useToolbarOverflow(actionsKey: string): {
+function useToolbarOverflow(
+  actionsKey: string,
+  active: boolean,
+): {
   headerRef: React.RefObject<HTMLDivElement | null>;
   explorerRef: React.RefObject<HTMLButtonElement | null>;
   backRef: React.RefObject<HTMLDivElement | null>;
@@ -318,7 +321,7 @@ function useToolbarOverflow(actionsKey: string): {
   useLayoutEffect(() => {
     const header = headerRef.current;
     const measure = measureRef.current;
-    if (!header || !measure || typeof ResizeObserver === "undefined") return;
+    if (!active || !header || !measure || typeof ResizeObserver === "undefined") return;
     const evaluate = () => {
       const style = getComputedStyle(header);
       const padX = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
@@ -357,7 +360,7 @@ function useToolbarOverflow(actionsKey: string): {
     const ro = new ResizeObserver(evaluate);
     ro.observe(header);
     return () => ro.disconnect();
-  }, [actionsKey]);
+  }, [actionsKey, active]);
 
   return {
     headerRef,
@@ -394,6 +397,8 @@ export interface FileViewerProps {
   agentId?: string | null;
   position?: FilePosition;
   open: boolean;
+  /** Pause hidden presentation work while retaining the open editor and its guard. */
+  active?: boolean;
   /** Media visibility is independent of the mounted editor and its navigation guard. */
   mediaActive?: boolean;
   conversationId: string;
@@ -479,6 +484,7 @@ function FileViewerBody({
   comparisonScope: originView,
   position,
   open,
+  active = true,
   mediaActive = true,
   conversationId,
   path,
@@ -523,6 +529,7 @@ function FileViewerBody({
     [recipientValid, conversationId, path, workspaceRoot, workspaceId, hostId],
   );
   const isActiveViewport = viewport === undefined || (viewport === "mobile") === isMobile;
+  const visible = open && active && isActiveViewport;
   // Capture URL params once on open — we don't want re-renders caused by our own
   // param writes to re-run the initialization logic.
   const initialDiffRef = useRef(initialDiff ?? (syncUrl && searchParams.get("diff") === "1"));
@@ -550,9 +557,11 @@ function FileViewerBody({
   // doesn't lift it above the soft keyboard. Pad the overlay's bottom by the
   // keyboard inset so the comments panel and its (auto-focused) textarea stay
   // visible. No-op off iOS / with the keyboard closed or in the desktop rail.
-  const keyboardInset = useIOSNativeKeyboardInset((!frameless || mobileOverlay) && open);
+  const keyboardInset = useIOSNativeKeyboardInset((!frameless || mobileOverlay) && visible);
   // Video playback reads the complete binary on demand, never the capped JSON preview.
-  const fileQuery = useFileContent(conversationId, isVideoFile(path) ? null : path);
+  const fileQuery = useFileContent(conversationId, isVideoFile(path) ? null : path, {
+    enabled: visible,
+  });
   const { comparison: diffComparison, setComparison: setDiffComparison } = useWorkspaceComparison({
     workspaceId,
     conversationId: recipientValid ? (workspace?.chatSessionId ?? conversationId) : undefined,
@@ -567,6 +576,7 @@ function FileViewerBody({
   const agentComparison =
     diffComparison.source === "agent" || diffComparison.source === "last-turn";
   const changedFiles = useWorkspaceComparisonChanges(conversationId, {
+    enabled: visible,
     ...comparisonScope,
     viewId,
     ...(workspaceId !== undefined ? { workspaceId } : {}),
@@ -574,6 +584,7 @@ function FileViewerBody({
     ...(recipientValid ? {} : { agentEnabled: false }),
   });
   const gitChanges = useWorkspaceGitChanges(conversationId, {
+    enabled: visible,
     path:
       path?.startsWith("/") &&
       (!workspaceRoot || !path.startsWith(`${workspaceRoot.replace(/\/$/, "")}/`))
@@ -693,9 +704,9 @@ function FileViewerBody({
   // refreshes, so a comment arriving while the panel is open is
   // marked seen too.
   useEffect(() => {
-    if (!recipientValid || !open || !commentsOpen || commentsQuery.data === undefined) return;
+    if (!recipientValid || !visible || !commentsOpen || commentsQuery.data === undefined) return;
     markCommentsSeen(commentsQuery.data.map((c) => c.id));
-  }, [recipientValid, open, commentsOpen, commentsQuery.data]);
+  }, [recipientValid, visible, commentsOpen, commentsQuery.data]);
   // Notify parent when comments panel opens or closes (e.g. so the parent
   // can widen the inline panel to fit both the code viewer and comments).
   useEffect(() => {
@@ -880,7 +891,7 @@ function FileViewerBody({
 
   // Keyboard shortcut: Alt+← / Alt+→ to navigate between changed files.
   useEffect(() => {
-    if (!open || !onNavigateTo || currentNavIdx === -1) return;
+    if (!visible || !onNavigateTo || currentNavIdx === -1) return;
     const handler = (e: KeyboardEvent) => {
       if (!syncUrl && !viewerIsActiveSurfaceRef.current) return;
       if (!e.altKey) return;
@@ -903,11 +914,11 @@ function FileViewerBody({
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [syncUrl, open, onNavigateTo, currentNavIdx, prevPath, nextPath, guardDirty]);
+  }, [syncUrl, visible, onNavigateTo, currentNavIdx, prevPath, nextPath, guardDirty]);
 
   // Escape closes the active file tab (when search is not open).
   useEffect(() => {
-    if (!open || !onCloseTab) return;
+    if (!visible || !onCloseTab) return;
     const handler = (e: KeyboardEvent) => {
       if (!syncUrl && !viewerIsActiveSurfaceRef.current) return;
       if (e.key !== "Escape" || e.defaultPrevented) return;
@@ -924,7 +935,7 @@ function FileViewerBody({
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [syncUrl, open, onCloseTab, searchOpen, guardDirty]);
+  }, [syncUrl, visible, onCloseTab, searchOpen, guardDirty]);
 
   // View mode toggle — markdown defaults to the rich-text editor, HTML and
   // notebooks to their rendered preview, and everything else to source.
@@ -1010,13 +1021,13 @@ function FileViewerBody({
     diffComparison.sourceChatId ?? conversationId,
     isVideo ? null : path,
     {
-      enabled: requestedDiff && agentComparison && recipientValid,
+      enabled: visible && requestedDiff && agentComparison && recipientValid,
       lastTurn: diffComparison.source === "last-turn",
       turnId: diffComparison.turnId,
     },
   );
   const gitDiffQuery = useGitFileDiff(conversationId, isVideo ? null : path, {
-    enabled: requestedDiff && !agentComparison,
+    enabled: visible && requestedDiff && !agentComparison,
     base: diffComparison.base,
     target: diffComparison.target,
     scope: diffComparison.source === "git" ? undefined : comparisonScope.path,
@@ -1030,13 +1041,13 @@ function FileViewerBody({
     requestedDiff &&
     (isDiffAvailable || (linkedDiff && changedFiles.data === undefined && !changedFiles.isError));
   useEffect(() => {
-    if (!prepareDiff) return;
+    if (!visible || !prepareDiff) return;
     void loadMonacoDiffViewer()
       .then((m) => m.prepareDiffEditor(lang))
       .catch(() => {
         // The mounted viewer retries initialization and surfaces load errors.
       });
-  }, [prepareDiff, lang]);
+  }, [visible, prepareDiff, lang]);
   const [diffLayout, setDiffLayout] = useResourceViewState<"unified" | "split">(
     resourceIdentity,
     viewId,
@@ -1233,7 +1244,7 @@ function FileViewerBody({
     if (open) viewerIsActiveSurfaceRef.current = true;
   }, [open, path]);
   useEffect(() => {
-    if (!open) return;
+    if (!visible) return;
     const track = (e: Event) => {
       const root = viewerRootRef.current;
       const target = e.target;
@@ -1247,9 +1258,9 @@ function FileViewerBody({
       window.removeEventListener("mousedown", track, true);
       window.removeEventListener("focusin", track, true);
     };
-  }, [open]);
+  }, [visible]);
   useEffect(() => {
-    if (!open || !isMonacoFindSurface) return;
+    if (!visible || !isMonacoFindSurface) return;
     const handler = (e: KeyboardEvent) => {
       if (
         e.defaultPrevented ||
@@ -1270,10 +1281,10 @@ function FileViewerBody({
     // host page, not the file).
     window.addEventListener("keydown", handler, true);
     return () => window.removeEventListener("keydown", handler, true);
-  }, [open, isMonacoFindSurface, setSearchOpen]);
+  }, [visible, isMonacoFindSurface, setSearchOpen]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!visible) return;
     const find = (event: Event) => {
       const target = (event as CustomEvent<{ target: Element | null }>).detail?.target;
       if (target && !viewerRootRef.current?.contains(target)) return;
@@ -1293,7 +1304,7 @@ function FileViewerBody({
     };
     window.addEventListener(REQUEST_FILE_FIND_EVENT, find);
     return () => window.removeEventListener(REQUEST_FILE_FIND_EVENT, find);
-  }, [open, isImage, isPdf, isVideo, isModel, isBinary, lang, viewMode]);
+  }, [visible, isImage, isPdf, isVideo, isModel, isBinary, lang, viewMode]);
 
   // Reset the toggle when find is closed from inside Monaco (Escape or the
   // widget's ✕) so the next Cmd+F re-opens it instead of no-opping. Shared by
@@ -1311,19 +1322,20 @@ function FileViewerBody({
     contentScrollKey,
     fileQuery.data !== undefined,
     !isFilePositionPending(filePosition),
+    visible,
   );
   // Measure the content area so the split toggle can hide when there isn't
   // enough room for side-by-side. Only observe while the diff is shown — the
   // ref element only exists then, and it's the only mode that cares.
   useEffect(() => {
     const el = contentAreaRef.current;
-    if (!el || !diffViewActive || typeof ResizeObserver === "undefined") return;
+    if (!visible || !el || !diffViewActive || typeof ResizeObserver === "undefined") return;
     const measure = () => setContentWidth(el.getBoundingClientRect().width);
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [diffViewActive]);
+  }, [visible, diffViewActive]);
   // A measured width of 0 (pre-layout, or jsdom) is indistinguishable from
   // "unknown", so treat null/zero as wide enough — only a real sub-threshold
   // measurement hides the toggle, so it never flickers off before layout.
@@ -1343,7 +1355,7 @@ function FileViewerBody({
   // that AppShell writes (React Router v7 BrowserRouter defers via startTransition,
   // so stale searchParams seen here could emit a navigate("?") that strips it).
   useEffect(() => {
-    if (!syncUrl || !open || !isActiveViewport) return;
+    if (!syncUrl || !visible) return;
     const wantDiff = diffActive && isDiffAvailable;
     const hasDiff = searchParams.has("diff");
     if (wantDiff === hasDiff) return; // already in sync — no navigate needed
@@ -1359,7 +1371,7 @@ function FileViewerBody({
       },
       { replace: true },
     );
-  }, [syncUrl, diffActive, isDiffAvailable, open, isActiveViewport, searchParams, setSearchParams]);
+  }, [syncUrl, diffActive, isDiffAvailable, visible, searchParams, setSearchParams]);
 
   // Toolbar actions, declared once and rendered two ways: inline icon buttons
   // when there's room, or rows in an overflow ("⋯") menu when there isn't.
@@ -1665,6 +1677,7 @@ function FileViewerBody({
       `nav:${showNavButtons}`,
       `path:${fileHostLabel}:${displayPath}`,
     ].join("|"),
+    visible,
   );
 
   // The expanded inline row — rendered both offscreen (for measurement) and,
@@ -2133,30 +2146,40 @@ function FileViewerBody({
             )
           ) : (
             <FileContentReaderContext.Provider value={registerContentReader}>
-              <CodeViewer
-                position={filePosition}
-                conversationId={conversationId}
-                path={path}
-                fileQuery={fileQuery}
-                onDirtyChange={handleDirtyChange}
-                onSaveStatusChange={setSaveStatus}
-                comments={openComments}
-                addressedComments={addressedComments}
-                activeSelection={activeSelection}
-                onSetActiveSelection={handleSetActiveSelection}
-                pendingBodyRef={pendingBodyRef}
-                panelOpen={open}
-                mediaActive={open && isActiveViewport && mediaActive}
-                searchOpen={searchOpen}
-                setSearchOpen={setSearchOpen}
-                searchFocusNonce={searchFocusNonce}
-                searchInputRef={searchInputRef}
-                viewMode={viewMode}
-                markdownSourceFallback={markdownSourceFallback ?? false}
-                tocOpen={tocOpen}
-                onTocToggle={() => setTocOpen((prev) => !prev)}
-                onRequestEditMode={lang === "markdown" ? handleRequestEditMode : undefined}
-              />
+              {open && (
+                <Suspense
+                  fallback={
+                    <p role="status" className="p-8 text-muted-foreground text-ui">
+                      Loading file…
+                    </p>
+                  }
+                >
+                  <CodeViewer
+                    position={filePosition}
+                    conversationId={conversationId}
+                    path={path}
+                    fileQuery={fileQuery}
+                    onDirtyChange={handleDirtyChange}
+                    onSaveStatusChange={setSaveStatus}
+                    comments={openComments}
+                    addressedComments={addressedComments}
+                    activeSelection={activeSelection}
+                    onSetActiveSelection={handleSetActiveSelection}
+                    pendingBodyRef={pendingBodyRef}
+                    panelOpen={open}
+                    mediaActive={visible && mediaActive}
+                    searchOpen={searchOpen}
+                    setSearchOpen={setSearchOpen}
+                    searchFocusNonce={searchFocusNonce}
+                    searchInputRef={searchInputRef}
+                    viewMode={viewMode}
+                    markdownSourceFallback={markdownSourceFallback ?? false}
+                    tocOpen={tocOpen}
+                    onTocToggle={() => setTocOpen((prev) => !prev)}
+                    onRequestEditMode={lang === "markdown" ? handleRequestEditMode : undefined}
+                  />
+                </Suspense>
+              )}
             </FileContentReaderContext.Provider>
           )}
         </div>

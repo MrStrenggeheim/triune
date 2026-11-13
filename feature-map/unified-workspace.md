@@ -124,3 +124,17 @@ Use desktop/mobile and both color modes; verify drafts, original file bytes and 
 Verification: `tests/browser_ui/chat/test_triune_next_iteration.py`, `test_workspace_iteration.py`, `web/src/workbench/filePlacement.test.ts`, `web/src/components/ChatAttachment.test.tsx`, `web/src/components/chat/QuoteDestinationMenu.test.tsx`, `web/src/shell/useScrollRestore.geometry.test.ts` and the owning notification, sidebar, picker and transcript suites.
 Backend boundaries: `tests/server/routes/test_chat_attachments.py` and `tests/stores/test_context_references.py`.
 Hidden-measurement and scrollbar tests count avoided work; they do not establish frame-rate improvements or physical-device behavior.
+
+### Retained-view performance
+
+- Switching chats and adding file tabs keep unrelated retained resources behind stable render and context boundaries.
+- Inactive file, comparison, expanded-directory and Activity queries pause; revealing a view restores observation using its existing keys and cached state.
+- Hidden 3D/PDF viewers pause rendering without discarding camera, zoom or document position; agent and terminal lifecycles stay independent of tab visibility.
+- A live-file tab shows preparation immediately, then enables its editor after the original snapshot commits; Retry preserves its captured source.
+- Native text chunks share the existing frame scheduler, with final text and state transitions flushed in order.
+- Editor and specialized preview code loads at its use boundary; HTML sandbox, comments and rendering behavior stay the same.
+- Large JSON responses negotiate gzip; SSE, WebSockets, binary downloads and streaming bodies pass through.
+
+Verification: `web/src/workbench/WorkbenchContext.test.tsx`, `web/src/workbench/CapturedFileActions.test.tsx`, `web/src/workbench/DockWorkspace.test.tsx`, `web/src/workbench/ScopedChatStore.test.tsx`, `web/src/workbench/CapturedFileGate.test.tsx`, `web/src/hooks/useConversationEntryState.test.tsx`, the owning resource/query/viewer suites and `tests/browser_ui/chat/test_workspace_iteration.py`.
+Transport and persistence: `tests/server/routes/test_chat_attachments.py`, `tests/server/routes/test_gzip_route.py`, `tests/server/routes/test_workbench_workspaces.py` and artifact-store tests.
+Compare the same two/four/twelve-chat scenarios when measuring latency; browser/host timings are not interchangeable with a user's desktop.

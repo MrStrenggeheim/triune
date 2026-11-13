@@ -1,6 +1,7 @@
 // Modified for Triune.
 import {
   Fragment,
+  memo,
   useCallback,
   useEffect,
   useId,
@@ -78,6 +79,8 @@ export interface DockViewVisibility {
 }
 
 export interface DockWorkspaceProps {
+  /** Hidden workbenches retain resources while suspending their presentation work. */
+  active?: boolean;
   openActions?: WorkbenchOpenAction[];
   onOpenAction?: (paneId: string, action: WorkbenchOpenAction) => void;
   layout: DockLayout;
@@ -442,7 +445,11 @@ function DockSurface(props: DockWorkspaceProps) {
             {[...allViews.values()].map((view) => {
               const pane = dockPaneForView(layout, view.id);
               const focused = pane?.id === layout.focusedPaneId;
-              const visible = !!pane && pane.selectedViewId === view.id && (!compact || focused);
+              const visible =
+                props.active !== false &&
+                !!pane &&
+                pane.selectedViewId === view.id &&
+                (!compact || focused);
               const rect = geometry.panes.find((item) => item.key === pane?.id) ?? fullRect;
               return (
                 <DockViewSlot
@@ -548,10 +555,29 @@ function DockViewSlot({
       onPointerDownCapture={onFocus}
       onFocusCapture={onFocus}
     >
-      {renderView(view, { visible, focused })}
+      <DockViewResource view={view} visible={visible} focused={focused} renderView={renderView} />
     </div>
   );
 }
+
+/** Layout geometry and tab chrome must not render unchanged retained resources. */
+const DockViewResource = memo(
+  function DockViewResource({
+    view,
+    visible,
+    focused,
+    renderView,
+  }: Pick<DockWorkspaceProps, "renderView"> & { view: DockView } & DockViewVisibility) {
+    return renderView(view, { visible, focused });
+  },
+  (previous, next) =>
+    previous.renderView === next.renderView &&
+    previous.visible === next.visible &&
+    previous.focused === next.focused &&
+    previous.view.id === next.view.id &&
+    previous.view.title === next.view.title &&
+    (previous.view === next.view || sameDockResource(previous.view, next.view)),
+);
 
 function DockPaneChrome({
   prefix,

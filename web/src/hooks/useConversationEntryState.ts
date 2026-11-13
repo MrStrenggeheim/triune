@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { useCallback, useSyncExternalStore } from "react";
 import type { ConversationState } from "@/store/chatStore";
 import { conversationRegistry } from "@/store/conversationRegistry";
@@ -6,7 +7,7 @@ import { createInitialConversationState } from "@/store/conversationState";
 // A stable empty snapshot for an id that is not (yet) live, so `getSnapshot`
 // returns the same reference across renders and `useSyncExternalStore` doesn't
 // loop. `getState()` on a live entry is already reference-stable between
-// `setState` calls, so the whole hook is stable-by-construction.
+// `setState` calls.
 const EMPTY_STATE: ConversationState = createInitialConversationState();
 
 /**
@@ -19,25 +20,40 @@ const EMPTY_STATE: ConversationState = createInitialConversationState();
  * conversation's registry entry instead — the same per-conversation state the
  * store routes writes to via `entrySetter`/`setterFor`.
  *
- * Returns the whole `ConversationState` (a fresh reference on any change to that
- * conversation), so a panel-scale surface re-renders on each of its own frames;
- * `EMPTY_STATE` is returned for an id with no live entry yet.
+ * Select only the fields the consumer needs; use `useShallow` for composite
+ * selections. Omitting the selector retains the whole-state subscription.
+ * An absent entry is read from `EMPTY_STATE`.
  *
  * @param id Conversation id to observe, or null for none.
  */
-export function useConversationEntryState(id: string | null): ConversationState {
+export function useConversationEntryState(id: string | null): ConversationState;
+export function useConversationEntryState<T>(
+  id: string | null,
+  selector: (state: ConversationState) => T,
+): T;
+export function useConversationEntryState<T>(
+  id: string | null,
+  selector?: (state: ConversationState) => T,
+) {
   const subscribe = useCallback(
     (onChange: () => void) => {
       if (id === null) return () => {};
-      return conversationRegistry.subscribe((changedId) => {
+      const changed = (changedId: string) => {
         if (changedId === id) onChange();
-      });
+      };
+      const unsubscribe = conversationRegistry.subscribe(changed);
+      const unsubscribeDisposed = conversationRegistry.subscribeDisposed(changed);
+      return () => {
+        unsubscribe();
+        unsubscribeDisposed();
+      };
     },
     [id],
   );
   const getSnapshot = useCallback(() => {
     const entry = id === null ? undefined : conversationRegistry.peek(id);
-    return entry === undefined ? EMPTY_STATE : entry.getState();
-  }, [id]);
+    const state = entry === undefined ? EMPTY_STATE : entry.getState();
+    return selector ? selector(state) : state;
+  }, [id, selector]);
   return useSyncExternalStore(subscribe, getSnapshot);
 }

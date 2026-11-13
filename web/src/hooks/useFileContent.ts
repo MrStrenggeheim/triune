@@ -1,3 +1,4 @@
+// Modified for Triune.
 // TanStack Query wrapper around the resources filesystem file-content endpoint:
 // `GET /v1/sessions/{sessionId}/resources/environments/{environmentId}/filesystem/{path}`.
 //
@@ -195,7 +196,7 @@ export async function downloadWorkspaceFile(
 export function useFileContent(
   conversationId: string | undefined,
   path: string | null,
-  options: { retry?: boolean; workspace?: WorkbenchWorkspace | null } = {},
+  options: { enabled?: boolean; retry?: boolean; workspace?: WorkbenchWorkspace | null } = {},
 ) {
   // A `temp:*` id (navigate-first new-chat window) has no server session yet,
   // so never request `/v1/sessions/temp:*/resources/*` for it.
@@ -233,7 +234,7 @@ export function useFileContent(
   return useQuery({
     queryKey: ["file-content", identity, path],
     queryFn: () => fetchFileContent(serverId!, path!, workspace),
-    enabled: !!identity && !!path && serveable !== false,
+    enabled: options.enabled !== false && !!identity && !!path && serveable !== false,
     staleTime: 5_000,
     ...(options.retry === undefined ? {} : { retry: options.retry }),
   });
