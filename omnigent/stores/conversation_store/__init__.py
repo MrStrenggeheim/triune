@@ -740,6 +740,16 @@ class ConversationStore(ABC):
         ...
 
     @abstractmethod
+    def confirm_framework_input(
+        self, conversation_id: str, item_id: str, response_id: str
+    ) -> ConversationItem | None:
+        """Confirm a correlated framework echo without changing its identity or chronology.
+
+        Return the updated item only when its transcript receipt changed.
+        """
+        ...
+
+    @abstractmethod
     def enrich_resource_event(
         self, conversation_id: str, item_id: str, data: dict[str, Any]
     ) -> ConversationItem | None:

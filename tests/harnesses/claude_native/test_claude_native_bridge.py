@@ -1569,6 +1569,25 @@ def test_native_agent_tool_result_carries_only_completion_provenance(
     assert response_id == "active"
 
 
+@pytest.mark.parametrize("native_id", ["native-background-id", None, 42])
+def test_native_bash_result_keeps_explicit_resource_alias_separate_from_display_output(
+    tmp_path: Path, native_id: str | int | None
+) -> None:
+    _, _, items = _read_native_user(
+        tmp_path,
+        [{"type": "tool_result", "tool_use_id": "tool-use-id", "content": "unchanged output"}],
+        toolUseResult={"backgroundTaskId": native_id, "stdout": "captured stdout"},
+    )
+    [item] = items
+    assert item.data["call_id"] == "tool-use-id"
+    assert item.data["output"] == "unchanged output"
+    if isinstance(native_id, str):
+        assert item.data["source"] == "claude_native"
+        assert item.data["source_call_id"] == native_id
+    else:
+        assert "source_call_id" not in item.data and "source" not in item.data
+
+
 def test_read_transcript_items_since_flags_compact_summary(tmp_path: Path) -> None:
     """
     An ``isCompactSummary`` user record is flagged, not rendered as a bubble.

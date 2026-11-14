@@ -1,3 +1,4 @@
+# Modified for Triune; inherited notices remain applicable.
 """Routes for the Sessions API (``/v1/sessions``).
 
 These endpoints expose a thin, harness-agnostic surface over an
@@ -890,6 +891,9 @@ def create_sessions_router(
         ``/sessions`` endpoints.
     """
     router = APIRouter()
+    from omnigent.server.shell_resources import SessionShellResources
+
+    shell_resources = SessionShellResources(artifact_store)
 
     from omnigent.server.routes.sessions.routes_agent import register_agent_routes
     from omnigent.server.routes.sessions.routes_browser import register_browser_routes
@@ -950,6 +954,7 @@ def create_sessions_router(
         permission_store=permission_store,
         host_registry=host_registry,
         register_initial_file_upload=register_initial_file_upload,
+        shell_resources=shell_resources,
     )
 
     register_ui_routes(
@@ -992,6 +997,7 @@ def create_sessions_router(
         runner_tunnel_tokens=runner_tunnel_tokens,
         register_runner_ingest=register_runner_ingest,
         register_startup_dispatch=register_startup_dispatch,
+        shell_resources=shell_resources,
     )
 
     register_permissions_routes(

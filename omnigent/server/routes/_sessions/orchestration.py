@@ -3104,6 +3104,33 @@ async def _persist_external_conversation_item_unlocked(
             item,
             body.data["input_stable_id"],
         )
+    if (
+        isinstance(item.data, MessageData)
+        and item.data.communication is not None
+        and item.data.communication.kind == "system"
+        and item.stable_id is not None
+    ):
+        existing = await asyncio.to_thread(conversation_store.get_item, session_id, item.stable_id)
+        if existing is not None:
+            if (
+                not isinstance(existing.data, MessageData)
+                or existing.data.communication is None
+                or existing.data.communication.kind != "system"
+                or existing.data.communication.message_id != item.data.communication.message_id
+                or existing.data.communication.source_title != item.data.communication.source_title
+                or existing.data.content != item.data.content
+            ):
+                raise OmnigentError("Framework input identity conflict", code=ErrorCode.CONFLICT)
+            if body.data.get("input_stable_id") == existing.id:
+                confirmed = await asyncio.to_thread(
+                    conversation_store.confirm_framework_input,
+                    session_id,
+                    existing.id,
+                    item.response_id,
+                )
+                if confirmed is not None:
+                    _publish_persisted_external_item(session_id, body, confirmed)
+            return existing.id
     peer_pending_id = (
         pending_inputs.make_pending_id(session_id, item.replaces_pending_id)
         if item.replaces_pending_id is not None
@@ -3199,6 +3226,10 @@ async def _persist_external_conversation_item_unlocked(
         if drained is not None:
             cleared_pending_id = drained.pending_id
             item = _merge_pending_file_blocks(item, drained.content)
+            if match_method != "fifo_fallback":
+                item = item.model_copy(
+                    update={"data": item.data.model_copy(update={"user_authored": True})}
+                )
             # A text match preserves the sender recorded at POST time. FIFO
             # settlement alone does not establish authorship of the mirror.
             if (
@@ -3216,10 +3247,6 @@ async def _persist_external_conversation_item_unlocked(
             # No pending entry — direct terminal input. Fall back to the
             # identity authenticated on the forwarder's own request.
             item = item.model_copy(update={"created_by": created_by})
-        if agent_message_candidate:
-            item = item.model_copy(
-                update={"data": item.data.model_copy(update={"user_authored": True})}
-            )
     elif item.type == "slash_command" and isinstance(item.data, SlashCommandData):
         # A command typed in the web composer was queued as plain text but comes back
         # as a slash_command item; a plugin skill typed ``/simplify`` is recorded as
@@ -3367,7 +3394,7 @@ def _new_external_conversation_item(
     item = _parse_external_conversation_item(body)
     if isinstance(item.data, MessageData) and item.data.communication is not None:
         origin = item.data.communication
-        if origin.kind != "native_agent":
+        if origin.kind not in {"native_agent", "system", "external"}:
             raise OmnigentError(
                 "External items cannot assert peer delivery", code=ErrorCode.FORBIDDEN
             )
@@ -3377,12 +3404,18 @@ def _new_external_conversation_item(
                     update={
                         "destination_conversation_id": session_id,
                         "source_conversation_id": None,
-                        "source_title": None,
+                        "source_title": origin.source_title if origin.kind == "system" else None,
                         "source_resource_scope": None,
                     }
                 )
             }
         )
+        if origin.kind == "system":
+            if re.fullmatch(r"[0-9a-f]{32}", origin.message_id) is None:
+                raise OmnigentError(
+                    "Invalid framework input identity", code=ErrorCode.INVALID_INPUT
+                )
+            item = item.model_copy(update={"stable_id": origin.message_id, "created_by": None})
     return_id = body.data.get("subagent_return_id")
     if (
         isinstance(return_id, str)
@@ -3401,7 +3434,11 @@ def _new_external_conversation_item(
     # comes back flagged so the caller can unwind the duplicate's side effects
     # (no re-broadcast, and a wrongly-drained pending input is restored).
     source_id = body.data.get("source_id")
-    if source_id is not None:
+    if source_id is not None and not (
+        isinstance(item.data, MessageData)
+        and item.data.communication is not None
+        and item.data.communication.kind == "system"
+    ):
         if not isinstance(source_id, str) or not source_id.strip() or len(source_id) > 256:
             raise OmnigentError(
                 "external_conversation_item data.source_id must be a "

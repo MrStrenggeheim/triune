@@ -1,3 +1,5 @@
+# Modified for Triune.
+
 """
 Integration tests for ``POST /v1/sessions/{id}/hooks/permission-request``.
 
@@ -1516,8 +1518,19 @@ async def test_permission_request_hook_surfaces_ask_user_question_structured(
     assert resp.status_code == 200, resp.text
 
 
+@pytest.mark.parametrize(
+    "answers",
+    [
+        {"Which framework should we use?": "Vue", "Pick snacks": ["Popcorn", "Pretzels"]},
+        {"Pick snacks": ["Popcorn"]},
+        {},
+        {"Which framework should we use?": ""},
+    ],
+    ids=["full", "partial", "empty", "blank-editor"],
+)
 async def test_permission_request_hook_substitutes_ask_user_question_answers(
     client: httpx.AsyncClient,
+    answers: dict[str, Any],
 ) -> None:
     """
     When the gated tool is AskUserQuestion and the user accepts
@@ -1575,10 +1588,7 @@ async def test_permission_request_hook_substitutes_ask_user_question_answers(
                 # Flat MCP ``ElicitResult.content`` shape — each question
                 # text is one top-level field; single-select is a string,
                 # multi-select is a ``list[str]``.
-                "content": {
-                    "Which framework should we use?": "Vue",
-                    "Pick snacks": ["Popcorn", "Pretzels"],
-                },
+                "content": answers,
             },
         },
     )
@@ -1590,10 +1600,7 @@ async def test_permission_request_hook_substitutes_ask_user_question_answers(
     decision = body["hookSpecificOutput"]["decision"]
     assert decision["behavior"] == "allow"
     assert decision["updatedInput"]["questions"] == payload["tool_input"]["questions"]
-    assert decision["updatedInput"]["answers"] == {
-        "Which framework should we use?": "Vue",
-        "Pick snacks": ["Popcorn", "Pretzels"],
-    }
+    assert decision["updatedInput"]["answers"] == answers
 
 
 async def test_permission_request_hook_no_updated_input_without_answers(
@@ -2808,8 +2815,11 @@ async def test_codex_elicitation_resolved_event_clears_hook_wait(
     assert resolved[0]["elicitation_id"] == expected_elicitation_id
 
 
+@pytest.mark.parametrize("action", ["accept", "decline"])
 async def test_codex_request_user_input_hook_returns_id_keyed_answers(
     client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    action: str,
 ) -> None:
     """
     Codex ``item/tool/requestUserInput`` frames use the shared
@@ -2820,6 +2830,11 @@ async def test_codex_request_user_input_hook_returns_id_keyed_answers(
     but the app-server receives an empty ``answers`` object and Codex
     keeps waiting for input.
     """
+    forwarded = AsyncMock()
+    monkeypatch.setattr(
+        "omnigent.server.routes.sessions.routes_hooks._forward_session_change_to_runner",
+        forwarded,
+    )
     agent = await create_test_agent(client, "test-codex-request-user-input")
     session_id = await _create_session(client, agent["id"])
     payload = {
@@ -2861,14 +2876,22 @@ async def test_codex_request_user_input_hook_returns_id_keyed_answers(
         client,
         session_id,
         event["elicitation_id"],
-        "accept",
+        action,
         content={"framework": "React"},
     )
     assert verdict.status_code == 202, verdict.text
 
     resp = await hook_task
     assert resp.status_code == 200, resp.text
-    assert resp.json() == {"answers": {"framework": {"answers": ["React"]}}}
+    assert resp.json() == {
+        "answers": {"framework": {"answers": ["React"]}} if action == "accept" else {}
+    }
+    if action == "decline":
+        forwarded.assert_awaited_once()
+        assert forwarded.await_args.args[0] == session_id
+        assert forwarded.await_args.args[2] == {"type": "interrupt"}
+    else:
+        forwarded.assert_not_awaited()
 
 
 async def test_codex_plan_mode_final_prompt_round_trip(

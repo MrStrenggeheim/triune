@@ -1,3 +1,5 @@
+# Modified for Triune.
+
 """Subagent delivery tests for Claude-native forwarding."""
 
 from __future__ import annotations
@@ -68,6 +70,38 @@ async def test_subagent_watcher_forwards_transcript_items_to_child_session(
                     "content": [{"type": "text", "text": "looking now"}],
                 },
             },
+            {
+                "isSidechain": True,
+                "type": "assistant",
+                "uuid": "sa-bash",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "bash-child",
+                            "name": "Bash",
+                            "input": {"command": "sleep 120"},
+                        }
+                    ],
+                },
+            },
+            {
+                "isSidechain": True,
+                "type": "user",
+                "uuid": "sa-bash-result",
+                "message": {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "bash-child",
+                            "content": "child stdout",
+                        }
+                    ],
+                },
+                "toolUseResult": {"backgroundTaskId": "child-shell", "stdout": "child stdout\n"},
+            },
         ],
     )
     record_hook_event(
@@ -109,14 +143,25 @@ async def test_subagent_watcher_forwards_transcript_items_to_child_session(
         # We need the start event plus one event array addressed to the child.
         child_path = "/v1/sessions/conv_child_beta/events"
         batch: list[dict[str, Any]] | None = None
+        inventory = None
         for _ in range(40):
             req = await _get_recorded_request(server)
+            if (
+                isinstance(req["body"], dict)
+                and req["body"].get("type") == "external_session_background_tasks"
+            ):
+                assert req["path"] == child_path
+                inventory = req["body"]["data"]
             if req["path"] == child_path and isinstance(req["body"], list):
                 batch = req["body"]
                 break
         assert batch is not None
-        assert len(batch) == 2
+        assert len(batch) == 4
         assert all(event["type"] == "external_conversation_item" for event in batch)
+        assert inventory is not None and inventory["background_task_count"] == 1
+        shell = inventory["shell_resources"][0]
+        assert shell["session_id"] == "conv_child_beta" and shell["resource_id"] == "child-shell"
+        assert shell["output_preview"] == "child stdout" and not shell["can_stop"]
     finally:
         task.cancel()
         with pytest.raises(asyncio.CancelledError):

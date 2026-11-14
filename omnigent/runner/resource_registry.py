@@ -1,3 +1,5 @@
+# Modified for Triune.
+
 """Runner-side session resource registry.
 
 Authoritative owner/facade for all session-scoped resources: the
@@ -45,6 +47,7 @@ from omnigent.inner.sandbox import contained_realpath, containment_prefix
 from omnigent.inner.terminal_lifecycle import lifecycle_log_attributes
 from omnigent.native.native_coding_agents import native_coding_agent_for_harness
 from omnigent.native.native_dispatch import resolve_hook_for_key
+from omnigent.native.shell_resources import is_agent_terminal_resource
 from omnigent.server.feature_flags import Feature, resolve_feature_flags
 
 if TYPE_CHECKING:
@@ -799,6 +802,15 @@ class SessionResourceRegistry:
         """
         with self._lock:
             return self._terminal_roles.get((session_id, terminal_id))
+
+    def terminal_can_stop_independently(self, session_id: str, terminal_id: str) -> bool:
+        """Require explicit auxiliary ownership before offering a terminal-row Stop."""
+        with self._lock:
+            return self._terminal_lifecycles.get(
+                (session_id, terminal_id)
+            ) == TerminalLifecycle.AUXILIARY and not is_agent_terminal_resource(
+                terminal_id, self._terminal_roles.get((session_id, terminal_id))
+            )
 
     def list_resources(
         self,
@@ -1900,11 +1912,14 @@ class SessionResourceRegistry:
         self,
         session_id: str,
         terminal_id: str,
+        *,
+        expected_activity_id: str | None = None,
     ) -> bool:
         """Close a terminal resource by id.
 
         :param session_id: Session/conversation identifier.
         :param terminal_id: Opaque terminal resource id.
+        :param expected_activity_id: When present, close only this explicitly auxiliary launch.
         :returns: ``True`` if a terminal was closed.
         """
         if self._terminal_registry is None:
@@ -1914,6 +1929,11 @@ class SessionResourceRegistry:
             session_id,
         ):
             if terminal_resource_id(entry.terminal_name, entry.session_key) == terminal_id:
+                if expected_activity_id is not None and (
+                    expected_activity_id != f"activity_{entry.instance.lifecycle_trace.launch_id}"
+                    or not self.terminal_can_stop_independently(session_id, terminal_id)
+                ):
+                    return False
                 with contextlib.suppress(Exception):
                     entry.instance.lifecycle_trace.note_request(
                         "close_terminal", "resource_request"
@@ -1933,11 +1953,16 @@ class SessionResourceRegistry:
                         ),
                     ),
                 )
-                closed = await self._terminal_registry.close(
-                    session_id,
-                    entry.terminal_name,
-                    entry.session_key,
-                )
+                if expected_activity_id is not None:
+                    closed = await self._terminal_registry.close(
+                        session_id, entry.terminal_name, entry.session_key, expected=entry.instance
+                    )
+                else:
+                    closed = await self._terminal_registry.close(
+                        session_id,
+                        entry.terminal_name,
+                        entry.session_key,
+                    )
                 if closed:
                     with self._lock:
                         self._terminal_roles.pop((session_id, terminal_id), None)

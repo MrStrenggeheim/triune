@@ -6,12 +6,16 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import uuid
+from collections.abc import Awaitable, Callable
 
 from omnigent.harnesses.codex_native.app_server import (
     CodexAppServerClient,
     CodexAppServerResponseError,
     is_stale_active_turn_error,
 )
+from omnigent.native.communication import NATIVE_INPUT_CLIENT_ID_PREFIX
 from omnigent.util.json_types import JsonObject
 
 
@@ -56,10 +60,22 @@ async def submit_async_question_answer(
     client: CodexAppServerClient,
     params: JsonObject,
     result: JsonObject,
+    *,
+    prepare_framework_input: Callable[[str, str, str], Awaitable[list[JsonObject]]] | None = None,
 ) -> None:
-    """Deliver an answer as native user input, retaining its replay identity."""
+    """Deliver human answers or registered framework controls with replay identity.
+
+    ``prepare_framework_input(input_id, text, label)`` must durably register
+    system authorship and return prepared API ``input_text`` blocks.
+    """
     inputs = result.get("input")
-    if not isinstance(inputs, list) or not inputs:
+    submission = result.get("question_submission")
+    generated = (
+        isinstance(submission, dict)
+        and submission.get("action") in {"accept", "decline"}
+        and inputs == []
+    )
+    if not generated and (not isinstance(inputs, list) or not inputs):
         return
     thread_id = params.get("threadId")
     item = params.get("item")
@@ -67,7 +83,12 @@ async def submit_async_question_answer(
     if not isinstance(thread_id, str) or not thread_id or not isinstance(item_id, str):
         raise ValueError("Native async question is missing thread or item identity")
     digest = hashlib.sha256(f"{thread_id}:{item_id}".encode()).hexdigest()
-    client_id = f"omnigent-codex-question:{digest}"
+    answer_id = f"omnigent-codex-question:{digest}"
+    framework_id = uuid.uuid5(uuid.NAMESPACE_URL, f"{answer_id}:system").hex
+    framework_client_id = f"{NATIVE_INPUT_CLIENT_ID_PREFIX}{framework_id}"
+    client_id = framework_client_id if generated else answer_id
+    replay_ids = {answer_id, framework_client_id}
+    prepared = False
     # Only retry a rejected stale steer. Socket loss may mean input was accepted;
     # a replay checks the durable native user-message identity before sending.
     for attempt in range(2):
@@ -87,11 +108,40 @@ async def submit_async_question_answer(
                 if (
                     isinstance(previous, dict)
                     and previous.get("type") == "userMessage"
-                    and previous.get("clientId") == client_id
+                    and previous.get("clientId") in replay_ids
                 ):
                     return
             if turn.get("status") == "inProgress":
                 active_turn = turn.get("id")
+        if generated and not prepared:
+            if prepare_framework_input is None:
+                raise ValueError("Native async submission requires framework input registration")
+            normalized = async_question_params(params)
+            if normalized is None or not isinstance(submission, dict):
+                raise ValueError("Native async submission requires structured questions")
+            action = submission["action"]
+            text = json.dumps(
+                {
+                    "event": "question_submission",
+                    "item_id": item_id,
+                    "action": action,
+                    "answers": {},
+                },
+                ensure_ascii=False,
+            )
+            label = (
+                "Question request declined"
+                if action == "decline"
+                else "Questions submitted without answers"
+            )
+            content = await prepare_framework_input(framework_id, text, label)
+            if not content or any(
+                part.get("type") != "input_text" or not isinstance(part.get("text"), str)
+                for part in content
+            ):
+                raise ValueError("Framework input registration returned no native content")
+            inputs = [{"type": "text", "text": part["text"]} for part in content]
+            prepared = True
         request: JsonObject = {
             "threadId": thread_id,
             "clientUserMessageId": client_id,

@@ -1,3 +1,5 @@
+# Modified for Triune.
+
 """Activity snapshots retain captured evidence across server and runner loss."""
 
 import json
@@ -145,6 +147,10 @@ def test_native_recorded_commands_keep_completion_separate_from_shells() -> None
     assert rows[1].state == "exited" and rows[1].exit_status is None
     assert rows[2].exit_status == 7
     assert rows[3].exit_status == 0
+    assert all(
+        row.source == "codex_native" and row.source_call_id == "reused-call" for row in rows[:3]
+    )
+    assert rows[3].source_call_id is None
 
 
 @pytest.mark.asyncio
@@ -161,10 +167,65 @@ async def test_native_persisted_commands_available_without_runner(tmp_path: Path
     assert page["data"][0]["state"] == "exited"
     assert page["data"][0]["parent_agent_id"] == "child"
     assert page["data"][0]["output"] == "retained output"
+    assert page["data"][0]["source"] == "codex_native"
+    assert page["data"][0]["source_call_id"] == "reused-call"
     assert page["coverage"]["non_tty_commands"] == "persisted_tools"
     restarted = await SessionActivityService(LocalArtifactStore(str(tmp_path))).page("child")
     assert restarted["data"][0]["kind"] == "command"
     assert restarted["data"][0]["output"] == "retained output"
+    assert restarted["data"][0]["source_call_id"] == "reused-call"
+
+
+@pytest.mark.parametrize("metadata", [True, False])
+def test_claude_activity_uses_native_task_id_without_equating_equal_commands(
+    metadata: bool,
+) -> None:
+    from omnigent.entities import ConversationItem
+    from omnigent.server.session_activity import recorded_commands
+
+    items = []
+    for key in ("one", "two"):
+        output, call = _command_items(key, "same captured output", tool="Bash")
+        call_payload = call.model_dump(mode="json")
+        call_payload["data"].update(agent="claude-native-ui", call_id=f"tool-use-{key}")
+        result_payload = output.model_dump(mode="json")
+        result_payload["data"]["call_id"] = f"tool-use-{key}"
+        if metadata:
+            result_payload["data"].update(
+                source="claude_native", source_call_id=f"background-{key}"
+            )
+        else:
+            result_payload["data"]["output"] = json.dumps(
+                {"backgroundTaskId": f"background-{key}", "stdout": "same captured output"}
+            )
+        # Round-trip the persisted item schema; a raw producer-only extra must not suffice.
+        items.extend(
+            [
+                ConversationItem.model_validate(result_payload),
+                ConversationItem.model_validate(call_payload),
+            ]
+        )
+    rows = recorded_commands(items, "chat")
+    assert [row.source for row in rows] == ["claude_native", "claude_native"]
+    assert [row.source_call_id for row in rows] == (
+        ["background-one", "background-two"] if metadata else [None, None]
+    )
+    assert rows[0].name == rows[1].name
+    assert len({row.id for row in rows}) == 2
+
+
+def test_legacy_claude_text_and_unidentified_shells_remain_unlinked() -> None:
+    from omnigent.entities import ConversationItem
+    from omnigent.server.session_activity import recorded_commands
+
+    items = _command_items("legacy", "Background task id: not-structured", tool="Bash")
+    payload = items[-1].model_dump(mode="json")
+    payload["data"]["agent"] = "claude-native-ui"
+    row = recorded_commands([items[0], ConversationItem.model_validate(payload)], "chat")[0]
+    assert row.source == "claude_native" and row.source_call_id is None
+    payload["data"].update(agent="unknown", name="shell")
+    unknown = recorded_commands([ConversationItem.model_validate(payload)], "chat")[0]
+    assert unknown.source is None and unknown.source_call_id is None
 
 
 def test_completed_exec_tool_with_continuing_process_is_not_an_exited_command() -> None:
@@ -178,3 +239,32 @@ def test_completed_exec_tool_with_continuing_process_is_not_an_exited_command() 
         assert row.state == "unknown"
         assert row.ended_at is None
         assert row.exit_status is None
+
+
+@pytest.mark.asyncio
+async def test_agent_primary_terminal_is_absent_from_legacy_activity_shell_ledger(
+    tmp_path: Path,
+) -> None:
+    artifacts = LocalArtifactStore(str(tmp_path))
+    service = SessionActivityService(artifacts)
+    entries = [
+        ActivityEntry(
+            id=name,
+            session_id="chat",
+            terminal_id=terminal_id,
+            name=name,
+            owner_id="chat",
+            state="exited",
+            output=f"{name} output",
+        )
+        for name, terminal_id in [
+            ("agent", "terminal_codex_main"),
+            ("shell", "terminal_bash_main"),
+        ]
+    ]
+    artifacts.put(
+        service._key("chat"), json.dumps(activity_page(entries, available=True)).encode()
+    )
+    page = await service.page("chat")
+    assert [row["id"] for row in page["data"]] == ["shell"]
+    assert page["data"][0]["output"] == "shell output"

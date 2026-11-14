@@ -238,7 +238,7 @@ def correlate_native_peer_input(
         raise OmnigentError("Invalid native input identity", code=ErrorCode.INVALID_INPUT)
     saved = conversations.get_item(session_id, input_id)
     origin = saved.data.communication if saved and isinstance(saved.data, MessageData) else None
-    if origin is None or origin.kind != "peer":
+    if origin is None or origin.kind not in {"peer", "system"}:
         return item
     assert saved is not None and isinstance(saved.data, MessageData)
     text_parts = [block["text"] for block in peer_model_content(saved.data.content, origin)]
@@ -260,6 +260,7 @@ def correlate_native_peer_input(
         or (saved.response_id == PENDING_INPUT_RESPONSE_ID and saved.status != "incomplete")
         or (
             saved.response_id != PENDING_INPUT_RESPONSE_ID
+            and origin.kind != "system"
             and (
                 saved.response_id != item.response_id
                 or origin.receipt != "transcript"
@@ -267,7 +268,9 @@ def correlate_native_peer_input(
             )
         )
     ):
-        raise OmnigentError("Native input does not match the saved peer", code=ErrorCode.CONFLICT)
+        raise OmnigentError(
+            "Native input does not match its saved origin", code=ErrorCode.CONFLICT
+        )
     return item.model_copy(
         update={
             "stable_id": saved.id,
@@ -281,6 +284,7 @@ def correlate_native_peer_input(
                     "communication": origin.model_copy(
                         update={"delivery_state": "confirmed", "receipt": "transcript"}
                     ),
+                    "user_authored": False,
                 }
             ),
         }

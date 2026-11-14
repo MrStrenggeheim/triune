@@ -288,6 +288,7 @@ from omnigent.server.schemas import (
 from omnigent.server.session_live_state import last_liveness_stamp
 from omnigent.server.session_metadata_logging import log_session_metadata
 from omnigent.server.session_orchestration import require_orchestration_source
+from omnigent.server.shell_resources import SessionShellResources
 from omnigent.server.startup_inputs import StartupDispatch, StartupInputContext
 from omnigent.server.subagent_activity import (
     native_subagent_terminal_status,
@@ -792,6 +793,7 @@ def register_events_routes(
     agent_store: AgentStore,
     file_store: FileStore | None = None,
     artifact_store: ArtifactStore | None = None,
+    shell_resources: SessionShellResources | None = None,
     runner_router: RunnerRouter | None = None,
     auth_provider: AuthProvider | None = None,
     permission_store: PermissionStore | None = None,
@@ -808,6 +810,24 @@ def register_events_routes(
     """Register the events, stream, and delete routes on router."""
 
     event_router = APIRouter(route_class=_SessionEventBodyLimitRoute)
+    captured_shell_resources = shell_resources or SessionShellResources(artifact_store)
+
+    async def capture_shell_resources(request, conv, session_id, body):
+        raw = body.data.get("shell_resources")
+        if raw is None:
+            return
+        if not _has_bound_runner_authority(request, conv):
+            raise OmnigentError(
+                "Shell observations require the bound runner", code=ErrorCode.FORBIDDEN
+            )
+        if not isinstance(raw, list):
+            raise OmnigentError("shell_resources must be an array", code=ErrorCode.INVALID_INPUT)
+        try:
+            await captured_shell_resources.capture(session_id, raw)
+        except ValueError as error:
+            raise OmnigentError(
+                "Invalid shell resource observation", code=ErrorCode.INVALID_INPUT
+            ) from error
 
     def _has_bound_runner_authority(
         request: Request | _RunnerEventContext | StartupInputContext, conv: Any
@@ -1158,6 +1178,14 @@ def register_events_routes(
             ),
         )
         if body.type == "message":
+            if (
+                body.data.get("communication") is not None
+                and isinstance(request, Request)
+                and not _has_bound_runner_authority(request, conv)
+            ):
+                raise OmnigentError(
+                    "Message provenance is assigned by the server", code=ErrorCode.FORBIDDEN
+                )
             from .context_references import validate_context_references
 
             await validate_context_references(
@@ -1173,6 +1201,7 @@ def register_events_routes(
             and isinstance(external_data, dict)
             and (
                 external_data.get("communication") is not None
+                or external_data.get("user_authored") is True
                 or body.data.get("input_stable_id") is not None
             )
             and not _has_bound_runner_authority(request, conv)
@@ -2411,6 +2440,7 @@ def register_events_routes(
                     "data.background_task_count.",
                     code=ErrorCode.INVALID_INPUT,
                 )
+            await capture_shell_resources(request, conv, session_id, body)
             _publish_background_tasks(
                 session_id, count, _parse_background_tasks(body.data.get("background_tasks"))
             )
@@ -2435,6 +2465,9 @@ def register_events_routes(
                     f"{body.type} data.response_id must be a string",
                     code=ErrorCode.INVALID_INPUT,
                 )
+            if body.type == _EXTERNAL_SESSION_STATUS_TYPE:
+                await capture_shell_resources(request, conv, session_id, body)
+
             # ``None`` (field absent) = no information; leave the sticky
             # tally untouched (the PTY-activity ``idle`` carries none). An
             # explicit ``0`` from a ``Stop`` hook is authoritative and clears

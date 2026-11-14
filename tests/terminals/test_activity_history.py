@@ -1,3 +1,5 @@
+# Modified for Triune.
+
 """Captured shell history survives registry replacement without inventing exits."""
 
 from __future__ import annotations
@@ -34,6 +36,8 @@ def test_bounded_history_and_output_are_session_scoped(tmp_path: Path) -> None:
                 owner_id="chat",
                 started_at=index,
                 output="é" * MAX_OUTPUT_BYTES,
+                source="codex_native",
+                source_call_id=f"native-{index}",
             )
         )
     history.record(
@@ -48,8 +52,13 @@ def test_bounded_history_and_output_are_session_scoped(tmp_path: Path) -> None:
     rows = TerminalHistory(path).list("chat")
     assert len(rows) == MAX_ENTRIES
     assert rows[-1].id == "3"
+    assert all(
+        row.source == "codex_native" and row.source_call_id == f"native-{row.id}" for row in rows
+    )
     assert all(len((row.output or "").encode()) <= MAX_OUTPUT_BYTES for row in rows)
     assert len(history.list("other")) == 1
+    assert history.list("other")[0].source is None
+    assert history.list("other")[0].source_call_id is None
 
 
 @pytest.mark.asyncio

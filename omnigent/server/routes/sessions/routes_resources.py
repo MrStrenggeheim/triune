@@ -1,3 +1,4 @@
+# Modified for Triune; inherited notices remain applicable.
 """Resource routes: list/get/create/delete session resources, files, filesystem."""
 
 from __future__ import annotations
@@ -108,6 +109,7 @@ from omnigent.server.schemas import (
     SessionResourcePaginatedList,
 )
 from omnigent.server.session_activity import SessionActivityService, merge_activity_pages
+from omnigent.server.shell_resources import SessionShellResources
 from omnigent.stores import AgentStore, ConversationStore
 from omnigent.stores.artifact_store import ArtifactStore
 from omnigent.stores.file_store import FileStore
@@ -214,6 +216,7 @@ def register_resources_routes(
     permission_store: PermissionStore | None = None,
     host_registry: HostRegistry | None = None,
     register_initial_file_upload: Callable[..., None] | None = None,
+    shell_resources: SessionShellResources | None = None,
 ) -> None:
     """Register the resources routes on router."""
 
@@ -1355,6 +1358,17 @@ def register_resources_routes(
                 detail="runner resource endpoint unavailable",
             ) from exc
         return resp.status_code, resp.json()
+
+    from omnigent.server.shell_resource_routes import register_shell_resource_routes
+
+    register_shell_resource_routes(
+        router,
+        service=shell_resources or SessionShellResources(artifact_store),
+        validate_session=_validate_session,
+        proxy_get=_proxy_get_to_runner,
+        proxy_post=_proxy_post_to_runner,
+        activity_for_conversation=_activity_for_conversation,
+    )
 
     # Typed collection routes registered BEFORE /{resource_id} so
     # "environments", "terminals", "files" are not captured as ids.

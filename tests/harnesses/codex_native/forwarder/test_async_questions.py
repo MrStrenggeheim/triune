@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import uuid
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -150,6 +152,7 @@ async def test_async_question_survives_turn_end_and_answers_its_native_thread(
             assert method == "turn/start"
             assert params["threadId"] == thread
             assert params["input"] == [{"type": "text", "text": "Choose native color\nBlue"}]
+            assert params["clientUserMessageId"].startswith("omnigent-codex-question:")
             # A new forwarder can replay a durable answer without resending it.
             before = len(native.calls)
             await submit_async_question_answer(
@@ -163,11 +166,20 @@ async def test_async_question_survives_turn_end_and_answers_its_native_thread(
 
 
 @pytest.mark.asyncio
-async def test_async_answer_recovers_only_authoritatively_rejected_stale_steer():
+@pytest.mark.parametrize("generated", [False, True])
+async def test_async_answer_recovers_only_authoritatively_rejected_stale_steer(generated):
     error = CodexAppServerResponseError({"code": -32600, "message": "no active turn to steer"})
     native = _NativeAnswerClient(status="inProgress", failure=error)
+    result = (
+        {"input": [], "question_submission": {"action": "accept"}}
+        if generated
+        else {"input": [{"type": "text", "text": "Blue"}]}
+    )
+    register = AsyncMock(
+        return_value=[{"type": "input_text", "text": "registered framework envelope"}]
+    )
     await submit_async_question_answer(
-        native, _question_event()["params"], {"input": [{"type": "text", "text": "Blue"}]}
+        native, _question_event()["params"], result, prepare_framework_input=register
     )
     assert [method for method, _ in native.calls] == [
         "thread/read",
@@ -175,11 +187,96 @@ async def test_async_answer_recovers_only_authoritatively_rejected_stale_steer()
         "thread/read",
         "turn/start",
     ]
+    assert register.await_count == (1 if generated else 0)
     native = _NativeAnswerClient(
         status="inProgress", failure=ConnectionError("lost acknowledgement")
     )
     with pytest.raises(ConnectionError, match="lost acknowledgement"):
         await submit_async_question_answer(
-            native, _question_event()["params"], {"input": [{"type": "text", "text": "Blue"}]}
+            native, _question_event()["params"], result, prepare_framework_input=register
         )
     assert [method for method, _ in native.calls] == ["thread/read", "turn/steer"]
+
+
+@pytest.mark.asyncio
+async def test_async_generated_submission_reuses_answer_identity_and_requires_acknowledgement():
+    native = _NativeAnswerClient(
+        status="inProgress", failure=ConnectionError("lost acknowledgement")
+    )
+    result = {"input": [], "question_submission": {"action": "accept"}}
+    register = AsyncMock(
+        return_value=[{"type": "input_text", "text": "registered framework envelope"}]
+    )
+    with pytest.raises(ConnectionError, match="lost acknowledgement"):
+        await submit_async_question_answer(
+            native, _question_event()["params"], result, prepare_framework_input=register
+        )
+    assert [method for method, _ in native.calls] == ["thread/read", "turn/steer"]
+    await submit_async_question_answer(
+        native, _question_event()["params"], result, prepare_framework_input=register
+    )
+    calls = len(native.calls)
+    # A later full-answer replay cannot send the same submitted request twice.
+    await submit_async_question_answer(
+        native, _question_event()["params"], {"input": [{"type": "text", "text": "Blue"}]}
+    )
+    assert len(native.calls) == calls + 1
+    assert native.calls[-1][0] == "thread/read"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["accept", "decline"])
+@pytest.mark.parametrize(
+    "status, expected_method", [("completed", "turn/start"), ("inProgress", "turn/steer")]
+)
+async def test_async_empty_controls_register_trusted_framework_content(
+    action, status, expected_method
+):
+    native = _NativeAnswerClient(status=status)
+    register = AsyncMock(
+        return_value=[{"type": "input_text", "text": "registered framework envelope"}]
+    )
+    event = _question_event()
+    response = parse_codex_elicitation_request({"id": "call-question", **event}).build_response(
+        ElicitationResult(action=action, content={})
+    )
+    await submit_async_question_answer(
+        native, event["params"], response, prepare_framework_input=register
+    )
+    input_id, text, label = register.call_args.args
+    assert uuid.UUID(hex=input_id).hex == input_id
+    assert json.loads(text) == {
+        "event": "question_submission",
+        "item_id": "call-question",
+        "action": action,
+        "answers": {},
+    }
+    assert label == (
+        "Question request declined"
+        if action == "decline"
+        else "Questions submitted without answers"
+    )
+    method, request = native.calls[-1]
+    assert method == expected_method
+    assert request["clientUserMessageId"] == f"omnigent-input:{input_id}"
+    assert request["input"] == [{"type": "text", "text": "registered framework envelope"}]
+    await submit_async_question_answer(
+        native, event["params"], response, prepare_framework_input=register
+    )
+    register.assert_awaited_once()
+    assert native.calls[-1][0] == "thread/read"
+
+
+@pytest.mark.asyncio
+async def test_async_empty_control_cannot_send_without_durable_registration():
+    result = {"input": [], "question_submission": {"action": "accept"}}
+    native = _NativeAnswerClient()
+    with pytest.raises(ValueError, match="framework input registration"):
+        await submit_async_question_answer(native, _question_event()["params"], result)
+    assert [method for method, _ in native.calls] == ["thread/read"]
+    register = AsyncMock(side_effect=ConnectionError("registration failed"))
+    with pytest.raises(ConnectionError, match="registration failed"):
+        await submit_async_question_answer(
+            native, _question_event()["params"], result, prepare_framework_input=register
+        )
+    assert [method for method, _ in native.calls] == ["thread/read", "thread/read"]

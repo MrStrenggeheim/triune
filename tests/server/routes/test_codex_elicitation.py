@@ -65,6 +65,42 @@ def test_question_blocking_flags_and_native_answer_correlation(blocking, request
 
 
 @pytest.mark.parametrize(
+    "content, expected",
+    [
+        ({}, {}),
+        ({"first": "A"}, {"first": {"answers": ["A"]}}),
+        ({"editor": ""}, {"editor": {"answers": [""]}}),
+        ({"editor": "  \n"}, {"editor": {"answers": ["  \n"]}}),
+        ({"first": "", "Pick": "B"}, {"second": {"answers": ["B"]}}),
+        ({"unknown": "A"}, {}),
+    ],
+)
+def test_question_submissions_preserve_omissions_editor_values_and_stable_ids(content, expected):
+    request = parse_codex_elicitation_request(
+        {
+            "id": "request",
+            "method": "item/tool/requestUserInput",
+            "params": {
+                "questions": [
+                    {"id": "first", "question": "Pick", "options": [{"label": "A"}]},
+                    {"id": "second", "question": "Pick", "options": [{"label": "B"}]},
+                    {"id": "editor", "question": "Edit", "textInput": {"default": "original"}},
+                ]
+            },
+        }
+    )
+    assert request.params.model_dump()["ask_user_question"]["questions"][2]["textInput"] == {
+        "default": "original"
+    }
+    assert request.build_response(ElicitationResult(action="accept", content=content)) == {
+        "answers": expected
+    }
+    assert request.build_response(ElicitationResult(action="decline", content=content)) == {
+        "answers": {}
+    }
+
+
+@pytest.mark.parametrize(
     "questions", [[{"title": "Free text"}], [{"title": "Pick", "options": ["Blue", "Green"]}]]
 )
 def test_async_agent_message_questions_use_durable_item_identity(questions) -> None:
@@ -92,6 +128,11 @@ def test_async_agent_message_questions_use_durable_item_identity(questions) -> N
         ElicitationResult(action="accept", content={"question_0": "Blue"})
     ) == {"input": [{"type": "text", "text": f"{questions[0]['title']}\nBlue"}]}
     assert request.build_response(ElicitationResult(action="cancel")) == {"input": []}
+    for action in ["accept", "decline"]:
+        assert request.build_response(ElicitationResult(action=action, content={})) == {
+            "input": [],
+            "question_submission": {"action": action},
+        }
 
 
 @pytest.mark.parametrize(

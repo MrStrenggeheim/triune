@@ -7621,7 +7621,12 @@ def _build_new_item(
             f"invalid data for {body.type!r} item: {exc}",
             code=ErrorCode.INVALID_INPUT,
         ) from exc
-    if isinstance(data, MessageData) and data.role == "user" and not data.is_meta:
+    if (
+        isinstance(data, MessageData)
+        and data.role == "user"
+        and not data.is_meta
+        and data.communication is None
+    ):
         data = data.model_copy(update={"user_authored": True})
     return NewConversationItem(
         type=body.type,
@@ -8037,7 +8042,7 @@ def _title_content_from_item(
         return []
     if item.data.role != "user":
         return []
-    if item.data.is_meta:
+    if item.data.is_meta or item.data.communication is not None:
         return []
     return item.data.content
 

@@ -2514,6 +2514,43 @@ class SqlAlchemyConversationStore(ConversationStore):
             [data] = self._decode_item_data_batch([row.data])
             return _to_item(row, data)
 
+    def confirm_framework_input(
+        self, conversation_id: str, item_id: str, response_id: str
+    ) -> ConversationItem | None:
+        def write(session: Session) -> ConversationItem | None:
+            self._lock_conversation(session, conversation_id)
+            row = session.execute(
+                select(SqlConversationItem).where(
+                    SqlConversationItem.workspace_id == current_workspace_id(),
+                    SqlConversationItem.conversation_id == conversation_id,
+                    SqlConversationItem.id == item_id,
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                return None
+            [decoded] = self._decode_item_data_batch([row.data])
+            item = _to_item(row, decoded)
+            origin = item.data.communication if isinstance(item.data, MessageData) else None
+            if origin is None or origin.kind != "system" or origin.message_id != item_id:
+                raise ValueError("Framework receipt requires a registered system input")
+            if origin.delivery_state == "confirmed" and origin.receipt == "transcript":
+                return None
+            updated = item.data.model_copy(
+                update={
+                    "communication": origin.model_copy(
+                        update={"delivery_state": "confirmed", "receipt": "transcript"}
+                    ),
+                    "user_authored": False,
+                }
+            )
+            row.data = self._encode_item_data(updated.model_dump_json())
+            row.response_id = response_id
+            return item.model_copy(update={"data": updated, "response_id": response_id})
+
+        return run_write_transaction(
+            self._conv_session_immediate, "confirm_framework_input", write
+        )
+
     def enrich_resource_event(
         self, conversation_id: str, item_id: str, data: dict[str, Any]
     ) -> ConversationItem | None:

@@ -55,6 +55,7 @@ from omnigent.harnesses.claude_native.bridge import (
 )
 from omnigent.harnesses.claude_native.diagnostics import ClaudeDebugLogFollower
 from omnigent.harnesses.claude_native.message_display_hook import MESSAGE_DELTAS_FILE
+from omnigent.harnesses.claude_native.shell_resources import ClaudeShellResources
 from omnigent.harnesses.claude_native.status import sync_raw_status_context
 from omnigent.inner.hook_scripts.subagent_router import AGENT_TOOL_NAMES
 from omnigent.models.model_metadata import concrete_reported_model
@@ -72,12 +73,14 @@ from omnigent.native.failure_telemetry import (
     native_failure_id,
     normalize_failure_context,
 )
+from omnigent.native.shell_resources import ENDED_SHELL_STATUSES, MAX_SHELL_RESOURCES
 from omnigent.process_logging import harness_stderr_capture_enabled
 from omnigent.runner.transports.ws_tunnel.event_delivery import RunnerEventDispatcher
 from omnigent.session_event_batch import (
     MAX_SESSION_EVENT_BATCH_EVENTS,
     encode_session_event_batch,
 )
+from omnigent.util.json_types import JsonObject
 from omnigent.util.reasoning_effort import CLAUDE_EFFORTS, EFFORT_CLEAR_VALUES
 from omnigent.version import VERSION
 
@@ -2274,6 +2277,16 @@ async def _forward_one_subagent(
         current_response_id=None,
         include_sidechains=True,
     )
+    if not await _forward_shell_resources(
+        client=client,
+        session_id=entry.child_conversation_id,
+        bridge_dir=bridge_dir,
+        retry_tracker=item_retry_tracker,
+        transcript_entries=[
+            record.shell_entry for record in result.record_items if record.shell_entry is not None
+        ],
+    ):
+        return
     seen_source_ids = list(entry.seen_source_ids)
     seen = set(seen_source_ids)
     pending, safe_offset = _pending_items_from_records(result, seen, entry.byte_offset)
@@ -4127,6 +4140,109 @@ def _compaction_status_for_record(record: ClaudeHookRecord) -> str | None:
     return None
 
 
+def _read_shell_forward_state(
+    path: Path, session_id: str
+) -> tuple[ClaudeShellResources, str | None]:
+    """Restore observed handles and pending Bash correlation before consuming new cursors."""
+    shells = ClaudeShellResources(session_id)
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return shells, None
+    if not isinstance(payload, dict) or payload.get("session_id") != session_id:
+        raise ValueError("Claude shell forwarder session mismatch")
+    resources, calls = payload.get("resources"), payload.get("bash_calls")
+    if not isinstance(resources, list) or not isinstance(calls, dict):
+        raise ValueError("Invalid Claude shell forwarder state")
+    for row in resources[-MAX_SHELL_RESOURCES:]:
+        if not isinstance(row, dict) or row.get("session_id") != session_id:
+            raise ValueError("Claude shell resource session mismatch")
+        output = row.get("output")
+        shells.observe(row, output=output if isinstance(output, str) else None)
+    shells.bash_calls = {
+        key: value
+        for key, value in list(calls.items())[-MAX_SHELL_RESOURCES:]
+        if isinstance(value, dict)
+    }
+    posted = payload.get("posted_digest")
+    return shells, posted if isinstance(posted, str) else None
+
+
+async def _forward_shell_resources(
+    *,
+    client: httpx.AsyncClient,
+    session_id: str,
+    bridge_dir: Path,
+    retry_tracker: _PostRetryTracker,
+    hook_payload: JsonObject | None = None,
+    transcript_entries: Sequence[JsonObject] = (),
+    count_override: int | None = None,
+    tasks_override: list[JsonObject] | None = None,
+) -> bool:
+    """Persist actual observations, then publish changed bounded resources with held cursors."""
+    if hook_payload is None and not transcript_entries:
+        return True
+    path = bridge_dir / f"shell_resources_{hashlib.sha256(session_id.encode()).hexdigest()}.json"
+    shells, posted = await asyncio.to_thread(_read_shell_forward_state, path, session_id)
+    if hook_payload is not None:
+        shells.observe_hook(hook_payload)
+    for entry in transcript_entries:
+        shells.observe_transcript(entry)
+    resources = list(shells.resources.values())[-MAX_SHELL_RESOURCES:]
+    active = [row for row in resources if row.get("status") not in ENDED_SHELL_STATUSES]
+    if tasks_override is not None:
+        active = [shells.resources.get(str(row.get("id")), row) for row in tasks_override]
+    data: JsonObject = {
+        "shell_resources": resources,
+        "background_task_count": len(active) if count_override is None else count_override,
+        "background_tasks": [
+            {key: value for key, value in row.items() if key != "output"} for row in active
+        ],
+    }
+    digest = hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
+    state: JsonObject = {
+        "session_id": session_id,
+        "resources": resources,
+        "bash_calls": shells.bash_calls,
+        "posted_digest": posted,
+    }
+    await asyncio.to_thread(_write_json_atomic, path, state)
+    if not resources or digest == posted:
+        return True
+    retry_key = f"shell_resources:{session_id}"
+    if retry_tracker.retry_delay_s(retry_key) is not None:
+        return False
+    try:
+        response = await client.post(
+            f"/v1/sessions/{session_id}/events",
+            json={"type": "external_session_background_tasks", "data": data},
+        )
+        response.raise_for_status()
+    except httpx.HTTPError as exc:
+        decision = retry_tracker.record_failure(retry_key, exc, session_id=session_id)
+        _logger.warning(
+            "Claude shell resource delivery failed; session=%s attempts=%s",
+            session_id,
+            decision.attempts,
+            exc_info=True,
+        )
+        if not decision.exhausted:
+            return False
+        append_dead_letter(
+            bridge_dir,
+            session_id=session_id,
+            event_type="external_session_background_tasks",
+            payload=data,
+            reason="permanent HTTP failure after retries",
+            delivered_ambiguous=False,
+        )
+    else:
+        retry_tracker.clear(retry_key)
+    state["posted_digest"] = digest
+    await asyncio.to_thread(_write_json_atomic, path, state)
+    return True
+
+
 async def _forward_available_status_events(
     *,
     client: httpx.AsyncClient,
@@ -4267,6 +4383,36 @@ async def _forward_available_status_events(
             await _write_hook_state_async(bridge_dir, durable)
             continue
         retry_key = f"hook:{record.event_cursor}:{record.byte_offset}:{status}"
+        background_tasks = record.background_tasks
+        if record.shell_payload is not None and not _is_subagent_hook_record(
+            record, parent_claude_session_ids=parent_claude_session_ids
+        ):
+            if not await _forward_shell_resources(
+                client=client,
+                session_id=session_id,
+                bridge_dir=bridge_dir,
+                retry_tracker=retry_tracker,
+                hook_payload=record.shell_payload,
+                count_override=record.background_task_count
+                if record.event_name == "Stop"
+                else None,
+                tasks_override=record.background_tasks if record.event_name == "Stop" else None,
+            ):
+                return durable
+            if background_tasks is not None:
+                path = (
+                    bridge_dir
+                    / f"shell_resources_{hashlib.sha256(session_id.encode()).hexdigest()}.json"
+                )
+                shells, _ = await asyncio.to_thread(_read_shell_forward_state, path, session_id)
+                background_tasks = [
+                    {
+                        key: value
+                        for key, value in shells.resources.get(str(row.get("id")), row).items()
+                        if key != "output"
+                    }
+                    for row in background_tasks
+                ]
         if record.event_cursor in superseded_failures:
             # Preserve the historical failure without failing the newer completed turn.
             try:
@@ -4642,7 +4788,7 @@ async def _forward_available_status_events(
                 # Detail rides alongside the count on the same ``Stop`` edge so
                 # the UI can name the shells. Dropped on ``failed`` for the same
                 # reason as the count (the server clears the tally there).
-                background_tasks=(None if status == "failed" else record.background_tasks),
+                background_tasks=(None if status == "failed" else background_tasks),
                 failure_detail=_stop_failure_detail(
                     record, session_id=session_id, transcript_context=transcript_context
                 )
@@ -5109,6 +5255,16 @@ async def _forward_available_items(
     result = await asyncio.to_thread(
         _read_transcript_items_for_state, state, agent_name, dedupe.settled_response_id
     )
+    if not await _forward_shell_resources(
+        client=client,
+        session_id=session_id,
+        bridge_dir=bridge_dir,
+        retry_tracker=retry_tracker,
+        transcript_entries=[
+            record.shell_entry for record in result.record_items if record.shell_entry is not None
+        ],
+    ):
+        return state
     items = result.items
     if not items:
         if result.line_cursor == state.line_cursor and result.byte_offset == (

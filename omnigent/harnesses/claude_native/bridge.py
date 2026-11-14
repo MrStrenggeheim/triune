@@ -931,6 +931,7 @@ class TranscriptRecordItems:
 
     next_byte_offset: int
     items: tuple[ClaudeTranscriptItem, ...]
+    shell_entry: _JsonObject | None = None
 
 
 @dataclass(frozen=True)
@@ -1070,6 +1071,7 @@ class ClaudeHookRecord:
     task_status: str | None = None
     background_task_count: int = 0
     background_tasks: list[_JsonObject] | None = None
+    shell_payload: _JsonObject | None = None
     failure_category: str | None = None
     failure_message: str | None = None
     failure_context: FailureContext | None = None
@@ -3411,6 +3413,7 @@ def read_transcript_items_since_with_position(
             TranscriptRecordItems(
                 next_byte_offset=record.next_byte_offset,
                 items=tuple(parsed),
+                shell_entry=_shell_resource_transcript_entry(entry),
             )
         )
     items = _dedupe_compact_noop_echo(items)
@@ -3419,6 +3422,7 @@ def read_transcript_items_since_with_position(
         TranscriptRecordItems(
             next_byte_offset=record.next_byte_offset,
             items=tuple(item for item in record.items if item.source_id in retained_source_ids),
+            shell_entry=record.shell_entry,
         )
         for record in record_items
     ]
@@ -3538,6 +3542,9 @@ def read_transcript_items_from_offset(
             TranscriptRecordItems(
                 next_byte_offset=record.next_byte_offset,
                 items=tuple(parsed),
+                shell_entry=_shell_resource_transcript_entry(
+                    entry, include_sidechains=include_sidechains
+                ),
             )
         )
     items = _dedupe_compact_noop_echo(items)
@@ -3546,6 +3553,7 @@ def read_transcript_items_from_offset(
         TranscriptRecordItems(
             next_byte_offset=record.next_byte_offset,
             items=tuple(item for item in record.items if item.source_id in retained_source_ids),
+            shell_entry=record.shell_entry,
         )
         for record in record_items
     ]
@@ -4068,6 +4076,15 @@ def _hook_record_from_jsonl_record(record: _JsonlRecord) -> ClaudeHookRecord:
         task_status=task_status,
         background_task_count=background_task_count,
         background_tasks=background_tasks,
+        shell_payload=(
+            payload
+            if isinstance(payload, dict)
+            and (
+                isinstance(payload.get("background_tasks"), list)
+                or (event_name == "PostToolUse" and payload.get("tool_name") == "Bash")
+            )
+            else None
+        ),
         failure_category=failure_category,
         failure_message=failure_message,
         failure_context=failure_context,
@@ -8797,6 +8814,30 @@ def _assistant_text_from_transcript_line(line: str) -> str | None:
     return "".join(parts) or None
 
 
+def _shell_resource_transcript_entry(
+    entry: _JsonObject, *, include_sidechains: bool = False
+) -> _JsonObject | None:
+    """Carry native shell evidence beside chat items without changing message provenance."""
+    if not include_sidechains and entry.get("isSidechain") is True:
+        return None
+    if entry.get("type") == "system" and entry.get("subtype") == "task_notification":
+        return entry
+    message = entry.get("message")
+    content = message.get("content") if isinstance(message, dict) else None
+    if isinstance(content, list) and any(
+        isinstance(block, dict)
+        and (
+            (block.get("type") == "tool_use" and block.get("name") == "Bash")
+            or (
+                block.get("type") == "tool_result" and isinstance(entry.get("toolUseResult"), dict)
+            )
+        )
+        for block in content
+    ):
+        return entry
+    return None
+
+
 def _transcript_items_from_entry(
     entry: _JsonObject,
     *,
@@ -9824,6 +9865,10 @@ def _user_transcript_items_from_entry(
         response_id = current_response_id or _response_id_from_source(
             _parent_or_record_source_key(entry, line_number, record_offset)
         )
+        native_result = entry.get("toolUseResult")
+        native_shell_id = (
+            native_result.get("backgroundTaskId") if isinstance(native_result, dict) else None
+        )
         items.append(
             ClaudeTranscriptItem(
                 source_id=_source_id(source_key, item_index, "function_call_output"),
@@ -9831,6 +9876,11 @@ def _user_transcript_items_from_entry(
                 data={
                     "call_id": call_id,
                     "output": _tool_result_output(entry, block),
+                    **(
+                        {"source": "claude_native", "source_call_id": native_shell_id}
+                        if isinstance(native_shell_id, str) and native_shell_id
+                        else {}
+                    ),
                 },
                 response_id=response_id,
                 subagent_return_id=_completed_subagent_tool_id(entry),

@@ -3144,22 +3144,29 @@ def create_runner_app(
                 recovery_turn = "recovery_prompt"
                 if is_native_harness(harness_name):
                     _session_histories[session_id] = []
+                from omnigent.runtime.framework_input import (
+                    RECOVERY_INSTRUCTION,
+                    register_framework_input,
+                )
+
+                recovery_input_id = uuid.uuid5(
+                    uuid.NAMESPACE_URL, f"omnigent-recovery:{session_id}:{recovery_id}"
+                ).hex
+                recovery_content = await register_framework_input(
+                    server_client,
+                    session_id,
+                    recovery_input_id,
+                    RECOVERY_INSTRUCTION,
+                    "Session resumed",
+                )
                 _begin_turn_slot(session_id)
                 _publish_turn_status(session_id, "running")
                 recovery_body: _JsonObject = {
                     "agent_id": agent_id,
                     "model": body.get("model", agent_id),
                     "browser_renderer_available": False,
-                    "content": [
-                        {
-                            "type": "input_text",
-                            "text": (
-                                "Your runner was interrupted while this task was active. "
-                                "Continue the existing task from its current state. "
-                                "Check any interrupted operation's outcome before repeating it."
-                            ),
-                        }
-                    ],
+                    "input_stable_id": recovery_input_id,
+                    "content": recovery_content,
                 }
                 if not is_native_harness(harness_name):
                     _session_histories.setdefault(session_id, []).append(
@@ -3743,6 +3750,17 @@ def create_runner_app(
         bridge_state_for_session=_codex_native_bridge_state_for_session,
         client_safe_error_detail=_client_safe_error_detail,
         logger=_logger,
+    )
+    from omnigent.runner.native.shell_resources import (
+        NativeShellResources,
+        register_native_shell_resource_routes,
+    )
+
+    register_native_shell_resource_routes(
+        app,
+        NativeShellResources(
+            server_client, _codex_native_bridge_state_for_session, resource_registry
+        ),
     )
 
     async def _native_cost_popup_config_file(conv_id: str, harness: str) -> Path:

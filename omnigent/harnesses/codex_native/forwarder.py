@@ -1275,6 +1275,7 @@ class _DeltaChunk:
     delta: str
     tool_call_id: str | None = None
     reasoning_started: bool | None = None
+    shell_resources_only: bool = False
 
 
 def _resolve_marker(done: asyncio.Future[None]) -> None:
@@ -1363,6 +1364,39 @@ class _OutputTextDeltaCoalescer:
         self._next_index_by_message_id: dict[str, int] = {}
         self._queued_chars = 0
         self._dropping_until_barrier = False
+        self._shell_flush_at: float | None = None
+        self._pending_shells: dict[int, tuple[CodexCommandProcesses, set[str]]] = {}
+
+    async def observe_shell_output(
+        self, processes: CodexCommandProcesses, call_id: str, delta: str
+    ) -> None:
+        """Capture ordered output even after its assistant turn ends."""
+        async with processes.sync_lock:
+            if call_id not in processes.resources:
+                return
+            processes.observe_output(call_id, delta)
+        key = id(processes)
+        pending = self._pending_shells.setdefault(key, (processes, set()))
+        pending[1].add(call_id)
+        if self._shell_flush_at is None:
+            self._shell_flush_at = asyncio.get_running_loop().time() + 0.2
+        self._ensure_worker()
+        self._queue.put_nowait(_DeltaChunk(None, "", shell_resources_only=True))
+
+    async def _flush_shell_inventory(self, *, force: bool = False) -> None:
+        loop = asyncio.get_running_loop()
+        if not self._pending_shells or (
+            not force and self._shell_flush_at is not None and loop.time() < self._shell_flush_at
+        ):
+            return
+        for key, (processes, resource_ids) in list(self._pending_shells.items()):
+            async with processes.sync_lock:
+                snapshot = processes.snapshot(resource_ids=sorted(resource_ids))
+                if snapshot is None or await _publish_command_snapshot(
+                    self._client, self._session_id, processes, snapshot
+                ):
+                    self._pending_shells.pop(key, None)
+        self._shell_flush_at = loop.time() + 2 if self._pending_shells else None
 
     async def append(self, delta: str, *, message_id: str | None = None) -> None:
         """
@@ -1603,11 +1637,15 @@ class _OutputTextDeltaCoalescer:
             timeout = None
             if buffer and flush_deadline is not None:
                 timeout = max(0.0, flush_deadline - loop.time())
+            if self._shell_flush_at is not None:
+                shell_timeout = max(0.0, self._shell_flush_at - loop.time())
+                timeout = shell_timeout if timeout is None else min(timeout, shell_timeout)
             try:
                 item = await asyncio.wait_for(self._queue.get(), timeout=timeout)
             except TimeoutError:
                 if not self._dropping_until_barrier:
                     await self._flush_buffer(buffer, chunk=buffer_chunk)
+                await self._flush_shell_inventory()
                 buffer = []
                 buffer_chunk = None
                 buffered_chars = 0
@@ -1615,6 +1653,8 @@ class _OutputTextDeltaCoalescer:
                 continue
             if isinstance(item, _DeltaChunk):
                 self._queued_chars -= len(item.delta)
+                if item.shell_resources_only:
+                    continue
                 if self._dropping_until_barrier:
                     buffer = []
                     buffer_chunk = None
@@ -1660,6 +1700,7 @@ class _OutputTextDeltaCoalescer:
             if isinstance(item, _DeltaFlushBarrier):
                 if not self._dropping_until_barrier:
                     await self._flush_buffer(buffer, chunk=buffer_chunk)
+                await self._flush_shell_inventory(force=True)
                 buffer = []
                 buffer_chunk = None
                 buffered_chars = 0
@@ -1669,6 +1710,7 @@ class _OutputTextDeltaCoalescer:
                 continue
             if not self._dropping_until_barrier:
                 await self._flush_buffer(buffer, chunk=buffer_chunk)
+            await self._flush_shell_inventory(force=True)
             self._dropping_until_barrier = False
             _resolve_marker(item.done)
             return
@@ -4058,6 +4100,10 @@ async def _maybe_handle_delta_event(
             _logger.warning("Codex command output delta missing string delta: call_id=%s", call_id)
             return True
         turn_id = _turn_id_from_payload(params)
+        if forwarder_state is not None:
+            await delta_coalescer.observe_shell_output(
+                forwarder_state.command_processes, call_id, delta
+            )
         if bridge_dir is not None and not _is_active_turn_delta(bridge_dir, turn_id):
             _logger.info("Codex forwarder ignored stale command output delta: turn_id=%s", turn_id)
             return True
@@ -4629,7 +4675,19 @@ async def _handle_codex_elicitation_request(
         return
     params = event.get("params")
     if event.get("method") == "item/completed" and isinstance(params, dict):
-        await submit_async_question_answer(codex_client, params, result)
+        from omnigent.runtime.framework_input import register_framework_input
+
+        async def prepare_framework_input(
+            input_id: str, text: str, label: str
+        ) -> list[_JsonObject]:
+            return await register_framework_input(client, session_id, input_id, text, label)
+
+        await submit_async_question_answer(
+            codex_client,
+            params,
+            result,
+            prepare_framework_input=prepare_framework_input,
+        )
     else:
         await codex_client.respond(request_id, result)
 
@@ -6486,18 +6544,19 @@ async def _post_user_message(
         "role": "user",
         "content": content,
     }
-    from omnigent.native.communication import native_input_stable_id, native_peer_metadata
+    from omnigent.native.communication import (
+        is_native_question_answer,
+        native_input_stable_id,
+        native_peer_metadata,
+    )
 
     item_data.update(
         native_peer_metadata(item.get("origin"), source_id or _source_id(params, item))
     )
-    if not item_data.get("communication") and _is_codex_skill_wrapper(text):
-        item_data["is_meta"] = True
-        _logger.debug(
-            "Marked Codex skill wrapper as meta for session=%s source_id=%s",
-            session_id,
-            _source_id(params, item),
-        )
+    if not item_data.get("communication") and is_native_question_answer(item.get("clientId")):
+        item_data["user_authored"] = True
+    # Unclassified native input keeps its visible external origin. Human input
+    # is confirmed by its saved submission identity, never by its wording.
     return await _post_external_item(
         client,
         session_id,
@@ -7269,18 +7328,26 @@ async def _sync_command_processes(
         return
     processes = forwarder_state.command_processes
     async with processes.sync_lock:
-        snapshot = processes.observe(item)
+        snapshot = processes.observe(item, session_id=session_id)
         if snapshot is None:
             return
-        response = await _post_session_event(
-            client,
-            session_id,
-            event_type="external_session_background_tasks",
-            data=snapshot,
-        )
-        _log_failed_session_event_post("external_session_background_tasks", response)
-        if response is not None and response.status_code < 400:
-            processes.posted = snapshot
+        await _publish_command_snapshot(client, session_id, processes, snapshot)
+
+
+async def _publish_command_snapshot(
+    client: httpx.AsyncClient,
+    session_id: str,
+    processes: CodexCommandProcesses,
+    snapshot: _JsonObject,
+) -> bool:
+    response = await _post_session_event(
+        client, session_id, event_type="external_session_background_tasks", data=snapshot
+    )
+    _log_failed_session_event_post("external_session_background_tasks", response)
+    if response is not None and response.status_code < 400:
+        processes.posted = snapshot
+        return True
+    return False
 
 
 async def _post_external_session_todos(

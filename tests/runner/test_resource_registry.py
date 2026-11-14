@@ -1,3 +1,5 @@
+# Modified for Triune.
+
 """Tests for runner-side SessionResourceRegistry (Phase 2)."""
 
 from __future__ import annotations
@@ -13,7 +15,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -536,9 +538,50 @@ async def test_terminal_lifecycle_cannot_change_after_observe(tmp_path: Path) ->
     instance = make_test_terminal_instance("worker", "main", tmp_path)
 
     await registry.observe_auxiliary_terminal("conv_lifecycle", "worker", "main", instance)
+    assert registry.terminal_can_stop_independently("conv_lifecycle", "terminal_worker_main")
+    assert not registry.terminal_can_stop_independently("other_chat", "terminal_worker_main")
+    assert not registry.terminal_can_stop_independently("conv_lifecycle", "missing")
 
     with pytest.raises(RuntimeError, match="already observed as auxiliary"):
         await registry.observe_required_terminal("conv_lifecycle", "worker", "main", instance)
+
+    required = make_test_terminal_instance("agent", "main", tmp_path)
+    await registry.observe_required_terminal("conv_lifecycle", "agent", "main", required)
+    assert not registry.terminal_can_stop_independently("conv_lifecycle", "terminal_agent_main")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", ["current", "replaced", "required", "native-role", "native-slot"])
+async def test_shell_stop_revalidates_launch_and_closes_only_the_expected_instance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str
+) -> None:
+    terminal_registry = TerminalRegistry()
+    registry = SessionResourceRegistry(terminal_registry=terminal_registry)
+    name = "codex" if case == "native-slot" else "worker"
+    instance = make_test_terminal_instance(name, "main", tmp_path)
+    terminal_registry._by_conversation["chat"] = {(name, "main"): instance}
+    if case == "required":
+        await registry.observe_required_terminal("chat", name, "main", instance)
+    else:
+        await registry.observe_auxiliary_terminal(
+            "chat",
+            name,
+            "main",
+            instance,
+            resource_role=CODEX_NATIVE_TERMINAL_ROLE if case == "native-role" else None,
+        )
+    close = AsyncMock(return_value=True)
+    monkeypatch.setattr(terminal_registry, "close", close)
+    expected_id = (
+        "activity_old" if case == "replaced" else f"activity_{instance.lifecycle_trace.launch_id}"
+    )
+    assert await registry.close_terminal(
+        "chat", f"terminal_{name}_main", expected_activity_id=expected_id
+    ) == (case == "current")
+    if case == "current":
+        close.assert_awaited_once_with("chat", "worker", "main", expected=instance)
+    else:
+        close.assert_not_awaited()
 
 
 @pytest.mark.asyncio

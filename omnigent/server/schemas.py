@@ -2143,6 +2143,18 @@ class BackgroundTaskInfo(BaseModel):
     status: str | None = None
     description: str | None = None
     command: str | None = None
+    source: str | None = None
+    session_id: str | None = None
+    resource_id: str | None = None
+    terminal_id: str | None = None
+    output_preview: str | None = None
+    resource_url: str | None = None
+    can_open: bool = False
+    can_stop: bool = False
+    stop_disabled_reason: str | None = None
+    stop_url: str | None = None
+    stop_method: Literal["POST", "DELETE"] | None = None
+    exit_code: int | None = None
 
 
 class SessionResponse(BaseModel):

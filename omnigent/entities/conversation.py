@@ -1,3 +1,4 @@
+# Modified for Triune; inherited notices remain applicable.
 """Conversation entities — conversation, items, and item data types."""
 
 from __future__ import annotations
@@ -318,8 +319,8 @@ class MessageData(BaseModel):
     :param stream_message_id: Native live-preview stream finalized by
         this assistant message. Persisted so reconnect snapshots can
         suppress delayed preview chunks after the authoritative item.
-    :param user_authored: Confirmed or conservatively preserved user input;
-        prevents legacy content cleanup from hiding literal agent markup.
+    :param user_authored: Human input confirmed by a trusted submission or
+        adapter identity, independently of protocol role and account identity.
     :param subagent_return_id: Native task id of an explicitly completed child.
     :param communication: Trusted peer/native provenance, independent of model role.
     """
@@ -433,6 +434,8 @@ class FunctionCallOutputData(BaseModel):
 
     call_id: str
     output: str
+    source: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    source_call_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
     subagent_return_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
 

@@ -1,3 +1,5 @@
+# Modified for Triune.
+
 """Status tests for Claude-native forwarding."""
 
 from __future__ import annotations
@@ -458,6 +460,20 @@ async def test_forwarder_posts_idle_with_count_when_stop_has_background_tasks(
     record_hook_event(
         bridge_dir,
         {
+            "hook_event_name": "PostToolUse",
+            "session_id": "claude-session",
+            "tool_name": "Bash",
+            "tool_input": {"command": "sleep 120", "description": "Wait for CI"},
+            "tool_response": {
+                "backgroundTaskId": "abc123",
+                "stdout": "actual shell output\n",
+                "stderr": "",
+            },
+        },
+    )
+    record_hook_event(
+        bridge_dir,
+        {
             "hook_event_name": "Stop",
             "session_id": "claude-session",
             "background_tasks": [
@@ -484,6 +500,7 @@ async def test_forwarder_posts_idle_with_count_when_stop_has_background_tasks(
         )
     )
     try:
+        inventory = await _get_recorded_request(server)
         request = await _get_recorded_request(server)
     finally:
         task.cancel()
@@ -494,6 +511,14 @@ async def test_forwarder_posts_idle_with_count_when_stop_has_background_tasks(
         thread.join(timeout=5.0)
 
     assert request["path"] == "/v1/sessions/conv_abc/events"
+    assert inventory["path"] == request["path"]
+    assert inventory["body"]["type"] == "external_session_background_tasks"
+    shell = inventory["body"]["data"]["shell_resources"][0]
+    assert shell["session_id"] == "conv_abc" and shell["resource_id"] == "abc123"
+    assert shell["output_preview"] == "actual shell output"
+    assert shell["source"] == "claude_native" and not shell["can_stop"]
+    assert shell["command"] == "sleep 120" and shell["description"] == "Wait for CI"
+    assert inventory["body"]["data"]["background_task_count"] == 1
     assert request["body"] == {
         "type": "external_session_status",
         "data": {
@@ -502,15 +527,7 @@ async def test_forwarder_posts_idle_with_count_when_stop_has_background_tasks(
             "background_task_count": 1,
             # Per-shell detail rides alongside the count so the UI can name the
             # running shells (see BackgroundTaskInfo / _normalize_background_task).
-            "background_tasks": [
-                {
-                    "id": "abc123",
-                    "type": "shell",
-                    "status": "running",
-                    "description": "Wait for CI",
-                    "command": "sleep 120",
-                }
-            ],
+            "background_tasks": [{key: value for key, value in shell.items() if key != "output"}],
         },
     }
 

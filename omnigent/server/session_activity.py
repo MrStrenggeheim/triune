@@ -1,3 +1,5 @@
+# Modified for Triune.
+
 """Session-authorized terminal activity with durable artifact snapshots."""
 
 from __future__ import annotations
@@ -14,6 +16,7 @@ import httpx
 
 from omnigent.entities import ConversationItem
 from omnigent.entities.conversation import FunctionCallData, FunctionCallOutputData
+from omnigent.native.shell_resources import is_agent_terminal_resource
 from omnigent.process_logging import redact_log_text
 from omnigent.server.agent_file_diff import read_recorded_turn_items
 from omnigent.stores.artifact_store import ArtifactStore
@@ -103,6 +106,20 @@ def recorded_commands(items: list[ConversationItem], session_id: str) -> list[Ac
                         complete = False
                 elif "Process running with session ID" in output:
                     complete = False
+        source = None
+        source_call_id = None
+        if call.agent == "codex-native-ui" and call.name in {"shell", "commandExecution"}:
+            # Codex's commandExecution producer persists item.id verbatim as call_id.
+            source, source_call_id = "codex_native", call.call_id
+        elif call.name == "Bash":
+            native_output = output_item.data if output_item is not None else None
+            if getattr(native_output, "source", None) == "claude_native":
+                source = "claude_native"
+                native_id = getattr(native_output, "source_call_id", None)
+                if isinstance(native_id, str) and native_id:
+                    source_call_id = native_id
+            elif call.agent == "claude-native-ui":
+                source = "claude_native"
         digest = hashlib.sha256(
             f"{session_id}:{item.response_id}:{call.call_id}".encode()
         ).hexdigest()
@@ -117,6 +134,8 @@ def recorded_commands(items: list[ConversationItem], session_id: str) -> list[Ac
             exit_status=exit_status,
             output=bounded_output(output),
             owner_id=session_id,
+            source=source,
+            source_call_id=source_call_id,
         )
         if len(commands) == MAX_ENTRIES:
             break
@@ -240,7 +259,13 @@ class SessionActivityService:
                     continue
                 merged[entry.id] = entry
             entries = sorted(
-                merged.values(),
+                (
+                    entry
+                    for entry in merged.values()
+                    if not (
+                        entry.kind == "terminal" and is_agent_terminal_resource(entry.terminal_id)
+                    )
+                ),
                 key=lambda entry: (
                     entry.state not in ("running", "idle"),
                     -(entry.started_at or 0),

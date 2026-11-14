@@ -176,24 +176,28 @@ def _structured_codex_request_user_input(
         is_secret = entry.get("isSecret")
         if isinstance(is_secret, bool):
             question["isSecret"] = is_secret
+        text_input = entry.get("textInput")
+        if isinstance(text_input, dict) and isinstance(text_input.get("default"), str):
+            question["textInput"] = {"default": text_input["default"]}
         questions.append(question)
     if not questions:
         return None
     return {"questions": questions}
 
 
-def _string_list_answer(value: Any) -> list[str]:
+def _string_list_answer(value: Any, *, allow_empty: bool = False) -> list[str]:
     """
     Normalize one web-submitted answer to Codex's ``answers`` list.
 
     :param value: MCP ``ElicitResult.content`` value, e.g. ``"React"``
         or ``["React", "Vue"]``.
-    :returns: List of string answers with empty strings removed.
+    :param allow_empty: Preserve blank values for native text editors.
+    :returns: List of string answers, omitting blank choices.
     """
     if isinstance(value, str):
-        return [value] if value else []
+        return [value] if value or allow_empty else []
     if isinstance(value, list):
-        return [entry for entry in value if isinstance(entry, str) and entry]
+        return [entry for entry in value if isinstance(entry, str) and (entry or allow_empty)]
     if value is None:
         return []
     return [str(value)]
@@ -228,9 +232,11 @@ def _codex_request_user_input_response(
         if not isinstance(question_id, str) or not question_id:
             continue
         value = result.content.get(question_id)
-        if value is None and isinstance(question_text, str):
+        if question_id not in result.content and isinstance(question_text, str):
             value = result.content.get(question_text)
-        normalized = _string_list_answer(value)
+        normalized = _string_list_answer(
+            value, allow_empty=isinstance(entry.get("textInput"), dict)
+        )
         if normalized:
             answers[question_id] = {"answers": normalized}
     response["answers"] = answers
@@ -671,6 +677,8 @@ def _codex_async_question_response(
         if values:
             lines.append(f"{question['question']}\n{', '.join(values)}")
     if not lines:
+        if result.action in {"accept", "decline"}:
+            return {"input": [], "question_submission": {"action": result.action}}
         return {"input": []}
     return {"input": [{"type": "text", "text": "\n\n".join(lines)}]}
 

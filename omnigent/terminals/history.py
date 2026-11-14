@@ -1,3 +1,5 @@
+# Modified for Triune.
+
 """Bounded captured terminal activity, independent of live registry membership."""
 
 from __future__ import annotations
@@ -58,6 +60,8 @@ class ActivityEntry(BaseModel):
     owner_id: str
     workspace_id: str | None = None
     parent_agent_id: str | None = None
+    source: Literal["codex_native", "claude_native", "registered_terminal"] | None = None
+    source_call_id: str | None = None
 
 
 def bounded_output(text: str | None) -> str | None:

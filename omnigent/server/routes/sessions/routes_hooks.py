@@ -1,3 +1,5 @@
+# Modified for Triune.
+
 """Hook routes: permission requests, policy evaluation, elicitation hooks."""
 
 from __future__ import annotations
@@ -433,7 +435,7 @@ def register_hooks_routes(
                 media_type="application/json",
             )
         # When the gated tool is AskUserQuestion AND the user accepted
-        # with selections, propagate those selections back to Claude
+        # with an explicit answer map, propagate it back to Claude
         # via ``decision.updatedInput``. Claude reads
         # ``tool_input.answers`` and skips its TUI picker, returning
         # the supplied selections as the tool result the LLM sees.
@@ -447,7 +449,6 @@ def register_hooks_routes(
             and tool_name == "AskUserQuestion"
             and isinstance(tool_input, dict)
             and isinstance(result.content, dict)
-            and result.content
         ):
             decision["updatedInput"] = {**tool_input, "answers": result.content}
         # ExitPlanMode is a requiresUserInteraction tool: Claude Code coerces a

@@ -13,7 +13,7 @@ class MessageCommunication(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    kind: Literal["peer", "native_agent"]
+    kind: Literal["peer", "native_agent", "system", "external"]
     message_id: str = Field(min_length=1, max_length=256)
     source_conversation_id: str | None = None
     source_agent_id: str | None = None

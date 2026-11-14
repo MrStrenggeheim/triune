@@ -1,3 +1,5 @@
+# Modified for Triune.
+
 """Transcript delivery tests for Claude-native forwarding."""
 
 from __future__ import annotations
@@ -6,9 +8,13 @@ import asyncio
 import json
 from pathlib import Path
 
+import httpx
 import pytest
 
+from omnigent.harnesses.claude_native import forwarder
 from omnigent.harnesses.claude_native.bridge import (
+    read_transcript_items_from_offset,
+    read_transcript_items_since_with_position,
     record_hook_event,
 )
 from omnigent.harnesses.claude_native.forwarder import (
@@ -19,6 +25,124 @@ from tests.harnesses.claude_native.forwarder._support import (
     _get_recorded_request,
     _start_recording_server,
 )
+
+
+@pytest.mark.parametrize("reader", ["line", "byte"])
+async def test_shell_resources_hold_failed_delivery_and_restore_native_ids_across_restart(
+    tmp_path: Path, reader: str
+) -> None:
+    transcript = tmp_path / "shells.jsonl"
+    calls = {
+        "type": "assistant",
+        "uuid": "calls",
+        "message": {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": f"call-{key}",
+                    "name": "Bash",
+                    "input": {"command": "same command"},
+                }
+                for key in ("one", "two")
+            ],
+        },
+    }
+    transcript.write_text(json.dumps(calls) + "\n")
+    posted = []
+
+    def transport(request):
+        assert request.headers["authorization"] == "Bearer scoped-owner"
+        posted.append(json.loads(request.content))
+        return httpx.Response(500 if len(posted) == 1 else 202)
+
+    def read(offset=0, line=0):
+        if reader == "line":
+            return read_transcript_items_since_with_position(
+                transcript, line, agent_name="claude-native-ui"
+            )
+        return read_transcript_items_from_offset(
+            transcript, offset, start_line=line, agent_name="claude-native-ui"
+        )
+
+    async def forward(client, result):
+        return await forwarder._forward_shell_resources(
+            client=client,
+            session_id="chat",
+            bridge_dir=tmp_path / "bridge",
+            retry_tracker=forwarder._PostRetryTracker(base_delay_s=0),
+            transcript_entries=[
+                record.shell_entry
+                for record in result.record_items
+                if record.shell_entry is not None
+            ],
+        )
+
+    async with httpx.AsyncClient(
+        base_url="http://server",
+        headers={"Authorization": "Bearer scoped-owner"},
+        transport=httpx.MockTransport(transport),
+    ) as client:
+        first = read()
+        assert await forward(client, first)
+        assert posted == []
+        with transcript.open("a") as handle:
+            for key in ("one", "two"):
+                handle.write(
+                    json.dumps(
+                        {
+                            "type": "user",
+                            "uuid": f"result-{key}",
+                            "is_meta": True,
+                            "message": {
+                                "role": "user",
+                                "content": [
+                                    {
+                                        "type": "tool_result",
+                                        "tool_use_id": f"call-{key}",
+                                        "content": "tool result display",
+                                    }
+                                ],
+                            },
+                            "toolUseResult": {
+                                "backgroundTaskId": f"task-{key}",
+                                "stdout": f"actual {key}\n",
+                            },
+                        }
+                    )
+                    + "\n"
+                )
+        results = read(first.byte_offset, first.line_cursor)
+        assert not await forward(client, results)
+        assert await forward(client, results)
+        assert len(posted) == 2
+        rows = {row["resource_id"]: row for row in posted[-1]["data"]["shell_resources"]}
+        assert set(rows) == {"task-one", "task-two"}
+        assert rows["task-one"]["command"] == rows["task-two"]["command"] == "same command"
+        assert rows["task-one"]["output_preview"] == "actual one"
+        assert rows["task-two"]["output_preview"] == "actual two"
+        assert all(not row["can_stop"] and row["session_id"] == "chat" for row in rows.values())
+        assert await forward(client, results)
+        assert len(posted) == 2
+        with transcript.open("a") as handle:
+            handle.write(
+                json.dumps(
+                    {
+                        "type": "system",
+                        "subtype": "task_notification",
+                        "task_id": "task-one",
+                        "status": "completed",
+                    }
+                )
+                + "\n"
+            )
+        completion = read(results.byte_offset, results.line_cursor)
+        assert await forward(client, completion)
+        assert posted[-1]["data"]["background_task_count"] == 1
+        retained = {row["resource_id"]: row for row in posted[-1]["data"]["shell_resources"]}
+        assert retained["task-one"]["status"] == "completed"
+        assert retained["task-one"]["output_preview"] == "actual one"
+        assert retained["task-two"]["status"] == "running"
 
 
 @pytest.mark.asyncio
