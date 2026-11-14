@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { TooltipButton } from "@/components/ui/tooltip";
 // Hover-based table handles — row grip (left) and column handle (top).
 //
@@ -30,6 +31,7 @@ import type { Node as PMNode } from "@tiptap/pm/model";
 import { MoreHorizontal, MoreVertical, Trash2 } from "lucide-react";
 import { getEmbedRoot } from "@/lib/host";
 import { cn } from "@/lib/utils";
+import { openTouchContextMenu, trackTouchContextGesture } from "@/lib/touchContextGesture";
 
 // Embedded builds scope styles under the embed root, so portals must land inside it.
 const portalTarget = (): HTMLElement => getEmbedRoot() ?? document.body;
@@ -370,6 +372,32 @@ export function TableHandles({
   useEffect(() => {
     if (!editor.view?.dom) return;
     const dom = editor.view.dom;
+    let cancelHold: (() => void) | undefined;
+
+    const onPointerDown = (event: PointerEvent) => {
+      if (
+        event.pointerType !== "touch" ||
+        event.defaultPrevented ||
+        !(event.target instanceof Element)
+      )
+        return;
+      if (
+        event.target.closest(
+          "a, button, input, textarea, select, [contenteditable='false'], .column-resize-handle",
+        )
+      )
+        return;
+      const cell = event.target.closest<HTMLTableCellElement>("td, th");
+      if (!cell || !dom.contains(cell)) return;
+      cancelHold?.();
+      // Keep native caret placement and selection; selection or scrolling cancels the shared hold.
+      cancelHold = trackTouchContextGesture(cell, event, {
+        allowEditable: true,
+        onMenu: (point) => {
+          if (dom.contains(cell)) openTouchContextMenu(cell, point);
+        },
+      });
+    };
 
     const onMouseMove = (e: MouseEvent) => {
       if (!(e.target instanceof Element)) return;
@@ -452,6 +480,7 @@ export function TableHandles({
 
     const onMouseLeave = () => scheduleHide();
     const onScroll = () => {
+      cancelHold?.();
       setRowHandle(null);
       setColHandle(null);
       setRowMenu(null);
@@ -467,6 +496,7 @@ export function TableHandles({
     dom.addEventListener("mousemove", onMouseMove);
     dom.addEventListener("mouseleave", onMouseLeave);
     dom.addEventListener("contextmenu", onContextMenu);
+    dom.addEventListener("pointerdown", onPointerDown);
     const scrollEl = scrollContainerRef.current;
     scrollEl?.addEventListener("scroll", onScroll);
 
@@ -474,6 +504,8 @@ export function TableHandles({
       dom.removeEventListener("mousemove", onMouseMove);
       dom.removeEventListener("mouseleave", onMouseLeave);
       dom.removeEventListener("contextmenu", onContextMenu);
+      dom.removeEventListener("pointerdown", onPointerDown);
+      cancelHold?.();
       scrollEl?.removeEventListener("scroll", onScroll);
       window.clearTimeout(hideTimer.current);
     };

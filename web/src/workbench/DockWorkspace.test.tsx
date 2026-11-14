@@ -544,26 +544,88 @@ describe("sidebar conversation drops", () => {
 });
 
 describe("dock tab controls", () => {
-  it("allows touch swipes and activates docking only after a hold", async () => {
+  it("allows touch swipes and activates docking only after a hold and movement", () => {
+    vi.useFakeTimers();
+    try {
+      render(
+        <DockWorkspace
+          layout={createDockLayout([view("a"), view("b")])}
+          onLayoutChange={vi.fn()}
+          renderView={() => null}
+          compact
+        />,
+      );
+      const tab = screen.getByRole("tab", { name: "a" });
+      const touch = (clientX: number) => ({ identifier: 1, target: tab, clientX, clientY: 20 });
+      fireEvent.touchStart(tab, { touches: [touch(20)] });
+      expect(fireEvent.touchMove(tab, { touches: [touch(60)] })).toBe(true);
+      expect(tab).toHaveAttribute("data-dragging", "false");
+      fireEvent.touchEnd(tab, { touches: [] });
+      fireEvent.touchStart(tab, { touches: [touch(20)] });
+      act(() => vi.advanceTimersByTime(300));
+      expect(tab).toHaveAttribute("data-dragging", "false");
+      fireEvent.touchMove(tab, { touches: [touch(30)], changedTouches: [touch(30)] });
+      expect(tab).toHaveAttribute("data-dragging", "true");
+      expect(tab.closest('[data-slot="context-menu-trigger"]')).toHaveAttribute("data-disabled");
+      fireEvent.touchCancel(tab, { touches: [] });
+      expect(tab).toHaveAttribute("data-dragging", "false");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("opens the tab menu at 500ms, continues into the existing drag and swallows release", () => {
+    vi.useFakeTimers();
+    try {
+      const change = vi.fn();
+      render(
+        <DockWorkspace
+          layout={createDockLayout([view("a"), view("b")])}
+          onLayoutChange={change}
+          renderView={() => null}
+          compact
+        />,
+      );
+      const tab = screen.getByRole("tab", { name: "b" });
+      const touch = (clientX: number) => ({ identifier: 1, target: tab, clientX, clientY: 20 });
+      fireEvent.pointerDown(tab, { pointerId: 1, pointerType: "touch", clientX: 20, clientY: 20 });
+      fireEvent.touchStart(tab, { touches: [touch(20)] });
+      act(() => vi.advanceTimersByTime(500));
+      expect(screen.getByRole("menuitem", { name: "Move tab left" })).toBeVisible();
+      expect(tab).toHaveAttribute("data-dragging", "false");
+      fireEvent.touchMove(tab, { touches: [touch(30)], changedTouches: [touch(30)] });
+      expect(tab).toHaveAttribute("data-dragging", "true");
+      expect(screen.queryByRole("menu")).toBeNull();
+      expect(document.querySelector(".dock-drop-overlay")).toBeInTheDocument();
+      fireEvent.touchCancel(tab, { touches: [] });
+      fireEvent.click(tab);
+      expect(change).not.toHaveBeenCalled();
+      expect(tab).toHaveAttribute("data-dragging", "false");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("switches once when a touch lands on the pin's former hover target", () => {
+    const pin = vi.fn();
+    const change = vi.fn();
     render(
       <DockWorkspace
         layout={createDockLayout([view("a"), view("b")])}
-        onLayoutChange={vi.fn()}
+        onLayoutChange={change}
+        onPinView={pin}
         renderView={() => null}
         compact
       />,
     );
-    const tab = screen.getByRole("tab", { name: "a" });
-    const touch = (clientX: number) => ({ identifier: 1, target: tab, clientX, clientY: 20 });
-    fireEvent.touchStart(tab, { touches: [touch(20)] });
-    expect(fireEvent.touchMove(tab, { touches: [touch(60)] })).toBe(true);
-    expect(tab).toHaveAttribute("data-dragging", "false");
-    fireEvent.touchEnd(tab, { touches: [] });
-    fireEvent.touchStart(tab, { touches: [touch(20)] });
-    await waitFor(() => expect(tab).toHaveAttribute("data-dragging", "true"));
-    expect(tab.closest('[data-slot="context-menu-trigger"]')).toHaveAttribute("data-disabled");
-    fireEvent.touchCancel(tab, { touches: [] });
-    expect(tab).toHaveAttribute("data-dragging", "false");
+    const hiddenPin = screen.getByRole("button", { name: "Pin b" });
+    fireEvent.pointerDown(hiddenPin, { pointerType: "touch", pointerId: 1 });
+    fireEvent.pointerUp(hiddenPin, { pointerType: "touch", pointerId: 1 });
+    fireEvent.click(hiddenPin);
+    expect(pin).not.toHaveBeenCalled();
+    expect(change).toHaveBeenCalledTimes(1);
+    const update = change.mock.calls[0][0];
+    expect(update(createDockLayout([view("a"), view("b")])).panes[0].selectedViewId).toBe("b");
   });
 
   it.each(["before", "after", "end", "empty"] as const)(

@@ -16,7 +16,6 @@ import {
   DndContext,
   KeyboardSensor,
   MouseSensor,
-  TouchSensor,
   closestCenter,
   pointerWithin,
   useDndContext,
@@ -73,6 +72,7 @@ import {
 import { WorkbenchViewIcon } from "./viewIcons";
 import { projectedDockRect, tabDropTarget, type DockDropTarget } from "./dockDropPlacement";
 import { useResidentDockViews } from "./viewLifetime";
+import { TouchContextSensor } from "@/lib/touchContextGesture";
 import "./dockWorkspace.css";
 
 export interface DockViewVisibility {
@@ -213,7 +213,7 @@ function DockSurface(props: DockWorkspaceProps) {
     preview.tree === null ? { panes: [], dividers: [] } : terminalLayoutGeometry(preview.tree);
   const sensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
-    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 8 } }),
+    useSensor(TouchContextSensor),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
@@ -347,8 +347,10 @@ function DockSurface(props: DockWorkspaceProps) {
     }
   };
 
-  const focus = (paneId: string) =>
-    latest.current.onLayoutChange((current) => focusDockPane(current, paneId));
+  const focus = (paneId: string) => {
+    if (latest.current.layout.focusedPaneId !== paneId)
+      latest.current.onLayoutChange((current) => focusDockPane(current, paneId));
+  };
   const select = (id: string) => onLayoutChange((current) => selectDockView(current, id));
   const allViews = new Map(retainedViews.map((view) => [view.id, view]));
   for (const view of layout.views) allViews.set(view.id, view);
@@ -832,7 +834,7 @@ function DockTab({
   }, [selected]);
   return (
     <ContextMenu>
-      <ContextMenuTrigger asChild disabled={!!active}>
+      <ContextMenuTrigger asChild touchDrag disabled={!!active}>
         <div
           ref={(node) => {
             groupRef.current = node;
@@ -844,6 +846,15 @@ function DockTab({
           data-insertion={insertion}
           data-conversation-drop-pane={pane.id}
           data-conversation-drop-index={index}
+          onPointerDownCapture={(event) => {
+            event.currentTarget.dataset.input = event.pointerType;
+          }}
+          onPointerMoveCapture={(event) => {
+            if (event.pointerType === "mouse") event.currentTarget.dataset.input = "mouse";
+          }}
+          onKeyDownCapture={(event) => {
+            event.currentTarget.dataset.input = "keyboard";
+          }}
         >
           <button
             type="button"
@@ -894,7 +905,8 @@ function DockTab({
               onPointerDown={(event) => event.stopPropagation()}
               onClick={(event) => {
                 event.stopPropagation();
-                onPin?.();
+                if (groupRef.current?.dataset.input === "touch") onSelect();
+                else onPin?.();
               }}
             >
               <Pin size={14} fill={pinned ? "currentColor" : "none"} />

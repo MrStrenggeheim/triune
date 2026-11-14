@@ -111,6 +111,15 @@ html[data-electron-mac] .unified-workbench .sidebar-header-row {
 }
 
 @media (max-width: 767.98px) {
+  .unified-workbench.app-shell
+    aside.conversations-sidebar:not(aside[aria-label="Workspace"] *):not([data-collapsed]):not(
+      .is-peek
+    ) {
+    padding-top: 0;
+  }
+  .unified-workbench [data-testid="sidebar-primary-nav"] {
+    padding-top: 0;
+  }
   /* The shell owns the safe area; the composer only needs its content gutter. */
   .unified-workbench.app-shell .chat-composer-form {
     padding-bottom: 8px;

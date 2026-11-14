@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { conversationPage } from "@/test/sidebarMockHelpers";
 import { renderSidebar } from "@/test/sidebarTestHelpers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -111,7 +112,7 @@ function dispatchTouchPointer(
   const event = new PointerEvent(type, {
     bubbles: true,
     cancelable: true,
-    clientX: type === "pointerdown" ? 10 : 11,
+    clientX: type === "pointermove" ? 20 : 10,
     clientY: 10,
     pointerType: "touch",
   });
@@ -329,7 +330,7 @@ describe("project folder header context menu", () => {
       if (before === null) throw new Error("Folder header is missing aria-expanded");
 
       dispatchTouchPointer(header, "pointerdown");
-      act(() => vi.advanceTimersByTime(699));
+      act(() => vi.advanceTimersByTime(499));
       expect(screen.queryByTestId("rename-project")).toBeNull();
       act(() => vi.advanceTimersByTime(1));
 

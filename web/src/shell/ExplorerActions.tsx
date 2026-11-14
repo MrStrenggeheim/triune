@@ -38,6 +38,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useWorkbenchWorkspace, queryIdentity } from "@/lib/workbenchWorkspace";
 import { cn } from "@/lib/utils";
+import { useTouchContextMenu } from "@/lib/touchContextGesture";
 import { toast } from "@/lib/notifications";
 import { formatBytes } from "./fileStatusUtils";
 import { useFileDropTarget } from "@/hooks/useFileDropTarget";
@@ -150,6 +151,7 @@ export function useExplorerTree(controls: TreeControls): void {
 }
 
 export function useExplorerRow(path: string, directory: boolean, deleted = false) {
+  const hold = useTouchContextMenu(deleted);
   const ctx = useContext(ExplorerContext);
   const viewer = useContext(FileViewerContext);
   const revealBase = useContext(RevealBaseContext);
@@ -159,7 +161,11 @@ export function useExplorerRow(path: string, directory: boolean, deleted = false
     !!viewer?.activeFilePath &&
     relativizeToWorkspace(viewer.activeFilePath, viewer.workspaceRoot) ===
       relativizeToWorkspace(canonical, viewer.workspaceRoot);
-  const currentProps = { "aria-current": active ? ("true" as const) : undefined };
+  const currentProps = {
+    "aria-current": active ? ("true" as const) : undefined,
+    "data-touch-context-menu": true,
+    onPointerDown: hold,
+  };
   const entry = { path: canonical, directory };
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => clearTimeout(timer.current ?? undefined), []);
@@ -286,6 +292,7 @@ export function ExplorerActionsProvider({
   onRefresh: () => Promise<void>;
   onRevealFile?: (path: string) => void;
 }) {
+  const hold = useTouchContextMenu();
   const workspace = useWorkbenchWorkspace();
   const resourceIdentity = queryIdentity(workspace, conversationId);
   const viewId = useResourceViewId();
@@ -1032,6 +1039,8 @@ export function ExplorerActionsProvider({
         ref={setRoot}
         data-view-retain={localBusy || !!dialog || !!upload || !!pasteConflict || undefined}
         className="relative flex min-h-0 flex-1 flex-col"
+        data-touch-context-menu
+        onPointerDown={hold}
         onKeyDown={onKeyDown}
         onClick={(event) => {
           if (

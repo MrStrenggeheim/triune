@@ -1,4 +1,5 @@
 // Modified for Triune.
+import { TouchContextSensor } from "@/lib/touchContextGesture";
 import {
   branchRoots,
   branchChildren,
@@ -102,7 +103,6 @@ import {
   MeasuringStrategy,
   MouseSensor,
   pointerWithin,
-  TouchSensor,
   useDraggable,
   useDroppable,
   useSensor,
@@ -334,7 +334,6 @@ const KEYBOARD_SENSOR_OPTIONS = {
   keyboardCodes: { start: ["Space"], cancel: ["Escape"], end: ["Space"] },
 };
 const MOUSE_SENSOR_OPTIONS = { activationConstraint: { distance: 5 } };
-const TOUCH_SENSOR_OPTIONS = { activationConstraint: { delay: 250, tolerance: 8 } };
 
 const SCROLLBAR_HIDE_DELAY_MS = 700;
 
@@ -2356,12 +2355,12 @@ function ConversationList({
     [],
   );
   // Mouse: a small drag threshold so a plain click still navigates / opens the
-  // kebab. Touch: a press-and-hold delay so scrolling the list isn't hijacked
-  // into a drag. Project headers also support keyboard sorting.
+  // kebab. Touch shares hold/menu arbitration with the dock and keeps early
+  // movement available for scrolling. Project headers support keyboard sorting.
   const sensors = useSensors(
     useSensor(KeyboardSensor, KEYBOARD_SENSOR_OPTIONS),
     useSensor(MouseSensor, MOUSE_SENSOR_OPTIONS),
-    useSensor(TouchSensor, TOUCH_SENSOR_OPTIONS),
+    useSensor(TouchContextSensor),
   );
   const handleDragStart = useCallback((event: DragStartEvent) => {
     const isProject = event.active.data.current?.type === "project-order";
@@ -4122,7 +4121,11 @@ function ConversationSection({
       {!isCollapsed && (
         <div
           className="relative pt-1"
-          style={indentRows ? { paddingInlineStart: SIDEBAR_TREE_INDENT } : undefined}
+          style={
+            indentRows
+              ? { paddingInlineStart: "calc(var(--list-row-padding-inline) + 12px)" }
+              : undefined
+          }
         >
           {indentRows && <SidebarTreeGuides depth={1} />}
           {conversations.length === 0 && emptyMessage ? (
@@ -4726,7 +4729,9 @@ function SidebarTreeGuides({ depth }: { depth: number }) {
       aria-hidden
       data-sidebar-tree-guide
       className={SIDEBAR_TREE_GUIDE}
-      style={{ insetInlineStart: `calc((${level} + 0.5) * ${SIDEBAR_TREE_INDENT})` }}
+      style={{
+        insetInlineStart: `calc(var(--list-row-padding-inline) + 8px + ${level} * ${SIDEBAR_TREE_INDENT} - var(--sidebar-row-inset, 0px))`,
+      }}
     />
   ));
 }
@@ -5353,9 +5358,15 @@ function ConversationRowImpl({
       data-sidebar-session-id={conversation.id}
       data-sidebar-drop={isPinned && pinOrder ? "pin-order" : undefined}
       data-open-elsewhere={openElsewhere || undefined}
-      style={{
-        paddingInlineStart: `calc(${treeDepth} * ${SIDEBAR_TREE_INDENT})`,
-      }}
+      style={
+        {
+          "--sidebar-row-inset":
+            treeDepth > 0
+              ? `calc(var(--list-row-padding-inline) + 12px + ${treeDepth - 1} * ${SIDEBAR_TREE_INDENT})`
+              : "0px",
+          marginInlineStart: "var(--sidebar-row-inset)",
+        } as CSSProperties
+      }
       onMouseDown={(event) => {
         // Portaled dialogs bubble through this row but must not start a drag.
         if (
@@ -5397,7 +5408,9 @@ function ConversationRowImpl({
         rowLink
       ) : (
         <ContextMenu>
-          <ContextMenuTrigger asChild>{rowLink}</ContextMenuTrigger>
+          <ContextMenuTrigger asChild touchDrag={!!dragListeners?.onTouchStart}>
+            {rowLink}
+          </ContextMenuTrigger>
           <ContextMenuContent className="min-w-44">
             <ConversationMenuItems
               components={contextBundle}

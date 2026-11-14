@@ -1,7 +1,7 @@
 // Modified for Triune.
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { useState } from "react";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -119,6 +119,31 @@ function renderTree(initial = "root") {
     </QueryClientProvider>,
   );
 }
+it("coordinates a conversation hold with its drag sensor and never navigates on release", async () => {
+  renderTree();
+  const row = await screen.findByRole("link", { name: "root" });
+  vi.useFakeTimers();
+  try {
+    const touch = { identifier: 1, target: row, clientX: 20, clientY: 20 };
+    fireEvent.pointerDown(row, { pointerType: "touch", pointerId: 1, clientX: 20, clientY: 20 });
+    fireEvent.touchStart(row, { touches: [touch], changedTouches: [touch] });
+    act(() => vi.advanceTimersByTime(499));
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(document.querySelector("[data-sidebar-drag-overlay]")).toBeNull();
+    act(() => vi.advanceTimersByTime(1));
+    expect(screen.getByRole("menuitem", { name: "Open to side" })).toBeInTheDocument();
+    fireEvent.pointerUp(row, { pointerType: "touch", pointerId: 1 });
+    fireEvent.touchEnd(row, { touches: [], changedTouches: [touch] });
+    fireEvent.click(row);
+    expect(actions.open).not.toHaveBeenCalled();
+    fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
+  } finally {
+    cleanup();
+    vi.runOnlyPendingTimers();
+    vi.useRealTimers();
+  }
+});
+
 it("preserves the running spinner on a chat open elsewhere", async () => {
   vi.mocked(useConversations).mockReturnValue(
     conversationPage([{ ...rows[0], status: "running" }]),
@@ -143,21 +168,25 @@ it("uses trailing parent-only count/disclosure without reserving a leading root 
     "hover:bg-[color-mix(in_srgb,var(--foreground)_6%,var(--workspace-hover-on-chrome))]",
   );
   expect(root.lastElementChild).toBe(expand);
-  expect(root.style.paddingInlineStart).toContain("0 * var(--sidebar-tree-indent, 10px)");
+  expect(root.style.getPropertyValue("--sidebar-row-inset")).toBe("0px");
   expect(screen.queryByText("Conversations")).toBeNull();
   expect(document.querySelector(".sidebar-header-row")).toBeNull();
   expect(screen.getByTestId("new-chat-button")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Projects" })).toBeInTheDocument();
   fireEvent.click(expand);
   const child = await screen.findByRole("link", { name: "one" });
-  expect(child.closest("li")!.style.paddingInlineStart).toContain(
-    "1 * var(--sidebar-tree-indent, 10px)",
+  expect(child.closest("li")!.style.marginInlineStart).toBe("var(--sidebar-row-inset)");
+  expect(child.closest("li")!.style.getPropertyValue("--sidebar-row-inset")).toBe(
+    "calc(var(--list-row-padding-inline) + 12px + 0 * var(--sidebar-tree-indent, 10px))",
   );
   expect(screen.queryByRole("link", { name: "two" })).toBeNull();
   expect(screen.getByRole("button", { name: "Expand subchats of one" })).toHaveTextContent("3");
   const guide = child.closest("li")!.querySelector("[data-sidebar-tree-guide]")!;
   expect(guide).toHaveClass("w-px", "bg-muted-foreground/50", "pointer-events-none");
   expect(guide.className).not.toMatch(/opacity-0/);
+  expect((guide as HTMLElement).style.insetInlineStart).toBe(
+    "calc(var(--list-row-padding-inline) + 8px + 0 * var(--sidebar-tree-indent, 10px) - var(--sidebar-row-inset, 0px))",
+  );
   for (const id of ["one", "two", "three"]) {
     // oxlint-disable-next-line no-await-in-loop
     fireEvent.click(await screen.findByRole("button", { name: `Expand subchats of ${id}` }));

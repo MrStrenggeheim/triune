@@ -294,6 +294,8 @@
   border-radius: var(--radius-sm);
   color: var(--muted-foreground);
   opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
 }
 .dock-tab-type-icon {
   display: flex;
@@ -305,12 +307,30 @@
 .dock-tab-group[data-pinned="true"] .dock-tab-type-icon svg {
   fill: currentColor;
 }
-.dock-tab-group:has(.dock-tab-pin):hover .dock-tab-type-icon,
-.dock-tab-group:has(.dock-tab-pin):focus-within .dock-tab-type-icon {
+.dock-tab-group:has(.dock-tab-pin):has(:focus-visible) .dock-tab-type-icon {
   opacity: 0;
 }
-.dock-tab-group:hover .dock-tab-pin,
-.dock-tab-group:focus-within .dock-tab-pin {
+.dock-tab-group:has(:focus-visible) .dock-tab-pin {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+@media (any-hover: hover) and (any-pointer: fine) {
+  .dock-tab-group:not([data-input="touch"]):has(.dock-tab-pin):hover .dock-tab-type-icon {
+    opacity: 0;
+  }
+  .dock-tab-group:not([data-input="touch"]):hover .dock-tab-pin {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+  }
+}
+.dock-tab-group[data-input="touch"] .dock-tab-pin {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+.dock-tab-group[data-input="touch"] .dock-tab-type-icon {
   opacity: 1;
 }
 .dock-tab-pin[aria-pressed="true"] {

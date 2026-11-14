@@ -1,12 +1,38 @@
+// Modified for Triune.
 import * as React from "react";
 import * as ContextMenuPrimitive from "radix-ui/context-menu";
 
 import { getEmbedRoot } from "@/lib/host";
 import { cn } from "@/lib/utils";
 import { CheckIcon, ChevronRightIcon } from "lucide-react";
+import { TOUCH_DRAG_START_EVENT, useTouchContextMenu } from "@/lib/touchContextGesture";
 
-function ContextMenu({ ...props }: React.ComponentProps<typeof ContextMenuPrimitive.Root>) {
-  return <ContextMenuPrimitive.Root data-slot="context-menu" {...props} />;
+const TouchMenuContext = React.createContext<(() => void) | undefined>(undefined);
+
+function ContextMenu({
+  open: controlledOpen,
+  onOpenChange,
+  ...props
+}: React.ComponentProps<typeof ContextMenuPrimitive.Root>) {
+  const [open, setOpen] = React.useState(false);
+  const changeOpen = React.useCallback(
+    (next: boolean) => {
+      setOpen(next);
+      onOpenChange?.(next);
+    },
+    [onOpenChange],
+  );
+  const close = React.useCallback(() => changeOpen(false), [changeOpen]);
+  return (
+    <TouchMenuContext.Provider value={close}>
+      <ContextMenuPrimitive.Root
+        data-slot="context-menu"
+        {...props}
+        open={controlledOpen ?? open}
+        onOpenChange={changeOpen}
+      />
+    </TouchMenuContext.Provider>
+  );
 }
 
 function ContextMenuPortal({ ...props }: React.ComponentProps<typeof ContextMenuPrimitive.Portal>) {
@@ -19,11 +45,63 @@ function ContextMenuPortal({ ...props }: React.ComponentProps<typeof ContextMenu
   );
 }
 
-function ContextMenuTrigger({
-  ...props
-}: React.ComponentProps<typeof ContextMenuPrimitive.Trigger>) {
-  return <ContextMenuPrimitive.Trigger data-slot="context-menu-trigger" {...props} />;
-}
+const ContextMenuTrigger = React.forwardRef<
+  React.ComponentRef<typeof ContextMenuPrimitive.Trigger>,
+  React.ComponentPropsWithoutRef<typeof ContextMenuPrimitive.Trigger> & { touchDrag?: boolean }
+>(function ContextMenuTrigger(
+  { touchDrag = false, disabled, onPointerDown, onKeyDown, ...props },
+  forwardedRef,
+) {
+  const hold = useTouchContextMenu(disabled || touchDrag);
+  const close = React.useContext(TouchMenuContext);
+  const [element, setElement] = React.useState<HTMLSpanElement | null>(null);
+  React.useEffect(() => {
+    if (!element || !close) return;
+    element.addEventListener(TOUCH_DRAG_START_EVENT, close);
+    return () => element.removeEventListener(TOUCH_DRAG_START_EVENT, close);
+  }, [element, close]);
+  return (
+    <ContextMenuPrimitive.Trigger
+      {...props}
+      disabled={disabled}
+      data-slot="context-menu-trigger"
+      data-touch-context-menu
+      ref={React.useCallback(
+        (node: HTMLSpanElement | null) => {
+          setElement(node);
+          if (typeof forwardedRef === "function") forwardedRef(node);
+          else if (forwardedRef) forwardedRef.current = node;
+        },
+        [forwardedRef],
+      )}
+      onPointerDown={(event) => {
+        onPointerDown?.(event);
+        hold(event);
+        // Replace Radix's independent 700ms timer; touch scrolling is owned by touchmove.
+        if (event.pointerType === "touch" && !disabled) event.preventDefault();
+      }}
+      onKeyDown={(event) => {
+        onKeyDown?.(event);
+        if (
+          disabled ||
+          event.defaultPrevented ||
+          (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10"))
+        )
+          return;
+        event.preventDefault();
+        const bounds = event.currentTarget.getBoundingClientRect();
+        event.currentTarget.dispatchEvent(
+          new MouseEvent("contextmenu", {
+            bubbles: true,
+            cancelable: true,
+            clientX: bounds.left,
+            clientY: bounds.bottom,
+          }),
+        );
+      }}
+    />
+  );
+});
 
 function ContextMenuContent({
   className,

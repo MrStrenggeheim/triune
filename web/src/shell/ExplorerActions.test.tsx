@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { resetExplorerSelectionsForTesting } from "@/lib/explorerSelection";
 import userEvent from "@testing-library/user-event";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
@@ -108,6 +109,38 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("Explorer actions", () => {
+  it.each(["a.txt", "folder", "empty"])(
+    "opens the same actions by holding %s without activating its row",
+    (path) => {
+      vi.useFakeTimers();
+      try {
+        setup();
+        const target =
+          path === "empty"
+            ? screen.getByTestId("explorer-empty-space")
+            : screen.getByRole("button", { name: path });
+        const click = vi.fn();
+        target.addEventListener("click", click);
+        const pointer = { pointerId: 1, pointerType: "touch", clientX: 20, clientY: 30 };
+        fireEvent.pointerDown(target, pointer);
+        act(() => vi.advanceTimersByTime(499));
+        expect(screen.queryByRole("menu")).toBeNull();
+        act(() => vi.advanceTimersByTime(1));
+        expect(screen.getByRole("menuitem", { name: "Copy" })).toBeInTheDocument();
+        if (path !== "a.txt")
+          expect(screen.getByRole("menuitem", { name: "New file…" })).toBeInTheDocument();
+        fireEvent.pointerUp(target, pointer);
+        fireEvent.click(target);
+        expect(click).not.toHaveBeenCalled();
+        fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
+      } finally {
+        cleanup();
+        vi.runOnlyPendingTimers();
+        vi.useRealTimers();
+      }
+    },
+  );
+
   it.each(["a.txt", "folder"])(
     "replaces status and size with one keyboard/touch menu for %s",
     async (path) => {
