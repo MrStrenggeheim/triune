@@ -1,3 +1,4 @@
+# Modified for Triune; inherited notices remain applicable.
 """
 Tests for :class:`omnigent.runtime.harnesses._executor_adapter.ExecutorAdapter`.
 
@@ -3078,3 +3079,32 @@ async def test_subprocess_tracking_uses_validated_session_without_telemetry(
     assert [pr.url for pr in SessionPrRegistry(conv_id).list()] == [
         "https://github.com/example/sdk/pull/42"
     ]
+
+
+@pytest.mark.parametrize(
+    "response,continuing,authoritative,expected",
+    [
+        ("Done", False, True, True),
+        ("Progress", True, True, False),
+        ("Unknown", False, False, False),
+        (None, False, True, False),
+    ],
+)
+def test_terminal_adapter_response_requires_authority(
+    response, continuing, authoritative, expected
+):
+    from omnigent.inner.executor import TurnComplete
+    from omnigent.runtime.harnesses._executor_adapter import ExecutorAdapter
+
+    adapter = ExecutorAdapter(executor_factory=lambda: _StubExecutor())
+    ctx = _RecordingTurnContext()
+    adapter._translate_event(
+        TurnComplete(
+            response=response, continue_turn=continuing, response_is_authoritative=authoritative
+        ),
+        ctx,
+    )
+    assert bool(ctx.emitted) is expected
+    if expected:
+        assert ctx.emitted[0].item["phase"] == "final_answer"
+        assert ctx.emitted[0].item["content"][0]["text"] == "Done"

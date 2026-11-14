@@ -1,3 +1,4 @@
+# Modified for Triune; inherited notices remain applicable.
 """Wake a parent agent when one of its descendants blocks on an approval.
 
 A blocked sub-agent (e.g. a codex worker asking to run ``git fetch``) never
@@ -26,6 +27,7 @@ import logging
 import threading
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 if TYPE_CHECKING:
     from omnigent.entities.conversation import Conversation
@@ -58,6 +60,19 @@ _BLOCK_WAKE_ESCALATION_DELAY_S = 120.0
 # the wake was confirmed delivered, False when it could not be (no runner bound /
 # caught transport error) so the notifier can release the debounce and retry.
 WakeDispatch = Callable[[str, "Conversation", str], Awaitable[bool]]
+
+
+class FrameworkWakeNotice(str):
+    """Text plus trusted occurrence metadata for the injected server dispatcher."""
+
+    occurrence_id: str
+    kind: str
+
+    def __new__(cls, text: str, occurrence_id: str, kind: str):
+        notice = super().__new__(cls, text)
+        notice.occurrence_id = occurrence_id
+        notice.kind = kind
+        return notice
 
 
 class _WakeOutcome(enum.Enum):
@@ -298,7 +313,13 @@ class SubagentBlockNotifier:
             # Top-level session: no parent; the resolve event clears the arm.
             return
         parent_id = child.parent_conversation_id
-        notice = _format_block_notice(child, event)
+        generation = uuid4().hex
+        occurrence = f"framework-block:{parent_id}:{child.id}:{elicitation_id}:{generation}"
+        notice = FrameworkWakeNotice(
+            _format_block_notice(child, event),
+            uuid5(NAMESPACE_URL, occurrence + ":blocked").hex,
+            "blocked",
+        )
         # Register the resolve signal before dispatching so a resolve that
         # lands while the wake is in flight is never missed; the arm check
         # and registration share one critical section, so a resolve landing
@@ -325,7 +346,14 @@ class SubagentBlockNotifier:
                     return
                 verdict = self._verdicts.pop(signal, None)
             await self._deliver_with_retry(
-                parent_id, child, _format_resolution_notice(child, verdict), armed_id=None
+                parent_id,
+                child,
+                FrameworkWakeNotice(
+                    _format_resolution_notice(child, verdict),
+                    uuid5(NAMESPACE_URL, occurrence + ":resolved").hex,
+                    "resolved",
+                ),
+                armed_id=None,
             )
         finally:
             with self._lock:

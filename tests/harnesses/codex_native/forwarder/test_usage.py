@@ -1,3 +1,4 @@
+# Modified for Triune; inherited notices remain applicable.
 """Usage tests for Codex forwarder."""
 
 from __future__ import annotations
@@ -60,3 +61,109 @@ async def test_usage_coalescer_unseeded_omits_model() -> None:
     assert len(client.posts) == 1
     _url, body = client.posts[0]
     assert "model" not in body["data"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("email", [None, "owner@example.test"])
+async def test_account_snapshot_and_sparse_broadcast_do_not_route_to_thread(tmp_path, email):
+    from omnigent.harnesses.codex_native.runtime_notices import CodexRuntimeNotices
+
+    class Native:
+        def __init__(self):
+            self.calls = []
+            self.account = {"type": "chatgpt", "email": email, "planType": "plus"}
+
+        async def request(self, method, params):
+            self.calls.append((method, params))
+            if method == "account/read":
+                return {
+                    "result": {
+                        "account": self.account,
+                        "requiresOpenaiAuth": True,
+                        "workspaceRouting": {
+                            "chatgptAccountId": "workspace-account",
+                            "backendOrigin": "https://chatgpt.com",
+                            "accountRoutingOverride": "NO_CONSTRAINT",
+                        },
+                    }
+                }
+            assert method == "account/rateLimits/read"
+            return {
+                "result": {
+                    "rateLimits": {"primary": {"usedPercent": 95, "resetsAt": 100}},
+                    "ordinaryUsageAllowed": None,
+                    "rateLimitsByLimitId": None,
+                    "rateLimitResetCredits": None,
+                    "accountId": None,
+                    "rateLimitUpsell": None,
+                }
+            }
+
+    client = _RecordingClient()
+    native = Native()
+    observer = CodexRuntimeNotices(client, native, "bound-session", "server-a")
+    await observer.snapshot()
+    state = fwd._CodexForwarderState(parent_session_id="bound-session", runtime_notices=observer)
+    tracker = fwd._CodexElicitationTaskTracker()
+    try:
+        await fwd._handle_event(
+            client,
+            session_id="unrelated-active-chat",
+            bridge_dir=tmp_path,
+            event={
+                "method": "account/rateLimits/updated",
+                "params": {"rateLimits": {"primary": {"usedPercent": 100}}},
+            },
+            usage_coalescer=fwd._SessionUsageCoalescer(client, "unrelated-active-chat"),
+            elicitation_tracker=tracker,
+            forwarder_state=state,
+        )
+        assert [path for path, _ in client.posts] == ["/v1/sessions/bound-session/events"] * 3
+        data = client.posts[-1][1]["data"]
+        assert "account_id" not in data and data["scope_kind"] == "captured_parent"
+        assert data["account"] == native.account
+        assert data["workspace_routing"]["chatgptAccountId"] == "workspace-account"
+        assert native.calls == [
+            ("account/read", {"refreshToken": False}),
+            ("account/rateLimits/read", {}),
+        ]
+        epoch = data["scope_epoch"]
+        native.account = {"type": "chatgpt", "email": None, "planType": "pro"}
+        await observer.handle("account/updated", {"authMode": "chatgpt", "planType": "pro"})
+        assert client.posts[-2][1]["data"]["kind"] == "account"
+        assert client.posts[-2][1]["data"]["account"] is None
+        assert client.posts[-1][1]["data"]["scope_epoch"] != epoch
+        assert native.calls[-2:] == [
+            ("account/read", {"refreshToken": False}),
+            ("account/rateLimits/read", {}),
+        ]
+        await observer.handle("account/updated", {"authMode": None, "planType": None})
+        count = len(client.posts)
+        await observer.handle(
+            "account/rateLimits/updated", {"rateLimits": {"primary": {"usedPercent": 100}}}
+        )
+        assert len(client.posts) == count and client.posts[-1][1]["data"]["account"] is None
+        native.account = {"type": "apiKey"}
+        await observer.snapshot()
+        assert (
+            native.calls[-1][0] == "account/read"
+            and client.posts[-1][1]["data"]["account"] is None
+        )
+        native.account = None
+        await observer.snapshot()
+        assert observer.account is None
+    finally:
+        await tracker.close()
+
+
+@pytest.mark.asyncio
+async def test_completed_codex_message_transports_provider_phase():
+    client = _RecordingClient()
+    for phase in ("commentary", "final_answer", None):
+        assert await fwd._post_agent_message(
+            client,
+            "child",
+            {"turnId": "turn-a"},
+            {"type": "agentMessage", "id": f"item-{phase}", "text": "Observed", "phase": phase},
+        )
+        assert client.posts[-1][1]["data"]["item_data"]["phase"] == phase

@@ -5,12 +5,14 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
+from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.native.shell_resources import (
     ENDED_SHELL_STATUSES,
     SHELL_SOURCES,
@@ -20,6 +22,35 @@ from omnigent.native.shell_resources import (
 from omnigent.server.auth import LEVEL_EDIT, LEVEL_READ
 from omnigent.server.shell_resources import SessionShellResources, registered_shell_resource
 from omnigent.terminals.history import ActivityEntry, ActivityPage
+
+logger = logging.getLogger(__name__)
+
+
+def _read_unavailable(error: HTTPException | OmnigentError, *, missing: bool = False) -> bool:
+    """Recover live availability failures, keeping permission and routing errors intact."""
+    if isinstance(error, OmnigentError):
+        return error.code in {ErrorCode.RUNNER_UNAVAILABLE, ErrorCode.CONFLICT} or (
+            missing and error.code == ErrorCode.NOT_FOUND
+        )
+    if error.status_code in {401, 403, 410}:
+        return False
+    if isinstance(error.detail, dict):
+        payload = error.detail.get("error")
+        code = payload.get("code") if isinstance(payload, dict) else payload
+        if code in {ErrorCode.FORBIDDEN, ErrorCode.UNAUTHORIZED, ErrorCode.WRONG_REPLICA}:
+            return False
+        if code in {"native_shell_control_unavailable", "native_shell_unavailable"}:
+            return True
+        if code is not None and code != ErrorCode.RUNNER_UNAVAILABLE:
+            return missing and code == ErrorCode.NOT_FOUND
+    return error.status_code in {503, 504} or (missing and error.status_code == 404)
+
+
+def _without_live_controls(row: dict[str, Any]) -> dict[str, Any]:
+    if row.get("status") not in ENDED_SHELL_STATUSES:
+        row["status"] = "disconnected"
+    row.update(can_stop=False, stop_url=None, stop_method=None)
+    return row
 
 
 def register_shell_resource_routes(
@@ -50,19 +81,24 @@ def register_shell_resource_routes(
     @router.get("/sessions/{session_id}/resources/shells", response_model=None)
     async def list_shells(request: Request, session_id: str) -> dict[str, Any]:
         conversation = await validate_session(session_id, request, LEVEL_READ)
-        await capture_terminals(session_id, conversation)
         live: list[dict[str, Any]] = []
         warning = None
+        availability = "available"
         try:
+            await capture_terminals(session_id, conversation)
             page = await proxy_get(
                 session_id, f"/v1/sessions/{session_id}/resources/shells", conversation
             )
-        except HTTPException as exc:
-            if exc.status_code not in {404, 409, 502, 503}:
+        except (HTTPException, OmnigentError) as exc:
+            if not _read_unavailable(exc):
                 raise
-            warning = str(exc.detail)
+            logger.debug("Live shell inventory unavailable: session=%s", session_id, exc_info=True)
+            warning = "Live shell controls are unavailable. Showing captured history."
+            availability = "offline"
         else:
-            warning = page.get("warning")
+            if page.get("warning"):
+                warning = "Some live shell controls are unavailable. Showing captured history."
+                availability = "partial"
             data = page.get("data")
             if not isinstance(data, list):
                 raise HTTPException(status_code=502, detail="Invalid runner shell inventory")
@@ -76,8 +112,8 @@ def register_shell_resource_routes(
                 for key in ("can_stop", "stop_url", "stop_method", "stop_disabled_reason"):
                     row[key] = current.get(key)
             elif row.get("status") not in ENDED_SHELL_STATUSES:
-                row["status"] = "disconnected"
-        return {"data": retained, "warning": warning}
+                _without_live_controls(row)
+        return {"data": retained, "warning": warning, "availability": availability}
 
     @router.get(
         "/sessions/{session_id}/resources/shells/{source}/{resource_id}", response_model=None
@@ -88,21 +124,24 @@ def register_shell_resource_routes(
         conversation = await validate_session(session_id, request, LEVEL_READ)
         if source not in SHELL_SOURCES:
             raise HTTPException(status_code=404, detail="Unknown shell resource source")
-        if source == "registered_terminal":
-            await capture_terminals(session_id, conversation)
         try:
+            if source == "registered_terminal":
+                await capture_terminals(session_id, conversation)
             current = await proxy_get(
                 session_id, shell_resource_path(session_id, source, resource_id), conversation
             )
-        except HTTPException as exc:
-            if exc.status_code not in {404, 409, 502, 503}:
+        except (HTTPException, OmnigentError) as exc:
+            if not _read_unavailable(exc, missing=True):
                 raise
             retained = await service.get(session_id, source, resource_id)
             if retained is None:
                 raise
-            if retained.get("status") not in ENDED_SHELL_STATUSES:
-                retained["status"] = "disconnected"
-            return {**retained, "live_error": str(exc.detail)}
+            logger.debug("Live shell read unavailable: session=%s", session_id, exc_info=True)
+            return {
+                **_without_live_controls(retained),
+                "live_error": "Live shell controls are unavailable. Showing captured output.",
+                "availability": "offline",
+            }
         if current.get("source") != source or current.get("resource_id") != resource_id:
             raise HTTPException(status_code=502, detail="Runner shell identity mismatch")
         if source == "registered_terminal" and is_agent_terminal_resource(

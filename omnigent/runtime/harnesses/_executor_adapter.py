@@ -1,3 +1,4 @@
+# Modified for Triune; inherited notices remain applicable.
 """
 Shared :class:`HarnessApp` adapter that drives any inner :class:`Executor`.
 
@@ -35,6 +36,7 @@ from omnigent.inner.executor import (
     InjectionDeliveryAmbiguous,
     Message,
     ReasoningChunk,
+    RuntimeNoticeObservation,
     SubAgentCompleted,
     SubAgentStarted,
     SubAgentToolCall,
@@ -1132,9 +1134,32 @@ class ExecutorAdapter(HarnessApp):
             if isinstance(raw_args, dict):
                 item["arguments"] = raw_args
             ctx.emit(OutputItemDoneEvent(type="response.output_item.done", item=item))
+        elif isinstance(event, RuntimeNoticeObservation):
+            from omnigent.server.schemas import RuntimeNoticeObservedEvent
+
+            ctx.emit(
+                RuntimeNoticeObservedEvent(
+                    type="session.runtime_notice", observation=event.observation
+                )
+            )
         elif isinstance(event, TurnComplete):
-            if event.response is not None:
-                pass
+            if (
+                event.response is not None
+                and not event.continue_turn
+                and event.response_is_authoritative
+            ):
+                ctx.emit(
+                    OutputItemDoneEvent(
+                        type="response.output_item.done",
+                        item={
+                            "type": "message",
+                            "role": "assistant",
+                            "agent": ctx.response_id,
+                            "phase": "final_answer",
+                            "content": [{"type": "output_text", "text": event.response}],
+                        },
+                    )
+                )
             # Capture provider-reported usage for the response.completed payload.
             if event.usage is not None:
                 ctx.provider_usage = event.usage

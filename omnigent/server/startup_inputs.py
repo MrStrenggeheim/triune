@@ -390,6 +390,15 @@ class ManagedStartupInputs:
                 self.conversations.set_labels, session_id, {STARTUP_LABEL: "ready"}
             )
 
+    def schedule_delivery(self, app: Any, session_id: str, item: ConversationItem) -> None:
+        """Keep durable acceptance independent of the HTTP sender and policy wait."""
+        key = (current_workspace_id(), session_id)
+        if self.dispatch is not None and key not in self._deliveries:
+            task = asyncio.create_task(
+                self._deliver(app, session_id, item), name=f"startup-input-{session_id}"
+            )
+            self._deliveries[key] = task
+
     async def _deliver(
         self, app: Any, session_id: str, item: ConversationItem
     ) -> dict[str, Any] | None:
@@ -505,6 +514,15 @@ class ManagedStartupInputs:
             return {"error": str(exc), "delivery_state": "unknown" if uncertain else "failed"}
         finally:
             self._deliveries.pop(key, None)
+            if (
+                isinstance(item.data, MessageData)
+                and item.data.communication is not None
+                and item.data.communication.kind == "system"
+            ):
+                items = await asyncio.to_thread(self.conversations.list_pending_inputs, session_id)
+                head = next((row for row in items if row.status != "failed"), None)
+                if head is not None and head.status == "in_progress" and head.id != item.id:
+                    self.schedule_delivery(app, session_id, head)
 
     async def retry(self, session_id: str) -> bool:
         changed = False

@@ -28,6 +28,7 @@ from sqlalchemy import (
     select,
     text,
     tuple_,
+    union_all,
     update,
 )
 from sqlalchemy.orm import QueryableAttribute, Session, load_only
@@ -129,11 +130,17 @@ from omnigent.stores.conversation_store import (
 )
 from omnigent.stores.conversation_store.message_search import (
     MAX_SEARCH_QUERY,
+    MessageFilter,
+    MessageSearchHit,
     MessageSearchPage,
+    build_chat_hit,
     build_message_hit,
     decode_search_cursor,
     encode_search_cursor,
     literal_matcher,
+    matches_message_filter,
+    message_search_metadata,
+    message_search_source,
     search_fingerprint,
     sqlite_message_search,
 )
@@ -147,6 +154,13 @@ from omnigent.stores.conversation_store.overrides import (
 _logger = logging.getLogger(__name__)
 
 _SESSION_TODOS_STATE_KEY = "_omnigent_native_plan_snapshot_v1"
+_RUNTIME_NOTICES_STATE_KEY = "_triune_runtime_notices_v1"
+
+
+def _runtime_notices_state(value: str | None) -> dict[str, Any]:
+    payload = json.loads(value) if value else {}
+    snapshot = payload.get(_RUNTIME_NOTICES_STATE_KEY, {}) if isinstance(payload, dict) else {}
+    return snapshot if isinstance(snapshot, dict) else {}
 
 
 def _decode_session_state(
@@ -156,6 +170,7 @@ def _decode_session_state(
     state = json.loads(value) if value else {}
     if not isinstance(state, dict):
         raise TypeError("session_state must decode to an object")
+    state.pop(_RUNTIME_NOTICES_STATE_KEY, None)
     raw_todos = state.pop(_SESSION_TODOS_STATE_KEY, None)
     todos: list[dict[str, Any]] = []
     if raw_todos is not None:
@@ -167,10 +182,14 @@ def _decode_session_state(
 def _encode_session_state(
     state: dict[str, Any],
     todos: list[dict[str, Any]] | None,
+    runtime_notices: dict[str, Any] | None = None,
 ) -> str:
     """Serialize policy state while preserving an optional Plan snapshot."""
     payload = dict(state)
     payload.pop(_SESSION_TODOS_STATE_KEY, None)
+    payload.pop(_RUNTIME_NOTICES_STATE_KEY, None)
+    if runtime_notices:
+        payload[_RUNTIME_NOTICES_STATE_KEY] = runtime_notices
     if todos:
         payload[_SESSION_TODOS_STATE_KEY] = todos
     return json.dumps(payload, separators=(",", ":"))
@@ -283,6 +302,7 @@ def _to_conversation(
         session_state=session_state,
         session_usage=session_usage,
         session_todos=session_todos,
+        runtime_notice_state=_runtime_notices_state(meta.session_state if meta else None),
         reasoning_effort=overrides["reasoning_effort"],
         model_override=overrides["model_override"],
         inference_snapshot=(
@@ -859,7 +879,7 @@ def _remap_item_file_references(
     return changed
 
 
-def _ranked_latest_message_items(conversation_ids: list[str]) -> Subquery:
+def _ranked_latest_message_items(conversation_ids: list[str] | Select) -> Subquery:
     """
     Build a ranked latest-message subquery for multiple conversations.
 
@@ -1622,9 +1642,30 @@ class SqlAlchemyConversationStore(ConversationStore):
             meta = session.scalars(q).first()
             if meta is not None:
                 _, todos = _decode_session_state(meta.session_state)
-                meta.session_state = _encode_session_state(state, todos)
+                meta.session_state = _encode_session_state(
+                    state, todos, _runtime_notices_state(meta.session_state)
+                )
 
         run_write_transaction(self._session_immediate, "set_session_state", write)
+
+    def set_runtime_notice_state(self, conversation_id: str, snapshot: dict[str, Any]) -> bool:
+        """Replace runtime observations while preserving policy state and the native Plan."""
+
+        def write(session: Session) -> bool:
+            q = select(SqlConversationMetadata).where(
+                SqlConversationMetadata.workspace_id == current_workspace_id(),
+                SqlConversationMetadata.id == conversation_id,
+            )
+            if self._meta_supports_for_update:
+                q = q.with_for_update()
+            meta = session.scalars(q).first()
+            if meta is None:
+                return False
+            state, todos = _decode_session_state(meta.session_state)
+            meta.session_state = _encode_session_state(state, todos, snapshot)
+            return True
+
+        return run_write_transaction(self._session_immediate, "set_runtime_notice_state", write)
 
     def set_session_usage(
         self,
@@ -1682,7 +1723,9 @@ class SqlAlchemyConversationStore(ConversationStore):
             if meta is None:
                 return False
             state, _ = _decode_session_state(meta.session_state)
-            meta.session_state = _encode_session_state(state, validated)
+            meta.session_state = _encode_session_state(
+                state, validated, _runtime_notices_state(meta.session_state)
+            )
             return True
 
         return run_write_transaction(self._session_immediate, "set_session_todos", write)
@@ -2162,16 +2205,19 @@ class SqlAlchemyConversationStore(ConversationStore):
         shared_only: bool = False,
         include_archived: bool = False,
         archived_only: bool = False,
+        message_filter: MessageFilter = "all",
+        include_titles: bool = False,
     ) -> MessageSearchPage:
-        """Search persisted messages without fetching conversation histories.
+        """Search authorized messages and optional titles, newest first with stable ties.
 
-        Order is session ID, immutable item position, ID and creation time.
-        Limit+1 establishes has_more without a count or an offset scan.
+        Filter decoded candidate pages to support compressed payloads.
         """
         if not 1 <= limit <= 100:
             raise ValueError("Message search limit must be between 1 and 100")
         if len(query) > MAX_SEARCH_QUERY or "\x00" in query:
             raise ValueError("Invalid message search query")
+        if message_filter not in ("all", "final", "user"):
+            raise ValueError("Invalid message search filter")
         fingerprint = search_fingerprint(
             {
                 "query": query,
@@ -2182,6 +2228,8 @@ class SqlAlchemyConversationStore(ConversationStore):
                 "shared_only": shared_only,
                 "include_archived": include_archived,
                 "archived_only": archived_only,
+                "message_filter": message_filter,
+                "include_titles": include_titles,
                 "workspace": current_workspace_id(),
                 "server": str(self._conv_engine.url),
             }
@@ -2197,26 +2245,16 @@ class SqlAlchemyConversationStore(ConversationStore):
         ):
             return MessageSearchPage(data=[], has_more=False, next_cursor=None)
         matcher = literal_matcher(query)
-        stmt = (
-            select(SqlConversationItem, SqlConversation.title)
-            .join(
-                SqlConversation,
-                and_(
-                    SqlConversation.workspace_id == SqlConversationItem.workspace_id,
-                    SqlConversation.id == SqlConversationItem.conversation_id,
-                ),
-            )
-            .where(
-                SqlConversation.workspace_id == current_workspace_id(),
-                SqlConversation.agent_id.is_not(None),
-                SqlConversationItem.type == encode_item_type("message"),
-            )
+        eligible = select(
+            SqlConversation.id, SqlConversation.title, SqlConversation.created_at
+        ).where(
+            SqlConversation.workspace_id == current_workspace_id(),
+            SqlConversation.agent_id.is_not(None),
         )
         if conversation_id is not None:
-            stmt = stmt.where(SqlConversation.id == conversation_id)
+            eligible = eligible.where(SqlConversation.id == conversation_id)
         else:
-            # Delegates inherit their root's ACL; branches remain independent roots.
-            # Authorizing roots also excludes orphaned children and stale child grants.
+            # Delegates inherit root access; branches remain independent roots.
             authorized_roots, _ = self._conversation_permission_scope(
                 select(SqlConversation.id).where(
                     SqlConversation.workspace_id == current_workspace_id(),
@@ -2226,27 +2264,65 @@ class SqlAlchemyConversationStore(ConversationStore):
                 owned_by=owned_by,
                 shared_only=shared_only,
             )
-            stmt = stmt.where(SqlConversation.root_conversation_id.in_(authorized_roots))
+            eligible = eligible.where(SqlConversation.root_conversation_id.in_(authorized_roots))
         if archived_only:
-            stmt = stmt.where(SqlConversation.archived.is_(True))
+            eligible = eligible.where(SqlConversation.archived.is_(True))
         elif not include_archived:
-            stmt = stmt.where(SqlConversation.archived.is_(False))
-        if anchor:
-            stmt = stmt.where(
-                tuple_(
-                    SqlConversationItem.conversation_id,
-                    SqlConversationItem.position,
-                    SqlConversationItem.id,
-                    SqlConversationItem.created_at,
-                )
-                > anchor
+            eligible = eligible.where(SqlConversation.archived.is_(False))
+        chats = eligible.cte("searchable_chats")
+
+        def contains(column: Any) -> Any:
+            if self._conv_engine.dialect.name == "sqlite":
+                return func.omnigent_message_matches(column) == 1
+            return column.ilike(_like_contains_pattern(query), escape=_LIKE_ESCAPE)
+
+        messages = (
+            select(
+                SqlConversationItem.conversation_id,
+                chats.c.title,
+                SqlConversationItem.id.label("item_id"),
+                SqlConversationItem.position,
+                SqlConversationItem.created_at,
+                SqlConversationItem.data,
+                SqlConversationItem.created_by,
+                literal("message").label("kind"),
             )
-        stmt = stmt.order_by(
-            SqlConversationItem.conversation_id,
-            SqlConversationItem.position,
-            SqlConversationItem.id,
-            SqlConversationItem.created_at,
-        ).limit(limit + 1)
+            .join(chats, chats.c.id == SqlConversationItem.conversation_id)
+            .where(
+                SqlConversationItem.workspace_id == current_workspace_id(),
+                SqlConversationItem.type == encode_item_type("message"),
+                contains(SqlConversationItem.search_text),
+            )
+        )
+        candidates = messages.subquery()
+        if include_titles:
+            title_ids = select(chats.c.id).where(contains(chats.c.title))
+            ranked = _ranked_latest_message_items(title_ids)
+            latest = select(ranked).where(ranked.c.row_num == 1).subquery()
+            titles = (
+                select(
+                    chats.c.id.label("conversation_id"),
+                    chats.c.title,
+                    func.coalesce(latest.c.id, chats.c.id).label("item_id"),
+                    func.coalesce(latest.c.position, 0).label("position"),
+                    func.coalesce(latest.c.created_at, chats.c.created_at).label("created_at"),
+                    latest.c.data,
+                    latest.c.created_by,
+                    literal("chat").label("kind"),
+                )
+                .outerjoin(latest, latest.c.conversation_id == chats.c.id)
+                .where(contains(chats.c.title))
+            )
+            candidates = union_all(messages, titles).subquery()
+        ordering = (
+            candidates.c.created_at.desc(),
+            candidates.c.conversation_id,
+            candidates.c.position,
+            candidates.c.item_id,
+            candidates.c.kind,
+        )
+        batch_size = max(64, limit + 1) if message_filter != "all" else limit + 1
+        hits: list[tuple[MessageSearchHit, Any]] = []
         with self._conv_session("search_session_messages") as session:
             if self._conv_engine.dialect.name == "sqlite":
                 connection = cast(
@@ -2255,52 +2331,91 @@ class SqlAlchemyConversationStore(ConversationStore):
                 search_scope = sqlite_message_search(
                     connection, matcher, _SEARCH_STATEMENT_TIMEOUT_MS
                 )
-                stmt = stmt.where(
-                    func.omnigent_message_matches(SqlConversationItem.search_text) == 1
-                )
             else:
                 search_scope = nullcontext()
-                stmt = stmt.where(
-                    SqlConversationItem.search_text.ilike(
-                        _like_contains_pattern(query), escape=_LIKE_ESCAPE
-                    )
-                )
                 if is_postgresql_family(self._conv_engine.dialect.name):
                     session.execute(
                         text(f"SET LOCAL statement_timeout = {int(_SEARCH_STATEMENT_TIMEOUT_MS)}")
                     )
             with search_scope:
-                rows = session.execute(stmt).all()
-            has_more = len(rows) > limit
-            rows = rows[:limit]
-            decoded = self._decode_item_data_batch([row.data for row, _title in rows])
-            hits = []
-            for (row, title), data in zip(rows, decoded, strict=True):
-                message = json.loads(data)
-                # The search index strips NULs; offsets must address stored content.
-                source = " ".join(
-                    block["text"]
-                    for block in message["content"]
-                    if isinstance(block, dict) and block.get("text")
-                )
-                hit = build_message_hit(
-                    source=source,
-                    matcher=matcher,
-                    session_id=row.conversation_id,
-                    title=title,
-                    item_id=row.id,
-                    role=message["role"],
-                    created_at=row.created_at,
-                )
-                if hit is not None:
-                    hits.append(hit)
-            next_cursor = None
-            if has_more and rows:
-                last = rows[-1][0]
-                next_cursor = encode_search_cursor(
-                    fingerprint, last.conversation_id, last.position, last.id, last.created_at
-                )
-            return MessageSearchPage(data=hits, has_more=has_more, next_cursor=next_cursor)
+                while len(hits) <= limit:
+                    stmt = select(candidates).order_by(*ordering).limit(batch_size)
+                    if anchor:
+                        cid, position, item_id, created_at, kind = anchor
+                        stmt = stmt.where(
+                            or_(
+                                candidates.c.created_at < created_at,
+                                and_(
+                                    candidates.c.created_at == created_at,
+                                    tuple_(
+                                        candidates.c.conversation_id,
+                                        candidates.c.position,
+                                        candidates.c.item_id,
+                                        candidates.c.kind,
+                                    )
+                                    > (cid, position, item_id, kind),
+                                ),
+                            )
+                        )
+                    rows = session.execute(stmt).all()
+                    populated = [row for row in rows if row.data is not None]
+                    decoded = iter(self._decode_item_data_batch([row.data for row in populated]))
+                    for row in rows:
+                        message = json.loads(next(decoded)) if row.data is not None else None
+                        if row.kind == "chat":
+                            hit = build_chat_hit(
+                                title=row.title,
+                                matcher=matcher,
+                                session_id=row.conversation_id,
+                                item_id=row.item_id,
+                                created_at=row.created_at,
+                                message=message,
+                                created_by=row.created_by,
+                            )
+                        else:
+                            assert message is not None
+                            if not matches_message_filter(message, message_filter):
+                                continue
+                            hit = build_message_hit(
+                                source=message_search_source(message),
+                                matcher=matcher,
+                                session_id=row.conversation_id,
+                                title=row.title,
+                                item_id=row.item_id,
+                                role=message["role"],
+                                created_at=row.created_at,
+                                **message_search_metadata(message, row.created_by),
+                            )
+                        if hit is not None:
+                            hits.append((hit, row))
+                            if len(hits) > limit:
+                                break
+                    if len(rows) < batch_size or len(hits) > limit:
+                        break
+                    last = rows[-1]
+                    anchor = (
+                        last.conversation_id,
+                        last.position,
+                        last.item_id,
+                        last.created_at,
+                        last.kind,
+                    )
+        has_more = len(hits) > limit
+        hits = hits[:limit]
+        next_cursor = None
+        if has_more:
+            last = hits[-1][1]
+            next_cursor = encode_search_cursor(
+                fingerprint,
+                last.conversation_id,
+                last.position,
+                last.item_id,
+                last.created_at,
+                last.kind,
+            )
+        return MessageSearchPage(
+            data=[hit for hit, _row in hits], has_more=has_more, next_cursor=next_cursor
+        )
 
     def search(
         self,
@@ -2515,8 +2630,16 @@ class SqlAlchemyConversationStore(ConversationStore):
             return _to_item(row, data)
 
     def confirm_framework_input(
-        self, conversation_id: str, item_id: str, response_id: str
+        self,
+        conversation_id: str,
+        item_id: str,
+        response_id: str,
+        *,
+        receipt: str = "transcript",
     ) -> ConversationItem | None:
+        if receipt not in {"transcript", "model_consumed"}:
+            raise ValueError("Invalid framework receipt")
+
         def write(session: Session) -> ConversationItem | None:
             self._lock_conversation(session, conversation_id)
             row = session.execute(
@@ -2533,19 +2656,28 @@ class SqlAlchemyConversationStore(ConversationStore):
             origin = item.data.communication if isinstance(item.data, MessageData) else None
             if origin is None or origin.kind != "system" or origin.message_id != item_id:
                 raise ValueError("Framework receipt requires a registered system input")
-            if origin.delivery_state == "confirmed" and origin.receipt == "transcript":
+            if origin.delivery_state == "confirmed" and origin.receipt == receipt:
                 return None
             updated = item.data.model_copy(
                 update={
                     "communication": origin.model_copy(
-                        update={"delivery_state": "confirmed", "receipt": "transcript"}
+                        update={"delivery_state": "confirmed", "receipt": receipt}
                     ),
                     "user_authored": False,
                 }
             )
             row.data = self._encode_item_data(updated.model_dump_json())
             row.response_id = response_id
-            return item.model_copy(update={"data": updated, "response_id": response_id})
+            row.status = encode_item_status("completed")
+            row.created_by = None
+            return item.model_copy(
+                update={
+                    "data": updated,
+                    "response_id": response_id,
+                    "status": "completed",
+                    "created_by": None,
+                }
+            )
 
         return run_write_transaction(
             self._conv_session_immediate, "confirm_framework_input", write
@@ -2582,34 +2714,20 @@ class SqlAlchemyConversationStore(ConversationStore):
                 resource["agent_name_source"] = "native"
             if data.get("task_summary") and not resource.get("task_summary"):
                 resource["title"] = data["task_summary"]
+            from omnigent.entities.report_finality import REPORT_FIELDS, replace_report_snapshot
+
+            resource = replace_report_snapshot(resource, data)
             for key, value in data.items():
-                if not value:
+                if key in REPORT_FIELDS:
                     continue
-                if (
-                    key in {"result_text", "result_ref", "result_refs", "result_parts"}
-                    and resource.get("turn_id")
-                    and data.get("turn_id") != resource["turn_id"]
-                ):
+                if not value:
                     continue
                 previous = resource.get(key)
                 if not previous or (
-                    key in {"result_text", "task_input"}
+                    key == "task_input"
                     and isinstance(value, str)
                     and isinstance(previous, str)
                     and len(value) > len(previous)
-                ):
-                    resource[key] = value
-                elif (
-                    key == "result_refs" and isinstance(value, list) and isinstance(previous, list)
-                ):
-                    resource[key] = [*previous, *[ref for ref in value if ref not in previous]][
-                        :32
-                    ]
-                elif (
-                    key == "result_parts"
-                    and isinstance(value, list)
-                    and isinstance(previous, list)
-                    and len(json.dumps(value)) > len(json.dumps(previous))
                 ):
                     resource[key] = value
             if resource == item.data.resource:

@@ -1,3 +1,4 @@
+# Modified for Triune; inherited notices remain applicable.
 """Session lifecycle tests for Claude-native forwarding."""
 
 from __future__ import annotations
@@ -1044,3 +1045,45 @@ async def test_forwarder_does_not_mirror_when_hook_payload_lacks_session_id(
     # — a regression that would route empty/null
     # external_session_id values to the server.
     assert "PATCH" not in methods, f"unexpected PATCH(es): {drained}"
+
+
+@pytest.mark.asyncio
+async def test_native_notification_hook_is_observation_and_replay_is_deduped(tmp_path):
+    from omnigent.harnesses.claude_native import forwarder as fwd
+    from omnigent.harnesses.claude_native.bridge import record_hook_event
+
+    record_hook_event(
+        tmp_path,
+        {
+            "hook_event_name": "Notification",
+            "session_id": "claude-a",
+            "notification_type": "idle_prompt",
+            "message": "Ready for input",
+        },
+    )
+    calls = []
+
+    def handler(request):
+        calls.append(json.loads(request.content))
+        return httpx.Response(202)
+
+    async with httpx.AsyncClient(
+        base_url="http://local.test", transport=httpx.MockTransport(handler)
+    ) as client:
+        state = fwd.HookForwardState(event_cursor=0)
+        for _ in range(2):
+            state = await fwd._forward_available_status_events(
+                client=client,
+                session_id="parent",
+                bridge_dir=tmp_path,
+                state=state,
+                retry_tracker=fwd._PostRetryTracker(),
+                dedupe=fwd._ForwardDedupeState(),
+                task_subjects={},
+                task_statuses={},
+                task_order=[],
+            )
+    assert len(calls) == 1 and calls[0]["type"] == "external_runtime_notice"
+    assert calls[0]["data"]["kind"] == "nativeNotification"
+    assert calls[0]["data"]["state"]["message"] == "Ready for input"
+    assert "reset_at" not in calls[0]["data"]["state"]

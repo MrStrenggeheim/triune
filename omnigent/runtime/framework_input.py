@@ -58,3 +58,31 @@ async def register_framework_input(
     )
     response.raise_for_status()
     return peer_model_content(content, origin)
+
+
+async def dispatch_framework_input(
+    server_client: httpx.AsyncClient,
+    session_id: str,
+    occurrence_id: str,
+    text: str,
+    label: str,
+    *,
+    child_id: str,
+    kind: str = "completed",
+) -> None:
+    """Accept one durable System input; retries retain the occurrence identity."""
+    response = await server_client.post(
+        f"/v1/sessions/{session_id}/events",
+        json={
+            "type": "framework_input",
+            "data": {
+                "occurrence_id": occurrence_id,
+                "message": text,
+                "label": label,
+                "child_id": child_id,
+                "kind": kind,
+            },
+        },
+        timeout=10.0,
+    )
+    response.raise_for_status()

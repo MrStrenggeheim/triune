@@ -1,3 +1,4 @@
+# Modified for Triune; inherited notices remain applicable.
 """Runner-local registry for asynchronous sub-agent dispatches.
 
 Tracks each ``sys_session_send`` dispatch from launch to terminal status,
@@ -24,7 +25,6 @@ from fastapi.responses import JSONResponse
 from omnigent._wrapper_labels import WRAPPER_LABEL_KEY
 from omnigent.debug_logging import runner_primary_session_id
 from omnigent.native.native_coding_agents import native_coding_agent_for_harness
-from omnigent.runner.policy_proxy import _ASK_GATE_DELIVERY_TIMEOUT
 from omnigent.util.json_types import JsonObject as _JsonObject
 
 if TYPE_CHECKING:
@@ -934,6 +934,9 @@ async def _deliver_subagent_wake_post(
     notice: str,
     *,
     created_by: str | None = None,
+    occurrence_id: str | None = None,
+    child_id: str | None = None,
+    kind: str = "completed",
 ) -> bool:
     """
     POST a sub-agent wake notice with a bounded retry on transient failure.
@@ -954,53 +957,23 @@ async def _deliver_subagent_wake_post(
     :returns: ``True`` if a 2xx was confirmed, ``False`` if every attempt
         failed (transport error, timeout, or non-2xx response).
     """
-    attribution_created_by = created_by
+    del created_by  # System delivery has no human attribution.
+    from omnigent.runtime.framework_input import dispatch_framework_input
+
+    input_id = occurrence_id or uuid.uuid4().hex
     for attempt in range(1, _WAKE_POST_MAX_ATTEMPTS + 1):
         try:
-            resp = await server_client.post(
-                f"/v1/sessions/{parent_id}/events",
-                json={
-                    "type": "message",
-                    "data": {
-                        "role": "user",
-                        "content": [{"type": "input_text", "text": notice}],
-                    },
-                    **(
-                        {"created_by": attribution_created_by}
-                        if attribution_created_by is not None
-                        else {}
-                    ),
-                },
-                # The server gates this injected wake at the parent's REQUEST
-                # phase, which can PARK on a human ASK (e.g. session_cost_budget)
-                # for up to the deciding policy's ``ask_timeout`` (default one
-                # day). A 30s read budget severed that park after 30s → the
-                # TimeoutError below retried → each retry re-posted the notice
-                # and parked ANOTHER gate → duplicate approval cards, and the
-                # gate never cleanly blocked. Hold the read budget at one day so
-                # this POST waits for the real verdict (one held connection, one
-                # card); fast connect so an unreachable parent runner still
-                # fails out into the bounded retry below.
-                timeout=_ASK_GATE_DELIVERY_TIMEOUT,
+            await dispatch_framework_input(
+                server_client,
+                parent_id,
+                input_id,
+                notice,
+                "Subagent results available",
+                child_id=child_id or parent_id,
+                kind=kind,
             )
-            # Treat a non-2xx RESPONSE (e.g. a genuine 503 JSONResponse) as a
-            # failure — httpx does not raise on status by itself.
-            resp.raise_for_status()
             return True
         except (TimeoutError, httpx.HTTPError) as exc:
-            if (
-                attribution_created_by is not None
-                and isinstance(exc, httpx.HTTPStatusError)
-                and exc.response.status_code == 403
-            ):
-                _logger.debug(
-                    "Sub-agent wake POST attribution rejected for parent=%s; "
-                    "retrying without actor",
-                    parent_id,
-                    extra={"session_id": runner_primary_session_id()},
-                )
-                attribution_created_by = None
-                continue
             last_attempt = attempt >= _WAKE_POST_MAX_ATTEMPTS
             retryable = isinstance(exc, asyncio.TimeoutError) or _wake_post_is_retryable(exc)
             _logger.debug(

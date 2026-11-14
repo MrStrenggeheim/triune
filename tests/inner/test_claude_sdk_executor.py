@@ -1,3 +1,4 @@
+# Modified for Triune; inherited notices remain applicable.
 """Tests for ClaudeSDKExecutor."""
 
 import asyncio
@@ -4074,7 +4075,24 @@ async def test_result_message_usage_populates_turn_complete_usage() -> None:
         StreamEvent = SDKStreamEvent
         ResultMessage = SDKResultMessage
         ClaudeAgentOptions = SDKClaudeAgentOptions
-        messages = [sdk_result]
+        from claude_agent_sdk.types import RateLimitEvent, RateLimitInfo
+
+        messages = [
+            RateLimitEvent(
+                rate_limit_info=RateLimitInfo(status="allowed_warning", resets_at=321),
+                uuid="rate-event",
+                session_id="s1",
+            ),
+            SDKStreamEvent(
+                uuid="stream-event",
+                session_id="s1",
+                event={
+                    "type": "content_block_delta",
+                    "delta": {"type": "text_delta", "text": "Long progress before the result."},
+                },
+            ),
+            sdk_result,
+        ]
 
         class ClaudeSDKClient(_SDKClient):
             async def receive_response(self):
@@ -4093,6 +4111,14 @@ async def test_result_message_usage_populates_turn_complete_usage() -> None:
         ]
 
     turn = next(e for e in events if isinstance(e, TurnComplete))
+
+    from omnigent.inner.executor import RuntimeNoticeObservation
+
+    assert turn.response == "Hello" and turn.response_is_authoritative
+    assert any(isinstance(event, TextChunk) and "progress" in event.text for event in events)
+    observation = next(event for event in events if isinstance(event, RuntimeNoticeObservation))
+    assert observation.observation["state"]["status"] == "allowed_warning"
+    assert observation.observation["state"]["resets_at"] == 321
 
     # Provider-reported counts must appear verbatim — if this is None the
     # REPL context ring will never update after the first turn for claude-sdk.

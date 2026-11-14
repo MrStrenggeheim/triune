@@ -1356,6 +1356,24 @@ class ElicitationResult(BaseModel):
 # ── Sessions (/v1/sessions) ────────────────────────────────────
 
 
+class RuntimeNotice(BaseModel):
+    """An observed provider notice with no implied native response action."""
+
+    id: str
+    revision: str | None = None
+    title: str
+    message: str
+    severity: Literal["info", "warning", "error"]
+    provider: str | None = None
+    created_at: float
+    reset_at: float | None = None
+    requires_action: bool = False
+
+
+class RuntimeNoticesResponse(BaseModel):
+    data: list[RuntimeNotice]
+
+
 class SessionEventInput(BaseModel):
     """
     A single client-submitted event/input item for a session.
@@ -3309,6 +3327,9 @@ class _SSEEventBase(BaseModel):
     """
 
     sequence_number: int | None = None
+    framework_input_ids: list[str] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     model_config = ConfigDict(extra="ignore")
 
@@ -3619,6 +3640,18 @@ class SessionAgentChangedEvent(_SSEEventBase):
     conversation_id: str
     agent_id: str
     agent_name: str
+
+
+class RuntimeNoticeObservedEvent(_SSEEventBase):
+    """Internal SDK observer transport; the server persists before publishing."""
+
+    type: Literal["session.runtime_notice"]
+    observation: dict[str, Any]
+
+
+class RuntimeNoticesChangedEvent(_SSEEventBase):
+    type: Literal["session.runtime_notices"]
+    conversation_id: str
 
 
 class SessionTodosEvent(_SSEEventBase):
@@ -5039,6 +5072,8 @@ ServerStreamEvent = Annotated[
     | SessionCodexApprovalModeEvent
     | SessionAgentChangedEvent
     | SessionTodosEvent
+    | RuntimeNoticeObservedEvent
+    | RuntimeNoticesChangedEvent
     | SessionTerminalPendingEvent
     | SessionSandboxStatusEvent
     | SessionMcpStartupEvent

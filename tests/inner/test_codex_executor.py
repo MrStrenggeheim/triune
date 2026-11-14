@@ -1,3 +1,4 @@
+# Modified for Triune; inherited notices remain applicable.
 """Tests for CodexExecutor."""
 
 import asyncio
@@ -1595,6 +1596,12 @@ class TestCodexExecutor(unittest.TestCase):
                             },
                         }
                     )
+                    session._events.put_nowait(
+                        {
+                            "method": "turn/completed",
+                            "params": {"turn": {"id": "turn-1", "status": "completed"}},
+                        }
+                    )
 
                 inject_task = asyncio.create_task(_inject_final_after_warning())
                 with self.assertLogs("omnigent.inner.codex_executor", level="WARNING") as cm:
@@ -1624,7 +1631,7 @@ class TestCodexExecutor(unittest.TestCase):
 
         _run(_t())
 
-    def test_app_server_run_turn_finishes_on_final_answer_item_without_turn_completed(self):
+    def test_app_server_run_turn_waits_for_terminal_after_final_answer_item(self):
         async def _t():
             session = _CodexAppServerSession(
                 codex_path="/bin/echo",
@@ -1649,6 +1656,12 @@ class TestCodexExecutor(unittest.TestCase):
                             "text": "done",
                         },
                     },
+                }
+            )
+            await session._events.put(
+                {
+                    "method": "turn/completed",
+                    "params": {"turn": {"id": "turn-1", "status": "completed"}},
                 }
             )
 
@@ -2203,6 +2216,12 @@ class TestCodexExecutor(unittest.TestCase):
                         },
                     }
                 )
+                session._events.put_nowait(
+                    {
+                        "method": "turn/completed",
+                        "params": {"turn": {"id": "turn-1", "status": "completed"}},
+                    }
+                )
 
             inject_task = asyncio.create_task(_inject_trailing_final_answer())
             events = [
@@ -2321,6 +2340,12 @@ class TestCodexExecutor(unittest.TestCase):
                         },
                     }
                 )
+                session._events.put_nowait(
+                    {
+                        "method": "turn/completed",
+                        "params": {"turn": {"id": "turn-1", "status": "completed"}},
+                    }
+                )
 
             inject_task = asyncio.create_task(_inject())
             events = [
@@ -2401,6 +2426,12 @@ class TestCodexExecutor(unittest.TestCase):
                         },
                     }
                 )
+                session._events.put_nowait(
+                    {
+                        "method": "turn/completed",
+                        "params": {"turn": {"id": "turn-1", "status": "completed"}},
+                    }
+                )
 
             inject_task = asyncio.create_task(_inject())
             events = [
@@ -2475,6 +2506,12 @@ class TestCodexExecutor(unittest.TestCase):
                                 "text": "Answer.",
                             },
                         },
+                    }
+                )
+                session._events.put_nowait(
+                    {
+                        "method": "turn/completed",
+                        "params": {"turn": {"id": "turn-1", "status": "completed"}},
                     }
                 )
 
@@ -2861,6 +2898,12 @@ async def test_run_turn_refuses_to_adopt_stale_final_answer_event() -> None:
                 },
             }
         )
+        session._events.put_nowait(
+            {
+                "method": "turn/completed",
+                "params": {"turn": {"id": "turn-1", "status": "completed"}},
+            }
+        )
         # The real turn-2 final answer.
         session._events.put_nowait(
             {
@@ -2874,6 +2917,12 @@ async def test_run_turn_refuses_to_adopt_stale_final_answer_event() -> None:
                         "phase": "final_answer",
                     },
                 },
+            }
+        )
+        session._events.put_nowait(
+            {
+                "method": "turn/completed",
+                "params": {"turn": {"id": "turn-2", "status": "completed"}},
             }
         )
 
@@ -2949,6 +2998,12 @@ async def test_run_turn_still_adopts_non_terminal_first_event() -> None:
                         "phase": "final_answer",
                     },
                 },
+            }
+        )
+        session._events.put_nowait(
+            {
+                "method": "turn/completed",
+                "params": {"turn": {"id": "turn-2-rewritten", "status": "completed"}},
             }
         )
 

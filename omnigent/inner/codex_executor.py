@@ -1,3 +1,4 @@
+# Modified for Triune; inherited notices remain applicable.
 """CodexExecutor: run agents through the Codex App Server.
 
 This executor keeps one long-lived ``codex app-server`` subprocess per
@@ -107,6 +108,7 @@ from .executor import (
     ToolCallRequest,
     ToolCallStatus,
     ToolSpec,
+    TurnCancelled,
     TurnComplete,
     classify_tool_result,
     describe_exception,
@@ -3536,6 +3538,7 @@ class _CodexAppServerSession:
         active_turn_id: str,
         message_buffers: dict[str, str],
         final_response: str,
+        final_answers: dict[str, str] | None = None,
     ) -> str:
         """Collect a trailing final-answer item that arrives after ``turn/completed``.
 
@@ -3595,7 +3598,9 @@ class _CodexAppServerSession:
             if phase == "final_answer" or phase is None:
                 final_response = completed_text
             if phase == "final_answer":
-                return final_response
+                if final_answers is not None:
+                    final_answers[str(item.get("id"))] = completed_text
+                return "\n\n".join(final_answers.values()) if final_answers else final_response
 
     async def _resolve_default_effort(self) -> str:
         """Resolve the thread's original configured or model-default effort."""
@@ -3814,6 +3819,7 @@ class _CodexAppServerSession:
         observed_builtin_tool_ids: set[str] = set()
         completed_builtin_tool_ids: set[str] = set()
         final_response = ""
+        final_answers: dict[str, str] = {}
         observed_turn_id: str | None = None
 
         def _event_turn_matches(params: CodexParams) -> bool:
@@ -4085,17 +4091,8 @@ class _CodexAppServerSession:
                         if phase == "final_answer" or phase is None:
                             final_response = completed_text
                         if phase == "final_answer":
-                            # Diagnostic: log response head + turn id so
-                            # ghost-events surface in CI logs.
-                            logger.info(
-                                "Codex TurnComplete: turn_id=%s response_head=%r",
-                                active_turn_id,
-                                final_response[:120],
-                            )
-                            turn_usage = self._consume_turn_usage()
-                            _notify_usage_from_dict(model=model, usage=turn_usage)
-                            yield TurnComplete(response=final_response, usage=turn_usage)
-                            return
+                            final_answers[completed_item_id] = completed_text
+                            final_response = "\n\n".join(final_answers.values())
                         continue
                     if item_type == "dynamicToolCall":
                         raw_dyn_call_id = item.get("id")
@@ -4147,15 +4144,27 @@ class _CodexAppServerSession:
                         self._certificate_failure = None
                     if not final_response:
                         final_response = _latest_buffered_agent_message(message_buffers)
-                    if not final_response:
+                    if not final_answers:
                         final_response = await self._drain_turn_completed_tail(
                             active_turn_id=active_turn_id,
                             message_buffers=message_buffers,
                             final_response=final_response,
+                            final_answers=final_answers,
                         )
+                    status = _codex_turn_status(turn)
+                    if status == "interrupted":
+                        yield TurnCancelled(reason="native_turn_interrupted")
+                        return
+                    if status == "failed":
+                        yield ExecutorError(message=str(turn.get("error") or "Codex turn failed"))
+                        return
                     turn_usage = self._consume_turn_usage()
                     _notify_usage_from_dict(model=model, usage=turn_usage)
-                    yield TurnComplete(response=final_response, usage=turn_usage)
+                    yield TurnComplete(
+                        response=final_response,
+                        usage=turn_usage,
+                        response_is_authoritative=bool(final_answers),
+                    )
                     return
 
                 if method == "turn/failed":

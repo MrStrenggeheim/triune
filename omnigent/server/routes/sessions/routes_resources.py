@@ -606,6 +606,10 @@ def register_resources_routes(
             conversation=conversation,
         )
         if runner_client is None:
+            if preserve_errors:
+                raise OmnigentError(
+                    "The session host is unavailable", code=ErrorCode.RUNNER_UNAVAILABLE
+                )
             raise HTTPException(
                 status_code=502,
                 detail="no runner available for resource access",
@@ -613,6 +617,10 @@ def register_resources_routes(
         try:
             resp = await runner_client.get(path, params=params, timeout=timeout)
         except (httpx.HTTPError, ConnectionError) as exc:
+            if preserve_errors:
+                raise OmnigentError(
+                    "The session host is unavailable", code=ErrorCode.RUNNER_UNAVAILABLE
+                ) from exc
             raise HTTPException(
                 status_code=502,
                 detail="runner resource endpoint unavailable",
@@ -1361,11 +1369,22 @@ def register_resources_routes(
 
     from omnigent.server.shell_resource_routes import register_shell_resource_routes
 
+    async def _proxy_shell_read(
+        session_id: str, path: str, conversation: Conversation
+    ) -> dict[str, Any]:
+        return await _proxy_get_to_runner(
+            session_id,
+            path,
+            conversation,
+            preserve_errors=True,
+            unsupported_endpoint_message="Live shell controls are unavailable on this host",
+        )
+
     register_shell_resource_routes(
         router,
         service=shell_resources or SessionShellResources(artifact_store),
         validate_session=_validate_session,
-        proxy_get=_proxy_get_to_runner,
+        proxy_get=_proxy_shell_read,
         proxy_post=_proxy_post_to_runner,
         activity_for_conversation=_activity_for_conversation,
     )

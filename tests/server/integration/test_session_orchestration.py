@@ -1737,3 +1737,160 @@ async def test_buffered_peer_check_requires_destination_runner_and_current_sourc
     permissions.ensure_user("bob")
     permissions.grant("bob", source["id"], LEVEL_READ)
     assert (await auth_client.post(url, json=event)).status_code == 403
+
+
+async def test_runtime_notices_use_bound_transport_and_authorized_saved_get(
+    auth_client, peers, db_uri
+):
+    source, target, _ = peers
+    path = f"/v1/sessions/{source['id']}/runtime-notices"
+    assert (await auth_client.get(path)).json() == {"data": []}
+    event = {
+        "type": "external_runtime_notice",
+        "data": {
+            "provider": "codex",
+            "source_instance": "server-one",
+            "scope_kind": "captured_parent",
+            "scope_epoch": "connection-login-one",
+            "account": {"type": "chatgpt", "email": None, "planType": "plus"},
+            "workspace_routing": None,
+            "sequence": 1,
+            "observed_at": 123,
+            "kind": "rate_limit",
+            "state": {"rateLimits": {"primary": {"usedPercent": 100}}},
+        },
+    }
+    posted = await auth_client.post(f"/v1/sessions/{source['id']}/events", json=event)
+    assert posted.status_code == 202, posted.text
+    [notice] = (await auth_client.get(path)).json()["data"]
+    assert notice["severity"] == "error" and notice["created_at"] == 123
+    assert notice["reset_at"] is None and notice["revision"]
+    assert (await auth_client.get(f"/v1/sessions/{target['id']}/runtime-notices")).json() == {
+        "data": []
+    }
+    auth_client.headers.pop(RUNNER_TUNNEL_TOKEN_HEADER)
+    event["data"]["sequence"] = 2
+    assert (
+        await auth_client.post(f"/v1/sessions/{source['id']}/events", json=event)
+    ).status_code == 403
+    permissions = SqlAlchemyPermissionStore(db_uri)
+    permissions.ensure_user("bob")
+    permissions.grant("bob", source["id"], LEVEL_READ)
+    assert (await auth_client.get(path, headers={"X-Forwarded-Email": "bob"})).json()["data"] == [
+        notice
+    ]
+    denied = await auth_client.get(path, headers={"X-Forwarded-Email": "mallory"})
+    assert denied.status_code in {403, 404}
+
+
+async def test_framework_dispatch_accepts_one_system_queue_and_sdk_receipt(
+    auth_client, auth_app, peers, db_uri
+):
+    import asyncio
+
+    from omnigent.server.session_orchestration import confirm_framework_sdk_receipts
+
+    source, _, _ = peers
+    store = SqlAlchemyConversationStore(db_uri)
+    child = store.create_conversation(parent_conversation_id=source["id"])
+    calls = []
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def dispatch(context, session_id, body):
+        calls.append(body)
+        assert await context.claim(store, session_id)
+        entered.set()
+        await release.wait()
+        return {"pending_id": "native-pending"}
+
+    previous = auth_app.state.startup_inputs.dispatch
+    auth_app.state.startup_inputs.dispatch = dispatch
+    event = {
+        "type": "framework_input",
+        "data": {
+            "occurrence_id": uuid4().hex,
+            "child_id": child.id,
+            "kind": "completed",
+            "label": "Subagent finished",
+            "message": "Read the inbox.",
+        },
+    }
+    try:
+        first = await auth_client.post(f"/v1/sessions/{source['id']}/events", json=event)
+        assert first.status_code == 202, first.text
+        await asyncio.wait_for(entered.wait(), timeout=2)
+        second = await auth_client.post(f"/v1/sessions/{source['id']}/events", json=event)
+        assert second.status_code == 202, second.text
+        [pending] = store.list_pending_inputs(source["id"])
+        assert pending.data.communication.kind == "system" and not pending.data.user_authored
+        assert pending.created_by is None and len(calls) == 1
+        # A completed SDK turn supplies a receipt without pretending a native echo occurred.
+        await confirm_framework_sdk_receipts(store, source["id"], "sdk-turn", [pending.id])
+        await confirm_framework_sdk_receipts(store, source["id"], "sdk-turn", [pending.id])
+        saved = store.get_item(source["id"], pending.id)
+        assert saved.response_id == "sdk-turn"
+        assert saved.data.communication.receipt == "model_consumed"
+        assert store.list_pending_inputs(source["id"]) == []
+        event["data"]["message"] = "Different occurrence contents"
+        assert (
+            await auth_client.post(f"/v1/sessions/{source['id']}/events", json=event)
+        ).status_code == 409
+    finally:
+        release.set()
+        auth_app.state.startup_inputs.dispatch = previous
+
+
+async def test_claude_provider_final_boundary_survives_forwarding_reload_and_final_search(
+    auth_client, peers, tmp_path
+):
+    from omnigent.harnesses.claude_native.bridge import read_transcript_items_since
+    from omnigent.harnesses.claude_native.forwarder import _post_external_conversation_item
+
+    source, _, _ = peers
+    transcript = tmp_path / "claude-root.jsonl"
+    records = [
+        {
+            "type": "user",
+            "uuid": "human-prompt",
+            "message": {
+                "role": "user",
+                "content": "Inspect the task",
+            },
+        },
+        *[
+            {
+                "type": "assistant",
+                "uuid": native_id,
+                "message": {
+                    "role": "assistant",
+                    "stop_reason": stop_reason,
+                    "content": [{"type": "text", "text": text}],
+                },
+            }
+            for native_id, stop_reason, text in (
+                ("progress", "tool_use", "needle progress"),
+                ("answer", "end_turn", "needle final answer"),
+                ("unknown", None, "needle unknown prose"),
+            )
+        ],
+    ]
+    transcript.write_text("".join(json.dumps(record) + "\n" for record in records))
+    _, _, items = read_transcript_items_since(transcript, 0, agent_name="claude-native-ui")
+    for item in items:
+        for _ in range(2):
+            await _post_external_conversation_item(auth_client, session_id=source["id"], item=item)
+    rows = (await auth_client.get(f"/v1/sessions/{source['id']}/items")).json()["data"]
+    assistant = [row for row in rows if row.get("role") == "assistant"]
+    assert len(assistant) == 3
+    assert [row.get("phase") for row in assistant] == ["commentary", "final_answer", None]
+    response = await auth_client.get(
+        "/v1/sessions/search/messages",
+        params={
+            "query": "needle",
+            "message_filter": "final",
+            "session_id": source["id"],
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert [hit["text"] for hit in response.json()["data"]] == ["needle final answer"]

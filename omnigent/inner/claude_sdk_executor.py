@@ -1,3 +1,4 @@
+# Modified for Triune; inherited notices remain applicable.
 """ClaudeSDKExecutor: run agents using the Claude Agent SDK.
 
 Uses the ``claude-agent-sdk`` Python package to run Claude Code as the
@@ -2944,6 +2945,7 @@ class ClaudeSDKExecutor(Executor):
         # avoid double-emitting (the SDK sends both StreamEvents AND
         # the complete AssistantMessage for the same content).
         got_stream_events = False
+        authoritative_result: str | None = None
 
         # Per-API-call prompt usage from the most recent ``message_start``
         # stream event. A single user turn can drive MANY internal API
@@ -3325,6 +3327,31 @@ class ClaudeSDKExecutor(Executor):
                                         metadata={"call_id": result_block.tool_use_id},
                                     )
 
+                    elif isinstance(message, getattr(sdk, "RateLimitEvent", ())):
+                        from omnigent.inner.executor import RuntimeNoticeObservation
+
+                        info = message.rate_limit_info
+                        native_id = getattr(message, "session_id", None)
+                        yield RuntimeNoticeObservation(
+                            observation={
+                                "provider": "claude",
+                                "kind": "rate_limit",
+                                "source_instance": f"claude-sdk:{native_id}",
+                                "native_session_id": native_id,
+                                "sequence": time.time_ns(),
+                                "source_event_id": getattr(message, "uuid", None),
+                                "observed_at": time.time(),
+                                "state": {
+                                    key: getattr(info, key, None)
+                                    for key in (
+                                        "status",
+                                        "resets_at",
+                                        "rate_limit_type",
+                                        "utilization",
+                                    )
+                                },
+                            }
+                        )
                     elif isinstance(message, sdk.ResultMessage):
                         result_msg = cast(_ResultMessageObj, message)
                         claude_session_id = getattr(result_msg, "session_id", None)
@@ -3349,8 +3376,9 @@ class ClaudeSDKExecutor(Executor):
                                 if terminal_auth_failure
                                 else failure_text
                             )
-                        elif not response_text and result_msg.result:
-                            response_text = result_msg.result
+                        elif isinstance(result_msg.result, str):
+                            authoritative_result = result_msg.result
+                            response_text = authoritative_result
                         raw_usage = getattr(result_msg, "usage", None)
                         if isinstance(raw_usage, dict) and raw_usage:
                             # ``ResultMessage.usage`` is CUMULATIVE across every
@@ -3576,7 +3604,11 @@ class ClaudeSDKExecutor(Executor):
                 yield compaction_event
 
         logger.info("ClaudeSDKExecutor: turn complete")
-        yield TurnComplete(response=response_text, usage=turn_usage)
+        yield TurnComplete(
+            response=response_text,
+            usage=turn_usage,
+            response_is_authoritative=authoritative_result is not None,
+        )
 
     @staticmethod
     def _build_prompt(

@@ -1,3 +1,4 @@
+# Modified for Triune.
 """Bounded message-search results and query-bound keyset cursors."""
 
 from __future__ import annotations
@@ -12,13 +13,15 @@ import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from itertools import islice
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel
 
 MAX_SEARCH_TEXT = 32_768
 MAX_SEARCH_QUERY = 512
 MAX_SEARCH_OCCURRENCES = 1024
+MessageFilter = Literal["all", "final", "user"]
+MessagePhase = Literal["commentary", "final_answer"]
 
 
 class MessageSearchRange(BaseModel):
@@ -29,6 +32,7 @@ class MessageSearchRange(BaseModel):
 
 
 class MessageSearchHit(BaseModel):
+    kind: Literal["message", "chat"] = "message"
     session_id: str
     title: str | None
     item_id: str
@@ -42,6 +46,10 @@ class MessageSearchHit(BaseModel):
     occurrence_count: int
     text_start: int
     text_truncated: bool
+    sender_name: str | None = None
+    user_authored: bool | None = None
+    phase: MessagePhase | None = None
+    title_ranges: list[MessageSearchRange] | None = None
 
 
 class MessageSearchPage(BaseModel):
@@ -93,6 +101,65 @@ def utf16_length(text: str) -> int:
     return len(text.encode("utf-16-le")) // 2
 
 
+def message_search_source(message: dict[str, Any]) -> str:
+    """Match the index's raw, one-space text-block join, preserving NULs for offsets."""
+    return " ".join(
+        block["text"]
+        for block in message["content"]
+        if isinstance(block, dict) and block.get("text")
+    )
+
+
+def message_search_metadata(message: dict[str, Any], created_by: str | None) -> dict[str, Any]:
+    """Use recorded provenance and phase; account identity alone never proves origin."""
+    communication = message.get("communication") or {}
+    kind = communication.get("kind")
+    human = (
+        message.get("role") == "user"
+        and message.get("user_authored") is True
+        and not message.get("is_meta")
+        and kind is None
+    )
+    if kind in ("peer", "native_agent"):
+        sender = communication.get("source_agent_name") or "Agent"
+    elif kind == "system" or message.get("is_meta"):
+        sender = "System"
+    elif kind == "external":
+        sender = "External input"
+    elif human:
+        sender = created_by or "User"
+    elif message.get("role") == "assistant":
+        sender = message.get("model") or message.get("agent") or "Assistant"
+    else:
+        sender = "External input"
+    phase = message.get("phase")
+    return {
+        "sender_name": sender,
+        "user_authored": human,
+        "phase": phase if phase in ("commentary", "final_answer") else None,
+    }
+
+
+def matches_message_filter(message: dict[str, Any], message_filter: MessageFilter) -> bool:
+    """Final includes trusted humans and confirmed agent answers, never transport status."""
+    if message_filter == "all":
+        return True
+    if message_search_metadata(message, None)["user_authored"]:
+        return True
+    communication = message.get("communication") or {}
+    return (
+        message_filter == "final"
+        and message.get("phase") == "final_answer"
+        and not message.get("is_meta")
+        and not message.get("interrupted")
+        and communication.get("kind") not in ("system", "external")
+        and (
+            message.get("role") == "assistant"
+            or communication.get("kind") in ("peer", "native_agent")
+        )
+    )
+
+
 def build_message_hit(
     *,
     source: str,
@@ -102,6 +169,9 @@ def build_message_hit(
     item_id: str,
     role: str,
     created_at: int,
+    sender_name: str | None = None,
+    user_authored: bool | None = None,
+    phase: MessagePhase | None = None,
 ) -> MessageSearchHit | None:
     """Retain raw block-joined source and locate every match in a bounded window."""
     first = matcher.search(source)
@@ -134,6 +204,47 @@ def build_message_hit(
         occurrence_count=len(ranges),
         text_start=utf16_length(source[:start]),
         text_truncated=start > 0 or len(bounded) < len(source),
+        sender_name=sender_name,
+        user_authored=user_authored,
+        phase=phase,
+    )
+
+
+def build_chat_hit(
+    *,
+    title: str,
+    matcher: re.Pattern[str],
+    session_id: str,
+    item_id: str,
+    created_at: int,
+    message: dict[str, Any] | None,
+    created_by: str | None,
+) -> MessageSearchHit:
+    """Title matches navigate to the chat; the preview always begins at its latest message."""
+    source = message_search_source(message) if message else ""
+    bounded = source[:MAX_SEARCH_TEXT]
+    return MessageSearchHit(
+        kind="chat",
+        session_id=session_id,
+        title=title,
+        item_id=item_id,
+        role=message["role"] if message else "",
+        created_at=created_at,
+        text=bounded,
+        content_hash=hashlib.sha256(bounded.encode("utf-8")).hexdigest(),
+        snippet=source[:240],
+        snippet_start=0,
+        ranges=[],
+        occurrence_count=0,
+        text_start=0,
+        text_truncated=len(bounded) < len(source),
+        title_ranges=[
+            MessageSearchRange(
+                start=utf16_length(title[: match.start()]), end=utf16_length(title[: match.end()])
+            )
+            for match in islice(matcher.finditer(title), MAX_SEARCH_OCCURRENCES)
+        ],
+        **(message_search_metadata(message, created_by) if message else {}),
     )
 
 
@@ -143,13 +254,18 @@ def search_fingerprint(scope: dict[str, Any]) -> str:
 
 
 def encode_search_cursor(
-    fingerprint: str, session_id: str, position: int, item_id: str, created_at: int
+    fingerprint: str,
+    session_id: str,
+    position: int,
+    item_id: str,
+    created_at: int,
+    kind: str = "message",
 ) -> str:
-    payload = [1, fingerprint, session_id, position, item_id, created_at]
+    payload = [2, fingerprint, session_id, position, item_id, created_at, kind]
     return base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
 
 
-def decode_search_cursor(cursor: str, fingerprint: str) -> tuple[str, int, str, int]:
+def decode_search_cursor(cursor: str, fingerprint: str) -> tuple[str, int, str, int, str]:
     """Validate cursors before using their keyset; ACLs are reapplied on every page."""
     try:
         if len(cursor) > 1024:
@@ -157,8 +273,8 @@ def decode_search_cursor(cursor: str, fingerprint: str) -> tuple[str, int, str, 
         payload = json.loads(
             base64.b64decode(cursor + "=" * (-len(cursor) % 4), altchars=b"-_", validate=True)
         )
-        version, scope, session_id, position, item_id, created_at = payload
-        if version != 1 or scope != fingerprint:
+        version, scope, session_id, position, item_id, created_at, kind = payload
+        if version != 2 or scope != fingerprint or kind not in ("message", "chat"):
             raise ValueError
         for identifier in (session_id, item_id):
             if not isinstance(identifier, str) or not re.fullmatch(r"[0-9a-f]{32}", identifier):
@@ -170,6 +286,6 @@ def decode_search_cursor(cursor: str, fingerprint: str) -> tuple[str, int, str, 
             or not -(2**31) <= created_at <= 2**31 - 1
         ):
             raise ValueError
-        return session_id, position, item_id, created_at
+        return session_id, position, item_id, created_at, kind
     except (ValueError, TypeError, binascii.Error, UnicodeError) as exc:
         raise ValueError("Invalid message search cursor or changed search scope") from exc

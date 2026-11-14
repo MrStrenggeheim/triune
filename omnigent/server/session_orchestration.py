@@ -434,3 +434,122 @@ def orchestration_message(source_id: str, message: object) -> SessionStartupInpu
             ],
         },
     )
+
+
+async def accept_framework_input(
+    app: Any,
+    target: Conversation,
+    data: dict[str, Any],
+    conversations: ConversationStore,
+) -> dict[str, bool | str]:
+    """Server-authorized System delivery through the existing durable input queue."""
+    import asyncio
+    import re
+
+    from starlette.datastructures import Headers
+
+    from omnigent.entities.communication import MessageCommunication
+
+    occurrence_id = data.get("occurrence_id")
+    text, label = data.get("message"), data.get("label")
+    child_id = data.get("child_id")
+    kind = data.get("kind")
+    if (
+        not isinstance(occurrence_id, str)
+        or re.fullmatch(r"[0-9a-f]{32}", occurrence_id) is None
+        or not isinstance(text, str)
+        or not text.strip()
+        or len(text) > 16000
+        or not isinstance(label, str)
+        or not label.strip()
+        or len(label) > 256
+        or not isinstance(child_id, str)
+        or kind not in {"completed", "blocked", "resolved", "recovery"}
+    ):
+        raise OmnigentError("Invalid framework occurrence", code=ErrorCode.INVALID_INPUT)
+    child = await asyncio.to_thread(conversations.get_conversation, child_id)
+    if child is None or child.parent_conversation_id != target.id:
+        raise OmnigentError(
+            "Framework input requires the destination's child", code=ErrorCode.FORBIDDEN
+        )
+    origin = MessageCommunication(
+        kind="system",
+        message_id=occurrence_id,
+        source_agent_name="System",
+        source_title=label,
+        destination_conversation_id=target.id,
+        source_conversation_id=child.id,
+        task_id=kind,
+        delivery_state="queued",
+        receipt="accepted",
+    )
+    content = [{"type": "input_text", "text": text}]
+    existing = await asyncio.to_thread(conversations.get_item, target.id, occurrence_id)
+    if existing is not None:
+        saved_origin = (
+            existing.data.communication if isinstance(existing.data, MessageData) else None
+        )
+        if (
+            saved_origin is None
+            or not isinstance(existing.data, MessageData)
+            or saved_origin.kind != "system"
+            or saved_origin.source_title != label
+            or saved_origin.task_id != kind
+            or saved_origin.source_conversation_id != child.id
+            or saved_origin.destination_conversation_id != target.id
+            or existing.data.content != content
+        ):
+            raise OmnigentError("Framework occurrence identity conflict", code=ErrorCode.CONFLICT)
+        return peer_acknowledgement(existing)
+    startup = getattr(app.state, "startup_inputs", None)
+    if startup is None:
+        raise OmnigentError(
+            "Durable framework delivery unavailable", code=ErrorCode.RUNNER_UNAVAILABLE
+        )
+    pending = await asyncio.to_thread(conversations.list_pending_inputs, target.id)
+    if len(pending) >= 64:
+        raise OmnigentError("Framework input queue is full", code=ErrorCode.CONFLICT)
+    waiting = bool(pending) or await startup.accepts(target, app)
+    event = SessionStartupInput(
+        type="message",
+        data={
+            "role": "user",
+            "content": content,
+            "stable_id": occurrence_id,
+            "communication": origin.model_dump(),
+        },
+    )
+    saved = await startup.enqueue(target.id, event, user_id=None, headers=Headers(), first=False)
+    if not waiting:
+        startup.schedule_delivery(app, target.id, saved)
+    if target.host_id:
+        startup.host_changed(app, target.host_id)
+    current = await asyncio.to_thread(conversations.get_item, target.id, occurrence_id)
+    return peer_acknowledgement(current or saved)
+
+
+async def confirm_framework_sdk_receipts(
+    conversations: ConversationStore, session_id: str, response_id: str, input_ids: list[str]
+) -> None:
+    """A successful SDK turn confirms its exact, runner-correlated System inputs."""
+    import asyncio
+
+    from omnigent.server.routes._sessions.helpers import _publish_external_conversation_item
+
+    for item_id in dict.fromkeys(input_ids[:64]):
+        item = await asyncio.to_thread(conversations.get_item, session_id, item_id)
+        origin = item.data.communication if item and isinstance(item.data, MessageData) else None
+        if (
+            origin is not None
+            and origin.kind == "system"
+            and origin.destination_conversation_id == session_id
+        ):
+            confirmed = await asyncio.to_thread(
+                conversations.confirm_framework_input,
+                session_id,
+                item_id,
+                response_id,
+                receipt="model_consumed",
+            )
+            if confirmed is not None:
+                _publish_external_conversation_item(session_id, confirmed)

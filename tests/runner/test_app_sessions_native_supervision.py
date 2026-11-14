@@ -1,3 +1,4 @@
+# Modified for Triune; inherited notices remain applicable.
 """Tests for subagent status supervision, delivery, and parent wakeups."""
 
 from __future__ import annotations
@@ -942,7 +943,7 @@ async def test_native_subagent_completion_wakes_idle_parent() -> None:
     assert len(server_client.wake_posts) == 1, (
         f"Expected one wake POST to the parent, got {len(server_client.wake_posts)}."
     )
-    wake_text = server_client.wake_posts[0]["data"]["content"][0]["text"]
+    wake_text = server_client.wake_posts[0]["data"]["message"]
     # Notice names the finished worker and steers the parent to drain the inbox.
     assert "sub-agent claude_code/auth finished (completed)" in wake_text
     assert "sys_read_inbox" in wake_text
@@ -1420,7 +1421,7 @@ async def test_delete_session_clears_pending_subagent_wake() -> None:
         f"Expected a fresh wake after deleting and reusing the parent id, got "
         f"{len(server_client.wake_posts)} wake posts."
     )
-    followup_text = server_client.wake_posts[1]["data"]["content"][0]["text"]
+    followup_text = server_client.wake_posts[1]["data"]["message"]
     assert "sub-agent worker/after-delete finished (completed)" in followup_text
 
 
@@ -1521,7 +1522,7 @@ async def test_subagent_completion_during_parent_wake_turn_posts_followup_wake()
         f"Expected a follow-up wake after the parent turn started, got "
         f"{len(server_client.wake_posts)} wake posts."
     )
-    followup_text = server_client.wake_posts[1]["data"]["content"][0]["text"]
+    followup_text = server_client.wake_posts[1]["data"]["message"]
     assert "sub-agent codex/followup finished (completed)" in followup_text
     assert "sys_read_inbox" in followup_text
 
@@ -1708,7 +1709,7 @@ async def test_parent_idle_with_stuck_wake_flag_posts_recovery_wake() -> None:
     )
     # Recovery wake (3rd) names child B — the latest completed at turn end, not
     # C — and reports the 2 results stranded then (A + B, before C).
-    recovery_text = server_client.wake_posts[2]["data"]["content"][0]["text"]
+    recovery_text = server_client.wake_posts[2]["data"]["message"]
     assert "sub-agent gpt/debate finished (completed)" in recovery_text, (
         f"Recovery wake should name child B (gpt/debate), the latest "
         f"completed child at turn end; got: {recovery_text!r}"
@@ -1940,7 +1941,7 @@ async def test_parent_idle_with_stuck_wake_flag_and_drained_inbox_clears_flag() 
     )
     # The 3rd wake is C's: it names child C and steers the parent to drain.
     # A wrong name would mean a different completion posted this wake.
-    c_wake_text = server_client.wake_posts[2]["data"]["content"][0]["text"]
+    c_wake_text = server_client.wake_posts[2]["data"]["message"]
     assert "sub-agent claude/debate finished (completed)" in c_wake_text, (
         f"Third wake should name child C (claude/debate); got: {c_wake_text!r}"
     )
@@ -2082,7 +2083,7 @@ async def test_repeat_identical_recovery_wake_is_suppressed() -> None:
                 f"Expected the recovery wake to bring the count to 3, got "
                 f"{len(server_client.wake_posts)}."
             )
-            recovery_text = server_client.wake_posts[2]["data"]["content"][0]["text"]
+            recovery_text = server_client.wake_posts[2]["data"]["message"]
             assert "sub-agent gp/fanout finished (completed)" in recovery_text
             assert "2 results waiting in inbox" in recovery_text
             await _wait_turn_idle()
@@ -2239,10 +2240,7 @@ async def test_recovery_wake_fires_again_for_an_episode_after_a_full_drain() -> 
                 f"Expected A + B + recovery wakes to end episode 1, got "
                 f"{len(server_client.wake_posts)}."
             )
-            assert (
-                "2 results waiting in inbox"
-                in (server_client.wake_posts[2]["data"]["content"][0]["text"])
-            )
+            assert "2 results waiting in inbox" in (server_client.wake_posts[2]["data"]["message"])
 
             # Step 4: the parent fully drains during T2, ending the episode.
             gate.clear()

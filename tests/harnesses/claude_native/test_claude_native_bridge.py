@@ -930,6 +930,70 @@ def test_read_assistant_text_since_parses_claude_jsonl(tmp_path: Path) -> None:
     assert chunks == ["first", "second"]
 
 
+@pytest.mark.parametrize("blocks", [False, True])
+@pytest.mark.parametrize(
+    "stop_reason,expected",
+    [
+        ("end_turn", "final_answer"),
+        ("stop_sequence", "final_answer"),
+        ("tool_use", "commentary"),
+        (None, None),
+        ("max_tokens", None),
+        ("pause_turn", None),
+        ("unknown", None),
+    ],
+)
+def test_assistant_phase_requires_explicit_provider_stop_reason(
+    tmp_path: Path, blocks: bool, stop_reason: str | None, expected: str | None
+) -> None:
+    transcript = tmp_path / "session.jsonl"
+    content = [{"type": "text", "text": "Observed prose"}] if blocks else "Observed prose"
+    transcript.write_text(
+        json.dumps(
+            {
+                "type": "assistant",
+                "uuid": "native-answer",
+                "message": {
+                    "role": "assistant",
+                    "content": content,
+                    "stop_reason": stop_reason,
+                },
+            }
+        )
+        + "\n"
+    )
+    _, response_id, items = read_transcript_items_since(
+        transcript, 0, agent_name="claude-native-ui"
+    )
+    [item] = items
+    assert item.data.get("phase") == expected
+    assert item.source_id == "native-answer:0:message"
+    assert item.response_id == response_id
+
+
+@pytest.mark.parametrize("api_error", [False, True])
+def test_terminal_stop_reason_does_not_promote_tools_or_api_errors(
+    tmp_path: Path, api_error: bool
+) -> None:
+    transcript = tmp_path / "session.jsonl"
+    content = [{"type": "text", "text": "Observed prose"}]
+    if not api_error:
+        content.append({"type": "tool_use", "id": "call-1", "name": "Read", "input": {}})
+    transcript.write_text(
+        json.dumps(
+            {
+                "type": "assistant",
+                "uuid": "nonfinal",
+                "isApiErrorMessage": api_error,
+                "message": {"role": "assistant", "content": content, "stop_reason": "end_turn"},
+            }
+        )
+        + "\n"
+    )
+    _, _, items = read_transcript_items_since(transcript, 0, agent_name="claude-native-ui")
+    assert all(item.data.get("phase") != "final_answer" for item in items)
+
+
 def test_read_transcript_items_since_parses_claude_visible_events(tmp_path: Path) -> None:
     """
     Transcript parsing preserves user text, tools, results, and output.
@@ -3691,6 +3755,9 @@ def test_augment_claude_args_injects_mcp_and_hooks(tmp_path: Path) -> None:
     # pass the development-channels flag.
     assert "--dangerously-load-development-channels" not in args
     settings = _load_invocation_settings(args)
+    notification_hooks = settings["hooks"]["Notification"][0]["hooks"]
+    assert len(notification_hooks) == 1
+    assert "--evaluate" not in notification_hooks[0]["command"]
     prompt_hooks = settings["hooks"]["UserPromptSubmit"][0]["hooks"]
     assert any("framework-context" in hook["command"] for hook in prompt_hooks)
     assert (

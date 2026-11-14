@@ -283,6 +283,7 @@ from omnigent.server.schemas import (
     ElicitationRequestParams,
     ErrorDetail,
     McpServerStartup,
+    RuntimeNoticesResponse,
     SessionEventInput,
 )
 from omnigent.server.session_live_state import last_liveness_stamp
@@ -347,6 +348,7 @@ _TRANSIENT_AUDIT_EVENT_TYPES = frozenset(
         _EXTERNAL_OUTPUT_REASONING_DELTA_TYPE,
         _EXTERNAL_TOOL_OUTPUT_DELTA_TYPE,
         _EXTERNAL_SESSION_USAGE_TYPE,
+        "external_runtime_notice",
     }
 )
 
@@ -863,6 +865,24 @@ def register_events_routes(
             else _get_user_id(request, auth_provider)
         )
         conv = None
+        if isinstance(request, StartupInputContext):
+            saved = await asyncio.to_thread(
+                conversation_store.get_item, session_id, request.input_id
+            )
+            from omnigent.entities.conversation import MessageData
+
+            origin = (
+                saved.data.communication if saved and isinstance(saved.data, MessageData) else None
+            )
+            if (
+                origin is not None
+                and origin.kind == "system"
+                and origin.destination_conversation_id == session_id
+            ):
+                conv = await asyncio.to_thread(conversation_store.get_conversation, session_id)
+                if conv is None:
+                    raise _session_not_found()
+                return None, conv
         if external_transcript:
             conv = await asyncio.to_thread(conversation_store.get_conversation, session_id)
             if conv is None:
@@ -963,6 +983,22 @@ def register_events_routes(
             )
 
     router.include_router(event_router)
+
+    @router.get("/sessions/{session_id}/runtime-notices")
+    async def get_runtime_notices(request: Request, session_id: str) -> RuntimeNoticesResponse:
+        from omnigent.server.runtime_notices import runtime_notices
+
+        await _require_access(
+            _get_user_id(request, auth_provider),
+            session_id,
+            LEVEL_READ,
+            permission_store,
+            conversation_store,
+        )
+        conv = await asyncio.to_thread(conversation_store.get_conversation, session_id)
+        if conv is None:
+            raise _session_not_found()
+        return RuntimeNoticesResponse(data=runtime_notices(conv))
 
     @router.get("/sessions/{session_id}/native-child-capabilities")
     async def get_native_child_capabilities(request: Request, session_id: str) -> dict[str, Any]:
@@ -1175,8 +1211,37 @@ def register_events_routes(
                 _EXTERNAL_CONVERSATION_ITEM_TYPE,
                 _EXTERNAL_ASSISTANT_MESSAGE_TYPE,
                 _EXTERNAL_SESSION_BACKGROUND_TASKS_TYPE,
+                "external_runtime_notice",
+                "framework_input",
             ),
         )
+        if body.type == "external_runtime_notice":
+            if not _has_bound_runner_authority(request, conv):
+                raise OmnigentError(
+                    "Runtime observations require the bound runner", code=ErrorCode.FORBIDDEN
+                )
+            from omnigent.server.runtime_notices import observe_runtime_notice
+
+            try:
+                changed = await asyncio.to_thread(
+                    observe_runtime_notice, conversation_store, session_id, body.data
+                )
+            except ValueError as error:
+                raise OmnigentError(str(error), code=ErrorCode.INVALID_INPUT) from error
+            if changed:
+                session_stream.publish(
+                    session_id, {"type": "session.runtime_notices", "conversation_id": session_id}
+                )
+            return {"queued": False}
+        if body.type == "framework_input":
+            if not _has_bound_runner_authority(request, conv):
+                raise OmnigentError(
+                    "Framework input requires the bound runner", code=ErrorCode.FORBIDDEN
+                )
+            from omnigent.server.session_orchestration import accept_framework_input
+
+            await _raise_if_runner_on_another_replica(conv, request.app.state, conversation_store)
+            return await accept_framework_input(request.app, conv, body.data, conversation_store)
         if body.type == "message":
             if (
                 body.data.get("communication") is not None
@@ -1291,19 +1356,22 @@ def register_events_routes(
                 raise OmnigentError(
                     "communication is reserved for trusted delivery", code=ErrorCode.FORBIDDEN
                 )
-            from omnigent.server.feature_flags import Feature
-
-            if not request.app.state.feature_flags.enabled(Feature.SESSION_ORCHESTRATION):
-                raise OmnigentError("Session orchestration is disabled", code=ErrorCode.FORBIDDEN)
             origin = body.data["communication"]
-            await asyncio.to_thread(
-                require_peer_replay,
-                origin["source_conversation_id"],
-                session_id,
-                user_id,
-                conversation_store,
-                permission_store,
-            )
+            if origin.get("kind") != "system":
+                from omnigent.server.feature_flags import Feature
+
+                if not request.app.state.feature_flags.enabled(Feature.SESSION_ORCHESTRATION):
+                    raise OmnigentError(
+                        "Session orchestration is disabled", code=ErrorCode.FORBIDDEN
+                    )
+                await asyncio.to_thread(
+                    require_peer_replay,
+                    origin["source_conversation_id"],
+                    session_id,
+                    user_id,
+                    conversation_store,
+                    permission_store,
+                )
         elif body.type == "message" and isinstance(request, Request):
             from omnigent.server.session_orchestration import PEER_STOP_LABEL
 

@@ -42,6 +42,7 @@ async def test_lifecycle_publishes_once_per_child_turn(
                     response_id=turn_id,
                     data=MessageData(
                         role="assistant",
+                        phase="final_answer",
                         agent="Claude",
                         content=[{"type": "output_text", "text": "Done"}],
                     ),
@@ -219,6 +220,7 @@ async def test_claude_completion_survives_retries_and_late_child_discovery(
                     response_id=f"update-{i}",
                     data=MessageData(
                         role="assistant",
+                        phase="final_answer",
                         agent="Claude",
                         content=[{"type": "output_text", "text": "Update"}],
                     ),
@@ -246,11 +248,13 @@ async def test_claude_completion_survives_retries_and_late_child_discovery(
         assert resource["status"] == expected
         if return_id:
             assert resource["result_text"]
+            assert resource["result_ref"] == {
+                "conversation_id": parent.id,
+                "item_id": persisted.id,
+            }
         else:
-            assert "<task-notification>" not in resource.get("result_text", "")
-            if "Clean summary" in str(data):
-                assert resource["result_text"] == "Clean summary"
-        assert resource["result_ref"] == {"conversation_id": parent.id, "item_id": persisted.id}
+            assert "result_text" not in resource
+            assert "result_ref" not in resource
 
 
 @pytest.mark.asyncio
@@ -282,6 +286,7 @@ async def test_reused_managed_child_keeps_each_dispatch_input_and_result(db_uri:
                     response_id=f"answer-{index}",
                     data=MessageData(
                         role="assistant",
+                        phase="final_answer",
                         agent="researcher",
                         content=[{"type": "output_text", "text": f"Result {index}"}],
                     ),
@@ -434,6 +439,7 @@ async def test_steering_keeps_original_task_identity(db_uri: str, native: bool) 
                 response_id="answer",
                 data=MessageData(
                     role="assistant",
+                    phase="final_answer",
                     agent="worker",
                     content=[{"type": "output_text", "text": "Both checks completed"}],
                 ),
@@ -485,6 +491,7 @@ async def test_return_before_transcript_enriches_same_event_and_republishes(
                 "item_type": "message",
                 "item_data": {
                     "role": "assistant",
+                    "phase": "final_answer",
                     "agent": "worker",
                     "content": [{"type": "output_text", "text": text}],
                 },
@@ -610,6 +617,7 @@ async def test_legacy_report_uses_authorized_exact_refs_without_mutating_history
                 response_id="old-turn",
                 data=MessageData(
                     role="assistant",
+                    phase="final_answer",
                     agent="worker",
                     content=[{"type": "output_text", "text": "Full original result"}],
                 ),
@@ -619,6 +627,7 @@ async def test_legacy_report_uses_authorized_exact_refs_without_mutating_history
                 response_id="new-turn",
                 data=MessageData(
                     role="assistant",
+                    phase="final_answer",
                     agent="worker",
                     content=[{"type": "output_text", "text": "New unrelated result"}],
                 ),
@@ -768,6 +777,7 @@ async def test_late_old_report_updates_only_original_dispatch(
             "item_type": "message",
             "item_data": {
                 "role": "assistant",
+                "phase": "final_answer",
                 "agent": "worker",
                 "content": [{"type": "output_text", "text": "Original task result"}],
             },
@@ -912,6 +922,7 @@ async def test_complete_activity_refresh_skips_source_authorization_and_reads(
                         "item_type": "message",
                         "item_data": {
                             "role": "assistant",
+                            "phase": "final_answer",
                             "agent": "worker",
                             "content": [{"type": "output_text", "text": text}],
                         },
@@ -961,3 +972,98 @@ async def test_complete_activity_refresh_skips_source_authorization_and_reads(
     assert [call.args[0] for call in access_calls.call_args_list] == [parent.id] * 3
     point_read.assert_not_called()
     child_read.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_progress_shorter_final_atomic_replacement_and_old_turn_guard(db_uri):
+    store = SqlAlchemyConversationStore(db_uri)
+    parent = store.create_conversation()
+    child = store.create_conversation(parent_conversation_id=parent.id)
+    store.append(
+        child.id,
+        [
+            NewConversationItem(
+                type="message",
+                response_id="t-final",
+                data=MessageData(
+                    role="user", content=[{"type": "input_text", "text": "Do the task"}]
+                ),
+            )
+        ],
+    )
+    await record_subagent_activity(child.id, "delegated", store)
+    [progress] = store.append(
+        child.id,
+        [
+            NewConversationItem(
+                type="message",
+                response_id="t-final",
+                data=MessageData(
+                    role="assistant",
+                    agent="worker",
+                    phase="commentary",
+                    content=[{"type": "output_text", "text": "Long progress details"}],
+                ),
+            )
+        ],
+    )
+    await record_subagent_activity(
+        child.id, "returned", store, turn_id="t-final", status="completed"
+    )
+    returned = store.list_items(parent.id).data[-1]
+    assert "result_text" not in returned.data.resource
+    legacy = {
+        **returned.data.resource,
+        "result_text": "A long historical report",
+        "result_finality": "unknown",
+        "result_ref": {"conversation_id": child.id, "item_id": progress.id},
+        "result_refs": [{"conversation_id": child.id, "item_id": progress.id}],
+    }
+    assert store.enrich_resource_event(parent.id, returned.id, legacy)
+    [final] = store.append(
+        child.id,
+        [
+            NewConversationItem(
+                type="message",
+                response_id="t-final",
+                data=MessageData(
+                    role="assistant",
+                    agent="worker",
+                    phase="final_answer",
+                    content=[{"type": "output_text", "text": "Done"}],
+                ),
+            )
+        ],
+    )
+    for _ in range(2):
+        await record_subagent_activity(
+            child.id, "returned", store, turn_id="t-final", status="completed"
+        )
+    updated = store.get_item(parent.id, returned.id)
+    assert updated.data.resource["result_text"] == "Done"
+    assert updated.data.resource["result_refs"] == [
+        {"conversation_id": child.id, "item_id": final.id}
+    ]
+    assert (
+        len(
+            [
+                row
+                for row in store.list_items(parent.id).data
+                if row.data.event_type.endswith("returned")
+            ]
+        )
+        == 1
+    )
+    assert (
+        store.enrich_resource_event(
+            parent.id,
+            returned.id,
+            {
+                **updated.data.resource,
+                "turn_id": "another-turn",
+                "result_finality": "handback",
+                "result_text": "Wrong",
+            },
+        )
+        is None
+    )

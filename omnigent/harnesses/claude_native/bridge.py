@@ -1,3 +1,4 @@
+# Modified for Triune; inherited notices remain applicable.
 """Claude terminal utilities and the shared native-harness MCP relay.
 
 The ``serve-mcp`` entrypoint and tool relay also serve Codex, Antigravity,
@@ -1075,6 +1076,7 @@ class ClaudeHookRecord:
     failure_category: str | None = None
     failure_message: str | None = None
     failure_context: FailureContext | None = None
+    native_notification: _JsonObject | None = None
 
 
 @dataclass(frozen=True)
@@ -2466,6 +2468,7 @@ def build_hook_settings(
     hooks: dict[str, list[_JsonObject]] = {
         "SessionStart": [{"hooks": [session_start_hook]}],
         "SessionEnd": [{"hooks": [hook]}],
+        "Notification": [{"hooks": [hook]}],
         "Stop": [{"hooks": [hook]}],
         "StopFailure": [{"hooks": [hook]}],
         # ``UserPromptSubmit`` is the symmetric counterpart to
@@ -4033,6 +4036,13 @@ def _hook_record_from_jsonl_record(record: _JsonlRecord) -> ClaudeHookRecord:
             _display_text(raw_details, is_api_error=True) if raw_details is not None else None
         )
     return ClaudeHookRecord(
+        native_notification={
+            key: payload[key]
+            for key in ("message", "title", "notification_type")
+            if key in payload
+        }
+        if event_name == "Notification" and isinstance(payload, dict)
+        else None,
         event_cursor=record.line_number,
         byte_offset=record.next_byte_offset,
         event_name=event_name,
@@ -9949,6 +9959,16 @@ def _assistant_transcript_items_from_entry(
     )
     items: list[ClaudeTranscriptItem] = []
     is_api_error = _is_api_error_entry(entry)
+    stop_reason = message.get("stop_reason") if isinstance(message, dict) else None
+    has_tool_use = isinstance(content, list) and any(
+        isinstance(block, dict) and block.get("type") == "tool_use" for block in content
+    )
+    phase = None
+    if not is_api_error:
+        if stop_reason in ("end_turn", "stop_sequence") and not has_tool_use:
+            phase = "final_answer"
+        elif stop_reason == "tool_use":
+            phase = "commentary"
 
     if isinstance(content, str):
         if content:
@@ -9959,6 +9979,7 @@ def _assistant_transcript_items_from_entry(
                     agent_name=agent_name,
                     response_id=response_id,
                     text=content,
+                    phase=phase,
                     is_api_error=is_api_error,
                     failure_context=(
                         claude_failure_context(entry, error_text=content) if is_api_error else None
@@ -9990,6 +10011,7 @@ def _assistant_transcript_items_from_entry(
                         agent_name=agent_name,
                         response_id=response_id,
                         text=text,
+                        phase=phase,
                         is_api_error=is_api_error,
                         failure_context=(
                             claude_failure_context(entry, error_text=text)
@@ -10168,6 +10190,7 @@ def _assistant_message_item(
     agent_name: str,
     response_id: str,
     text: str,
+    phase: str | None = None,
     is_api_error: bool = False,
     failure_context: FailureContext | None = None,
 ) -> ClaudeTranscriptItem:
@@ -10179,6 +10202,7 @@ def _assistant_message_item(
     :param agent_name: Agent/model name for the assistant message.
     :param response_id: Response id grouping the Claude turn.
     :param text: Assistant text block.
+    :param phase: Reply phase established by the provider's explicit stop reason.
     :param is_api_error: Whether Claude Code flagged the record as its
         own API error (see :func:`_is_api_error_entry`). Gates the
         ``/login`` guidance append, which is safe only on CLI-authored
@@ -10192,6 +10216,7 @@ def _assistant_message_item(
         data={
             "role": "assistant",
             "agent": agent_name,
+            **({"phase": phase} if phase is not None else {}),
             "content": [
                 {"type": "output_text", "text": _display_text(text, is_api_error=is_api_error)}
             ],

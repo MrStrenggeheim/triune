@@ -1983,7 +1983,10 @@ def _external_conversation_item_event(item: ClaudeTranscriptItem) -> dict[str, o
         "data": {
             "source_id": item.source_id,
             "item_type": item.item_type,
-            "item_data": item.data,
+            "item_data": {
+                **item.data,
+                **({"phase": "final_answer"} if item.subagent_return_id else {}),
+            },
             "response_id": item.response_id,
             **(
                 {"subagent_return_id": item.subagent_return_id}
@@ -2342,7 +2345,10 @@ async def _forward_one_subagent(
                 payload={
                     "source_id": item.source_id,
                     "item_type": item.item_type,
-                    "item_data": item.data,
+                    "item_data": {
+                        **item.data,
+                        **({"phase": "final_answer"} if item.subagent_return_id else {}),
+                    },
                     "response_id": item.response_id,
                 },
                 reason=drop_reason,
@@ -4382,6 +4388,28 @@ async def _forward_available_status_events(
             durable = next_durable
             await _write_hook_state_async(bridge_dir, durable)
             continue
+        if record.native_notification is not None and not _is_subagent_hook_record(
+            record, parent_claude_session_ids=parent_claude_session_ids
+        ):
+            response = await client.post(
+                f"/v1/sessions/{session_id}/events",
+                json={
+                    "type": "external_runtime_notice",
+                    "data": {
+                        "provider": "claude",
+                        "kind": "nativeNotification",
+                        "source_instance": f"claude-native:{record.claude_session_id}",
+                        "native_session_id": record.claude_session_id,
+                        "source_event_id": (
+                            f"notification:{record.event_cursor}:{record.byte_offset}"
+                        ),
+                        "sequence": int((record.recorded_at or time.time()) * 1_000_000_000),
+                        "observed_at": record.recorded_at or time.time(),
+                        "state": record.native_notification,
+                    },
+                },
+            )
+            response.raise_for_status()
         retry_key = f"hook:{record.event_cursor}:{record.byte_offset}:{status}"
         background_tasks = record.background_tasks
         if record.shell_payload is not None and not _is_subagent_hook_record(

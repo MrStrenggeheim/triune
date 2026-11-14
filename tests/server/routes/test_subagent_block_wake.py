@@ -1,3 +1,4 @@
+# Modified for Triune; inherited notices remain applicable.
 """
 Server-side wake delivery for the sub-agent block notifier.
 
@@ -177,8 +178,35 @@ async def test_record_publish_delivers_wake_message_to_parent(
     monkeypatch.setattr(sessions_module, "_get_runner_client", _fake_get_runner_client)
     monkeypatch.setattr(sessions_module, "_dispatch_session_event_to_runner", _record_dispatch)
 
+    from types import SimpleNamespace
+
+    from omnigent.server.host_registry import HostRegistry
+    from omnigent.server.startup_inputs import ManagedStartupInputs
+
+    startup = ManagedStartupInputs(conv_store, HostRegistry())
+    app = SimpleNamespace(state=SimpleNamespace(startup_inputs=startup))
+    origins = []
+
+    async def dispatch(context, session_id, body):
+        assert await context.claim(conv_store, session_id)
+        origins.append(body.data["communication"])
+        await _record_dispatch(
+            session_id,
+            parent,
+            body,
+            conv_store,
+            sentinel_client,
+            agent_revision=f"{parent_agent_id}/v2",
+        )
+        conv_store.confirm_framework_input(
+            session_id, context.input_id, "sdk-turn", receipt="model_consumed"
+        )
+        return {"item_id": context.input_id}
+
+    startup.dispatch = dispatch
+
     uninstall = sessions_module.configure_subagent_block_notifier(
-        conv_store, None, agent_store=agent_store
+        conv_store, None, agent_store=agent_store, app=app
     )
     try:
         pending_elicitations.record_publish(
@@ -220,6 +248,7 @@ async def test_record_publish_delivers_wake_message_to_parent(
         await asyncio.wait_for(fired.wait(), timeout=2.0)
     finally:
         uninstall()
+        await startup.shutdown()
 
     # 2 = block wake + resolution notice. 1 means the resolve never
     # reached the waiting handler and the parent dangles on the notice.
@@ -231,6 +260,12 @@ async def test_record_publish_delivers_wake_message_to_parent(
     # The verdict rides the notice verbatim so the parent agent cannot
     # narrate an approval that did not happen.
     assert "(action: decline — NOT approved)" in resolution.text
+    assert [origin["task_id"] for origin in origins] == ["blocked", "resolved"]
+    assert origins[0]["message_id"] != origins[1]["message_id"]
+    for item in conv_store.list_items(parent.id).data:
+        assert item.data.communication.kind == "system"
+        assert item.data.communication.receipt == "model_consumed"
+        assert not item.data.user_authored and item.created_by is None
 
 
 async def test_record_publish_no_wake_when_no_runner_bound(
@@ -238,14 +273,10 @@ async def test_record_publish_no_wake_when_no_runner_bound(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """
-    With no runner bound to the parent, the wake is a no-op (but retried).
+    Without a runner, acceptance saves one System input for later recovery.
 
-    A message event for an unbound parent must NOT be dispatched —
-    forwarding one would desync conversation store and harness state. The
-    wake resolves the runner, sees ``None``, logs, and reports failure so
-    the notifier releases its debounce. Because an unbound parent is the
-    transient-miss case the notifier retries, the runner lookup runs once
-    per attempt (``1 + _WAKE_RETRIES``) — and no attempt dispatches.
+    The queue owns delivery after acceptance, so observer retries cannot
+    create another instruction or claim that a native handoff occurred.
     """
     # No-op the backoff so the bounded retry doesn't add real wall-clock
     # sleeps (rule 14: patch the module's _sleep, not global asyncio.sleep).
@@ -275,7 +306,22 @@ async def test_record_publish_no_wake_when_no_runner_bound(
     monkeypatch.setattr(sessions_module, "_get_runner_client", _no_runner_client)
     monkeypatch.setattr(sessions_module, "_dispatch_session_event_to_runner", _record_dispatch)
 
-    uninstall = sessions_module.configure_subagent_block_notifier(conv_store, None)
+    from types import SimpleNamespace
+
+    from omnigent.server.host_registry import HostRegistry
+    from omnigent.server.startup_inputs import ManagedStartupInputs
+
+    startup = ManagedStartupInputs(conv_store, HostRegistry())
+    app = SimpleNamespace(state=SimpleNamespace(startup_inputs=startup))
+
+    async def unavailable_dispatch(context, session_id, body):
+        # No handoff is attempted; the durable input remains queued for recovery.
+        await _no_runner_client(session_id, None)
+        return {"queued": True}
+
+    startup.dispatch = unavailable_dispatch
+    expected_attempts = 1
+    uninstall = sessions_module.configure_subagent_block_notifier(conv_store, None, app=app)
     try:
         pending_elicitations.record_publish(child.id, _request_event("elicit_norunner", "approve"))
         # Deterministic: the lookup stub sets the event on its final attempt,
@@ -286,12 +332,13 @@ async def test_record_publish_no_wake_when_no_runner_bound(
             await asyncio.sleep(0)
     finally:
         uninstall()
+        await startup.shutdown()
 
     # No dispatch on any attempt: the unbound-parent branch dropped the wake
     # instead of forwarding an item the harness would never see. A non-empty
     # list would mean a None runner_client slipped past the guard.
     assert dispatched == []
-    # The runner lookup ran once per bounded attempt — confirming the
-    # server-layer retry actually re-tries the unroutable parent rather than
-    # giving up after the first miss.
+    # Acceptance is durable; the delivery service owns subsequent recovery.
     assert lookups == expected_attempts
+    [queued] = conv_store.list_pending_inputs(parent.id)
+    assert queued.status == "in_progress" and queued.data.communication.kind == "system"

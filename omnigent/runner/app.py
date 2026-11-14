@@ -1,3 +1,4 @@
+# Modified for Triune; inherited notices remain applicable.
 """Runner FastAPI app — spawns harness subprocesses and dispatches to them.
 
 Per ``designs/RUNNER.md`` §1, the runner owns harness subprocesses.
@@ -1461,6 +1462,7 @@ def create_runner_app(
     _subagent_recovery_tasks: dict[str, asyncio.Task[None]] = {}
     _subagent_wake_pending: set[str] = set()
     _last_rewake_notice: dict[str, str] = {}
+    _recovery_occurrences: dict[str, tuple[str, str, str]] = {}
     # Parents whose wake POST exhausted its bounded retries while their inbox
     # still held a sub-agent result (typically: the server was down when the
     # child finished). The catch-up scan re-attempts these on tunnel reconnect.
@@ -3524,6 +3526,7 @@ def create_runner_app(
         _subagent_wake_pending.discard(session_id)
         _stranded_wake_parents.discard(session_id)
         _last_rewake_notice.pop(session_id, None)
+        _recovery_occurrences.pop(session_id, None)
         _session_sub_agent_names.pop(session_id, None)
         unregister_child_session(session_id)
         unregister_subagent_work_for_session(session_id)
@@ -4449,7 +4452,14 @@ def create_runner_app(
                             "content": body.get("content", []),
                         }
                     )
-                next_body = all_bodies[-1]
+                next_body = dict(all_bodies[-1])
+                next_body["framework_input_ids"] = [
+                    body["persisted_item_id"]
+                    for body in all_bodies
+                    if isinstance(body.get("communication"), dict)
+                    and body["communication"].get("kind") == "system"
+                    and isinstance(body.get("persisted_item_id"), str)
+                ]
 
             if _is_sdk_compact_body(next_body):
                 # This buffered /compact now dispatches as its own turn. Mirror the
@@ -4490,14 +4500,22 @@ def create_runner_app(
         created_by: str | None,
         *,
         is_rewake: bool = False,
+        occurrence_id: str,
+        episode: str,
     ) -> None:
         delivered = await _deliver_subagent_wake_post(
-            server_client, parent_id, notice, created_by=created_by
+            server_client,
+            parent_id,
+            notice,
+            created_by=created_by,
+            occurrence_id=occurrence_id,
+            child_id=child_id,
+            kind="recovery" if is_rewake else "completed",
         )
         if delivered:
             _stranded_wake_parents.discard(parent_id)
             if is_rewake:
-                _last_rewake_notice[parent_id] = notice
+                _last_rewake_notice[parent_id] = episode
         else:
             _subagent_wake_pending.discard(parent_id)
             _stranded_wake_parents.add(parent_id)
@@ -4533,16 +4551,39 @@ def create_runner_app(
             status=entry.status,
             pending=inbox.qsize(),
         )
-        if is_rewake and notice == _last_rewake_notice.get(entry.parent_session_id):
-            return
+        episode = f"{entry.work_id}:{entry.status}"
+        wake_child_id = entry.child_session_id
+        if is_rewake:
+            occurrence_id, wake_child_id, notice = _recovery_occurrences.setdefault(
+                entry.parent_session_id,
+                (
+                    uuid.uuid5(
+                        uuid.NAMESPACE_URL,
+                        f"framework-recovery:{entry.parent_session_id}:{entry.work_id}:"
+                        f"{uuid.uuid4().hex}",
+                    ).hex,
+                    entry.child_session_id,
+                    notice,
+                ),
+            )
+            episode = occurrence_id
+            if episode == _last_rewake_notice.get(entry.parent_session_id):
+                return
+        else:
+            occurrence_id = uuid.uuid5(
+                uuid.NAMESPACE_URL,
+                f"framework-wake:{entry.parent_session_id}:{entry.work_id}:{entry.status}",
+            ).hex
         _subagent_wake_pending.add(entry.parent_session_id)
         _wake_task = loop.create_task(
             _post_subagent_wake_notice(
                 entry.parent_session_id,
                 notice,
-                entry.child_session_id,
+                wake_child_id,
                 entry.created_by,
                 is_rewake=is_rewake,
+                episode=episode,
+                occurrence_id=occurrence_id,
             )
         )
         _wake_task.add_done_callback(_background_tasks.discard)
@@ -4556,6 +4597,7 @@ def create_runner_app(
             # re-wake no longer describes outstanding work; forget it or a
             # later episode's matching notice is wrongly deduped.
             _last_rewake_notice.pop(parent_session_id, None)
+            _recovery_occurrences.pop(parent_session_id, None)
             _stranded_wake_parents.discard(parent_session_id)
         # A parent whose wake POST exhausted its retries has no pending flag,
         # but its inbox still holds an undelivered result — rescue it too.
@@ -5959,6 +6001,27 @@ def create_runner_app(
                                     )
 
                                 _evt_type = event.get("type")
+                                if _evt_type in {"response.in_progress", "response.completed"}:
+                                    raw_input_ids = body.get("framework_input_ids")
+                                    input_ids = (
+                                        [
+                                            value
+                                            for value in raw_input_ids
+                                            if isinstance(value, str)
+                                        ]
+                                        if isinstance(raw_input_ids, list)
+                                        else []
+                                    )
+                                    if (
+                                        isinstance(body.get("communication"), dict)
+                                        and body["communication"].get("kind") == "system"
+                                        and isinstance(body.get("persisted_item_id"), str)
+                                    ):
+                                        input_ids.append(body["persisted_item_id"])
+                                    if input_ids:
+                                        event["framework_input_ids"] = list(
+                                            dict.fromkeys(input_ids)
+                                        )
                                 if (
                                     _evt_type == "response.compaction.in_progress"
                                     and conv_id in _sdk_compact_inprogress

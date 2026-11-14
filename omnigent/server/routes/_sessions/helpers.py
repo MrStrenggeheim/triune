@@ -8720,6 +8720,7 @@ async def _flush_relay_text(
     deny_reason: str | None = None,
     evaluate_response_phase: bool = False,
     turn_final: bool = False,
+    phase: str | None = "commentary",
 ) -> None:
     """
     Persist buffered assistant text as a message item and clear the buffer.
@@ -8810,6 +8811,7 @@ async def _flush_relay_text(
         # would close), so without a visible sentinel the deny would only
         # be discoverable after a reload.
         text = f"{_DENY_SENTINEL_PREFIX}{deny_reason}]"
+        phase = "commentary"
         # Commit the substitution into the retry buffer itself: a failed
         # persist below leaves ``text_acc`` for the next flush, and that
         # retry must carry the sentinel, never the denied content. Without
@@ -8824,11 +8826,17 @@ async def _flush_relay_text(
         item = NewConversationItem(
             type="message",
             response_id=response_id or f"turn_{uuid.uuid4().hex}",
+            stable_id=(
+                uuid.uuid5(uuid.NAMESPACE_URL, f"sdk-final:{session_id}:{response_id}").hex
+                if phase == "final_answer" and response_id
+                else None
+            ),
             data=parse_item_data(
                 "message",
                 {
                     "type": "message",
                     "role": "assistant",
+                    "phase": phase,
                     "agent": model_id or "unknown",
                     "content": [{"type": "output_text", "text": text}],
                 },

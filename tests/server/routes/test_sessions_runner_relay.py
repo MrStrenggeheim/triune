@@ -1,3 +1,4 @@
+# Modified for Triune; inherited notices remain applicable.
 """Tests for AP's runner stream relay startup handshake."""
 
 from __future__ import annotations
@@ -3987,3 +3988,40 @@ async def test_relay_leaves_a_turn_on_an_offline_host_to_the_disconnect_hold(
         sessions_module._runner_relay_tasks.clear()
         sessions_module._session_status_cache.pop(session_id, None)
         session_stream.close(session_id)
+
+
+@pytest.mark.parametrize("outcome", ["completed", "failed", "cancelled"])
+@pytest.mark.asyncio
+async def test_authoritative_sdk_result_keeps_progress_separate_and_requires_success(
+    db_uri, outcome
+):
+    from omnigent.entities.conversation import MessageData
+    from omnigent.server.routes._sessions.orchestration import _relay_runner_stream_once
+
+    store = SqlAlchemyConversationStore(db_uri)
+    conv = store.create_conversation()
+    release = asyncio.Event()
+    release.set()
+    events = [
+        {"type": "response.in_progress", "response": {"id": "sdk-final-turn", "model": "worker"}},
+        {"type": "response.output_text.delta", "delta": "A much longer progress explanation."},
+        {
+            "type": "response.output_item.done",
+            "item": {
+                "type": "message",
+                "role": "assistant",
+                "agent": "worker",
+                "phase": "final_answer",
+                "content": [{"type": "output_text", "text": "OK"}],
+            },
+        },
+        {"type": f"response.{outcome}", "response": {"id": "sdk-final-turn"}},
+        {"type": f"response.{outcome}", "response": {"id": "sdk-final-turn"}},
+    ]
+    await _relay_runner_stream_once(conv.id, _ScriptedRunnerClient(release, events), store)
+    rows = [row for row in store.list_items(conv.id).data if isinstance(row.data, MessageData)]
+    assert rows[0].data.phase == "commentary"
+    finals = [row for row in rows if row.data.phase == "final_answer"]
+    assert len(finals) == (1 if outcome == "completed" else 0)
+    if finals:
+        assert finals[0].data.content == [{"type": "output_text", "text": "OK"}]

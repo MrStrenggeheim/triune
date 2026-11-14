@@ -1,3 +1,4 @@
+# Modified for Triune; inherited notices remain applicable.
 """
 :class:`HarnessApp` scaffold — base class every per-harness wrap
 inherits.
@@ -533,6 +534,9 @@ class TurnContext:
         # but heartbeats for as long as the human takes, so heartbeats hold
         # the idle window open then — via the idle-only hook, so the
         # absolute ceiling stays the hard cap even for an ignored approval.
+        if event.type == "session.runtime_notice":
+            self._event_queue.put_nowait(event)
+            return
         if not isinstance(event, HeartbeatEvent):
             if not isinstance(event, RetryEvent) and not (
                 isinstance(event, PolicyEvaluationRequestEvent)

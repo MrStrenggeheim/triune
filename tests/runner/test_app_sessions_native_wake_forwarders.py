@@ -1,3 +1,4 @@
+# Modified for Triune; inherited notices remain applicable.
 """Tests for wake-post retries and native transcript forwarder lifecycle."""
 
 from __future__ import annotations
@@ -35,6 +36,7 @@ class _WakePost:
     url: str
     notice: str
     created_by: str | None = None
+    occurrence_id: str | None = None
 
 
 class _QueuedResponseServerClient:
@@ -71,13 +73,15 @@ class _QueuedResponseServerClient:
         :returns: The next pre-built response from the queue.
         :raises AssertionError: If more POSTs are made than responses queued.
         """
-        notice = json["data"]["content"][0]["text"]
+        assert json["type"] == "framework_input"
+        notice = json["data"]["message"]
         created_by = json.get("created_by")
         self.calls.append(
             _WakePost(
                 url=url,
                 notice=notice,
                 created_by=created_by if isinstance(created_by, str) else None,
+                occurrence_id=json["data"]["occurrence_id"],
             )
         )
         assert self._responses, (
@@ -143,6 +147,7 @@ async def test_wake_post_retries_transient_503_then_succeeds(
     # Both POSTs targeted the parent's events endpoint with the same notice.
     assert client.calls[0].url == f"/v1/sessions/{parent_id}/events"
     assert client.calls[1].notice == "[System: worker completed]"
+    assert client.calls[0].occurrence_id == client.calls[1].occurrence_id
     # Exactly one backoff slept (between the two attempts) — proves the retry
     # path ran rather than the call being retried zero or two+ times.
     assert len(_no_wake_backoff) == 1, (
@@ -150,8 +155,8 @@ async def test_wake_post_retries_transient_503_then_succeeds(
     )
 
 
-async def test_wake_post_carries_dispatch_actor() -> None:
-    """A wake notice preserves the collaborator that dispatched the child."""
+async def test_wake_post_has_no_human_attribution() -> None:
+    """A framework wake never claims the collaborator authored it."""
     parent_id = "5a81ef19fce549929c8f9925c2ee034f"
     client = _QueuedResponseServerClient([_wake_response(200, parent_id)])
 
@@ -164,11 +169,11 @@ async def test_wake_post_carries_dispatch_actor() -> None:
 
     assert delivered is True
     assert len(client.calls) == 1
-    assert client.calls[0].created_by == "bob@example.com"
+    assert client.calls[0].created_by is None
 
 
-async def test_wake_post_retries_without_actor_when_attribution_is_rejected() -> None:
-    """A stale collaborator grant cannot permanently drop a parent wake."""
+async def test_forbidden_framework_wake_does_not_downgrade_authority() -> None:
+    """An authentication rejection cannot be retried as a weaker message."""
     parent_id = "32561551610d43b39dc4e394b78ea89d"
     client = _QueuedResponseServerClient(
         [_wake_response(403, parent_id), _wake_response(200, parent_id)]
@@ -181,10 +186,9 @@ async def test_wake_post_retries_without_actor_when_attribution_is_rejected() ->
         created_by="bob@example.com",
     )
 
-    assert delivered is True
-    assert len(client.calls) == 2
-    assert client.calls[0].created_by == "bob@example.com"
-    assert client.calls[1].created_by is None
+    assert delivered is False
+    assert len(client.calls) == 1
+    assert client.calls[0].created_by is None
 
 
 async def test_wake_post_persistent_503_returns_failure(

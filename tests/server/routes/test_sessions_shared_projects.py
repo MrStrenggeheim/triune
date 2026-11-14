@@ -1,3 +1,4 @@
+# Modified for Triune.
 """Regression tests: sessions shared into a project stay on "Shared with me".
 
 Projects are a "My sessions"-only sidebar surface — filing a session into a
@@ -313,6 +314,8 @@ def test_message_search_authentication_validation_and_empty_query(db_uri, monkey
             {"query": "x" * 513},
             {"query": "x", "session_id": "invalid"},
             {"query": "x", "visibility": "unknown"},
+            {"query": "x", "message_filter": "unknown"},
+            {"query": "x", "include_titles": "unknown"},
         ):
             assert (
                 client.get(
@@ -462,3 +465,112 @@ def test_all_chat_message_search_includes_only_authorized_branches_and_delegates
             )
             assert response.status_code == 200
             assert response.json() == {"data": [], "has_more": False, "next_cursor": None}
+
+
+def test_unified_search_title_previews_trusted_filters_and_captured_scope(db_uri, monkeypatch):
+    clock = [100]
+    monkeypatch.setattr(
+        "omnigent.stores.conversation_store.sqlalchemy_store.now_epoch", lambda: clock[0]
+    )
+    shared_id = _seed_shared_project_session(db_uri)
+    store = SqlAlchemyConversationStore(db_uri)
+    agent_id = store.get_conversation(shared_id).agent_id
+    store.update_conversation(shared_id, title="😀 needle shared")
+    private = store.create_conversation(title="needle private", agent_id=agent_id)
+    SqlAlchemyPermissionStore(db_uri).grant(BOB, private.id, LEVEL_OWNER)
+    store.append(
+        private.id,
+        [
+            NewConversationItem(
+                type="message",
+                response_id="private",
+                data=MessageData(
+                    role="user",
+                    user_authored=True,
+                    content=[{"type": "input_text", "text": "needle private"}],
+                ),
+            )
+        ],
+    )
+    ids = {}
+    for time, label, role, metadata in (
+        (200, "legacy", "user", {}),
+        (300, "human", "user", {"user_authored": True}),
+        (400, "answer", "assistant", {"agent": "Actual actor", "phase": "final_answer"}),
+        (500, "progress", "assistant", {"agent": "Actual actor", "phase": "commentary"}),
+    ):
+        clock[0] = time
+        item = NewConversationItem(
+            type="message",
+            response_id="search",
+            created_by=ALICE if role == "user" else None,
+            data=MessageData(
+                role=role,
+                content=[
+                    {
+                        "type": "input_text" if role == "user" else "output_text",
+                        "text": "needle " + label,
+                    }
+                ],
+                **metadata,
+            ),
+        )
+        ids[label] = store.append(shared_id, [item])[0].id
+    endpoint = "/v1/sessions/search/messages"
+    headers = {"X-Forwarded-Email": ALICE}
+    with TestClient(_multi_user_app(db_uri)) as client:
+        base = {"query": "needle", "include_titles": True, "limit": 1}
+        found, cursor = [], None
+        while True:
+            response = client.get(
+                endpoint,
+                headers=headers,
+                params={**base, **({"cursor": cursor} if cursor else {})},
+            )
+            assert response.status_code == 200, response.text
+            page = response.json()
+            found.extend(page["data"])
+            if not page["has_more"]:
+                break
+            cursor = page["next_cursor"]
+        assert [(hit["created_at"], hit["kind"]) for hit in found] == [
+            (500, "chat"),
+            (500, "message"),
+            (400, "message"),
+            (300, "message"),
+            (200, "message"),
+        ]
+        title = found[0]
+        assert title["session_id"] == shared_id and title["item_id"] == ids["progress"]
+        assert title["snippet"] == "needle progress" and title["sender_name"] == "Actual actor"
+        assert title["title_ranges"] == [{"start": 3, "end": 9}]
+        assert title["ranges"] == [] and title["occurrence_count"] == 0
+        for message_filter, expected in (
+            ("user", {ids["human"]}),
+            ("final", {ids["human"], ids["answer"]}),
+        ):
+            response = client.get(
+                endpoint,
+                headers=headers,
+                params={"query": "needle", "message_filter": message_filter},
+            )
+            assert response.status_code == 200
+            assert {hit["item_id"] for hit in response.json()["data"]} == expected
+        scoped = client.get(
+            endpoint, headers=headers, params={**base, "session_id": shared_id, "limit": 100}
+        ).json()
+        assert scoped["data"] == found
+        assert (
+            client.get(
+                endpoint, headers=headers, params={**base, "session_id": private.id}
+            ).json()["data"]
+            == []
+        )
+        first = client.get(endpoint, headers=headers, params=base).json()
+        for changed in ({"message_filter": "final"}, {"include_titles": False}):
+            response = client.get(
+                endpoint,
+                headers=headers,
+                params={**base, "cursor": first["next_cursor"], **changed},
+            )
+            assert response.status_code == 400

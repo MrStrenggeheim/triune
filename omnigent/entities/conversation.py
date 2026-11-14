@@ -247,6 +247,7 @@ class Conversation:
     host_id: str | None = None
     labels: dict[str, str] = field(default_factory=dict)
     session_state: dict[str, Any] = field(default_factory=dict)
+    runtime_notice_state: dict[str, Any] = field(default_factory=dict)
     session_usage: dict[str, Any] = field(default_factory=dict)
     session_todos: list[dict[str, Any]] = field(default_factory=list)
     reasoning_effort: str | None = None
@@ -328,6 +329,18 @@ class MessageData(BaseModel):
     communication: MessageCommunication | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    phase: Literal["commentary", "final_answer"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+
+    @field_validator("phase", mode="before")
+    @classmethod
+    def normalize_phase(cls, value: object) -> str | None:
+        """Only explicit provider phases establish commentary or finality."""
+        return (
+            value if isinstance(value, str) and value in {"commentary", "final_answer"} else None
+        )
+
     resource_scope: dict[str, Any] | None = None
     role: Literal["user", "assistant"]
     # Heterogeneous content blocks (input_text, output_text, input_image, etc.)

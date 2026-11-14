@@ -3130,6 +3130,12 @@ async def _persist_external_conversation_item_unlocked(
                 )
                 if confirmed is not None:
                     _publish_persisted_external_item(session_id, body, confirmed)
+                    pending_id = pending_inputs.pending_id_for_stable_id(session_id, existing.id)
+                    if pending_id is not None:
+                        pending_inputs.resolve(session_id, pending_id)
+                        _publish_input_consumed(
+                            session_id, confirmed, cleared_pending_id=pending_id
+                        )
             return existing.id
     peer_pending_id = (
         pending_inputs.make_pending_id(session_id, item.replaces_pending_id)
@@ -9244,6 +9250,7 @@ async def _relay_runner_stream_once(
         it is synchronous and does not create a helper task.
     """
     text_acc: list[str] = []
+    authoritative_response: str | None = None
     current_response_id: str | None = None
     pending_subagent_return_id: str | None = None
     pending_subagent_return_status = "completed"
@@ -9497,6 +9504,24 @@ async def _relay_runner_stream_once(
                             _llm_response_denied_turns.pop(session_id, None)
                         continue
 
+                    if evt_type == "session.runtime_notice":
+                        from omnigent.server.runtime_notices import observe_runtime_notice
+
+                        observation = event.get("observation")
+                        if isinstance(observation, dict):
+                            changed = await asyncio.to_thread(
+                                observe_runtime_notice, conversation_store, session_id, observation
+                            )
+                            if changed:
+                                session_stream.publish(
+                                    session_id,
+                                    {
+                                        "type": "session.runtime_notices",
+                                        "conversation_id": session_id,
+                                    },
+                                )
+                        continue
+
                     # Terminal spin-up status from the runner's auto-create
                     # path. Re-publish via _publish_terminal_pending so the
                     # event carries conversation_id and the cache write
@@ -9514,6 +9539,7 @@ async def _relay_runner_stream_once(
                     # Track the turn's response_id from lifecycle
                     # events so persisted items share one id.
                     if evt_type == "response.in_progress":
+                        authoritative_response = None
                         _turn_start_s = time.monotonic()
                         pending_subagent_return_id = None
                         resp_obj = event.get("response", {})
@@ -9548,6 +9574,20 @@ async def _relay_runner_stream_once(
                     _raw_item = event.get("item")
                     _item = _raw_item if isinstance(_raw_item, dict) else {}
                     _item_type = _item.get("type")
+                    if (
+                        evt_type == "response.output_item.done"
+                        and _item_type == "message"
+                        and _item.get("phase") == "final_answer"
+                    ):
+                        authoritative_response = "".join(
+                            block["text"]
+                            for block in _item.get("content", [])
+                            if isinstance(block, dict)
+                            and block.get("type") == "output_text"
+                            and isinstance(block.get("text"), str)
+                        )
+                        # Commit the selected result only after successful terminal completion.
+                        continue
                     _item_call_id = _item.get("call_id")
                     _persist_rid: str | None
                     if (
@@ -9662,6 +9702,18 @@ async def _relay_runner_stream_once(
                         # durable gating is the RESPONSE phase's job — the
                         # boundary flush above evaluates it for every segment.
                         _deny_reason = _llm_response_denied_turns.pop(session_id, None)
+                        if evt_type == "response.completed" and authoritative_response is not None:
+                            if "".join(text_acc) != authoritative_response:
+                                await _flush_relay_text(
+                                    conversation_store,
+                                    session_id,
+                                    text_acc,
+                                    current_response_id,
+                                    _final_model,
+                                    deny_reason=_deny_reason,
+                                    evaluate_response_phase=_deny_reason is None,
+                                )
+                            text_acc[:] = [authoritative_response]
                         await _flush_relay_text(
                             conversation_store,
                             session_id,
@@ -9673,6 +9725,10 @@ async def _relay_runner_stream_once(
                             evaluate_response_phase=_deny_reason is None,
                             # Only successful completion triggers final-response actions.
                             turn_final=evt_type == "response.completed",
+                            phase="final_answer"
+                            if evt_type == "response.completed"
+                            and authoritative_response is not None
+                            else "commentary",
                         )
                         # A failed append leaves text_acc intact for a retry
                         # at a later flush — re-arm the marker so the retry
@@ -9950,6 +10006,18 @@ async def _relay_runner_stream_once(
                     # terminal event so it doesn't leak to the
                     # next turn.
                     if evt_type in _TERMINAL_RESPONSE_EVENT_TYPES:
+                        authoritative_response = None
+                        if evt_type == "response.completed" and current_response_id:
+                            from omnigent.server.session_orchestration import (
+                                confirm_framework_sdk_receipts,
+                            )
+
+                            await confirm_framework_sdk_receipts(
+                                conversation_store,
+                                session_id,
+                                current_response_id,
+                                event.get("framework_input_ids") or [],
+                            )
                         current_response_id = None
 
                     # Patch the live event's response_id for
@@ -10590,94 +10658,35 @@ async def _wake_parent_for_blocked_child(
     conversation_store: ConversationStore,
     runner_router: RunnerRouter | None,
     agent_store: AgentStore | None = None,
+    app: Any | None = None,
 ) -> bool:
-    """
-    Deliver a parent-wake notice when a sub-agent blocks on an approval.
+    """Accept blocked/resolved wakes through the same durable System dispatch."""
+    del runner_router, agent_store  # The common startup dispatcher resolves current services.
+    from omnigent.runtime.subagent_block_notifier import FrameworkWakeNotice
+    from omnigent.server.session_orchestration import accept_framework_input
 
-    Posts the ``[System: …]`` notice as a synthetic user message to the
-    parent's ``POST /v1/sessions/{id}/events`` — the same path the runner's
-    terminal-completion wake uses, so it starts a continuation turn (idle
-    parent) or coalesces with pending input (busy parent). Best-effort: a
-    missing parent, missing runner, or transport error is logged and swallowed
-    (a dropped wake is no worse than the pre-fix no-wake baseline), but the
-    *outcome* is reported back so the notifier can release its per-block
-    debounce and let a later publish retry rather than silencing the block.
-
-    :param parent_id: Parent session id, e.g. ``\"conv_parent123\"``.
-    :param child: The blocked child :class:`Conversation`; used only for its
-        label/id in the notice and logs.
-    :param notice: The ``[System: …]`` text to inject into the parent.
-    :param conversation_store: Used to load the parent :class:`Conversation`
-        and persist the synthetic user message item.
-    :param runner_router: Router used to resolve the parent's bound
-        runner. ``None`` in in-process setups (the runtime singleton is
-        consulted as a fallback).
-    :param agent_store: Resolves the parent agent's current bundle, so a
-        reinstall since the parent's last turn reaches this wake turn too.
-    :returns: ``True`` when the notice was dispatched to the parent's runner;
-        ``False`` when delivery could not happen (parent gone, no runner bound,
-        or the forward raised a transport error).
-    """
-    parent_conv = await asyncio.to_thread(conversation_store.get_conversation, parent_id)
-    if parent_conv is None:
-        # Parent vanished between publish and wake (cascading-delete race).
-        _logger.debug(
-            "subagent block notifier: parent %s missing; dropping wake for %s",
-            parent_id,
-            child.id,
-        )
+    if app is None or not isinstance(notice, FrameworkWakeNotice):
+        _logger.warning("Framework wake has no durable dispatch context; parent=%s", parent_id)
         return False
-    runner_client = await _get_runner_client(parent_id, runner_router)
-    if runner_client is None:
-        # WARNING (not DEBUG): an unbound parent is the transient-miss case the
-        # notifier retries — surface it rather than burying it as routine.
-        _logger.warning(
-            "subagent block notifier: no runner bound for parent %s; dropping wake for %s",
-            parent_id,
-            child.id,
-        )
+    parent = await asyncio.to_thread(conversation_store.get_conversation, parent_id)
+    if parent is None:
         return False
-    # Ensure the parent's SSE relay is live so the wake turn's output is
-    # persisted (parity with post_event).
-    _ensure_runner_relay(
-        parent_id,
-        parent_conv.runner_id,
-        runner_client,
-        conversation_store,
-        conversation=parent_conv,
-    )
-    body = SessionEventInput(
-        type="message",
-        data={
-            "role": "user",
-            "content": [{"type": "input_text", "text": notice}],
-        },
-    )
-    parent_agent = (
-        await asyncio.to_thread(agent_store.get, parent_conv.agent_id)
-        if agent_store is not None and parent_conv.agent_id
-        else None
-    )
     try:
-        # None args: a system notice carries no agent/files/artifacts; the runner
-        # recomputes has_mcp_servers from the parent's cached spec.
-        await _dispatch_session_event_to_runner(
-            parent_id,
-            parent_conv,
-            body,
+        await accept_framework_input(
+            app,
+            parent,
+            {
+                "occurrence_id": notice.occurrence_id,
+                "child_id": child.id,
+                "kind": notice.kind,
+                "message": str(notice),
+                "label": "Subagent approval " + notice.kind,
+            },
             conversation_store,
-            runner_client,
-            agent_name=None,
-            file_store=None,
-            artifact_store=None,
-            runner_router=runner_router,
-            agent_revision=mcp_selection_revision(parent_agent.bundle_location, parent_conv.labels)
-            if parent_agent is not None
-            else None,
         )
     except (httpx.HTTPError, OmnigentError):
         _logger.warning(
-            "subagent block wake POST failed for parent=%s child=%s",
+            "Framework block wake was not accepted; parent=%s child=%s",
             parent_id,
             child.id,
             exc_info=True,
@@ -10690,6 +10699,8 @@ def configure_subagent_block_notifier(
     conversation_store: ConversationStore,
     runner_router: RunnerRouter | None,
     agent_store: AgentStore | None = None,
+    *,
+    app: Any | None = None,
 ) -> Callable[[], None]:
     """
     Install the parent-wake notifier on the elicitation publish path.
@@ -10735,6 +10746,7 @@ def configure_subagent_block_notifier(
             conversation_store=conversation_store,
             runner_router=runner_router,
             agent_store=agent_store,
+            app=app,
         )
 
     notifier = SubagentBlockNotifier(

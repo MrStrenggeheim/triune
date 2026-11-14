@@ -70,6 +70,7 @@ from omnigent.harnesses.codex_native.elicitation import (
 from omnigent.harnesses.codex_native.elicitation import (
     is_codex_request_id as _is_codex_request_id,
 )
+from omnigent.harnesses.codex_native.runtime_notices import CodexRuntimeNotices
 from omnigent.native._native_forwarder_health import (
     note_post_success as note_native_post_success,
 )
@@ -532,6 +533,7 @@ class _CodexForwarderState:
     posted_approval_preset: str | None = None
     parent_session_id: str | None = None
     codex_client: CodexAppServerClient | None = None
+    runtime_notices: CodexRuntimeNotices | None = None
     subagents_by_thread: dict[str, str] = field(default_factory=dict)
     pending_child_threads: dict[str, str | None] = field(default_factory=dict)
     subscribed_child_threads: set[str] = field(default_factory=set)
@@ -2289,6 +2291,16 @@ async def supervise_forwarder(
             parent_session_id=session_id,
             codex_client=client,
         )
+        forwarder_state.runtime_notices = CodexRuntimeNotices(
+            ap_client,
+            client,
+            session_id,
+            "codex-server:" + hashlib.sha256(app_server_url.encode()).hexdigest()[:24],
+        )
+        try:
+            await forwarder_state.runtime_notices.snapshot()
+        except httpx.HTTPError:
+            _logger.warning("Could not persist Codex quota snapshot", exc_info=True)
         # Released when the live event stream shows the thread became
         # active (its first turn materializes the rollout). Lets the
         # subscribe task park instead of blind-polling ``thread/resume``
@@ -3139,6 +3151,10 @@ async def _handle_event(
     method = event.get("method")
     params = event.get("params")
     if not isinstance(method, str) or not isinstance(params, dict):
+        return
+    if method in {"account/rateLimits/updated", "account/updated"}:
+        if forwarder_state is not None and forwarder_state.runtime_notices is not None:
+            await forwarder_state.runtime_notices.handle(method, params)
         return
     if forwarder_state is not None and _thread_started_is_subagent(event):
         child_thread_id = _thread_id_from_started_event(event)
@@ -6596,6 +6612,7 @@ async def _post_agent_message(
         item_data={
             "role": "assistant",
             "agent": _AGENT_NAME,
+            "phase": item.get("phase"),
             "content": [{"type": "output_text", "text": text}],
         },
         response_id=_response_id(params),

@@ -1,3 +1,4 @@
+# Modified for Triune; inherited notices remain applicable.
 """Executor adapter interface for Omnigent.
 
 An Executor translates between the framework's abstract message/tool model
@@ -167,6 +168,13 @@ class ToolCallRequest(ExecutorEvent):
 
 
 @dataclass
+class RuntimeNoticeObservation(ExecutorEvent):
+    """Provider state observation, independent of assistant prose and approvals."""
+
+    observation: dict[str, Any]
+
+
+@dataclass
 class TurnComplete(ExecutorEvent):
     """The LLM has finished its turn with a final text response.
 
@@ -190,6 +198,7 @@ class TurnComplete(ExecutorEvent):
     """
 
     response: str | None = None
+    response_is_authoritative: bool = True
     modified_by_policy: bool = False
     continue_turn: bool = False
     usage: ExecutorUsage | None = None

@@ -25,7 +25,7 @@ MAX_PENDING_INPUTS = 100
 
 if TYPE_CHECKING:
     from omnigent.db.account_authority import AccountAuthority
-    from omnigent.stores.conversation_store.message_search import MessageSearchPage
+    from omnigent.stores.conversation_store.message_search import MessageFilter, MessageSearchPage
 
 # Label set on a fork of a session that had a working directory, or a
 # runner-bound native session whose working-directory metadata was lost.
@@ -741,7 +741,12 @@ class ConversationStore(ABC):
 
     @abstractmethod
     def confirm_framework_input(
-        self, conversation_id: str, item_id: str, response_id: str
+        self,
+        conversation_id: str,
+        item_id: str,
+        response_id: str,
+        *,
+        receipt: str = "transcript",
     ) -> ConversationItem | None:
         """Confirm a correlated framework echo without changing its identity or chronology.
 
@@ -1013,11 +1018,14 @@ class ConversationStore(ABC):
         shared_only: bool = False,
         include_archived: bool = False,
         archived_only: bool = False,
+        message_filter: "MessageFilter" = "all",
+        include_titles: bool = False,
     ) -> "MessageSearchPage":
         """Search message source with the session-list ACL and bounded keyset pages.
 
-        Ranges and text_start use UTF-16 offsets; occurrence_count covers only
-        the bounded returned text, and no unestablished total is reported.
+        Ranges and text_start use UTF-16 offsets into bounded message source.
+        Title hits preview the latest message independently of message_filter.
+        Occurrence counts cover only returned text; no unestablished total is reported.
         """
         raise NotImplementedError("Message search is not supported by this store")
 
@@ -1342,6 +1350,11 @@ class ConversationStore(ABC):
         :param state: The complete session-state dict to persist.
             Serialized as JSON. Empty dict is stored as ``"{}"``.
         """
+        ...
+
+    @abstractmethod
+    def set_runtime_notice_state(self, conversation_id: str, snapshot: dict[str, Any]) -> bool:
+        """Replace reserved runtime observations without changing policy state or Plan."""
         ...
 
     @abstractmethod

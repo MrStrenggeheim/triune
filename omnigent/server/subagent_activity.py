@@ -166,11 +166,17 @@ def _completion_result(
             if isinstance(resource, dict):
                 metadata = {
                     key: resource[key]
-                    for key in ("result_text", "agent_name", "result_item_id")
+                    for key in (
+                        "result_text",
+                        "agent_name",
+                        "result_item_id",
+                        "result_finality",
+                        "result_revision",
+                    )
                     if resource.get(key)
                 }
                 item_id = metadata.pop("result_item_id", None)
-                if item_id:
+                if item_id and metadata.get("result_text"):
                     metadata["result_ref"] = {"conversation_id": parent_id, "item_id": item_id}
                     metadata["result_refs"] = [metadata["result_ref"]]
                     if metadata.get("result_text"):
@@ -279,26 +285,49 @@ def _turn_report(
 ) -> dict[str, object]:
     parts = []
     refs = []
+    finality = "final_answer"
+    selected = []
     for row in reversed(rows):
         if not turn_id or row.response_id != turn_id:
             continue
-        result = _message_text(row, role="assistant")
-        if (
+        if isinstance(row.data, MessageData):
+            if (
+                row.status != "completed"
+                or row.data.interrupted
+                or row.data.phase != "final_answer"
+            ):
+                continue
+            result = _message_text(row, role="assistant")
+            if result:
+                selected.append((row, result))
+        elif (
             isinstance(row.data, ResourceEventData)
             and row.data.event_type == "session.subagent.result"
             and isinstance(row.data.resource, dict)
+            and isinstance(row.data.resource.get("result_text"), str)
         ):
-            result = row.data.resource.get("result_text")
-        if isinstance(result, str) and result.strip():
+            # A correlated adapter result supersedes streamed assistant blocks.
+            if finality != "adapter_result":
+                selected = []
+                finality = "adapter_result"
+            selected.append((row, row.data.resource["result_text"]))
+    if finality == "adapter_result":
+        selected = [
+            (row, text) for row, text in selected if isinstance(row.data, ResourceEventData)
+        ]
+    for row, result in selected:
+        if result.strip():
             parts.append(result)
             refs.append({"conversation_id": child_id, "item_id": row.id})
     if not parts:
-        return {}
+        return {"result_finality": "unknown"}
     return {
         "result_text": "\n\n".join(parts),
         "result_ref": refs[0],
         "result_refs": refs,
         "result_parts": [{"text": part, **ref} for part, ref in zip(parts, refs, strict=True)],
+        "result_finality": finality,
+        "result_revision": len(refs),
     }
 
 
@@ -570,7 +599,13 @@ async def recover_subagent_activity(
                 if ref.get("conversation_id") == child_id and result.response_id == resource.get(
                     "turn_id"
                 ):
-                    text = _message_text(result, role="assistant")
+                    text = (
+                        _message_text(result, role="assistant")
+                        if isinstance(result.data, MessageData)
+                        and result.data.phase == "final_answer"
+                        and not result.data.interrupted
+                        else None
+                    )
                 elif (
                     ref.get("conversation_id") == parent_id
                     and isinstance(result.data, (MessageData, FunctionCallOutputData))
@@ -591,9 +626,14 @@ async def recover_subagent_activity(
                 if text:
                     parts.append(text)
                     result_parts.append({"text": text, **ref})
-            if parts and len("\n\n".join(parts)) > len(resource.get("result_text", "")):
+            if parts:
                 resource["result_text"] = "\n\n".join(parts)
                 resource["result_parts"] = result_parts
+                resource["result_refs"] = [
+                    {key: part[key] for key in ("conversation_id", "item_id")}
+                    for part in result_parts
+                ]
+                resource["result_ref"] = resource["result_refs"][0]
             elif (
                 not resource.get("result_text")
                 and resource.get("turn_id")
@@ -711,6 +751,13 @@ async def record_subagent_activity(
             metadata.update(
                 await asyncio.to_thread(_completion_result, parent_id, metadata, store)
             )
+            if status in {"failed", "cancelled"}:
+                from omnigent.entities.report_finality import REPORT_FIELDS
+
+                metadata = {
+                    key: value for key, value in metadata.items() if key not in REPORT_FIELDS
+                }
+                metadata["result_finality"] = "unknown"
         else:
             labels = {
                 f"omnigent.subagent.{key}": value
@@ -876,6 +923,14 @@ def claude_subagent_completion_markers(
         if item.data.communication and item.data.communication.source_agent_name:
             metadata["agent_name"] = item.data.communication.source_agent_name
     item_id = item.id if isinstance(item, ConversationItem) else item.stable_id
+    if (
+        isinstance(item.data, (MessageData, FunctionCallOutputData))
+        and item.data.subagent_return_id
+    ):
+        metadata["result_finality"] = "handback"
+        metadata["result_revision"] = 1
+    else:
+        metadata.pop("result_text", None)
     if item_id:
         metadata["result_item_id"] = item_id
     return [

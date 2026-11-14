@@ -227,7 +227,11 @@ from omnigent.stores.conversation_store import (
     pinned_label_key,
     runner_seen_is_fresh,
 )
-from omnigent.stores.conversation_store.message_search import MAX_SEARCH_QUERY, MessageSearchPage
+from omnigent.stores.conversation_store.message_search import (
+    MAX_SEARCH_QUERY,
+    MessageFilter,
+    MessageSearchPage,
+)
 from omnigent.stores.file_store import FileStore
 from omnigent.stores.permission_store import PermissionStore
 from omnigent.stores.project_store import ProjectStore
@@ -1810,11 +1814,14 @@ def register_core_routes(
         cursor: str | None = Query(default=None, max_length=1024),
         include_archived: bool = Query(default=False),
         visibility: str = Query(default="all", pattern="^(all|mine|shared|archived)$"),
+        message_filter: MessageFilter = "all",
+        include_titles: bool = Query(default=False),
     ) -> MessageSearchPage:
-        """Return bounded authorized message hits, including unloaded history.
+        """Return one authorized page of messages and optional chat-title hits.
 
-        Text retains the stored raw text-block join (one space); all offsets
-        use UTF-16. Truncated text reports its full-source offset explicitly.
+        Final includes trusted human messages and confirmed final agent replies.
+        Text retains the raw one-space block join; all offsets use UTF-16.
+        Truncated text reports its full-source offset explicitly.
         """
         user_id = _require_user(request, auth_provider)
         try:
@@ -1824,6 +1831,8 @@ def register_core_routes(
                 conversation_id=session_id,
                 limit=limit,
                 cursor=cursor,
+                message_filter=message_filter,
+                include_titles=include_titles,
                 **_session_visibility_filters(user_id, visibility, include_archived),
             )
         except ValueError as exc:
