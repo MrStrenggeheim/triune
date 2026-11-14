@@ -1,3 +1,4 @@
+// Modified for Triune; inherited notices remain applicable.
 "use client";
 
 import * as React from "react";
@@ -21,7 +22,7 @@ function PopoverContent({
   ...props
 }: React.ComponentProps<typeof PopoverPrimitive.Content>) {
   return (
-    <PopoverPrimitive.Portal container={getEmbedRoot() ?? undefined}>
+    <PopoverPrimitive.Portal container={getEmbedRoot() ?? undefined} forceMount={props.forceMount}>
       <PopoverPrimitive.Content
         data-slot="popover-content"
         align={align}

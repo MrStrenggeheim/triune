@@ -34,7 +34,7 @@
 //   3. rolls back to "pending" on network error.
 
 import type { NativePermissionDelivery } from "@/lib/nativePermissionDelivery";
-import { useContext } from "react";
+import { useContext, useState } from "react";
 import {
   CheckIcon,
   ClipboardListIcon,
@@ -268,6 +268,7 @@ export function ApprovalCard({
   requester,
   className,
 }: ApprovalCardProps) {
+  const [questionIndex, setQuestionIndex] = useState(0);
   // In a side-chat pane this resolves to the child id, so the verdict targets
   // the child's elicitation rather than the main conversation's. null (the main
   // transcript) leaves submitApproval on its active-conversation default.
@@ -855,6 +856,15 @@ export function ApprovalCard({
         {showPhase && !isMultiChoice && !isAskUserQuestion && !isExitPlanMode && (
           <span className="text-muted-foreground text-sm">({phase})</span>
         )}
+        {askPayload && (
+          <span
+            data-testid="ask-user-question-progress"
+            className="ml-auto shrink-0 text-sm font-normal text-muted-foreground"
+          >
+            Question {Math.min(questionIndex + 1, askPayload.questions.length)} of{" "}
+            {askPayload.questions.length}
+          </span>
+        )}
       </AlertTitle>
       <AlertDescription className="flex flex-col gap-2">
         {requesterLine}
@@ -871,6 +881,9 @@ export function ApprovalCard({
         ) : isAskUserQuestion ? (
           <AskUserQuestionForm
             questions={askPayload.questions}
+            currentIndex={questionIndex}
+            onCurrentIndexChange={setQuestionIndex}
+            showProgress={false}
             onSubmit={submitAnswers}
             onReject={() => submitBinary("decline")}
           />

@@ -1,6 +1,10 @@
 // Modified for Triune.
 import { persistMessageQueue } from "@/lib/queuedMessagePersistence";
-import { readMessageCommunication, type MessageCommunication } from "@/lib/messageCommunication";
+import {
+  messageInputKind,
+  readMessageCommunication,
+  type MessageCommunication,
+} from "@/lib/messageCommunication";
 import { getBasePath } from "@/lib/basePath";
 // Module-scope Zustand store for the active chat session.
 //
@@ -165,12 +169,7 @@ import {
   onResponseStart,
 } from "./interactionTelemetry";
 import { getSessionHost, subscribeSessionHostChanges } from "@/lib/sessionHost";
-import {
-  isClaudeAgentMessageContent,
-  isSystemUserContent,
-  taskNotificationMarkerContent,
-  withoutAttachedMarkers,
-} from "@/lib/systemMessage";
+import { taskNotificationMarkerContent, withoutAttachedMarkers } from "@/lib/systemMessage";
 import {
   isNativeTerminalSession as isNativeTerminalSessionFn,
   nativeCodingAgentForHarness,
@@ -5998,8 +5997,7 @@ function reconcilePendingMessages(
   session: Session,
 ): PendingUserMessage[] {
   const receipts = committed.filter(
-    (block): block is UserMessageBlock =>
-      block.type === "user_message" && !isSystemUserContent(block.content),
+    (block): block is UserMessageBlock => block.type === "user_message",
   );
   const pendingItemIds = new Set(
     pending
@@ -6023,6 +6021,8 @@ function reconcilePendingMessages(
           receipt.communication?.message_id === message.communication.message_id
         );
       }
+      if (messageInputKind(receipt.communication, receipt.userAuthored, receipt.isMeta) !== "human")
+        return false;
       if (message.author && receipt.ctx.createdBy && message.author !== receipt.ctx.createdBy)
         return false;
       const text = withoutAttachedMarkers(messageContentText(message.content));
@@ -6036,8 +6036,7 @@ function reconcilePendingMessages(
   });
   const unmatched = [...remaining];
   const serverReceipts = committed.filter(
-    (block): block is UserMessageBlock =>
-      block.type === "user_message" && !isSystemUserContent(block.content),
+    (block): block is UserMessageBlock => block.type === "user_message",
   );
   const replayed: PendingUserMessage[] = [];
   for (const input of session.pendingInputs ?? []) {
@@ -6059,7 +6058,12 @@ function reconcilePendingMessages(
     if (matching !== -1) {
       const [message] = unmatched.splice(matching, 1);
       const at = remaining.indexOf(message!);
-      remaining[at] = { ...message!, pendingId: input.pendingId, content: input.content };
+      remaining[at] = {
+        ...message!,
+        pendingId: input.pendingId,
+        content: input.content,
+        ...(input.communication ? { communication: input.communication } : {}),
+      };
       continue;
     }
     if (committed.some((block) => block.ctx.itemId === input.pendingId)) continue;
@@ -6067,6 +6071,8 @@ function reconcilePendingMessages(
       if (input.communication || block.communication) {
         return input.communication?.message_id === block.communication?.message_id;
       }
+      if (messageInputKind(block.communication, block.userAuthored, block.isMeta) !== "human")
+        return false;
       const text = withoutAttachedMarkers(messageContentText(input.content));
       return (
         text !== "" && withoutAttachedMarkers(messageContentText(block.content)).endsWith(text)
@@ -7638,7 +7644,11 @@ export async function pumpStreamEvents(
 }
 
 function isHumanAuthoredInput(event: SessionInputConsumedEvent): boolean {
-  return Boolean(event.createdBy || event.data.user_authored === true || event.clearedPendingId);
+  return !readMessageCommunication(event.data.communication) && event.data.user_authored === true;
+}
+
+function isMetaInput(event: SessionInputConsumedEvent): boolean {
+  return event.isMeta === true || event.data.is_meta === true;
 }
 
 /**
@@ -7658,13 +7668,12 @@ function userContentFromEvent(event: SessionInputConsumedEvent): MessageContentB
       "type" in b &&
       (b.type === "input_text" || b.type === "input_image" || b.type === "input_file"),
   );
-  if (event.isMeta !== true && isHumanAuthoredInput(event)) return content;
   // A Claude background-task wake is hidden context (`is_meta`) that still
   // has to start a new turn on screen: render it as a system marker. Every
   // other meta message (injected skill text) stays hidden.
-  const marker = taskNotificationMarkerContent(content);
+  const marker = isMetaInput(event) ? taskNotificationMarkerContent(content) : null;
   if (marker !== null) return marker;
-  if (event.isMeta === true) return null;
+  if (isMetaInput(event)) return null;
   return content;
 }
 
@@ -8015,6 +8024,13 @@ function committedContentFor(
 ): MessageContentBlock[] | null {
   const serverContent = userContentFromEvent(event);
   if (!serverContent) return pendingContent;
+  return preserveInputAttachments(serverContent, pendingContent);
+}
+
+function preserveInputAttachments(
+  serverContent: MessageContentBlock[],
+  pendingContent: MessageContentBlock[] | null,
+): MessageContentBlock[] {
   if (!pendingContent) return serverContent;
   const serverHasFiles = serverContent.some(
     (b) => b.type === "input_image" || b.type === "input_file",
@@ -8023,7 +8039,47 @@ function committedContentFor(
   const pendingFiles = pendingContent.filter(
     (b) => b.type === "input_image" || b.type === "input_file",
   );
-  return [...pendingFiles, ...serverContent];
+  return pendingFiles.length > 0 ? [...pendingFiles, ...serverContent] : serverContent;
+}
+
+/** Fill provenance and uploads when a persisted item beats its pending receipt. */
+function reconcileCommittedInput(
+  blocks: AnyBlock[],
+  event: SessionInputConsumedEvent,
+  pending?: PendingUserMessage,
+  communication?: MessageCommunication,
+): AnyBlock[] {
+  let changed = false;
+  const reconciled = blocks.map((block) => {
+    if (block.type !== "user_message" || block.ctx.itemId !== event.itemId) return block;
+    const provenance = block.communication ?? communication ?? pending?.communication;
+    const userAuthored = provenance
+      ? block.userAuthored
+      : block.userAuthored || isHumanAuthoredInput(event) || (pending && !pending.communication);
+    const isMeta = isMetaInput(event) ? true : block.isMeta;
+    const content = pending
+      ? preserveInputAttachments(block.content, pending.content)
+      : block.content;
+    const stableKey = block.stableKey ?? pending?.tempId;
+    if (
+      provenance === block.communication &&
+      Boolean(userAuthored) === Boolean(block.userAuthored) &&
+      isMeta === block.isMeta &&
+      content === block.content &&
+      stableKey === block.stableKey
+    )
+      return block;
+    changed = true;
+    return {
+      ...block,
+      userAuthored: userAuthored === true,
+      isMeta,
+      content,
+      stableKey,
+      ...(provenance ? { communication: provenance } : {}),
+    };
+  });
+  return changed ? reconciled : blocks;
 }
 
 /**
@@ -8042,9 +8098,15 @@ function committedUserBlock(
   stableKey?: string,
   createdBy?: string,
   createdAtS?: number,
+  userAuthored = false,
+  isMeta = false,
+  communication?: MessageCommunication,
 ): UserMessageBlock {
   return {
     type: "user_message",
+    userAuthored: !communication && userAuthored,
+    isMeta,
+    ...(communication ? { communication } : {}),
     ctx: {
       agent: null,
       depth: 0,
@@ -8899,7 +8961,7 @@ export function handleSessionEvent(event: StreamEvent, streamConversationId?: st
               (block): block is MessageContentBlock =>
                 typeof block === "object" &&
                 block !== null &&
-                ["input_text", "input_image", "input_file"].includes(block.type),
+                ["input_text", "output_text", "input_image", "input_file"].includes(block.type),
             )
           : [];
         applyToConversation((state) => {
@@ -8909,29 +8971,34 @@ export function handleSessionEvent(event: StreamEvent, streamConversationId?: st
             (!!event.clearedPendingId &&
               (pending.tempId === event.clearedPendingId ||
                 pending.pendingId === event.clearedPendingId)) ||
-            (pending.communication?.message_id === event.itemId &&
+            ((pending.communication?.message_id === event.itemId ||
+              pending.communication?.message_id === communication.message_id) &&
+              pending.communication !== undefined &&
               pending.communication.source_conversation_id ===
                 communication.source_conversation_id &&
               pending.communication.destination_conversation_id ===
                 communication.destination_conversation_id);
           const matched = state.pendingUserMessages.find(matchesReceipt);
+          const committed = hasCommittedItem(state.blocks, event.itemId);
           return {
             startupPending: false,
             pendingUserMessages: state.pendingUserMessages.filter(
               (pending) => !matchesReceipt(pending),
             ),
-            ...(hasCommittedItem(state.blocks, event.itemId)
-              ? {}
+            ...(committed
+              ? { blocks: reconcileCommittedInput(state.blocks, event, matched, communication) }
               : {
                   blocks: [
                     ...state.blocks,
                     {
                       ...committedUserBlock(
                         event.itemId,
-                        content,
+                        preserveInputAttachments(content, matched?.content ?? null),
                         matched?.tempId,
                         event.createdBy ?? matched?.author,
                         matched?.createdAtS,
+                        false,
+                        isMetaInput(event),
                       ),
                       communication,
                     },
@@ -8965,27 +9032,16 @@ export function handleSessionEvent(event: StreamEvent, streamConversationId?: st
       });
       // Hidden meta inputs stay hidden — except a background-task wake,
       // which `userContentFromEvent` re-labels as a system marker.
-      if (event.isMeta === true && userContentFromEvent(event) === null) return;
-      if (
-        !isHumanAuthoredInput(event) &&
-        isClaudeAgentMessageContent(userContentFromEvent(event) ?? [])
-      ) {
-        return;
-      }
+      if (isMetaInput(event) && userContentFromEvent(event) === null) return;
       // Promote the matching optimistic bubble into committed history.
       // Three ways to find it, in order of precision:
       //   1. By id — the server tells us which pending-input entry this
       //      message drained (clearedPendingId = the FIFO-oldest entry's
       //      id), so we drop that exact bubble. Covers snapshot-hydrated
       //      bubbles and optimistic ones whose sender adopted the id.
-      //   2. FIFO head — for an optimistic bubble whose POST hasn't
-      //      returned the id to adopt yet (consumed raced ahead), or a
-      //      cross-client send. Per-session SSE ordering makes the head
-      //      the right entry. No text match: the native transcript
-      //      reformats text (reply-quote `>` blockquotes, `[Attached:]`
-      //      markers), so a text guard would wrongly skip the drop and
-      //      strand the bubble as a duplicate. Only system markers, which
-      //      never had a bubble here, are held back.
+      //   2. FIFO head — only a trusted human receipt may acknowledge a
+      //      send whose POST has not returned its id yet. Native formatting
+      //      can change the text; content never establishes authorship.
       //   3. No pending entry — render the event payload as a fresh
       //      committed bubble (TUI-typed message, marker, or another
       //      client).
@@ -8995,11 +9051,7 @@ export function handleSessionEvent(event: StreamEvent, streamConversationId?: st
           (pending) => !pending.communication,
         );
         const pendingHead = s.pendingUserMessages[pendingHeadIndex];
-        // Bare envelopes typed in the terminal must not consume unrelated web input.
-        const unmatchedEnvelope =
-          eventContent !== null &&
-          isClaudeAgentMessageContent(eventContent) &&
-          (!pendingHead || contentKeyOf(pendingHead.content) !== contentKeyOf(eventContent));
+        const canPromoteHead = isHumanAuthoredInput(event) && !isMetaInput(event);
         // An older server's skip receipt names a `!cmd` bubble its shell input already
         // cleared: it owns no bubble, and the FIFO head belongs to a later message.
         const named = event.clearedPendingId;
@@ -9013,6 +9065,11 @@ export function handleSessionEvent(event: StreamEvent, streamConversationId?: st
                 eventContent !== null &&
                 entry.contentKey === contentKeyOf(eventContent)),
           );
+        const matchedIndex = s.pendingUserMessages.findIndex((pending) =>
+          [pending.tempId, pending.pendingId, pending.stableId].some(
+            (id) => id !== undefined && (id === named || id === event.itemId),
+          ),
+        );
         if (hasCommittedItem(s.blocks, event.itemId)) {
           // The committed copy is already in `blocks` — the forwarder-mirrored
           // item beat this event through the stream, or a snapshot merge
@@ -9020,83 +9077,61 @@ export function handleSessionEvent(event: StreamEvent, streamConversationId?: st
           // dropping it strands a duplicate user bubble at the transcript tail.
           // Same precision order as below (named entry, then FIFO head), minus
           // the append.
-          const cleared = event.clearedPendingId;
-          const at = cleared
-            ? s.pendingUserMessages.findIndex(
-                (p) => p.tempId === cleared || p.pendingId === cleared,
-              )
-            : -1;
-          if (at >= 0) {
+          if (matchedIndex >= 0) {
             return {
-              pendingUserMessages: [
-                ...s.pendingUserMessages.slice(0, at),
-                ...s.pendingUserMessages.slice(at + 1),
-              ],
+              blocks: reconcileCommittedInput(s.blocks, event, s.pendingUserMessages[matchedIndex]),
+              pendingUserMessages: s.pendingUserMessages.filter(
+                (_, index) => index !== matchedIndex,
+              ),
             };
           }
-          if (settledShell) return {};
-          // FIFO-head fallback — same marker guard as the promote path below. A
-          // mirrored system marker (the vendor CLI's own `[Request interrupted
-          // by user]` record) is synthesized by the CLI, owns no pending entry,
-          // and arrives with clearedPendingId unset; dropping the head would
-          // steal a real queued message's bubble. Hold the head back for a marker.
-          if (unmatchedEnvelope || (eventContent !== null && isSystemUserContent(eventContent))) {
-            return {};
-          }
-          if (!pendingHead || pendingHead.initialDraft) return {};
+          const blocks = reconcileCommittedInput(s.blocks, event);
+          if (settledShell) return { blocks };
+          if (
+            !canPromoteHead ||
+            s.blocks.some(
+              (block) =>
+                block.type === "user_message" &&
+                block.ctx.itemId === event.itemId &&
+                block.stableKey !== undefined,
+            )
+          )
+            return { blocks };
+          if (!pendingHead || pendingHead.initialDraft) return { blocks };
           return {
+            blocks: reconcileCommittedInput(s.blocks, event, pendingHead),
             pendingUserMessages: s.pendingUserMessages.filter(
               (_, index) => index !== pendingHeadIndex,
             ),
           };
         }
 
-        // 1. Drop by id when the server names the drained entry.
-        const cleared = event.clearedPendingId;
-        if (cleared) {
-          const idx = s.pendingUserMessages.findIndex(
-            (p) => p.tempId === cleared || p.pendingId === cleared,
-          );
-          if (idx >= 0) {
-            const matched = s.pendingUserMessages[idx]!;
-            const content = committedContentFor(event, matched.content);
-            if (content === null) return {};
-            return {
-              pendingUserMessages: [
-                ...s.pendingUserMessages.slice(0, idx),
-                ...s.pendingUserMessages.slice(idx + 1),
-              ],
-              // stableKey = the optimistic bubble's temp id → the
-              // promoted bubble keeps the same React key (no remount).
-              blocks: [
-                ...s.blocks,
-                committedUserBlock(
-                  event.itemId,
-                  content,
-                  matched.tempId,
-                  event.createdBy ?? matched.author,
-                  matched.createdAtS,
-                ),
-              ],
-            };
-          }
+        // 1. Promote the exact pending identity, preserving its known provenance.
+        if (matchedIndex >= 0) {
+          const matched = s.pendingUserMessages[matchedIndex]!;
+          const content = committedContentFor(event, matched.content);
+          if (content === null) return {};
+          return {
+            pendingUserMessages: s.pendingUserMessages.filter((_, index) => index !== matchedIndex),
+            blocks: [
+              ...s.blocks,
+              committedUserBlock(
+                event.itemId,
+                content,
+                matched.tempId,
+                event.createdBy ?? matched.author,
+                matched.createdAtS,
+                isHumanAuthoredInput(event) || !matched.communication,
+                isMetaInput(event),
+                matched.communication,
+              ),
+            ],
+          };
         }
 
-        // 2. FIFO head fallback (id not adopted yet / cross-client).
-        //    Skipped for an unsent draft or a mirrored system marker (the vendor CLI's own
-        //    interrupt record): it is synthesized by the CLI, never queued
-        //    here, so popping the head would hand the queued message's
-        //    uploads to the marker and leave the real message empty. A
-        //    `[System: …]` notice DOES have a pending entry, but the server
-        //    drains it and names it via `clearedPendingId`, so it lands on
-        //    branch 1 and never reaches this fallback.
+        // 2. Trusted human receipt with no adopted id; never consume an unsent draft.
         const head =
-          settledShell ||
-          unmatchedEnvelope ||
-          (eventContent !== null && isSystemUserContent(eventContent)) ||
-          pendingHead?.initialDraft
-            ? undefined
-            : pendingHead;
+          settledShell || !canPromoteHead || pendingHead?.initialDraft ? undefined : pendingHead;
         if (head) {
           const content = committedContentFor(event, head.content);
           if (content === null) return {};
@@ -9114,6 +9149,8 @@ export function handleSessionEvent(event: StreamEvent, streamConversationId?: st
                 head.tempId,
                 event.createdBy ?? head.author,
                 head.createdAtS,
+                isHumanAuthoredInput(event),
+                isMetaInput(event),
               ),
             ],
           };
@@ -9125,7 +9162,15 @@ export function handleSessionEvent(event: StreamEvent, streamConversationId?: st
         return {
           blocks: [
             ...s.blocks,
-            committedUserBlock(event.itemId, eventContent, undefined, event.createdBy),
+            committedUserBlock(
+              event.itemId,
+              eventContent,
+              undefined,
+              event.createdBy,
+              undefined,
+              isHumanAuthoredInput(event),
+              isMetaInput(event),
+            ),
           ],
         };
       });

@@ -3,12 +3,15 @@ import { useQuery } from "@tanstack/react-query";
 import { authenticatedFetch } from "@/lib/identity";
 import { apiErrorFromResponse } from "@/lib/sessionsApi";
 import { isTempConvId } from "@/lib/tempConversationId";
+import type { BackgroundTaskInfo } from "@/lib/types";
 
 export interface ChatActivityEntry {
   id: string;
   kind: "terminal" | "command";
   session_id: string;
   terminal_id?: string | null;
+  source?: BackgroundTaskInfo["source"];
+  source_call_id?: string | null;
   name: string;
   state: "running" | "idle" | "exited" | "disconnected" | "unknown";
   started_at?: string | number | null;

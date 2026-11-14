@@ -1,3 +1,4 @@
+// Modified for Triune; inherited notices remain applicable.
 import { readMessageCommunication } from "./messageCommunication";
 import { attachmentsFromContent } from "./chatAttachments";
 // Translate persisted `ConversationItem`s into a flat `AnyBlock[]` —
@@ -63,7 +64,7 @@ import {
 } from "./conversationItems";
 import { nativePolicyNameForAgentName } from "./nativeCodingAgents";
 import { routingExtrasFromWire } from "./routingDecision";
-import { isClaudeAgentMessageContent, taskNotificationMarkerContent } from "./systemMessage";
+import { taskNotificationMarkerContent } from "./systemMessage";
 import { readSubagentActivity } from "./subagentActivity";
 
 // Claude built-ins whose call is a question TO the user rather than work
@@ -274,38 +275,18 @@ function itemToBlock(item: ConversationItem, agentName?: string | null): AnyBloc
   }
   if (isMessageItem(item) && readMessageCommunication(item.communication)) {
     return {
-      type: "user_message",
-      ctx: ctxFor(item),
+      ...userMessageToBlock(item),
       content: item.content,
       communication: item.communication,
     };
   }
-  if (isMessageItem(item) && item.role === "user") {
-    if (!item.is_meta && (item.created_by || item.user_authored === true)) {
-      return userMessageToBlock(item);
-    }
-    if (isClaudeAgentMessageContent(item.content)) return null;
-    // Claude Code's background-task wake: the CLI injects a
-    // `<task-notification>` user entry (mirrored with `is_meta`) and
-    // starts a new turn on it. Render it as a muted system marker so the
-    // answer it interrupts keeps its own bubble instead of folding into
-    // the follow-up work's "Worked for" row.
-    const marker = taskNotificationMarkerContent(item.content);
-    if (marker !== null) {
-      return { ...userMessageToBlock(item), content: marker };
-    }
-  }
   if (isMessageItem(item) && item.is_meta === true) {
+    // Format a typed background wake; other deliberate skill/context stays hidden.
+    const marker = item.role === "user" ? taskNotificationMarkerContent(item.content) : null;
+    if (marker !== null) return { ...userMessageToBlock(item), content: marker };
     return null;
   }
   if (isMessageItem(item) && item.role === "user") {
-    // Hide the compaction summary message injected by Claude Code
-    // after /compact. It starts with a distinctive prefix and is
-    // part of the model's context (needed for resume) but should
-    // not be shown as a chat bubble in the web UI.
-    if (isCompactionSummaryMessage(item)) {
-      return null;
-    }
     return userMessageToBlock(item);
   }
   if (isMessageItem(item) && item.role === "assistant") {
@@ -342,26 +323,11 @@ function itemToBlock(item: ConversationItem, agentName?: string | null): AnyBloc
   return null;
 }
 
-/**
- * Detect the compaction summary message injected by Claude Code after
- * `/compact`. The message carries the conversation summary for the
- * model's context but should not render as a user chat bubble.
- */
-function isCompactionSummaryMessage(item: MessageItem): boolean {
-  const prefix = "This session is being continued from a previous conversation";
-  for (const block of item.content) {
-    if (block.type === "input_text" && typeof block.text === "string") {
-      if (block.text.startsWith(prefix)) {
-        return true;
-      }
-    }
-  }
-  return false;
-}
-
 function userMessageToBlock(item: MessageItem): UserMessageBlock {
   return {
-    ...(item.communication ? { communication: item.communication } : {}),
+    userAuthored: item.user_authored === true,
+    isMeta: item.is_meta === true,
+    ...(readMessageCommunication(item.communication) ? { communication: item.communication } : {}),
     type: "user_message",
     ctx: ctxFor(item),
     // Forward the full content array verbatim so the renderer can
@@ -487,6 +453,7 @@ function skillEchoBlock(item: SlashCommandItem): UserMessageBlock | null {
   return {
     type: "user_message",
     ctx: { ...ctxFor(item), itemId: slashCommandEchoItemId(item.id) },
+    userAuthored: true,
     content: [{ type: "input_text", text: slashCommandEchoText(item.name, item.arguments) }],
   };
 }

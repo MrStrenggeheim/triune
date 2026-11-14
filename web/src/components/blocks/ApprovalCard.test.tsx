@@ -1,3 +1,4 @@
+// Modified for Triune; inherited notices remain applicable.
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
@@ -693,7 +694,7 @@ describe("ApprovalCard — Antigravity permission prompt details", () => {
     });
     await expectTooltip(
       alwaysAllow,
-      "Ask Antigravity to save a rule allowing commands starting with “pwd” for this Omnigent session",
+      "Ask Antigravity to save a rule allowing commands starting with “pwd” for this Triune session",
     );
     fireEvent.click(alwaysAllow);
     expect(submitSpy).toHaveBeenCalledWith("elic_agy_perm", "accept", undefined, {
@@ -908,9 +909,8 @@ describe("ApprovalCard — AskUserQuestion form (parsed from content_preview)", 
     expect(checkboxes[0]!.getAttribute("type")).toBe("checkbox");
   });
 
-  it("gates Submit until every question has at least one selection", () => {
-    // Without this gate Submit fires with half-filled answers and
-    // the user can't tell which questions still need attention.
+  it("accepts an explicitly empty submission", () => {
+    const onSubmit = vi.fn();
     render(
       <ApprovalCard
         elicitationId="elic_gate"
@@ -921,11 +921,14 @@ describe("ApprovalCard — AskUserQuestion form (parsed from content_preview)", 
         requestedSchema={{}}
         status="pending"
         response={null}
+        onSubmit={onSubmit}
       />,
     );
 
     const submit = screen.getByRole("button", { name: /submit/i });
-    expect(submit.hasAttribute("disabled")).toBe(true);
+    expect(submit).toBeEnabled();
+    fireEvent.click(submit);
+    expect(onSubmit).toHaveBeenCalledWith("elic_gate", "accept", {});
 
     fireEvent.click(screen.getByLabelText("React"));
     expect(submit.hasAttribute("disabled")).toBe(false);
@@ -1171,7 +1174,7 @@ describe("ApprovalCard — AskUserQuestion form (parsed from content_preview)", 
       ).toBeDefined();
       expect(screen.queryByText("Claude has questions")).toBeNull();
       const submit = screen.getByTestId("ask-user-question-submit");
-      expect(submit.hasAttribute("disabled")).toBe(!textInput);
+      expect(submit).toBeEnabled();
       if (textInput) {
         expect(screen.getByTestId("ask-user-question-custom-input")).toHaveValue(textInput.default);
       }
@@ -1252,7 +1255,7 @@ describe("ApprovalCard — AskUserQuestion form (parsed from content_preview)", 
     expect(screen.getByLabelText("MySQL")).toBeDefined();
   });
 
-  it("renders one question at a time and navigates between them via Prev/Next", () => {
+  it("keeps question progress in the needs-input header while navigating", () => {
     // Carousel layout: only the current question's fieldset is in
     // the DOM. Without this guard the form stacks every question
     // vertically, which becomes unreadable for 3+ question batches.
@@ -1286,13 +1289,17 @@ describe("ApprovalCard — AskUserQuestion form (parsed from content_preview)", 
     );
 
     // Only the first question's fieldset is rendered.
-    expect(screen.getByTestId("ask-user-question-progress").textContent).toBe("Question 1 of 2:");
+    const progress = screen.getByTestId("ask-user-question-progress");
+    expect(progress.textContent).toBe("Question 1 of 2");
+    expect(progress.parentElement).toHaveTextContent("Claude has questions");
+    expect(screen.getByTestId("ask-user-question-next")).toHaveTextContent("Skip");
+    expect(screen.getByRole("button", { name: "Previous" })).toBeDisabled();
     expect(screen.getByText("First?")).toBeDefined();
     expect(screen.queryByText("Second?")).toBeNull();
 
     // Next reveals the second question.
     fireEvent.click(screen.getByTestId("ask-user-question-next"));
-    expect(screen.getByTestId("ask-user-question-progress").textContent).toBe("Question 2 of 2:");
+    expect(screen.getByTestId("ask-user-question-progress").textContent).toBe("Question 2 of 2");
     expect(screen.queryByText("First?")).toBeNull();
     expect(screen.getByText("Second?")).toBeDefined();
 
@@ -1301,11 +1308,7 @@ describe("ApprovalCard — AskUserQuestion form (parsed from content_preview)", 
     expect(screen.getByText("First?")).toBeDefined();
   });
 
-  it("hides Submit until the carousel is on the final question", () => {
-    // Submit is the only path to commit the form, so it only
-    // makes sense on the last slide — earlier slides expose Next.
-    // Without this, users could submit prematurely and the LLM
-    // sees half-filled answers.
+  it("shows enabled Submit on every question", () => {
     render(
       <ApprovalCard
         elicitationId="elic_submit_last"
@@ -1335,9 +1338,9 @@ describe("ApprovalCard — AskUserQuestion form (parsed from content_preview)", 
       />,
     );
 
-    expect(screen.queryByTestId("ask-user-question-submit")).toBeNull();
+    expect(screen.getByTestId("ask-user-question-submit")).toBeEnabled();
     fireEvent.click(screen.getByTestId("ask-user-question-next"));
-    expect(screen.getByTestId("ask-user-question-submit")).toBeDefined();
+    expect(screen.getByTestId("ask-user-question-submit")).toBeEnabled();
   });
 
   it("accepts a custom-text answer that wins over the radio selection", () => {
@@ -1412,8 +1415,7 @@ describe("ApprovalCard — AskUserQuestion form (parsed from content_preview)", 
     // the typed value to count as the answer. Auto-checking on
     // first keystroke means the user doesn't have to click twice
     // (type + click radio). Without this, typing alone leaves the
-    // question "unanswered" which surprises the user — they typed
-    // something, yet Submit stays disabled.
+    // question "unanswered" and omit the typed value on submission.
     render(
       <ApprovalCard
         elicitationId="elic_autocheck"
@@ -2087,3 +2089,4 @@ describe("Kiro approval delivery", () => {
     });
   });
 });
+// Modified for Triune.

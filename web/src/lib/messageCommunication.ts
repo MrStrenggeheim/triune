@@ -1,6 +1,6 @@
 // Modified for Triune.
 export interface MessageCommunication {
-  kind: "peer" | "native_agent";
+  kind: "peer" | "native_agent" | "system" | "external";
   message_id: string;
   source_conversation_id?: string | null;
   source_agent_id?: string | null;
@@ -20,7 +20,8 @@ export function readMessageCommunication(value: unknown): MessageCommunication |
   if (!value || typeof value !== "object") return undefined;
   const data = value as Record<string, unknown>;
   if (
-    (data.kind !== "peer" && data.kind !== "native_agent") ||
+    typeof data.kind !== "string" ||
+    !["peer", "native_agent", "system", "external"].includes(data.kind) ||
     typeof data.message_id !== "string" ||
     !data.message_id ||
     typeof data.destination_conversation_id !== "string" ||
@@ -38,4 +39,17 @@ export function readMessageCommunication(value: unknown): MessageCommunication |
   ])
     if (data[key] != null && typeof data[key] !== "string") return undefined;
   return data as unknown as MessageCommunication;
+}
+
+/** Protocol role and authenticated account never establish human authorship. */
+export function messageInputKind(
+  communication?: MessageCommunication,
+  userAuthored = false,
+  isMeta = false,
+): "human" | "agent" | "system" | "external" {
+  if (communication?.kind === "peer" || communication?.kind === "native_agent") return "agent";
+  if (communication?.kind === "system") return "system";
+  if (communication?.kind === "external") return "external";
+  if (isMeta) return "system";
+  return userAuthored === true ? "human" : "external";
 }

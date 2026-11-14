@@ -356,13 +356,26 @@ function normalizeEventType(eventType: string): string {
   return eventType;
 }
 
-const BACKGROUND_TASK_KEYS = ["id", "type", "status", "description", "command"] as const;
+const BACKGROUND_TASK_KEYS = [
+  "id",
+  "type",
+  "status",
+  "description",
+  "command",
+  "session_id",
+  "terminal_id",
+  "resource_id",
+  "output_preview",
+  "resource_url",
+  "stop_url",
+  "stop_disabled_reason",
+] as const;
 
 /**
  * Parse the `background_tasks` detail off a `session.status` payload.
  *
- * Keeps only the string display fields (see {@link BACKGROUND_TASK_KEYS}) and
- * drops non-object / field-less entries. Returns `undefined` when the value is
+ * Preserves typed display fields and resource identity/capabilities, dropping
+ * non-object / field-less entries. Returns `undefined` when the value is
  * not an array or nothing usable survives, so callers can treat "no detail"
  * uniformly (the count alone still drives the pill).
  */
@@ -377,6 +390,19 @@ export function parseBackgroundTasks(raw: unknown): BackgroundTaskInfo[] | undef
       const value = record[key];
       if (typeof value === "string" && value) info[key] = value;
     }
+    if (
+      record.source === "codex_native" ||
+      record.source === "claude_native" ||
+      record.source === "registered_terminal"
+    )
+      info.source = record.source;
+    for (const key of ["can_open", "can_stop"] as const) {
+      if (typeof record[key] === "boolean") info[key] = record[key];
+    }
+    if (record.stop_method === "POST" || record.stop_method === "DELETE")
+      info.stop_method = record.stop_method;
+    if (typeof record.exit_code === "number" && Number.isInteger(record.exit_code))
+      info.exit_code = record.exit_code;
     if (Object.keys(info).length > 0) tasks.push(info);
   }
   return tasks.length > 0 ? tasks : undefined;

@@ -1,6 +1,12 @@
 // Modified for Triune.
 import { useContext, useEffect, useId, useMemo, useRef, useState } from "react";
-import { ChevronDownIcon, ChevronUpIcon, EllipsisIcon, MessageCircleIcon } from "lucide-react";
+import {
+  ChevronDownIcon,
+  ChevronUpIcon,
+  EllipsisIcon,
+  MessageCircleIcon,
+  SendIcon,
+} from "lucide-react";
 import { QueryClientContext, useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import {
@@ -42,6 +48,10 @@ function AuthorizedPeerMessage(props: PeerMessageProps) {
   const viewer = useViewerId();
   const visible = useConversationChatVisible();
   const id = props.communication.source_conversation_id;
+  const useChatStore = useConversationChatStore();
+  const scoped = useContext(ConversationScopeContext);
+  const viewing = useChatStore((state) => scoped ?? state.conversationId);
+  const outgoing = !!id && viewing === id;
   const query = useQuery({
     queryKey: ["peer-source-label", getOmnigentServerIdentity(), viewer, id],
     queryFn: () => getSessionSlim(id!, { refreshState: false }),
@@ -52,10 +62,27 @@ function AuthorizedPeerMessage(props: PeerMessageProps) {
     throwOnError: false,
     select: selectPeerSource,
   });
+  const destination = useQuery({
+    queryKey: [
+      "peer-source-label",
+      getOmnigentServerIdentity(),
+      viewer,
+      props.communication.destination_conversation_id,
+    ],
+    queryFn: () =>
+      getSessionSlim(props.communication.destination_conversation_id, { refreshState: false }),
+    enabled: visible && outgoing,
+    staleTime: 30_000,
+    refetchInterval: false,
+    retry: false,
+    throwOnError: false,
+    select: selectPeerSource,
+  });
   return (
     <PeerMessageContent
       {...props}
       source={!query.isError ? query.data : undefined}
+      destination={!destination.isError ? destination.data : undefined}
       sourceAgentName={!query.isError ? props.communication.source_agent_name : undefined}
     />
   );
@@ -81,10 +108,12 @@ function PeerMessageContent({
   createdAtS,
   pending,
   source,
+  destination,
   sourceTitle,
   sourceAgentName,
 }: PeerMessageProps & {
   source?: PeerSource;
+  destination?: PeerSource;
   sourceTitle?: string | null;
   sourceAgentName?: string | null;
 }) {
@@ -116,7 +145,10 @@ function PeerMessageContent({
   const name =
     sourceAgentName?.trim() || source?.subAgentName?.trim() || source?.agentName?.trim() || "Agent";
   const sourceId = communication.source_conversation_id;
+  const outgoing = !!sourceId && conversationId === sourceId;
+  const relatedId = outgoing ? communication.destination_conversation_id : sourceId;
   const title = source?.title?.trim() || sourceTitle?.trim() || "conversation";
+  const relatedTitle = outgoing ? destination?.title?.trim() || "conversation" : title;
   const messageConversationId =
     conversationId === sourceId ? sourceId : communication.destination_conversation_id;
   const menuConversationId =
@@ -143,16 +175,21 @@ function PeerMessageContent({
     <article
       className="group min-w-0 border-l-2 border-primary/60 pl-2.5 text-sm sm:pl-3"
       data-testid="peer-message"
+      data-direction={outgoing ? "sent" : "received"}
       data-message-id={itemId}
     >
       <header className="flex min-h-7 min-w-0 items-center gap-1.5">
-        <MessageCircleIcon className="size-4 shrink-0 text-primary" aria-hidden />
+        {outgoing ? (
+          <SendIcon className="size-4 shrink-0 text-primary" aria-hidden />
+        ) : (
+          <MessageCircleIcon className="size-4 shrink-0 text-primary" aria-hidden />
+        )}
         <strong className="max-w-[40%] truncate font-semibold">{name}</strong>{" "}
-        {sourceId && (
+        {relatedId && (
           <>
-            <span className="shrink-0 text-muted-foreground">from</span>{" "}
+            <span className="shrink-0 text-muted-foreground">{outgoing ? "sent to" : "from"}</span>{" "}
             <Link
-              to={`/c/${encodeURIComponent(sourceId)}`}
+              to={`/c/${encodeURIComponent(relatedId)}`}
               className="min-w-0 truncate rounded-sm text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               onClick={(event) => {
                 if (
@@ -163,11 +200,11 @@ function PeerMessageContent({
                   !event.altKey
                 ) {
                   event.preventDefault();
-                  workbench.openConversation(sourceId, { beside: true });
+                  workbench.openConversation(relatedId, { beside: true });
                 }
               }}
             >
-              {title}
+              {relatedTitle}
             </Link>
           </>
         )}

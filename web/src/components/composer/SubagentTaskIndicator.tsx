@@ -1,17 +1,19 @@
 // Modified for Triune.
 
-import { useEffect, useRef, useState, type MouseEvent } from "react";
+import { useEffect, useRef, useState } from "react";
 import { BotIcon } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { RunningDot } from "@/components/RunningDot";
 import { useChildSessions, type ChildSessionInfo } from "@/hooks/useChildSessions";
-import { Link, useLocation } from "@/lib/routing";
+import { useLocation, useNavigate } from "@/lib/routing";
 import { sessionNavigationSearch } from "@/lib/sessionNavigation";
 import { cn } from "@/lib/utils";
 import { childStatus } from "@/shell/subagentStatus";
 import { useWorkbenchActions } from "@/workbench/WorkbenchContext";
+import { AgentResourceRow } from "@/shell/ChatActivityPanel";
+import { interrupt } from "@/lib/sessionsApi";
+import { subagentName } from "@/lib/subagentActivity";
 import {
   COMPOSER_COLLAPSED_LABEL_CLASS,
   COMPOSER_WORKSPACE_COLLAPSED_LABEL_CLASS,
@@ -31,16 +33,6 @@ interface IndicatorChild {
   child: ChildSessionInfo;
   state: IndicatorState;
   statusLabel: string;
-}
-
-function subagentLabel(child: ChildSessionInfo): string {
-  const summary = child.task_summary?.trim();
-  if (summary) return summary;
-  const name = child.session_name?.trim();
-  if (name) return name;
-  const title = child.title?.trim();
-  if (title) return title;
-  return "Sub-agent";
 }
 
 function indicatorChild(child: ChildSessionInfo): IndicatorChild | null {
@@ -75,88 +67,37 @@ function statusSummary(items: IndicatorChild[]): string {
   return `${total} sub-agent${total === 1 ? "" : "s"}: ${parts.join(", ")}`;
 }
 
-function SubagentStateIndicator({ state, label }: { state: IndicatorState; label: string }) {
-  if (state === "active") {
-    return (
-      <span
-        role="status"
-        className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground"
-      >
-        <RunningDot />
-        {label}
-      </span>
-    );
-  }
-
-  return (
-    <span
-      role="status"
-      className={cn(
-        "flex shrink-0 items-center gap-1.5 text-xs",
-        state === "parked"
-          ? "text-warning"
-          : state === "error"
-            ? "text-destructive"
-            : "text-muted-foreground",
-      )}
-    >
-      <span className="size-1.5 rounded-full bg-current" aria-hidden="true" />
-      {label}
-    </span>
-  );
-}
-
 function SubagentNavigationRow({
-  item: { child, state, statusLabel },
+  item: { child },
+  conversationId,
   onNavigate,
 }: {
   item: IndicatorChild;
-  onNavigate: (event: MouseEvent<HTMLAnchorElement>) => void;
+  conversationId: string;
+  onNavigate: () => void;
 }) {
   const search = sessionNavigationSearch(useLocation().search);
-  const label = subagentLabel(child);
+  const navigate = useNavigate();
   const workbench = useWorkbenchActions();
-  const tool = child.tool?.trim();
-  const showTool = !!tool && tool !== label;
-
   return (
     <li>
-      <Link
-        to={{ pathname: `/c/${child.id}`, search }}
-        componentId="composer-subagent-indicator-row"
-        onClick={(event) => {
-          onNavigate(event);
-          if (workbench && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
-            event.preventDefault();
+      <AgentResourceRow
+        child={child}
+        conversationId={conversationId}
+        href={`/c/${encodeURIComponent(child.id)}${search ? `?${search.replace(/^\?/, "")}` : ""}`}
+        onOpen={() => {
+          onNavigate();
+          if (workbench)
             workbench.openView(
-              {
-                kind: "conversation",
-                conversationId: child.id,
-                title: child.session_name ?? child.title ?? "Sub-agent",
-              },
+              { kind: "conversation", conversationId: child.id, title: subagentName(child) },
               { beside: true },
             );
-          }
+          else navigate({ pathname: `/c/${child.id}`, search });
         }}
-        className="flex items-start gap-2 rounded-lg px-1 py-2 hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-      >
-        <span className="flex h-5 w-5 shrink-0 items-center justify-center text-muted-foreground">
-          <BotIcon className="size-4" aria-hidden="true" />
-        </span>
-        <span className="flex min-w-0 flex-1 flex-col gap-1">
-          <span className="flex min-w-0 items-center gap-2">
-            <span className="min-w-0 flex-1 truncate text-sm text-foreground" title={label}>
-              {label}
-            </span>
-            <SubagentStateIndicator state={state} label={statusLabel} />
-          </span>
-          {showTool ? (
-            <span className="truncate font-mono text-xs text-muted-foreground" title={tool}>
-              {tool}
-            </span>
-          ) : null}
-        </span>
-      </Link>
+        onStopAgent={async (target) => {
+          await interrupt(target.id);
+        }}
+      />
     </li>
   );
 }
@@ -214,10 +155,6 @@ export function SubagentTaskIndicator({
         ? "active"
         : "quiet";
 
-  const handleNavigate = (event: MouseEvent<HTMLAnchorElement>) => {
-    if (!event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) setOpen(false);
-  };
-
   return (
     <>
       {/* Polite tally so count changes are announced with the popover closed. */}
@@ -268,7 +205,12 @@ export function SubagentTaskIndicator({
         >
           <ul className="flex flex-col">
             {items.map((item) => (
-              <SubagentNavigationRow key={item.child.id} item={item} onNavigate={handleNavigate} />
+              <SubagentNavigationRow
+                key={item.child.id}
+                item={item}
+                conversationId={conversationId!}
+                onNavigate={() => setOpen(false)}
+              />
             ))}
           </ul>
         </PopoverContent>

@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { Loader2Icon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -11,7 +12,7 @@ export function RunningDot({ className }: { className?: string }) {
       role="presentation"
       data-testid="running-dot"
       className={cn(
-        "flex size-3 shrink-0 animate-spin items-center justify-center text-muted-foreground",
+        "flex size-3 shrink-0 animate-spin items-center justify-center text-muted-foreground motion-reduce:animate-none",
         className,
       )}
     >

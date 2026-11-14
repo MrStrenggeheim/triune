@@ -1,10 +1,38 @@
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+// Modified for Triune.
+import { act, cleanup, fireEvent, render as renderComponent, screen } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { ReactNode } from "react";
+import { useSessionShellResources } from "@/hooks/useSessionShellResources";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useChatStore } from "@/store/chatStore";
 import type { BackgroundTaskInfo } from "@/lib/types";
-
+import { WorkbenchProvider } from "@/workbench/WorkbenchContext";
+import { authenticatedFetch } from "@/lib/identity";
+import type * as IdentityModule from "@/lib/identity";
+import type * as ShellResourcesModule from "@/hooks/useSessionShellResources";
 import { BackgroundTaskIndicator } from "./BackgroundTaskIndicator";
+
+vi.mock("@/lib/identity", async (original) => ({
+  ...(await original<typeof IdentityModule>()),
+  authenticatedFetch: vi.fn(),
+}));
+
+vi.mock("@/hooks/useSessionShellResources", async (original) => ({
+  ...(await original<typeof ShellResourcesModule>()),
+  useSessionShellResources: vi.fn(),
+}));
+
+const shellQuery = vi.mocked(useSessionShellResources);
+const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+function render(node: ReactNode) {
+  return renderComponent(<QueryClientProvider client={client}>{node}</QueryClientProvider>);
+}
+function liveShells(data: BackgroundTaskInfo[] = [], error: Error | null = null) {
+  shellQuery.mockReturnValue({ data: { data }, error } as ReturnType<
+    typeof useSessionShellResources
+  >);
+}
 
 function setBackground(
   count: number,
@@ -32,12 +60,17 @@ const flushRadix = () =>
   });
 
 beforeEach(() => {
+  shellQuery.mockReturnValue({ data: undefined, error: null } as ReturnType<
+    typeof useSessionShellResources
+  >);
   setBackground(0, [], null);
 });
 
 afterEach(() => {
   setBackground(0, [], null);
   cleanup();
+  client.clear();
+  vi.clearAllMocks();
 });
 
 describe("BackgroundTaskIndicator", () => {
@@ -233,23 +266,18 @@ describe("BackgroundTaskIndicator", () => {
     expect(newTrigger).toHaveFocus();
   });
 
-  it("labels rows by description, then command, then a generic fallback", () => {
-    setBackground(4, [
-      { description: "Wait for CI", command: "gh run watch" },
-      { command: "sleep 30" },
-      { description: "   ", command: "npm run build" },
+  it("shows the actual command first and the last captured output second", () => {
+    setBackground(3, [
+      { description: "Wait for CI", command: "gh run watch", output_preview: "checks passed" },
+      { description: "Named shell" },
       {},
     ]);
     render(<BackgroundTaskIndicator />);
-    fireEvent.click(badge("4 background tasks still running"));
-
-    expect(screen.getByText("Wait for CI")).toBeInTheDocument();
+    fireEvent.click(badge());
     expect(screen.getByText("gh run watch")).toBeInTheDocument();
-    // Command-only: the command is the label, not duplicated as a second line.
-    expect(screen.getAllByText("sleep 30")).toHaveLength(1);
-    // Blank description falls through to the command.
-    expect(screen.getAllByText("npm run build")).toHaveLength(1);
-    // Neither field: generic label.
+    expect(screen.getByText("checks passed")).toBeInTheDocument();
+    expect(screen.queryByText("Wait for CI")).toBeNull();
+    expect(screen.getByText("Named shell")).toBeInTheDocument();
     expect(screen.getByText("Background task")).toBeInTheDocument();
   });
 
@@ -382,19 +410,17 @@ describe("BackgroundTaskIndicator", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it("wraps long labels and starts commands in a two-line preview", () => {
-    const longDescription = `Watch the ${"very ".repeat(40)}long deploy`;
-    const longCommand = `echo ${"y".repeat(300)}`;
-    setBackground(1, [{ description: longDescription, command: longCommand }]);
+  it("keeps complete command and output text in one-line ellipsis targets", () => {
+    const command = `echo ${"y".repeat(300)}`;
+    const output = "captured output ".repeat(40);
+    setBackground(1, [{ command, output_preview: output }]);
     render(<BackgroundTaskIndicator />);
-    fireEvent.click(badge("1 background task still running"));
-
-    const label = screen.getByText(longDescription);
-    expect(label).toHaveClass("[overflow-wrap:anywhere]");
-    expect(label).not.toHaveClass("truncate");
-    const command = screen.getByText(longCommand);
-    expect(command).toHaveClass("line-clamp-2", "whitespace-pre-wrap", "[overflow-wrap:anywhere]");
-    expect(command).not.toHaveClass("truncate");
+    fireEvent.click(badge());
+    expect(screen.getByText(command)).toHaveClass("truncate");
+    expect(screen.getByText(command)).toHaveAttribute("title", command);
+    expect(screen.getByText(output.trim())).toHaveClass("truncate");
+    expect(screen.getByText(output.trim())).toHaveAttribute("title", output);
+    expect(screen.queryByRole("button", { name: /Expand command/ })).toBeNull();
   });
 
   it("uses a real type=button trigger so toggling never submits the composer form", () => {
@@ -417,251 +443,109 @@ describe("BackgroundTaskIndicator", () => {
   });
 });
 
-describe("BackgroundTaskIndicator command previews", () => {
-  const longCommand = [
-    "while true; do",
-    "  gh pr checks 123 --watch",
-    "  gh pr view 123 --json reviews",
-    "  sleep 30",
-    "done",
-  ].join("\n");
-  let commandHeights: Map<string, number>;
-
-  beforeEach(() => {
-    commandHeights = new Map([[longCommand, 80]]);
-    const naturalHeight = (element: Element) => {
-      if (element.getAttribute("data-testid") !== "background-task-command") return 0;
-      const text = element.textContent ?? "";
-      return commandHeights.get(text) ?? text.split("\n").length * 16;
-    };
-    // jsdom has no layout; model a two-line box and its unclipped content.
-    vi.spyOn(Element.prototype, "scrollHeight", "get").mockImplementation(function (this: Element) {
-      return naturalHeight(this);
-    });
-    vi.spyOn(Element.prototype, "clientHeight", "get").mockImplementation(function (this: Element) {
-      const height = naturalHeight(this);
-      return this.classList.contains("line-clamp-2") ? Math.min(height, 32) : height;
-    });
-  });
-
-  afterEach(() => {
-    vi.restoreAllMocks();
-    vi.unstubAllGlobals();
-  });
-
-  it("supports icon-only expand/collapse by click, Enter, and Space without submitting or closing", async () => {
-    const user = userEvent.setup();
-    const onSubmit = vi.fn();
-    setBackground(1, [{ description: "Watch PR checks", command: longCommand }]);
+describe("shell resource contracts", () => {
+  const task: BackgroundTaskInfo = {
+    id: "display-id",
+    source: "codex_native",
+    resource_id: "item/7",
+    status: "running",
+    command: "printf actual-command",
+    output_preview: "captured last line",
+    resource_url: "/v1/sessions/conv-1/resources/shells/codex_native/item%2F7",
+    can_open: true,
+    can_stop: true,
+    stop_url: "/v1/sessions/conv-1/resources/shells/codex_native/item%2F7/stop",
+    stop_method: "POST",
+  };
+  function openResource(record: BackgroundTaskInfo) {
+    const openView = vi.fn();
+    liveShells([record]);
+    setBackground(1, [record]);
     render(
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          onSubmit();
-        }}
-      >
+      <WorkbenchProvider value={{ openView, openConversation: vi.fn() }}>
         <BackgroundTaskIndicator />
-      </form>,
+      </WorkbenchProvider>,
     );
-    await user.click(badge());
-
-    const command = screen.getByTestId("background-task-command");
-    const toggle = screen.getByRole("button", { name: "Expand command" });
-    const chevron = toggle.querySelector("svg");
-    expect(command.textContent).toBe(longCommand);
-    expect(command).toHaveClass("line-clamp-2", "whitespace-pre-wrap");
-    expect(command.id).not.toBe("");
-    expect(toggle).toHaveAttribute("type", "button");
-    expect(toggle).toHaveAttribute("aria-controls", command.id);
-    expect(toggle).toHaveAttribute("aria-expanded", "false");
-    expect(toggle.textContent).toBe("");
-    expect(screen.queryByText(/^(Show|Hide) command$/)).toBeNull();
-    expect(chevron).toHaveClass("lucide-chevron-right");
-    expect(chevron).toHaveAttribute("aria-hidden", "true");
-    expect(chevron).not.toHaveClass("rotate-90");
-
-    await user.click(toggle);
-    expect(toggle).toHaveAccessibleName("Collapse command");
-    expect(toggle).toHaveAttribute("aria-expanded", "true");
-    expect(toggle.textContent).toBe("");
-    expect(chevron).toHaveClass("rotate-90");
-    expect(command).not.toHaveClass("line-clamp-2");
-    expect(command.textContent).toBe(longCommand);
-    expect(screen.getByRole("dialog")).toBeVisible();
-
-    await user.keyboard("{Enter}");
-    expect(toggle).toHaveAccessibleName("Expand command");
-    expect(toggle).toHaveAttribute("aria-expanded", "false");
-    expect(chevron).not.toHaveClass("rotate-90");
-    expect(command).toHaveClass("line-clamp-2");
-
-    await user.keyboard(" ");
-    expect(toggle).toHaveAccessibleName("Collapse command");
-    expect(chevron).toHaveClass("rotate-90");
-    expect(command).not.toHaveClass("line-clamp-2");
-    expect(screen.getByRole("dialog")).toBeVisible();
-    expect(onSubmit).not.toHaveBeenCalled();
+    fireEvent.click(badge());
+    return openView;
+  }
+  it("opens the exact resource beside and sends a scoped Orchestration focus request", () => {
+    const openView = openResource(task);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Open shell beside · printf actual-command" }),
+    );
+    expect(openView).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        kind: "terminal",
+        conversationId: "conv-1",
+        terminalId: "codex_native:item/7",
+        shellResource: task,
+      }),
+      { beside: true },
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Show printf actual-command in Orchestration" }),
+    );
+    expect(openView).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        source: { kind: "chat", conversationId: "conv-1" },
+        focusShellId: "codex_native:item/7",
+        linkRequestId: expect.any(String),
+      }),
+      { beside: true },
+    );
   });
-
-  it.each(["sleep 30", "echo ready\necho done"])(
-    "does not offer expansion when the command fits in two lines: %s",
-    async (shortCommand) => {
-      const user = userEvent.setup();
-      setBackground(1, [{ description: "Short command", command: shortCommand }]);
-      render(<BackgroundTaskIndicator />);
-      await user.click(badge());
-
-      expect(screen.getByTestId("background-task-command").textContent).toBe(shortCommand);
-      expect(screen.queryByRole("button", { name: /^(Expand|Collapse) command$/ })).toBeNull();
+  it.each(["codex_native", "registered_terminal"] as const)(
+    "uses the exact %s service Stop route",
+    async (source) => {
+      const resourceUrl = `/v1/sessions/conv-1/resources/shells/${source}/item%2F7`;
+      const stopUrl = `${resourceUrl}/stop`;
+      vi.mocked(authenticatedFetch).mockResolvedValue(new Response(null, { status: 204 }));
+      const openView = openResource({
+        ...task,
+        source,
+        resource_url: resourceUrl,
+        stop_url: stopUrl,
+      });
+      const status = screen.getByRole("button", { name: "Actions for printf actual-command" });
+      fireEvent.pointerDown(status, { pointerType: "mouse", button: 0 });
+      fireEvent.click(status, { detail: 1 });
+      await act(async () => {});
+      expect(authenticatedFetch).toHaveBeenCalledExactlyOnceWith(stopUrl, { method: "POST" });
+      expect(openView).not.toHaveBeenCalled();
     },
   );
-
-  it("updates expansion availability when a resize changes how many lines fit", async () => {
-    const user = userEvent.setup();
-    const commandText = "gh pr checks 123 --watch";
-    const OriginalResizeObserver = globalThis.ResizeObserver;
-    let notifyCommandResize: (() => void) | undefined;
-    vi.stubGlobal(
-      "ResizeObserver",
-      class extends OriginalResizeObserver {
-        private readonly callback: ResizeObserverCallback;
-
-        constructor(callback: ResizeObserverCallback) {
-          super(callback);
-          this.callback = callback;
-        }
-
-        override observe(target: Element, options?: ResizeObserverOptions) {
-          super.observe(target, options);
-          if (target.getAttribute("data-testid") === "background-task-command") {
-            notifyCommandResize = () => this.callback([], this);
-          }
-        }
-      },
-    );
-    setBackground(1, [{ description: "Watch PR checks", command: commandText }]);
-    render(<BackgroundTaskIndicator />);
-    await user.click(badge());
-    expect(screen.queryByRole("button", { name: "Expand command" })).toBeNull();
-    expect(notifyCommandResize).toBeDefined();
-
-    commandHeights.set(commandText, 64);
-    act(() => notifyCommandResize!());
-    expect(screen.getByRole("button", { name: "Expand command" })).toHaveAttribute(
-      "aria-expanded",
-      "false",
-    );
-
-    commandHeights.set(commandText, 16);
-    act(() => notifyCommandResize!());
-    expect(screen.queryByRole("button", { name: /^(Expand|Collapse) command$/ })).toBeNull();
-  });
-
-  it("starts collapsed when the popover is reopened", async () => {
-    const user = userEvent.setup();
-    setBackground(1, [{ id: "watch-pr", description: "Watch PR checks", command: longCommand }]);
-    render(<BackgroundTaskIndicator />);
-    await user.click(badge());
-    await user.click(screen.getByRole("button", { name: "Expand command" }));
-    expect(screen.getByRole("button", { name: "Collapse command" })).toBeVisible();
-
-    await user.keyboard("{Escape}");
-    expect(screen.queryByRole("dialog")).toBeNull();
-    await flushRadix();
-    await user.click(badge());
-
-    expect(screen.getByRole("button", { name: "Expand command" })).toHaveAttribute(
-      "aria-expanded",
-      "false",
-    );
-    expect(screen.getByTestId("background-task-command")).toHaveClass("line-clamp-2");
-  });
-
-  it("does not carry an expanded command to another session", async () => {
-    const user = userEvent.setup();
-    const task = { id: "watch-pr", description: "Watch PR checks", command: longCommand };
-    setBackground(1, [task], "session-a");
-    render(<BackgroundTaskIndicator />);
-    await user.click(badge());
-    await user.click(screen.getByRole("button", { name: "Expand command" }));
-
-    act(() => setBackground(1, [task], "session-b"));
-    expect(screen.queryByRole("dialog")).toBeNull();
-    await flushRadix();
-    await user.click(badge());
-
-    expect(screen.getByRole("button", { name: "Expand command" })).toHaveAttribute(
-      "aria-expanded",
-      "false",
-    );
-    expect(screen.getByTestId("background-task-command")).toHaveClass("line-clamp-2");
-  });
-
-  it("collapses a replacement command for the same task without closing the panel", async () => {
-    const user = userEvent.setup();
-    const task = { id: "watch-pr", description: "Watch PR checks", command: longCommand };
-    setBackground(1, [task]);
-    render(<BackgroundTaskIndicator />);
-    await user.click(badge());
-    await user.click(screen.getByRole("button", { name: "Expand command" }));
-    expect(screen.getByRole("button", { name: "Collapse command" })).toBeVisible();
-
-    const replacement = "gh pr checks 456\ngh pr view 456 --json reviews\nsleep 60";
-    act(() => setBackground(1, [{ ...task, command: replacement }]));
-
-    expect(screen.getByRole("dialog")).toBeVisible();
-    expect(screen.getByTestId("background-task-command").textContent).toBe(replacement);
-    expect(screen.getByTestId("background-task-command")).toHaveClass("line-clamp-2");
-    expect(screen.getByRole("button", { name: "Expand command" })).toHaveAttribute(
-      "aria-expanded",
-      "false",
-    );
-    expect(screen.queryByRole("button", { name: "Collapse command" })).toBeNull();
-  });
-
-  it("expands only the selected task and gives each command its own accessible target", async () => {
-    const user = userEvent.setup();
-    const secondCommand = "npm run lint\nnpm run type-check\nnpm run test\nnpm run build";
-    setBackground(2, [
-      { id: "watch-pr", description: "Watch PR checks", command: longCommand },
-      { id: "check-build", description: "Check build", command: secondCommand },
-    ]);
-    render(<BackgroundTaskIndicator />);
-    await user.click(badge());
-    const commands = screen.getAllByTestId("background-task-command");
-    const toggles = screen.getAllByRole("button", { name: "Expand command" });
-    expect(commands).toHaveLength(2);
-    expect(toggles).toHaveLength(2);
-    expect(commands[0]!.id).not.toBe(commands[1]!.id);
-    expect(toggles[0]).toHaveAttribute("aria-controls", commands[0]!.id);
-    expect(toggles[1]).toHaveAttribute("aria-controls", commands[1]!.id);
-
-    await user.click(toggles[0]!);
-    expect(commands[0]).not.toHaveClass("line-clamp-2");
-    expect(commands[1]).toHaveClass("line-clamp-2");
-    expect(toggles[0]).toHaveAttribute("aria-expanded", "true");
-    expect(toggles[1]).toHaveAttribute("aria-expanded", "false");
-  });
-
   it.each([
-    { label: "missing", description: undefined },
-    { label: "blank", description: "   " },
-    { label: "matching", description: longCommand },
-  ])(
-    "compacts a command with a $label description without duplicating it",
-    async ({ description }) => {
-      const user = userEvent.setup();
-      setBackground(1, [{ description, command: longCommand }]);
-      render(<BackgroundTaskIndicator />);
-      await user.click(badge());
-
-      const commands = screen.getAllByTestId("background-task-command");
-      expect(commands).toHaveLength(1);
-      expect(screen.getAllByText(longCommand, { normalizer: (text) => text })).toHaveLength(1);
-      expect(commands[0]).toHaveClass("line-clamp-2");
-      await user.click(screen.getByRole("button", { name: "Expand command" }));
-      expect(commands[0]).not.toHaveClass("line-clamp-2");
-      expect(screen.getAllByText(longCommand, { normalizer: (text) => text })).toHaveLength(1);
-    },
-  );
+    { can_stop: false },
+    { can_stop: undefined },
+    { resource_id: undefined },
+    { stop_url: undefined },
+    { stop_method: null },
+    { status: "completed" },
+  ])("does not offer Stop without live, explicit capabilities and identity: %j", (override) => {
+    openResource({ ...task, ...override });
+    expect(screen.queryByRole("button", { name: /Actions for/ })).toBeNull();
+    expect(authenticatedFetch).not.toHaveBeenCalled();
+  });
+  it("leaves old detail-only records readable without inventing shell actions or output", () => {
+    const openView = openResource({
+      id: "not-a-process-id",
+      command: "same command",
+      description: "Legacy details",
+    });
+    expect(screen.getByText("same command")).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: /Open shell|Orchestration|Actions for/ }),
+    ).toBeNull();
+    expect(openView).not.toHaveBeenCalled();
+  });
+  it("retains displayed output but removes Stop when live controls fail to refresh", () => {
+    openResource(task);
+    expect(screen.getByRole("button", { name: /Actions for/ })).toBeInTheDocument();
+    liveShells([task], new Error("Runner offline"));
+    act(() => setBackground(1, [{ ...task }]));
+    expect(screen.queryByRole("button", { name: /Actions for/ })).toBeNull();
+    expect(screen.getByText("captured last line")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("Runner offline");
+  });
 });

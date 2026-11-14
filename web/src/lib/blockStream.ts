@@ -1,3 +1,4 @@
+// Modified for Triune; inherited notices remain applicable.
 import { attachmentsFromContent } from "./chatAttachments";
 // Mirrors sdks/python-client/omnigent_client/_stream.py.
 //
@@ -655,6 +656,7 @@ function* processEvent(state: ReducerState, event: StreamEvent): Generator<AnyBl
         // itemsToBlocks, sharing the derived item id for dedup).
         yield {
           type: "user_message",
+          userAuthored: true,
           ctx: {
             ...ctx(
               state,

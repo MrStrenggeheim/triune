@@ -66,6 +66,7 @@ import { useAppName } from "@/lib/branding";
 import { hasPendingOwnElicitation } from "@/lib/blocks";
 import { cn } from "@/lib/utils";
 import { QueuedMessagesStrip } from "@/pages/QueuedMessagesStrip";
+import { ComposerShelf } from "@/components/composer/ComposerShelf";
 import {
   serverSwitcherHiddenForSurface,
   useSurfaceFrontmost,
@@ -2365,15 +2366,13 @@ export function subAgentComposerLabel(
 }
 
 /**
- * Sub-agent shelf tucked behind the composer card's rounded top.
- * Bottom padding keeps the label above the overlap; opaque surfaces prevent
- * the accent tint from bleeding through the card.
+ * Child context uses the same stack and presence motion as the other shelves.
  */
 function SubagentComposerTray({ label }: { label: string }) {
   return (
     <div
       data-testid="composer-subagent-tray"
-      className="composer-subagent-surface mx-3 -mb-4 flex items-center gap-1.5 rounded-t-2xl px-4 pb-5.5 pt-1.5 text-sm text-brand-accent"
+      className="composer-subagent-surface mx-3 flex items-center gap-1.5 rounded-t-2xl px-4 py-1.5 text-sm text-brand-accent"
     >
       <BotIcon className="size-3.5 shrink-0" aria-hidden="true" />
       {/* truncate so a long sub-agent name never wraps the tray to two rows */}
@@ -4133,12 +4132,13 @@ function ComposerImpl(
       {/* Drop cue, spanning the chat column this composer belongs to. */}
       {isDragActive && dropTarget ? <FileDropOverlay container={dropTarget} /> : null}
       {/* Queued messages and child context dock directly onto the composer card. */}
-      <div className={cn("mx-auto", COMPOSER_COLUMN_WIDTH)}>
+      <div className={cn("composer-shelf-stack mx-auto", COMPOSER_COLUMN_WIDTH)}>
         {/* Queued messages — peeks above the composer card like the
             sub-agent tray. Lists follow-ups held while the agent is busy;
             drains FIFO on idle. Scope to this conversation so a queue held
             elsewhere never leaks in. */}
         <QueuedMessagesStrip
+          conversationId={conversationId}
           messages={composerQueuedMessages}
           onDelete={dequeueMessage}
           onEdit={(queueId) => {
@@ -4162,7 +4162,9 @@ function ComposerImpl(
           widthClassName="mx-3 w-auto"
         />
         {/* An empty child label must not create a nameless tray. */}
-        {subAgentLabel ? <SubagentComposerTray label={subAgentLabel} /> : null}
+        <ComposerShelf key={conversationId} present={!!subAgentLabel}>
+          <SubagentComposerTray label={subAgentLabel ?? ""} />
+        </ComposerShelf>
         <ComposerAttentionShelf />
       </div>
       <ChatComposer

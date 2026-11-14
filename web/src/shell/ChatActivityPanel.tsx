@@ -1,6 +1,13 @@
 // Modified for Triune.
 import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
-import { BotIcon, EllipsisIcon, TerminalIcon } from "lucide-react";
+import {
+  BotIcon,
+  EllipsisIcon,
+  MessageCircleIcon,
+  SquareArrowOutUpRightIcon,
+  SquareTerminalIcon,
+} from "lucide-react";
+import type { BackgroundTaskInfo } from "@/lib/types";
 import { ActivityRow } from "@/components/ActivityRow";
 import { SubagentTaskStatus } from "@/components/blocks/SubagentTaskRow";
 import { FilePathAwareMessageResponse } from "@/components/blocks/ChatMarkdown";
@@ -9,13 +16,22 @@ import { Button } from "@/components/ui/button";
 import { SegmentedControl, SegmentedControlItem } from "@/components/ui/segmented-control";
 import { useChatActivity, type ChatActivityEntry } from "@/hooks/useChatActivity";
 import { useChildSessionTree, type ChildSessionInfo } from "@/hooks/useChildSessions";
+import { useQueryClient } from "@tanstack/react-query";
+import {
+  useSessionShellResources,
+  shellResourceKey,
+  shellResourcePath,
+  shellStopRequest,
+  sessionShellResourcesKey,
+  sessionShellResourceKey,
+  shellResourceMatchesActivity,
+} from "@/hooks/useSessionShellResources";
 import { useNativeChildCapabilities } from "@/hooks/useNativeChildCapabilities";
 import { authenticatedFetch } from "@/lib/identity";
 import { apiErrorFromResponse } from "@/lib/sessionsApi";
 import { subagentName, subagentTaskDescription } from "@/lib/subagentActivity";
 import { useWorkbenchActions } from "@/workbench/WorkbenchContext";
 import { childStatus, type AgentActivity } from "./subagentStatus";
-import { toast } from "@/lib/notifications";
 import { panelFolderKey, useResourceViewState } from "@/lib/panelFolder";
 import { useScrollRestore } from "./useScrollRestore";
 import {
@@ -29,6 +45,7 @@ import {
 const SubagentsGraphView = lazy(() =>
   import("./SubagentsGraphView").then((module) => ({ default: module.SubagentsGraphView })),
 );
+const NO_SHELL_RESOURCES: BackgroundTaskInfo[] = [];
 
 export interface ChatActivityShellSnapshot {
   id: string;
@@ -44,6 +61,7 @@ export interface ChatActivityTerminalTarget {
   /** Settled records must open retained output without attaching or creating a process. */
   retainedOnly?: boolean;
   activity?: ChatActivityShellSnapshot;
+  shellResource?: BackgroundTaskInfo;
 }
 
 export interface ChatActivityPanelProps {
@@ -52,14 +70,19 @@ export interface ChatActivityPanelProps {
   rootSessionId: string;
   active?: boolean;
   focusAgentId?: string;
+  /** Stable activity entry ID, never a command-text or process-ID match. */
+  focusShellId?: string;
   linkRequestId?: string;
   sourceControl?: ReactNode;
+  /** Server-projected native shell inventory, including settled records. */
+  shellResources?: BackgroundTaskInfo[];
   onOpenAgent?: (child: ChildSessionInfo) => void;
   onConsumeLinkIntent?: () => void;
   canStopAgent?: (child: ChildSessionInfo) => boolean;
   onStopAgent?: (child: ChildSessionInfo) => Promise<void>;
   /** Open this exact existing resource, even when it belongs to another chat. */
   onOpenTerminal?: (target: ChatActivityTerminalTarget) => void;
+  canStopShell?: (target: ChatActivityTerminalTarget) => boolean;
 }
 
 export type ActivityFilter = "All" | "Agents" | "Shells";
@@ -205,8 +228,10 @@ function ChatActivityContent({
   rootSessionId,
   active = true,
   focusAgentId,
+  focusShellId,
   linkRequestId,
   sourceControl,
+  shellResources: shellResourcesOverride,
   onOpenAgent,
   onConsumeLinkIntent,
   canStopAgent,
@@ -227,12 +252,18 @@ function ChatActivityContent({
   );
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [highlightedAgent, setHighlightedAgent] = useState<string>();
+  const [highlightedShell, setHighlightedShell] = useState<string>();
   const consumedIntent = useRef<string | null>(null);
   const handledIntent = useRef<string | null>(null);
   const rowsRef = useRef<HTMLDivElement>(null);
   const workbench = useWorkbenchActions();
   const agents = useChildSessionTree(rootSessionId, active);
   const activity = useChatActivity(conversationId, { enabled: active });
+  const shells = useSessionShellResources(conversationId, {
+    enabled:
+      active && filter !== "Agents" && viewMode === "list" && shellResourcesOverride === undefined,
+  });
+  const shellResources = shellResourcesOverride ?? shells.data?.data ?? NO_SHELL_RESOURCES;
   const handleScroll = useScrollRestore(
     rowsRef,
     viewId ? `activity:${panelFolderKey(conversationId, viewId)}:${filter}:${viewMode}` : null,
@@ -250,18 +281,23 @@ function ChatActivityContent({
       left.id.localeCompare(right.id),
   );
   useEffect(() => {
-    if (!active || !focusAgentId) return;
-    const intent = JSON.stringify([focusAgentId, linkRequestId]);
+    if (!active || (!focusAgentId && !focusShellId)) return;
+    const intent = JSON.stringify([focusAgentId, focusShellId, linkRequestId]);
     if (consumedIntent.current === intent) return;
     consumedIntent.current = intent;
     setHighlightedAgent(focusAgentId);
-    setFilter("Agents");
+    setHighlightedShell(focusShellId);
+    setFilter(focusShellId ? "Shells" : "Agents");
     setViewMode("list");
-  }, [active, focusAgentId, linkRequestId, setFilter, setViewMode]);
+  }, [active, focusAgentId, focusShellId, linkRequestId, setFilter, setViewMode]);
   useEffect(() => {
-    if (!active || !highlightedAgent || highlightedAgent !== focusAgentId) return;
-    const row = [...(rowsRef.current?.querySelectorAll<HTMLElement>("[data-agent-id]") ?? [])].find(
-      (element) => element.dataset.agentId === highlightedAgent,
+    if (!active || (!highlightedAgent && !highlightedShell)) return;
+    const row = [
+      ...(rowsRef.current?.querySelectorAll<HTMLElement>("[data-agent-id], [data-shell-id]") ?? []),
+    ].find((element) =>
+      highlightedShell
+        ? element.dataset.shellId === highlightedShell
+        : element.dataset.agentId === highlightedAgent,
     );
     row?.scrollIntoView?.({ block: "nearest" });
     if (row && handledIntent.current !== consumedIntent.current) {
@@ -273,11 +309,46 @@ function ChatActivityContent({
     focusAgentId,
     linkRequestId,
     highlightedAgent,
+    highlightedShell,
+    focusShellId,
+    activity.data,
+    shellResources,
     filter,
     viewMode,
     agents.children,
     onConsumeLinkIntent,
   ]);
+
+  const resourceShells = shellResources.map((task) => {
+    const group =
+      task.source === "registered_terminal"
+        ? groups.find(
+            (candidate) =>
+              candidate.terminal?.id === task.resource_id &&
+              candidate.terminal?.session_id === conversationId,
+          )
+        : undefined;
+    const latest = group
+      ? [...group.commands].sort(
+          (left, right) => (timestamp(right.started_at) ?? 0) - (timestamp(left.started_at) ?? 0),
+        )[0]
+      : undefined;
+    return latest && !task.command ? { ...task, command: latest.name } : task;
+  });
+  const legacyGroups = groups.flatMap((group) => {
+    if (
+      group.terminal &&
+      shellResources.some((task) =>
+        shellResourceMatchesActivity(task, group.terminal!, conversationId),
+      )
+    )
+      return [];
+    const commands = group.commands.filter(
+      (entry) =>
+        !shellResources.some((task) => shellResourceMatchesActivity(task, entry, conversationId)),
+    );
+    return group.terminal || commands.length ? [{ ...group, commands }] : [];
+  });
 
   function openAgent(child: ChildSessionInfo) {
     if (onOpenAgent) onOpenAgent(child);
@@ -287,18 +358,6 @@ function ChatActivityContent({
         { beside: true },
       );
     else window.location.assign(`/c/${encodeURIComponent(child.id)}`);
-  }
-
-  async function stopShell(target: ChatActivityTerminalTarget) {
-    const path = target.workspaceId
-      ? `/v1/workbench-workspaces/${encodeURIComponent(target.workspaceId)}/terminals/${encodeURIComponent(target.terminalId)}`
-      : `/v1/sessions/${encodeURIComponent(target.sessionId)}/resources/terminals/${encodeURIComponent(target.terminalId)}`;
-    try {
-      const response = await authenticatedFetch(path, { method: "DELETE" });
-      if (!response.ok && response.status !== 404) throw await apiErrorFromResponse(response);
-    } finally {
-      void activity.refetch();
-    }
   }
 
   return (
@@ -339,6 +398,11 @@ function ChatActivityContent({
             Could not refresh shells: {activity.error.message}
           </p>
         )}
+        {shells.error && shellResourcesOverride === undefined && (
+          <p role="alert" className="px-3 py-2 text-sm text-destructive">
+            Could not refresh shell controls: {shells.error.message}
+          </p>
+        )}
         {viewMode === "list" && (
           <>
             {filter !== "Shells" && (
@@ -347,36 +411,14 @@ function ChatActivityContent({
                 <ul aria-label="Agents" className="density-list flex flex-col">
                   {children.map((child) => (
                     <li key={child.id} data-agent-id={child.id}>
-                      <ActivityRow
-                        icon={<BotIcon aria-hidden="true" className="size-3.5" />}
-                        title={subagentName(child)}
-                        description={
-                          <ConversationScopeContext.Provider value={child.id}>
-                            <FilePathAwareMessageResponse
-                              mode="static"
-                              className="text-xs leading-4 [&>*]:my-0 [&_p]:my-0"
-                            >
-                              {(
-                                subagentTaskDescription(child) ??
-                                child.last_message_preview ??
-                                ""
-                              ).slice(0, 768)}
-                            </FilePathAwareMessageResponse>
-                          </ConversationScopeContext.Provider>
-                        }
+                      <AgentResourceRow
+                        child={child}
+                        conversationId={conversationId}
+                        active={active}
                         selected={highlightedAgent === child.id}
                         onOpen={() => openAgent(child)}
-                        status={
-                          <>
-                            <SubagentTaskStatus status={childStatus(child)} />
-                            <AgentActions
-                              child={child}
-                              active={active}
-                              onStopAgent={onStopAgent}
-                              canStopAgent={canStopAgent}
-                            />
-                          </>
-                        }
+                        canStopAgent={canStopAgent}
+                        onStopAgent={onStopAgent}
                       />
                     </li>
                   ))}
@@ -399,16 +441,28 @@ function ChatActivityContent({
               <section aria-label="Shells" className="p-2">
                 <h3 className="px-2 py-1 text-xs font-medium text-muted-foreground">Shells</h3>
                 <ul aria-label="Shells" className="density-list flex flex-col">
-                  {groups.map((group) => (
+                  {resourceShells.map((task) => (
+                    <li key={shellFocusId(task) ?? task.id} data-shell-id={shellFocusId(task)}>
+                      <ShellResourceRow
+                        task={task}
+                        conversationId={conversationId}
+                        selected={highlightedShell === shellFocusId(task)}
+                        allowStop={active && !shells.error}
+                        onOpenTerminal={onOpenTerminal}
+                      />
+                    </li>
+                  ))}
+                  {legacyGroups.map((group) => (
                     <ShellRow
                       key={group.id}
                       group={group}
+                      conversationId={conversationId}
+                      selected={highlightedShell === (group.terminal?.id ?? group.commands[0]?.id)}
                       onOpenTerminal={onOpenTerminal}
-                      onStop={stopShell}
                     />
                   ))}
                 </ul>
-                {!groups.length && (
+                {!legacyGroups.length && !resourceShells.length && (
                   <p role="status" className="p-2 text-sm text-muted-foreground">
                     {activity.isLoading ? "Loading shells…" : "No shells in loaded history."}
                   </p>
@@ -433,78 +487,267 @@ function ChatActivityContent({
   );
 }
 
-type AgentActionsProps = Pick<ChatActivityPanelProps, "onStopAgent" | "canStopAgent"> & {
-  child: ChildSessionInfo;
-  active: boolean;
-};
-
-function AgentActions(props: AgentActionsProps) {
-  const running = props.child.busy || props.child.current_task_status === "launching";
-  const native = props.child.labels?.["omnigent.wrapper"]?.endsWith("-native-ui-subagent");
-  if (native && running) return <NativeAgentActions {...props} />;
-  return (
-    <ActivityActions
-      name={subagentName(props.child)}
-      onStop={
-        running && props.active && props.onStopAgent && props.canStopAgent?.(props.child)
-          ? () => props.onStopAgent!(props.child)
-          : undefined
-      }
-    />
-  );
+export function shellFocusId(task: BackgroundTaskInfo): string | undefined {
+  return shellResourceKey(task);
 }
 
-function NativeAgentActions({ child, active, onStopAgent }: AgentActionsProps) {
-  const capabilities = useNativeChildCapabilities(child.id, active);
-  return (
-    <ActivityActions
-      name={subagentName(child)}
-      onStop={
-        active && !capabilities.error && capabilities.data?.can_stop === true && onStopAgent
-          ? () => onStopAgent(child)
-          : undefined
-      }
-    />
+export function ShellResourceRow({
+  task,
+  conversationId,
+  selected = false,
+  allowStop = false,
+  onOpenTerminal,
+}: {
+  task: BackgroundTaskInfo;
+  conversationId: string;
+  selected?: boolean;
+  allowStop?: boolean;
+  onOpenTerminal?: ChatActivityPanelProps["onOpenTerminal"];
+}) {
+  const queryClient = useQueryClient();
+  const workbench = useWorkbenchActions();
+  const orchestration = useResourceOrchestration(conversationId);
+  const name = task.command?.trim() || task.description?.trim() || "Background task";
+  const focusId = shellFocusId(task);
+  const live = ["running", "idle", "in_progress"].includes(task.status ?? "running");
+  const failed = task.status === "failed" || (task.exit_code != null && task.exit_code !== 0);
+  const ended = ["completed", "exited", "stopped", "killed", "declined", "failed"].includes(
+    task.status ?? "",
   );
-}
-
-export function ActivityActions({ name, onStop }: { name: string; onStop?: () => Promise<void> }) {
-  const [stopping, setStopping] = useState(false);
+  const resourcePath = shellResourcePath(conversationId, task);
+  const open =
+    (workbench || onOpenTerminal) &&
+    conversationId &&
+    task.can_open === true &&
+    resourcePath &&
+    task.resource_url === resourcePath &&
+    focusId
+      ? () => {
+          const request = {
+            kind: "terminal" as const,
+            conversationId,
+            terminalId: focusId,
+            terminalOwner: "conversation" as const,
+            title: name,
+            shellResource: task,
+          };
+          if (onOpenTerminal)
+            onOpenTerminal({
+              sessionId: conversationId,
+              terminalId: focusId,
+              shellResource: task,
+              retainedOnly: true,
+            });
+          else workbench!.openView(request, { beside: true });
+        }
+      : undefined;
+  const stopRequest = allowStop ? shellStopRequest(conversationId, task) : undefined;
+  const stop = stopRequest
+    ? async () => {
+        const response = await authenticatedFetch(stopRequest.url, { method: stopRequest.method });
+        if (!response.ok) throw await apiErrorFromResponse(response);
+        await queryClient.invalidateQueries({
+          queryKey: sessionShellResourcesKey(conversationId),
+          exact: true,
+        });
+        await queryClient.invalidateQueries({
+          queryKey: sessionShellResourceKey(conversationId, task),
+          exact: true,
+        });
+      }
+    : undefined;
   return (
-    <span className="flex w-12 shrink-0 items-center justify-end gap-1">
-      {onStop && (
-        <Button
-          variant="ghost"
-          size="xs"
-          aria-label={`Stop ${name}`}
-          disabled={stopping}
-          onClick={async () => {
-            setStopping(true);
-            try {
-              await onStop();
-            } catch (failure) {
-              toast.error(failure instanceof Error ? failure.message : String(failure));
-            } finally {
-              setStopping(false);
-            }
+    <ActivityRow
+      icon={<SquareTerminalIcon aria-hidden="true" />}
+      title={name}
+      description={task.output_preview ?? ""}
+      selected={selected}
+      onOpen={open}
+      onStop={stop}
+      status={
+        <SubagentTaskStatus
+          status={{
+            activity: failed ? "failed" : ended ? "done" : live ? "working" : "other",
+            label: failed
+              ? "Failed"
+              : ended
+                ? "Completed"
+                : live
+                  ? "Running"
+                  : (task.status ?? "Unknown"),
           }}
+          label={
+            failed
+              ? "Failed"
+              : ended
+                ? task.status === "stopped" || task.status === "killed"
+                  ? "Stopped"
+                  : "Completed"
+                : live
+                  ? "Running"
+                  : (task.status ?? "Unknown")
+          }
+        />
+      }
+      actions={
+        <ActivityNavigation
+          name={name}
+          shell
+          onOpen={open}
+          onOrchestration={
+            orchestration && focusId ? () => orchestration({ focusShellId: focusId }) : undefined
+          }
+        />
+      }
+    />
+  );
+}
+
+export function ActivityNavigation({
+  name,
+  shell = false,
+  onOpen,
+  onOrchestration,
+}: {
+  name: string;
+  shell?: boolean;
+  onOpen?: () => void;
+  onOrchestration?: () => void;
+}) {
+  return (
+    <>
+      {onOpen && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          aria-label={`Open ${shell ? "shell" : "chat"} beside · ${name}`}
+          onClick={onOpen}
         >
-          {stopping ? "Stopping…" : "Stop"}
+          {shell ? (
+            <SquareTerminalIcon aria-hidden="true" className="size-4" />
+          ) : (
+            <MessageCircleIcon aria-hidden="true" className="size-4" />
+          )}
         </Button>
       )}
-    </span>
+      {onOrchestration && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          aria-label={`Show ${name} in Orchestration`}
+          onClick={onOrchestration}
+        >
+          <SquareArrowOutUpRightIcon aria-hidden="true" className="size-4" />
+        </Button>
+      )}
+    </>
+  );
+}
+
+export function useResourceOrchestration(conversationId: string) {
+  const workbench = useWorkbenchActions();
+  return workbench && conversationId
+    ? (focus: { focusAgentId?: string; focusShellId?: string }) => {
+        const request = {
+          kind: "activity" as const,
+          conversationId,
+          source: { kind: "chat" as const, conversationId },
+          ...focus,
+          linkRequestId: crypto.randomUUID(),
+          title: "Orchestration",
+        };
+        workbench.openView(request, { beside: true });
+      }
+    : undefined;
+}
+
+type AgentResourceRowProps = Pick<ChatActivityPanelProps, "canStopAgent" | "onStopAgent"> & {
+  child: ChildSessionInfo;
+  conversationId: string;
+  active?: boolean;
+  selected?: boolean;
+  onOpen: () => void;
+  href?: string;
+};
+
+/** Shared agent identity, task summary, status and actions in every resource list. */
+export function AgentResourceRow(props: AgentResourceRowProps) {
+  const native = props.child.labels?.["omnigent.wrapper"]?.endsWith("-native-ui-subagent");
+  if (native && ["launching", "working", "awaiting"].includes(childStatus(props.child).activity))
+    return <NativeAgentResourceRow {...props} />;
+  return <AgentResourceContent {...props} canStop={props.canStopAgent?.(props.child) === true} />;
+}
+
+function NativeAgentResourceRow(props: AgentResourceRowProps) {
+  const capabilities = useNativeChildCapabilities(props.child.id, props.active !== false);
+  return (
+    <AgentResourceContent
+      {...props}
+      canStop={!capabilities.error && capabilities.data?.can_stop === true}
+    />
+  );
+}
+
+function AgentResourceContent({
+  child,
+  conversationId,
+  onOpen,
+  active = true,
+  selected,
+  onStopAgent,
+  canStop,
+  href,
+}: AgentResourceRowProps & { canStop: boolean }) {
+  const orchestration = useResourceOrchestration(conversationId);
+  const name = subagentName(child);
+  const running = ["launching", "working", "awaiting"].includes(childStatus(child).activity);
+  return (
+    <ActivityRow
+      icon={<BotIcon aria-hidden="true" />}
+      title={name}
+      selected={selected}
+      href={href}
+      onOpen={onOpen}
+      descriptionText={subagentTaskDescription(child) ?? child.last_message_preview ?? ""}
+      description={
+        <ConversationScopeContext.Provider value={child.id}>
+          <FilePathAwareMessageResponse
+            mode="static"
+            className="text-xs leading-4 [&>*]:my-0 [&_p]:my-0"
+          >
+            {subagentTaskDescription(child) ?? child.last_message_preview ?? ""}
+          </FilePathAwareMessageResponse>
+        </ConversationScopeContext.Provider>
+      }
+      status={<SubagentTaskStatus status={childStatus(child)} />}
+      onStop={active && running && canStop && onStopAgent ? () => onStopAgent(child) : undefined}
+      actions={
+        <ActivityNavigation
+          name={name}
+          onOpen={onOpen}
+          onOrchestration={
+            orchestration ? () => orchestration({ focusAgentId: child.id }) : undefined
+          }
+        />
+      }
+    />
   );
 }
 
 function ShellRow({
   group,
+  conversationId,
+  selected,
   onOpenTerminal,
-  onStop,
 }: {
   group: ShellGroup;
+  conversationId: string;
+  selected?: boolean;
   onOpenTerminal?: ChatActivityPanelProps["onOpenTerminal"];
-  onStop: (target: ChatActivityTerminalTarget) => Promise<void>;
 }) {
+  const orchestration = useResourceOrchestration(conversationId);
   const terminal = group.terminal;
   const entries = [...(terminal ? [terminal] : []), ...group.commands];
   const latest = [...group.commands].sort(
@@ -518,36 +761,39 @@ function ShellRow({
     ...(owner.owner_kind === "workspace"
       ? { workspaceId: owner.workspace_id ?? owner.owner_id }
       : {}),
-    retainedOnly: !terminal || !isLive(terminal),
+    retainedOnly: true,
     activity: { id: group.id, name: groupName(group), state, entries },
   };
   const open = () => onOpenTerminal?.(target);
   return (
-    <li>
+    <li data-shell-id={owner.id}>
       <ActivityRow
-        icon={<TerminalIcon aria-hidden="true" className="size-3.5" />}
-        title={groupName(group)}
-        description={latest?.name ?? terminal?.name ?? "No command recorded"}
-        onOpen={open}
+        selected={selected}
+        icon={<SquareTerminalIcon aria-hidden="true" className="size-3.5" />}
+        title={latest?.name ?? groupName(group)}
+        description={
+          (latest?.output ?? terminal?.output ?? "").trim().split(/\r?\n/).filter(Boolean).at(-1) ??
+          ""
+        }
+        onOpen={onOpenTerminal ? open : undefined}
+        actions={
+          <ActivityNavigation
+            name={groupName(group)}
+            shell
+            onOpen={onOpenTerminal ? open : undefined}
+            onOrchestration={
+              orchestration ? () => orchestration({ focusShellId: owner.id }) : undefined
+            }
+          />
+        }
         status={
-          <>
-            <SubagentTaskStatus
-              status={{
-                activity:
-                  state === "exited" && owner.exit_status ? "failed" : STATE_ACTIVITY[state],
-                label: STATE_LABELS[state],
-              }}
-              label={STATE_LABELS[state]}
-            />
-            <ActivityActions
-              name={groupName(group)}
-              onStop={
-                terminal && isLive(terminal) && terminal.terminal_id
-                  ? () => onStop(target)
-                  : undefined
-              }
-            />
-          </>
+          <SubagentTaskStatus
+            status={{
+              activity: state === "exited" && owner.exit_status ? "failed" : STATE_ACTIVITY[state],
+              label: STATE_LABELS[state],
+            }}
+            label={STATE_LABELS[state]}
+          />
         }
       />
     </li>

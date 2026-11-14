@@ -413,6 +413,50 @@ describe("parseEvent — session.status (background_tasks detail)", () => {
     ).toEqual([{ description: "keep me" }]);
   });
 
+  it("preserves exact native shell identity and typed controls through live and snapshot parsing", () => {
+    const shell = {
+      id: "launch",
+      type: "shell",
+      status: "running",
+      command: "same command",
+      source: "codex_native",
+      session_id: "conv_a",
+      terminal_id: "slot",
+      resource_id: "launch",
+      output_preview: "Latest output",
+      resource_url: "/v1/sessions/conv_a/resources/shells/codex_native/launch",
+      can_open: true,
+      can_stop: false,
+      stop_disabled_reason: "unsupported",
+      stop_url: "/v1/sessions/conv_a/resources/shells/codex_native/launch/stop",
+      stop_method: "POST",
+      exit_code: 0,
+    };
+    expect(bgTasks({ background_tasks: [shell] })).toEqual([shell]);
+    expect(
+      parseEvent("session.background_tasks", {
+        conversation_id: "conv_a",
+        background_task_count: 1,
+        background_tasks: [shell],
+      }),
+    ).toMatchObject({ backgroundTasks: [shell] });
+    expect(
+      bgTasks({
+        background_tasks: [
+          {
+            id: "launch",
+            source: "unknown",
+            can_open: "true",
+            can_stop: 1,
+            stop_method: "GET",
+            exit_code: "0",
+            resource_id: 7,
+          },
+        ],
+      }),
+    ).toEqual([{ id: "launch" }]);
+  });
+
   it("leaves detail undefined when absent, not an array, or empty after filtering", () => {
     expect(bgTasks({})).toBeUndefined();
     expect(bgTasks({ background_tasks: "nope" })).toBeUndefined();

@@ -1,3 +1,4 @@
+// Modified for Triune; inherited notices remain applicable.
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { userEvent } from "storybook/test";
 import { AskUserQuestionForm } from "./AskUserQuestionForm";
@@ -76,8 +77,28 @@ export const MultiQuestionCarousel: Story = {
   },
 };
 
+export const UnansweredRequest: Story = {
+  args: MultiQuestionCarousel.args,
+};
+
+export const BlankEditorAnswer: Story = {
+  args: {
+    questions: [
+      {
+        id: "note",
+        question: "Edit the note",
+        header: "Note",
+        multiSelect: false,
+        options: [],
+        textInput: { default: "" },
+      },
+    ],
+  },
+};
+
 function requiredElement(root: HTMLElement, selector: string): HTMLElement {
   const element = root.querySelector<HTMLElement>(selector);
   if (!element) throw new Error(`Story element not found: ${selector}`);
   return element;
 }
+// Modified for Triune.

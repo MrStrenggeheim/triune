@@ -1,4 +1,5 @@
-import type { MessageCommunication } from "./messageCommunication";
+// Modified for Triune; inherited notices remain applicable.
+import { messageInputKind, type MessageCommunication } from "./messageCommunication";
 import type { ChatAttachmentContent } from "./chatAttachments";
 import type { NativePermissionDelivery } from "./nativePermissionDelivery";
 // Block walker — converts a flat `AnyBlock[]` into a list of bubble
@@ -37,7 +38,6 @@ import {
   isSessionScopedDecision,
   routingExtras,
 } from "./routingDecision";
-import { isSystemUserContent } from "./systemMessage";
 import type { AgyPermission, CodexPersistMode, RememberScope } from "./types";
 import type { ActiveResponse } from "@/store/types";
 
@@ -171,6 +171,8 @@ export type RenderItem =
 export type Bubble =
   | {
       kind: "user";
+      userAuthored?: boolean;
+      isMeta?: boolean;
       communication?: MessageCommunication;
       itemId: string;
       /** Queued input that does not yet have a persisted transcript item. */
@@ -558,7 +560,11 @@ export function liveCandidateAssistantIndex(bubbles: readonly Bubble[]): number 
   const idx = lastRenderableAssistantIndex(bubbles);
   for (let i = idx + 1; i < bubbles.length; i += 1) {
     const b = bubbles[i]!;
-    if (b.kind === "user" && !isSystemUserContent(b.content)) return -1;
+    if (
+      b.kind === "user" &&
+      messageInputKind(b.communication, b.userAuthored, b.isMeta) !== "system"
+    )
+      return -1;
   }
   return idx;
 }
@@ -627,7 +633,11 @@ function hasAssistantContinuation(bubbles: Bubble[], from: number): boolean {
     const next = bubbles[i]!;
     if (next.kind === "assistant") return true;
     // A real user turn ends this one; system markers do not.
-    if (next.kind === "user" && !isSystemUserContent(next.content)) return false;
+    if (
+      next.kind === "user" &&
+      messageInputKind(next.communication, next.userAuthored, next.isMeta) !== "system"
+    )
+      return false;
     // Compaction / routing markers are mid-turn events — keep scanning.
   }
   return false;
@@ -884,6 +894,8 @@ function walkBubbles(
           : bubbles.length;
       bubbles.push({
         kind: "user",
+        userAuthored: b.type === "user_message" ? b.userAuthored : true,
+        isMeta: b.type === "user_message" ? b.isMeta : false,
         ...(b.type === "user_message" && b.communication ? { communication: b.communication } : {}),
         itemId: b.ctx.itemId ?? `user_${i}`,
         content:
@@ -1552,7 +1564,7 @@ function midResponseUserMessageId(blocks: AnyBlock[], index: number): string | n
   if (
     user?.type !== "user_message" ||
     isAnonymousRid(user.ctx.responseId) ||
-    isSystemUserContent(user.content)
+    messageInputKind(user.communication, user.userAuthored, user.isMeta) === "system"
   ) {
     return null;
   }
@@ -1560,7 +1572,11 @@ function midResponseUserMessageId(blocks: AnyBlock[], index: number): string | n
     const previous = blocks[previousIndex]!;
     if (isNonRenderingBlock(previous)) return null;
     if (isSubagentActivityBlock(previous)) continue;
-    if (previous.type === "user_message" && isSystemUserContent(previous.content)) continue;
+    if (
+      previous.type === "user_message" &&
+      messageInputKind(previous.communication, previous.userAuthored, previous.isMeta) === "system"
+    )
+      continue;
     return isAssistantSideBlock(previous) && previous.ctx.responseId === user.ctx.responseId
       ? user.ctx.responseId
       : null;
@@ -2003,6 +2019,8 @@ export function bubblesEqual(a: Bubble, b: Bubble): boolean {
       Boolean(a.awaitingAgent) !== Boolean(b.awaitingAgent) ||
       a.createdBy !== b.createdBy ||
       a.communication !== b.communication ||
+      a.userAuthored !== b.userAuthored ||
+      a.isMeta !== b.isMeta ||
       a.createdAtS !== b.createdAtS ||
       a.stableKey !== b.stableKey ||
       a.shellCommand !== b.shellCommand ||

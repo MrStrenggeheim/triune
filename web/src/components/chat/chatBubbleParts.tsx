@@ -53,7 +53,7 @@ import {
 } from "@/components/blocks/StatusBlocks";
 import { SystemMessageView } from "@/components/blocks/SystemMessage";
 import { SubagentActivityMessage } from "@/components/blocks/SubagentActivityMessage";
-import { isSystemUserContent, parseSystemMessage } from "@/lib/systemMessage";
+import { parseSystemMessage } from "@/lib/systemMessage";
 import { Button } from "@/components/ui/button";
 import { BrandLogo } from "@/components/BrandLogo";
 import { cn } from "@/lib/utils";
@@ -68,6 +68,8 @@ import {
 } from "@/lib/blocks";
 import { type Bubble, type RenderItem, bubblesEqual } from "@/lib/renderItems";
 import { PeerMessage } from "@/components/blocks/PeerMessage";
+import { messageInputKind, type MessageCommunication } from "@/lib/messageCommunication";
+import { Link } from "@/lib/routing";
 import { getCurrentAuthorId } from "@/lib/identity";
 import { QueryClientContext } from "@tanstack/react-query";
 import { ApiError, continueFailedTurn, retrySession } from "@/lib/sessionsApi";
@@ -225,6 +227,7 @@ export function buildPendingBubbles(
     const author = p.author ?? selfAuthor;
     return {
       kind: "user",
+      userAuthored: !p.communication,
       // No server item id yet; tempId keeps React keys stable until promotion.
       itemId: p.tempId,
       pending: true,
@@ -522,12 +525,16 @@ export function shouldShowWorkingIndicator(showsWorking: boolean, bubbles: Bubbl
 }
 
 /**
- * Whether a user-role bubble is a runtime-injected `[System: ...]`
- * notification (rendered via SystemMessageView, not as a normal user bubble).
+ * Whether an input bubble should be omitted from human turn navigation.
  */
 export function isSystemBubble(bubble: Bubble): boolean {
   if (bubble.kind !== "user") return false;
-  return isSystemUserContent(bubble.content);
+  const kind = messageInputKind(
+    bubble.communication,
+    bubble.userAuthored || bubble.shellCommand !== undefined,
+    bubble.isMeta,
+  );
+  return kind === "system" || kind === "external";
 }
 
 function CompactionLoadingIndicator({ createdAtS }: { createdAtS?: number }) {
@@ -587,18 +594,35 @@ export const BubbleView = memo(
     /** Hide retry/recovery controls when the surrounding session is sealed. */
     recoveryDisabled?: boolean;
   }) {
-    if (bubble.kind === "user")
-      return bubble.communication ? (
-        <PeerMessage
-          communication={bubble.communication}
-          content={bubble.content}
-          itemId={bubble.itemId}
-          createdAtS={bubble.createdAtS}
-          pending={bubble.pending}
-        />
-      ) : (
-        <UserBubble bubble={bubble} />
+    if (bubble.kind === "user") {
+      const inputKind = messageInputKind(
+        bubble.communication,
+        bubble.userAuthored || bubble.shellCommand !== undefined,
+        bubble.isMeta,
       );
+      if (inputKind === "agent" && bubble.communication)
+        return (
+          <PeerMessage
+            communication={bubble.communication}
+            content={bubble.content}
+            itemId={bubble.itemId}
+            createdAtS={bubble.createdAtS}
+            pending={bubble.pending}
+          />
+        );
+      if (
+        inputKind === "system" &&
+        bubble.content.every((block) => block.type === "input_text") &&
+        extractAttachedPaths(bubble.content).length === 0
+      )
+        return <SystemBubble bubble={bubble} />;
+      return (
+        <UserBubble
+          bubble={bubble}
+          origin={inputKind === "human" ? "human" : inputKind === "system" ? "system" : "external"}
+        />
+      );
+    }
     if (bubble.kind === "compaction_loading") {
       return <CompactionLoadingIndicator createdAtS={bubble.createdAtS} />;
     }
@@ -661,7 +685,56 @@ const USER_MESSAGE_REMARK_REHYPE_OPTIONS: MessageResponseProps["remarkRehypeOpti
   },
 };
 
-function UserBubble({ bubble }: { bubble: Extract<Bubble, { kind: "user" }> }) {
+function InputSource({ communication }: { communication?: MessageCommunication }) {
+  const sourceId = communication?.source_conversation_id;
+  const title = communication?.source_title?.trim();
+  return sourceId ? (
+    <Link
+      className="text-sm text-muted-foreground underline"
+      to={`/c/${encodeURIComponent(sourceId)}`}
+    >
+      {title || "Source conversation"}
+    </Link>
+  ) : title ? (
+    <span className="text-sm text-muted-foreground">{title}</span>
+  ) : null;
+}
+
+function SystemBubble({ bubble }: { bubble: Extract<Bubble, { kind: "user" }> }) {
+  const sessionId = useScopedConversationId();
+  const text = extractUserText(bubble.content);
+  // Text parsing only formats input already identified as System by provenance.
+  const parsed = parseSystemMessage(text);
+  if (parsed?.kind === "subagent_wake") return null;
+  return (
+    <Message from="assistant" data-role="system" data-message-id={bubble.itemId}>
+      <SystemMessageView
+        message={{
+          ...(parsed ?? { kind: "generic", body: text }),
+          label: bubble.communication?.source_title?.trim() || parsed?.label || "System event",
+        }}
+      />
+      {bubble.communication?.source_conversation_id && (
+        <InputSource communication={bubble.communication} />
+      )}
+      <MessageFooter
+        text={text}
+        messageId={bubble.pending ? null : bubble.itemId}
+        conversationId={sessionId}
+        createdAtS={bubble.createdAtS}
+      />
+    </Message>
+  );
+}
+
+function UserBubble({
+  bubble,
+  origin,
+}: {
+  bubble: Extract<Bubble, { kind: "user" }>;
+  origin: "human" | "system" | "external";
+}) {
+  const human = origin === "human";
   const useChatStore = useConversationChatStore();
   // Scoped so a side-chat bubble builds attachment URLs against the CHILD, not
   // the main conversation the root store projects.
@@ -689,26 +762,39 @@ function UserBubble({ bubble }: { bubble: Extract<Bubble, { kind: "user" }> }) {
   const isLong = text.length > COLLAPSE_THRESHOLD;
   const [isCollapsed, setIsCollapsed] = useState(isLong);
   const visibleText = isCollapsed ? sliceByCodePoint(text, COLLAPSE_THRESHOLD) : text;
-  // Runtime-injected `[System: ...]` notifications ride in on role=user. When
-  // the content is a pure system marker, swap in a muted centered indicator.
-  if (images.length === 0 && fileChips.length === 0 && mentionedChips.length === 0) {
-    const parsed = parseSystemMessage(text);
-    if (parsed) return <SystemMessageView message={parsed} />;
-  }
   // Badge OTHER contributors' messages only (never your own).
   const author = bubble.createdBy;
-  const showAuthorBadge = shouldShowAuthorBadge(author, getCurrentAuthorId(), isSessionShared);
+  const showAuthorBadge =
+    human && shouldShowAuthorBadge(author, getCurrentAuthorId(), isSessionShared);
 
   return (
     <Message
-      from="user"
+      from={human ? "user" : "assistant"}
       data-testid="message-bubble"
-      data-role="user"
-      data-user-message-id={bubble.itemId}
+      data-role={human ? "user" : origin}
+      data-user-message-id={human ? bubble.itemId : undefined}
       data-message-id={bubble.itemId}
-      className={cn("max-w-[640px]", bubble.pending && "animate-user-message-enter")}
+      className={cn(
+        "max-w-[640px]",
+        human && bubble.pending && "animate-user-message-enter",
+        !human && "border-l-2 border-border pl-2.5",
+      )}
     >
-      <div className="ml-auto flex w-fit max-w-full flex-col items-end">
+      {!human && (
+        <div className="flex items-center gap-2">
+          <strong className="text-sm font-semibold text-muted-foreground">
+            {origin === "system" ? "System" : "External input"}
+          </strong>
+          <InputSource communication={bubble.communication} />
+        </div>
+      )}
+      <div
+        className={
+          human
+            ? "ml-auto flex w-fit max-w-full flex-col items-end"
+            : "flex w-full min-w-0 flex-col items-start"
+        }
+      >
         {/* w-fit + ml-auto shrink-wrap the row so the author avatar sits
             immediately left of the right-aligned bubble. */}
         <div className="flex w-fit max-w-full items-center gap-1.5">
@@ -1650,7 +1736,7 @@ export function LatestTurnSpacer({
       for (const block of useChatStore.getState().blocks) {
         if (
           block.type === "user_message" &&
-          !isSystemUserContent(block.content) &&
+          messageInputKind(block.communication, block.userAuthored, block.isMeta) === "human" &&
           block.ctx.itemId !== null
         ) {
           ids.add(block.ctx.itemId);

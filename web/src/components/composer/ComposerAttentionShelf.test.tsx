@@ -1,3 +1,4 @@
+// Modified for Triune; inherited notices remain applicable.
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -5,6 +6,7 @@ import type { ElicitationBlock } from "@/lib/blocks";
 import type * as ChildSessionsModule from "@/hooks/useChildSessions";
 import { useChatStore } from "@/store/chatStore";
 import { ComposerAttentionShelf } from "./ComposerAttentionShelf";
+import userEvent from "@testing-library/user-event";
 
 vi.mock("@/hooks/useChildSessions", async (original) => ({
   ...(await original<typeof ChildSessionsModule>()),
@@ -107,4 +109,66 @@ it("places shell counts before plan without a dropdown chevron", () => {
   expect(buttons[0]).toHaveTextContent("Shells2");
   expect(buttons[1]).toHaveTextContent("Plan0/1");
   expect(shelf.querySelector(".lucide-chevron-down")).toBeNull();
+});
+
+it("does not mount unopened mirrored-child forms or their descendant queries", () => {
+  useChatStore.setState({
+    blocks: [
+      { ...request("ask", true), targetSessionId: "child-chat" },
+      { ...request("permission"), targetSessionId: "child-chat" },
+    ],
+  });
+  openShelf();
+  expect(screen.getByRole("button", { name: "Questions: 1" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Approvals: 1" })).toBeInTheDocument();
+  expect(document.querySelector('[data-slot="popover-content"]')).toBeNull();
+  expect(screen.queryByTestId("ask-user-question-form")).toBeNull();
+});
+
+it("mounts each request kind on first opening and clears that retention on a conversation switch", () => {
+  useChatStore.setState({ blocks: [request("ask", true), request("permission")] });
+  openShelf();
+  const popup = (label: string) =>
+    document.querySelector(`[data-slot="popover-content"][aria-label="${label}"]`);
+  expect(popup("Questions")).toBeNull();
+  expect(popup("Approvals")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Questions: 1" }));
+  const questions = popup("Questions");
+  expect(questions).toBeVisible();
+  expect(popup("Approvals")).toBeNull();
+  fireEvent.keyDown(document.body, { key: "Escape" });
+  expect(popup("Questions")).toBe(questions);
+  expect(questions).not.toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Approvals: 1" }));
+  expect(popup("Approvals")).toBeVisible();
+  expect(popup("Questions")).toBe(questions);
+  act(() => useChatStore.setState({ conversationId: "chat-b" }));
+  expect(popup("Questions")).toBeNull();
+  expect(popup("Approvals")).toBeNull();
+});
+
+it("retains question selections when the shelf popup closes and reopens without trapping focus", async () => {
+  const user = userEvent.setup();
+  useChatStore.setState({ blocks: [request("ask", true), request("permission")] });
+  render(
+    <MemoryRouter>
+      <ComposerAttentionShelf />
+      <textarea aria-label="Composer draft" />
+    </MemoryRouter>,
+  );
+  const trigger = screen.getByRole("button", { name: "Questions: 1" });
+  await user.click(trigger);
+  await user.click(screen.getByRole("radio", { name: /Focused/ }));
+  expect(screen.getByRole("radio", { name: /Focused/ })).toBeChecked();
+  await user.keyboard("{Escape}");
+  expect(screen.queryByRole("dialog", { name: "Questions" })).toBeNull();
+  expect(trigger).toHaveFocus();
+  const draft = screen.getByRole("textbox", { name: "Composer draft" });
+  await user.click(draft);
+  await user.type(draft, "keep typed draft");
+  expect(draft).toHaveFocus();
+  expect(draft).toHaveValue("keep typed draft");
+  await user.click(trigger);
+  expect(screen.getByRole("radio", { name: /Focused/ })).toBeChecked();
+  expect(screen.getAllByText("Question 1 of 1")).toHaveLength(1);
 });

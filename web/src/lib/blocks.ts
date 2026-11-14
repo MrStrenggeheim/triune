@@ -242,6 +242,8 @@ export interface ResponseStartBlock {
  * user input directly, not as a block).
  */
 export interface UserMessageBlock {
+  userAuthored?: boolean;
+  isMeta?: boolean;
   communication?: MessageCommunication;
   type: "user_message";
   ctx: BlockContext;

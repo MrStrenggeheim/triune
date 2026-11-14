@@ -277,6 +277,19 @@ export interface BackgroundTaskInfo {
   description?: string;
   /** The command the shell is running, e.g. `"sleep 120"`. */
   command?: string;
+  source?: "codex_native" | "claude_native" | "registered_terminal" | null;
+  session_id?: string | null;
+  terminal_id?: string | null;
+  /** Stable vendor item or registered terminal identity; never a process ID. */
+  resource_id?: string | null;
+  output_preview?: string | null;
+  resource_url?: string | null;
+  can_open?: boolean;
+  can_stop?: boolean;
+  stop_disabled_reason?: string | null;
+  stop_url?: string | null;
+  stop_method?: "POST" | "DELETE" | null;
+  exit_code?: number | null;
 }
 
 export interface Session {

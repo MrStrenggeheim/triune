@@ -48,6 +48,59 @@ const communication: MessageCommunication = {
 };
 
 describe("trusted peer presentation", () => {
+  it("labels the sender copy as sent to the authorized destination", async () => {
+    vi.mocked(getSessionSlim).mockImplementation(
+      async (id) =>
+        ({
+          title: id === "review" ? "Independent review" : "Implementation chat",
+          agentName: "Codex",
+        }) as Awaited<ReturnType<typeof getSessionSlim>>,
+    );
+    render(
+      <QueryClientProvider client={queryClient()}>
+        <MemoryRouter>
+          <ConversationScopeContext.Provider value="review">
+            <PeerMessage communication={communication} itemId="sent" content={[]} />
+          </ConversationScopeContext.Provider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByRole("link", { name: "Implementation chat" })).toHaveAttribute(
+      "href",
+      "/c/implementation",
+    );
+    expect(screen.getByText("sent to")).toBeInTheDocument();
+    expect(screen.queryByText("from")).not.toBeInTheDocument();
+    expect(screen.getByTestId("peer-message")).toHaveAttribute("data-direction", "sent");
+    expect(document.querySelector(".lucide-send")).not.toBeNull();
+  });
+
+  it("keeps a forbidden destination title out of the sender copy", async () => {
+    vi.mocked(getSessionSlim).mockImplementation(async (id) => {
+      if (id === "implementation") throw new Error("Forbidden");
+      return { title: "Own chat", agentName: "Codex" } as Awaited<
+        ReturnType<typeof getSessionSlim>
+      >;
+    });
+    render(
+      <QueryClientProvider client={queryClient()}>
+        <MemoryRouter>
+          <ConversationScopeContext.Provider value="review">
+            <PeerMessage communication={communication} itemId="sent" content={[]} />
+          </ConversationScopeContext.Provider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    await waitFor(() =>
+      expect(screen.getByText("Codex", { selector: "strong" })).toBeInTheDocument(),
+    );
+    expect(screen.getByRole("link", { name: "conversation" })).toHaveAttribute(
+      "href",
+      "/c/implementation",
+    );
+    expect(screen.queryByRole("link", { name: "Own chat" })).not.toBeInTheDocument();
+  });
+
   it("removes a cached source title when access is revoked", async () => {
     const client = queryClient();
     vi.mocked(getSessionSlim).mockResolvedValue({

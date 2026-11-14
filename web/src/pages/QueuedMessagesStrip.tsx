@@ -1,3 +1,4 @@
+// Modified for Triune.
 import {
   closestCenter,
   DndContext,
@@ -29,10 +30,11 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import type { QueuedMessage } from "@/store/chatStore";
 import { attachmentFilename } from "@/lib/attachments";
 import { cn } from "@/lib/utils";
+import { ComposerShelf } from "@/components/composer/ComposerShelf";
 
 /** Keep touch targets large without enlarging the visible glyphs. */
 const ACTION_BUTTON_CLASS =
-  "shrink-0 text-muted-foreground transition-colors hover:text-foreground focus-visible:text-foreground max-md:size-11";
+  "composer-queue-action shrink-0 text-muted-foreground transition-colors hover:text-foreground focus-visible:text-foreground";
 
 const ACTION_ICON_CLASS = "size-3.5 max-md:size-4";
 
@@ -60,6 +62,8 @@ export const queuedMessageCollisionDetection: CollisionDetection = (args) =>
   args.pointerCoordinates ? pointerWithin(args) : closestCenter(args);
 
 interface QueuedMessagesStripProps {
+  /** A conversation switch discards the previous shelf's exit snapshot. */
+  conversationId?: string | null;
   /** Messages waiting to be flushed, in FIFO order (head first). */
   messages: QueuedMessage[];
   /** Remove a queued message by id (per-row delete). */
@@ -135,7 +139,7 @@ function QueuedRow({
       className={cn(
         // WebKit's long-press text selection and callout cancel the touch
         // gesture dnd-kit's TouchSensor relies on, so suppress them on the row.
-        "relative flex min-w-0 items-center gap-1 py-0.5 text-sm text-foreground select-none [-webkit-touch-callout:none]",
+        "composer-queue-row relative flex min-w-0 items-center gap-1 text-sm text-foreground select-none [-webkit-touch-callout:none]",
         isDragging && "z-10 rounded-md bg-background shadow-md ring-1 ring-border ring-inset",
         isOver &&
           !isDragging &&
@@ -253,15 +257,15 @@ function QueuedRow({
 
 /**
  * Docked strip above the composer listing messages queued while the agent is
- * busy. Peeks above the composer stack's top surface (`-mb-4` + bottom
- * padding tuck its square bottom corners behind it), mirroring
- * `SubagentComposerTray`. Renders nothing when the queue is empty.
+ * busy. The shared stack owns spacing; presence retains the strip during
+ * exit, then removes the empty slot.
  *
  * Each row can be steered (sent now), edited (pulled back into the composer),
  * deleted, or — when `onReorder` is provided — dragged by its grip to reorder
  * the queue (drains FIFO, so order is the send order).
  */
 export function QueuedMessagesStrip({
+  conversationId,
   messages,
   onDelete,
   onEdit,
@@ -277,8 +281,6 @@ export function QueuedMessagesStrip({
     useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 8 } }),
     useSensor(KeyboardSensor),
   );
-
-  if (messages.length === 0) return null;
 
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
@@ -308,33 +310,35 @@ export function QueuedMessagesStrip({
   // the literal md:px-3 repeats it because the token has no responsive
   // variant. Narrow phones keep the compact px-2.
   return (
-    <div
-      data-testid="composer-queued-strip"
-      className={cn(
-        "composer-queued-surface mx-auto -mb-4 flex w-full flex-col rounded-t-2xl px-2 pt-1.5 pb-5.5 md:px-3",
-        widthClassName,
-      )}
-    >
-      {/* Cap the list height and scroll when the queue is long, so a big
-          backlog never pushes the composer off-screen. ~5 rows tall. */}
+    <ComposerShelf key={conversationId} present={messages.length > 0}>
       <div
-        role="list"
-        aria-label="Queued messages"
-        className="flex max-h-32 flex-col gap-1 overflow-y-auto overscroll-contain"
-      >
-        {onReorder === undefined ? (
-          rows
-        ) : (
-          <DndContext
-            sensors={sensors}
-            collisionDetection={queuedMessageCollisionDetection}
-            modifiers={[restrictToQueuedList]}
-            onDragEnd={handleDragEnd}
-          >
-            {rows}
-          </DndContext>
+        data-testid="composer-queued-strip"
+        className={cn(
+          "composer-queued-surface mx-auto flex w-full flex-col rounded-t-2xl px-2 md:px-3",
+          widthClassName,
         )}
+      >
+        {/* Cap the list height and scroll when the queue is long, so a big
+          backlog never pushes the composer off-screen. ~5 rows tall. */}
+        <div
+          role="list"
+          aria-label="Queued messages"
+          className="composer-queue-list flex max-h-32 flex-col overflow-y-auto overscroll-contain"
+        >
+          {onReorder === undefined ? (
+            rows
+          ) : (
+            <DndContext
+              sensors={sensors}
+              collisionDetection={queuedMessageCollisionDetection}
+              modifiers={[restrictToQueuedList]}
+              onDragEnd={handleDragEnd}
+            >
+              {rows}
+            </DndContext>
+          )}
+        </div>
       </div>
-    </div>
+    </ComposerShelf>
   );
 }

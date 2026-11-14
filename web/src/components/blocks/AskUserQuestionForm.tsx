@@ -1,10 +1,11 @@
-// Question carousel for structured elicitation, with single- or multi-select answers.
-// isOther controls custom input; submit requires an answer to every question.
+// Modified for Triune.
+// Question carousel for structured elicitation, with optional answers.
 
-import { CheckIcon, ChevronLeftIcon, ChevronRightIcon, XIcon } from "lucide-react";
+import { CheckIcon, ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
 import { type ChangeEvent, useState } from "react";
 import { Button } from "@/components/ui/button";
 import type { ClaudeQuestion } from "@/lib/askUserQuestion";
+import { cn } from "@/lib/utils";
 
 /**
  * Map from question id/text → either a single selected label
@@ -16,6 +17,9 @@ interface AskUserQuestionFormProps {
   questions: ClaudeQuestion[];
   onSubmit: (answers: AskUserQuestionAnswers) => void;
   onReject: () => void;
+  currentIndex?: number;
+  onCurrentIndexChange?: (index: number) => void;
+  showProgress?: boolean;
 }
 
 /**
@@ -55,9 +59,21 @@ function questionKey(question: ClaudeQuestion): string {
   return question.id && question.id.length > 0 ? question.id : question.question;
 }
 
-export function AskUserQuestionForm({ questions, onSubmit, onReject }: AskUserQuestionFormProps) {
+export function AskUserQuestionForm({
+  questions,
+  onSubmit,
+  onReject,
+  currentIndex: controlledIndex,
+  onCurrentIndexChange,
+  showProgress = true,
+}: AskUserQuestionFormProps) {
   // Currently-visible question (carousel index).
-  const [currentIndex, setCurrentIndex] = useState(0);
+  const [localIndex, setLocalIndex] = useState(0);
+  const currentIndex = Math.min(controlledIndex ?? localIndex, questions.length - 1);
+  const setCurrentIndex = (index: number) => {
+    setLocalIndex(index);
+    onCurrentIndexChange?.(index);
+  };
 
   // Per-question option selection. Single-select stores a string;
   // multi-select stores a deduped array.
@@ -133,21 +149,6 @@ export function AskUserQuestionForm({ questions, onSubmit, onReject }: AskUserQu
     }
   };
 
-  // Every question needs at least one answer. Without this guard
-  // the form submits half-filled answers and the LLM sees ``null``
-  // for the missing slots.
-  const allAnswered = questions.every((q) => {
-    const key = questionKey(q);
-    return (
-      answerForQuestion(
-        q,
-        selections[key] ?? "",
-        customSelected[key] ?? false,
-        customInputs[key] ?? "",
-      ) !== null
-    );
-  });
-
   const handleSubmit = () => {
     const finalAnswers: AskUserQuestionAnswers = {};
     for (const q of questions) {
@@ -158,8 +159,7 @@ export function AskUserQuestionForm({ questions, onSubmit, onReject }: AskUserQu
         customSelected[key] ?? false,
         customInputs[key] ?? "",
       );
-      if (answer === null) return; // unreachable while ``allAnswered`` gates the button
-      finalAnswers[key] = answer;
+      if (answer !== null) finalAnswers[key] = answer;
     }
     onSubmit(finalAnswers);
   };
@@ -169,6 +169,13 @@ export function AskUserQuestionForm({ questions, onSubmit, onReject }: AskUserQu
   const currentKey = questionKey(current);
   const isFirst = currentIndex === 0;
   const isLast = currentIndex === questions.length - 1;
+  const currentAnswered =
+    answerForQuestion(
+      current,
+      selections[currentKey] ?? "",
+      customSelected[currentKey] ?? false,
+      customInputs[currentKey] ?? "",
+    ) !== null;
 
   // Selected labels drive the preview render. Only PREDEFINED
   // options contribute previews — the custom row has no preview
@@ -194,16 +201,20 @@ export function AskUserQuestionForm({ questions, onSubmit, onReject }: AskUserQu
 
   return (
     <div className="flex flex-col gap-2 text-foreground" data-testid="ask-user-question-form">
-      <div className="flex items-center gap-2 text-sm text-muted-foreground">
-        <span data-testid="ask-user-question-progress">
-          Question {currentIndex + 1} of {questions.length}:
-        </span>
-        {current.header && (
-          <span className="text-muted-foreground text-sm rounded bg-muted px-1.5 py-0.5">
-            {current.header}
-          </span>
-        )}
-      </div>
+      {(showProgress || current.header) && (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          {showProgress && (
+            <span data-testid="ask-user-question-progress">
+              Question {currentIndex + 1} of {questions.length}
+            </span>
+          )}
+          {current.header && (
+            <span className="text-muted-foreground text-sm rounded bg-muted px-1.5 py-0.5">
+              {current.header}
+            </span>
+          )}
+        </div>
+      )}
 
       <fieldset
         key={currentKey}
@@ -220,19 +231,15 @@ export function AskUserQuestionForm({ questions, onSubmit, onReject }: AskUserQu
               const sel = selections[currentKey];
               const checked = Array.isArray(sel) && sel.includes(opt.label);
               return (
-                <label
-                  key={opt.label}
-                  htmlFor={inputId}
-                  className="flex items-start gap-2 cursor-pointer text-ui text-foreground"
-                >
+                <label key={opt.label} htmlFor={inputId} className={choiceRowClass(checked)}>
                   <input
                     type="checkbox"
                     id={inputId}
                     checked={checked}
                     onChange={() => handleMultiToggle(currentKey, opt.label)}
-                    className="mt-1"
+                    className={choiceInputClass}
                   />
-                  <span className="flex flex-col">
+                  <span className="flex min-w-0 flex-col break-words">
                     <span>{opt.label}</span>
                     {opt.description && (
                       <span className="text-muted-foreground text-sm">{opt.description}</span>
@@ -244,20 +251,16 @@ export function AskUserQuestionForm({ questions, onSubmit, onReject }: AskUserQu
             const sel = selections[currentKey];
             const checked = sel === opt.label && !customSelected[currentKey];
             return (
-              <label
-                key={opt.label}
-                htmlFor={inputId}
-                className="flex items-start gap-2 cursor-pointer text-ui text-foreground"
-              >
+              <label key={opt.label} htmlFor={inputId} className={choiceRowClass(checked)}>
                 <input
                   type="radio"
                   id={inputId}
                   name={currentKey}
                   checked={checked}
                   onChange={() => handleSingleSelect(currentKey, opt.label)}
-                  className="mt-1"
+                  className={choiceInputClass}
                 />
-                <span className="flex flex-col">
+                <span className="flex min-w-0 flex-col break-words">
                   <span>{opt.label}</span>
                   {opt.description && (
                     <span className="text-muted-foreground text-sm">{opt.description}</span>
@@ -271,10 +274,7 @@ export function AskUserQuestionForm({ questions, onSubmit, onReject }: AskUserQu
                matching radio/checkbox prefix, so the user picks
                between predefined options and free-form input the
                same way. */
-            <label
-              htmlFor={customRowId}
-              className="flex items-start gap-2 cursor-pointer text-ui text-foreground"
-            >
+            <label htmlFor={customRowId} className={choiceRowClass(customRowChecked)}>
               <input
                 type={current.multiSelect ? "checkbox" : "radio"}
                 id={customRowId}
@@ -285,7 +285,8 @@ export function AskUserQuestionForm({ questions, onSubmit, onReject }: AskUserQu
                     ? handleCustomToggleMulti(currentKey)
                     : handleCustomToggleSingle(currentKey)
                 }
-                className="mt-1"
+                className={choiceInputClass}
+                aria-label="Custom answer"
                 data-testid="ask-user-question-custom-toggle"
               />
               {/* ``field-sizing-content`` (Tailwind v4 / CSS) auto-grows
@@ -295,10 +296,11 @@ export function AskUserQuestionForm({ questions, onSubmit, onReject }: AskUserQu
               <textarea
                 rows={1}
                 placeholder="Type something"
+                aria-label="Custom answer text"
                 value={customRowValue}
                 onChange={(e) => handleCustomInput(currentKey, e)}
                 data-testid="ask-user-question-custom-input"
-                className="field-sizing-content flex-1 resize-none bg-transparent text-ui placeholder:text-muted-foreground focus:outline-none"
+                className="field-sizing-content min-w-0 flex-1 resize-none rounded-sm bg-transparent text-ui placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
             </label>
           )}
@@ -317,53 +319,59 @@ export function AskUserQuestionForm({ questions, onSubmit, onReject }: AskUserQu
         )}
       </fieldset>
 
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <Button
           size="sm"
           variant="outline"
-          onClick={() => setCurrentIndex((i) => i - 1)}
+          onClick={() => setCurrentIndex(currentIndex - 1)}
           disabled={isFirst}
           data-testid="ask-user-question-prev"
           componentId="question.prev"
         >
           <ChevronLeftIcon className="mr-1 size-3.5" />
-          Prev
+          Previous
         </Button>
         {!isLast && (
           <Button
             size="sm"
             variant="outline"
-            onClick={() => setCurrentIndex((i) => i + 1)}
+            onClick={() => setCurrentIndex(currentIndex + 1)}
             data-testid="ask-user-question-next"
             componentId="question.next"
           >
-            Next
+            {currentAnswered ? "Next" : "Skip"}
             <ChevronRightIcon className="ml-1 size-3.5" />
           </Button>
         )}
-        {isLast && (
+        <div className="ml-auto flex items-center gap-2">
+          <Button size="sm" variant="outline" onClick={onReject} componentId="question.cancel">
+            Decline
+          </Button>
           <Button
             size="sm"
             onClick={handleSubmit}
-            disabled={!allAnswered}
             data-testid="ask-user-question-submit"
             componentId="question.submit"
           >
             <CheckIcon className="mr-1 size-3.5" />
             Submit
           </Button>
-        )}
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={onReject}
-          className="ml-auto"
-          componentId="question.cancel"
-        >
-          <XIcon className="mr-1 size-3.5" />
-          Cancel
-        </Button>
+        </div>
       </div>
     </div>
   );
 }
+
+// CardRadioGroup uses buttons, which cannot contain the custom answer editor.
+// Keep its selection treatment with native radio and checkbox semantics here.
+function choiceRowClass(selected: boolean) {
+  return cn(
+    "flex items-start gap-2 rounded-lg border-2 p-2 cursor-pointer text-ui text-foreground",
+    selected
+      ? "border-primary bg-primary/5"
+      : "border-border hover:border-border-strong hover:bg-muted hover:shadow-sm",
+  );
+}
+
+const choiceInputClass =
+  "mt-1 size-4 shrink-0 accent-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2";

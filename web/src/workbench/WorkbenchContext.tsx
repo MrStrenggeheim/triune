@@ -5,6 +5,7 @@ import { useStableCallback } from "@/hooks/useStableCallback";
 import { useShallowStable } from "@/hooks/useShallowStable";
 import type { WorkbenchWorkspace } from "@/lib/workbenchWorkspace";
 import type { OpenFileOptions } from "@/shell/FileViewerContext";
+import type { BackgroundTaskInfo } from "@/lib/types";
 
 export type WorkbenchViewKind =
   | "conversation"
@@ -26,6 +27,7 @@ export interface OpenWorkbenchView {
   kind: WorkbenchViewKind;
   source?: ActivitySource;
   focusAgentId?: string;
+  focusShellId?: string;
   conversationId?: string;
   workspace?: WorkbenchWorkspace;
   workspaceId?: string;
@@ -35,6 +37,7 @@ export interface OpenWorkbenchView {
   unavailableReason?: string;
   path?: string;
   terminalId?: string;
+  shellResource?: BackgroundTaskInfo;
   title?: string;
   fileOptions?: OpenFileOptions;
   sourceViewId?: string;

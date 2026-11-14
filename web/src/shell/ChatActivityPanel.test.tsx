@@ -3,13 +3,20 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { useSessionShellResources } from "@/hooks/useSessionShellResources";
+import type * as ShellResourcesModule from "@/hooks/useSessionShellResources";
 import { useChatActivity, type ChatActivityEntry } from "@/hooks/useChatActivity";
 import { useChildSessionTree, type ChildSessionInfo } from "@/hooks/useChildSessions";
 import { toast } from "@/lib/notifications";
 import { useNativeChildCapabilities } from "@/hooks/useNativeChildCapabilities";
 import { authenticatedFetch } from "@/lib/identity";
+import { WorkbenchProvider } from "@/workbench/WorkbenchContext";
 import { ChatActivityPanel, type ChatActivityPanelProps } from "./ChatActivityPanel";
 
+vi.mock("@/hooks/useSessionShellResources", async (original) => ({
+  ...(await original<typeof ShellResourcesModule>()),
+  useSessionShellResources: vi.fn(),
+}));
 vi.mock("@/hooks/useChatActivity", () => ({ useChatActivity: vi.fn() }));
 vi.mock("@/hooks/useNativeChildCapabilities", () => ({ useNativeChildCapabilities: vi.fn() }));
 vi.mock("@/hooks/useChildSessions", () => ({ useChildSessionTree: vi.fn() }));
@@ -77,6 +84,11 @@ function panel(props: Partial<ChatActivityPanelProps> = {}) {
     </QueryClientProvider>
   );
 }
+function stopByMouse(name: string) {
+  const pill = screen.getByRole("button", { name: `Actions for ${name}` });
+  fireEvent.pointerDown(pill, { pointerType: "mouse", button: 0 });
+  fireEvent.click(pill, { detail: 1 });
+}
 function options() {
   fireEvent.pointerDown(screen.getByRole("button", { name: "Orchestration options" }), {
     button: 0,
@@ -89,6 +101,11 @@ function choose(value: string) {
 }
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(useSessionShellResources).mockReturnValue({
+    data: undefined,
+    error: null,
+    isLoading: false,
+  } as ReturnType<typeof useSessionShellResources>);
   agents([]);
   vi.mocked(useNativeChildCapabilities).mockReturnValue({
     data: undefined,
@@ -121,20 +138,15 @@ it("shows settled history in separate sections ordered by observed activity", ()
   ]);
   const { container } = render(panel());
   const agentRows = within(screen.getByRole("list", { name: "Agents" })).getAllByRole("listitem");
-  expect(agentRows.map((row) => row.querySelector("button")?.textContent)).toEqual([
-    "Failed agent",
-    "James",
-    "Older",
-  ]);
+  expect(
+    agentRows.map((row) => row.querySelector(".min-w-0.flex-1")?.firstElementChild?.textContent),
+  ).toEqual(["Failed agent", "James", "Older"]);
   expect(agentRows[0]).toHaveTextContent("Failed");
   expect(agentRows[1]).toHaveTextContent("Completed");
   const shellRows = within(screen.getByRole("list", { name: "Shells" })).getAllByRole("listitem");
-  expect(shellRows.map((row) => row.querySelector("button")?.textContent)).toEqual([
-    "old shell",
-    "idle shell",
-    "bash",
-    "lost shell",
-  ]);
+  expect(
+    shellRows.map((row) => row.querySelector(".min-w-0.flex-1")?.firstElementChild?.textContent),
+  ).toEqual(["old shell", "idle shell", "bash", "lost shell"]);
   expect(shellRows[3]).toHaveTextContent("Disconnected");
   expect(container.querySelectorAll(".workspace-control-header")).toHaveLength(1);
   expect(container.querySelectorAll(".density-row")).toHaveLength(7);
@@ -155,6 +167,7 @@ it("uses the shared header control for All, Agents and Shells", () => {
   expect(screen.queryByRole("region", { name: "Agents" })).not.toBeInTheDocument();
   expect(screen.getByRole("region", { name: "Shells" })).toBeVisible();
   fireEvent.click(within(filter).getByRole("button", { name: "Agents" }));
+  expect(useSessionShellResources).toHaveBeenLastCalledWith("selected-chat", { enabled: false });
   expect(screen.getByRole("region", { name: "Agents" })).toBeVisible();
   expect(screen.queryByRole("region", { name: "Shells" })).not.toBeInTheDocument();
 });
@@ -264,7 +277,7 @@ it.each(["running", "idle", "exited", "unknown", "disconnected"] as const)(
       sessionId: "origin-chat",
       terminalId: "terminal_bash_a",
       workspaceId: "workspace",
-      retainedOnly: state !== "running" && state !== "idle",
+      retainedOnly: true,
       activity: {
         id: JSON.stringify(["origin-chat", "shell"]),
         name: "bash",
@@ -291,7 +304,7 @@ it("retains command-only history and sends its output without a live attach targ
   const open = vi.fn();
   render(panel({ onOpenTerminal: open }));
   expect(screen.getByText("pnpm test")).toBeVisible();
-  fireEvent.click(screen.getByRole("button", { name: "Commands without a terminal" }));
+  fireEvent.click(screen.getByRole("button", { name: "pnpm test" }));
   expect(open).toHaveBeenCalledWith(
     expect.objectContaining({
       terminalId: "",
@@ -305,7 +318,7 @@ it("retains command-only history and sends its output without a live attach targ
 it("assigns commands by launch time and keeps reused terminal IDs isolated by session", () => {
   const old = entry({
     id: "old",
-    name: "previous bash",
+    name: "old command",
     state: "exited",
     started_at: 100,
     ended_at: 200,
@@ -331,11 +344,11 @@ it("assigns commands by launch time and keeps reused terminal IDs isolated by se
   expect(
     within(screen.getByRole("list", { name: "Shells" })).getAllByRole("listitem")[0],
   ).toHaveTextContent("new command");
-  fireEvent.click(screen.getByRole("button", { name: "previous bash" }));
+  fireEvent.click(screen.getByRole("button", { name: "old command" }));
   expect(open).toHaveBeenLastCalledWith(
     expect.objectContaining({ activity: expect.objectContaining({ entries: [old, oldCommand] }) }),
   );
-  fireEvent.click(screen.getByRole("button", { name: "bash" }));
+  fireEvent.click(screen.getByRole("button", { name: "new command" }));
   expect(open).toHaveBeenLastCalledWith(
     expect.objectContaining({
       activity: expect.objectContaining({ entries: [recent, newCommand] }),
@@ -391,25 +404,41 @@ it("stops only capability-approved running agents and keeps failures visible", a
   const open = vi.fn();
   const stop = vi.fn().mockRejectedValue(new Error("Native stop unavailable"));
   const view = render(panel({ onOpenAgent: open, onStopAgent: stop }));
-  expect(screen.queryByRole("button", { name: "Stop James" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Actions for James" })).not.toBeInTheDocument();
   view.rerender(panel({ onOpenAgent: open, onStopAgent: stop, canStopAgent: () => true }));
-  expect(screen.queryByRole("button", { name: "Stop Done agent" })).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Stop James" }));
+  expect(screen.queryByRole("button", { name: "Actions for Done agent" })).not.toBeInTheDocument();
+  stopByMouse("James");
   await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Native stop unavailable"));
   expect(stop).toHaveBeenCalledWith(running);
   expect(open).not.toHaveBeenCalled();
 });
 
-it("stops the captured shell owner and refetches without opening a tab", async () => {
-  activity([entry({ owner_kind: "workspace", owner_id: "workspace" })]);
+it("stops the captured registered launch through the live service without opening a tab", async () => {
+  const resourceUrl = "/v1/sessions/selected-chat/resources/shells/registered_terminal/launch-one";
+  vi.mocked(useSessionShellResources).mockReturnValue({
+    data: {
+      data: [
+        {
+          source: "registered_terminal",
+          resource_id: "launch-one",
+          terminal_id: "slot-reused",
+          status: "running",
+          command: "same command",
+          can_stop: true,
+          resource_url: resourceUrl,
+          stop_url: `${resourceUrl}/stop`,
+          stop_method: "POST",
+        },
+      ],
+    },
+    error: null,
+  } as ReturnType<typeof useSessionShellResources>);
   vi.mocked(authenticatedFetch).mockResolvedValue(new Response(null, { status: 204 }));
   const open = vi.fn();
   render(panel({ onOpenTerminal: open }));
-  fireEvent.click(screen.getByRole("button", { name: "Stop bash" }));
-  await waitFor(() => expect(refetch).toHaveBeenCalled());
-  expect(authenticatedFetch).toHaveBeenCalledWith(
-    "/v1/workbench-workspaces/workspace/terminals/terminal_bash_a",
-    { method: "DELETE" },
+  stopByMouse("same command");
+  await waitFor(() =>
+    expect(authenticatedFetch).toHaveBeenCalledWith(`${resourceUrl}/stop`, { method: "POST" }),
   );
   expect(open).not.toHaveBeenCalled();
 });
@@ -432,24 +461,160 @@ it("queries controls only for running native children and requires an affirmativ
   expect(vi.mocked(useNativeChildCapabilities).mock.calls.every(([id]) => id === "james")).toBe(
     true,
   );
-  expect(screen.queryByRole("button", { name: "Stop James" })).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Stop Managed" })).toBeVisible();
-  expect(screen.queryByRole("button", { name: "Stop Settled" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Actions for James" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Actions for Managed" })).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Actions for Settled" })).not.toBeInTheDocument();
   vi.mocked(useNativeChildCapabilities).mockReturnValue({
     data: { version: 1, state: "running", can_reply: false, can_steer: false, can_stop: true },
     error: null,
   } as ReturnType<typeof useNativeChildCapabilities>);
   view.rerender(panel(props));
-  fireEvent.click(screen.getByRole("button", { name: "Stop James" }));
+  stopByMouse("James");
   await waitFor(() => expect(stop).toHaveBeenCalledWith(native));
   view.rerender(panel({ ...props, active: false }));
   expect(useNativeChildCapabilities).toHaveBeenLastCalledWith("james", false);
-  expect(screen.queryByRole("button", { name: "Stop James" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Actions for James" })).not.toBeInTheDocument();
   vi.mocked(useNativeChildCapabilities).mockReturnValue({
     data: { can_stop: true },
     error: new Error("Capability refresh failed"),
   } as ReturnType<typeof useNativeChildCapabilities>);
   view.rerender(panel(props));
-  expect(screen.queryByRole("button", { name: "Stop James" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Actions for James" })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "James" })).toBeVisible();
+});
+
+it("focuses a native shell once per link request and preserves the selected source", () => {
+  const consume = vi.fn();
+  const shellResources = [
+    {
+      source: "codex_native" as const,
+      resource_id: "item-a",
+      command: "echo exact-command",
+      output_preview: "saved output",
+      status: "completed",
+    },
+  ];
+  const props = {
+    shellResources,
+    focusShellId: "codex_native:item-a",
+    linkRequestId: "first",
+    onConsumeLinkIntent: consume,
+  };
+  const view = render(panel(props));
+  expect(screen.getByRole("button", { name: "Shells", pressed: true })).toBeVisible();
+  expect(screen.getByText("saved output")).toBeVisible();
+  expect(consume).toHaveBeenCalledOnce();
+  view.rerender(panel(props));
+  expect(consume).toHaveBeenCalledOnce();
+  view.rerender(panel({ ...props, linkRequestId: "second" }));
+  expect(consume).toHaveBeenCalledTimes(2);
+  expect(query).toHaveBeenLastCalledWith("selected-chat", { enabled: true });
+});
+
+it("shares agent navigation controls and targets the originating Orchestration", () => {
+  agents([child()]);
+  const openView = vi.fn();
+  const openAgent = vi.fn();
+  render(
+    <WorkbenchProvider value={{ openView, openConversation: vi.fn() }}>
+      {panel({ onOpenAgent: openAgent })}
+    </WorkbenchProvider>,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Open chat beside · James" }));
+  expect(openAgent).toHaveBeenCalledWith(expect.objectContaining({ id: "james" }));
+  expect(openView).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Show James in Orchestration" }));
+  expect(openView).toHaveBeenCalledWith(
+    expect.objectContaining({
+      source: { kind: "chat", conversationId: "selected-chat" },
+      focusAgentId: "james",
+      linkRequestId: expect.any(String),
+    }),
+    { beside: true },
+  );
+});
+
+it("deduplicates service and ledger launches by identity and keeps identical commands separate", () => {
+  activity([
+    entry({ id: "launch-one", session_id: "selected-chat", name: "shell one" }),
+    entry({ id: "launch-two", session_id: "selected-chat", name: "shell two" }),
+  ]);
+  vi.mocked(useSessionShellResources).mockReturnValue({
+    data: {
+      data: ["launch-one", "launch-two"].map((resource_id) => ({
+        source: "registered_terminal",
+        session_id: "selected-chat",
+        resource_id,
+        terminal_id: "reused-slot",
+        command: "same command",
+        status: "running",
+        can_open: true,
+        resource_url: `/v1/sessions/selected-chat/resources/shells/registered_terminal/${resource_id}`,
+      })),
+    },
+    error: null,
+  } as ReturnType<typeof useSessionShellResources>);
+  const open = vi.fn();
+  render(panel({ onOpenTerminal: open }));
+  const rows = within(screen.getByRole("list", { name: "Shells" })).getAllByRole("listitem");
+  expect(rows).toHaveLength(2);
+  fireEvent.click(
+    within(rows[1]).getByRole("button", { name: "Open shell beside · same command" }),
+  );
+  expect(open).toHaveBeenCalledWith(
+    expect.objectContaining({
+      sessionId: "selected-chat",
+      terminalId: "registered_terminal:launch-two",
+      shellResource: expect.objectContaining({
+        resource_id: "launch-two",
+        terminal_id: "reused-slot",
+      }),
+      retainedOnly: true,
+    }),
+  );
+  expect(useSessionShellResources).toHaveBeenLastCalledWith("selected-chat", { enabled: true });
+});
+
+it("deduplicates native executions by a known activity alias and retains an unmapped equal command", () => {
+  activity([
+    entry({
+      id: "command_known_one",
+      kind: "command",
+      terminal_id: null,
+      session_id: "selected-chat",
+      name: "same command",
+    }),
+    entry({
+      id: "command_known_two",
+      kind: "command",
+      terminal_id: null,
+      session_id: "selected-chat",
+      name: "same command",
+    }),
+    entry({
+      id: "command_unmapped",
+      kind: "command",
+      terminal_id: null,
+      session_id: "selected-chat",
+      name: "same command",
+    }),
+  ]);
+  vi.mocked(useSessionShellResources).mockReturnValue({
+    data: {
+      data: ["one", "two"].map((id) => ({
+        source: "codex_native",
+        resource_id: id,
+        activity_id: `command_known_${id}`,
+        command: "same command",
+        status: "completed",
+      })),
+    },
+    error: null,
+  } as ReturnType<typeof useSessionShellResources>);
+  render(panel());
+  const rows = within(screen.getByRole("list", { name: "Shells" })).getAllByRole("listitem");
+  expect(rows).toHaveLength(3);
+  expect(rows[0]).toHaveAttribute("data-shell-id", "codex_native:one");
+  expect(rows[1]).toHaveAttribute("data-shell-id", "codex_native:two");
+  expect(rows[2]).toHaveAttribute("data-shell-id", "command_unmapped");
 });

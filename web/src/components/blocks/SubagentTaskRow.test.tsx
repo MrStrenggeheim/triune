@@ -23,6 +23,10 @@ it.each([
     expect(pill).toHaveAttribute("data-slot", "badge");
     expect(pill).toHaveClass(tone);
     expect(pill.querySelector("svg, [data-testid=running-dot]")).not.toBeNull();
+    if (activity === "working" || activity === "launching") {
+      expect(screen.getByTestId("running-dot")).toHaveClass("text-inherit");
+      expect(screen.getByTestId("running-dot")).not.toHaveClass("text-muted-foreground");
+    }
   },
 );
 it.each(["Running", "Exited", "Unknown"])(

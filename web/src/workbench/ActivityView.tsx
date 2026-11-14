@@ -30,6 +30,7 @@ export interface ActivityViewProps {
   source?: ActivitySource | null;
   active?: boolean;
   focusAgentId?: string;
+  focusShellId?: string;
   linkRequestId?: string;
   onSourceChange: (source: ActivitySource) => void | Promise<void>;
   onOpenTerminal: (target: ChatActivityTerminalTarget) => void;
@@ -127,6 +128,7 @@ export function ActivityView(props: ActivityViewProps) {
         rootSessionId={source.conversationId}
         active={props.active}
         focusAgentId={props.focusAgentId}
+        focusShellId={props.focusShellId}
         linkRequestId={props.linkRequestId}
         sourceControl={sourceControl}
         onOpenAgent={props.onOpenAgent}
@@ -158,6 +160,9 @@ function HostActivity({
   sourceControl,
   onOpenTerminal,
   onNewTerminal,
+  focusShellId,
+  linkRequestId,
+  onConsumeLinkIntent,
 }: ActivityViewProps & {
   source: Extract<ActivitySource, { kind: "host" }>;
   scope: string;
@@ -253,6 +258,9 @@ function HostActivity({
                   !workspaces.error && host.status === "online" && workspace.available !== false,
               }}
               active={active}
+              focusShellId={focusShellId}
+              linkRequestId={linkRequestId}
+              onConsumeLinkIntent={onConsumeLinkIntent}
               onOpenTerminal={(terminalId) =>
                 onOpenTerminal({ workspaceId: workspace.id, sessionId: "", terminalId })
               }

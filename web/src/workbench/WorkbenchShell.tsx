@@ -93,6 +93,7 @@ import { WorkbenchAppBar, type WorkbenchOpenAction } from "./WorkbenchAppBar";
 import { ConversationView } from "./ConversationView";
 import { ActivityView, type ActivitySource } from "./ActivityView";
 import { TerminalResourceView, RetainedActivityView } from "./TerminalResourceView";
+import { ShellResourceView } from "./ShellResourceView";
 import { ResourceView, inheritResourceViewState } from "./ResourceView";
 import { DockWorkspace, type DockViewVisibility } from "./DockWorkspace";
 import { canSuspendDockView } from "./viewLifetime";
@@ -550,6 +551,14 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
         openConversation(request.conversationId, { ...options, title: request.title });
         return;
       }
+      if (
+        request.shellResource &&
+        (!request.shellResource.source ||
+          !(request.shellResource.resource_id ?? request.shellResource.id))
+      ) {
+        toast.error("This shell has no recorded resource identity");
+        return;
+      }
       const captured = {
         ...request,
         conversationId:
@@ -557,7 +566,17 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
           (request.kind === "activity" && request.source?.kind === "chat"
             ? request.source.conversationId
             : undefined),
-        ...(request.focusAgentId ? { linkRequestId: randomUUID() } : {}),
+        ...(request.focusAgentId || request.focusShellId ? { linkRequestId: randomUUID() } : {}),
+        ...(request.shellResource
+          ? {
+              terminalOwner: "conversation" as const,
+              terminalId: `${request.shellResource.source}:${request.shellResource.resource_id ?? request.shellResource.id}`,
+              shellResource: {
+                source: request.shellResource.source,
+                resource_id: request.shellResource.resource_id ?? request.shellResource.id,
+              },
+            }
+          : {}),
       };
       const overridePane = openPaneOverride.current;
       const targetPane =
@@ -585,15 +604,16 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
               dockRef.current.focusView(existing.id);
               ensureVisible();
             };
-            if (resource.fileOptions || resource.focusAgentId) {
+            if (resource.fileOptions || resource.focusAgentId || resource.focusShellId) {
               void dockRef.current
                 .updateView(existing.id, {
                   resource: JSON.parse(
                     JSON.stringify(
-                      resource.focusAgentId
+                      resource.focusAgentId || resource.focusShellId
                         ? {
                             ...existing.resource,
                             focusAgentId: resource.focusAgentId,
+                            focusShellId: resource.focusShellId,
                             linkRequestId: resource.linkRequestId,
                           }
                         : resource,
@@ -1048,6 +1068,16 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
             }}
           />
         );
+      else if (view.kind === "terminal" && sessionId && resource.shellResource)
+        content = (
+          <ShellResourceView
+            conversationId={sessionId}
+            shellResource={
+              resource.shellResource as NonNullable<OpenWorkbenchView["shellResource"]>
+            }
+            active={showDock && visibility.visible}
+          />
+        );
       else if (view.kind === "terminal" && sessionId && resource.retainedActivity)
         content = (
           <RetainedActivityView
@@ -1082,6 +1112,9 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
             focusAgentId={
               typeof resource.focusAgentId === "string" ? resource.focusAgentId : undefined
             }
+            focusShellId={
+              typeof resource.focusShellId === "string" ? resource.focusShellId : undefined
+            }
             linkRequestId={
               typeof resource.linkRequestId === "string" ? resource.linkRequestId : undefined
             }
@@ -1110,6 +1143,7 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
             onConsumeLinkIntent={() => {
               void updateResource(view, {
                 focusAgentId: undefined,
+                focusShellId: undefined,
                 linkRequestId: undefined,
               }).catch((error) =>
                 toast.error(
@@ -1121,6 +1155,7 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
               const accepted = await updateResource(view, {
                 source,
                 focusAgentId: undefined,
+                focusShellId: undefined,
                 linkRequestId: undefined,
                 ...(source.kind === "chat"
                   ? { conversationId: source.conversationId, workspace: undefined }
@@ -1135,6 +1170,20 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
               openView({ kind: "terminal", workspace: target, terminalOwner: "workspace" })
             }
             onOpenTerminal={(target) => {
+              if (target.shellResource) {
+                openView(
+                  {
+                    kind: "terminal",
+                    conversationId: target.sessionId,
+                    shellResource: target.shellResource,
+                    terminalOwner: "conversation",
+                    title:
+                      target.shellResource.command ?? target.shellResource.description ?? "Shell",
+                  },
+                  { beside: true },
+                );
+                return;
+              }
               if (target.retainedOnly && target.activity && !target.workspaceId) {
                 openView({
                   kind: "terminal",

@@ -19,9 +19,13 @@ export function SubagentTaskStatus({ status, label }: { status: AgentStatus; lab
   const running = status.activity === "working" || status.activity === "launching";
   const completed = status.activity === "done";
   const failed = status.activity === "failed";
+  const statusLabel =
+    label ?? (status.activity === "working" ? "Running" : completed ? "Completed" : status.label);
   return (
     <Badge
       variant={failed ? "destructive" : "secondary"}
+      role="status"
+      aria-label={statusLabel}
       aria-description={status.details}
       className={cn(
         "w-fit text-xs font-normal",
@@ -30,7 +34,7 @@ export function SubagentTaskStatus({ status, label }: { status: AgentStatus; lab
         status.activity === "awaiting" && "bg-warning/10 text-warning",
       )}
     >
-      {running && <RunningDot />}
+      {running && <RunningDot className="text-inherit" />}
       {completed && <CheckIcon aria-hidden="true" className="size-3.5" />}
       {failed && <CircleAlertIcon aria-hidden="true" className="size-3.5" />}
       {!running &&
@@ -45,8 +49,7 @@ export function SubagentTaskStatus({ status, label }: { status: AgentStatus; lab
         ) : (
           <CircleIcon aria-hidden="true" />
         ))}
-      {label ??
-        (status.activity === "working" ? "Running" : completed ? "Completed" : status.label)}
+      {statusLabel}
     </Badge>
   );
 }

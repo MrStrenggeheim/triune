@@ -1,82 +1,17 @@
 // Modified for Triune.
 
-import { useEffect, useId, useRef, useState } from "react";
-import { ChevronRightIcon, SquareTerminalIcon } from "lucide-react";
-
+import { useEffect, useRef, useState } from "react";
+import { SquareTerminalIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { useSessionShellResources, mergeShellResources } from "@/hooks/useSessionShellResources";
 import type { BackgroundTaskInfo } from "@/lib/types";
-import { cn } from "@/lib/utils";
-import { useConversationChatStore } from "@/workbench/ScopedChatStore";
+import { useConversationChatVisible, useConversationChatStore } from "@/workbench/ScopedChatStore";
+import { ShellResourceRow, shellFocusId } from "@/shell/ChatActivityPanel";
 import {
   COMPOSER_COLLAPSED_LABEL_CLASS,
   COMPOSER_WORKSPACE_COLLAPSED_LABEL_CLASS,
 } from "./ChatComposer";
-
-function taskLabel(task: BackgroundTaskInfo): string {
-  const description = task.description?.trim();
-  if (description) return description;
-  const command = task.command?.trim();
-  if (command) return command;
-  return "Background task";
-}
-
-function TaskCommand({ command, label }: { command: string; label: string }) {
-  const [expanded, setExpanded] = useState(false);
-  const [clipped, setClipped] = useState(false);
-  const commandRef = useRef<HTMLDivElement>(null);
-  const commandId = useId();
-  const asLabel = command === label;
-
-  useEffect(() => {
-    const element = commandRef.current;
-    if (!element || expanded) return;
-    const measure = () => setClipped(element.scrollHeight > element.clientHeight + 1);
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [command, expanded]);
-
-  return (
-    <div className="flex min-w-0 items-start gap-1">
-      <div className="flex min-w-0 flex-1 flex-col gap-1">
-        {!asLabel && (
-          <span className="text-sm text-foreground [overflow-wrap:anywhere]">{label}</span>
-        )}
-        <div
-          ref={commandRef}
-          id={commandId}
-          data-testid="background-task-command"
-          className={cn(
-            "whitespace-pre-wrap [overflow-wrap:anywhere]",
-            asLabel ? "text-sm text-foreground" : "font-mono text-xs text-muted-foreground",
-            !expanded && "line-clamp-2",
-          )}
-        >
-          {command}
-        </div>
-      </div>
-      {(clipped || expanded) && (
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-xs"
-          aria-label={expanded ? "Collapse command" : "Expand command"}
-          aria-controls={commandId}
-          aria-expanded={expanded}
-          onClick={() => setExpanded((value) => !value)}
-          className="shrink-0 text-muted-foreground"
-        >
-          <ChevronRightIcon
-            aria-hidden="true"
-            className={cn("size-3.5", expanded && "rotate-90")}
-          />
-        </Button>
-      )}
-    </div>
-  );
-}
 
 /** Running shells and monitors, independent of foreground work; the count is authoritative. */
 export function BackgroundTaskIndicator({ shelf = false }: { shelf?: boolean }) {
@@ -85,6 +20,7 @@ export function BackgroundTaskIndicator({ shelf = false }: { shelf?: boolean }) 
   const bgTasks = useChatStore((s) => s.backgroundTasks);
   const conversationId = useChatStore((s) => s.conversationId);
   const [open, setOpen] = useState(false);
+  const visible = useConversationChatVisible();
   const triggerRef = useRef<HTMLButtonElement>(null);
   // Escape returns to the trigger; session switches must never move focus.
   const closeReasonRef = useRef<"session-change" | "escape" | null>(null);
@@ -114,8 +50,6 @@ export function BackgroundTaskIndicator({ shelf = false }: { shelf?: boolean }) 
   const countLabel = `${bgCount} background task${bgCount === 1 ? "" : "s"}`;
   // The count is authoritative in both directions: an over-long detail list
   // is clamped, a short one is acknowledged as partially unavailable.
-  const displayedTasks = bgTasks.slice(0, bgCount);
-  const undetailed = bgCount - displayedTasks.length;
 
   return (
     <>
@@ -173,59 +107,66 @@ export function BackgroundTaskIndicator({ shelf = false }: { shelf?: boolean }) 
           }}
           className="max-h-[min(24rem,var(--radix-popover-content-available-height))] w-[min(25rem,calc(100vw-2rem))] overflow-y-auto p-2"
         >
-          {displayedTasks.length > 0 ? (
-            <>
-              <ul className="flex flex-col">
-                {displayedTasks.map((task, i) => {
-                  const label = taskLabel(task);
-                  const command = task.command?.trim();
-                  return (
-                    <li key={task.id ?? i} className="flex items-start gap-2 px-1 py-2">
-                      <span className="flex h-5 w-4 shrink-0 items-center justify-center text-muted-foreground">
-                        <SquareTerminalIcon className="size-4" aria-hidden="true" />
-                      </span>
-                      <div className="flex min-w-0 flex-1 flex-col gap-1">
-                        {command ? (
-                          <TaskCommand key={`${open}:${command}`} command={command} label={label} />
-                        ) : (
-                          <span className="text-sm text-foreground [overflow-wrap:anywhere]">
-                            {label}
-                          </span>
-                        )}
-                      </div>
-                      <span className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
-                        <span
-                          role="status"
-                          aria-label="Running"
-                          className="size-3.5 animate-spin rounded-full motion-reduce:animate-none"
-                          style={{
-                            animationDuration: "1.6s",
-                            background:
-                              "conic-gradient(from 0deg, transparent 0deg, currentColor 360deg)",
-                            WebkitMask:
-                              "radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 2px))",
-                            mask: "radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 2px))",
-                          }}
-                        />
-                        <span aria-hidden="true">Running</span>
-                      </span>
-                    </li>
-                  );
-                })}
-              </ul>
-              {undetailed > 0 ? (
-                <p className="border-t border-border/60 px-1 pb-1 pt-2 text-sm text-muted-foreground">
-                  +{undetailed} more — details unavailable
-                </p>
-              ) : null}
-            </>
-          ) : (
-            <p className="px-1 py-2 text-sm text-muted-foreground">
-              {countLabel} — details unavailable
-            </p>
-          )}
+          <BackgroundTasksList
+            conversationId={conversationId}
+            reported={bgTasks}
+            count={bgCount}
+            active={open && visible}
+          />
         </PopoverContent>
       </Popover>
+    </>
+  );
+}
+
+function BackgroundTasksList({
+  conversationId,
+  reported,
+  count,
+  active,
+}: {
+  conversationId: string | null;
+  reported: BackgroundTaskInfo[];
+  count: number;
+  active: boolean;
+}) {
+  const resources = useSessionShellResources(conversationId, { enabled: active });
+  const tasks = mergeShellResources(
+    reported,
+    resources.data?.data ?? [],
+    count,
+    active && !resources.error && resources.data !== undefined,
+  );
+  const undetailed = count - tasks.length;
+  return (
+    <>
+      {resources.error && (
+        <p role="alert" className="px-1 py-2 text-xs text-destructive">
+          Could not refresh shell controls: {resources.error.message}
+        </p>
+      )}
+      {tasks.length ? (
+        <ul className="flex flex-col">
+          {tasks.map((task, index) => (
+            <li key={shellFocusId(task) ?? task.id ?? index}>
+              <ShellResourceRow
+                task={task}
+                conversationId={conversationId ?? ""}
+                allowStop={active && !resources.error && resources.data !== undefined}
+              />
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="px-1 py-2 text-sm text-muted-foreground">
+          {count} background task{count === 1 ? "" : "s"} — details unavailable
+        </p>
+      )}
+      {tasks.length > 0 && undetailed > 0 && (
+        <p className="border-t border-border/60 px-1 pb-1 pt-2 text-sm text-muted-foreground">
+          +{undetailed} more — details unavailable
+        </p>
+      )}
     </>
   );
 }

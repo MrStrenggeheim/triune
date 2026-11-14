@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { DisabledActionTooltip } from "@/components/DisabledActionTooltip";
 import { forwardRef, useRef, type ComponentPropsWithoutRef, type ReactNode } from "react";
 import {
@@ -40,16 +41,16 @@ export const COMPOSER_CONTROL_TEXT_CLASS = "text-ui font-normal text-foreground"
 /**
  * The workspace tray docked above the composer card. A tray nests inside the
  * card's outer edges by the shared inset rather than sharing its border box
- * (see the layout contract in ChatComposer); its chips sit on the card's
- * content inset line via the shared content inset; a chip's box starts there, and its
- * own px-1 keeps the glyph off the edge.
+ * (see ChatComposer). Workspace controls use the card's content inset;
+ * attention shelves use the tighter shared shelf inset.
  */
 export function ComposerWorkspaceBar({
   className,
   children,
   trailingContent,
+  shelfInset = false,
   ...props
-}: ComponentPropsWithoutRef<"div"> & { trailingContent?: ReactNode }) {
+}: ComponentPropsWithoutRef<"div"> & { trailingContent?: ReactNode; shelfInset?: boolean }) {
   const barRef = useRef<HTMLDivElement>(null);
   useCollapsedWorkspaceLabels(barRef);
   return (
@@ -57,7 +58,7 @@ export function ComposerWorkspaceBar({
       ref={barRef}
       className={cn(
         "composer-workspace-surface group/composer-workspace relative z-0 -mb-px flex h-7 min-w-0 items-center gap-0.5 rounded-t-2xl border border-b-0 border-border py-0.5 md:h-[37px] md:gap-2 md:py-1.5",
-        COMPOSER_CONTENT_INSET_CLASS,
+        shelfInset ? "composer-attention-surface" : COMPOSER_CONTENT_INSET_CLASS,
         COMPOSER_TRAY_INSET_CLASS,
         className,
       )}

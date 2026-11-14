@@ -1,3 +1,4 @@
+// Modified for Triune; inherited notices remain applicable.
 import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { Profiler, useEffect, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -26,9 +27,11 @@ vi.mock("use-stick-to-bottom", () => ({
 
 const originalLoadMoreHistory = useChatStore.getState().loadMoreHistory;
 
-function userBlock(id: string, text = id): UserMessageBlock {
+function userBlock(id: string, text = id, isMeta = false): UserMessageBlock {
   return {
     type: "user_message",
+    userAuthored: !isMeta,
+    isMeta,
     ctx: {
       agent: null,
       depth: 0,
@@ -508,7 +511,7 @@ describe("HistoryAutoLoader", () => {
     // make the open keep fetching until it found a second prompt, so the
     // transcript grew and shifted seconds after the page had settled.
     useChatStore.setState({
-      blocks: [userBlock("latest"), userBlock("system", "[System: task completed]")],
+      blocks: [userBlock("latest"), userBlock("system", "[System: task completed]", true)],
       hasMoreHistory: true,
       oldestItemId: "item_9",
       loadMoreHistory,

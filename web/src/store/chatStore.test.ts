@@ -33,7 +33,7 @@ import type {
 } from "@/lib/blocks";
 import type { ConversationItem, MessageItem } from "@/lib/conversationItems";
 import { itemsToBlocks } from "@/lib/itemsToBlocks";
-import type { MessageCommunication } from "@/lib/messageCommunication";
+import { messageInputKind, type MessageCommunication } from "@/lib/messageCommunication";
 import { buildBubbles } from "@/lib/renderItems";
 import { getSessionSlim, INITIAL_WINDOW_ITEMS, SESSION_HISTORY_PAGE_SIZE } from "@/lib/sessionsApi";
 import { SSE_STALL_TIMEOUT_MS } from "@/lib/sse";
@@ -132,6 +132,7 @@ function userMessage(responseId: string, text: string): ConversationItem {
     response_id: responseId,
     type: "message",
     role: "user",
+    user_authored: true,
     status: "completed",
     content: [{ type: "input_text", text }],
   };
@@ -1321,7 +1322,11 @@ describe("chatStore — switchTo", () => {
         data: {
           item_id: "item_bg_user",
           type: "message",
-          data: { role: "user", content: [{ type: "input_text", text: "hello from bg" }] },
+          data: {
+            role: "user",
+            user_authored: true,
+            content: [{ type: "input_text", text: "hello from bg" }],
+          },
         },
       }),
     );
@@ -6056,6 +6061,7 @@ describe("chatStore — send (file attachments)", () => {
       itemType: "message",
       data: {
         role: "user",
+        user_authored: true,
         content: [
           {
             type: "input_text",
@@ -6179,6 +6185,7 @@ describe("chatStore — send (file attachments)", () => {
       itemType: "message",
       data: {
         role: "user",
+        user_authored: true,
         content: [{ type: "input_text", text: "[Attached: /tmp/uploads/shot.png]" }],
       },
     });
@@ -6243,6 +6250,7 @@ describe("chatStore — send (file attachments)", () => {
       clearedPendingId: "pending_native_1",
       data: {
         role: "user",
+        user_authored: true,
         content: [{ type: "input_text", text: "[Attached: /tmp/diagram.png]\n\ndraw this" }],
       },
     });
@@ -6401,6 +6409,7 @@ describe("chatStore — delivered-but-unacked send", () => {
       itemType: "message",
       data: {
         role: "user",
+        user_authored: true,
         content: [{ type: "input_text", text: "summarize the deploy status" }],
       },
     });
@@ -6428,7 +6437,7 @@ describe("chatStore — delivered-but-unacked send", () => {
       type: "session_input_consumed",
       itemId,
       itemType: "message",
-      data: { role: "user", content: [{ type: "input_text", text }] },
+      data: { role: "user", user_authored: true, content: [{ type: "input_text", text }] },
       createdBy: "user@example.com",
     });
   }
@@ -6494,7 +6503,11 @@ describe("chatStore — delivered-but-unacked send", () => {
       type: "session_input_consumed",
       itemId: stableId,
       itemType: "message",
-      data: { role: "user", content: [{ type: "input_text", text: "resend me" }] },
+      data: {
+        role: "user",
+        user_authored: true,
+        content: [{ type: "input_text", text: "resend me" }],
+      },
     });
 
     expect(useChatStore.getState().restoredSendDraft).toMatchObject({ stableId, delivered: true });
@@ -6514,6 +6527,7 @@ describe("chatStore — delivered-but-unacked send", () => {
       itemType: "message",
       data: {
         role: "user",
+        user_authored: true,
         content: [{ type: "input_text", text: "summarize the deploy status" }],
       },
     });
@@ -6686,7 +6700,11 @@ describe("chatStore — delivered-but-unacked send", () => {
       type: "session_input_consumed",
       itemId: stableId,
       itemType: "message",
-      data: { role: "user", content: [{ type: "input_text", text: "resend me" }] },
+      data: {
+        role: "user",
+        user_authored: true,
+        content: [{ type: "input_text", text: "resend me" }],
+      },
     });
     failPost(new TypeError("Failed to fetch"));
     await sending;
@@ -6819,7 +6837,11 @@ describe("chatStore — delivered-but-unacked send", () => {
       type: "session_input_consumed",
       itemId: stableId,
       itemType: "message",
-      data: { role: "user", content: [{ type: "input_text", text: "resend me" }] },
+      data: {
+        role: "user",
+        user_authored: true,
+        content: [{ type: "input_text", text: "resend me" }],
+      },
     });
     failVerdict(new TypeError("Failed to fetch"));
     await sending;
@@ -6882,7 +6904,11 @@ describe("chatStore — delivered-but-unacked send", () => {
       type: "session_input_consumed",
       itemId: stableId,
       itemType: "message",
-      data: { role: "user", content: [{ type: "input_text", text: "resend me" }] },
+      data: {
+        role: "user",
+        user_authored: true,
+        content: [{ type: "input_text", text: "resend me" }],
+      },
     });
     expect(useChatStore.getState().restoredSendDraft).toBeNull();
     expect(useChatStore.getState().pendingRetryStableId).toBeNull();
@@ -8734,7 +8760,11 @@ describe("chatStore — handleSessionEvent (session.* events)", () => {
           type: "session_input_consumed",
           itemId: "msg_from_terminal",
           itemType: "message",
-          data: { role: "user", content: [{ type: "input_text", text: "from the terminal" }] },
+          data: {
+            role: "user",
+            user_authored: true,
+            content: [{ type: "input_text", text: "from the terminal" }],
+          },
         };
         useChatStore.setState({ blocks: [], pendingUserMessages: [] });
         if (alreadyMirrored) handleSessionEvent(event);
@@ -8780,7 +8810,11 @@ describe("chatStore — handleSessionEvent (session.* events)", () => {
         type: "session_input_consumed",
         itemId: "msg_persisted_first",
         itemType: "message",
-        data: { role: "user", content: [{ type: "input_text", text: "first" }] },
+        data: {
+          role: "user",
+          user_authored: true,
+          content: [{ type: "input_text", text: "first" }],
+        },
       };
       handleSessionEvent(event);
 
@@ -8834,13 +8868,17 @@ describe("chatStore — handleSessionEvent (session.* events)", () => {
         type: "session_input_consumed",
         itemId: "msg_already_committed",
         itemType: "message",
-        data: { role: "user", content: [{ type: "input_text", text: "hello" }] },
+        data: {
+          role: "user",
+          user_authored: true,
+          content: [{ type: "input_text", text: "hello" }],
+        },
       });
 
       const state = useChatStore.getState();
       // No second copy appended — the committed block stands alone.
       expect(state.blocks).toHaveLength(1);
-      expect(state.blocks[0]).toBe(committed);
+      expect(state.blocks[0]).toEqual({ ...committed, userAuthored: true, stableKey: "pend_1" });
       // And the optimistic echo is acked away, not stranded.
       expect(state.pendingUserMessages).toEqual([]);
     });
@@ -8873,7 +8911,11 @@ describe("chatStore — handleSessionEvent (session.* events)", () => {
         itemId: "msg_committed_2",
         itemType: "message",
         clearedPendingId: "pend_b",
-        data: { role: "user", content: [{ type: "input_text", text: "second" }] },
+        data: {
+          role: "user",
+          user_authored: true,
+          content: [{ type: "input_text", text: "second" }],
+        },
       });
 
       const state = useChatStore.getState();
@@ -8946,7 +8988,7 @@ describe("chatStore — handleSessionEvent (session.* events)", () => {
         itemId: "msg_1",
         itemType: "message",
         createdBy: "alice@example.com",
-        data: { role: "user", content: [{ type: "input_text", text: "hi" }] },
+        data: { role: "user", user_authored: true, content: [{ type: "input_text", text: "hi" }] },
       });
 
       const promoted = useChatStore.getState().blocks[0] as UserMessageBlock;
@@ -8980,6 +9022,7 @@ describe("chatStore — handleSessionEvent (session.* events)", () => {
         itemType: "message",
         data: {
           role: "user",
+          user_authored: true,
           content: [
             { type: "input_image", file_id: "file_abc123", filename: "photo.png" },
             { type: "input_text", text: "look at this" },
@@ -9027,6 +9070,7 @@ describe("chatStore — handleSessionEvent (session.* events)", () => {
         itemType: "message",
         data: {
           role: "user",
+          user_authored: true,
           content: [{ type: "input_text", text: "from web UI" }],
         },
       });
@@ -9051,7 +9095,11 @@ describe("chatStore — handleSessionEvent (session.* events)", () => {
         itemId: "msg_from_collab",
         itemType: "message",
         createdBy: "bob@example.com",
-        data: { role: "user", content: [{ type: "input_text", text: "from bob" }] },
+        data: {
+          role: "user",
+          user_authored: true,
+          content: [{ type: "input_text", text: "from bob" }],
+        },
       });
 
       const promoted = useChatStore.getState().blocks[0] as UserMessageBlock;
@@ -9067,7 +9115,11 @@ describe("chatStore — handleSessionEvent (session.* events)", () => {
         type: "session_input_consumed",
         itemId: "msg_no_author",
         itemType: "message",
-        data: { role: "user", content: [{ type: "input_text", text: "anon" }] },
+        data: {
+          role: "user",
+          user_authored: true,
+          content: [{ type: "input_text", text: "anon" }],
+        },
       });
 
       const promoted = useChatStore.getState().blocks[0] as UserMessageBlock;
@@ -9098,6 +9150,7 @@ describe("chatStore — handleSessionEvent (session.* events)", () => {
         itemType: "message",
         data: {
           role: "user",
+          user_authored: true,
           content: [{ type: "input_text", text: "run tests" }],
         },
       });
@@ -9106,7 +9159,7 @@ describe("chatStore — handleSessionEvent (session.* events)", () => {
       // A replayed live event must not append another user bubble.
       // Refresh hydrates from the canonical snapshot and shows one item;
       // this assertion keeps the live view equally idempotent.
-      expect(after.blocks).toEqual([existing]);
+      expect(after.blocks).toEqual([{ ...existing, userAuthored: true }]);
       expect(after.pendingUserMessages).toEqual([]);
     });
 
@@ -9126,6 +9179,7 @@ describe("chatStore — handleSessionEvent (session.* events)", () => {
         isMeta: true,
         data: {
           role: "user",
+          user_authored: true,
           is_meta: true,
           content: [{ type: "input_text", text: "<skill>hidden</skill>" }],
         },
@@ -9157,6 +9211,7 @@ describe("chatStore — handleSessionEvent (session.* events)", () => {
         isMeta: true,
         data: {
           role: "user",
+          user_authored: true,
           is_meta: true,
           content: [
             {
@@ -9211,7 +9266,7 @@ describe("chatStore — handleSessionEvent (session.* events)", () => {
         ...authorship,
         data: { role: "user", content: teamContent, user_authored: "userAuthored" in authorship },
       });
-      const human = Object.keys(authorship).length > 0;
+      const human = "userAuthored" in authorship || "clearedPendingId" in authorship;
       expect(useChatStore.getState().pendingUserMessages).toEqual(human ? [] : pending);
       expect(useChatStore.getState().blocks).toMatchObject(
         human
@@ -9223,7 +9278,7 @@ describe("chatStore — handleSessionEvent (session.* events)", () => {
                 content: teamContent,
               },
             ]
-          : [],
+          : [{ type: "user_message", userAuthored: false, content: teamContent }],
       );
     });
 
@@ -9246,7 +9301,7 @@ describe("chatStore — handleSessionEvent (session.* events)", () => {
           itemId: "msg_xml",
           itemType: "message",
           ...(named ? { clearedPendingId: "xml" } : {}),
-          data: { role: "user", content: teamContent, user_authored: true },
+          data: { role: "user", content: teamContent, user_authored: named },
         };
         handleSessionEvent(event);
         handleSessionEvent(event);
@@ -9291,7 +9346,11 @@ describe("chatStore — handleSessionEvent (session.* events)", () => {
         itemId: "msg_newer",
         itemType: "message",
         clearedPendingId: "pending_new",
-        data: { role: "user", content: [{ type: "input_text", text: "newer" }] },
+        data: {
+          role: "user",
+          user_authored: true,
+          content: [{ type: "input_text", text: "newer" }],
+        },
       });
 
       const state = useChatStore.getState();
@@ -9332,6 +9391,7 @@ describe("chatStore — handleSessionEvent (session.* events)", () => {
         // whitespace. A text comparison against the pending entry fails.
         data: {
           role: "user",
+          user_authored: true,
           content: [{ type: "input_text", text: "quoted line Is this the only trigger?" }],
         },
       });
@@ -9370,7 +9430,11 @@ describe("chatStore — handleSessionEvent (session.* events)", () => {
         itemId: "msg_hi",
         itemType: "message",
         clearedPendingId: null,
-        data: { role: "user", content: [{ type: "input_text", text: "the original draft" }] },
+        data: {
+          role: "user",
+          user_authored: true,
+          content: [{ type: "input_text", text: "the original draft" }],
+        },
       });
 
       const state = useChatStore.getState();
@@ -9625,6 +9689,7 @@ describe("chatStore — handleSessionEvent (session.* events)", () => {
       // The forwarder-mirrored item beat its receipt into `blocks`.
       const rendered = {
         type: "user_message",
+        userAuthored: true,
         ctx: {
           agent: null,
           depth: 0,
@@ -10091,7 +10156,11 @@ describe("chatStore — handleSessionEvent (session.* events)", () => {
           type: "session_input_consumed",
           itemId: "item_bg",
           itemType: "message",
-          data: { role: "user", content: [{ type: "input_text", text: "from background" }] },
+          data: {
+            role: "user",
+            user_authored: true,
+            content: [{ type: "input_text", text: "from background" }],
+          },
         },
         "conv_bg",
       );
@@ -18568,7 +18637,11 @@ describe("chatStore — client-side message queue", () => {
       type: "session_input_consumed",
       itemId: "delivered_first",
       itemType: "message",
-      data: { role: "user", content: [{ type: "input_text", text: "second startup input" }] },
+      data: {
+        role: "user",
+        user_authored: true,
+        content: [{ type: "input_text", text: "second startup input" }],
+      },
     });
     useChatStore.getState().enqueueMessage("ordinary busy follow-up");
     expect(useChatStore.getState().startupPending).toBe(false);
@@ -21075,6 +21148,7 @@ it.each(["restore", "newer", "foreign", "delivered", "no-id", "refused", "unsett
               response_id: "turn",
               type: "message",
               role: "user",
+              user_authored: true,
               status: "completed",
               content: [{ type: "input_text", text: "Retry" }],
             },
@@ -21150,6 +21224,192 @@ it("holds a restored queue when the workspace changed while this client was away
   ).toEqual([]);
 });
 
+describe("input authorship across live receipts and reload", () => {
+  const content = [
+    { type: "input_text" as const, text: "Please continue from where you left off." },
+  ];
+  const file = { type: "input_file" as const, file_id: "file", filename: "notes.txt" };
+
+  it.each(["human", "system"] as const)(
+    "enriches a history-first %s receipt once without consuming the next send",
+    (origin) => {
+      bindConversationForTest("attribution");
+      const next: PendingUserMessage = { tempId: "next", content };
+      const persisted: MessageItem = {
+        type: "message",
+        id: "input",
+        response_id: "response",
+        status: "completed",
+        role: "user",
+        content,
+      };
+      useChatStore.setState({
+        blocks: itemsToBlocks([persisted]),
+        pendingUserMessages: [{ tempId: "own", content: [file, ...content] }, next],
+      });
+      const event: SessionInputConsumedEvent = {
+        type: "session_input_consumed",
+        itemId: "input",
+        itemType: "message",
+        clearedPendingId: "own",
+        data: {
+          role: "user",
+          content,
+          user_authored: origin === "human",
+          ...(origin === "system"
+            ? {
+                communication: {
+                  kind: "system",
+                  message_id: "input",
+                  destination_conversation_id: "attribution",
+                  delivery_state: "confirmed",
+                },
+              }
+            : {}),
+        },
+      };
+      handleSessionEvent(event);
+      handleSessionEvent({ ...event, clearedPendingId: null });
+      const state = useChatStore.getState();
+      expect(state.pendingUserMessages).toEqual([next]);
+      expect(state.blocks).toHaveLength(1);
+      const block = state.blocks[0] as UserMessageBlock;
+      expect(block.content).toEqual([file, ...content]);
+      expect(block.stableKey).toBe("own");
+      expect(messageInputKind(block.communication, block.userAuthored, block.isMeta)).toBe(origin);
+    },
+  );
+
+  it("preserves assistant output text in a communication receipt", () => {
+    bindConversationForTest("attribution");
+    useChatStore.setState({ blocks: [], pendingUserMessages: [] });
+    const output = [{ type: "output_text", text: "Agent report" }];
+    handleSessionEvent({
+      type: "session_input_consumed",
+      itemId: "peer-output",
+      itemType: "message",
+      data: {
+        role: "assistant",
+        content: output,
+        communication: {
+          kind: "peer",
+          message_id: "peer-output",
+          destination_conversation_id: "attribution",
+          delivery_state: "confirmed",
+        },
+      },
+    });
+    expect(useChatStore.getState().blocks).toMatchObject([
+      { content: output, userAuthored: false },
+    ]);
+  });
+
+  it.each(["human", "unknown", "system", "external", "peer", "native_agent"] as const)(
+    "keeps %s attribution consistent across live consumption and rehydration",
+    (origin) => {
+      bindConversationForTest("attribution");
+      const communication: MessageCommunication | undefined =
+        origin === "human" || origin === "unknown"
+          ? undefined
+          : {
+              kind: origin,
+              message_id: "input",
+              destination_conversation_id: "attribution",
+              source_title: "Recovery",
+              delivery_state: "confirmed",
+            };
+      const pending: PendingUserMessage = { tempId: "own-human", content: [file, ...content] };
+      useChatStore.setState({ blocks: [], pendingUserMessages: [pending] });
+      const event: SessionInputConsumedEvent = {
+        type: "session_input_consumed",
+        itemId: "input",
+        itemType: "message",
+        createdBy: "account@example.com",
+        data: { role: "user", content, communication, user_authored: origin !== "unknown" },
+      };
+      handleSessionEvent(event);
+      handleSessionEvent(event);
+      const state = useChatStore.getState();
+      expect(state.pendingUserMessages).toEqual(origin === "human" ? [] : [pending]);
+      expect(state.blocks).toHaveLength(1);
+      const [live] = buildBubbles(state.blocks, null);
+      const persisted: MessageItem = {
+        type: "message",
+        id: event.itemId,
+        response_id: "response",
+        status: "completed",
+        role: "user",
+        created_by: event.createdBy,
+        user_authored: origin !== "unknown",
+        communication,
+        content: origin === "human" ? [file, ...content] : content,
+      };
+      const [reloaded] = buildBubbles(itemsToBlocks(JSON.parse(JSON.stringify([persisted]))), null);
+      if (live?.kind !== "user" || reloaded?.kind !== "user")
+        throw new Error("Missing input bubble");
+      const expected =
+        origin === "unknown"
+          ? "external"
+          : origin === "human"
+            ? "human"
+            : origin === "peer" || origin === "native_agent"
+              ? "agent"
+              : origin;
+      expect(messageInputKind(live.communication, live.userAuthored, live.isMeta)).toBe(expected);
+      expect(messageInputKind(reloaded.communication, reloaded.userAuthored, reloaded.isMeta)).toBe(
+        expected,
+      );
+      expect(live.content).toEqual(reloaded.content);
+    },
+  );
+
+  it.each([undefined, "system", "peer", "external"] as const)(
+    "preserves known pending provenance (%s) and files through an exact receipt",
+    (kind) => {
+      bindConversationForTest("attribution");
+      const communication: MessageCommunication | undefined = kind
+        ? {
+            kind,
+            message_id: "own-input",
+            destination_conversation_id: "attribution",
+            delivery_state: "queued",
+          }
+        : undefined;
+      useChatStore.setState({
+        blocks: [],
+        pendingUserMessages: [{ tempId: "own-input", content: [file, ...content], communication }],
+      });
+      handleSessionEvent({
+        type: "session_input_consumed",
+        itemType: "message",
+        itemId: "own-input",
+        data: { role: "user", content },
+      });
+      expect(useChatStore.getState().pendingUserMessages).toEqual([]);
+      expect(useChatStore.getState().blocks).toMatchObject([
+        {
+          userAuthored: !kind,
+          content: [file, ...content],
+          ...(communication ? { communication } : {}),
+        },
+      ]);
+    },
+  );
+
+  it("does not acknowledge a pending human message by matching unknown account-owned history text", async () => {
+    const unknown = {
+      ...userMessage("unknown", content[0]!.text),
+      user_authored: false,
+      created_by: "account@example.com",
+    };
+    seedSession("attribution-reload", [unknown]);
+    seedPendingInputs("attribution-reload", [{ pending_id: "own-input", content }]);
+    await useChatStore.getState().switchTo("attribution-reload");
+    expect(useChatStore.getState().pendingUserMessages).toHaveLength(1);
+    expect(useChatStore.getState().blocks).toMatchObject([{ userAuthored: false }]);
+  });
+});
+
 describe("pending peer communication", () => {
   const communication: MessageCommunication = {
     kind: "peer",
@@ -21178,7 +21438,7 @@ describe("pending peer communication", () => {
       itemType: "message",
       itemId: communication.message_id,
       clearedPendingId: "pending_peer",
-      data: { role: "user", content, communication },
+      data: { role: "user", user_authored: true, content, communication },
     };
     handleSessionEvent(receipt, "conv_peer");
     handleSessionEvent(receipt, "conv_peer");
@@ -21219,10 +21479,10 @@ describe("pending peer communication", () => {
         type: "session_input_consumed",
         itemType: "message",
         itemId: communication.message_id,
-        data: { role: "user", content, communication: peer.communication },
+        data: { role: "user", user_authored: true, content, communication: peer.communication },
       });
       expect(useChatStore.getState().pendingUserMessages).toEqual([human]);
-      expect(useChatStore.getState().blocks).toEqual(committed);
+      expect(useChatStore.getState().blocks).toEqual([{ ...committed[0], stableKey: peer.tempId }]);
       expect(useChatStore.getState().startupPending).toBe(false);
     },
   );
@@ -21241,6 +21501,7 @@ describe("pending peer communication", () => {
       clearedPendingId: "unknown-pending",
       data: {
         role: "user",
+        user_authored: true,
         content,
         communication: { ...communication, message_id: "different-item" },
       },
@@ -21260,7 +21521,7 @@ describe("pending peer communication", () => {
       type: "session_input_consumed",
       itemType: "message",
       itemId: "human-item",
-      data: { role: "user", content },
+      data: { role: "user", user_authored: true, content },
     });
     expect(useChatStore.getState().pendingUserMessages).toEqual([peer]);
     expect(useChatStore.getState().blocks[0]).toMatchObject({ stableKey: "human" });

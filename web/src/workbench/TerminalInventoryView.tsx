@@ -1,7 +1,8 @@
 // Modified for Triune.
 
 import { useQuery } from "@tanstack/react-query";
-import { PlusIcon, RefreshCwIcon, TerminalIcon } from "lucide-react";
+import { useEffect, useRef } from "react";
+import { PlusIcon, RefreshCwIcon, SquareTerminalIcon } from "lucide-react";
 import { ActivityRow } from "@/components/ActivityRow";
 import { Button } from "@/components/ui/button";
 import { TooltipButton } from "@/components/ui/tooltip";
@@ -14,7 +15,8 @@ import { stripAnsi } from "@/lib/ansi";
 import { authenticatedFetch } from "@/lib/identity";
 import { LEVEL_OWNER } from "@/lib/permissionsApi";
 import { apiErrorFromResponse } from "@/lib/sessionsApi";
-import { ActivityActions } from "@/shell/ChatActivityPanel";
+import { ActivityNavigation } from "@/shell/ChatActivityPanel";
+import { useWorkbenchActions } from "@/workbench/WorkbenchContext";
 import { SubagentTaskStatus } from "@/components/blocks/SubagentTaskRow";
 import type { AgentStatus } from "@/shell/subagentStatus";
 import type { WorkbenchWorkspace } from "@/lib/workbenchWorkspace";
@@ -111,6 +113,9 @@ export function TerminalInventoryView({
   onOpenTerminal,
   onNewTerminal,
   embedded = false,
+  focusShellId,
+  linkRequestId,
+  onConsumeLinkIntent,
 }: {
   workspace: WorkbenchWorkspace;
   active: boolean;
@@ -118,7 +123,13 @@ export function TerminalInventoryView({
   onNewTerminal: () => void;
   /** Host Activity supplies the view header; retain this inventory's root and actions. */
   embedded?: boolean;
+  focusShellId?: string;
+  linkRequestId?: string;
+  onConsumeLinkIntent?: () => void;
 }) {
+  const workbench = useWorkbenchActions();
+  const rowsRef = useRef<HTMLDivElement>(null);
+  const consumedIntent = useRef<string | undefined>(undefined);
   // The legacy live-tab hook excludes exited/stopped rows; this cache retains them.
   const inventory = useQuery({
     queryKey: [...terminalHistoryKey(workspace.id), "list"],
@@ -150,6 +161,18 @@ export function TerminalInventoryView({
     workspace.available !== false &&
     inventory.data?.available === true &&
     !inventory.error;
+  useEffect(() => {
+    if (!active || !focusShellId) return;
+    const intent = JSON.stringify([workspace.id, focusShellId, linkRequestId]);
+    if (consumedIntent.current === intent) return;
+    const row = [...(rowsRef.current?.querySelectorAll<HTMLElement>("[data-shell-id]") ?? [])].find(
+      (element) => element.dataset.shellId === focusShellId,
+    );
+    if (!row) return;
+    row.scrollIntoView?.({ block: "nearest" });
+    consumedIntent.current = intent;
+    onConsumeLinkIntent?.();
+  }, [active, focusShellId, linkRequestId, workspace.id, inventory.data, onConsumeLinkIntent]);
   async function stopTerminal(terminal: ManualTerminalRecord) {
     try {
       const response = await authenticatedFetch(
@@ -191,7 +214,7 @@ export function TerminalInventoryView({
           <PlusIcon className="size-3.5" />
         </TooltipButton>
       </header>
-      <div className="min-h-0 flex-1 overflow-auto px-3 py-2">
+      <div ref={rowsRef} className="min-h-0 flex-1 overflow-auto px-3 py-2">
         {inventory.error && (
           <p role="alert" className="text-sm text-destructive">
             {inventory.error.message}
@@ -210,48 +233,71 @@ export function TerminalInventoryView({
         {inventory.data?.terminals.length === 0 && (
           <p className="text-sm text-muted-foreground">No retained shells in this workspace.</p>
         )}
-        {inventory.data?.terminals.map((terminal) =>
-          embedded ? (
-            <ActivityRow
-              key={terminal.id}
-              icon={<TerminalIcon aria-hidden="true" className="size-3.5" />}
-              title={terminalDisplayLabel(terminal)}
-              description={terminal.lastCommand ?? "No command recorded"}
-              onOpen={() => onOpenTerminal(terminal.id)}
-              status={
-                <>
+        {inventory.data?.terminals.map((terminal) => (
+          <div key={`${workspace.id}:${terminal.id}`} data-shell-id={terminal.id}>
+            {embedded ? (
+              <ActivityRow
+                key={terminal.id}
+                selected={focusShellId === terminal.id}
+                icon={<SquareTerminalIcon aria-hidden="true" className="size-3.5" />}
+                title={terminal.lastCommand ?? terminalDisplayLabel(terminal)}
+                description={
+                  stripAnsi(terminal.output).trim().split(/\r?\n/).filter(Boolean).at(-1) ?? ""
+                }
+                onOpen={() => onOpenTerminal(terminal.id)}
+                onStop={
+                  canCreate && terminal.state === "running" && terminal.connectivity === "connected"
+                    ? () => stopTerminal(terminal)
+                    : undefined
+                }
+                actions={
+                  <ActivityNavigation
+                    name={terminalDisplayLabel(terminal)}
+                    shell
+                    onOpen={() => onOpenTerminal(terminal.id)}
+                    onOrchestration={
+                      workbench && workspace.host_id
+                        ? () => {
+                            const request = {
+                              kind: "activity" as const,
+                              source: {
+                                kind: "host" as const,
+                                hostId: workspace.host_id!,
+                                workspace,
+                              },
+                              focusShellId: terminal.id,
+                              linkRequestId: crypto.randomUUID(),
+                              title: "Orchestration",
+                            };
+                            workbench.openView(request, { beside: true });
+                          }
+                        : undefined
+                    }
+                  />
+                }
+                status={
                   <SubagentTaskStatus
                     status={inventoryStatus(terminal)}
                     label={inventoryStatus(terminal).label}
                   />
-                  <ActivityActions
-                    name={terminalDisplayLabel(terminal)}
-                    onStop={
-                      canCreate &&
-                      terminal.state === "running" &&
-                      terminal.connectivity === "connected"
-                        ? () => stopTerminal(terminal)
-                        : undefined
-                    }
-                  />
-                </>
-              }
-            />
-          ) : (
-            <ActivityRow
-              key={terminal.id}
-              icon={<TerminalIcon className="size-3.5" />}
-              title={
-                <Button variant="ghost" size="sm" onClick={() => onOpenTerminal(terminal.id)}>
-                  {terminalDisplayLabel(terminal)}
-                </Button>
-              }
-              status={terminalStateLabel(terminal)}
-            >
-              <RetainedTerminalOutput terminal={terminal} />
-            </ActivityRow>
-          ),
-        )}
+                }
+              />
+            ) : (
+              <ActivityRow
+                key={terminal.id}
+                icon={<SquareTerminalIcon className="size-3.5" />}
+                title={
+                  <Button variant="ghost" size="sm" onClick={() => onOpenTerminal(terminal.id)}>
+                    {terminalDisplayLabel(terminal)}
+                  </Button>
+                }
+                status={terminalStateLabel(terminal)}
+              >
+                <RetainedTerminalOutput terminal={terminal} />
+              </ActivityRow>
+            )}
+          </div>
+        ))}
       </div>
     </section>
   );

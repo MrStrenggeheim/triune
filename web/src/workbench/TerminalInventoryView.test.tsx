@@ -209,8 +209,10 @@ it("uses two-line embedded rows, sorts observed exit activity and stops only an 
       .filter((button) => ["old", "live"].includes(button.getAttribute("aria-label") ?? ""))
       .map((button) => button.getAttribute("aria-label")),
   ).toEqual(["old", "live"]);
-  expect(screen.queryByRole("button", { name: "Stop old" })).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Stop live" }));
+  expect(screen.queryByRole("button", { name: "Actions for old" })).not.toBeInTheDocument();
+  const status = screen.getByRole("button", { name: "Actions for live" });
+  fireEvent.pointerDown(status, { pointerType: "mouse", button: 0 });
+  fireEvent.click(status, { detail: 1 });
   await waitFor(() =>
     expect(fetchMock).toHaveBeenCalledWith("/v1/workbench-workspaces/workspace-a/terminals/live", {
       method: "DELETE",
@@ -226,9 +228,45 @@ it("uses two-line embedded rows, sorts observed exit activity and stops only an 
       onNewTerminal={vi.fn()}
     />,
   );
-  expect(screen.queryByRole("button", { name: "Stop live" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Actions for live" })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "old" }));
   expect(open).toHaveBeenCalledWith("old");
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Expand activity" })).not.toBeInTheDocument();
+});
+
+it("shows the captured command/output and consumes a matching focus request once", async () => {
+  fetchMock.mockResolvedValue(
+    response([
+      {
+        ...row("exact-id", "exited"),
+        metadata: {
+          last_command: "printf actual-command",
+          output: "first line\n\u001b[32mlast captured line\u001b[0m\n",
+          exit_code: 0,
+        },
+      },
+    ]),
+  );
+  const consume = vi.fn();
+  const props = {
+    workspace,
+    active: true,
+    embedded: true,
+    onOpenTerminal: vi.fn(),
+    onNewTerminal: vi.fn(),
+    focusShellId: "exact-id",
+    linkRequestId: "first",
+    onConsumeLinkIntent: consume,
+  };
+  const view = render(<TerminalInventoryView {...props} />, { wrapper: setup() });
+  expect(await screen.findByRole("button", { name: "printf actual-command" })).toBeVisible();
+  expect(screen.getByText("last captured line")).toHaveClass("truncate");
+  expect(screen.queryByText("first line")).toBeNull();
+  await waitFor(() => expect(consume).toHaveBeenCalledOnce());
+  view.rerender(<TerminalInventoryView {...props} />);
+  expect(consume).toHaveBeenCalledOnce();
+  view.rerender(<TerminalInventoryView {...props} linkRequestId="second" />);
+  expect(consume).toHaveBeenCalledTimes(2);
+  expect(screen.queryByRole("button", { name: /Actions for/ })).toBeNull();
 });

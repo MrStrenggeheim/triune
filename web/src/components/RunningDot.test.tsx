@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { RunningDot } from "./RunningDot";
@@ -21,6 +22,12 @@ describe("RunningDot", () => {
   it("centers the svg so a CSS-resized glyph still spins around its own center", () => {
     render(<RunningDot />);
     expect(screen.getByTestId("running-dot")).toHaveClass("items-center", "justify-center");
+  });
+  it("can inherit a status pill's color and stops spinning for reduced motion", () => {
+    render(<RunningDot className="text-inherit" />);
+    const dot = screen.getByTestId("running-dot");
+    expect(dot).toHaveClass("text-inherit", "motion-reduce:animate-none");
+    expect(dot).not.toHaveClass("text-muted-foreground");
   });
 
   it("defaults the wrapper to size-3 when no className is passed", () => {

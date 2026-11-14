@@ -2706,9 +2706,10 @@ describe("Composer shared visible controls", () => {
     expect(childSessionsArgsSpy).toHaveBeenCalledWith("conv_parent");
 
     fireEvent.click(subagent);
-    expect(
-      screen.getByRole("link", { name: /Verify queue behavior.*Working.*developer/ }),
-    ).toHaveAttribute("href", "/c/conv_child?debug=1");
+    expect(screen.getByRole("link", { name: "developer" })).toHaveAttribute(
+      "href",
+      "/c/conv_child?debug=1",
+    );
   });
 
   it("passes the real session id/host/workspace/creation-branch to useComposerGitStatus", () => {
@@ -3165,7 +3166,12 @@ describe("Composer permission-mode shortcut", () => {
 });
 
 describe("Composer background tasks", () => {
+  const shellQueryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   beforeEach(() => {
+    const shellFetch = vi
+      .spyOn(identity, "authenticatedFetch")
+      .mockImplementation(async () => Response.json({ data: [] }));
+    onTestFinished(() => shellFetch.mockRestore());
     clearSessionDrafts();
     setComposerState({
       conversationId: "conv_background_tasks",
@@ -3178,6 +3184,7 @@ describe("Composer background tasks", () => {
 
   afterEach(() => {
     cleanup();
+    shellQueryClient.clear();
     useChatStore.setState({ backgroundTaskCount: 0, backgroundTasks: [] });
     clearSessionDrafts();
   });
@@ -3195,7 +3202,11 @@ describe("Composer background tasks", () => {
         },
       ],
     });
-    renderWithTooltips(<Composer {...composerProps()} />);
+    renderWithTooltips(
+      <QueryClientProvider client={shellQueryClient}>
+        <Composer {...composerProps()} />
+      </QueryClientProvider>,
+    );
 
     const trigger = screen.getByRole("button", {
       name: "1 background task still running",
@@ -3204,12 +3215,16 @@ describe("Composer background tasks", () => {
     expect(screen.queryByTestId("subagent-task-pill")).toBeNull();
     fireEvent.click(trigger);
     const dialog = screen.getByRole("dialog", { name: "1 background task" });
-    expect(dialog).toHaveTextContent("Watch PR checks");
+    expect(dialog).not.toHaveTextContent("Watch PR checks");
     expect(dialog).toHaveTextContent("gh pr checks 123 --watch");
   });
 
   it("shows live task counts and removes the control when all tasks finish", () => {
-    renderWithTooltips(<Composer {...composerProps()} />);
+    renderWithTooltips(
+      <QueryClientProvider client={shellQueryClient}>
+        <Composer {...composerProps()} />
+      </QueryClientProvider>,
+    );
     expect(screen.queryByTestId("background-task-pill")).toBeNull();
 
     act(() => useChatStore.setState({ backgroundTaskCount: 2 }));
@@ -3225,7 +3240,11 @@ describe("Composer background tasks", () => {
     const user = userEvent.setup();
     const props = composerProps();
     useChatStore.setState({ backgroundTaskCount: 1 });
-    renderWithTooltips(<Composer {...props} />);
+    renderWithTooltips(
+      <QueryClientProvider client={shellQueryClient}>
+        <Composer {...props} />
+      </QueryClientProvider>,
+    );
 
     await user.click(screen.getByRole("button", { name: "1 background task still running" }));
     expect(screen.getByRole("dialog", { name: "1 background task" })).toBeVisible();
@@ -5958,7 +5977,7 @@ describe("Composer sub-agent tray", () => {
   it("docks the child tray directly onto the composer without a workspace shelf", () => {
     render(<Composer {...composerProps({ subAgentLabel: "check-account-eligibility" })} />);
     const card = textarea().closest("[data-composer-card]");
-    expect(tray()?.parentElement?.nextElementSibling).toBe(card);
+    expect(tray()?.closest(".composer-shelf-stack")?.nextElementSibling).toBe(card);
     expect(document.querySelector(".composer-workspace-surface")).toBeNull();
   });
 
@@ -5970,7 +5989,7 @@ describe("Composer sub-agent tray", () => {
     });
     renderWithTooltips(<Composer {...composerProps()} />);
     const strip = screen.getByTestId("composer-queued-strip");
-    expect(strip.parentElement?.nextElementSibling).toBe(
+    expect(strip.closest(".composer-shelf-stack")?.nextElementSibling).toBe(
       textarea().closest("[data-composer-card]"),
     );
     expect(document.querySelector(".composer-workspace-surface")).toBeNull();
@@ -6290,7 +6309,9 @@ describe("Composer — editing queued messages", () => {
     fireEvent.keyDown(textarea(), { key: "ArrowUp" });
 
     await waitFor(() => expect(textarea().value).toBe(QUEUED_TEXT));
-    expect(screen.getByText("notes.txt")).toBeTruthy();
+    expect(
+      within(textarea().closest("[data-composer-card]") as HTMLElement).getByText("notes.txt"),
+    ).toBeTruthy();
     expect(useChatStore.getState().queuedMessages).toHaveLength(0);
   });
 

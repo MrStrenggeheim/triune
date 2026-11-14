@@ -1,4 +1,4 @@
-/* Shared appearance density changes spacing without changing typography. */
+/* Modified for Triune. Shared appearance density changes spacing without changing typography. */
 :root,
 [data-list-density="comfortable"] {
   --density-header-height: 48px;
@@ -8,6 +8,10 @@
   --list-row-gap: 8px;
   --list-gap: 4px;
   --tree-indent: 18px;
+  --queue-shelf-padding-block: 6px;
+  --queue-list-gap: 4px;
+  --queue-row-padding-block: 2px;
+  --queue-action-size: 24px;
 }
 
 [data-list-density="compact"] {
@@ -18,6 +22,10 @@
   --list-row-gap: 6px;
   --list-gap: 2px;
   --tree-indent: 14px;
+  --queue-shelf-padding-block: 4px;
+  --queue-list-gap: 2px;
+  --queue-row-padding-block: 0px;
+  --queue-action-size: 20px;
 }
 
 .density-row {
@@ -42,6 +50,7 @@
   :root,
   [data-list-density] {
     --list-row-min-height: 44px;
+    --queue-action-size: 44px;
   }
 
   .density-row {

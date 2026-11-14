@@ -1,3 +1,4 @@
+// Modified for Triune; inherited notices remain applicable.
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -25,6 +26,7 @@ const FILE_VIEWER_NOOP = {
 function userBubble(text: string, overrides: Partial<Extract<Bubble, { kind: "user" }>> = {}) {
   return {
     kind: "user" as const,
+    userAuthored: true,
     itemId: "u1",
     content: [{ type: "input_text" as const, text }],
     ...overrides,
@@ -124,7 +126,9 @@ describe("UserBubble markdown rendering", () => {
 
 describe("UserBubble system messages", () => {
   it("keeps hook order stable when a system message becomes a regular message", () => {
-    const { rerender } = renderBubble(userBubble("[System: timer build fired]"));
+    const { rerender } = renderBubble(
+      userBubble("[System: timer build fired]", { userAuthored: false, isMeta: true }),
+    );
     expect(screen.getByTestId("system-message")).toBeInTheDocument();
 
     rerender(
@@ -141,7 +145,12 @@ describe("UserBubble system messages", () => {
     // The two items a mid-tool-use steer produces, once the pending-input
     // drain stops handing the uploads to the marker: Claude's own interrupt
     // record (text-only) and the user's attachments-only message.
-    renderBubble(userBubble("[Request interrupted by user for tool use]"));
+    renderBubble(
+      userBubble("[Request interrupted by user for tool use]", {
+        userAuthored: false,
+        isMeta: true,
+      }),
+    );
     const marker = screen.getByTestId("system-message");
     expect(marker.getAttribute("data-system-kind")).toBe("interrupted");
     expect(marker).toHaveTextContent("Interrupted");

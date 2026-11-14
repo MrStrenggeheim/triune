@@ -1,3 +1,4 @@
+// Modified for Triune; inherited notices remain applicable.
 import { ComposerMentionMenu } from "@/components/composer/ComposerMentionMenu";
 import { ComposerMentionChips } from "@/components/composer/ComposerMentionChips";
 import { useMentionBrowser } from "@/hooks/useMentionBrowser";
@@ -407,7 +408,7 @@ export function SideChatPane({
           />
         )}
         {(!fullSession || !readOnly) && (
-          <div className="shrink-0 px-3 pt-3 pb-5">
+          <div className="composer-shelf-stack shrink-0 px-3 pt-3 pb-5">
             {readOnly ? (
               <p className="rounded-md border border-border bg-muted/40 px-3 py-2 text-center text-sm text-muted-foreground">
                 This side chat has ended and can’t be continued.
@@ -976,6 +977,7 @@ function SideChatComposer({
       {queues && (
         <TooltipProvider>
           <QueuedMessagesStrip
+            conversationId={childId}
             messages={queuedMessages}
             onDelete={dequeueMessage}
             onEdit={(queueId) => {

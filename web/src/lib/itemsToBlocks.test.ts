@@ -1,3 +1,4 @@
+// Modified for Triune; inherited notices remain applicable.
 // Vitest cases for the items → flat blocks translator. Hand-build item
 // arrays matching the server's `ConversationItem` shape; assert on the
 // resulting `AnyBlock[]`.
@@ -19,12 +20,18 @@ import type {
 import type { ConversationItem, ErrorItem } from "./conversationItems";
 import { itemsToBlocks } from "./itemsToBlocks";
 
-function userMessage(responseId: string, text: string, id = "msg_user"): ConversationItem {
+function userMessage(
+  responseId: string,
+  text: string,
+  id = "msg_user",
+  userAuthored = true,
+): ConversationItem {
   return {
     id,
     response_id: responseId,
     type: "message",
     role: "user",
+    user_authored: userAuthored,
     status: "completed",
     content: [{ type: "input_text", text }],
   };
@@ -105,7 +112,7 @@ describe("itemsToBlocks — flat shape", () => {
     ]);
   });
 
-  it("hides a Claude subagent task notification between real messages", () => {
+  it("preserves an unclassified Claude subagent notification between real messages", () => {
     const items: ConversationItem[] = [
       userMessage("resp_before", "visible before", "msg_before"),
       userMessage(
@@ -121,6 +128,7 @@ describe("itemsToBlocks — flat shape", () => {
           "</task-notification>",
         ].join("\n"),
         "msg_legacy_task_notification",
+        false,
       ),
       userMessage("resp_after", "visible after", "msg_after"),
     ];
@@ -129,7 +137,8 @@ describe("itemsToBlocks — flat shape", () => {
 
     const userBlocks = blocks.filter((b): b is UserMessageBlock => b.type === "user_message");
     const texts = userBlocks.map((b) => b.content.map((c) => ("text" in c ? c.text : "")).join(""));
-    expect(texts).toEqual(["visible before", "visible after"]);
+    expect(texts).toHaveLength(3);
+    expect(texts[1]).toContain("<result>final report</result>");
   });
 
   it("re-labels an is_meta task notification (bridge-marked) as a system marker", () => {
@@ -183,7 +192,7 @@ describe("itemsToBlocks — flat shape", () => {
       ),
     ];
 
-    const blocks = itemsToBlocks(items);
+    const blocks = itemsToBlocks(items.map((item) => ({ ...item, is_meta: true })));
 
     expect(blocks).toHaveLength(1);
     expect((blocks[0] as UserMessageBlock).content).toEqual([
@@ -200,7 +209,10 @@ describe("itemsToBlocks — flat shape", () => {
     '<teammate-message teammate_id="reviewer">Review this</teammate-message>',
     '<agent-message from="reviewer">Review this</agent-message>',
   ])("preserves a human's bare envelope after reload: %s", (text) => {
-    for (const authorship of [{ created_by: "alice@example.com" }, { user_authored: true }]) {
+    for (const authorship of [
+      { created_by: "alice@example.com", user_authored: true },
+      { user_authored: true },
+    ]) {
       const item = { ...userMessage("resp_user", text), ...authorship };
       expect(itemsToBlocks([item])).toMatchObject([
         { type: "user_message", content: [{ type: "input_text", text }] },
@@ -209,20 +221,33 @@ describe("itemsToBlocks — flat shape", () => {
     }
   });
 
-  it("keeps legacy teammate handbacks out of the transcript while preserving user discussion", () => {
+  it("keeps unclassified teammate handbacks visible alongside user discussion", () => {
     const envelope =
       '<teammate-message teammate_id="reviewer" summary="Review complete">Ready</teammate-message>';
     const blocks = itemsToBlocks([
       userMessage("resp_1", "Review this change", "msg_before"),
-      userMessage("resp_2", envelope, "msg_teammate"),
-      userMessage("resp_2", '<agent-message from="reviewer">Ready</agent-message>', "msg_report"),
-      userMessage("resp_3", `Another Claude session sent a message:\n${envelope}`, "msg_peer"),
+      userMessage("resp_2", envelope, "msg_teammate", false),
+      userMessage(
+        "resp_2",
+        '<agent-message from="reviewer">Ready</agent-message>',
+        "msg_report",
+        false,
+      ),
+      userMessage(
+        "resp_3",
+        `Another Claude session sent a message:\n${envelope}`,
+        "msg_peer",
+        false,
+      ),
       assistantMessage("resp_3", "The review is complete."),
       userMessage("resp_4", `What does ${envelope} mean?`, "msg_after"),
     ]);
 
     expect(blocks.map((block) => block.ctx.itemId)).toEqual([
       "msg_before",
+      "msg_teammate",
+      "msg_report",
+      "msg_peer",
       "msg_asst",
       "msg_after",
     ]);
@@ -909,7 +934,9 @@ describe("itemsToBlocks — edge cases", () => {
       // Normal message after compaction — should be visible
       userMessage("r3", "what next?", "msg_3"),
     ];
-    const blocks = itemsToBlocks(items);
+    const blocks = itemsToBlocks(
+      items.map((item) => (item.id === "msg_compact_summary" ? { ...item, is_meta: true } : item)),
+    );
     const userBlocks = blocks.filter((b) => b.type === "user_message") as UserMessageBlock[];
     // The compaction summary should be hidden; only "hello" and "what next?" remain
     expect(userBlocks).toHaveLength(2);

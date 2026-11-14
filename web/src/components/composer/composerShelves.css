@@ -1,0 +1,140 @@
+/* Triune additions: PolyForm Noncommercial 1.0.0; see LICENSING.md.
+ * Required Notice: Copyright 2026 MrStrenggeheim. Triune (https://github.com/MrStrenggeheim/triune).
+ */
+.composer-shelf-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  isolation: isolate;
+}
+
+.composer-shelf-presence {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 200ms ease-in;
+}
+
+.composer-shelf-presence[data-shown="true"] {
+  grid-template-rows: 1fr;
+  transition-timing-function: ease-out;
+}
+
+.composer-shelf-clip {
+  min-height: 0;
+  overflow: clip;
+}
+
+.composer-shelf-content {
+  opacity: 0;
+  transform: translateY(100%);
+  transition:
+    transform 200ms ease-in,
+    opacity 200ms ease-in;
+}
+
+.composer-shelf-presence[data-shown="true"] > .composer-shelf-clip > .composer-shelf-content {
+  opacity: 1;
+  transform: translateY(0);
+  transition-timing-function: ease-out;
+}
+
+.composer-shelf-stack .composer-workspace-surface {
+  margin-bottom: 0;
+}
+
+.composer-attention-surface {
+  padding-inline: 4px;
+}
+
+.composer-queued-surface {
+  padding-block: var(--queue-shelf-padding-block);
+}
+
+.composer-queue-list {
+  row-gap: var(--queue-list-gap);
+}
+
+.composer-queue-row {
+  padding-block: var(--queue-row-padding-block);
+}
+
+.composer-queue-action {
+  width: var(--queue-action-size);
+  height: var(--queue-action-size);
+}
+
+.resource-description {
+  line-height: 1rem;
+}
+
+.resource-description * {
+  display: inline;
+  white-space: nowrap;
+}
+
+.resource-description > *,
+.resource-description p {
+  margin: 0;
+}
+
+.resource-status {
+  display: inline-grid;
+  background: transparent;
+}
+
+.resource-status-label,
+.resource-stop-label {
+  grid-area: 1 / 1;
+  justify-self: end;
+}
+
+.resource-stop-label {
+  visibility: hidden;
+}
+
+.resource-status:disabled .resource-status-label {
+  visibility: hidden;
+}
+
+.resource-status:disabled .resource-stop-label {
+  visibility: visible;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .resource-row:hover .resource-status-label {
+    visibility: hidden;
+  }
+
+  .resource-row:hover .resource-stop-label {
+    visibility: visible;
+  }
+
+  .resource-status:hover .resource-stop-label {
+    background: var(--destructive);
+    color: var(--destructive-foreground);
+  }
+}
+
+@media (max-width: 767.98px), (any-pointer: coarse) {
+  .resource-row {
+    padding-inline: 4px;
+    gap: 6px;
+  }
+
+  .resource-icon {
+    width: 32px;
+  }
+
+  .resource-actions button,
+  .resource-status {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composer-shelf-presence,
+  .composer-shelf-content {
+    transition: none;
+  }
+}

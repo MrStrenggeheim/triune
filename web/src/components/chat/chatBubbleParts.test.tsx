@@ -11,11 +11,135 @@ import { ForkDialogContextProvider } from "@/shell/ForkDialogContext";
 import { BubbleView, buildPendingBubbles, containsMermaidDiagram } from "./chatBubbleParts";
 import { MemoryRouter } from "react-router-dom";
 import type { MessageCommunication } from "@/lib/messageCommunication";
+import { itemsToBlocks } from "@/lib/itemsToBlocks";
+import { buildBubbles } from "@/lib/renderItems";
+import type { MessageItem } from "@/lib/conversationItems";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
 const fetchMock = vi.fn();
 const initialStoreState = useChatStore.getState();
 const continuation = "Please continue from where you left off.";
+
+describe("input attribution", () => {
+  function renderInput(item: MessageItem) {
+    const [bubble] = buildBubbles(itemsToBlocks([item]), null);
+    if (!bubble) throw new Error("Missing input bubble");
+    return render(
+      <MemoryRouter>
+        <QueryClientProvider
+          client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+        >
+          <TooltipProvider>
+            <ConversationScopeContext.Provider value="recipient">
+              <BubbleView bubble={bubble} />
+            </ConversationScopeContext.Provider>
+          </TooltipProvider>
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+  }
+
+  const input: MessageItem = {
+    id: "input-id",
+    response_id: "response",
+    type: "message",
+    status: "completed",
+    role: "user",
+    created_by: "account@example.com",
+    content: [{ type: "input_text", text: continuation }],
+  };
+  const system: MessageCommunication = {
+    kind: "system",
+    message_id: input.id,
+    destination_conversation_id: "recipient",
+    source_title: "Recovery",
+    delivery_state: "confirmed",
+  };
+
+  it.each([
+    "[System: timer build fired]",
+    "[Request interrupted by user for tool use]",
+    continuation,
+    '<agent-message from="reviewer">Ready</agent-message>',
+    "This session is being continued from a previous conversation that ran out of context.",
+  ])("keeps an exact human quotation human: %s", (text) => {
+    renderInput({ ...input, user_authored: true, content: [{ type: "input_text", text }] });
+    expect(screen.getByTestId("message-bubble")).toHaveAttribute("data-role", "user");
+    expect(screen.getByText(text)).toBeInTheDocument();
+    expect(screen.queryByTestId("system-message")).not.toBeInTheDocument();
+  });
+
+  it("shows unknown input as External even with an authenticated account and system-shaped text", () => {
+    const text = "[System: interrupted]";
+    renderInput({ ...input, content: [{ type: "input_text", text }] });
+    expect(screen.getByTestId("message-bubble")).toHaveAttribute("data-role", "external");
+    expect(screen.getByText("External input")).toBeInTheDocument();
+    expect(screen.getByText(text)).toBeInTheDocument();
+    expect(screen.queryByTestId("message-author")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("system-message")).not.toBeInTheDocument();
+  });
+
+  it("formats typed recovery as System and retains complete Copy and source links", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    renderInput({
+      ...input,
+      user_authored: true,
+      communication: { ...system, source_conversation_id: "source" },
+    });
+    expect(screen.getByTestId("system-message")).toHaveTextContent("System: Recovery");
+    fireEvent.click(screen.getByRole("button", { name: /System: Recovery/ }));
+    expect(screen.getByText(continuation)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Recovery" })).toHaveAttribute("href", "/c/source");
+    fireEvent.click(screen.getByRole("button", { name: "Copy" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(continuation));
+    fireEvent.click(screen.getByRole("button", { name: "Copy link" }));
+    await waitFor(() =>
+      expect(writeText).toHaveBeenCalledWith(expect.stringContaining("message=input-id")),
+    );
+    expect(screen.queryByTestId("message-author")).not.toBeInTheDocument();
+  });
+
+  it.each([undefined, "external", "system"] as const)(
+    "preserves files, images and mentions for %s input",
+    (kind) => {
+      fetchMock.mockResolvedValue(
+        jsonResponse({ name: "notes.txt", metadata: { bytes: 12, content_type: "text/plain" } }),
+      );
+      renderInput({
+        ...input,
+        ...(kind ? { communication: { ...system, kind } } : {}),
+        content: [
+          { type: "input_text", text: `${continuation}\n[Attached: src/main.ts]` },
+          { type: "input_file", file_id: "file", filename: "notes.txt" },
+          {
+            type: "input_image",
+            image_url: "data:image/png;base64,aGVsbG8=",
+            filename: "shot.png",
+          },
+        ],
+      });
+      expect(screen.getByTestId("message-bubble")).toHaveAttribute(
+        "data-role",
+        kind === "system" ? "system" : "external",
+      );
+      expect(screen.getByText(continuation)).toBeInTheDocument();
+      expect(screen.getByTestId("chat-attachment")).toHaveTextContent("notes.txt");
+      expect(screen.getByRole("img", { name: "shot.png" })).toBeInTheDocument();
+      expect(screen.getByText("@src/main.ts")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Copy link" })).toBeEnabled();
+    },
+  );
+
+  it("keeps text-only System file mentions visible", () => {
+    renderInput({
+      ...input,
+      communication: system,
+      content: [{ type: "input_text", text: "[Attached: src/main.ts]" }],
+    });
+    expect(screen.getByText("@src/main.ts")).toBeInTheDocument();
+  });
+});
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -76,6 +200,7 @@ it("places explicit user attachments after the message text", async () => {
         <BubbleView
           bubble={{
             kind: "user",
+            userAuthored: true,
             itemId: "user_file",
             content: [
               { type: "input_file", file_id: "original-file", filename: "notes.txt" },
@@ -90,7 +215,8 @@ it("places explicit user attachments after the message text", async () => {
   const text = screen.getByText("Review these notes.");
   const attachment = screen.getByTestId("chat-attachment");
   expect(text.compareDocumentPosition(attachment) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  await waitFor(() => expect(attachment).toHaveTextContent("text/plain · 12 B"));
+  await waitFor(() => expect(attachment).toHaveTextContent("text/plain"));
+  expect(attachment).toHaveTextContent("12 B");
   expect(screen.getByRole("button", { name: "Download notes.txt" })).toBeEnabled();
 });
 
@@ -242,6 +368,7 @@ describe("message navigation highlight", () => {
   const bubbles: Bubble[] = [
     {
       kind: "user",
+      userAuthored: true,
       itemId: messageId,
       content: [{ type: "input_text", text }],
       createdAtS,
@@ -296,6 +423,7 @@ describe("UserBubble literal text", () => {
         <BubbleView
           bubble={{
             kind: "user",
+            userAuthored: true,
             itemId: "user_list",
             content: [{ type: "input_text", text: `${preamble}  - first\n  - second` }],
           }}
@@ -327,6 +455,7 @@ describe("UserBubble literal text", () => {
       <BubbleView
         bubble={{
           kind: "user",
+          userAuthored: true,
           itemId: "user_literal",
           content: [{ type: "input_text", text }],
         }}
@@ -346,6 +475,7 @@ describe("UserBubble literal text", () => {
         <BubbleView
           bubble={{
             kind: "user",
+            userAuthored: true,
             itemId: "user_markdown",
             content: [
               {
@@ -698,6 +828,7 @@ describe("UserBubble shell prompts", () => {
     const command = "printf '%s\\n' '**hi**' '[Attached: /tmp/file]' '`pwd`'\necho done";
     const bubble: Extract<Bubble, { kind: "user" }> = {
       kind: "user",
+      userAuthored: true,
       itemId: "shell-input",
       content: [{ type: "input_text", text: `!${command}` }],
       shellCommand: command,
@@ -724,6 +855,7 @@ describe("UserBubble long-prompt collapse", () => {
   function userBubble(text: string): Extract<Bubble, { kind: "user" }> {
     return {
       kind: "user",
+      userAuthored: true,
       itemId: "user_collapse_test",
       content: [{ type: "input_text", text }],
     };

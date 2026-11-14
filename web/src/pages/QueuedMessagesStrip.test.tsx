@@ -1,3 +1,4 @@
+// Modified for Triune.
 // Tests for QueuedMessagesStrip — the presentational strip above the composer
 // listing messages queued while the agent is busy. It's a pure prop-driven
 // component (no store access), so we exercise it with plain props.
@@ -25,6 +26,26 @@ afterEach(() => {
 });
 
 describe("QueuedMessagesStrip", () => {
+  it("does not retain another conversation's queued text during shelf exit", () => {
+    const view = render(
+      <QueuedMessagesStrip
+        conversationId="conv_abc"
+        messages={[msg("q_1", "private queued draft")]}
+        onDelete={vi.fn()}
+        onEdit={vi.fn()}
+      />,
+    );
+    view.rerender(
+      <QueuedMessagesStrip
+        conversationId="conv_other"
+        messages={[]}
+        onDelete={vi.fn()}
+        onEdit={vi.fn()}
+      />,
+    );
+    expect(screen.queryByText("private queued draft")).toBeNull();
+    expect(view.container).toBeEmptyDOMElement();
+  });
   it.each([
     ["attachment only, named", "", "Screenshot 2026-09-18 at 11.49.24 AM.png"],
     ["attachment only, unnamed", "", ""],
@@ -310,7 +331,7 @@ describe("QueuedMessagesStrip", () => {
     for (const name of actionNames) {
       const button = screen.getByRole("button", { name });
       // Keep the 44px touch target while matching the composer's 16px glyphs.
-      expect(button, name).toHaveClass("max-md:size-11");
+      expect(button, name).toHaveClass("composer-queue-action");
       expect(button.querySelector("svg"), name).toHaveClass("max-md:size-4");
     }
   });

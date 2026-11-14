@@ -1,3 +1,4 @@
+// Modified for Triune; inherited notices remain applicable.
 // Vitest cases for the bubble walker. Hand-built block sequences →
 // `buildBubbles` → assert on the resulting `Bubble[]`.
 //
@@ -8,7 +9,7 @@
 import { describe, expect, it } from "vitest";
 import type { AnyBlock, BlockContext, MessageContentBlock, ToolExecution } from "./blocks";
 import { BlockStream } from "./blockStream";
-import type { ConversationItem } from "./conversationItems";
+import type { ConversationItem, MessageItem } from "./conversationItems";
 import type { StreamEvent } from "./events";
 import { itemsToBlocks } from "./itemsToBlocks";
 import {
@@ -26,6 +27,42 @@ import {
   liveCandidateAssistantIndex,
 } from "./renderItems";
 import type { ActiveResponse } from "@/store/types";
+
+describe("input attribution through history and memoization", () => {
+  it.each([false, true])(
+    "carries human=%s, meta and communication onto bubbles",
+    (userAuthored) => {
+      const item: MessageItem = {
+        type: "message",
+        id: "input",
+        response_id: "response",
+        status: "completed",
+        role: "user",
+        user_authored: userAuthored,
+        created_by: "account@example.com",
+        content: [{ type: "input_text", text: "Please continue from where you left off." }],
+      };
+      const [bubble] = buildBubbles(itemsToBlocks([item]), null);
+      expect(bubble).toMatchObject({ kind: "user", userAuthored, isMeta: false });
+      if (bubble?.kind !== "user") throw new Error("Missing input bubble");
+      expect(bubblesEqual(bubble, { ...bubble, userAuthored: !userAuthored })).toBe(false);
+      expect(bubblesEqual(bubble, { ...bubble, isMeta: true })).toBe(false);
+      const communication = {
+        kind: "system" as const,
+        message_id: "input",
+        destination_conversation_id: "recipient",
+        delivery_state: "confirmed" as const,
+        source_title: "Recovery",
+      };
+      const [system] = buildBubbles(
+        itemsToBlocks([{ ...item, is_meta: true, communication }]),
+        null,
+      );
+      expect(system).toMatchObject({ kind: "user", isMeta: true, communication });
+      expect(bubblesEqual(bubble, { ...bubble, communication })).toBe(false);
+    },
+  );
+});
 
 function ctx(opts?: {
   itemId?: string | null;
@@ -464,6 +501,7 @@ describe("sub-agent timeline events", () => {
   it("keeps a notice recorded before a wake marker in the turn it ended", () => {
     const wake: AnyBlock = {
       type: "user_message",
+      isMeta: true,
       ctx: ctx({ itemId: "wake", responseId: "wake_turn" }),
       content: [{ type: "input_text", text: "[System: sub-agent reviewer finished (completed)]" }],
     };
@@ -666,6 +704,7 @@ describe("buildBubbles — bubble grouping", () => {
 
     const system: AnyBlock = {
       type: "user_message",
+      isMeta: true,
       ctx: ctx({ itemId: "wake", responseId: "resp_reused" }),
       content: [{ type: "input_text", text: "[System: timer timer_1 fired]" }],
     };
@@ -4150,8 +4189,10 @@ describe("buildBubbles — continued turns (sub-agent await)", () => {
     fullText: "Both repos profiled.",
     hasCodeBlocks: false,
   });
-  const userMessage = (rid: string, text: string): AnyBlock => ({
+  const userMessage = (rid: string, text: string, isMeta = false): AnyBlock => ({
     type: "user_message",
+    isMeta,
+    userAuthored: !isMeta,
     ctx: ctx({ itemId: `${rid}_u`, responseId: rid }),
     content: [{ type: "input_text", text }],
   });
@@ -4168,10 +4209,12 @@ describe("buildBubbles — continued turns (sub-agent await)", () => {
         userMessage(
           "resp_2",
           "[System: sub-agent general-purpose finished (completed) — 1 result]",
+          true,
         ),
         userMessage(
           "resp_3",
           "[System: sub-agent general-purpose finished (completed) — 2 result]",
+          true,
         ),
         answer("resp_4"),
       ],
@@ -4221,6 +4264,7 @@ describe("buildBubbles — continued turns (sub-agent await)", () => {
       userMessage(
         "resp_wake",
         "[System: sub-agent general-purpose/general-purpose finished (completed) — 1 result waiting in inbox.]",
+        true,
       ),
       answer("resp_2"),
     ];
@@ -4384,8 +4428,10 @@ describe("liveCandidateAssistantIndex", () => {
     fullText: text,
     hasCodeBlocks: false,
   });
-  const userMsg = (itemId: string, text: string): AnyBlock => ({
+  const userMsg = (itemId: string, text: string, isMeta = false): AnyBlock => ({
     type: "user_message",
+    isMeta,
+    userAuthored: !isMeta,
     ctx: ctx({ itemId, responseId: "" }),
     content: [{ type: "input_text", text }],
   });
@@ -4414,11 +4460,19 @@ describe("liveCandidateAssistantIndex", () => {
       [
         userMsg("u1", "question"),
         textDone("m1", "r1", "dispatching…"),
-        userMsg("u2", "[System: sub-agent general-purpose finished (completed) — 1 result]"),
+        userMsg("u2", "[System: sub-agent general-purpose finished (completed) — 1 result]", true),
       ],
       null,
     );
     expect(liveCandidateAssistantIndex(bubbles)).toBe(1);
+  });
+
+  it("ends the prior turn for a human's exact System quotation", () => {
+    const bubbles = buildBubbles(
+      [textDone("m1", "r1", "done"), userMsg("u2", "[System: timer build fired]")],
+      null,
+    );
+    expect(liveCandidateAssistantIndex(bubbles)).toBe(-1);
   });
 });
 

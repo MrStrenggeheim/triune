@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -106,9 +107,9 @@ describe("SubagentTaskIndicator", () => {
 
     const workingStatus = screen
       .getAllByRole("status")
-      .find((status) => status.textContent === "Working");
+      .find((status) => status.textContent === "Running");
     expect(workingStatus).toBeDefined();
-    expect(workingStatus).toHaveTextContent("Working");
+    expect(workingStatus).toHaveTextContent("Running");
     // The active spinner must use the shared RunningDot (same component as the
     // sidebar), not a one-off inline loader.
     expect(workingStatus?.querySelector('[data-testid="running-dot"]')).toBeInTheDocument();
@@ -118,9 +119,10 @@ describe("SubagentTaskIndicator", () => {
     expect(screen.getAllByRole("status").some((status) => status.textContent === "Failed")).toBe(
       true,
     );
-    expect(
-      screen.getByRole("link", { name: /Investigate auth.*Working.*researcher/ }),
-    ).toHaveAttribute("href", "/c/working?debug=1");
+    expect(screen.getByRole("link", { name: "researcher" })).toHaveAttribute(
+      "href",
+      "/c/working?debug=1",
+    );
   });
 
   it("renders disconnected sub-agents as a quiet non-destructive state", () => {
@@ -142,8 +144,8 @@ describe("SubagentTaskIndicator", () => {
     const disconnectedStatus = screen
       .getAllByRole("status")
       .find((status) => status.textContent === "Disconnected");
-    expect(disconnectedStatus).toHaveClass("text-muted-foreground");
-    expect(screen.getByRole("link", { name: /Sub-agent.*Disconnected/ })).toBeInTheDocument();
+    expect(disconnectedStatus).toHaveClass("bg-secondary");
+    expect(screen.getByRole("link", { name: "Agent" })).toBeInTheDocument();
   });
 
   it("uses the parked trigger treatment when no child has an error", () => {
