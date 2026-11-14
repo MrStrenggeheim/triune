@@ -1,10 +1,9 @@
 // Modified for Triune.
 import { useContext } from "react";
 import { QueryClientContext } from "@tanstack/react-query";
-import { MessageCircleIcon, SquareArrowOutUpRightIcon } from "lucide-react";
+import { MessageCircleIcon, WorkflowIcon } from "lucide-react";
 import { ConversationScopeContext } from "@/components/chat/conversationScope";
 import { Button } from "@/components/ui/button";
-import { MessageFooter } from "@/components/chat/MessageFooter";
 import { FilePathAwareMessageResponse } from "@/components/blocks/ChatMarkdown";
 import { useChildSessions } from "@/hooks/useChildSessions";
 import { Link, useLocation, useNavigate } from "@/lib/routing";
@@ -165,7 +164,7 @@ function Task({
             else navigate(to);
           }}
         >
-          <SquareArrowOutUpRightIcon aria-hidden="true" className="size-3.5" />
+          <WorkflowIcon aria-hidden="true" className="size-3.5" />
         </Link>
       </Button>
     </>
@@ -191,6 +190,7 @@ function Task({
         description={task ? shortTaskText(task, 80) : "Delegated task"}
         status={status ?? subagentEventStatus(activity)}
         action={action}
+        preview={input ? shortTaskText(input.split("\n", 1)[0], 180) : "Delegated task"}
       >
         {input ? (
           <div className="group space-y-2 py-1 text-sm">
@@ -205,11 +205,6 @@ function Task({
                 {input}
               </FilePathAwareMessageResponse>
             </ConversationScopeContext.Provider>
-            <MessageFooter
-              text={input}
-              messageId={activity.taskInputRef?.itemId ?? activity.itemId}
-              conversationId={activity.taskInputRef?.conversationId ?? conversationId}
-            />
           </div>
         ) : undefined}
       </SubagentTaskRow>

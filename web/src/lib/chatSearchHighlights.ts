@@ -1,13 +1,25 @@
+// Modified for Triune; inherited notices remain applicable.
 import type { Bubble } from "@/lib/renderItems";
 import { findMessageElement } from "@/lib/messageDeepLink";
+import { createContext } from "react";
+import { messageSearchSource } from "@/lib/messageSearchSource";
 
 export interface SearchSource {
   itemId: string;
   rowId: string;
   text: string;
-  sectionIndex: number;
-  sectionCount: number;
 }
+
+/** Transcript-owned reveal state outlives individual virtual rows. */
+export interface ChatSearchRevealState {
+  revealedItems: ReadonlySet<string>;
+  originalSources: ReadonlyMap<string, string>;
+  revealRequest?: { itemId: string; revision: number };
+  reveal: (itemId: string) => void;
+  showOriginal: (itemId: string, text: string) => void;
+}
+
+export const ChatSearchRevealContext = createContext<ChatSearchRevealState | null>(null);
 
 // ChatMarkdown bypasses Markdown for huge text and long unbroken tokens.
 export const CHAT_SEARCH_BODY_SELECTOR = ".message-markdown, [data-chat-plain-text]";
@@ -20,25 +32,22 @@ export function chatSearchSources(bubbles: readonly Bubble[]): SearchSource[] {
         {
           itemId: bubble.itemId,
           rowId: bubble.itemId,
-          text: bubble.content
-            .flatMap((part) => ("text" in part && part.text ? [part.text] : []))
-            .join(" "),
-          sectionIndex: 0,
-          sectionCount: 1,
+          text: messageSearchSource(bubble.content),
         },
       ];
     }
     if (bubble.kind !== "assistant") return [];
     const sections = bubble.items.filter((item) => item.kind === "text");
-    return sections.flatMap((item, sectionIndex) =>
+    return sections.flatMap((item) =>
       item.itemId
         ? [
             {
               itemId: item.itemId,
               rowId: bubble.responseId,
-              text: item.text,
-              sectionIndex,
-              sectionCount: sections.length,
+              text:
+                "searchText" in item && typeof item.searchText === "string"
+                  ? item.searchText
+                  : item.text,
             },
           ]
         : [],
@@ -49,11 +58,12 @@ export function chatSearchSources(bubbles: readonly Bubble[]): SearchSource[] {
 export function searchSourceElement(root: Element, source: SearchSource): Element | null {
   const row = findMessageElement(source.rowId, root);
   if (!row) return null;
-  if (source.rowId === source.itemId) return row.querySelector(CHAT_SEARCH_BODY_SELECTOR);
-  const sections = row.querySelectorAll('[data-testid="assistant-text-section"]');
-  // Folded narration can remove sections; never guess which repeated text survived.
-  if (sections.length !== source.sectionCount) return null;
-  return sections[source.sectionIndex]?.querySelector(CHAT_SEARCH_BODY_SELECTOR) ?? null;
+  const section = Array.from(row.querySelectorAll<HTMLElement>("[data-search-item-id]")).find(
+    (element) => element.dataset.searchItemId === source.itemId,
+  );
+  // A user row itself carries the stored item identity.
+  const owner = section ?? (source.rowId === source.itemId ? row : null);
+  return owner?.querySelector(CHAT_SEARCH_BODY_SELECTOR) ?? null;
 }
 
 interface TextPoint {

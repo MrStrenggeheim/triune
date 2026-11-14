@@ -516,7 +516,7 @@ export function ChatAttachment({
               onClick={openPreview}
             />
           ) : (
-            <span className="flex min-w-0 items-start gap-2">
+            <span className="flex min-w-0 items-center gap-2">
               <span className="flex h-9 w-8 shrink-0 items-center justify-center rounded-md bg-muted">
                 <WorkspaceFileIcon
                   path={filename}

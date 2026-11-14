@@ -2,7 +2,15 @@
 // Required Notice: Copyright 2026 MrStrenggeheim. Triune (https://github.com/MrStrenggeheim/triune).
 import { RefreshCwIcon } from "lucide-react";
 import type { BackgroundTaskInfo } from "@/lib/types";
-import { useSessionShellResource, shellResourcePath } from "@/hooks/useSessionShellResources";
+import {
+  useSessionShellResource,
+  shellResourcePath,
+  sessionShellResourceKey,
+} from "@/hooks/useSessionShellResources";
+import { useNotificationNotice } from "@/hooks/useNotificationNotice";
+import { shellResourceErrorMessage } from "@/lib/shellResourceError";
+import { shellState } from "@/lib/shellState";
+import { SubagentTaskStatus } from "@/components/blocks/SubagentTaskRow";
 import { HeaderActionButton } from "@/components/HeaderActionButton";
 import { RetainedTerminalOutput } from "./TerminalInventoryView";
 
@@ -20,6 +28,25 @@ export function ShellResourceView({
   const validIdentity =
     !!path && (shellResource.resource_url == null || shellResource.resource_url === path);
   const task = resource.data;
+  const outcome = shellState({ status: task?.status, exitCode: task?.exit_code });
+  const offline =
+    task && (("availability" in task && task.availability === "offline") || task.live_error);
+  useNotificationNotice(
+    `shell-output:${JSON.stringify(sessionShellResourceKey(conversationId, shellResource))}`,
+    active && (resource.error || offline)
+      ? {
+          title: resource.error ? "Shell output unavailable" : "Shell runtime offline",
+          description: resource.error
+            ? shellResourceErrorMessage(resource.error)
+            : "Showing retained output. Refresh after the runtime reconnects.",
+          type: resource.error ? "error" : "warning",
+          action: validIdentity
+            ? { label: "Refresh", onClick: () => void resource.refetch() }
+            : undefined,
+        }
+      : null,
+  );
+
   return (
     <section
       className="flex h-full min-h-0 flex-col bg-[var(--workspace-content)]"
@@ -30,6 +57,7 @@ export function ShellResourceView({
         <span className="min-w-0 flex-1 truncate" title={task?.command ?? task?.description}>
           {task?.command ?? task?.description ?? "Shell"}
         </span>
+        {task && <SubagentTaskStatus status={outcome} label={outcome.label} />}
         <span className="text-muted-foreground">Read-only output</span>
         <HeaderActionButton
           aria-label="Refresh shell output"
@@ -39,22 +67,16 @@ export function ShellResourceView({
           <RefreshCwIcon className="size-3.5" />
         </HeaderActionButton>
       </header>
-      {resource.error && (
-        <p role="alert" className="px-3 py-2 text-sm text-destructive">
-          {resource.error.message}
-        </p>
-      )}
       {!validIdentity && !resource.error && (
         <p role="alert" className="px-3 py-2 text-sm text-destructive">
           Shell resource identity is unavailable.
         </p>
       )}
-      {task?.live_error && (
-        <p role="status" className="px-3 py-2 text-sm text-muted-foreground">
-          Live shell unavailable. Showing retained output.
+      {resource.error && !task ? (
+        <p role="status" className="p-3 text-sm text-muted-foreground">
+          Shell output is unavailable. Use Refresh to try again.
         </p>
-      )}
-      {resource.isLoading ? (
+      ) : resource.isLoading ? (
         <p role="status" className="p-3 text-sm text-muted-foreground">
           Loading shell output…
         </p>

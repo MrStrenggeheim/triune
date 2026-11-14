@@ -1,16 +1,16 @@
-import { TooltipButton } from "@/components/ui/tooltip";
+// Modified for Triune.
+import type { ReactNode } from "react";
+import { FilePathAwareMessageResponse } from "@/components/blocks/ChatMarkdown";
+import { ActivityRow } from "@/components/ActivityRow";
 import {
   AlertCircleIcon,
   BanIcon,
   BellIcon,
   CheckCircle2Icon,
-  ChevronRightIcon,
   InfoIcon,
   TerminalIcon,
   type LucideIcon,
 } from "lucide-react";
-import { useState } from "react";
-import { cn } from "@/lib/utils";
 import type { ParsedSystemMessage, SystemMessageKind } from "@/lib/systemMessage";
 
 const KIND_ICON: Record<Exclude<SystemMessageKind, "subagent_wake">, LucideIcon> = {
@@ -25,58 +25,53 @@ const KIND_ICON: Record<Exclude<SystemMessageKind, "subagent_wake">, LucideIcon>
 
 interface SystemMessageViewProps {
   message: ParsedSystemMessage;
+  source?: ReactNode;
+  sourceItemId?: string;
+  children?: ReactNode;
 }
 
-/**
- * Centered, muted marker for runtime-injected `[System: ...]` user-role
- * messages (task completion, timer firings, terminal-idle events). The
- * body — tool output, error+traceback, or timer note — is collapsed by
- * default and reveals on click.
- *
- * Sub-agent auto-wake notices are model-facing control traffic. They remain
- * in history so the parent agent drains its inbox, but the web UI hides them
- * because the Agents rail already owns that status.
- */
-export function SystemMessageView({ message }: SystemMessageViewProps) {
-  const [open, setOpen] = useState(false);
+/** Runtime notices use the same compact disclosure as other activity cards. */
+export function SystemMessageView({
+  message,
+  source,
+  sourceItemId,
+  children,
+}: SystemMessageViewProps) {
   if (message.kind === "subagent_wake") return null;
   const Icon = KIND_ICON[message.kind];
   const hasBody = message.body.trim().length > 0;
-
+  const excerpt = message.body
+    .trimStart()
+    .slice(0, 768)
+    .replace(/[\uD800-\uDBFF]$/u, "")
+    .split(/\r?\n/, 1)[0]
+    .replace(/\s+/g, " ")
+    .trim();
   return (
-    <div
-      className="my-1 flex flex-col items-center gap-1 text-muted-foreground text-sm"
-      data-testid="system-message"
-      data-system-kind={message.kind}
-    >
-      {hasBody ? (
-        <TooltipButton
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          className="flex items-center gap-1.5 rounded px-1.5 py-0.5 hover:text-foreground"
-          aria-expanded={open}
-        >
-          <Icon className="size-3.5 shrink-0" />
-          <span>
-            <strong className="font-semibold">System:</strong> {message.label}
-          </span>
-          <ChevronRightIcon
-            className={cn("size-3.5 shrink-0 transition-transform", open && "rotate-90")}
-          />
-        </TooltipButton>
-      ) : (
-        <div className="flex items-center gap-1.5 px-1.5 py-0.5">
-          <Icon className="size-3.5 shrink-0" />
-          <span>
-            <strong className="font-semibold">System:</strong> {message.label}
-          </span>
-        </div>
-      )}
-      {hasBody && open && (
-        <div className="mt-0.5 max-h-64 max-w-full overflow-auto whitespace-pre-wrap rounded-md bg-muted px-3 py-2 text-left text-sm text-muted-foreground">
-          {message.body}
-        </div>
-      )}
+    <div className="min-w-0 text-sm" data-testid="system-message" data-system-kind={message.kind}>
+      <ActivityRow
+        presentation="message"
+        icon={<Icon aria-hidden="true" />}
+        title={
+          <>
+            <strong className="shrink-0 font-semibold">System</strong>
+            {source}
+          </>
+        }
+        summary={excerpt || message.label}
+      >
+        {children ??
+          (hasBody ? (
+            <FilePathAwareMessageResponse
+              sourceItemId={sourceItemId}
+              breaks
+              mode="static"
+              className="text-sm leading-5 [&>*]:my-0 [&_p]:my-1"
+            >
+              {message.body}
+            </FilePathAwareMessageResponse>
+          ) : undefined)}
+      </ActivityRow>
     </div>
   );
 }

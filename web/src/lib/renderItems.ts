@@ -76,6 +76,7 @@ export type RenderItem =
       attachments?: ChatAttachmentContent[];
       itemId: string | null;
       text: string;
+      searchText?: string;
       final: boolean;
       previewInterrupted?: boolean;
     }
@@ -1884,6 +1885,7 @@ function textItem(run: AnyBlock[]): RenderItem {
         kind: "text",
         itemId: b.ctx.itemId,
         text: b.fullText,
+        ...(b.searchText !== undefined ? { searchText: b.searchText } : {}),
         ...(b.attachments?.length ? { attachments: b.attachments } : {}),
         final: true,
         ...(b.previewInterrupted ? { previewInterrupted: true } : {}),

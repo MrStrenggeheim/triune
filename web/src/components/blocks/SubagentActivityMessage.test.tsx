@@ -1,5 +1,5 @@
 // Modified for Triune.
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -78,7 +78,7 @@ describe("sub-agent task and reply", () => {
       </MemoryRouter>,
     );
     const card = screen.getByTestId("subagent-activity");
-    expect(card).toHaveTextContent("Curie: Inspect navigationRunning");
+    expect(card).toHaveTextContent("Curie · Inspect navigationInspect navigation.Running");
     expect(screen.queryByText(/Keep/)).not.toBeInTheDocument();
     await act(async () =>
       client.setQueryData(childSessionsQueryKey("parent"), [
@@ -107,7 +107,7 @@ describe("sub-agent task and reply", () => {
         </MemoryRouter>,
       );
       expect(screen.getByTestId("subagent-activity")).toHaveTextContent(
-        "Agent: Inspect navigationStarted",
+        "Agent · Inspect navigationDelegated taskStarted",
       );
       expect(screen.queryByText("Running")).not.toBeInTheDocument();
       expect(screen.queryByText("Later name")).not.toBeInTheDocument();
@@ -138,7 +138,7 @@ describe("sub-agent task and reply", () => {
     expect(screen.getAllByTestId("subagent-activity")).toHaveLength(1);
     const card = screen.getByTestId("subagent-activity");
     const reply = screen.getByTestId("subagent-reply");
-    expect(card).toHaveTextContent("Curie: Inspect navigationCompleted");
+    expect(card).toHaveTextContent("Curie · Inspect navigationInspect navigation.Completed");
     expect(card).not.toHaveTextContent("original result");
     expect(reply).toHaveTextContent("Curie replied");
     expect(reply).not.toHaveTextContent("Inspect navigation");
@@ -208,7 +208,7 @@ describe("sub-agent task and reply", () => {
         `${identity.agent_name} replied`,
       );
       expect(screen.queryByTestId("subagent-activity")).not.toBeInTheDocument();
-      expect(screen.getByTestId("message-timestamp")).toBeInTheDocument();
+      expect(screen.queryByTestId("message-timestamp")).not.toBeInTheDocument();
     },
   );
 
@@ -225,10 +225,9 @@ describe("sub-agent task and reply", () => {
     },
   );
 
-  it("bounds a long Markdown preview, expands in place and copies the complete report", async () => {
+  it("bounds a long Markdown preview and expands in place without footer controls", async () => {
     const text = `**Report**\n\n${"Report α🙂 ".repeat(12000)}FINAL_REPORT_MARKER`;
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    vi.stubGlobal("navigator", { clipboard: { writeText } });
+
     render(
       <MemoryRouter>
         <SubagentActivityMessage data={activity("returned", { result_text: text })} />
@@ -237,49 +236,44 @@ describe("sub-agent task and reply", () => {
     const reply = screen.getByTestId("subagent-reply");
     expect(reply).not.toHaveTextContent("FINAL_REPORT_MARKER");
     expect(reply).not.toHaveTextContent("\uFFFD");
-    fireEvent.click(screen.getByRole("button", { name: "Copy" }));
-    await waitFor(() => expect(writeText).toHaveBeenCalledWith(text));
-    fireEvent.click(screen.getByRole("button", { name: "Show full" }));
+    expect(screen.queryByRole("button", { name: "Copy" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Expand activity" }));
     expect(reply).toHaveTextContent("FINAL_REPORT_MARKER");
-    fireEvent.click(screen.getByRole("button", { name: "Show less" }));
+    fireEvent.click(screen.getByRole("button", { name: "Collapse activity" }));
     expect(reply).not.toHaveTextContent("FINAL_REPORT_MARKER");
   });
 
-  it("expands full Markdown with tables and code while copying the original source", async () => {
+  it("expands full Markdown with tables and code without a message footer", async () => {
     const text =
       "Intro\n\n**Details**\n\n| State | Result |\n| --- | --- |\n| Done | Correct |\n\n```ts\nconst result = 1;\n```";
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    vi.stubGlobal("navigator", { clipboard: { writeText } });
+
     render(
       <MemoryRouter>
         <SubagentActivityMessage data={activity("returned", { result_text: text })} />
       </MemoryRouter>,
     );
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Show full" }));
+    fireEvent.click(screen.getByRole("button", { name: "Expand activity" }));
     expect(screen.getByRole("table")).toHaveTextContent("DoneCorrect");
+    expect(screen.getByTestId("subagent-reply").textContent?.match(/Intro/g)).toHaveLength(1);
     expect(screen.getByText("Details")).toHaveAttribute("data-streamdown", "strong");
     expect(screen.getByTestId("subagent-reply").querySelector("pre")).toHaveTextContent(
       "const result = 1;",
     );
-    fireEvent.click(
-      within(screen.getByTestId("subagent-reply")).getAllByRole("button", { name: "Copy" }).at(-1)!,
-    );
-    await waitFor(() => expect(writeText).toHaveBeenCalledWith(text));
+    expect(screen.queryByTestId("message-timestamp")).not.toBeInTheDocument();
   });
 
   it.each(["task_input_ref", "result_ref"])(
-    "uses the exact %s conversation/item for Markdown and Copy link",
+    "uses the exact %s conversation/item for Markdown without a message footer",
     async (field) => {
       const fetch = vi.fn().mockResolvedValue(
         new Response(JSON.stringify({ kind: "missing", path: "/original/guide.txt" }), {
           headers: { "Content-Type": "application/json" },
         }),
       );
-      const writeText = vi.fn().mockResolvedValue(undefined);
+
       vi.stubGlobal("fetch", fetch);
-      vi.stubGlobal("navigator", { clipboard: { writeText } });
-      vi.stubGlobal("location", { href: "https://app.example/c/wrong" });
+
       const client = queryClient(summary);
       const data = activity(field === "task_input_ref" ? "delegated" : "returned", {
         [field]: { conversation_id: "original", item_id: "captured-item" },
@@ -302,12 +296,7 @@ describe("sub-agent task and reply", () => {
         "/v1/sessions/original/attachments/references/captured-item/metadata?path=%2Foriginal%2Fguide.txt";
       await waitFor(() => expect(fetch).toHaveBeenCalledWith(url, expect.anything()));
       rendered.rerender(view("newly-focused-chat"));
-      fireEvent.click(screen.getByRole("button", { name: "Copy link" }));
-      await waitFor(() =>
-        expect(writeText).toHaveBeenCalledWith(
-          "https://app.example/c/original?message=captured-item",
-        ),
-      );
+      expect(screen.queryByRole("button", { name: "Copy link" })).not.toBeInTheDocument();
       expect(
         fetch.mock.calls
           .filter(([requested]) => String(requested).includes("/attachments/"))
@@ -357,7 +346,7 @@ describe("sub-agent task and reply", () => {
         />
       </MemoryRouter>,
     );
-    expect(screen.getByTestId("subagent-activity")).toHaveTextContent("Agent: Delegated task");
+    expect(screen.getByTestId("subagent-activity")).toHaveTextContent("Agent · Delegated task");
     expect(screen.queryByText("Ambiguous old label")).not.toBeInTheDocument();
   });
 
@@ -377,9 +366,9 @@ it("resolves each multipart report section against its own exact source item", a
       headers: { "Content-Type": "application/json" },
     }),
   );
-  const writeText = vi.fn().mockResolvedValue(undefined);
+
   vi.stubGlobal("fetch", fetch);
-  vi.stubGlobal("navigator", { clipboard: { writeText } });
+
   const first = "First **section** cites `/original/guide.txt`.\n\nContinued.\n\nStill first.";
   const second = "Second section cites `/original/guide.txt`.";
   const text = `${first}\n\n${second}`;
@@ -409,15 +398,14 @@ it("resolves each multipart report section against its own exact source item", a
     ),
   );
   expect(screen.queryByText(/Second section/)).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Show full" }));
+  fireEvent.click(screen.getByRole("button", { name: "Expand activity" }));
   await waitFor(() =>
     expect(fetch).toHaveBeenCalledWith(
       "/v1/sessions/original/attachments/references/second/metadata?path=%2Foriginal%2Fguide.txt",
       expect.anything(),
     ),
   );
-  fireEvent.click(screen.getByRole("button", { name: "Copy" }));
-  await waitFor(() => expect(writeText).toHaveBeenCalledWith(text));
+  expect(screen.queryByRole("button", { name: "Copy" })).not.toBeInTheDocument();
 });
 
 it("keeps an expanded reply open as late report text enriches the same event", async () => {
@@ -428,13 +416,13 @@ it("keeps an expanded reply open as late report text enriches the same event", a
     </MemoryRouter>
   );
   const rendered = render(view(original));
-  fireEvent.click(screen.getByRole("button", { name: "Show full" }));
+  fireEvent.click(screen.getByRole("button", { name: "Expand activity" }));
   const article = screen.getByTestId("subagent-reply");
   rendered.rerender(
     view(activity("returned", { result_text: "One\nTwo\nThree\nFour\n**Late final part**" })),
   );
   expect(screen.getByTestId("subagent-reply")).toBe(article);
-  expect(screen.getByRole("button", { name: "Show less" })).toHaveAttribute(
+  expect(screen.getByRole("button", { name: "Collapse activity" })).toHaveAttribute(
     "aria-expanded",
     "true",
   );

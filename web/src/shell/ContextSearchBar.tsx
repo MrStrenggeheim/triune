@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { useRef } from "react";
 import { usePanelEscapeClose } from "@/hooks/usePanelEscapeClose";
 import { ChevronDownIcon, ChevronUpIcon, SearchIcon, XIcon } from "lucide-react";
@@ -21,15 +22,13 @@ export function ContextSearchBar({ contained = false }: { contained?: boolean })
     ? "Type to search"
     : !search.queryReady || search.activeMessages.isPending
       ? "Searching…"
-      : search.activeMessages.isError
-        ? "Search unavailable"
-        : search.unavailable
-          ? "Match unavailable"
-          : count
-            ? search.currentIndex < 0
-              ? `${count}${incomplete ? "+" : ""} matches`
-              : `${search.currentIndex + 1} of ${count}${incomplete ? "+" : ""}`
-            : "No matches";
+      : count
+        ? search.currentIndex < 0
+          ? `${count}${incomplete ? "+" : ""} matches`
+          : `${search.currentIndex + 1} of ${count}${incomplete ? "+" : ""}`
+        : search.activeMessages.isError
+          ? ""
+          : "No matches";
   return (
     <div
       ref={root}
@@ -66,7 +65,6 @@ export function ContextSearchBar({ contained = false }: { contained?: boolean })
         <SearchIcon className="size-3.5 shrink-0" />
         <span className="truncate">{search.query || "Search chats…"}</span>
       </TooltipButton>
-      <span className="shrink-0 text-muted-foreground max-sm:hidden">In this chat</span>
       <span
         role="status"
         aria-live="polite"
@@ -75,23 +73,15 @@ export function ContextSearchBar({ contained = false }: { contained?: boolean })
       >
         {counter}
       </span>
-      {search.activeMessages.isError && (
-        <TooltipButton
-          type="button"
-          onClick={() => {
-            void search.activeMessages.refetch();
-          }}
-          className="shrink-0 rounded px-1 py-1 underline"
-          disabled={search.activeMessages.isFetching}
-        >
-          Retry
-        </TooltipButton>
-      )}
       <TooltipButton
         type="button"
         aria-label="Previous match"
         tooltipShortcut={["Shift", "Enter"]}
-        disabled={!count || !search.queryReady || search.activeMessages.isFetchingNextPage}
+        disabled={
+          (!count && !search.activeMessages.hasNextPage) ||
+          !search.queryReady ||
+          search.activeMessages.isFetchingNextPage
+        }
         onClick={() => search.move(-1)}
         className="inline-flex size-8 shrink-0 items-center justify-center rounded hover:bg-accent disabled:opacity-40"
       >
@@ -101,7 +91,11 @@ export function ContextSearchBar({ contained = false }: { contained?: boolean })
         type="button"
         aria-label="Next match"
         tooltipShortcut={["Enter"]}
-        disabled={!count || !search.queryReady || search.activeMessages.isFetchingNextPage}
+        disabled={
+          (!count && !search.activeMessages.hasNextPage) ||
+          !search.queryReady ||
+          search.activeMessages.isFetchingNextPage
+        }
         onClick={() => search.move(1)}
         className="inline-flex size-8 shrink-0 items-center justify-center rounded hover:bg-accent disabled:opacity-40"
       >

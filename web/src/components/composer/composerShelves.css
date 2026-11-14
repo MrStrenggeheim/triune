@@ -3,6 +3,7 @@
  */
 .composer-shelf-stack {
   display: flex;
+  min-width: 0;
   flex-direction: column;
   gap: 0;
   isolation: isolate;
@@ -10,6 +11,8 @@
 
 .composer-shelf-presence {
   display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: 0fr;
   transition: grid-template-rows 200ms ease-in;
 }
@@ -20,11 +23,13 @@
 }
 
 .composer-shelf-clip {
+  min-width: 0;
   min-height: 0;
   overflow: clip;
 }
 
 .composer-shelf-content {
+  min-width: 0;
   opacity: 0;
   transform: translateY(100%);
   transition:

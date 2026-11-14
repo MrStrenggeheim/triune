@@ -4,10 +4,15 @@ import {
   BotIcon,
   EllipsisIcon,
   MessageCircleIcon,
-  SquareArrowOutUpRightIcon,
+  WorkflowIcon,
   SquareTerminalIcon,
 } from "lucide-react";
 import type { BackgroundTaskInfo } from "@/lib/types";
+import { shellState } from "@/lib/shellState";
+import { Link } from "@/lib/routing";
+import { shellResourceErrorMessage } from "@/lib/shellResourceError";
+import { useNotificationNotice } from "@/hooks/useNotificationNotice";
+import { notify } from "@/lib/notifications";
 import { ActivityRow } from "@/components/ActivityRow";
 import { SubagentTaskStatus } from "@/components/blocks/SubagentTaskRow";
 import { FilePathAwareMessageResponse } from "@/components/blocks/ChatMarkdown";
@@ -15,7 +20,11 @@ import { ConversationScopeContext } from "@/components/chat/conversationScope";
 import { Button } from "@/components/ui/button";
 import { SegmentedControl, SegmentedControlItem } from "@/components/ui/segmented-control";
 import { useChatActivity, type ChatActivityEntry } from "@/hooks/useChatActivity";
-import { useChildSessionTree, type ChildSessionInfo } from "@/hooks/useChildSessions";
+import {
+  useChildSessionTree,
+  childSessionsQueryKey,
+  type ChildSessionInfo,
+} from "@/hooks/useChildSessions";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   useSessionShellResources,
@@ -31,7 +40,7 @@ import { authenticatedFetch } from "@/lib/identity";
 import { apiErrorFromResponse } from "@/lib/sessionsApi";
 import { subagentName, subagentTaskDescription } from "@/lib/subagentActivity";
 import { useWorkbenchActions } from "@/workbench/WorkbenchContext";
-import { childStatus, type AgentActivity } from "./subagentStatus";
+import { childStatus } from "./subagentStatus";
 import { panelFolderKey, useResourceViewState } from "@/lib/panelFolder";
 import { useScrollRestore } from "./useScrollRestore";
 import {
@@ -192,22 +201,6 @@ function groupName(group: ShellGroup) {
   );
 }
 
-const STATE_LABELS: Record<ChatActivityEntry["state"], string> = {
-  running: "Running",
-  idle: "Shell open",
-  exited: "Exited",
-  disconnected: "Disconnected",
-  unknown: "Unknown",
-};
-
-const STATE_ACTIVITY: Record<ChatActivityEntry["state"], AgentActivity> = {
-  running: "working",
-  idle: "idle",
-  exited: "done",
-  disconnected: "disconnected",
-  unknown: "other",
-};
-
 function groupLastActive(group: ShellGroup): number {
   return Math.max(
     0,
@@ -257,6 +250,7 @@ function ChatActivityContent({
   const handledIntent = useRef<string | null>(null);
   const rowsRef = useRef<HTMLDivElement>(null);
   const workbench = useWorkbenchActions();
+  const queryClient = useQueryClient();
   const agents = useChildSessionTree(rootSessionId, active);
   const activity = useChatActivity(conversationId, { enabled: active });
   const shells = useSessionShellResources(conversationId, {
@@ -264,6 +258,52 @@ function ChatActivityContent({
       active && filter !== "Agents" && viewMode === "list" && shellResourcesOverride === undefined,
   });
   const shellResources = shellResourcesOverride ?? shells.data?.data ?? NO_SHELL_RESOURCES;
+  const noticeScope = JSON.stringify(sessionShellResourcesKey(conversationId));
+  useNotificationNotice(
+    `activity-agents:${noticeScope}`,
+    active && agents.error
+      ? {
+          title: "Agent activity unavailable",
+          description: shellResourceErrorMessage(agents.error, "Could not refresh agent activity."),
+          type: "error",
+          action: {
+            label: "Refresh",
+            onClick: () =>
+              void queryClient.invalidateQueries({
+                queryKey: childSessionsQueryKey(rootSessionId),
+              }),
+          },
+        }
+      : null,
+  );
+  useNotificationNotice(
+    `activity-history:${noticeScope}`,
+    active && activity.error
+      ? {
+          title: "Shell history unavailable",
+          description: shellResourceErrorMessage(activity.error),
+          type: "error",
+          action: { label: "Refresh", onClick: () => void activity.refetch() },
+        }
+      : null,
+  );
+  useNotificationNotice(
+    `activity-shells:${noticeScope}`,
+    active &&
+      filter !== "Agents" &&
+      shellResourcesOverride === undefined &&
+      (shells.error || shells.data?.warning)
+      ? {
+          title: shells.error ? "Shell controls unavailable" : "Shell runtime offline",
+          description: shells.error
+            ? shellResourceErrorMessage(shells.error)
+            : "Showing retained shells. Refresh after the runtime reconnects.",
+          type: shells.error ? "error" : "warning",
+          action: { label: "Refresh", onClick: () => void shells.refetch() },
+        }
+      : null,
+  );
+
   const handleScroll = useScrollRestore(
     rowsRef,
     viewId ? `activity:${panelFolderKey(conversationId, viewId)}:${filter}:${viewMode}` : null,
@@ -388,21 +428,6 @@ function ChatActivityContent({
         </DropdownMenu>
       </header>
       <div ref={rowsRef} onScroll={handleScroll} className="min-h-0 flex-1 overflow-y-auto">
-        {agents.error && (
-          <p role="alert" className="px-3 py-2 text-sm text-destructive">
-            Could not refresh agents: {agents.error.message}
-          </p>
-        )}
-        {activity.error && (
-          <p role="alert" className="px-3 py-2 text-sm text-destructive">
-            Could not refresh shells: {activity.error.message}
-          </p>
-        )}
-        {shells.error && shellResourcesOverride === undefined && (
-          <p role="alert" className="px-3 py-2 text-sm text-destructive">
-            Could not refresh shell controls: {shells.error.message}
-          </p>
-        )}
         {viewMode === "list" && (
           <>
             {filter !== "Shells" && (
@@ -464,7 +489,25 @@ function ChatActivityContent({
                 </ul>
                 {!legacyGroups.length && !resourceShells.length && (
                   <p role="status" className="p-2 text-sm text-muted-foreground">
-                    {activity.isLoading ? "Loading shells…" : "No shells in loaded history."}
+                    {activity.isLoading
+                      ? "Loading shells…"
+                      : shells.error || activity.error
+                        ? "Shell history is unavailable."
+                        : shells.data?.warning
+                          ? "No retained shells are available."
+                          : "No shells in loaded history."}
+                    {!!(shells.error || activity.error || shells.data?.warning) && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          void activity.refetch();
+                          void shells.refetch();
+                        }}
+                      >
+                        Refresh shells
+                      </Button>
+                    )}
                   </p>
                 )}
               </section>
@@ -509,11 +552,7 @@ export function ShellResourceRow({
   const orchestration = useResourceOrchestration(conversationId);
   const name = task.command?.trim() || task.description?.trim() || "Background task";
   const focusId = shellFocusId(task);
-  const live = ["running", "idle", "in_progress"].includes(task.status ?? "running");
-  const failed = task.status === "failed" || (task.exit_code != null && task.exit_code !== 0);
-  const ended = ["completed", "exited", "stopped", "killed", "declined", "failed"].includes(
-    task.status ?? "",
-  );
+  const outcome = shellState({ status: task.status, exitCode: task.exit_code });
   const resourcePath = shellResourcePath(conversationId, task);
   const open =
     (workbench || onOpenTerminal) &&
@@ -544,16 +583,35 @@ export function ShellResourceRow({
   const stopRequest = allowStop ? shellStopRequest(conversationId, task) : undefined;
   const stop = stopRequest
     ? async () => {
-        const response = await authenticatedFetch(stopRequest.url, { method: stopRequest.method });
-        if (!response.ok) throw await apiErrorFromResponse(response);
-        await queryClient.invalidateQueries({
-          queryKey: sessionShellResourcesKey(conversationId),
-          exact: true,
-        });
-        await queryClient.invalidateQueries({
-          queryKey: sessionShellResourceKey(conversationId, task),
-          exact: true,
-        });
+        try {
+          const response = await authenticatedFetch(stopRequest.url, {
+            method: stopRequest.method,
+          });
+          if (!response.ok) throw await apiErrorFromResponse(response);
+          await queryClient.invalidateQueries({
+            queryKey: sessionShellResourcesKey(conversationId),
+            exact: true,
+          });
+          await queryClient.invalidateQueries({
+            queryKey: sessionShellResourceKey(conversationId, task),
+            exact: true,
+          });
+        } catch (error) {
+          notify({
+            id: `shell-stop:${JSON.stringify(sessionShellResourceKey(conversationId, task))}`,
+            title: "Could not stop shell",
+            description: shellResourceErrorMessage(error, "Refresh shell controls and try again."),
+            type: "error",
+            action: {
+              label: "Refresh",
+              onClick: () =>
+                void queryClient.invalidateQueries({
+                  queryKey: sessionShellResourcesKey(conversationId),
+                  exact: true,
+                }),
+            },
+          });
+        }
       }
     : undefined;
   return (
@@ -564,31 +622,7 @@ export function ShellResourceRow({
       selected={selected}
       onOpen={open}
       onStop={stop}
-      status={
-        <SubagentTaskStatus
-          status={{
-            activity: failed ? "failed" : ended ? "done" : live ? "working" : "other",
-            label: failed
-              ? "Failed"
-              : ended
-                ? "Completed"
-                : live
-                  ? "Running"
-                  : (task.status ?? "Unknown"),
-          }}
-          label={
-            failed
-              ? "Failed"
-              : ended
-                ? task.status === "stopped" || task.status === "killed"
-                  ? "Stopped"
-                  : "Completed"
-                : live
-                  ? "Running"
-                  : (task.status ?? "Unknown")
-          }
-        />
-      }
+      status={<SubagentTaskStatus status={outcome} label={outcome.label} />}
       actions={
         <ActivityNavigation
           name={name}
@@ -608,39 +642,69 @@ export function ActivityNavigation({
   shell = false,
   onOpen,
   onOrchestration,
+  openHref,
+  orchestrationHref,
 }: {
   name: string;
   shell?: boolean;
   onOpen?: () => void;
   onOrchestration?: () => void;
+  openHref?: string;
+  orchestrationHref?: string;
 }) {
+  function navigation(icon: ReactNode, label: string, href?: string, action?: () => void) {
+    if (!href && !action) return null;
+    return (
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-xs"
+        aria-label={label}
+        asChild={!!href}
+        onClick={href ? undefined : action}
+      >
+        {href ? (
+          <Link
+            to={href}
+            onClick={(event) => {
+              if (
+                !action ||
+                event.button !== 0 ||
+                event.metaKey ||
+                event.ctrlKey ||
+                event.shiftKey ||
+                event.altKey
+              )
+                return;
+              event.preventDefault();
+              action();
+            }}
+          >
+            {icon}
+          </Link>
+        ) : (
+          icon
+        )}
+      </Button>
+    );
+  }
   return (
     <>
-      {onOpen && (
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-xs"
-          aria-label={`Open ${shell ? "shell" : "chat"} beside · ${name}`}
-          onClick={onOpen}
-        >
-          {shell ? (
-            <SquareTerminalIcon aria-hidden="true" className="size-4" />
-          ) : (
-            <MessageCircleIcon aria-hidden="true" className="size-4" />
-          )}
-        </Button>
+      {navigation(
+        shell ? (
+          <SquareTerminalIcon aria-hidden="true" className="size-4" />
+        ) : (
+          <MessageCircleIcon aria-hidden="true" className="size-4" />
+        ),
+        `Open ${shell ? "shell" : "chat"} beside · ${name}`,
+        openHref,
+        onOpen,
       )}
-      {onOrchestration && (
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-xs"
-          aria-label={`Show ${name} in Orchestration`}
-          onClick={onOrchestration}
-        >
-          <SquareArrowOutUpRightIcon aria-hidden="true" className="size-4" />
-        </Button>
+      {navigation(
+        <WorkflowIcon aria-hidden="true" className="size-4" />,
+        `Show ${name} in Orchestration`,
+        orchestrationHref,
+        onOrchestration,
       )}
     </>
   );
@@ -722,7 +786,25 @@ function AgentResourceContent({
         </ConversationScopeContext.Provider>
       }
       status={<SubagentTaskStatus status={childStatus(child)} />}
-      onStop={active && running && canStop && onStopAgent ? () => onStopAgent(child) : undefined}
+      onStop={
+        active && running && canStop && onStopAgent
+          ? async () => {
+              try {
+                await onStopAgent(child);
+              } catch (error) {
+                notify({
+                  id: `agent-stop:${JSON.stringify(sessionShellResourcesKey(conversationId))}:${child.id}`,
+                  title: "Could not stop agent",
+                  description: shellResourceErrorMessage(
+                    error,
+                    "Refresh agent controls and try again.",
+                  ),
+                  type: "error",
+                });
+              }
+            }
+          : undefined
+      }
       actions={
         <ActivityNavigation
           name={name}
@@ -755,6 +837,7 @@ function ShellRow({
   )[0];
   const owner = terminal ?? latest;
   const state = groupState(group);
+  const outcome = shellState({ status: state, exitCode: owner.exit_status });
   const target: ChatActivityTerminalTarget = {
     sessionId: owner.session_id,
     terminalId: owner.terminal_id ?? "",
@@ -786,15 +869,7 @@ function ShellRow({
             }
           />
         }
-        status={
-          <SubagentTaskStatus
-            status={{
-              activity: state === "exited" && owner.exit_status ? "failed" : STATE_ACTIVITY[state],
-              label: STATE_LABELS[state],
-            }}
-            label={STATE_LABELS[state]}
-          />
-        }
+        status={<SubagentTaskStatus status={outcome} label={outcome.label} />}
       />
     </li>
   );

@@ -1,4 +1,5 @@
 // Modified for Triune; inherited notices remain applicable.
+import { messageSearchSource } from "./messageSearchSource";
 import { attachmentsFromContent } from "./chatAttachments";
 // Mirrors sdks/python-client/omnigent_client/_stream.py.
 //
@@ -722,6 +723,7 @@ function* processEvent(state: ReducerState, event: StreamEvent): Generator<AnyBl
         return;
       }
       const attachments = attachmentsFromContent(event.content);
+      const searchText = messageSearchSource(event.content);
       const isResponseSwitch = !!event.responseId && event.responseId !== state.responseId;
       const hadOpenText = state.inText;
       // Snapshot accumulated text BEFORE closeText resets state.fullText —
@@ -738,8 +740,12 @@ function* processEvent(state: ReducerState, event: StreamEvent): Generator<AnyBl
         // On a response switch, event.itemId belongs to the new message — don't
         // attach it to the old text block being closed.
         for (const block of closeText(state, isResponseSwitch ? null : event.itemId || null)) {
-          yield block.type === "text_done" && !isResponseSwitch && attachments.length
-            ? { ...block, attachments }
+          yield block.type === "text_done" && !isResponseSwitch
+            ? {
+                ...block,
+                ...(searchText && searchText !== block.fullText ? { searchText } : {}),
+                ...(attachments.length ? { attachments } : {}),
+              }
             : block;
         }
       }
@@ -786,6 +792,7 @@ function* processEvent(state: ReducerState, event: StreamEvent): Generator<AnyBl
           type: "text_done",
           ctx: ctx(state, event.itemId || null),
           fullText: text,
+          ...(searchText && searchText !== text ? { searchText } : {}),
           ...(attachments.length ? { attachments } : {}),
           hasCodeBlocks: text.includes("```"),
         } satisfies TextDone;

@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 from PIL import Image, ImageDraw
-from playwright.sync_api import Page, expect
+from playwright.sync_api import Locator, Page, Route, expect
 
 from tests.browser_ui.chat._geometry_helpers import (
     TOLERANCE,
@@ -79,6 +79,28 @@ def _no_browser_errors(
     assert errors == [], "Browser console errors: " + "\n".join(errors)
 
 
+def _assert_footerless_card(card: Locator, *, controls: int) -> dict:
+    expect(card.get_by_role("button", name=re.compile(r"^Copy(?: link)?$"))).to_have_count(0)
+    expect(card.get_by_test_id("message-timestamp")).to_have_count(0)
+    actions = card.locator(".resource-actions").locator("a, button")
+    expect(actions).to_have_count(controls)
+    assert actions.last.get_attribute("aria-controls")
+    geometry = card.locator(".activity-row").evaluate(
+        """element => {
+          const row = element.querySelector('[data-resource-row]');
+          const style = getComputedStyle(element);
+          return {card: element.getBoundingClientRect().toJSON(),
+            row: row.getBoundingClientRect().toJSON(),
+            padding: parseFloat(style.paddingTop) + parseFloat(style.paddingBottom),
+            border: parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth)};
+        }"""
+    )
+    assert geometry["card"]["height"] == pytest.approx(
+        geometry["row"]["height"] + geometry["padding"] + geometry["border"], abs=TOLERANCE
+    ), geometry
+    return geometry
+
+
 def test_provenance_peer_directions_and_reload(
     page: Page, workspace_journey: WorkspaceJourney, output_path: str, appearance: str
 ) -> None:
@@ -89,6 +111,9 @@ def test_provenance_peer_directions_and_reload(
     recovery = "Please continue from where you left off."
     human = message_item("human-quotation", "user", quotation, response_id="human")
     human_recovery = message_item("human-recovery", "user", recovery, response_id="human-recovery")
+    assistant = message_item(
+        "ordinary-answer", "assistant", "Ordinary assistant answer.", response_id="ordinary"
+    )
     unknown = {
         **message_item("unknown-account", "user", quotation, response_id="import"),
         "user_authored": False,
@@ -122,7 +147,11 @@ def test_provenance_peer_directions_and_reload(
     }
     outgoing = {
         **message_item(
-            "sent-request", "assistant", "Please inspect the original scope.", response_id="sent"
+            "sent-request",
+            "assistant",
+            "Please inspect the original scope.\nPreserve the captured source.\n"
+            "Keep the linked chat.\nExpanded peer detail.",
+            response_id="sent",
         ),
         "communication": {
             "kind": "peer",
@@ -134,55 +163,140 @@ def test_provenance_peer_directions_and_reload(
             "delivery_state": "confirmed",
         },
     }
-    first.set_items(list(reversed([human, human_recovery, unknown, system, incoming, outgoing])))
+    tasks = [
+        {
+            "id": f"audit-{phase}",
+            "type": "resource_event",
+            "status": "completed",
+            "response_id": f"audit-{phase}",
+            "event_type": f"session.subagent.{phase}",
+            "resource_type": "session",
+            "resource_id": second.session_id,
+            "resource": {
+                "agent_name": "Jules",
+                "dispatch_id": "card-audit",
+                "task_summary": "Shared card audit",
+                "task_input": "Inspect the compact cards.\n\nFull captured assignment.",
+                **(
+                    {
+                        "status": "completed",
+                        "result_text": (
+                            "Compact **cards pass**.\nSecond line.\nThird line.\n\n"
+                            "| Check | Result |\n| --- | --- |\n| Footer | Absent |"
+                        ),
+                    }
+                    if phase == "returned"
+                    else {}
+                ),
+            },
+        }
+        for phase in ("delegated", "returned")
+    ]
+    first.set_items(
+        list(
+            reversed(
+                [human, human_recovery, assistant, unknown, system, incoming, outgoing, *tasks]
+            )
+        )
+    )
     second.set_items([{**outgoing, "id": "received-request"}])
-    page.context.grant_permissions(["clipboard-read", "clipboard-write"])
     page.goto(first.url)
     chat = _view(page, "Chat A")
     expect(chat.get_by_label("Message the agent")).to_be_visible(timeout=30_000)
+    measurements = {}
     for reload in (False, True):
         if reload:
             page.reload()
         for item_id in ("human-quotation", "human-recovery"):
             bubble = chat.locator(f'[data-message-id="{item_id}"]')
             expect(bubble).to_have_attribute("data-role", "user")
-            expect(bubble).to_have_class(re.compile(r"\bis-user\b"))
+            expect(bubble.get_by_role("button", name="Copy", exact=True)).to_have_count(1)
+        expect(
+            chat.locator('[data-message-id="ordinary"]').get_by_role(
+                "button", name="Copy", exact=True
+            )
+        ).to_have_count(1)
         external = chat.locator('[data-message-id="unknown-account"]')
         expect(external).to_have_attribute("data-role", "external")
-        expect(external).to_contain_text("External input")
         expect(external).to_contain_text(quotation)
         expect(external.get_by_test_id("message-author")).to_have_count(0)
         control = chat.locator('[data-message-id="recovery-control"]')
         expect(control).to_have_attribute("data-role", "system")
-        control.get_by_role("button", name="System: Session recovery", exact=True).click()
+        _assert_footerless_card(control, controls=1)
+        control.get_by_role("button", name="Expand activity", exact=True).click()
         expect(control).to_contain_text(recovery)
-        control.scroll_into_view_if_needed()
-        _capture(page, output_path, f"{appearance}-provenance-{'reload' if reload else 'initial'}")
+        control.get_by_role("button", name="Collapse activity", exact=True).click()
         received = chat.locator('[data-message-id="received-report"]')
         sent = chat.locator('[data-message-id="sent-request"]')
-        expect(received).to_have_attribute("data-direction", "received")
-        expect(received.locator("header")).to_contain_text("Jules from Chat B")
-        expect(sent).to_have_attribute("data-direction", "sent")
-        expect(sent.locator("header")).to_contain_text("Orion sent to Chat B")
-        expect(sent).to_contain_text("Please inspect the original scope.")
+        for card, direction, attribution, name in (
+            (received, "received", "Jules from Chat B", "Jules"),
+            (sent, "sent", "Orion sent to Chat B", "Orion"),
+        ):
+            expect(card).to_have_attribute("data-direction", direction)
+            expect(card.locator("[data-resource-row]")).to_contain_text(attribution)
+            expect(card.locator("strong")).to_have_text(name)
+            expect(card.get_by_role("link", name="Chat B", exact=True)).to_have_attribute(
+                "href", f"/c/{second.session_id}"
+            )
+            measurements[f"{direction}-{'reload' if reload else 'initial'}"] = (
+                _assert_footerless_card(card, controls=3)
+            )
         expect(chat.get_by_test_id("peer-message")).to_have_count(2)
+        expect(chat.get_by_test_id("subagent-activity")).to_have_count(1)
+        task = chat.get_by_test_id("subagent-activity")
+        expect(task.get_by_role("status", name="Completed", exact=True)).to_be_visible()
+        reply = chat.get_by_test_id("subagent-reply")
+        expect(reply).to_have_count(1)
+        _assert_footerless_card(task, controls=3)
+        _assert_footerless_card(reply, controls=3)
+        if not reload:
+            task.get_by_role("button", name="Expand activity", exact=True).click()
+            expect(task).to_contain_text("Full captured assignment.")
+            _capture(page, output_path, f"{appearance}-expanded-task")
+            task.get_by_role("button", name="Collapse activity", exact=True).click()
+            reply.get_by_role("button", name="Expand activity", exact=True).click()
+            expect(reply.get_by_role("table")).to_contain_text("FooterAbsent")
+            _capture(page, output_path, f"{appearance}-expanded-reply")
+            reply.get_by_role("button", name="Collapse activity", exact=True).click()
+            actions = sent.locator(".resource-actions").locator("a, button")
+            fills = []
+            for action in actions.all():
+                action.hover()
+                action.evaluate(
+                    """element => Promise.all(element.getAnimations().map(
+                        animation => animation.finished.catch(() => {})))"""
+                )
+                fills.append(
+                    action.evaluate("element => getComputedStyle(element).backgroundColor")
+                )
+            assert len(set(fills)) == 1, fills
+            expect(sent).not_to_contain_text("Expanded peer detail.")
+            disclosure = sent.get_by_role("button", name="Expand activity", exact=True)
+            disclosure.click()
+            expect(sent).to_contain_text("Expanded peer detail.")
+            glyph = sent.locator(".resource-actions button[aria-controls] svg").evaluate(
+                """element => ({duration: getComputedStyle(element).transitionDuration,
+                    rotate: getComputedStyle(element).rotate,
+                    transform: getComputedStyle(element).transform})"""
+            )
+            assert glyph["duration"] == "0s" and (
+                glyph["rotate"] == "90deg" or glyph["transform"].startswith("matrix(0, 1")
+            ), glyph
+            sent.get_by_role("button", name="Collapse activity", exact=True).click()
         sent.scroll_into_view_if_needed()
-        sent.hover()
-        sent.get_by_role("button", name="Copy", exact=True).click()
-        assert (
-            page.evaluate("navigator.clipboard.readText()") == "Please inspect the original scope."
-        )
         _capture(
-            page, output_path, f"{appearance}-peer-directions-{'reload' if reload else 'initial'}"
+            page, output_path, f"{appearance}-footerless-peer-{'reload' if reload else 'initial'}"
         )
+    Path(output_path).mkdir(parents=True, exist_ok=True)
+    (Path(output_path) / "card-geometry.json").write_text(
+        json.dumps(measurements, indent=2) + "\n"
+    )
     _navigate_chat(page, second)
-    expect(_view(page, "Chat B").get_by_test_id("peer-message").locator("header")).to_contain_text(
-        "Orion from Chat A"
-    )
+    received = _view(page, "Chat B").get_by_test_id("peer-message")
+    expect(received.locator("[data-resource-row]")).to_contain_text("Orion from Chat A")
+    _assert_footerless_card(received, controls=3)
     page.reload()
-    expect(_view(page, "Chat B").get_by_test_id("peer-message")).to_have_attribute(
-        "data-direction", "received"
-    )
+    expect(received).to_have_attribute("data-direction", "received")
 
 
 def test_settings_controls_density_and_attachment_geometry(
@@ -358,6 +472,8 @@ def test_portrait_and_tiny_image_footer_containment(
                 titleBounds.x + titleBounds.width / 2, titleBounds.y + titleBounds.height / 2);
               return {
                 name: image.alt, card: rect(card), image: rect(image), title: rect(title),
+                footer: rect(title.parentElement.parentElement),
+                footerParts: [...title.parentElement.parentElement.children].map(rect),
                 naturalWidth: image.naturalWidth, naturalHeight: image.naturalHeight,
                 titleHitTarget: titleBounds.width > 0 && !!titleHit && title.contains(titleHit),
                 clientWidth: card.clientWidth, scrollWidth: card.scrollWidth,
@@ -393,6 +509,8 @@ def test_portrait_and_tiny_image_footer_containment(
         ), row
         assert row["scrollWidth"] <= row["clientWidth"] + TOLERANCE, row
         assert row["titleHitTarget"], row
+        for part in row["footerParts"]:
+            assert_same_vertical_center(row["footer"], part)
         assert len(row["controls"]) == 2, row
         assert all(control["contained"] and control["hitTarget"] for control in row["controls"]), (
             row
@@ -443,17 +561,19 @@ def test_shelf_resource_rows_and_question_drafts(
         "pending_elicitations_count": 0,
         "labels": {},
     }
+    offline: dict = {}
+    pending_stop: list[Route] = []
+    browser_contract.route(
+        browser_contract._matcher(shell_path + "/stop"), lambda route: pending_stop.append(route)
+    )
     first.update_session(background_task_count=1, background_tasks=[shell])
     browser_contract.json(
-        f"/v1/sessions/{first.session_id}/resources/shells", list_payload([shell])
+        f"/v1/sessions/{first.session_id}/resources/shells",
+        lambda _request: {**list_payload([shell]), **offline},
     )
     browser_contract.json(
         shell_path,
-        {
-            **shell,
-            "output": retained_output,
-            "live_error": "CLI unavailable in this browser contract",
-        },
+        lambda _request: {**shell, "output": retained_output, **offline},
     )
     manual_creates: list[str] = []
     page.on(
@@ -545,9 +665,7 @@ def test_shelf_resource_rows_and_question_drafts(
     expect(shell_view.get_by_label("Retained shell output", exact=True)).to_have_text(
         retained_output, timeout=15_000
     )
-    expect(
-        shell_view.get_by_text("Live shell unavailable. Showing retained output.", exact=True)
-    ).to_be_visible()
+    expect(shell_view.get_by_text("Read-only output", exact=True)).to_be_visible()
     expect(page.get_by_role("tab", name="pnpm test", exact=True)).to_have_count(1)
     if appearance.startswith("desktop"):
         assert_no_overlap(box(_view(page, "Chat A")), box(shell_view))
@@ -585,6 +703,56 @@ def test_shelf_resource_rows_and_question_drafts(
         assert box(row)["height"] == pytest.approx(shelf_height, abs=TOLERANCE)
         assert_within_viewport(box(row), page.viewport_size["width"])
     _capture(page, output_path, f"{appearance}-shared-orchestration-resources")
+    live_row = shells.locator("[data-resource-row]")
+    status = live_row.get_by_role("button", name="Actions for pnpm test", exact=True)
+    page.mouse.move(0, 0)
+    reserve = box(status)["width"]
+    live_row.hover()
+    samples = status.evaluate(
+        """async element => {
+          const read = delay => ({delay, width: element.getBoundingClientRect().width,
+            running: getComputedStyle(element.querySelector('[role=status]')).visibility,
+            stop: getComputedStyle(element.querySelector('.resource-stop-label')).visibility});
+          const result = [read(0)];
+          await new Promise(resolve => setTimeout(resolve, 50)); result.push(read(50));
+          await new Promise(resolve => setTimeout(resolve, 150)); result.push(read(200));
+          return result;
+        }"""
+    )
+    for sample in samples:
+        assert sample["running"] == "hidden" and sample["stop"] == "visible", sample
+        assert sample["width"] == pytest.approx(reserve, abs=TOLERANCE), sample
+    _capture(page, output_path, f"{appearance}-stop-swap")
+    status.click()
+    expect(status).to_be_disabled()
+    assert len(pending_stop) == 1
+    shell.update(status="stopped", exit_code=-1, can_stop=False)
+    pending_stop.pop().fulfill(json=shell)
+    expect(live_row.get_by_role("status", name="Stopped", exact=True)).to_be_visible()
+    expect(live_row.get_by_role("button", name="Actions for pnpm test", exact=True)).to_have_count(
+        0
+    )
+    offline.update(availability="offline", warning="Showing retained shells.")
+    page.get_by_role("tab", name="Chat A", exact=True).click()
+    shelf.get_by_test_id("background-task-pill").click()
+    shell_popup.get_by_role("button", name="Open shell beside · pnpm test", exact=True).click()
+    page.keyboard.press("Escape")
+    shell_view.get_by_role("button", name="Refresh shell output", exact=True).click()
+    expect(shell_view.get_by_role("status", name="Stopped", exact=True)).to_be_visible()
+    expect(shell_view.get_by_label("Retained shell output", exact=True)).to_have_text(
+        retained_output
+    )
+    expect(page.get_by_text("Shell runtime offline", exact=True).first).to_be_visible()
+    expect(
+        page.get_by_text(
+            "Showing retained output. Refresh after the runtime reconnects.", exact=True
+        ).first
+    ).to_be_visible()
+    expect(shell_view.get_by_role("alert")).to_have_count(0)
+    assert manual_creates == [] and workspace_journey.attachments == []
+    (Path(output_path) / "stop-label-timing.json").write_text(json.dumps(samples, indent=2) + "\n")
+    _capture(page, output_path, f"{appearance}-offline-retained-shell")
+    page.get_by_role("tab", name="Orchestration", exact=True).click()
     source.click()
     page.get_by_role("option", name="Chat B", exact=True).click()
     expect(source).to_contain_text("Chat B")
@@ -606,3 +774,60 @@ def test_shelf_resource_rows_and_question_drafts(
     page.get_by_role("tab", name="Chat A", exact=True).click()
     expect(editor).to_have_value("Retained composer draft")
     assert first.event_posts == []
+
+
+@pytest.mark.parametrize(
+    "appearance",
+    [("desktop", "dark"), ("mobile", "light")],
+    ids=["desktop-dark", "mobile-light"],
+    indirect=True,
+)
+def test_notice_popup_transport_fixture(
+    page: Page,
+    workspace_journey: WorkspaceJourney,
+    browser_contract: BrowserContract,
+    output_path: str,
+    appearance: str,
+) -> None:
+    """Scripted API notices prove browser transport and dismissal, not native capture."""
+    first, second = workspace_journey.chats
+    notice = {
+        "id": "fixture-usage-window",
+        "revision": "one",
+        "provider": "Codex",
+        "title": "Usage limit approaching",
+        "message": "Captured usage window is nearly full.",
+        "severity": "warning",
+        "created_at": 1_700_000_000,
+        "requires_action": False,
+    }
+    path = f"/v1/sessions/{first.session_id}/runtime-notices"
+    browser_contract.json(path, lambda _request: list_payload([notice]))
+    page.goto(first.url)
+    editor = _view(page, "Chat A").get_by_label("Message the agent")
+    editor.fill("Keep this draft while reading notices")
+    trigger = page.get_by_role("button", name="Notices: 1", exact=True)
+    trigger.click()
+    popup = page.get_by_role("dialog", name="Agent notices", exact=True)
+    expect(popup).to_contain_text("Codex · Usage limit approaching")
+    expect(popup).to_contain_text(notice["message"])
+    expect(popup.get_by_role("button", name="Open Agent CLI", exact=True)).to_be_visible()
+    expect(
+        popup.get_by_role("button", name=re.compile("Submit|Approve|Switch model"))
+    ).to_have_count(0)
+    assert_within_viewport(box(popup), page.viewport_size["width"])
+    _capture(page, output_path, f"{appearance}-notice-popup-transport-fixture")
+    popup.get_by_role("button", name="Dismiss", exact=True).click()
+    expect(trigger).to_have_count(0)
+    expect(editor).to_have_value("Keep this draft while reading notices")
+    with page.expect_response(lambda response: response.url.split("?")[0].endswith(path)):
+        page.reload()
+    expect(page.get_by_role("button", name="Notices: 1", exact=True)).to_have_count(0)
+    notice.update(revision="two", message="A new usage-window observation is available.")
+    page.reload()
+    trigger.click()
+    expect(popup).to_contain_text(notice["message"])
+    page.keyboard.press("Escape")
+    _navigate_chat(page, second)
+    expect(page.get_by_role("button", name="Notices: 1", exact=True)).to_have_count(0)
+    assert first.event_posts == [] and second.event_posts == []

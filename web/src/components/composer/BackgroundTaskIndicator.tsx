@@ -1,8 +1,10 @@
 // Modified for Triune.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { SquareTerminalIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useNotificationNotice } from "@/hooks/useNotificationNotice";
+import { shellResourceErrorMessage } from "@/lib/shellResourceError";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useSessionShellResources, mergeShellResources } from "@/hooks/useSessionShellResources";
 import type { BackgroundTaskInfo } from "@/lib/types";
@@ -131,6 +133,7 @@ function BackgroundTasksList({
   active: boolean;
 }) {
   const resources = useSessionShellResources(conversationId, { enabled: active });
+  const { error: resourceError, refetch: refetchResources } = resources;
   const tasks = mergeShellResources(
     reported,
     resources.data?.data ?? [],
@@ -138,13 +141,21 @@ function BackgroundTasksList({
     active && !resources.error && resources.data !== undefined,
   );
   const undetailed = count - tasks.length;
+  const notice = useMemo(
+    () =>
+      active && resourceError
+        ? {
+            title: "Could not refresh shell history",
+            description: shellResourceErrorMessage(resourceError),
+            type: "error" as const,
+            action: { label: "Retry", onClick: () => void refetchResources() },
+          }
+        : null,
+    [active, resourceError, refetchResources],
+  );
+  useNotificationNotice(`shell-popup:${conversationId}`, notice);
   return (
     <>
-      {resources.error && (
-        <p role="alert" className="px-1 py-2 text-xs text-destructive">
-          Could not refresh shell controls: {resources.error.message}
-        </p>
-      )}
       {tasks.length ? (
         <ul className="flex flex-col">
           {tasks.map((task, index) => (

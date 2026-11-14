@@ -8,6 +8,10 @@ import { useChatStore } from "@/store/chatStore";
 import { ComposerAttentionShelf } from "./ComposerAttentionShelf";
 import userEvent from "@testing-library/user-event";
 
+vi.mock("@/hooks/useRuntimeNotices", () => ({
+  useRuntimeNotices: () => ({ notices: [], dismiss: vi.fn() }),
+}));
+
 vi.mock("@/hooks/useChildSessions", async (original) => ({
   ...(await original<typeof ChildSessionsModule>()),
   useChildSessions: () => ({ children: [], isLoading: false, error: null }),

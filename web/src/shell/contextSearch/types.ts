@@ -1,5 +1,6 @@
+// Modified for Triune.
 export type ContextSearchScope = "current" | "all";
-export type ContextSearchCategory = "all" | "messages" | "titles" | "actions";
+export type MessageSearchFilter = "all" | "final" | "user";
 
 export interface SearchRange {
   start: number;
@@ -7,6 +8,11 @@ export interface SearchRange {
 }
 
 export interface MessageSearchHit {
+  kind?: "message" | "chat";
+  sender_name?: string | null;
+  user_authored?: boolean | null;
+  phase?: string | null;
+  title_ranges?: SearchRange[] | null;
   session_id: string;
   title: string | null;
   item_id: string;
@@ -53,7 +59,24 @@ export function targetKey(target: ContextSearchTarget | null): string {
 }
 
 export function searchOccurrences(hits: readonly MessageSearchHit[]): SearchOccurrence[] {
-  return hits.flatMap((hit) => hit.ranges.map((range) => ({ hit, range })));
+  return searchResults(hits).flatMap((hit) =>
+    hit.kind === "chat" ? [] : hit.ranges.map((range) => ({ hit, range })),
+  );
+}
+
+export function searchHitKey(hit: MessageSearchHit): string {
+  return `${hit.kind ?? "message"}:${hit.session_id}:${hit.kind === "chat" ? "" : hit.item_id}`;
+}
+
+/** Preserve the server's date order and cursor tie-breakers across overlapping pages. */
+export function searchResults(hits: readonly MessageSearchHit[]): MessageSearchHit[] {
+  const seen = new Set<string>();
+  return hits.filter((hit) => {
+    const key = searchHitKey(hit);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 export function occurrenceTarget(

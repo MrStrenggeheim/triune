@@ -1,9 +1,10 @@
+// Modified for Triune; inherited notices remain applicable.
 // Tests for TodoPanel — the small presentational panel that mirrors Claude
 // Code's todo list from useChatStore.todos. We mock the store so the panel's
 // own rendering (empty state, per-status icon/strikethrough, activeForm
 // subtitle) is exercised in isolation.
 
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 interface TodoItem {
@@ -40,21 +41,36 @@ describe("TodoPanel", () => {
     h.todos = [
       { content: "Write tests", status: "pending", activeForm: "Writing tests" },
       { content: "Ship it", status: "completed", activeForm: "Shipping it" },
+      { content: "Build it", status: "in_progress", activeForm: "Building it" },
     ];
     render(<TodoPanel />);
     expect(screen.getByText("Write tests")).toBeInTheDocument();
     expect(screen.getByText("Ship it")).toBeInTheDocument();
-    expect(screen.getAllByRole("listitem")).toHaveLength(2);
+    const rows = screen.getAllByRole("listitem");
+    expect(rows).toHaveLength(3);
+    for (const [index, state] of ["unchecked", "checked", "indeterminate"].entries()) {
+      const visual = rows[index]!.querySelector('[data-slot="checkbox-visual"]')!;
+      expect(visual).toHaveAttribute("data-state", state);
+      expect(visual).toHaveAttribute("aria-hidden", "true");
+      expect(visual).not.toHaveAttribute("tabindex");
+      fireEvent.click(visual);
+      fireEvent.keyDown(visual, { key: " " });
+      expect(visual).toHaveAttribute("data-state", state);
+    }
+    expect(screen.getByText("Pending")).toHaveClass("sr-only");
+    expect(screen.getByText("In progress")).toHaveClass("sr-only");
+    expect(screen.queryByRole("checkbox")).toBeNull();
+    expect(rows[0]!.parentElement!.querySelector("input, button, [tabindex]")).toBeNull();
   });
 
-  it("strikes through and dims a completed todo", () => {
-    // WHY: completed todos get line-through + opacity-50; a regression in the
-    // status-conditional classes would leave them looking active.
+  it("strikes through completed text while keeping the status visual opaque", () => {
     h.todos = [{ content: "Done thing", status: "completed", activeForm: "Doing thing" }];
     render(<TodoPanel />);
     const span = screen.getByText("Done thing");
     expect(span.className).toContain("line-through");
-    expect(span.closest("li")?.className).toContain("opacity-50");
+    expect(span.closest("li")).not.toHaveClass("opacity-50");
+    expect(span).toHaveClass("text-muted-foreground");
+    expect(screen.getByText("Completed")).toHaveClass("sr-only");
   });
 
   it("shows the activeForm subtitle for an in_progress todo when it differs", () => {

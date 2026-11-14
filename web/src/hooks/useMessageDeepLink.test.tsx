@@ -1,3 +1,4 @@
+// Modified for Triune; inherited notices remain applicable.
 import type * as ConversationModule from "@/components/ai-elements/conversation";
 import { act, fireEvent, renderHook, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -110,6 +111,21 @@ describe("useMessageDeepLink", () => {
     expect(target.getAttribute("data-message-id")).toBe("msg_1");
     act(() => vi.advanceTimersByTime(SETTLE_MS));
     expect(useChatStore.getState().flashItemId).toBe("msg_1");
+  });
+
+  it("consumes a pending URL target when search supersedes it, without replaying on close", () => {
+    const loadMoreHistory = vi.fn();
+    useChatStore.setState({ hasMoreHistory: true, loadMoreHistory });
+    const { rerender } = renderHook(
+      ({ superseded }) => useMessageDeepLink("conv_1", { superseded }),
+      {
+        initialProps: { superseded: true },
+        wrapper: wrapperFor("/c/conv_1?message=old"),
+      },
+    );
+    rerender({ superseded: false });
+    expect(loadMoreHistory).not.toHaveBeenCalled();
+    expect(scrollSpy).not.toHaveBeenCalled();
   });
 
   it("releases the stick-to-bottom lock before scrolling a tall transcript", () => {

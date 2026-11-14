@@ -1,3 +1,4 @@
+// Modified for Triune; inherited notices remain applicable.
 // Mirrors tests/frontends/sdk/test_stream.py.
 //
 // Hand-built event sequences → BlockStream → assert on emitted blocks.
@@ -306,6 +307,23 @@ describe("BlockStream — block ctx carries response_id and item_id", () => {
 });
 
 describe("BlockStream — text", () => {
+  it("preserves indexed multi-block source when a live message finalizes", () => {
+    const blocks = reduce([
+      {
+        type: "message_done",
+        itemId: "multi-block-live",
+        responseId: "source-turn",
+        content: [
+          { type: "output_text", text: "left" },
+          { type: "output_text", text: "right" },
+        ],
+      },
+    ]);
+    expect(blocks.find((block) => block.type === "text_done")).toMatchObject({
+      fullText: "leftright",
+      searchText: "left right",
+    });
+  });
   it("message_done content renders without preceding text deltas", () => {
     const blocks = reduce([
       {

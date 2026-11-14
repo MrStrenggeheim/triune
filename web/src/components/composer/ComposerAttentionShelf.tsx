@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ListTodoIcon, MessageCircleQuestionMarkIcon, ShieldCheckIcon } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
-import { useConversationChatStore } from "@/workbench/ScopedChatStore";
+import { useConversationChatStore, useConversationChatVisible } from "@/workbench/ScopedChatStore";
 import type { ElicitationBlock } from "@/lib/blocks";
 import { castAskUserQuestionPayload, parseAskUserQuestionPreview } from "@/lib/askUserQuestion";
 import { ElicitationCard } from "@/components/blocks/ApprovalCard";
@@ -16,6 +16,9 @@ import { COMPOSER_WORKSPACE_COLLAPSED_LABEL_CLASS } from "./ChatComposer";
 import { ComposerShelf } from "./ComposerShelf";
 import { useChildSessions } from "@/hooks/useChildSessions";
 import { childStatus } from "@/shell/subagentStatus";
+import { useRuntimeNotices } from "@/hooks/useRuntimeNotices";
+import { RuntimeNoticeIndicator } from "./RuntimeNoticeIndicator";
+import { useNotificationNotice } from "@/hooks/useNotificationNotice";
 
 export function isQuestionRequest(block: ElicitationBlock): boolean {
   if (block.codexCommand || block.exitPlanMode) return false;
@@ -31,6 +34,22 @@ export function isQuestionRequest(block: ElicitationBlock): boolean {
 export function ComposerAttentionShelf() {
   const useChatStore = useConversationChatStore();
   const conversationId = useChatStore((state) => state.conversationId);
+  const visible = useConversationChatVisible();
+  const runtimeNotices = useRuntimeNotices(conversationId, visible);
+  const { error: runtimeNoticeError, refetch: refetchRuntimeNotices } = runtimeNotices;
+  const noticeError = useMemo(
+    () =>
+      visible && runtimeNoticeError
+        ? {
+            title: "Could not refresh agent notices",
+            description: "Try again to check the agent's current notices.",
+            type: "error" as const,
+            action: { label: "Retry", onClick: () => void refetchRuntimeNotices() },
+          }
+        : null,
+    [visible, runtimeNoticeError, refetchRuntimeNotices],
+  );
+  useNotificationNotice(`agent-notices:${conversationId}`, noticeError);
   const backgroundCount = useChatStore((state) => state.backgroundTaskCount);
   const { children } = useChildSessions(conversationId);
   const hasAgents = children.some((child) =>
@@ -71,7 +90,13 @@ export function ComposerAttentionShelf() {
     <ComposerShelf
       key={conversationId}
       retainContent={false}
-      present={pending.length > 0 || todos.length > 0 || backgroundCount > 0 || hasAgents}
+      present={
+        pending.length > 0 ||
+        todos.length > 0 ||
+        backgroundCount > 0 ||
+        hasAgents ||
+        runtimeNotices.notices.length > 0
+      }
     >
       <ComposerWorkspaceBar
         shelfInset
@@ -152,6 +177,11 @@ export function ComposerAttentionShelf() {
             </Popover>
           );
         })}
+        <RuntimeNoticeIndicator
+          conversationId={conversationId}
+          notices={runtimeNotices.notices}
+          onDismiss={runtimeNotices.dismiss}
+        />
         <span className="flex-1" />
         <BackgroundTaskIndicator shelf />
         <SubagentTaskIndicator conversationId={conversationId} shelf />

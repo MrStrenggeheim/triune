@@ -92,3 +92,95 @@ it("opens a status menu on touch without stopping or navigating on the first tap
   await waitFor(() => expect(stop).toHaveBeenCalledOnce());
   expect(open).not.toHaveBeenCalled();
 });
+
+it("joins navigation and disclosure with a stable body identity and keeps actions independent", async () => {
+  const user = userEvent.setup();
+  const open = vi.fn();
+  const navigation = vi.fn();
+  const view = (summary: string) => (
+    <ActivityRow
+      presentation="message"
+      title={<strong>Ada · Audit</strong>}
+      summary={summary}
+      icon={<span>Icon</span>}
+      onOpen={open}
+      actions={
+        <>
+          <button type="button" onClick={navigation}>
+            Open chat
+          </button>
+          <button type="button" onClick={navigation}>
+            Workflow
+          </button>
+        </>
+      }
+    >
+      <p>Exact captured body</p>
+    </ActivityRow>
+  );
+  const rendered = render(view("Short excerpt"));
+  const controls = screen.getAllByRole("button");
+  expect(
+    controls.map((control) => control.getAttribute("aria-label") ?? control.textContent),
+  ).toEqual(["Ada · Audit", "Open chat", "Workflow", "Expand activity"]);
+  const disclosure = screen.getByRole("button", { name: "Expand activity" });
+  const id = disclosure.getAttribute("aria-controls")!;
+  expect(document.getElementById(id)).not.toBeVisible();
+  expect(screen.getByText("Short excerpt")).toBeVisible();
+  disclosure.focus();
+  await user.keyboard(" ");
+  expect(document.getElementById(id)).toHaveTextContent("Exact captured body");
+  expect(document.getElementById(id)).toBeVisible();
+  expect(screen.queryByText("Short excerpt")).toBeNull();
+  expect(open).not.toHaveBeenCalled();
+  rendered.rerender(view("Updated excerpt"));
+  expect(screen.queryByText("Updated excerpt")).toBeNull();
+  expect(screen.getByRole("button", { name: "Collapse activity" })).toHaveAttribute(
+    "aria-controls",
+    id,
+  );
+  await user.click(screen.getByRole("button", { name: "Workflow" }));
+  expect(navigation).toHaveBeenCalledOnce();
+  expect(open).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Collapse activity" }));
+  expect(document.getElementById(id)).not.toBeVisible();
+  expect(screen.getByText("Updated excerpt")).toBeVisible();
+});
+
+it("honors controlled expansion while retaining the same content identity", () => {
+  const change = vi.fn();
+  const view = (expanded: boolean) => (
+    <ActivityRow
+      presentation="message"
+      icon={<span>Icon</span>}
+      title="Controlled card"
+      expanded={expanded}
+      onExpandedChange={change}
+    >
+      <p>Captured detail</p>
+    </ActivityRow>
+  );
+  const rendered = render(view(false));
+  const disclosure = screen.getByRole("button", { name: "Expand activity" });
+  const id = disclosure.getAttribute("aria-controls")!;
+  fireEvent.click(disclosure);
+  expect(change).toHaveBeenCalledWith(true);
+  expect(document.getElementById(id)).not.toBeVisible();
+  rendered.rerender(view(true));
+  expect(screen.getByRole("button", { name: "Collapse activity" })).toHaveAttribute(
+    "aria-controls",
+    id,
+  );
+  expect(document.getElementById(id)).toHaveTextContent("Captured detail");
+});
+
+it("retains a resource summary during expansion", () => {
+  render(
+    <ActivityRow icon={<span>Icon</span>} title="Resource" description="Resource preview">
+      <p>Resource output</p>
+    </ActivityRow>,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Expand activity" }));
+  expect(screen.getByText("Resource preview")).toBeVisible();
+  expect(screen.getByText("Resource output")).toBeVisible();
+});

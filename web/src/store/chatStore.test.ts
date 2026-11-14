@@ -18218,6 +18218,307 @@ describe("chatStore — policy deny renders once", () => {
 
 describe("chatStore — client-side message queue", () => {
   it.each([
+    { native: false, consumedByCurrentTurn: false },
+    { native: false, consumedByCurrentTurn: true },
+    { native: true, consumedByCurrentTurn: true },
+  ])(
+    "holds a selected send until its owning response settles (native: $native, current turn: $consumedByCurrentTurn)",
+    async ({ native, consumedByCurrentTurn }) => {
+      const id = "conv_selected_sdk";
+      seedSession(id);
+      await useChatStore.getState().switchTo(id);
+      if (native) {
+        useChatStore.setState({ isNativeTerminalSession: true });
+        fetchMock.mockImplementation((input, init) =>
+          String(input) === `/v1/sessions/${id}/events` && init?.method === "POST"
+            ? mockResponse({ queued: true, pending_id: "pending_B" })
+            : defaultFetchHandler(input as RequestInfo, init as RequestInit),
+        );
+      }
+      handleSessionEvent({
+        type: "session_status",
+        conversationId: id,
+        status: "running",
+        responseId: "turn_old",
+      });
+      for (const text of ["A", "B", "C"]) useChatStore.getState().enqueueMessage(text);
+      const original = useChatStore.getState().queuedMessages;
+      useChatStore.getState().steerMessage(original[1]!.queueId);
+      await tick();
+      if (consumedByCurrentTurn) {
+        handleSessionEvent({
+          type: "session_input_consumed",
+          itemId: native ? "native_B" : original[1]!.stableId!,
+          ...(native ? { clearedPendingId: "pending_B" } : {}),
+          itemType: "message",
+          data: { role: "user", user_authored: true, content: [{ type: "input_text", text: "B" }] },
+        });
+      }
+      const sink = pushableStream();
+      const controller = new AbortController();
+      onTestFinished(() => {
+        controller.abort();
+        sink.close();
+      });
+      void pumpStreamEvents(
+        id,
+        sink.stream,
+        controller,
+        useChatStore.setState,
+        useChatStore.getState,
+      );
+      sink.push(sse("response.completed", { id: "turn_old", status: "completed", output: [] }));
+      await tick();
+      handleSessionEvent({
+        type: "session_status",
+        conversationId: id,
+        status: "idle",
+        responseId: "turn_old",
+      });
+      useChatStore.getState().maybeFlushQueuedHead();
+      if (consumedByCurrentTurn) {
+        await tick();
+        expect(useChatStore.getState().queuedMessages).toEqual([original[2]]);
+        return;
+      }
+      expect(useChatStore.getState().queuedMessages).toEqual([original[0], original[2]]);
+      sink.push(sse("response.created", { id: "turn_B", status: "in_progress", output: [] }));
+      await tick();
+      useChatStore.getState().maybeFlushQueuedHead();
+      expect(useChatStore.getState().queuedMessages).toEqual([original[0], original[2]]);
+      sink.push(sse("response.completed", { id: "turn_B", status: "completed", output: [] }));
+      await tick();
+      useChatStore.getState().maybeFlushQueuedHead();
+      await tick();
+      expect(useChatStore.getState().queuedMessages).toEqual([original[2]]);
+      const posts = fetchMock.mock.calls.filter(
+        ([url, init]) => url === `/v1/sessions/${id}/events` && init?.method === "POST",
+      );
+      expect(posts.map(([, init]) => JSON.parse(init!.body as string).data.content)).toEqual([
+        [{ type: "input_text", text: "B" }],
+        [{ type: "input_text", text: "A" }],
+      ]);
+    },
+  );
+
+  it.each(["failed", "offline"])(
+    "restores a selected %s send with its original identity and releases admission for retry",
+    async (outcome) => {
+      const id = "conv_selected_retry";
+      seedSession(id);
+      await useChatStore.getState().switchTo(id);
+      handleSessionEvent({
+        type: "session_status",
+        conversationId: id,
+        status: "running",
+        responseId: "turn_old",
+      });
+      for (const text of ["A", "B", "C"]) useChatStore.getState().enqueueMessage(text);
+      const [first, selected, last] = useChatStore.getState().queuedMessages;
+      fetchMock.mockImplementation((input, init) => {
+        if (String(input) === `/v1/sessions/${id}/events` && init?.method === "POST") {
+          return mockResponse(
+            {
+              error: {
+                code: outcome === "offline" ? "host_offline" : "send_failed",
+                message: "Unavailable",
+              },
+            },
+            { ok: false, status: 503 },
+          );
+        }
+        return defaultFetchHandler(input as RequestInfo, init as RequestInit);
+      });
+      useChatStore.getState().steerMessage(selected!.queueId);
+      await tick();
+      handleSessionEvent({
+        type: "session_status",
+        conversationId: id,
+        status: "idle",
+        responseId: "turn_old",
+      });
+      useChatStore.getState().maybeFlushQueuedHead();
+      await tick();
+      expect(useChatStore.getState().queuedMessages).toEqual([
+        expect.objectContaining({
+          ...selected,
+          ...(outcome === "offline"
+            ? { waitingForHost: true, requiresRetry: false }
+            : { requiresRetry: true }),
+        }),
+        first,
+        last,
+      ]);
+      expect(
+        fetchMock.mock.calls.filter(
+          ([url, init]) => String(url).endsWith("/events") && init?.method === "POST",
+        ),
+      ).toHaveLength(1);
+      fetchMock.mockImplementation(defaultFetchHandler);
+      if (outcome === "offline") {
+        useChatStore.getState().releaseHostHeldMessages(id);
+        useChatStore.getState().maybeFlushQueuedHead();
+      } else useChatStore.getState().steerMessage(selected!.queueId);
+      await tick();
+      expect(useChatStore.getState().queuedMessages).toEqual([first, last]);
+      handleSessionEvent({
+        type: "session_status",
+        conversationId: id,
+        status: "running",
+        responseId: "turn_retry",
+      });
+      handleSessionEvent({
+        type: "session_status",
+        conversationId: id,
+        status: "idle",
+        responseId: "turn_retry",
+      });
+      useChatStore.getState().maybeFlushQueuedHead();
+      await tick();
+      expect(useChatStore.getState().queuedMessages).toEqual([last]);
+    },
+  );
+
+  it.each(["foreground", "background", "retained", "synchronous", "reconnected"])(
+    "keeps other drafts queued through a selected send's old idle and POST completion (%s)",
+    async (mode) => {
+      const id = "conv_selected_queue";
+      seedSession(id);
+      await useChatStore.getState().switchTo(id);
+      useChatStore.setState({ sessionHarness: "codex-native", isNativeTerminalSession: true });
+      handleSessionEvent({
+        type: "session_status",
+        conversationId: id,
+        status: "running",
+        responseId: "turn_old",
+      });
+      for (const text of ["A", "B", "C"]) useChatStore.getState().enqueueMessage(text);
+      const original = useChatStore.getState().queuedMessages;
+      const selected = original[1]!;
+      expect(useChatStore.getState().send).toBe(realSend);
+      const posts: { text: string; stableId: string }[] = [];
+      let releaseB!: () => void;
+      fetchMock.mockImplementation((input, init) => {
+        if (String(input) === `/v1/sessions/${id}/events` && init?.method === "POST") {
+          const body = JSON.parse(init.body as string);
+          const text = body.data.content.find(
+            (block: { type: string }) => block.type === "input_text",
+          ).text;
+          posts.push({ text, stableId: body.data.stable_id });
+          if (text === "B")
+            return new Promise<Response>((resolve) => {
+              releaseB = () => resolve(mockResponse({ queued: true, pending_id: "pending_B" }));
+            });
+          return mockResponse({ queued: true });
+        }
+        return defaultFetchHandler(input as RequestInfo, init as RequestInit);
+      });
+      const background = mode === "background" || mode === "retained";
+      if (mode === "synchronous") {
+        handleSessionEvent({
+          type: "session_status",
+          conversationId: id,
+          status: "idle",
+          responseId: "turn_old",
+        });
+      }
+      // Removal subscribers can run synchronously, before send installs its bubble.
+      let observedRemoval = false;
+      const unsubscribe = useChatStore.subscribe((state, previous) => {
+        if (observedRemoval || state.queuedMessages === previous.queuedMessages) return;
+        observedRemoval = true;
+        state.maybeFlushQueuedHead(id);
+      });
+      onTestFinished(unsubscribe);
+      useChatStore.getState().steerMessage(selected.queueId);
+      await tick();
+      expect(posts).toEqual([{ text: "B", stableId: selected.stableId }]);
+      expect(useChatStore.getState().queuedMessages).toEqual([original[0], original[2]]);
+      if (mode === "foreground") {
+        // Native wrapper responses can finish before the actual selected turn.
+        const sink = pushableStream();
+        const controller = new AbortController();
+        onTestFinished(() => {
+          controller.abort();
+          sink.close();
+        });
+        void pumpStreamEvents(
+          id,
+          sink.stream,
+          controller,
+          useChatStore.setState,
+          useChatStore.getState,
+        );
+        sink.push(
+          sse("response.created", { id: "native_wrapper", status: "in_progress", output: [] }),
+        );
+        sink.push(
+          sse("response.completed", { id: "native_wrapper", status: "completed", output: [] }),
+        );
+        await tick();
+      }
+      if (background) {
+        if (mode === "retained") onTestFinished(conversationRegistry.retain(id, true, false));
+        seedSession("conv_other");
+        await useChatStore.getState().switchTo("conv_other");
+        seedConversationsCache([conv(id, "idle"), conv("conv_other", "idle")]);
+      }
+      const flush = () => {
+        if (mode !== "background") useChatStore.getState().maybeFlushQueuedHead(id);
+        useChatStore.getState().flushBackgroundQueues();
+      };
+      handleSessionEvent(
+        { type: "session_status", conversationId: id, status: "idle", responseId: "turn_old" },
+        id,
+      );
+      flush();
+      await tick();
+      expect(posts.map((post) => post.text)).toEqual(["B"]);
+      expect(conversationRegistry.peek(id)!.getState().pendingUserMessages).toEqual([
+        expect.objectContaining({ stableId: selected.stableId }),
+      ]);
+      releaseB();
+      await tick();
+      flush();
+      await tick();
+      expect(posts.map((post) => post.text)).toEqual(["B"]);
+      expect(useChatStore.getState().queuedMessages).toEqual([original[0], original[2]]);
+      if (mode === "reconnected") {
+        conversationRegistry.peek(id)!.getState().abortController?.abort();
+        await useChatStore.getState().switchTo(id);
+        flush();
+        expect(useChatStore.getState().queuedMessages).toEqual([original[0], original[2]]);
+      }
+      handleSessionEvent(
+        { type: "session_status", conversationId: id, status: "running", responseId: "turn_B" },
+        id,
+      );
+      // An explicit stale terminal after the new turn starts still owns nothing.
+      handleSessionEvent(
+        { type: "session_status", conversationId: id, status: "idle", responseId: "turn_old" },
+        id,
+      );
+      flush();
+      await tick();
+      expect(posts.map((post) => post.text)).toEqual(["B"]);
+      if (mode === "reconnected") {
+        conversationRegistry.peek(id)!.getState().abortController?.abort();
+        await useChatStore.getState().switchTo(id);
+      } else {
+        handleSessionEvent(
+          { type: "session_status", conversationId: id, status: "idle", responseId: "turn_B" },
+          id,
+        );
+      }
+      flush();
+      await tick();
+      expect(posts.map((post) => post.text)).toEqual(["B", "A"]);
+      expect(useChatStore.getState().queuedMessages).toEqual([original[2]]);
+      if (background) expect(useChatStore.getState().pendingUserMessages).toEqual([]);
+    },
+  );
+
+  it.each([
     ...["codex-native", "claude-sdk", "pi-native"].flatMap((harness) =>
       ["foreground", "background", "evicted", "stranded"].map((mode) => [harness, mode]),
     ),

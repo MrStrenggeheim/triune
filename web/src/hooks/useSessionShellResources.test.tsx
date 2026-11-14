@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider, focusManager } from "@tanstack/react-
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { shellState } from "@/lib/shellState";
 import { authenticatedFetch } from "@/lib/identity";
 import {
   useSessionShellResources,
@@ -232,4 +233,45 @@ it("deduplicates explicit call/known activity identities without equating comman
       "chat",
     ),
   ).toBe(false);
+});
+
+it.each([
+  ["completed", "stopped", -1, "Stopped", "stopped"],
+  ["stopped", "failed", -1, "Stopped", "stopped"],
+  ["completed", "failed", 7, "Failed", "failed"],
+  ["completed", "running", undefined, "Ended", "completed"],
+  ["stopped", "running", undefined, "Stopped", "stopped"],
+] as const)(
+  "preserves outcome for reported %s and observed %s without resurrecting Stop",
+  (reported, observed, exit_code, label, status) => {
+    const [merged] = mergeShellResources(
+      [{ ...resource(), status: reported }],
+      [{ ...resource(), status: observed, exit_code }],
+      2,
+      true,
+    );
+    expect(merged).toMatchObject({ status, can_stop: false });
+    expect(shellState({ status: merged.status, exitCode: merged.exit_code }).label).toBe(label);
+    if (exit_code !== undefined) expect(merged.exit_code).toBe(exit_code);
+  },
+);
+
+it("retains confirmed exit evidence across a late live update and isolates a reused terminal slot", () => {
+  const old = {
+    ...resource("launch-old"),
+    terminal_id: "same-slot",
+    status: "exited",
+    exit_code: 0,
+  };
+  const fresh = { ...resource("launch-new"), terminal_id: "same-slot" };
+  const rows = mergeShellResources(
+    [old],
+    [{ ...old, status: "running", exit_code: null }, fresh],
+    3,
+    true,
+  );
+  expect(rows).toMatchObject([
+    { resource_id: "launch-old", status: "exited", exit_code: 0, can_stop: false },
+    { resource_id: "launch-new", status: "running", can_stop: true },
+  ]);
 });

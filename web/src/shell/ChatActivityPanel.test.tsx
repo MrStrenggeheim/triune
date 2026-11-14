@@ -7,11 +7,16 @@ import { useSessionShellResources } from "@/hooks/useSessionShellResources";
 import type * as ShellResourcesModule from "@/hooks/useSessionShellResources";
 import { useChatActivity, type ChatActivityEntry } from "@/hooks/useChatActivity";
 import { useChildSessionTree, type ChildSessionInfo } from "@/hooks/useChildSessions";
-import { toast } from "@/lib/notifications";
+import type * as Notifications from "@/lib/notifications";
+import { toast, getNotificationSnapshot } from "@/lib/notifications";
 import { useNativeChildCapabilities } from "@/hooks/useNativeChildCapabilities";
 import { authenticatedFetch } from "@/lib/identity";
 import { WorkbenchProvider } from "@/workbench/WorkbenchContext";
-import { ChatActivityPanel, type ChatActivityPanelProps } from "./ChatActivityPanel";
+import {
+  ChatActivityPanel,
+  ActivityNavigation,
+  type ChatActivityPanelProps,
+} from "./ChatActivityPanel";
 
 vi.mock("@/hooks/useSessionShellResources", async (original) => ({
   ...(await original<typeof ShellResourcesModule>()),
@@ -19,8 +24,14 @@ vi.mock("@/hooks/useSessionShellResources", async (original) => ({
 }));
 vi.mock("@/hooks/useChatActivity", () => ({ useChatActivity: vi.fn() }));
 vi.mock("@/hooks/useNativeChildCapabilities", () => ({ useNativeChildCapabilities: vi.fn() }));
-vi.mock("@/hooks/useChildSessions", () => ({ useChildSessionTree: vi.fn() }));
-vi.mock("@/lib/notifications", () => ({ toast: { error: vi.fn() } }));
+vi.mock("@/hooks/useChildSessions", () => ({
+  useChildSessionTree: vi.fn(),
+  childSessionsQueryKey: (id: string) => ["conversation", id, "child_sessions"],
+}));
+vi.mock("@/lib/notifications", async (original) => ({
+  ...(await original<typeof Notifications>()),
+  toast: { error: vi.fn() },
+}));
 vi.mock("@/lib/identity", () => ({
   authenticatedFetch: vi.fn(),
   getCurrentUserId: () => "activity-test-viewer",
@@ -209,7 +220,7 @@ it("opens the named child through its row without a redundant Open action or ins
   render(panel({ onOpenAgent: open }));
   fireEvent.click(screen.getByRole("button", { name: "James" }));
   expect(screen.queryByRole("button", { name: "Open James" })).toBeNull();
-  fireEvent.click(screen.getByRole("listitem").firstElementChild!);
+  fireEvent.click(screen.getByRole("listitem").querySelector("[data-resource-row]")!);
   expect(open.mock.calls).toEqual([[agent], [agent]]);
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });
@@ -227,7 +238,9 @@ it("highlights and consumes a link once across hide/restore while allowing a del
   const view = render(panel(props));
   expect(consume).toHaveBeenCalledOnce();
   expect(screen.getByRole("button", { name: "Agents" })).toHaveAttribute("aria-pressed", "true");
-  expect(screen.getByRole("listitem").firstElementChild).toHaveClass("ring-ring");
+  expect(screen.getByRole("listitem").querySelector("[data-resource-row]")).toHaveClass(
+    "ring-ring",
+  );
   view.rerender(panel({ ...props, active: false }));
   view.rerender(panel(props));
   expect(consume).toHaveBeenCalledOnce();
@@ -408,7 +421,18 @@ it("stops only capability-approved running agents and keeps failures visible", a
   view.rerender(panel({ onOpenAgent: open, onStopAgent: stop, canStopAgent: () => true }));
   expect(screen.queryByRole("button", { name: "Actions for Done agent" })).not.toBeInTheDocument();
   stopByMouse("James");
-  await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Native stop unavailable"));
+  await waitFor(() =>
+    expect(getNotificationSnapshot().entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          title: "Could not stop agent",
+          description: "Refresh agent controls and try again.",
+        }),
+      ]),
+    ),
+  );
+  expect(toast.error).not.toHaveBeenCalled();
+  expect(document.body).not.toHaveTextContent("Native stop unavailable");
   expect(stop).toHaveBeenCalledWith(running);
   expect(open).not.toHaveBeenCalled();
 });
@@ -617,4 +641,134 @@ it("deduplicates native executions by a known activity alias and retains an unma
   expect(rows[0]).toHaveAttribute("data-shell-id", "codex_native:one");
   expect(rows[1]).toHaveAttribute("data-shell-id", "codex_native:two");
   expect(rows[2]).toHaveAttribute("data-shell-id", "command_unmapped");
+});
+
+it.each([
+  ["exited", 0, "Completed"],
+  ["exited", 2, "Failed"],
+  ["exited", undefined, "Ended"],
+  ["disconnected", undefined, "Disconnected"],
+] as const)("uses shared shell outcomes for legacy %s / %s", (state, exit_status, label) => {
+  activity([entry({ state, exit_status })]);
+  render(panel());
+  expect(
+    within(screen.getByRole("list", { name: "Shells" })).getByRole("status", { name: label }),
+  ).toBeVisible();
+});
+
+it.each([
+  ["stopped", -1, "Stopped"],
+  ["completed", undefined, "Ended"],
+  ["completed", 0, "Completed"],
+  ["completed", 1, "Failed"],
+  ["declined", undefined, "Declined"],
+  ["killed", undefined, "Ended"],
+] as const)(
+  "uses shared shell outcomes and never offers Stop for %s / %s",
+  (status, exit_code, label) => {
+    render(
+      panel({
+        shellResources: [
+          {
+            source: "codex_native",
+            resource_id: "one",
+            command: "Retained command",
+            status,
+            exit_code,
+            can_stop: true,
+          },
+        ],
+      }),
+    );
+    expect(screen.getByRole("status", { name: label })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Actions for Retained command" })).toBeNull();
+  },
+);
+
+it("deduplicates safe shell notices per source, preserves rows and retires Refresh when hidden", async () => {
+  const refresh = vi.fn();
+  const observation = {
+    data: {
+      data: [
+        {
+          source: "codex_native",
+          resource_id: "one",
+          command: "Retained shell",
+          status: "disconnected",
+        },
+      ],
+      warning: "runner_token_secret",
+    },
+    error: null,
+    refetch: refresh,
+  } as unknown as ReturnType<typeof useSessionShellResources>;
+  vi.mocked(useSessionShellResources).mockReturnValue(observation);
+  const view = render(panel());
+  const notice = () =>
+    getNotificationSnapshot().entries.find(
+      (noticeEntry) => String(noticeEntry.id).startsWith("activity-shells:") && noticeEntry.visible,
+    );
+  expect(notice()).toMatchObject({
+    title: "Shell runtime offline",
+    action: expect.objectContaining({ label: "Refresh" }),
+  });
+  const id = notice()!.id;
+  expect(screen.getByText("Retained shell")).toBeVisible();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(document.body).not.toHaveTextContent("runner_token_secret");
+  view.rerender(panel());
+  expect(
+    getNotificationSnapshot().entries.filter((noticeEntry) => noticeEntry.id === id),
+  ).toHaveLength(1);
+  const action = notice()!.action as Notifications.Action;
+  action.onClick({} as Parameters<typeof action.onClick>[0]);
+  expect(refresh).toHaveBeenCalledOnce();
+  vi.mocked(useSessionShellResources).mockReturnValue({
+    ...observation,
+    error: new Error("runner_token_secret"),
+  } as ReturnType<typeof useSessionShellResources>);
+  view.rerender(panel());
+  expect(notice()).toMatchObject({
+    id,
+    title: "Shell controls unavailable",
+    description: "Could not refresh shell history. Try again.",
+  });
+  expect(JSON.stringify(notice())).not.toContain("runner_token_secret");
+  view.rerender(panel({ active: false }));
+  expect(
+    getNotificationSnapshot().entries.find((noticeEntry) => noticeEntry.id === id),
+  ).toMatchObject({
+    visible: false,
+    action: undefined,
+  });
+});
+
+it("retains genuine navigation hrefs and leaves modified clicks to the browser", () => {
+  const open = vi.fn();
+  const orchestration = vi.fn();
+  render(
+    <MemoryRouter>
+      <ActivityNavigation
+        name="Exact chat"
+        openHref="/c/captured%2Fchat"
+        orchestrationHref="/c/parent?panel=activity&focusAgentId=child"
+        onOpen={open}
+        onOrchestration={orchestration}
+      />
+    </MemoryRouter>,
+  );
+  const chat = screen.getByRole("link", { name: "Open chat beside · Exact chat" });
+  const activityLink = screen.getByRole("link", { name: "Show Exact chat in Orchestration" });
+  expect(chat).toHaveAttribute("href", "/c/captured%2Fchat");
+  expect(activityLink).toHaveAttribute("href", "/c/parent?panel=activity&focusAgentId=child");
+  for (const modifier of ["ctrlKey", "metaKey", "shiftKey", "altKey"]) {
+    fireEvent.click(chat, { [modifier]: true });
+    fireEvent.click(activityLink, { [modifier]: true });
+  }
+  expect(open).not.toHaveBeenCalled();
+  expect(orchestration).not.toHaveBeenCalled();
+  fireEvent.click(chat);
+  fireEvent.click(activityLink);
+  expect(open).toHaveBeenCalledOnce();
+  expect(orchestration).toHaveBeenCalledOnce();
 });

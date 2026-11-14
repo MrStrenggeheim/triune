@@ -1,6 +1,6 @@
 // Modified for Triune.
 
-import { CheckCircle2Icon, CircleIcon, CircleDotIcon } from "lucide-react";
+import { CheckboxVisual } from "@/components/ui/checkbox";
 import { useConversationChatStore } from "@/workbench/ScopedChatStore";
 import { cn } from "@/lib/utils";
 
@@ -15,13 +15,20 @@ interface TodoPanelProps {
 }
 
 function TodoIcon({ status }: { status: TodoItem["status"] }) {
-  if (status === "completed") {
-    return <CheckCircle2Icon className="h-3 w-3 shrink-0 text-green-500" />;
-  }
-  if (status === "in_progress") {
-    return <CircleDotIcon className="h-3 w-3 shrink-0 text-blue-500" />;
-  }
-  return <CircleIcon className="h-3 w-3 shrink-0 text-muted-foreground" />;
+  return (
+    <>
+      <CheckboxVisual
+        checked={status === "in_progress" ? "indeterminate" : status === "completed"}
+      />
+      <span className="sr-only">
+        {status === "in_progress"
+          ? "In progress"
+          : status === "completed"
+            ? "Completed"
+            : "Pending"}
+      </span>
+    </>
+  );
 }
 
 /**
@@ -48,17 +55,14 @@ export function TodoPanel({ frameless = false }: TodoPanelProps) {
           <li
             // eslint-disable-next-line react/no-array-index-key
             key={i}
-            className={cn(
-              "flex items-center gap-2 rounded px-1.5 py-1 text-sm",
-              todo.status === "completed" && "opacity-50",
-            )}
+            className="flex items-center gap-2 rounded px-1.5 py-1 text-sm"
           >
             <TodoIcon status={todo.status} />
             <span className="min-w-0">
               <span
                 className={cn(
                   "block break-words leading-snug",
-                  todo.status === "completed" && "line-through",
+                  todo.status === "completed" && "line-through text-muted-foreground",
                 )}
               >
                 {todo.content}

@@ -398,6 +398,8 @@ export interface TextDone {
   type: "text_done";
   ctx: BlockContext;
   fullText: string;
+  /** Stored block-joined source used for exact search offsets. */
+  searchText?: string;
   hasCodeBlocks: boolean;
   /** True when this persisted assistant text came from an interrupted turn. */
   interrupted?: boolean;

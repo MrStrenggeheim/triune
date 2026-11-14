@@ -269,6 +269,7 @@ export function TurnRail({
     >
       <div
         ref={railRef}
+        data-scrollbar="hidden"
         onMouseEnter={() => {
           interactingRef.current = true;
         }}
@@ -283,7 +284,7 @@ export function TurnRail({
         // extends rightward from a fixed left edge instead of re-centering the
         // column; pl-2 insets the dashes from the screen edge; scrollbar hidden
         // — this is chrome.
-        className="turn-rail-fade pointer-events-auto flex max-h-72 flex-col items-start overflow-x-hidden overflow-y-auto py-6 pl-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        className="turn-rail-fade pointer-events-auto flex max-h-72 flex-col items-start overflow-x-hidden overflow-y-auto py-6 pl-2"
       >
         {turns.map((turn) => {
           const isHovered = turn.itemId === hoveredId;

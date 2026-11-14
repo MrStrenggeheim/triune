@@ -79,24 +79,18 @@ describe("input attribution", () => {
     expect(screen.queryByTestId("system-message")).not.toBeInTheDocument();
   });
 
-  it("formats typed recovery as System and retains complete Copy and source links", async () => {
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    vi.stubGlobal("navigator", { clipboard: { writeText } });
+  it("formats typed recovery as System with source navigation and no message footer", () => {
     renderInput({
       ...input,
       user_authored: true,
       communication: { ...system, source_conversation_id: "source" },
     });
-    expect(screen.getByTestId("system-message")).toHaveTextContent("System: Recovery");
-    fireEvent.click(screen.getByRole("button", { name: /System: Recovery/ }));
+    expect(screen.getByTestId("system-message")).toHaveTextContent(/System.*Recovery/);
+    fireEvent.click(screen.getByRole("button", { name: "Expand activity" }));
     expect(screen.getByText(continuation)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Recovery" })).toHaveAttribute("href", "/c/source");
-    fireEvent.click(screen.getByRole("button", { name: "Copy" }));
-    await waitFor(() => expect(writeText).toHaveBeenCalledWith(continuation));
-    fireEvent.click(screen.getByRole("button", { name: "Copy link" }));
-    await waitFor(() =>
-      expect(writeText).toHaveBeenCalledWith(expect.stringContaining("message=input-id")),
-    );
+    expect(screen.queryByRole("button", { name: "Copy" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Copy link" })).not.toBeInTheDocument();
     expect(screen.queryByTestId("message-author")).not.toBeInTheDocument();
   });
 
@@ -123,11 +117,15 @@ describe("input attribution", () => {
         "data-role",
         kind === "system" ? "system" : "external",
       );
+      if (kind === "system")
+        fireEvent.click(screen.getByRole("button", { name: "Expand activity" }));
       expect(screen.getByText(continuation)).toBeInTheDocument();
       expect(screen.getByTestId("chat-attachment")).toHaveTextContent("notes.txt");
       expect(screen.getByRole("img", { name: "shot.png" })).toBeInTheDocument();
       expect(screen.getByText("@src/main.ts")).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "Copy link" })).toBeEnabled();
+      if (kind === "system")
+        expect(screen.queryByRole("button", { name: "Copy link" })).not.toBeInTheDocument();
+      else expect(screen.getByRole("button", { name: "Copy link" })).toBeEnabled();
     },
   );
 
@@ -137,6 +135,7 @@ describe("input attribution", () => {
       communication: system,
       content: [{ type: "input_text", text: "[Attached: src/main.ts]" }],
     });
+    fireEvent.click(screen.getByRole("button", { name: "Expand activity" }));
     expect(screen.getByText("@src/main.ts")).toBeInTheDocument();
   });
 });
@@ -998,6 +997,6 @@ it("renders a restored pending peer with attribution instead of a human bubble",
   expect(screen.getByText("Agent", { selector: "strong" })).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "Reviewer" })).toHaveAttribute("href", "/c/source");
   expect(screen.queryByText(/Unconfirmed|accepted/)).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Copy link" })).toBeDisabled();
+  expect(screen.queryByRole("button", { name: "Copy link" })).not.toBeInTheDocument();
   expect(screen.queryByText("human-account")).not.toBeInTheDocument();
 });

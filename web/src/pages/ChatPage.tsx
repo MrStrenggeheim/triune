@@ -4159,7 +4159,6 @@ function ComposerImpl(
           }}
           onSteer={(queueId) => steerMessage(queueId)}
           onReorder={reorderQueuedMessage}
-          widthClassName="mx-3 w-auto"
         />
         {/* An empty child label must not create a nameless tray. */}
         <ComposerShelf key={conversationId} present={!!subAgentLabel}>

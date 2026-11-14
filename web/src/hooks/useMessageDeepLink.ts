@@ -1,3 +1,4 @@
+// Modified for Triune; inherited notices remain applicable.
 import { useConversationChatStore, useConversationChatRoot } from "@/workbench/ScopedChatStore";
 // Apply ``?message=<id>`` deep links: after the session loads, page in
 // older history if needed, then scroll + flash the target message.
@@ -40,12 +41,19 @@ interface MessageDeepLinkOptions {
   ensureMessageVisible?: (messageId: string) => boolean;
   ready?: boolean;
   rangeNonce?: number;
+  /** Explicit search consumes the old URL navigation until the URL changes. */
+  superseded?: boolean;
 }
 
 /** Resolve a message after its transcript and virtualizer are ready. */
 export function useMessageDeepLink(
   conversationId: string | null,
-  { ensureMessageVisible, ready = true, rangeNonce = 0 }: MessageDeepLinkOptions = {},
+  {
+    ensureMessageVisible,
+    ready = true,
+    rangeNonce = 0,
+    superseded = false,
+  }: MessageDeepLinkOptions = {},
 ): void {
   const useChatStore = useConversationChatStore();
   const root = useConversationChatRoot();
@@ -68,6 +76,10 @@ export function useMessageDeepLink(
       return;
     }
     const key = `${conversationId}:${messageId}`;
+    if (superseded) {
+      appliedKeyRef.current = key;
+      return;
+    }
     if (appliedKeyRef.current === key) return;
     if (!ready || showTerminal || loadingConversation || loadingMoreHistory) return;
 
@@ -95,6 +107,7 @@ export function useMessageDeepLink(
     flashUserMessage,
     ensureMessageVisible,
     rangeNonce,
+    superseded,
     root,
     useChatStore,
   ]);

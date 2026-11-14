@@ -1,5 +1,6 @@
 // Triune additions: PolyForm Noncommercial 1.0.0; see LICENSING.md.
 // Required Notice: Copyright 2026 MrStrenggeheim. Triune (https://github.com/MrStrenggeheim/triune).
+import { shellState } from "@/lib/shellState";
 import { useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { BackgroundTaskInfo } from "@/lib/types";
@@ -244,14 +245,23 @@ export function mergeShellResources(
     if (key && used.has(key)) continue;
     if (key) used.add(key);
     const current = key ? liveById.get(key) : undefined;
-    const ended = ["completed", "exited", "stopped", "killed", "declined", "failed"].includes(
-      task.status ?? "",
-    );
+    const reportedEnded = shellState({ status: task.status }).ended;
+    const observedEnded = shellState({ status: current?.status }).ended;
+    const status =
+      task.status === "stopped" || (reportedEnded && !observedEnded)
+        ? task.status
+        : (current?.status ?? task.status);
+    const ended = shellState({ status }).ended;
     rows.push({
       ...task,
       ...current,
       command: current?.command ?? task.command,
-      status: ended ? task.status : (current?.status ?? task.status),
+      status,
+      exit_code: observedEnded
+        ? (current?.exit_code ?? task.exit_code)
+        : reportedEnded
+          ? task.exit_code
+          : (current?.exit_code ?? task.exit_code),
       can_stop: !ended && controlsCurrent && current?.can_stop === true,
     });
     if (rows.length >= limit) break;

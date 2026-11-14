@@ -30,6 +30,7 @@ import type { RenderItem } from "@/lib/renderItems";
 import type { SessionStatus } from "@/lib/types";
 import type { ActiveResponse } from "@/store/types";
 import { cn } from "@/lib/utils";
+import { ChatSearchRevealContext } from "@/lib/chatSearchHighlights";
 import { FilePathAwareMessageResponse } from "./ChatMarkdown";
 import { ElicitationCard } from "./ApprovalCard";
 import { ReasoningView } from "./ReasoningView";
@@ -232,6 +233,7 @@ export function BlockRenderer({
   foldNarration = false,
   onRetryError,
 }: BlockRendererProps) {
+  const searchReveal = useContext(ChatSearchRevealContext);
   const { isOwnTurnLive, possiblyLive, isTurnLive } = turnLiveness({
     sessionStatus,
     turnLifecycle,
@@ -337,6 +339,14 @@ export function BlockRenderer({
           workedForS={workRunCount === 1 ? workedForS : undefined}
           animateCollapse={animateCollapse}
           defaultOpen={defaultExpanded}
+          searchOpen={segment.items.some(
+            (item) => !!item.itemId && searchReveal?.revealedItems.has(item.itemId),
+          )}
+          searchRequest={
+            segment.items.some((item) => item.itemId === searchReveal?.revealRequest?.itemId)
+              ? searchReveal?.revealRequest?.revision
+              : undefined
+          }
         >
           {renderSequence(segment.items, {
             liveEdge: false,
@@ -596,15 +606,25 @@ function TurnWorkedFold({
   workedForS,
   animateCollapse,
   defaultOpen,
+  searchOpen = false,
+  searchRequest,
   children,
 }: {
   workedForS?: number;
   animateCollapse: boolean;
   defaultOpen: boolean;
+  searchOpen?: boolean;
+  searchRequest?: number;
   children: ReactNode;
 }) {
   const label = workedForS !== undefined ? `Worked for ${formatWorkedFor(workedForS)}` : "Worked";
-  const [open, setOpen] = useState(animateCollapse || defaultOpen);
+  const [open, setOpen] = useState(animateCollapse || defaultOpen || searchOpen);
+  useLayoutEffect(() => {
+    if (searchOpen) setOpen(true);
+  }, [searchOpen]);
+  useLayoutEffect(() => {
+    if (searchRequest) setOpen(true);
+  }, [searchRequest]);
   const userChangedOpenRef = useRef(false);
   useLayoutEffect(() => {
     // History hydration can identify an interjection after this fold mounted.
@@ -612,10 +632,10 @@ function TurnWorkedFold({
     if (defaultOpen && !userChangedOpenRef.current) setOpen(true);
   }, [defaultOpen]);
   useEffect(() => {
-    if (!animateCollapse || defaultOpen) return;
+    if (!animateCollapse || defaultOpen || searchOpen) return;
     const frame = requestAnimationFrame(() => setOpen(false));
     return () => cancelAnimationFrame(frame);
-  }, [animateCollapse, defaultOpen]);
+  }, [animateCollapse, defaultOpen, searchOpen]);
 
   // A USER-initiated expand (never the animateCollapse mount-close)
   // opens INSTANTLY — no height animation — and snaps the fold row to
@@ -690,7 +710,10 @@ function TurnWorkedFold({
           content so the spacing and guide shrink with its existing
           height animation. */}
       <CollapsibleContent
-        className={cn("turn-fold-content", userOpened && "turn-fold-content-instant")}
+        className={cn(
+          "turn-fold-content",
+          (userOpened || searchOpen) && "turn-fold-content-instant",
+        )}
       >
         <div className="relative flex flex-col gap-1 pt-2 pl-4">
           <span
@@ -827,18 +850,12 @@ function renderItem(
   switch (item.kind) {
     case "text":
       return (
-        <div
+        <SearchableAssistantText
           key={key}
-          data-testid="assistant-text-section"
-          className={cn("min-w-0", followsText && "mt-2")}
+          item={item}
+          streaming={isTextStreaming}
+          followsText={followsText}
         >
-          <FilePathAwareMessageResponse
-            sourceItemId={item.itemId}
-            className="chat-markdown"
-            mode={isTextStreaming ? "streaming" : "static"}
-          >
-            {item.text}
-          </FilePathAwareMessageResponse>
           {item.attachments?.map((attachment, attachmentIndex) => (
             <AssistantAttachment
               key={attachment.file_id ?? attachmentIndex}
@@ -855,7 +872,7 @@ function renderItem(
               Live output interrupted. Full response will appear when complete.
             </div>
           )}
-        </div>
+        </SearchableAssistantText>
       );
     case "reasoning":
       return (
@@ -971,6 +988,43 @@ function renderItem(
     case "subagent_activity":
       return <SubagentActivityMessage key={key} data={item.data} />;
   }
+}
+
+function SearchableAssistantText({
+  item,
+  streaming,
+  followsText,
+  children,
+}: {
+  item: Extract<RenderItem, { kind: "text" }>;
+  streaming: boolean;
+  followsText: boolean;
+  children: ReactNode;
+}) {
+  const reveal = useContext(ChatSearchRevealContext);
+  const original = item.itemId ? reveal?.originalSources.get(item.itemId) : undefined;
+  return (
+    <div
+      data-testid="assistant-text-section"
+      data-search-item-id={item.itemId}
+      className={cn("min-w-0", followsText && "mt-2")}
+    >
+      {original !== undefined ? (
+        <pre data-chat-plain-text className="whitespace-pre-wrap break-words text-chat">
+          {original}
+        </pre>
+      ) : (
+        <FilePathAwareMessageResponse
+          sourceItemId={item.itemId}
+          className="chat-markdown"
+          mode={streaming ? "streaming" : "static"}
+        >
+          {item.text}
+        </FilePathAwareMessageResponse>
+      )}
+      {children}
+    </div>
+  );
 }
 
 /**

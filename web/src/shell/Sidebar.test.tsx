@@ -1,3 +1,4 @@
+// Modified for Triune; inherited notices remain applicable.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/hooks/useScopeCache", () => import("@/test/mockScopeCache"));
@@ -586,39 +587,19 @@ describe("Sidebar session list", () => {
     expect(screen.getByText("filed-session")).toBe(filed);
   });
 
-  it("reveals a thin, theme-aware scrollbar only while scrolling", () => {
-    vi.useFakeTimers();
-    try {
-      mockConversations(THREE_TYPE_CONVERSATIONS);
-      renderSidebar();
-
-      const scroller = screen.getByLabelText("Conversations").querySelector("nav")!;
-      expect(scroller).toHaveClass("overflow-y-auto", "px-2", "[scrollbar-width:thin]");
-      expect(scroller.className).toContain("[&::-webkit-scrollbar]:w-2");
-      expect(scroller).not.toHaveClass("[scrollbar-width:none]");
-      expect(scroller.className).not.toContain("[&::-webkit-scrollbar]:hidden");
-
-      expect(scroller).toHaveClass("[scrollbar-color:transparent_transparent]");
-      expect(scroller.className).toContain("[&::-webkit-scrollbar-thumb]:bg-transparent");
-      expect(scroller).not.toHaveClass("[scrollbar-color:var(--muted-foreground)_transparent]");
-      expect(scroller.className).not.toContain("[&::-webkit-scrollbar-thumb]:bg-muted-foreground");
-
-      // Scrolling reveals the thumb.
-      act(() => {
-        fireEvent.scroll(scroller, { target: { scrollTop: 40 } });
-      });
-      expect(scroller).toHaveClass("[scrollbar-color:var(--muted-foreground)_transparent]");
-      expect(scroller.className).toContain("[&::-webkit-scrollbar-thumb]:bg-muted-foreground");
-
-      // It hides again once scrolling settles.
-      act(() => {
-        vi.advanceTimersByTime(1000);
-      });
-      expect(scroller).toHaveClass("[scrollbar-color:transparent_transparent]");
-      expect(scroller.className).toContain("[&::-webkit-scrollbar-thumb]:bg-transparent");
-    } finally {
-      vi.useRealTimers();
-    }
+  it("hides native and overlay scrollbars while retaining scrolling and the divider", () => {
+    mockConversations(THREE_TYPE_CONVERSATIONS);
+    renderSidebar();
+    const scroller = screen.getByLabelText("Conversations").querySelector("nav")!;
+    const divider = screen.getByTestId("sidebar-scroll-divider");
+    expect(scroller).toHaveClass("overflow-y-auto", "px-2", "max-md:pb-16");
+    expect(scroller).toHaveAttribute("data-scrollbar", "hidden");
+    expect(divider).toHaveClass("opacity-0");
+    fireEvent.scroll(scroller, { target: { scrollTop: 40 } });
+    expect(divider).toHaveClass("opacity-100");
+    expect(scroller).toHaveAttribute("data-scrollbar", "hidden");
+    fireEvent.scroll(scroller, { target: { scrollTop: 0 } });
+    expect(divider).toHaveClass("opacity-0");
   });
 
   it("shows a draft icon only beside sessions with unfinished composer content", () => {

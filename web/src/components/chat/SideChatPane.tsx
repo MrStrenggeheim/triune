@@ -990,7 +990,6 @@ function SideChatComposer({
             }}
             onSteer={steerMessage}
             onReorder={reorderQueuedMessage}
-            widthClassName="mx-3 w-auto"
           />
         </TooltipProvider>
       )}

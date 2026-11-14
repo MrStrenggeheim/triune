@@ -131,6 +131,7 @@ describe("TurnRail", () => {
       "overflow-x-hidden",
       "overflow-y-auto",
     );
+    expect(container.querySelector(".turn-rail-fade")).toHaveAttribute("data-scrollbar", "hidden");
     fireEvent.focus(screen.getAllByRole("button")[0]!);
     expect(screen.getByText(turns[0]!.userText)).toHaveClass("break-words");
   });

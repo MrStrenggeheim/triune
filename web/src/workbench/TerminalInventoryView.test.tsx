@@ -65,9 +65,9 @@ it("lists and reopens running, ended and unknown manual shells without creating 
   );
   fireEvent.click(await screen.findByRole("button", { name: "ended" }));
   expect(open).toHaveBeenCalledWith("ended");
-  expect(screen.getByText("Exited (code 9)")).toBeVisible();
+  expect(screen.getByText("Failed")).toBeVisible();
   expect(screen.getByText("Stopped")).toBeVisible();
-  expect(screen.getByText("Process state unknown")).toBeVisible();
+  expect(screen.getByText("Unknown")).toBeVisible();
   expect(create).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("button", { name: "New shell" }));
   expect(create).toHaveBeenCalledOnce();
@@ -89,7 +89,7 @@ it("shows offline retained output and leaves uncertain processes unconfirmed", a
     { wrapper: setup() },
   );
   expect(await screen.findByText("Host offline. Showing retained shell records.")).toBeVisible();
-  expect(screen.getByText("Offline · process state unconfirmed")).toBeVisible();
+  expect(screen.getByText("Disconnected")).toBeVisible();
   expect(screen.getByRole("button", { name: "New shell" })).toBeDisabled();
   fireEvent.click(screen.getByRole("button", { name: "Expand activity" }));
   expect(screen.getByLabelText("Retained shell output")).toHaveTextContent("retained offline");
@@ -177,7 +177,12 @@ it.each(["http", "network"])("retains rows and displays %s refresh failures", as
   await act(async () => {
     fireEvent.click(screen.getByRole("button", { name: "Refresh shells" }));
   });
-  expect(await screen.findByRole("alert")).toHaveTextContent("network unavailable");
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    failure === "http"
+      ? "The host is unavailable. Captured output can still be viewed."
+      : "Could not refresh shell history. Try again.",
+  );
+  expect(document.body).not.toHaveTextContent("network unavailable");
   expect(screen.getByRole("button", { name: "retained" })).toBeVisible();
   expect(screen.getByRole("button", { name: "New shell" })).toBeDisabled();
 });

@@ -1,3 +1,4 @@
+// Modified for Triune; inherited notices remain applicable.
 import { render, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it } from "vitest";
@@ -35,7 +36,7 @@ describe("exact chat occurrence mapping", () => {
     ]);
     const { container } = render(
       <div data-message-id="response">
-        <div data-testid="assistant-text-section">
+        <div data-testid="assistant-text-section" data-search-item-id="one">
           <FilePathAwareMessageResponse mode="static">{source}</FilePathAwareMessageResponse>
         </div>
         <button type="button">needle✓</button>
@@ -129,9 +130,46 @@ it("resolves an assistant item ID to its exact response section", () => {
     },
   ]);
   const root = body(
-    '<div data-message-id="response"><div data-testid="assistant-text-section"><p class="message-markdown">echo</p></div><div data-testid="assistant-text-section"><p class="message-markdown">echo</p></div></div>',
+    '<div data-message-id="response"><div data-testid="assistant-text-section" data-search-item-id="one"><p class="message-markdown">echo</p></div><div data-testid="assistant-text-section" data-search-item-id="two"><p class="message-markdown">echo</p></div></div>',
   );
   expect(searchSourceElement(root, sources[1])).toBe(root.querySelectorAll("p")[1]);
   root.querySelector('[data-testid="assistant-text-section"]')!.remove();
-  expect(searchSourceElement(root, sources[1])).toBeNull();
+  expect(searchSourceElement(root, sources[1])).toBe(root.querySelector("p"));
+});
+
+it("keeps the backend's raw space-joined source independently of rendered concatenation", () => {
+  const items = [
+    {
+      kind: "text" as const,
+      itemId: "raw",
+      text: "firstsecond",
+      searchText: "first second",
+      final: true,
+    },
+  ];
+  expect(
+    chatSearchSources([
+      {
+        kind: "assistant",
+        responseId: "row",
+        stableId: "row",
+        lifecycle: "completed",
+        error: null,
+        items,
+      },
+    ])[0].text,
+  ).toBe("first second");
+  expect(
+    chatSearchSources([
+      {
+        kind: "user",
+        itemId: "user",
+        content: [
+          { type: "input_text", text: "first" },
+          { type: "input_text", text: "" },
+          { type: "input_text", text: "second" },
+        ],
+      },
+    ])[0].text,
+  ).toBe("first second");
 });

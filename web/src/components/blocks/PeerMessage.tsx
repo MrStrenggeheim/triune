@@ -1,21 +1,15 @@
 // Modified for Triune.
-import { useContext, useEffect, useId, useMemo, useRef, useState } from "react";
-import {
-  ChevronDownIcon,
-  ChevronUpIcon,
-  EllipsisIcon,
-  MessageCircleIcon,
-  SendIcon,
-} from "lucide-react";
+import { useContext, useMemo } from "react";
+import { MessageCircleIcon, SendIcon } from "lucide-react";
 import { QueryClientContext, useQuery } from "@tanstack/react-query";
-import { Button } from "@/components/ui/button";
+import { ActivityRow } from "@/components/ActivityRow";
+import { ActivityNavigation } from "@/shell/ChatActivityPanel";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { MessageFooter } from "@/components/chat/MessageFooter";
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import { FilePathAwareMessageResponse } from "@/components/blocks/ChatMarkdown";
 import { ConversationScopeContext } from "@/components/chat/conversationScope";
 import { useConversationChatStore, useConversationChatVisible } from "@/workbench/ScopedChatStore";
@@ -105,8 +99,6 @@ function PeerMessageContent({
   communication,
   content,
   itemId,
-  createdAtS,
-  pending,
   source,
   destination,
   sourceTitle,
@@ -122,7 +114,6 @@ function PeerMessageContent({
   const scopedConversationId = useContext(ConversationScopeContext);
   const conversationId = useChatStore((state) => scopedConversationId ?? state.conversationId);
   const flashing = useChatStore((state) => state.flashItemId === itemId);
-  const visible = useConversationChatVisible();
   const text = useMemo(
     () =>
       content
@@ -131,7 +122,7 @@ function PeerMessageContent({
         .join("\n"),
     [content],
   );
-  // Parse only a bounded excerpt while collapsed; Copy always uses the full source.
+  // Parse only a bounded excerpt while collapsed.
   const preview = useMemo(
     () =>
       text
@@ -155,128 +146,125 @@ function PeerMessageContent({
     conversationId === sourceId
       ? communication.destination_conversation_id
       : sourceId || communication.destination_conversation_id;
-  const [expanded, setExpanded] = useState(false);
-  const [clipped, setClipped] = useState(false);
-  const excerptRef = useRef<HTMLDivElement>(null);
-  const excerptId = useId();
-
-  useEffect(() => {
-    const element = excerptRef.current;
-    if (!element || expanded || !visible) return;
-    const measure = () =>
-      setClipped(preview !== text || element.scrollHeight > element.clientHeight + 1);
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [text, preview, expanded, visible]);
 
   return (
     <article
-      className="group min-w-0 border-l-2 border-primary/60 pl-2.5 text-sm sm:pl-3"
+      className="group min-w-0 text-sm"
       data-testid="peer-message"
       data-direction={outgoing ? "sent" : "received"}
       data-message-id={itemId}
     >
-      <header className="flex min-h-7 min-w-0 items-center gap-1.5">
-        {outgoing ? (
-          <SendIcon className="size-4 shrink-0 text-primary" aria-hidden />
-        ) : (
-          <MessageCircleIcon className="size-4 shrink-0 text-primary" aria-hidden />
-        )}
-        <strong className="max-w-[40%] truncate font-semibold">{name}</strong>{" "}
-        {relatedId && (
-          <>
-            <span className="shrink-0 text-muted-foreground">{outgoing ? "sent to" : "from"}</span>{" "}
+      <ContextMenu>
+        <ContextMenuTrigger asChild>
+          <div>
+            <ActivityRow
+              presentation="message"
+              icon={
+                outgoing ? (
+                  <SendIcon aria-hidden="true" />
+                ) : (
+                  <MessageCircleIcon aria-hidden="true" />
+                )
+              }
+              title={
+                <>
+                  <strong className="max-w-[40%] truncate font-semibold">{name}</strong>{" "}
+                  {relatedId && (
+                    <>
+                      <span className="shrink-0 text-muted-foreground">
+                        {outgoing ? "sent to" : "from"}
+                      </span>{" "}
+                      <Link
+                        to={`/c/${encodeURIComponent(relatedId)}`}
+                        className="min-w-0 truncate rounded-sm text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        onClick={(event) => {
+                          if (
+                            event.button === 0 &&
+                            workbench &&
+                            !event.metaKey &&
+                            !event.ctrlKey &&
+                            !event.shiftKey &&
+                            !event.altKey
+                          ) {
+                            event.preventDefault();
+                            workbench.openConversation(relatedId, { beside: true });
+                          }
+                        }}
+                      >
+                        {relatedTitle}
+                      </Link>
+                    </>
+                  )}
+                </>
+              }
+              actions={
+                <ActivityNavigation
+                  name={relatedTitle}
+                  openHref={relatedId ? `/c/${encodeURIComponent(relatedId)}` : undefined}
+                  onOpen={
+                    relatedId && workbench
+                      ? () => workbench.openConversation(relatedId, { beside: true })
+                      : undefined
+                  }
+                  orchestrationHref={
+                    relatedId ? `/c/${encodeURIComponent(relatedId)}?panel=activity` : undefined
+                  }
+                  onOrchestration={
+                    relatedId && workbench
+                      ? () =>
+                          workbench.openView(
+                            {
+                              kind: "activity",
+                              source: { kind: "chat", conversationId: relatedId },
+                              title: "Orchestration",
+                            },
+                            { beside: true },
+                          )
+                      : undefined
+                  }
+                />
+              }
+              summary={
+                <ConversationScopeContext.Provider value={messageConversationId ?? null}>
+                  <FilePathAwareMessageResponse
+                    sourceItemId={itemId}
+                    breaks
+                    mode="static"
+                    className={cn(
+                      "text-sm leading-5 [&>*]:my-0 [&_p]:my-0 [&_p]:leading-5",
+                      flashing && "animate-message-highlight",
+                    )}
+                  >
+                    {preview}
+                  </FilePathAwareMessageResponse>
+                </ConversationScopeContext.Provider>
+              }
+            >
+              <ConversationScopeContext.Provider value={messageConversationId ?? null}>
+                <FilePathAwareMessageResponse
+                  sourceItemId={itemId}
+                  breaks
+                  mode="static"
+                  className="text-sm leading-5 [&>*]:my-0 [&_p]:my-0 [&_p]:leading-5"
+                >
+                  {text}
+                </FilePathAwareMessageResponse>
+              </ConversationScopeContext.Provider>
+            </ActivityRow>
+          </div>
+        </ContextMenuTrigger>
+        <ContextMenuContent alignOffset={0}>
+          <ContextMenuItem asChild>
             <Link
-              to={`/c/${encodeURIComponent(relatedId)}`}
-              className="min-w-0 truncate rounded-sm text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              onClick={(event) => {
-                if (
-                  workbench &&
-                  !event.metaKey &&
-                  !event.ctrlKey &&
-                  !event.shiftKey &&
-                  !event.altKey
-                ) {
-                  event.preventDefault();
-                  workbench.openConversation(relatedId, { beside: true });
-                }
-              }}
+              to={`/c/${encodeURIComponent(menuConversationId)}`}
+              target="_blank"
+              rel="noopener noreferrer"
             >
-              {relatedTitle}
+              Open {menuConversationId === sourceId ? "source" : "receiving"} chat in new tab
             </Link>
-          </>
-        )}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              aria-label="Message actions"
-              className="ml-auto shrink-0 text-muted-foreground"
-            >
-              <EllipsisIcon className="size-4" aria-hidden />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem asChild>
-              <Link
-                to={`/c/${encodeURIComponent(menuConversationId)}`}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                Open {menuConversationId === sourceId ? "source" : "receiving"} chat in new tab
-              </Link>
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </header>
-      <div className="pt-0.5 sm:pl-[22px]">
-        <div
-          ref={excerptRef}
-          id={excerptId}
-          className={cn(
-            "whitespace-pre-wrap break-words leading-5 [overflow-wrap:anywhere]",
-            !expanded && "line-clamp-3 max-h-[60px]",
-            flashing && "animate-message-highlight",
-          )}
-        >
-          <ConversationScopeContext.Provider value={messageConversationId ?? null}>
-            <FilePathAwareMessageResponse
-              sourceItemId={itemId}
-              breaks
-              mode="static"
-              className="text-sm leading-5 [&>*]:my-0 [&_p]:my-0 [&_p]:leading-5"
-            >
-              {expanded ? text : preview}
-            </FilePathAwareMessageResponse>
-          </ConversationScopeContext.Provider>
-        </div>
-        {(clipped || expanded) && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-auto gap-1 px-0 py-0.5 text-xs text-muted-foreground"
-            aria-expanded={expanded}
-            aria-controls={excerptId}
-            onClick={() => setExpanded((value) => !value)}
-          >
-            Show {expanded ? "less" : "full"}
-            {expanded ? (
-              <ChevronUpIcon className="size-3.5" aria-hidden />
-            ) : (
-              <ChevronDownIcon className="size-3.5" aria-hidden />
-            )}
-          </Button>
-        )}
-        <MessageFooter
-          text={text}
-          messageId={pending ? null : itemId}
-          conversationId={messageConversationId}
-          createdAtS={createdAtS ?? communication.sent_at ?? undefined}
-        />
-      </div>
+          </ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
     </article>
   );
 }

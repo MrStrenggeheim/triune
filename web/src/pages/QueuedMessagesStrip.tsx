@@ -165,9 +165,12 @@ function QueuedRow({
           aria-hidden="true"
         />
       )}
-      <div className="flex min-w-0 flex-1 items-center gap-2 max-md:flex-col max-md:items-start max-md:gap-0.5">
+      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 max-md:flex-col max-md:items-start max-md:gap-0.5">
         {hasText && (
-          <span className="min-w-0 max-w-full truncate" title={message.text}>
+          <span
+            className="min-w-0 max-w-full whitespace-pre-wrap [overflow-wrap:anywhere]"
+            title={message.text}
+          >
             {message.text}
           </span>
         )}
@@ -306,15 +309,13 @@ export function QueuedMessagesStrip({
     />
   ));
 
-  // Desktop shares the card's content inset (COMPOSER_CONTENT_INSET_CLASS);
-  // the literal md:px-3 repeats it because the token has no responsive
-  // variant. Narrow phones keep the compact px-2.
+  // Match the composer's outer edges and its responsive content padding.
   return (
     <ComposerShelf key={conversationId} present={messages.length > 0}>
       <div
         data-testid="composer-queued-strip"
         className={cn(
-          "composer-queued-surface mx-auto flex w-full flex-col rounded-t-2xl px-2 md:px-3",
+          "composer-queued-surface mx-auto flex min-w-0 w-full flex-col rounded-t-2xl px-2 md:px-3",
           widthClassName,
         )}
       >

@@ -1712,6 +1712,64 @@ const sendChains = new Map<string | symbol, SendChain>();
  */
 const inFlightSends = new Map<string, boolean>();
 
+// Selected sends own admission independently of the older turn and POST chain.
+const selectedQueueSends = new Map<
+  string,
+  Map<
+    string,
+    { message: QueuedMessage; previousResponseId: string | null; responseId: string | null }
+  >
+>();
+
+function releaseSelectedQueueSend(conversationId: string | null, stableId: string): void {
+  if (conversationId === null) return;
+  const sends = selectedQueueSends.get(conversationId);
+  sends?.delete(stableId);
+  if (sends?.size === 0) selectedQueueSends.delete(conversationId);
+}
+
+function selectedQueueTurn(conversationId: string, responseId: string, settled = false): void {
+  const sends = selectedQueueSends.get(conversationId);
+  if (!sends || !responseId) return;
+  for (const [stableId, send] of sends) {
+    if (responseId === send.previousResponseId && send.responseId !== responseId) continue;
+    if (!settled && send.responseId === null) send.responseId = responseId;
+    if (settled && send.responseId === responseId) {
+      releaseSelectedQueueSend(conversationId, stableId);
+    }
+  }
+}
+
+function acknowledgeSelectedQueueSend(
+  conversationId: string | null,
+  event: SessionInputConsumedEvent,
+): void {
+  if (conversationId === null || event.itemType !== "message") return;
+  const sends = selectedQueueSends.get(conversationId);
+  const state = setterForState(conversationId);
+  const active = state?.activeResponse;
+  if (!sends || !state || state.sessionStatus !== "running" || active?.state !== "streaming")
+    return;
+  for (const [stableId, send] of sends) {
+    const pending = state.pendingUserMessages.find((message) => message.stableId === stableId);
+    const matches =
+      event.itemId === stableId ||
+      (!!event.clearedPendingId &&
+        pending !== undefined &&
+        (pending.pendingId === event.clearedPendingId ||
+          pending.tempId === event.clearedPendingId));
+    if (!matches || (send.responseId !== null && send.responseId !== active.responseId)) continue;
+    // Native wrapper responses do not establish the vendor turn's identity.
+    if (
+      state.isNativeTerminalSession &&
+      active.responseId !== send.previousResponseId &&
+      active.responseId !== send.responseId
+    )
+      continue;
+    send.responseId = active.responseId;
+  }
+}
+
 // Sends with no conversation id yet (brand-new chat) serialize together: the
 // session is created inside the chained work, so they can't key by id. A
 // non-string key can never collide with a conversation id.
@@ -1985,6 +2043,7 @@ export function initChatStore(client: QueryClient): void {
   // the next one (production calls this once at boot; tests call it per case).
   // The send latch is per-conversation state now, cleared with the registry above.
   sendChains.clear();
+  selectedQueueSends.clear();
   queryClient = client;
 }
 
@@ -2309,9 +2368,19 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
     const targetState = setterForState(target.conversationId);
     if (targetState !== null && (holdsInitialDraft(targetState) || targetState.workspaceSwitching))
       return;
-    // Remove BEFORE the POST so a concurrent flush can't also send it.
+    const options = queuedSendOptions(target);
+    if (target.command !== "compact") {
+      let sends = selectedQueueSends.get(target.conversationId);
+      if (!sends) selectedQueueSends.set(target.conversationId, (sends = new Map()));
+      sends.set(options.stableId, {
+        message: target,
+        previousResponseId: targetState?.activeResponse?.responseId ?? null,
+        responseId: null,
+      });
+    }
+    // Reserve before removal: synchronous subscribers may attempt another flush.
     setActive({ queuedMessages: s.queuedMessages.filter((m) => m.queueId !== queueId) });
-    void s.send(target.text, agentId, target.files, queuedSendOptions(target));
+    void s.send(target.text, agentId, target.files, options);
   },
 
   steerAllQueuedMessages: (conversationId) => {
@@ -2391,6 +2460,7 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
     if (
       s.conversationId === null ||
       s.boundAgentId === null ||
+      selectedQueueSends.has(s.conversationId) ||
       s.sessionStatus === "running" ||
       s.workspaceSwitching ||
       holdsInitialDraft(s)
@@ -2471,6 +2541,7 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
     // next idle (via WS/poll) triggers this again for the next message (FIFO).
     const now = Date.now();
     for (const conversationId of candidateIds) {
+      if (selectedQueueSends.has(conversationId)) continue;
       if (statusById.get(conversationId) !== "idle") continue;
       // The sidebar can still say idle while a compact control starts.
       const local = setterForState(conversationId);
@@ -2932,6 +3003,7 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
       // bubble. Settle local state from the POST response instead of
       // depending on the live stream being connected.
       if (postResult.denied) {
+        releaseSelectedQueueSend(sessionId, stableId);
         // Target the session this send posted to: the user may have navigated
         // away while the POST was open, and settling the VISIBLE conversation
         // would clobber an unrelated chat's composer state.
@@ -3016,6 +3088,7 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
       }
       const callerHandlesError = heldForHost || opts?.onError !== undefined;
       if (!heldForHost) opts?.onError?.(message);
+      releaseSelectedQueueSend(holdTarget, stableId);
       // Hand the failed message back to the composer so the user can retry it —
       // a failed send has no server-side record, so nothing else would restore
       // it. Keyed by the session it was meant for, so it lands in the right
@@ -3993,11 +4066,14 @@ function holdSendForHost(
   notice: string,
   message: Omit<QueuedMessage, "queueId" | "conversationId">,
 ): void {
+  const selected = selectedQueueSends.get(conversationId)?.get(message.stableId ?? "")?.message;
   const held: QueuedMessage = {
     ...queuedWorkspaceContext(conversationId),
+    ...selected,
     ...message,
-    queueId: `q_${randomUUID()}`,
+    queueId: selected?.queueId ?? `q_${randomUUID()}`,
     conversationId,
+    requiresRetry: false,
     waitingForHost: true,
   };
   setActive((s) => {
@@ -4019,7 +4095,7 @@ function holdSendForHost(
 function queuedSendOptions(
   message: QueuedMessage,
   batchOrder?: ReadonlyMap<string, number>,
-): SendOptions {
+): SendOptions & { stableId: string } {
   const stableId = message.stableId ?? randomUUID().replace(/-/g, "");
   return {
     command: message.command,
@@ -4048,6 +4124,7 @@ function queuedSendOptions(
       setterFor(message.conversationId)((s) => ({
         blocks: [...s.blocks, makeClientErrorBlock(error, "")],
       }));
+      releaseSelectedQueueSend(message.conversationId, stableId);
     },
   };
 }
@@ -5486,6 +5563,20 @@ function reconnectStatusPatch(
   s: ChatState,
   launchBeforeFetch: ConversationState["mcpStartupLaunch"] | undefined,
 ): Partial<ChatState> {
+  if (s.conversationId !== null) {
+    if (session.status === "running" && session.activeResponseId) {
+      selectedQueueTurn(s.conversationId, session.activeResponseId);
+    } else if (
+      session.status === "idle" ||
+      session.status === "waiting" ||
+      session.status === "failed"
+    ) {
+      // A fresh snapshot can settle a selected turn whose terminal edge was missed.
+      for (const [stableId, send] of selectedQueueSends.get(s.conversationId) ?? []) {
+        if (send.responseId !== null) releaseSelectedQueueSend(s.conversationId, stableId);
+      }
+    }
+  }
   const patch: Partial<ChatState> = {
     sessionStatus: session.status,
     startupPending: sessionStartupPending(session),
@@ -7384,6 +7475,7 @@ export async function pumpStreamEvents(
       if (isConversationDisposed(id)) return "switched";
 
       if (block.type === "response_start") {
+        if (!get().isNativeTerminalSession) selectedQueueTurn(id, block.responseId);
         // New response: force-flush whatever is buffered, then land the
         // marker + lifecycle in one commit. Reset the first-paint latch.
         paintedFirstContent = false;
@@ -7560,6 +7652,7 @@ export async function pumpStreamEvents(
         if (active !== null && active.responseId !== endedId) {
           continue;
         }
+        if (!get().isNativeTerminalSession) selectedQueueTurn(id, endedId, true);
         // A terminal for an already-settled (or stopped) turn must not take a
         // spinner published after it (an idle `/compact` is stamped with it).
         const settlesTurn = endedId !== "" && (active === null || active.state === "streaming");
@@ -8694,6 +8787,15 @@ export function handleSessionEvent(event: StreamEvent, streamConversationId?: st
       // further down are deliberately NOT (they are keyed by explicit id, so a
       // sub-agent's status still refreshes its parent's rail).
       applyToNamedConversation(event.conversationId, (s) => {
+        const responseId = event.responseId ?? s.activeResponse?.responseId;
+        if (event.responseId && event.status === "running") {
+          selectedQueueTurn(event.conversationId, event.responseId);
+        } else if (
+          responseId &&
+          (event.status === "idle" || event.status === "waiting" || event.status === "failed")
+        ) {
+          selectedQueueTurn(event.conversationId, responseId, true);
+        }
         // `sessionStatus` tracks the server's session-level status 1:1 — a
         // server `idle` means the session is idle, full stop, and the
         // "Working…" indicator (which reads only `sessionStatus`) turns off.
@@ -8953,6 +9055,7 @@ export function handleSessionEvent(event: StreamEvent, streamConversationId?: st
       return;
     }
     case "session_input_consumed":
+      acknowledgeSelectedQueueSend(sourceConversationId, event);
       if (readMessageCommunication(event.data.communication)) {
         const communication = readMessageCommunication(event.data.communication)!;
         const raw = event.data.content;

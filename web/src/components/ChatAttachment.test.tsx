@@ -126,6 +126,9 @@ it.each([
     const zoom = screen.getByRole("button", { name: "Zoom image: chart ü.png" });
     expect(zoom.parentElement).toHaveClass("flex", "min-w-0", "max-w-full", "justify-center");
     expect(card).toContainElement(screen.getByRole("button", { name: "Download chart ü.png" }));
+    const actions = screen.getByRole("button", { name: "Download chart ü.png" }).parentElement!;
+    expect(actions.parentElement).toHaveClass("items-center");
+    expect(actions.parentElement).not.toHaveClass("items-start");
     expect(card).toContainElement(
       screen.getByRole("button", { name: "More actions for chart ü.png" }),
     );

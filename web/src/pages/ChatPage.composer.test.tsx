@@ -25,7 +25,7 @@ import { setSessionHost } from "@/lib/sessionHost";
 import { SideChatPane } from "@/components/chat/SideChatPane";
 import { toast } from "@/lib/notifications";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
-import { handleSessionEvent, useChatStore, type ChatState } from "@/store/chatStore";
+import { handleSessionEvent, initChatStore, useChatStore, type ChatState } from "@/store/chatStore";
 import {
   clearSessionDrafts,
   getSessionDraft,
@@ -59,6 +59,10 @@ vi.mock("@/hooks/useWorkspaceChangedFiles", async (importOriginal) => {
     useWorkspaceDirectory: () => ({ data: undefined }),
   };
 });
+
+vi.mock("@/hooks/useRuntimeNotices", () => ({
+  useRuntimeNotices: () => ({ notices: [], dismiss: vi.fn() }),
+}));
 
 // The /mcp panel's registry read and popup sign-in; the MCP cases script both.
 vi.mock("@/lib/mcpRegistry", () => ({
@@ -6182,6 +6186,8 @@ describe("Composer — Enter sends the next queued message", () => {
 });
 
 describe("Composer — queued-message flush gating", () => {
+  beforeEach(() => initChatStore(new QueryClient()));
+
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();

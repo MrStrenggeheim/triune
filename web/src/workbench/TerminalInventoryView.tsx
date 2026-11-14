@@ -18,7 +18,8 @@ import { apiErrorFromResponse } from "@/lib/sessionsApi";
 import { ActivityNavigation } from "@/shell/ChatActivityPanel";
 import { useWorkbenchActions } from "@/workbench/WorkbenchContext";
 import { SubagentTaskStatus } from "@/components/blocks/SubagentTaskRow";
-import type { AgentStatus } from "@/shell/subagentStatus";
+import { shellResourceErrorMessage } from "@/lib/shellResourceError";
+import { shellState } from "@/lib/shellState";
 import type { WorkbenchWorkspace } from "@/lib/workbenchWorkspace";
 
 export interface ManualTerminalRecord extends TerminalInfo {
@@ -55,32 +56,20 @@ export function manualTerminalRecord(raw: Record<string, unknown>): ManualTermin
   };
 }
 
+function inventoryStatus(terminal: ManualTerminalRecord) {
+  return shellState({
+    status: terminal.state,
+    exitCode: terminal.exitCode,
+    connectivity: terminal.connectivity,
+  });
+}
+
 export function terminalEnded(terminal: ManualTerminalRecord) {
-  return terminal.state === "stopped" || terminal.state === "exited";
+  return inventoryStatus(terminal).ended;
 }
 
 export function terminalStateLabel(terminal: ManualTerminalRecord) {
-  if (terminal.state === "stopped") return "Stopped";
-  if (terminal.state === "exited")
-    return terminal.exitCode === undefined ? "Exited" : `Exited (code ${terminal.exitCode})`;
-  if (terminal.connectivity === "disconnected") return "Offline · process state unconfirmed";
-  if (terminal.connectivity !== "connected")
-    return "Connection unknown · process state unconfirmed";
-  return terminal.state === "running" ? "Running" : "Process state unknown";
-}
-
-function inventoryStatus(terminal: ManualTerminalRecord): AgentStatus {
-  if (terminal.state === "stopped") return { activity: "other", label: "Stopped" };
-  if (terminal.state === "exited")
-    return {
-      activity: terminal.exitCode ? "failed" : "done",
-      label: terminal.exitCode == null ? "Exited" : `Exited (${terminal.exitCode})`,
-    };
-  if (terminal.connectivity === "disconnected")
-    return { activity: "disconnected", label: "Offline" };
-  if (terminal.connectivity === "connected" && terminal.state === "running")
-    return { activity: "working", label: "Running" };
-  return { activity: "other", label: "Unknown" };
+  return inventoryStatus(terminal).label;
 }
 
 export function RetainedTerminalOutput({
@@ -180,6 +169,11 @@ export function TerminalInventoryView({
         { method: "DELETE" },
       );
       if (!response.ok && response.status !== 404) throw await apiErrorFromResponse(response);
+    } catch (error) {
+      throw new Error(
+        shellResourceErrorMessage(error, "Could not stop shell. Refresh and try again."),
+        { cause: error },
+      );
     } finally {
       void inventory.refetch();
     }
@@ -217,7 +211,7 @@ export function TerminalInventoryView({
       <div ref={rowsRef} className="min-h-0 flex-1 overflow-auto px-3 py-2">
         {inventory.error && (
           <p role="alert" className="text-sm text-destructive">
-            {inventory.error.message}
+            {shellResourceErrorMessage(inventory.error)}
           </p>
         )}
         {inventory.isLoading && (
@@ -291,7 +285,12 @@ export function TerminalInventoryView({
                     {terminalDisplayLabel(terminal)}
                   </Button>
                 }
-                status={terminalStateLabel(terminal)}
+                status={
+                  <SubagentTaskStatus
+                    status={inventoryStatus(terminal)}
+                    label={inventoryStatus(terminal).label}
+                  />
+                }
               >
                 <RetainedTerminalOutput terminal={terminal} />
               </ActivityRow>

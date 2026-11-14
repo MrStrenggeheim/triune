@@ -1,8 +1,5 @@
+// Modified for Triune.
 import { TooltipButton } from "@/components/ui/tooltip";
-// ⌘K palette: Sessions (recent, or title matches), In messages (content matches), Actions.
-// Sessions are searched server-side (one loaded page can't find older ones), so
-// cmdk filtering is off and the static actions are filtered here.
-
 import type React from "react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { FileIcon, SearchIcon, XIcon } from "lucide-react";
@@ -24,7 +21,6 @@ import {
   useSessionSearch,
 } from "@/hooks/useConversations";
 import { useIsMobileViewport } from "@/hooks/useIsMobileViewport";
-import { BOOT_PROBE_TIMEOUT_MS } from "@/lib/bootCapabilities";
 import { useServerInfo } from "@/lib/CapabilitiesContext";
 import { cn } from "@/lib/utils";
 import { isImeCompositionKeyEvent } from "@/lib/ime";
@@ -38,7 +34,28 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command";
-import { conversationDisplayLabel, getConversationAgentType } from "./sidebarNav";
+import { conversationDisplayLabel } from "./sidebarNav";
+import {
+  useMessageSearch,
+  useMessageSearchIdentity,
+  useMessageSearchNotice,
+} from "@/hooks/useMessageSearch";
+import { useContextSearch } from "./ContextSearchContext";
+import {
+  SharedSearchResultRow,
+  MessageSearchFilterControl,
+  SearchExcerpt,
+} from "./SharedSearchResultRow";
+import { SegmentedControl, SegmentedControlItem } from "@/components/ui/segmented-control";
+import {
+  occurrenceTarget,
+  searchHitKey,
+  searchResults,
+  type MessageSearchFilter,
+  type ContextSearchScope,
+  type ContextSearchTarget,
+  type MessageSearchHit,
+} from "./contextSearch/types";
 
 export type { CommandPaletteFileTarget } from "@/workbench/paletteCommands";
 
@@ -53,7 +70,12 @@ export interface CommandPaletteProps {
   onOpenProjects?: () => void;
   /** Captured actions supplied by the currently focused workbench view. */
   actions?: ActionCommand[];
-  onMessageSearch?: (sessionId: string, query: string) => void;
+  onMessageSearch?: (
+    sessionId: string,
+    query: string,
+    target?: ContextSearchTarget,
+    messageFilter?: MessageSearchFilter,
+  ) => void;
   sessionsOnly?: boolean;
   onNavigate?: (path: string) => void;
   open: boolean;
@@ -66,34 +88,6 @@ export interface CommandPaletteProps {
 
 /** Debounce matches the sidebar search (300ms) so keystrokes don't each fetch. */
 const SEARCH_DEBOUNCE_MS = 300;
-
-/** Split `text` on case-insensitive occurrences of `query`, bolding the matches
-    so a search hit is visible in the title / content snippet. Returns the raw
-    text unchanged when the query is empty or doesn't occur (e.g. the snippet
-    matched a stemmed form). */
-function HighlightedText({ text, query }: { text: string; query: string }): React.ReactNode {
-  const q = query.trim();
-  if (!q) return text;
-  // Escape regex metacharacters so a query like "a.b" matches literally.
-  const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const parts = text.split(new RegExp(`(${escaped})`, "gi"));
-  const lower = q.toLowerCase();
-  // Non-matches stay raw strings (React needs no key for those); each match is
-  // keyed by its running offset so repeated terms get stable, unique keys
-  // without leaning on the bare array index.
-  let offset = 0;
-  return parts.map((part) => {
-    const at = offset;
-    offset += part.length;
-    return part.toLowerCase() === lower ? (
-      <mark key={at} className="bg-transparent font-semibold text-foreground">
-        {part}
-      </mark>
-    ) : (
-      part
-    );
-  });
-}
 
 /** How many recent sessions to show before the user types, so the Actions
     group stays visible without scrolling. Typing lifts the cap. */
@@ -108,7 +102,6 @@ const SELECTION_KEYS = new Set(["ArrowUp", "ArrowDown", "Home", "End", "PageUp",
 interface PaletteSession {
   id: string;
   label: string;
-  agent: string;
   snippet: string | null;
 }
 
@@ -126,7 +119,6 @@ function paletteSessions(
       out.push({
         id: c.id,
         label: conversationDisplayLabel(c),
-        agent: getConversationAgentType(c),
         // Present only when the match was in chat content (not the title);
         // the server omits it otherwise. Shown as a dimmed second line.
         snippet: c.search_snippet ?? null,
@@ -156,6 +148,15 @@ export function CommandPalette({
   const isMobile = useIsMobileViewport();
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
+  const contextSearch = useContextSearch();
+  const identity = useMessageSearchIdentity();
+  const [localMessageFilter, setLocalMessageFilter] = useState<MessageSearchFilter>("all");
+  const [localScope, setLocalScope] = useState<ContextSearchScope>("all");
+  const messageFilter = contextSearch?.messageFilter ?? localMessageFilter;
+  const setMessageFilter = contextSearch?.setMessageFilter ?? setLocalMessageFilter;
+  const scope = contextSearch?.scope ?? localScope;
+  const setScope = contextSearch?.setScope ?? setLocalScope;
+  const sessionId = scope === "current" ? contextSearch?.activeSessionId : undefined;
   const [pageLimit, setPageLimit] = useState(SESSION_SEARCH_PAGE_BATCH);
   const [anchor, setAnchor] = useState<{ top: number; left: number; width: number } | null>(null);
   useLayoutEffect(() => {
@@ -200,7 +201,7 @@ export function CommandPalette({
   }, [open]);
 
   useEffect(() => {
-    const timer = setTimeout(() => setDebouncedQuery(query), SEARCH_DEBOUNCE_MS);
+    const timer = setTimeout(() => setDebouncedQuery(query.trim()), SEARCH_DEBOUNCE_MS);
     return () => clearTimeout(timer);
   }, [query]);
 
@@ -213,7 +214,7 @@ export function CommandPalette({
   };
   const serverInfo = useServerInfo();
   const isAdmin = useIsAdmin();
-  const querySettled = query === debouncedQuery;
+  const querySettled = query.trim() === debouncedQuery;
   const target = useMemo(
     () =>
       fileTarget
@@ -297,32 +298,31 @@ export function CommandPalette({
 
   const { data, isFetching, isError, refetch, hasNextPage, fetchNextPage, isFetchNextPageError } =
     useConversations("", false, { enabled: open });
-  // Older servers ignore `search_scope`, so they get one mixed group instead.
-  const groupedSearch = serverInfo !== "loading" && serverInfo.session_search_scope === true;
   const searching = debouncedQuery !== "";
-  // Wait briefly for server info so a supporting server never gets the mixed
-  // request; if it stalls, fall back to that request rather than never searching.
-  const serverInfoLoading = serverInfo === "loading";
-  const [serverInfoWaitExpired, setServerInfoWaitExpired] = useState(false);
-  useEffect(() => {
-    if (!serverInfoLoading || !searching || serverInfoWaitExpired) return;
-    const timer = setTimeout(() => setServerInfoWaitExpired(true), BOOT_PROBE_TIMEOUT_MS);
-    return () => clearTimeout(timer);
-  }, [serverInfoLoading, searching, serverInfoWaitExpired]);
-  const awaitingServerInfo = !sessionsOnly && serverInfoLoading && !serverInfoWaitExpired;
-  const searchOptions = {
-    enabled: open && searching && !awaitingServerInfo,
+  const titleSearch = useSessionSearch(debouncedQuery, "title", {
+    enabled: open && searching && querySettled && sessionsOnly,
     limit: SEARCH_GROUP_PAGE_SIZE,
-  };
-  const titleSearch = useSessionSearch(
-    debouncedQuery,
-    sessionsOnly || groupedSearch ? "title" : "all",
-    searchOptions,
-  );
-  const contentSearch = useSessionSearch(debouncedQuery, "content", {
-    ...searchOptions,
-    enabled: searchOptions.enabled && groupedSearch && !sessionsOnly,
+    cacheIdentity: identity,
   });
+  const messageSearch = useMessageSearch(
+    debouncedQuery,
+    sessionId,
+    open && searching && querySettled && !sessionsOnly && (scope === "all" || !!sessionId),
+    identity,
+    messageFilter,
+  );
+  useMessageSearchNotice(
+    messageSearch,
+    open && querySettled && searching && !sessionsOnly,
+    `${identity}:${sessionId ?? ""}:${messageFilter}:${debouncedQuery}`,
+  );
+  const hits = useMemo(
+    () =>
+      querySettled && searching && !sessionsOnly
+        ? searchResults((messageSearch.data?.pages ?? []).flatMap((page) => page.data))
+        : [],
+    [querySettled, searching, sessionsOnly, messageSearch.data],
+  );
   const loadedPages = data?.pages.length ?? 0;
   useEffect(() => {
     if (
@@ -353,7 +353,9 @@ export function CommandPalette({
   const sessions = useMemo(() => {
     if (!querySettled) return [];
     if (searching)
-      return titleSearch.isPlaceholderData ? [] : paletteSessions(titleSearch.data?.pages ?? []);
+      return !sessionsOnly || titleSearch.isPlaceholderData
+        ? []
+        : paletteSessions(titleSearch.data?.pages ?? []);
     const out = paletteSessions(data?.pages ?? []);
     if (sessionsOnly) return out;
     // The full first page would push Actions below the fold.
@@ -366,25 +368,9 @@ export function CommandPalette({
     searching,
     sessionsOnly,
   ]);
-  // Excludes title matches again in case a rename moved a session between the
-  // two groups' requests: cmdk needs each item value to be unique.
-  const contentSessions = useMemo(
-    () =>
-      !sessionsOnly && searching && querySettled && !contentSearch.isPlaceholderData
-        ? paletteSessions(contentSearch.data?.pages ?? [], new Set(sessions.map((s) => s.id)))
-        : [],
-    [
-      contentSearch.data,
-      contentSearch.isPlaceholderData,
-      querySettled,
-      searching,
-      sessionsOnly,
-      sessions,
-    ],
-  );
   const visibleSessions =
     sessionsOnly && !searching ? sessions.slice(0, SESSION_SEARCH_RESULT_LIMIT) : sessions;
-  const searchGroups = sessionsOnly ? [titleSearch] : [titleSearch, contentSearch];
+  const searchGroups = sessionsOnly ? [titleSearch] : [messageSearch];
   const recentFetching = sessionsOnly && !query && isFetching;
   const loadError = searching
     ? searchGroups.some((group) => group.isError)
@@ -392,8 +378,7 @@ export function CommandPalette({
   const loadMoreError = searching
     ? searchGroups.some((group) => group.isFetchNextPageError)
     : isFetchNextPageError;
-  const searchFetching =
-    (searching && awaitingServerInfo) || searchGroups.some((group) => group.isFetching);
+  const searchFetching = searching && searchGroups.some((group) => group.isFetching);
   const retrying = searching
     ? searchGroups.some((group) => group.isError && group.isFetching)
     : isFetching;
@@ -408,19 +393,16 @@ export function CommandPalette({
     }
   };
 
-  // The two search groups resolve independently, so a title match can render
-  // above an already-highlighted content match. Keep the top row selected
-  // until the user moves the selection for this query.
   const firstItemValue =
     visibleSessions[0]?.id ??
-    contentSessions[0]?.id ??
+    (hits[0] ? searchHitKey(hits[0]) : undefined) ??
     (visibleFiles[0] ? `file:${visibleFiles[0].path}` : undefined) ??
     (filteredActions[0] ? `action:${filteredActions[0].id}` : "");
   const [selectedValue, setSelectedValue] = useState("");
   const userMovedSelection = useRef(false);
   useEffect(() => {
     userMovedSelection.current = false;
-  }, [open, debouncedQuery]);
+  }, [open, debouncedQuery, messageFilter, scope]);
   useEffect(() => {
     if (!userMovedSelection.current) setSelectedValue(firstItemValue);
   }, [firstItemValue, open, debouncedQuery]);
@@ -442,46 +424,51 @@ export function CommandPalette({
     navigate(`/c/${id}`);
   };
 
-  const renderSession = (s: PaletteSession, messageResult = false): React.ReactNode => (
-    // pl-6 indents the label to line up with the icon-prefixed Action rows
-    // below (their 16px icon + 8px gap), so the groups read as one column.
+  const renderSession = (s: PaletteSession): React.ReactNode => (
     <CommandItem
       key={s.id}
       value={s.id}
       onSelect={() => {
-        if (!querySettled) return;
-        if (messageResult && onMessageSearch) {
-          close();
-          onMessageSearch(s.id, debouncedQuery);
-        } else goToSession(s.id);
+        if (querySettled) goToSession(s.id);
       }}
       className="items-start pl-6"
     >
-      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <span className="truncate text-left">
-          <HighlightedText text={s.label} query={sessionsOnly ? query : debouncedQuery} />
-        </span>
-        {s.snippet && (
-          // Where the match was found in the chat body — the session is often
-          // unidentifiable from the title alone.
-          <span className="truncate text-left text-muted-foreground text-sm">
-            <HighlightedText text={s.snippet} query={debouncedQuery} />
-          </span>
-        )}
-      </div>
-      <span className="ml-2 shrink-0 text-sm text-muted-foreground">{s.agent}</span>
+      <span className="truncate text-left">
+        <SearchExcerpt text={s.label} query={debouncedQuery} />
+      </span>
     </CommandItem>
   );
 
+  const selectHit = (hit: MessageSearchHit) => {
+    if (!querySettled) return;
+    if (hit.kind === "chat") {
+      // Clear any earlier body activation before opening a title match.
+      contextSearch?.goToTitle(hit.session_id);
+      close();
+      if (!contextSearch) navigate(`/c/${encodeURIComponent(hit.session_id)}`);
+      return;
+    }
+    const range = hit.ranges[0];
+    if (!range) return;
+    const messageTarget = occurrenceTarget({ hit, range }, 0);
+    close();
+    if (onMessageSearch)
+      onMessageSearch(hit.session_id, debouncedQuery, messageTarget, messageFilter);
+    else if (contextSearch) {
+      contextSearch.openResult(messageTarget, debouncedQuery, messageFilter);
+      navigate(`/c/${encodeURIComponent(hit.session_id)}`);
+    }
+  };
+
   const renderShowMore = (
-    scope: "title" | "content",
+    groupScope: "title",
     group: typeof titleSearch,
     rows: readonly PaletteSession[],
   ): React.ReactNode =>
     group.hasNextPage &&
     !group.isFetchNextPageError && (
       <CommandItem
-        value={`more:${scope}`}
+        value={`more:${groupScope}`}
         disabled={group.isFetchingNextPage}
         onSelect={() => {
           // This row vanishes after the last page, so park the selection on
@@ -590,7 +577,34 @@ export function CommandPalette({
               data-testid="command-palette-input"
             />
           )}
+          {!sessionsOnly && (
+            <div className="flex flex-wrap items-center justify-between gap-2 px-2 py-2">
+              <SegmentedControl
+                aria-label="Search scope"
+                className="h-auto min-h-6 max-w-full flex-wrap"
+              >
+                {(
+                  [
+                    ["current", "Current chat"],
+                    ["all", "All chats"],
+                  ] as const
+                ).map(([value, label]) => (
+                  <SegmentedControlItem
+                    key={value}
+                    label={label}
+                    active={scope === value}
+                    disabled={value === "current" && !contextSearch?.activeSessionId}
+                    onClick={() => setScope(value)}
+                  >
+                    {label}
+                  </SegmentedControlItem>
+                ))}
+              </SegmentedControl>
+              <MessageSearchFilterControl value={messageFilter} onChange={setMessageFilter} />
+            </div>
+          )}
           <CommandList
+            data-scrollbar="hidden"
             className={isMobile ? "max-h-none flex-1" : undefined}
             // Hovering a row selects it in cmdk, which counts as the user's pick.
             onPointerMove={(event) => {
@@ -599,7 +613,7 @@ export function CommandPalette({
               }
             }}
           >
-            {(loadError || recentFetching) && (
+            {((loadError && (!searching || sessionsOnly)) || recentFetching) && (
               <p role="status" className="px-3 py-2 text-xs text-muted-foreground">
                 {loadError
                   ? loadMoreError
@@ -634,15 +648,38 @@ export function CommandPalette({
                 </CommandEmpty>
               )}
             {sessions.length > 0 && (
-              <CommandGroup heading="Sessions">
+              <CommandGroup heading={searching ? undefined : "Sessions"}>
                 {visibleSessions.map((session) => renderSession(session))}
                 {searching && renderShowMore("title", titleSearch, visibleSessions)}
               </CommandGroup>
             )}
-            {contentSessions.length > 0 && (
-              <CommandGroup heading="In messages">
-                {contentSessions.map((session) => renderSession(session, true))}
-                {renderShowMore("content", contentSearch, contentSessions)}
+            {hits.length > 0 && (
+              <CommandGroup>
+                {hits.map((hit) => (
+                  <CommandItem
+                    key={searchHitKey(hit)}
+                    value={searchHitKey(hit)}
+                    onSelect={() => selectHit(hit)}
+                    className="items-start px-2 py-2"
+                  >
+                    <SharedSearchResultRow hit={hit} query={debouncedQuery} scope={scope} />
+                  </CommandItem>
+                ))}
+                {messageSearch.hasNextPage && !messageSearch.isFetchNextPageError && (
+                  <CommandItem
+                    value="more:results"
+                    disabled={messageSearch.isFetchingNextPage}
+                    onSelect={() => {
+                      userMovedSelection.current = true;
+                      const last = hits.at(-1);
+                      if (last) setSelectedValue(searchHitKey(last));
+                      void messageSearch.fetchNextPage();
+                    }}
+                    className="px-2 text-muted-foreground"
+                  >
+                    {messageSearch.isFetchingNextPage ? "Loading…" : "Show more"}
+                  </CommandItem>
+                )}
               </CommandGroup>
             )}
             {filesEnabled && querySettled && fileSearch.isError && (
@@ -681,7 +718,7 @@ export function CommandPalette({
                   >
                     <FileIcon />
                     <span className="truncate text-left">
-                      <HighlightedText text={file.path} query={debouncedQuery} />
+                      <SearchExcerpt text={file.path} query={debouncedQuery} />
                     </span>
                   </CommandItem>
                 ))}

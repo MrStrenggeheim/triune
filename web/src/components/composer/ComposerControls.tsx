@@ -40,9 +40,8 @@ export const COMPOSER_CONTROL_TEXT_CLASS = "text-ui font-normal text-foreground"
 
 /**
  * The workspace tray docked above the composer card. A tray nests inside the
- * card's outer edges by the shared inset rather than sharing its border box
- * (see ChatComposer). Workspace controls use the card's content inset;
- * attention shelves use the tighter shared shelf inset.
+ * card's outer edges for attention shelves. Workspace controls retain the
+ * card's content inset; attention shelves use the tighter shared padding.
  */
 export function ComposerWorkspaceBar({
   className,
@@ -59,7 +58,7 @@ export function ComposerWorkspaceBar({
       className={cn(
         "composer-workspace-surface group/composer-workspace relative z-0 -mb-px flex h-7 min-w-0 items-center gap-0.5 rounded-t-2xl border border-b-0 border-border py-0.5 md:h-[37px] md:gap-2 md:py-1.5",
         shelfInset ? "composer-attention-surface" : COMPOSER_CONTENT_INSET_CLASS,
-        COMPOSER_TRAY_INSET_CLASS,
+        !shelfInset && COMPOSER_TRAY_INSET_CLASS,
         className,
       )}
       {...props}

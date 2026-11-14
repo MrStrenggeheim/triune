@@ -22,10 +22,6 @@
   --list-row-gap: 6px;
   --list-gap: 2px;
   --tree-indent: 14px;
-  --queue-shelf-padding-block: 4px;
-  --queue-list-gap: 2px;
-  --queue-row-padding-block: 0px;
-  --queue-action-size: 20px;
 }
 
 .density-row {

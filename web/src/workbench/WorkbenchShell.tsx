@@ -1648,15 +1648,19 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
                   }}
                   onToggleLeftSidebar={toggleSidebar}
                   onToggleRightSidebar={() => openFocused("files")}
-                  onMessageSearch={(id, query) => {
+                  onMessageSearch={(id, query, target, filter) => {
                     dock.addView(
                       conversationView(id, titles.get(id)),
                       conversationPlacement(dock.layout, dock.pinnedViewIds, lastConversation),
                     );
                     setLastConversation(id);
                     ensureVisible();
-                    search.openSearch("current");
-                    search.setQuery(query);
+                    if (target) search.openResult(target, query, filter);
+                    else {
+                      search.openSearch("current");
+                      search.setQuery(query);
+                      if (filter) search.setMessageFilter(filter);
+                    }
                   }}
                 />
               )}

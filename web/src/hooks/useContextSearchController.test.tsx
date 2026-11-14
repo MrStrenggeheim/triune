@@ -14,10 +14,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useState, type ReactNode } from "react";
 import type * as HostModule from "@/lib/host";
 import { useContextSearchController } from "./useContextSearchController";
+import { useMessageSearch } from "./useMessageSearch";
 import { ContextSearchProvider } from "@/shell/ContextSearchContext";
-import { MessageSearchExcerpt, ContextSearchSidebar } from "@/shell/ContextSearchSidebar";
+import { ContextSearchSidebar } from "@/shell/ContextSearchSidebar";
+import { MessageSearchExcerpt } from "@/shell/SharedSearchResultRow";
+import { getNotificationSnapshot, toast } from "@/lib/notifications";
 import { ContextSearchBar } from "@/shell/ContextSearchBar";
-import type { MessageSearchHit, MessageSearchPage } from "@/shell/contextSearch/types";
+import {
+  occurrenceTarget,
+  type MessageSearchHit,
+  type MessageSearchPage,
+} from "@/shell/contextSearch/types";
 
 const identity = vi.hoisted(() => ({ viewer: "owner", server: "server" }));
 vi.mock("./useViewerId", () => ({ useViewerId: () => identity.viewer }));
@@ -94,6 +101,7 @@ function SearchUI() {
   const search = useSearchHarness();
   return (
     <ContextSearchProvider value={search}>
+      <textarea aria-label="Composer draft" defaultValue="Unsent work" />
       <button type="button" onClick={() => search.openSearch("current")}>
         Find current
       </button>
@@ -129,6 +137,7 @@ async function typeQuery(
 beforeEach(() => {
   identity.viewer = "owner";
   identity.server = "server";
+  toast.dismiss();
   fetchMock.mockReset();
   navigate.mockClear();
   isMobile.mockReturnValue(false);
@@ -137,9 +146,8 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("context search navigation and lifecycle", () => {
-  it("keeps idle context stable while saved actions use the latest navigation implementation", () => {
+  it("keeps idle context stable while saved title actions use the latest navigation", () => {
     const navigated = vi.fn();
-    const toggled = vi.fn();
     const { wrapper } = queryWrapper();
     const { result, rerender } = renderHook(
       ({ version }) =>
@@ -151,8 +159,8 @@ describe("context search navigation and lifecycle", () => {
             navigated(version, path);
             done();
           },
-          onToggleLeftSidebar: () => {},
-          onToggleRightSidebar: () => toggled(version),
+          onToggleLeftSidebar: toggle,
+          onToggleRightSidebar: toggle,
           isMobile: () => false,
         }),
       { wrapper, initialProps: { version: 1 } },
@@ -160,16 +168,8 @@ describe("context search navigation and lifecycle", () => {
     const idle = result.current;
     rerender({ version: 2 });
     expect(result.current).toBe(idle);
-    act(() => {
-      idle.actions.find((action) => action.id === "go-settings")!.run();
-      idle.actions.find((action) => action.id === "toggle-right-sidebar")!.run();
-      idle.goToTitle("latest-chat");
-    });
-    expect(navigated.mock.calls).toEqual([
-      [2, "/settings"],
-      [2, "/c/latest-chat"],
-    ]);
-    expect(toggled).toHaveBeenCalledWith(2);
+    act(() => idle.goToTitle("latest-chat"));
+    expect(navigated).toHaveBeenCalledWith(2, "/c/latest-chat");
     expect(result.current.open).toBe(false);
   });
 
@@ -299,7 +299,7 @@ describe("context search navigation and lifecycle", () => {
     expect(navigate).not.toHaveBeenCalled();
   });
 
-  it.each(["query", "scope", "close"])(
+  it.each(["query", "scope", "filter", "close"])(
     "cancels delayed result navigation when %s supersedes it",
     async (change) => {
       fetchMock.mockImplementation(() =>
@@ -321,6 +321,7 @@ describe("context search navigation and lifecycle", () => {
       act(() => {
         if (change === "query") result.current.setQuery("different");
         else if (change === "scope") result.current.setScope("current");
+        else if (change === "filter") result.current.setMessageFilter("final");
         else result.current.close();
       });
       act(() => commit?.());
@@ -329,7 +330,7 @@ describe("context search navigation and lifecycle", () => {
     },
   );
 
-  it("keeps a navigated current-chat match selected beyond the loaded All page", async () => {
+  it("keeps exact current-chat navigation separate from the globally paginated results", async () => {
     fetchMock.mockImplementation((url: string) =>
       Promise.resolve(
         response(
@@ -345,7 +346,7 @@ describe("context search navigation and lifecycle", () => {
     act(() => result.current.move(1));
     act(() => result.current.move(1));
     expect(result.current.highlightTarget?.itemId).toBe("second");
-    expect(result.current.hits.map((entry) => entry.item_id)).toEqual(["first", "second"]);
+    expect(result.current.hits.map((entry) => entry.item_id)).toEqual(["first"]);
     expect(result.current.messages.data?.pages[0].data).toHaveLength(1);
     expect(navigate).not.toHaveBeenCalled();
   });
@@ -395,6 +396,31 @@ describe("context search navigation and lifecycle", () => {
 });
 
 describe("integrated search sidebar and match bar", () => {
+  it("opens a keyboard-selected title hit without a body activation", async () => {
+    const title = {
+      ...hit("latest"),
+      kind: "chat" as const,
+      title: "needle title",
+      ranges: [],
+      occurrence_count: 0,
+    };
+    fetchMock.mockImplementation(() => Promise.resolve(response(page([hit(), title]))));
+    setupUI();
+    fireEvent.click(screen.getByText("Find current"));
+    const input = screen.getByRole("textbox", { name: "Search chats" });
+    fireEvent.change(input, { target: { value: "needle" } });
+    await waitFor(() =>
+      expect(within(screen.getByRole("search")).getByRole("status")).toHaveTextContent("1 of 2"),
+    );
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(navigate).toHaveBeenCalledWith("/c/chat", expect.any(Function), expect.any(Function));
+    expect(
+      document.querySelector('[data-search-result="chat"]')?.closest("button"),
+    ).toHaveAttribute("aria-pressed", "true");
+    expect(within(screen.getByRole("search")).getByRole("status")).toHaveTextContent("2 matches");
+  });
+
   it("resynchronizes a keyboard-selected result with the active occurrence when the bar advances", async () => {
     fetchMock.mockImplementation(() =>
       Promise.resolve(response(page([hit(), hit("m2", "chat", "needle second message")]))),
@@ -433,17 +459,31 @@ describe("integrated search sidebar and match bar", () => {
     expect(screen.queryByRole("textbox", { name: "Search chats" })).toBeNull();
   });
 
-  it("activates All-chat selection only on Enter and never executes an action from typing/loading/filtering", async () => {
+  it("retains scope and query while filtering and activates All results only on selection", async () => {
     setupUI();
+    fireEvent.change(screen.getByRole("textbox", { name: "Composer draft" }), {
+      target: { value: "Keep this draft" },
+    });
     fireEvent.click(screen.getByText("Find all"));
     const input = screen.getByRole("textbox", { name: "Search chats" });
-    fireEvent.change(input, { target: { value: "settings" } });
-    await screen.findByText("Go to Settings");
+    fireEvent.change(input, { target: { value: "needle" } });
+    await waitFor(() =>
+      expect(screen.getByTestId("context-search-sidebar").querySelector("mark")).toHaveTextContent(
+        "needle",
+      ),
+    );
+    expect(screen.queryByRole("group", { name: "Search categories" })).toBeNull();
+    expect(screen.queryByText("Go to Settings")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Final" }));
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(([url]) => String(url).includes("message_filter=final")),
+      ).toBe(true),
+    );
+    expect(input).toHaveValue("needle");
+    expect(screen.getByRole("textbox", { name: "Composer draft" })).toHaveValue("Keep this draft");
     expect(navigate).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Actions", pressed: false }));
-    expect(navigate).not.toHaveBeenCalled();
-    fireEvent.keyDown(input, { key: "Enter" });
-    expect(navigate).toHaveBeenCalledWith("/settings", expect.any(Function));
+    expect(screen.queryByText("In this chat")).toBeNull();
   });
 
   it("renders safe abbreviated excerpts and retries a failed message query without losing the query", async () => {
@@ -452,15 +492,21 @@ describe("integrated search sidebar and match bar", () => {
     fireEvent.click(screen.getByText("Find current"));
     const input = screen.getByRole("textbox", { name: "Search chats" });
     fireEvent.change(input, { target: { value: "needle" } });
-    const retry = await within(screen.getByTestId("context-search-sidebar")).findByRole("button", {
-      name: "Retry",
-    });
+    await waitFor(() =>
+      expect(
+        getNotificationSnapshot().entries.some((entry) => entry.type === "error" && entry.visible),
+      ).toBe(true),
+    );
+    const notice = getNotificationSnapshot().entries.find(
+      (entry) => entry.type === "error" && entry.visible,
+    )!;
+    const retry = notice.action as { onClick: (event: never) => void };
     const source =
       "**needle** in `code` ![remote](https://example.test/image.png) <script>attack()</script>";
     fetchMock.mockImplementation(() =>
       Promise.resolve(response(page([hit("safe", "chat", source)]))),
     );
-    fireEvent.click(retry);
+    act(() => retry.onClick(undefined as never));
     await waitFor(() =>
       expect(screen.getByTestId("context-search-sidebar")).toHaveTextContent(
         "needle in code remote",
@@ -479,6 +525,213 @@ describe("integrated search sidebar and match bar", () => {
     });
     expect(results.scrollTop).toBe(150);
     expect(selected).toHaveAttribute("aria-pressed", "true");
+  });
+});
+
+describe("unified search filters and direct results", () => {
+  it("shares one query and result cache between matching consumers", async () => {
+    const { wrapper, client } = queryWrapper();
+    const { result, unmount } = renderHook(
+      () => ({
+        sidebar: useMessageSearch("needle", undefined, true, "server:owner", "final"),
+        palette: useMessageSearch("needle", undefined, true, "server:owner", "final"),
+      }),
+      { wrapper },
+    );
+    await waitFor(() => expect(result.current.sidebar.isSuccess).toBe(true));
+    expect(result.current.palette.data).toBe(result.current.sidebar.data);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(client.getQueryCache().getAll()).toHaveLength(1);
+    expect(
+      new URL(String(fetchMock.mock.calls[0][0]), "http://test").searchParams.get("include_titles"),
+    ).toBe("true");
+    unmount();
+    const later = renderHook(
+      () => useMessageSearch("needle", undefined, true, "server:owner", "final"),
+      { wrapper },
+    );
+    expect(later.result.current.isSuccess).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps users in Final, propagates filters to active occurrences and isolates pagination cursors", async () => {
+    const user = { ...hit("human"), role: "user", user_authored: true, sender_name: "Owner" };
+    const final = { ...hit("final"), phase: "final_answer" };
+    const progress = { ...hit("progress"), phase: "commentary" };
+    fetchMock.mockImplementation((url: string) => {
+      const params = new URL(url, "http://test").searchParams;
+      const filter = params.get("message_filter");
+      const rows =
+        filter === "user" ? [user] : filter === "final" ? [user, final] : [user, final, progress];
+      return Promise.resolve(
+        response(
+          params.has("cursor")
+            ? page([hit(`${filter}-older`)])
+            : page(rows, true, `${filter}-cursor`),
+        ),
+      );
+    });
+    const { result, client } = setup();
+    await typeQuery(result, "all");
+    await waitFor(() => expect(result.current.currentOccurrences).toHaveLength(6));
+    await act(async () => {
+      await result.current.messages.fetchNextPage();
+    });
+    act(() => result.current.setMessageFilter("final"));
+    await waitFor(() =>
+      expect(result.current.hits.map((entry) => entry.item_id)).toEqual(["human", "final"]),
+    );
+    await waitFor(() => expect(result.current.currentOccurrences).toHaveLength(4));
+    expect(result.current.highlightTarget).toBeNull();
+    expect(result.current.query).toBe("needle");
+    await act(async () => {
+      await result.current.messages.fetchNextPage();
+    });
+    act(() => result.current.setMessageFilter("user"));
+    await waitFor(() =>
+      expect(result.current.hits.map((entry) => entry.item_id)).toEqual(["human"]),
+    );
+    await waitFor(() => expect(result.current.currentOccurrences).toHaveLength(2));
+    const requests = fetchMock.mock.calls.map(
+      ([url]) => new URL(String(url), "http://test").searchParams,
+    );
+    for (const params of requests) {
+      if (params.has("cursor"))
+        expect(params.get("cursor")).toBe(`${params.get("message_filter")}-cursor`);
+      expect(params.get("include_titles")).toBe(String(!params.has("session_id")));
+    }
+    expect(
+      client.getQueryCache().findAll({
+        queryKey: ["message-search"],
+        predicate: (query) => query.queryKey[2] === "needle",
+      }),
+    ).toHaveLength(6);
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it("preserves an exact palette occurrence across chat changes and loads its arrow-navigation page", async () => {
+    const selected = hit("older", "other", "needle needle");
+    fetchMock.mockImplementation((url: string) => {
+      const params = new URL(url, "http://test").searchParams;
+      return Promise.resolve(
+        response(
+          params.has("cursor")
+            ? page([selected])
+            : page([hit("newer", params.get("session_id") ?? "other")], true, "older-page"),
+        ),
+      );
+    });
+    const { result, rerender } = setup();
+    act(() =>
+      result.current.openResult(
+        occurrenceTarget({ hit: selected, range: selected.ranges[1] }, 0),
+        "needle",
+        "final",
+      ),
+    );
+    const target = result.current.highlightTarget;
+    rerender({ activeSessionId: "other" });
+    await waitFor(() => expect(result.current.currentIndex).toBe(3));
+    expect(result.current.highlightTarget).toBe(target);
+    expect(result.current.messageFilter).toBe("final");
+    act(() => result.current.move(-1));
+    expect(result.current.highlightTarget).toMatchObject({
+      itemId: "older",
+      range: { start: 0, end: 6 },
+    });
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it("searches only bodies in Current with a separate cache while keeping All titles selectable", async () => {
+    const title = {
+      ...hit("latest"),
+      kind: "chat" as const,
+      title: "needle title",
+      ranges: [],
+      occurrence_count: 0,
+    };
+    fetchMock.mockImplementation((url: string) => {
+      const params = new URL(url, "http://test").searchParams;
+      return Promise.resolve(
+        response(page(params.get("include_titles") === "true" ? [title, hit()] : [hit()])),
+      );
+    });
+    const { result, rerender, client } = setup();
+    const oldCurrentKey = ["message-search", "server:owner", "needle", "chat", "all", true];
+    client.setQueryData(oldCurrentKey, {
+      pages: [page([title, hit()])],
+      pageParams: [undefined],
+    });
+    await typeQuery(result);
+    expect(result.current.hits.map((entry) => entry.item_id)).toEqual(["m1"]);
+    expect(result.current.currentOccurrences).toHaveLength(2);
+    expect(client.getQueryData(oldCurrentKey)).toMatchObject({
+      pages: [{ data: [title, hit()] }],
+    });
+    expect(
+      client.getQueryData(["message-search", "server:owner", "needle", "chat", "all", false]),
+    ).toMatchObject({ pages: [{ data: [hit()] }] });
+    const currentRequest = new URL(String(fetchMock.mock.calls[0][0]), "http://test");
+    expect(currentRequest.searchParams.get("session_id")).toBe("chat");
+    expect(currentRequest.searchParams.get("include_titles")).toBe("false");
+    act(() => result.current.setScope("all"));
+    await waitFor(() => expect(result.current.messages.isSuccess).toBe(true));
+    expect(result.current.hits).toHaveLength(2);
+    expect(result.current.hits[0].kind).toBe("chat");
+    expect(result.current.currentOccurrences).toHaveLength(2);
+    expect(result.current.highlightTarget).toBeNull();
+    const allRequest = fetchMock.mock.calls
+      .map(([url]) => new URL(String(url), "http://test"))
+      .find((url) => !url.searchParams.has("session_id"));
+    expect(allRequest?.searchParams.get("include_titles")).toBe("true");
+    act(() => result.current.goToTitle("other"));
+    rerender({ activeSessionId: "other" });
+    await waitFor(() => expect(result.current.activeMessages.isSuccess).toBe(true));
+    expect(result.current.highlightTarget).toBeNull();
+  });
+
+  it("steps through title-only pagination without inventing an occurrence", async () => {
+    const title = { ...hit(), kind: "chat" as const, ranges: [], occurrence_count: 0 };
+    fetchMock.mockImplementation((url: string) =>
+      Promise.resolve(
+        response(url.includes("cursor=") ? page([hit("body")]) : page([title], true, "body-page")),
+      ),
+    );
+    const { result } = setup();
+    await typeQuery(result);
+    expect(result.current.currentOccurrences).toHaveLength(0);
+    act(() => result.current.move(1));
+    await waitFor(() => expect(result.current.highlightTarget?.itemId).toBe("body"));
+    expect(result.current.currentIndex).toBe(0);
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it("retires failed-query notification actions after a filter change or close", async () => {
+    fetchMock.mockResolvedValue(new Response("offline", { status: 503 }));
+    const { result } = setup();
+    act(() => {
+      result.current.openSearch("current");
+      result.current.setQuery("needle");
+    });
+    await waitFor(() =>
+      expect(
+        getNotificationSnapshot().entries.some((entry) => entry.visible && entry.type === "error"),
+      ).toBe(true),
+    );
+    const notificationEntry = getNotificationSnapshot().entries.find(
+      (entry) => entry.visible && entry.type === "error",
+    )!;
+    const action = notificationEntry.action as { onClick: (event: never) => void };
+    act(() => result.current.setMessageFilter("user"));
+    await waitFor(() => expect(result.current.messages.isError).toBe(true));
+    const calls = fetchMock.mock.calls.length;
+    act(() => action.onClick(undefined as never));
+    expect(fetchMock).toHaveBeenCalledTimes(calls);
+    expect(
+      getNotificationSnapshot().entries.find((item) => item.id === notificationEntry.id)?.action,
+    ).toBeUndefined();
+    act(() => result.current.close());
+    expect(getNotificationSnapshot().entries.filter((item) => item.visible)).toHaveLength(0);
   });
 });
 

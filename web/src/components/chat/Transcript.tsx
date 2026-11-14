@@ -40,6 +40,7 @@ import { MESSAGE_QUERY_PARAM } from "@/lib/messageDeepLink";
 import { useMessageDeepLink } from "@/hooks/useMessageDeepLink";
 import { useUserMessageNav } from "@/hooks/useUserMessageNav";
 import { useChatSearchHighlights } from "@/hooks/useChatSearchHighlights";
+import { ChatSearchRevealContext, chatSearchSources } from "@/lib/chatSearchHighlights";
 import { useContextSearch } from "@/shell/ContextSearchContext";
 import {
   RunnerStartingIndicator,
@@ -155,6 +156,51 @@ function TranscriptImpl({
   const hasTasks = useChatStore((s) => s.todos.length > 0);
   const conversationId = useChatStore((s) => s.conversationId);
   const contextSearch = useContextSearch();
+  const [searchReveal, setSearchReveal] = useState(() => ({
+    conversationId,
+    revealedItems: new Set<string>(),
+    originalSources: new Map<string, string>(),
+    revealRequest: { itemId: "", revision: 0 },
+  }));
+  const revealState = useMemo(
+    () => ({
+      revealedItems:
+        searchReveal.conversationId === conversationId
+          ? searchReveal.revealedItems
+          : new Set<string>(),
+      originalSources:
+        searchReveal.conversationId === conversationId
+          ? searchReveal.originalSources
+          : new Map<string, string>(),
+      revealRequest:
+        searchReveal.conversationId === conversationId ? searchReveal.revealRequest : undefined,
+      reveal: (itemId: string) =>
+        setSearchReveal((previous) => ({
+          conversationId,
+          revealedItems: new Set([
+            ...(previous.conversationId === conversationId ? previous.revealedItems : []),
+            itemId,
+          ]),
+          originalSources:
+            previous.conversationId === conversationId ? previous.originalSources : new Map(),
+          revealRequest: { itemId, revision: previous.revealRequest.revision + 1 },
+        })),
+      showOriginal: (itemId: string, text: string) =>
+        setSearchReveal((previous) => ({
+          conversationId,
+          revealedItems: new Set([
+            ...(previous.conversationId === conversationId ? previous.revealedItems : []),
+            itemId,
+          ]),
+          originalSources: new Map([
+            ...(previous.conversationId === conversationId ? previous.originalSources : []),
+            [itemId, text],
+          ]),
+          revealRequest: previous.revealRequest,
+        })),
+    }),
+    [conversationId, searchReveal],
+  );
   const [expandedHistoryId, setExpandedHistoryId] = useState<string | null>(null);
   const [searchParams] = useSearchParams();
   const messageId = searchParams.get(MESSAGE_QUERY_PARAM);
@@ -167,6 +213,9 @@ function TranscriptImpl({
   const targetsHistory =
     !!targetId && blocks.slice(0, inheritedEnd + 1).some((block) => block.ctx.itemId === targetId);
   const historyExpanded = expandedHistoryId === historyId || targetsHistory;
+  useEffect(() => {
+    if (targetsHistory) setExpandedHistoryId(historyId);
+  }, [targetsHistory, historyId]);
   const canLoadHistory = !canFoldHistory || historyExpanded || inheritedEnd < 0;
   const visibleBlocks = useMemo(
     () => (canFoldHistory && !historyExpanded ? blocks.slice(inheritedEnd + 1) : blocks),
@@ -206,6 +255,11 @@ function TranscriptImpl({
   ]);
 
   const pendingElicitations = useMemo(() => collectPendingElicitations(bubbles), [bubbles]);
+  const searchSources = useMemo(
+    () =>
+      chatSearchSources(visibleBlocks === blocks ? bubbles : buildBubbles(blocks, activeResponse)),
+    [visibleBlocks, blocks, bubbles, activeResponse],
+  );
   const streamBubbles = useMemo(
     () => (pendingElicitations.length === 0 ? bubbles : stripPendingElicitations(bubbles)),
     [bubbles, pendingElicitations.length],
@@ -276,7 +330,7 @@ function TranscriptImpl({
   // spacer the range nonce, all from the virtualizer's model rather than the
   // windowed DOM. `scrollToItem` is held in a ref so `ensureItemVisible` keeps a
   // stable identity; the reactive fields are lifted to state.
-  const scrollToItemRef = useRef<((itemId: string) => boolean) | null>(null);
+  const scrollToItemRef = useRef<TranscriptGeometry["scrollToItem"] | null>(null);
   const [activeTurnId, setActiveTurnId] = useState<string | null>(null);
   const [spacerMeasureNonce, setSpacerMeasureNonce] = useState(0);
   const onGeometryChange = useCallback((geometry: TranscriptGeometry) => {
@@ -286,6 +340,10 @@ function TranscriptImpl({
   }, []);
   const ensureItemVisible = useCallback(
     (itemId: string) => scrollToItemRef.current?.(itemId) ?? false,
+    [],
+  );
+  const ensureSearchItemVisible = useCallback(
+    (itemId: string) => scrollToItemRef.current?.(itemId, true) ?? false,
     [],
   );
 
@@ -305,6 +363,7 @@ function TranscriptImpl({
     ensureMessageVisible: ensureItemVisible,
     ready: display.conversationId === conversationId && !!scroller?.el && !!scrollToItemRef.current,
     rangeNonce: spacerMeasureNonce,
+    superseded: searchTarget?.conversationId === conversationId,
   });
   useChatSearchHighlights({
     conversationId: conversationId ?? null,
@@ -317,7 +376,9 @@ function TranscriptImpl({
     container: containerEl,
     scrollElement: scroller?.el ?? null,
     bubbles: display.streamBubbles,
-    ensureMessageVisible: ensureItemVisible,
+    sources: searchSources,
+    reveal: revealState,
+    ensureMessageVisible: ensureSearchItemVisible,
     ready: display.conversationId === conversationId && !!scroller?.el && !!scrollToItemRef.current,
     rangeNonce: spacerMeasureNonce,
   });
@@ -374,7 +435,7 @@ function TranscriptImpl({
   const arcaWarning = useArcaShutdownBanner();
   const showArcaBanner = arcaWarning.showForHost(hostId);
   return (
-    <>
+    <ChatSearchRevealContext.Provider value={revealState}>
       {showArcaBanner && <ArcaShutdownBanner warning={arcaWarning} hasTasks={false} />}
       {/* Wrapper div gives us a ref to scope the SelectionPopup to the
       conversation area without requiring Conversation to forward refs. */}
@@ -499,7 +560,7 @@ function TranscriptImpl({
           />
         )}
       </div>
-    </>
+    </ChatSearchRevealContext.Provider>
   );
 }
 
@@ -543,7 +604,7 @@ export function activeTurnIdAtBubbleIndex(bubbles: Bubble[], midIndex: number): 
  */
 export interface TranscriptGeometry {
   /** Pulls a turn's row into the mounted window; false if its id isn't found. */
-  scrollToItem: (itemId: string) => boolean;
+  scrollToItem: (itemId: string, mountOnly?: boolean) => boolean;
   /** itemId of the user turn owning the viewport midpoint, or null. */
   activeTurnId: string | null;
   /** Bumps whenever the mounted range changes, so the spacer can re-measure a
@@ -980,7 +1041,7 @@ export function VirtualBubbleList({
     return finish;
   }, [conversationId, scrollEl, messageId, visible]);
 
-  const scrollToItem = useCallback((itemId: string): boolean => {
+  const scrollToItem = useCallback((itemId: string, mountOnly = false): boolean => {
     const index = bubblesRef.current.findIndex(
       (b) =>
         (b.kind === "user" && b.itemId === itemId) ||
@@ -991,7 +1052,12 @@ export function VirtualBubbleList({
     c.stopScroll();
     c.state.isAtBottom = false;
     c.state.escapedFromLock = true;
-    virtualizerRef.current.scrollToIndex(index, { align: "center" });
+    if (mountOnly) {
+      // Search owns subsequent measurement correction and cancellation.
+      // Avoid starting the virtualizer's independent index-reconcile loop.
+      const offset = virtualizerRef.current.getOffsetForIndex(index, "auto")?.[0];
+      if (offset !== undefined) c.state.scrollTop = offset;
+    } else virtualizerRef.current.scrollToIndex(index, { align: "center" });
     return true;
   }, []);
 

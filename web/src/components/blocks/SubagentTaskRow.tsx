@@ -70,24 +70,21 @@ export function SubagentTaskRow({
   children?: ReactNode;
 }) {
   return (
-    <div className="border-l-2 border-primary/60 pl-2 [&_.activity-row>p]:line-clamp-1">
-      <ActivityRow
-        icon={<BotIcon aria-hidden="true" className="size-3.5" />}
-        title={
-          <>
-            <strong className="font-semibold">{agentName}</strong>: {description}
-          </>
-        }
-        preview={preview}
-        status={
-          <span className="flex items-center gap-2">
-            <SubagentTaskStatus status={status} />
-            {action}
-          </span>
-        }
-      >
-        {children}
-      </ActivityRow>
-    </div>
+    <ActivityRow
+      presentation="message"
+      icon={<BotIcon aria-hidden="true" className="size-3.5" />}
+      title={
+        <>
+          <strong className="shrink-0 font-semibold">{agentName}</strong>{" "}
+          <span className="truncate">· {description}</span>
+        </>
+      }
+      preview={preview}
+      status={<SubagentTaskStatus status={status} />}
+      actions={action}
+      summary={preview ?? description}
+    >
+      {children}
+    </ActivityRow>
   );
 }

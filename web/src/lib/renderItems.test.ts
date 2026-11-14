@@ -12,6 +12,7 @@ import { BlockStream } from "./blockStream";
 import type { ConversationItem, MessageItem } from "./conversationItems";
 import type { StreamEvent } from "./events";
 import { itemsToBlocks } from "./itemsToBlocks";
+import { chatSearchSources } from "./chatSearchHighlights";
 import {
   type RoutingDecisionWire,
   routingDecisionBlock,
@@ -27,6 +28,30 @@ import {
   liveCandidateAssistantIndex,
 } from "./renderItems";
 import type { ActiveResponse } from "@/store/types";
+
+it("keeps canonical search offsets through hydration without changing Markdown display", () => {
+  const item: MessageItem = {
+    id: "multi-block-source",
+    type: "message",
+    role: "assistant",
+    model: "test-agent",
+    response_id: "source-turn",
+    status: "completed",
+    content: [
+      { type: "output_text", text: "left **needle**" },
+      { type: "output_text", text: "" },
+      { type: "output_text", text: "😀right" },
+    ],
+  };
+  const bubbles = buildBubbles(itemsToBlocks([item]), null);
+  const source = chatSearchSources(bubbles).find((value) => value.itemId === item.id);
+  expect(source?.text).toBe("left **needle** 😀right");
+  const assistant = bubbles.find((bubble) => bubble.kind === "assistant");
+  expect(assistant?.kind === "assistant" && assistant.items[0]).toMatchObject({
+    kind: "text",
+    text: "left **needle**😀right",
+  });
+});
 
 describe("input attribution through history and memoization", () => {
   it.each([false, true])(

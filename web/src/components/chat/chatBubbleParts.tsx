@@ -1,6 +1,7 @@
 // Modified for Triune.
 import { useConversationChatStore, useConversationChatVisible } from "@/workbench/ScopedChatStore";
 import { ChatAttachment } from "@/components/ChatAttachment";
+import { ChatSearchRevealContext } from "@/lib/chatSearchHighlights";
 // Bubble rendering, scroll helpers, and the working-indicator cluster for the
 // chat transcript. Extracted from ChatPage.tsx so <Transcript> can import them
 // without the ChatPage ↔ Transcript module cycle. ChatPage re-exports these for
@@ -701,7 +702,6 @@ function InputSource({ communication }: { communication?: MessageCommunication }
 }
 
 function SystemBubble({ bubble }: { bubble: Extract<Bubble, { kind: "user" }> }) {
-  const sessionId = useScopedConversationId();
   const text = extractUserText(bubble.content);
   // Text parsing only formats input already identified as System by provenance.
   const parsed = parseSystemMessage(text);
@@ -709,19 +709,12 @@ function SystemBubble({ bubble }: { bubble: Extract<Bubble, { kind: "user" }> })
   return (
     <Message from="assistant" data-role="system" data-message-id={bubble.itemId}>
       <SystemMessageView
+        sourceItemId={bubble.itemId}
+        source={<InputSource communication={bubble.communication} />}
         message={{
           ...(parsed ?? { kind: "generic", body: text }),
           label: bubble.communication?.source_title?.trim() || parsed?.label || "System event",
         }}
-      />
-      {bubble.communication?.source_conversation_id && (
-        <InputSource communication={bubble.communication} />
-      )}
-      <MessageFooter
-        text={text}
-        messageId={bubble.pending ? null : bubble.itemId}
-        conversationId={sessionId}
-        createdAtS={bubble.createdAtS}
       />
     </Message>
   );
@@ -747,7 +740,12 @@ function UserBubble({
   // - input_file: always render as a chip (non-image files can't be
   //   previewed inline).
   const isShellCommand = bubble.shellCommand !== undefined;
-  const text = isShellCommand ? `!${bubble.shellCommand}` : extractUserText(bubble.content);
+  const searchReveal = useContext(ChatSearchRevealContext);
+  const originalSource = searchReveal?.originalSources.get(bubble.itemId);
+  const searchExpanded = searchReveal?.revealedItems.has(bubble.itemId) ?? false;
+  const text =
+    originalSource ??
+    (isShellCommand ? `!${bubble.shellCommand}` : extractUserText(bubble.content));
   const images = bubble.content.filter((c): c is ImageContentBlock => c.type === "input_image");
   const fileChips = bubble.content.filter(
     (c): c is Extract<MessageContentBlock, { type: "input_file" }> => c.type === "input_file",
@@ -759,150 +757,146 @@ function UserBubble({
   const flashing = useChatStore((s) => s.flashItemId === bubble.itemId);
   // Collapse long prompts by default to avoid expensive Markdown parsing and
   // a large DOM for text the user hasn't asked to read yet.
-  const isLong = text.length > COLLAPSE_THRESHOLD;
-  const [isCollapsed, setIsCollapsed] = useState(isLong);
+  const isLong = origin !== "system" && text.length > COLLAPSE_THRESHOLD;
+  const [isCollapsed, setIsCollapsed] = useState(isLong && !searchExpanded);
+  useLayoutEffect(() => {
+    if (searchExpanded) setIsCollapsed(false);
+  }, [searchExpanded]);
+  const searchRevealRequest =
+    searchReveal?.revealRequest?.itemId === bubble.itemId
+      ? searchReveal.revealRequest.revision
+      : undefined;
+  useLayoutEffect(() => {
+    if (searchRevealRequest) setIsCollapsed(false);
+  }, [searchRevealRequest]);
   const visibleText = isCollapsed ? sliceByCodePoint(text, COLLAPSE_THRESHOLD) : text;
   // Badge OTHER contributors' messages only (never your own).
   const author = bubble.createdBy;
   const showAuthorBadge =
     human && shouldShowAuthorBadge(author, getCurrentAuthorId(), isSessionShared);
 
-  return (
-    <Message
-      from={human ? "user" : "assistant"}
-      data-testid="message-bubble"
-      data-role={human ? "user" : origin}
-      data-user-message-id={human ? bubble.itemId : undefined}
-      data-message-id={bubble.itemId}
-      className={cn(
-        "max-w-[640px]",
-        human && bubble.pending && "animate-user-message-enter",
-        !human && "border-l-2 border-border pl-2.5",
-      )}
+  const inputContent = (
+    <div
+      className={
+        human
+          ? "ml-auto flex w-fit max-w-full flex-col items-end"
+          : "flex w-full min-w-0 flex-col items-start"
+      }
     >
-      {!human && (
-        <div className="flex items-center gap-2">
-          <strong className="text-sm font-semibold text-muted-foreground">
-            {origin === "system" ? "System" : "External input"}
-          </strong>
-          <InputSource communication={bubble.communication} />
-        </div>
-      )}
-      <div
-        className={
-          human
-            ? "ml-auto flex w-fit max-w-full flex-col items-end"
-            : "flex w-full min-w-0 flex-col items-start"
-        }
-      >
-        {/* w-fit + ml-auto shrink-wrap the row so the author avatar sits
+      {/* w-fit + ml-auto shrink-wrap the row so the author avatar sits
             immediately left of the right-aligned bubble. */}
-        <div className="flex w-fit max-w-full items-center gap-1.5">
-          {showAuthorBadge && author && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Avatar
-                  size="sm"
-                  data-testid="message-author"
-                  aria-label={author}
-                  className="shrink-0"
+      <div className="flex w-fit max-w-full items-center gap-1.5">
+        {showAuthorBadge && author && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Avatar
+                size="sm"
+                data-testid="message-author"
+                aria-label={author}
+                className="shrink-0"
+              >
+                <AvatarFallback
+                  className="font-medium text-white"
+                  style={{ backgroundColor: userColor(author) }}
                 >
-                  <AvatarFallback
-                    className="font-medium text-white"
-                    style={{ backgroundColor: userColor(author) }}
-                  >
-                    {userInitials(author)}
-                  </AvatarFallback>
-                </Avatar>
-              </TooltipTrigger>
-              <TooltipContent>{author}</TooltipContent>
-            </Tooltip>
+                  {userInitials(author)}
+                </AvatarFallback>
+              </Avatar>
+            </TooltipTrigger>
+            <TooltipContent>{author}</TooltipContent>
+          </Tooltip>
+        )}
+        <MessageContent
+          className={cn(
+            flashing && "animate-message-highlight",
+            origin === "system" && "rounded-none bg-transparent p-0",
           )}
-          <MessageContent
-            className={flashing ? "animate-message-highlight" : undefined}
-            // Another contributor's bubble takes their avatar color at low
-            // alpha instead of the default bg-muted.
-            style={
-              showAuthorBadge && author ? { backgroundColor: userColorTint(author) } : undefined
-            }
-          >
-            {/* "@"-mentioned workspace files/folders (delivered as text markers) */}
-            {mentionedChips.length > 0 && (
-              <div className="mb-1.5 flex flex-wrap gap-1.5">
-                {mentionedChips.map((item) => (
-                  <span
-                    key={mentionItemPath(item)}
-                    className="flex items-center gap-1 rounded-full border border-border bg-muted px-2 py-0.5 text-sm text-muted-foreground"
-                  >
-                    {item.isDir ? (
-                      <FolderIcon className="size-3 shrink-0" />
-                    ) : (
-                      <FileTextIcon className="size-3 shrink-0" />
-                    )}
-                    <span className="max-w-[180px] truncate" title={mentionItemPath(item)}>
-                      @{item.path}
-                      {item.isDir ? "/" : ""}
-                    </span>
-                    {item.lineRange && (
-                      <span className="shrink-0">
-                        :{item.lineRange.start}-{item.lineRange.end}
-                      </span>
-                    )}
+          // Another contributor's bubble takes their avatar color at low
+          // alpha instead of the default bg-muted.
+          style={showAuthorBadge && author ? { backgroundColor: userColorTint(author) } : undefined}
+        >
+          {/* "@"-mentioned workspace files/folders (delivered as text markers) */}
+          {mentionedChips.length > 0 && (
+            <div className="mb-1.5 flex flex-wrap gap-1.5">
+              {mentionedChips.map((item) => (
+                <span
+                  key={mentionItemPath(item)}
+                  className="flex items-center gap-1 rounded-full border border-border bg-muted px-2 py-0.5 text-sm text-muted-foreground"
+                >
+                  {item.isDir ? (
+                    <FolderIcon className="size-3 shrink-0" />
+                  ) : (
+                    <FileTextIcon className="size-3 shrink-0" />
+                  )}
+                  <span className="max-w-[180px] truncate" title={mentionItemPath(item)}>
+                    @{item.path}
+                    {item.isDir ? "/" : ""}
                   </span>
-                ))}
-              </div>
-            )}
-            {/* Render user text as markdown, matching the assistant bubble.
+                  {item.lineRange && (
+                    <span className="shrink-0">
+                      :{item.lineRange.start}-{item.lineRange.end}
+                    </span>
+                  )}
+                </span>
+              ))}
+            </div>
+          )}
+          {/* Render user text as markdown, matching the assistant bubble.
               `breaks` keeps single newlines as line breaks. Empty text renders
               nothing rather than an empty markdown block.
               For long prompts, only the visible slice is passed to the renderer
               so the Markdown parser never processes hidden text. */}
-            {text && (
-              <>
-                <div className={cn("relative", isCollapsed && "max-h-64 overflow-hidden")}>
-                  {isShellCommand ? (
-                    <pre className="whitespace-pre-wrap break-words font-mono text-sm">
-                      <code>{visibleText}</code>
-                    </pre>
-                  ) : (
-                    <FilePathAwareMessageResponse
-                      sourceItemId={bubble.itemId}
-                      breaks
-                      mode="static"
-                      remarkRehypeOptions={USER_MESSAGE_REMARK_REHYPE_OPTIONS}
-                    >
-                      {visibleText}
-                    </FilePathAwareMessageResponse>
-                  )}
-                  {/* Gradient fade at the bottom of collapsed prompts to signal
-                      there is more content below. */}
-                  {isCollapsed && isLong && (
-                    <div className="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-muted to-transparent" />
-                  )}
-                </div>
-                {isLong && (
-                  <TooltipButton
-                    type="button"
-                    onClick={() => setIsCollapsed((c) => !c)}
-                    className="mt-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+          {text && (
+            <>
+              <div
+                data-search-item-id={bubble.itemId}
+                className={cn("relative", isCollapsed && "max-h-64 overflow-hidden")}
+              >
+                {originalSource !== undefined ? (
+                  <pre data-chat-plain-text className="whitespace-pre-wrap break-words text-chat">
+                    {visibleText}
+                  </pre>
+                ) : isShellCommand ? (
+                  <pre className="whitespace-pre-wrap break-words font-mono text-sm">
+                    <code>{visibleText}</code>
+                  </pre>
+                ) : (
+                  <FilePathAwareMessageResponse
+                    sourceItemId={bubble.itemId}
+                    breaks
+                    mode="static"
+                    remarkRehypeOptions={USER_MESSAGE_REMARK_REHYPE_OPTIONS}
                   >
-                    {isCollapsed
-                      ? `Show full prompt (${text.length.toLocaleString()} chars)`
-                      : "Collapse prompt"}
-                  </TooltipButton>
+                    {visibleText}
+                  </FilePathAwareMessageResponse>
                 )}
-              </>
-            )}
-            {/* Inline image previews. Wrap rather than scroll horizontally:
+                {/* Gradient fade at the bottom of collapsed prompts to signal
+                      there is more content below. */}
+                {isCollapsed && isLong && (
+                  <div className="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-muted to-transparent" />
+                )}
+              </div>
+              {isLong && (
+                <TooltipButton
+                  type="button"
+                  onClick={() => setIsCollapsed((c) => !c)}
+                  className="mt-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  {isCollapsed
+                    ? `Show full prompt (${text.length.toLocaleString()} chars)`
+                    : "Collapse prompt"}
+                </TooltipButton>
+              )}
+            </>
+          )}
+          {/* Inline image previews. Wrap rather than scroll horizontally:
                 a landscape image fills the bubble width, so a second one in a
                 non-wrapping strip would sit off-screen in the overflow and
                 look like it never rendered. */}
-            {images.length > 0 && (
-              <div className="mt-2 flex flex-wrap items-start gap-2">
-                {keyedAttachments(
-                  images,
-                  (img) => img.file_id ?? img.image_url ?? img.filename,
-                ).map(({ key, item: img }) => {
+          {images.length > 0 && (
+            <div className="mt-2 flex flex-wrap items-start gap-2">
+              {keyedAttachments(images, (img) => img.file_id ?? img.image_url ?? img.filename).map(
+                ({ key, item: img }) => {
                   const preview = imagePreview(img);
                   if (preview.kind === "uploaded") {
                     return <ChatAttachment key={key} sessionId={sessionId} attachment={img} />;
@@ -919,38 +913,84 @@ function UserBubble({
                   }
                   // In-flight upload, or a block with nothing renderable on it.
                   return <AttachmentChip key={key} icon={ImageIcon} label={preview.label} />;
-                })}
-              </div>
-            )}
-            {/* Non-image file chips */}
-            {fileChips.length > 0 && (
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {keyedAttachments(fileChips, (att) => att.file_id ?? att.filename).map(
-                  ({ key, item: att }) => (
-                    <ChatAttachment key={key} sessionId={sessionId} attachment={att} />
-                  ),
-                )}
-              </div>
-            )}
-          </MessageContent>
+                },
+              )}
+            </div>
+          )}
+          {/* Non-image file chips */}
+          {fileChips.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {keyedAttachments(fileChips, (att) => att.file_id ?? att.filename).map(
+                ({ key, item: att }) => (
+                  <ChatAttachment key={key} sessionId={sessionId} attachment={att} />
+                ),
+              )}
+            </div>
+          )}
+        </MessageContent>
+      </div>
+      {/* Always visible: a mid-turn message can wait minutes behind a long tool call. */}
+      {bubble.pending && bubble.awaitingAgent && (
+        <div
+          className="flex items-center gap-1 pt-1 text-[11px] leading-4 text-muted-foreground"
+          data-testid="message-awaiting-agent"
+        >
+          <ClockIcon size={12} aria-hidden />
+          The agent will read this after its current step
         </div>
-        {/* Always visible: a mid-turn message can wait minutes behind a long tool call. */}
-        {bubble.pending && bubble.awaitingAgent && (
-          <div
-            className="flex items-center gap-1 pt-1 text-[11px] leading-4 text-muted-foreground"
-            data-testid="message-awaiting-agent"
-          >
-            <ClockIcon size={12} aria-hidden />
-            The agent will read this after its current step
-          </div>
-        )}
+      )}
+      {origin !== "system" && (
         <MessageFooter
           text={text}
           messageId={bubble.pending ? null : bubble.itemId}
           conversationId={sessionId}
           createdAtS={bubble.createdAtS}
         />
-      </div>
+      )}
+    </div>
+  );
+  if (origin === "system") {
+    return (
+      <Message
+        from="assistant"
+        data-testid="message-bubble"
+        data-role="system"
+        data-message-id={bubble.itemId}
+      >
+        <SystemMessageView
+          message={{
+            kind: "generic",
+            label: bubble.communication?.source_title?.trim() || "System event",
+            body: text,
+          }}
+          source={<InputSource communication={bubble.communication} />}
+          sourceItemId={bubble.itemId}
+        >
+          {inputContent}
+        </SystemMessageView>
+      </Message>
+    );
+  }
+  return (
+    <Message
+      from={human ? "user" : "assistant"}
+      data-testid="message-bubble"
+      data-role={human ? "user" : origin}
+      data-user-message-id={human ? bubble.itemId : undefined}
+      data-message-id={bubble.itemId}
+      className={cn(
+        "max-w-[640px]",
+        human && bubble.pending && "animate-user-message-enter",
+        !human && "border-l-2 border-border pl-2.5",
+      )}
+    >
+      {!human && (
+        <div className="flex items-center gap-2">
+          <strong className="text-sm font-semibold text-muted-foreground">External input</strong>
+          <InputSource communication={bubble.communication} />
+        </div>
+      )}
+      {inputContent}
     </Message>
   );
 }

@@ -1,4 +1,5 @@
 // Modified for Triune; inherited notices remain applicable.
+import { messageSearchSource } from "./messageSearchSource";
 import { readMessageCommunication } from "./messageCommunication";
 import { attachmentsFromContent } from "./chatAttachments";
 // Translate persisted `ConversationItem`s into a flat `AnyBlock[]` —
@@ -351,10 +352,12 @@ function assistantMessageToBlock(item: MessageItem): TextDone {
     .filter((b): b is { type: "output_text"; text: string } => b.type === "output_text")
     .map((b) => b.text)
     .join("");
+  const searchText = messageSearchSource(item.content);
   return {
     type: "text_done",
     ctx: ctxFor(item),
     fullText: text,
+    ...(searchText !== text ? { searchText } : {}),
     attachments: attachmentsFromContent(item.content),
     hasCodeBlocks: text.includes("```"),
     ...(item.interrupted === true ? { interrupted: true } : {}),

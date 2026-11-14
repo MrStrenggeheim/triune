@@ -335,8 +335,6 @@ const KEYBOARD_SENSOR_OPTIONS = {
 };
 const MOUSE_SENSOR_OPTIONS = { activationConstraint: { distance: 5 } };
 
-const SCROLLBAR_HIDE_DELAY_MS = 700;
-
 // Maps a first-class project id → its name, provided once at the list level so
 // each row resolves its ``project_id`` to a folder name without its own
 // ``useProjects()`` subscription. Keeps row renders O(1) and avoids spinning up
@@ -804,15 +802,6 @@ function SidebarImpl({
   // infinite scroll (auto-loading the next page as the sentinel nears view).
   const scrollContainerRef = useRef<HTMLElement>(null);
   const [hasScrolled, setHasScrolled] = useState(false);
-  // Show the scrollbar only while actively scrolling; hide it after a pause.
-  const [isScrolling, setIsScrolling] = useState(false);
-  const scrollIdleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const markScrolling = useCallback(() => {
-    setIsScrolling(true);
-    clearTimeout(scrollIdleTimer.current ?? undefined);
-    scrollIdleTimer.current = setTimeout(() => setIsScrolling(false), SCROLLBAR_HIDE_DELAY_MS);
-  }, []);
-  useEffect(() => () => clearTimeout(scrollIdleTimer.current ?? undefined), []);
   const setScrollContainer = useCallback((node: HTMLElement | null) => {
     scrollContainerRef.current = node;
     setHasScrolled((node?.scrollTop ?? 0) > 0);
@@ -1389,22 +1378,15 @@ function SidebarImpl({
                 />
                 <nav
                   ref={setScrollContainer}
+                  data-scrollbar="hidden"
                   onScroll={(event) => {
                     setHasScrolled(event.currentTarget.scrollTop > 0);
-                    markScrolling();
                   }}
                   // max-md:pb-16 is the floating Settings chip's clearance: the
                   // chip is a non-scrolling sibling pinned bottom-right, so
                   // without a gutter the last row's always-visible kebab parks
                   // underneath it and can't be tapped.
-                  className={cn(
-                    "relative flex-1 overflow-y-auto px-2 pt-4 pb-3 max-md:pb-16",
-                    // Reserve the gutter so toggling the thumb never reflows the list.
-                    "[scrollbar-width:thin] [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-track]:bg-transparent",
-                    isScrolling
-                      ? "[scrollbar-color:var(--muted-foreground)_transparent] [&::-webkit-scrollbar-thumb]:bg-muted-foreground"
-                      : "[scrollbar-color:transparent_transparent] [&::-webkit-scrollbar-thumb]:bg-transparent",
-                  )}
+                  className="relative flex-1 overflow-y-auto px-2 pt-4 pb-3 max-md:pb-16"
                 >
                   <GridSidebar onNavigate={onNavClick} />
                   {sidebarData.identityReady ? (

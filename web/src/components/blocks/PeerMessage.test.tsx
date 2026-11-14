@@ -115,7 +115,11 @@ describe("trusted peer presentation", () => {
         </MemoryRouter>
       </QueryClientProvider>,
     );
-    await waitFor(() => expect(screen.getByRole("link")).toHaveTextContent("Private reviewer"));
+    await waitFor(() =>
+      expect(screen.getByRole("link", { name: "Private reviewer" })).toHaveTextContent(
+        "Private reviewer",
+      ),
+    );
     let completeRefresh!: (value: Awaited<ReturnType<typeof getSessionSlim>>) => void;
     vi.mocked(getSessionSlim).mockReturnValueOnce(
       new Promise((resolve) => {
@@ -126,7 +130,9 @@ describe("trusted peer presentation", () => {
     act(() => {
       refresh = client.invalidateQueries({ queryKey: ["peer-source-label"] });
     });
-    expect(screen.getByRole("link")).toHaveTextContent("Private reviewer");
+    expect(screen.getByRole("link", { name: "Private reviewer" })).toHaveTextContent(
+      "Private reviewer",
+    );
     expect(screen.getByText("James", { selector: "strong" })).toBeInTheDocument();
     await act(async () => {
       completeRefresh({
@@ -140,7 +146,9 @@ describe("trusted peer presentation", () => {
     await act(async () => {
       await client.invalidateQueries({ queryKey: ["peer-source-label"] });
     });
-    await waitFor(() => expect(screen.getByRole("link")).toHaveTextContent("conversation"));
+    await waitFor(() =>
+      expect(screen.getByRole("link", { name: "conversation" })).toHaveTextContent("conversation"),
+    );
     expect(screen.getByText("Agent", { selector: "strong" })).toBeInTheDocument();
     expect(screen.queryByText("James")).not.toBeInTheDocument();
     expect(screen.queryByText(/Private reviewer/)).not.toBeInTheDocument();
@@ -200,8 +208,7 @@ describe("trusted peer presentation", () => {
 
   it("does not render a long report beyond its bounded preview until expanded", async () => {
     const text = `${"Report α🙂 ".repeat(10000)}FINAL_REPORT_MARKER`;
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+
     render(
       <MemoryRouter>
         <PeerMessage
@@ -213,16 +220,14 @@ describe("trusted peer presentation", () => {
     );
     expect(screen.getByTestId("peer-message")).not.toHaveTextContent("FINAL_REPORT_MARKER");
     expect(screen.getByTestId("peer-message")).not.toHaveTextContent("\uFFFD");
-    fireEvent.click(screen.getByRole("button", { name: "Copy" }));
-    await waitFor(() => expect(writeText).toHaveBeenCalledWith(text));
-    fireEvent.click(screen.getByRole("button", { name: "Show full" }));
+    expect(screen.queryByRole("button", { name: "Copy" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Expand activity" }));
     expect(screen.getByTestId("peer-message")).toHaveTextContent("FINAL_REPORT_MARKER");
   });
 
-  it("clamps the preview, expands in place and copies the complete text", async () => {
+  it("expands in place with one trailing disclosure and no footer", async () => {
     const text = "First line\nSecond line\nThird line\nFourth line";
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    vi.stubGlobal("navigator", { clipboard: { writeText } });
+
     vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(80);
     vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(60);
     render(
@@ -238,19 +243,23 @@ describe("trusted peer presentation", () => {
       "href",
       "/c/review",
     );
-    const excerpt = screen.getByRole("button", { name: "Show full" }).previousElementSibling;
-    expect(excerpt).toHaveClass("line-clamp-3");
-    expect(screen.getByTestId("message-timestamp")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Copy" }));
-    await waitFor(() => expect(writeText).toHaveBeenCalledWith(text));
-    fireEvent.click(screen.getByRole("button", { name: "Show full" }));
-    expect(excerpt).not.toHaveClass("line-clamp-3");
-    expect(screen.getByRole("button", { name: "Show less" })).toHaveAttribute(
+    const disclosure = screen.getByRole("button", { name: "Expand activity" });
+    const detail = document.getElementById(disclosure.getAttribute("aria-controls")!);
+    expect(detail).not.toBeVisible();
+    expect(screen.queryByTestId("message-timestamp")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Copy" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Expand activity" }));
+    expect(detail).toBeVisible();
+    expect(screen.getByTestId("peer-message").textContent?.match(/First line/g)).toHaveLength(1);
+    expect(screen.getByTestId("peer-message")).toHaveTextContent("Fourth line");
+    expect(screen.getByRole("button", { name: "Collapse activity" })).toHaveAttribute(
       "aria-expanded",
       "true",
     );
-    fireEvent.click(screen.getByRole("button", { name: "Show less" }));
-    expect(excerpt).toHaveClass("line-clamp-3");
+    fireEvent.click(screen.getByRole("button", { name: "Collapse activity" }));
+    expect(detail).not.toBeVisible();
+    expect(screen.getByTestId("peer-message").textContent?.match(/First line/g)).toHaveLength(1);
+    expect(screen.getByTestId("peer-message")).not.toHaveTextContent("Fourth line");
     expect(
       screen.queryByText(/accepted|queued|Receipt|Delivery|peer-1|Agent message|In transcript/),
     ).not.toBeInTheDocument();
@@ -280,10 +289,16 @@ describe("trusted peer presentation", () => {
           </MemoryRouter>
         </QueryClientProvider>,
       );
-      await waitFor(() => expect(screen.getByRole("link")).toHaveTextContent("Review fork sync"));
+      await waitFor(() =>
+        expect(screen.getByRole("link", { name: "Review fork sync" })).toHaveTextContent(
+          "Review fork sync",
+        ),
+      );
       expect(screen.getByText(expected, { selector: "strong" })).toBeInTheDocument();
       expect(screen.getByText("from")).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "Message actions" })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Message actions" })).not.toBeInTheDocument();
+      fireEvent.contextMenu(screen.getByText(expected, { selector: "strong" }));
+      expect(screen.getByRole("menuitem", { name: "Open source chat in new tab" })).toBeVisible();
     },
   );
 
@@ -364,11 +379,8 @@ describe("trusted peer presentation", () => {
   });
 
   it.each(["review", "implementation", "unrelated"])(
-    "copies the owning conversation link in scope %s",
+    "omits footer nodes in scope %s",
     async (scope) => {
-      const writeText = vi.fn().mockResolvedValue(undefined);
-      vi.stubGlobal("navigator", { clipboard: { writeText } });
-      vi.stubGlobal("location", { href: "https://app.example/c/browser-current?file=wrong#old" });
       render(
         <ConversationScopeContext.Provider value={scope}>
           <MemoryRouter>
@@ -380,12 +392,8 @@ describe("trusted peer presentation", () => {
           </MemoryRouter>
         </ConversationScopeContext.Provider>,
       );
-      fireEvent.click(screen.getByRole("button", { name: "Copy link" }));
-      await waitFor(() =>
-        expect(writeText).toHaveBeenCalledWith(
-          `https://app.example/c/${scope === "review" ? "review" : "implementation"}?message=item-1`,
-        ),
-      );
+      expect(screen.queryByRole("button", { name: "Copy link" })).not.toBeInTheDocument();
+      expect(screen.queryByTestId("message-timestamp")).not.toBeInTheDocument();
     },
   );
 
