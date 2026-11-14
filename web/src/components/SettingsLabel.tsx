@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { CircleHelpIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
@@ -41,7 +42,7 @@ export function SettingsLabel({
   return (
     <div className={cn("min-w-0", className)}>
       <div className="flex items-center gap-1.5">
-        <span id={labelId} className={cn("text-ui font-normal md:font-medium", labelClassName)}>
+        <span id={labelId} className={cn("text-ui font-bold", labelClassName)}>
           {label}
         </span>
         <TooltipProvider delayDuration={0}>
@@ -74,7 +75,10 @@ export function SettingsLabel({
       <div
         id={descriptionId}
         data-testid={descriptionTestId}
-        className={cn("text-sm text-muted-foreground max-md:hidden", descriptionClassName)}
+        className={cn(
+          "text-sm font-normal text-muted-foreground max-md:hidden",
+          descriptionClassName,
+        )}
       >
         {description}
       </div>

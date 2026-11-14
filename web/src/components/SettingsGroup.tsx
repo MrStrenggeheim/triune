@@ -1,3 +1,4 @@
+// Modified for Triune.
 import type { ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
@@ -20,7 +21,7 @@ export function SettingsGroup({
 }: SettingsGroupProps) {
   return (
     <section className={cn("flex flex-col gap-3", className)} data-testid={testId}>
-      <h2 className="text-ui font-medium">{title}</h2>
+      <h2 className="text-ui font-bold">{title}</h2>
       <div className={cn("rounded-xl border border-border bg-card p-4", contentClassName)}>
         {children}
       </div>

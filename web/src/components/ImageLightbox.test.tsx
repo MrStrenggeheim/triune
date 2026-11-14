@@ -1,3 +1,4 @@
+// Modified for Triune.
 // Tests for the shared image lightbox: a ZoomableImage renders a button around
 // an <img>; activating it opens a full-screen Dialog showing the same source,
 // which closes via Escape, the "x" button, or a click on the empty stage
@@ -11,9 +12,37 @@ vi.mock("@/lib/host", () => ({
   getEmbedRoot: () => null,
 }));
 
-import { ImageLightboxProvider, ZoomableImage } from "./ImageLightbox";
+import { fitImagePreviewSize, ImageLightboxProvider, ZoomableImage } from "./ImageLightbox";
 
 afterEach(cleanup);
+
+describe("inline image fitting", () => {
+  it.each([
+    [1600, 800, 640, 512, 256],
+    [600, 1200, 640, 128, 256],
+    [400, 100, 240, 240, 60],
+    [120, 60, 640, 120, 60],
+    [800, 600, 180, 180, 135],
+  ])(
+    "fits %sx%s within %spx without changing ratio",
+    (width, height, maxWidth, expectedWidth, expectedHeight) => {
+      const fitted = fitImagePreviewSize(width, height, maxWidth)!;
+      expect(fitted.width).toBeCloseTo(expectedWidth);
+      expect(fitted.height).toBeCloseTo(expectedHeight);
+      expect(fitted.width / fitted.height).toBeCloseTo(width / height);
+    },
+  );
+
+  it.each([
+    [0, 100],
+    [100, 0],
+    [-1, 100],
+    [Infinity, 100],
+    [100, NaN],
+  ])("ignores undecoded or invalid dimensions %sx%s", (width, height) => {
+    expect(fitImagePreviewSize(width, height)).toBeUndefined();
+  });
+});
 
 function renderWithProvider() {
   return render(

@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { useEffect, useState } from "react";
 import { ImageIcon } from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
@@ -5,7 +6,7 @@ import { cn } from "@/lib/utils";
 import { withBasePath } from "@/lib/basePath";
 import { getOmnigentHostConfig } from "@/lib/host";
 import { authenticatedFetch } from "@/lib/identity";
-import { ZoomableImage } from "@/components/ImageLightbox";
+import { useImagePreviewSize, ZoomableImage } from "@/components/ImageLightbox";
 
 export interface SessionImageProps {
   /**
@@ -18,10 +19,30 @@ export interface SessionImageProps {
 }
 
 // Size the box to the image so short screenshots don't leave empty rows.
-const PREVIEW_BOX = "flex max-w-full shrink-0 items-start justify-center";
+const PREVIEW_BOX = "flex w-fit min-w-0 max-w-full shrink-0 items-start justify-center";
 
 // An absolute cap also constrains images inside the auto-height zoom button.
-const PREVIEW_IMAGE = "max-h-64 max-w-full";
+const PREVIEW_IMAGE = "block h-auto w-full max-h-64 max-w-full";
+
+function SessionImagePreview({
+  src,
+  alt,
+  className,
+  ...props
+}: React.ComponentProps<typeof ZoomableImage>) {
+  const { size, onLoad } = useImagePreviewSize(src);
+  return (
+    <div className={PREVIEW_BOX} style={{ width: size?.width }}>
+      <ZoomableImage
+        {...props}
+        src={src}
+        alt={alt}
+        className={cn(PREVIEW_IMAGE, className)}
+        onLoad={onLoad}
+      />
+    </div>
+  );
+}
 
 /** Placeholder width, so the box holds a slot on the row before its image lands. */
 const PREVIEW_PLACEHOLDER_BOX = "flex h-64 w-40 shrink-0 items-center justify-center";
@@ -93,23 +114,21 @@ export function InlineImage({
   }
 
   return (
-    <div className={PREVIEW_BOX}>
-      <ZoomableImage
-        src={src}
-        alt={alt}
-        className={cn(PREVIEW_IMAGE, className)}
-        // Offscreen history images cost nothing until scrolled to, and decoding
-        // off the main thread keeps the swap from blocking paint.
-        loading="lazy"
-        decoding="async"
-        // An absent src never resolved, so nothing has failed yet — latching
-        // here would strand the slot on a chip once the path arrives. A
-        // non-data src remains available for retry on error.
-        onError={() => {
-          if (src !== undefined && src.startsWith("data:")) setFailedSrc(src);
-        }}
-      />
-    </div>
+    <SessionImagePreview
+      src={src}
+      alt={alt}
+      className={className}
+      // Offscreen history images cost nothing until scrolled to, and decoding
+      // off the main thread keeps the swap from blocking paint.
+      loading="lazy"
+      decoding="async"
+      // An absent src never resolved, so nothing has failed yet — latching
+      // here would strand the slot on a chip once the path arrives. A
+      // non-data src remains available for retry on error.
+      onError={() => {
+        if (src !== undefined && src.startsWith("data:")) setFailedSrc(src);
+      }}
+    />
   );
 }
 
@@ -228,14 +247,5 @@ function EmbeddedSessionImage({ path, alt, className }: SessionImageProps) {
     );
   }
 
-  return (
-    <div className={PREVIEW_BOX}>
-      <ZoomableImage
-        src={blobUrl}
-        alt={alt}
-        className={cn(PREVIEW_IMAGE, className)}
-        decoding="async"
-      />
-    </div>
-  );
+  return <SessionImagePreview src={blobUrl} alt={alt} className={className} decoding="async" />;
 }

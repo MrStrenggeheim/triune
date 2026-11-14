@@ -3,13 +3,13 @@ import { SidebarServerPicker as ServerConnectionPicker } from "@/shell/SidebarSe
 import {
   fileOpeningModes,
   fileOpeningLabels,
+  type FileOpeningMode,
   useFileOpening,
   writeFileOpening,
 } from "@/lib/fileOpeningPreferences";
 import {
   DEFAULT_LIST_DENSITY,
   LIST_DENSITY_STORAGE_KEY,
-  listDensities,
   useListDensity,
   writeListDensity,
 } from "@/lib/listDensityPreferences";
@@ -30,7 +30,7 @@ import { SessionOrchestrationSettings } from "./settings/SessionOrchestrationSet
  *
  * - **General** — app-wide behavior preferences.
  * - **Appearance** — theme mode (System / Light / Dark), terminal theme,
- *   default transcript view, Workspace panel and tab defaults, and UI/code font
+ *   default transcript view, layout preferences, and UI/code font
  *   controls.
  * - **Git** — Git behavior: the global "always use a random worktree" default
  *   and the default base branch pre-filled when naming a new worktree branch.
@@ -66,11 +66,7 @@ import { useIsMobileViewport } from "@/hooks/useIsMobileViewport";
 import {
   ArchiveRestoreIcon,
   AlertTriangleIcon,
-  BotIcon,
   DownloadIcon,
-  FileDiffIcon,
-  FilesIcon,
-  GitPullRequestIcon,
   KeyRoundIcon,
   Loader2Icon,
   LogOutIcon,
@@ -78,9 +74,6 @@ import {
   MinusIcon,
   MonitorIcon,
   MoonIcon,
-  PanelRightCloseIcon,
-  PanelRightIcon,
-  PinIcon,
   PlusIcon,
   SunIcon,
   SquareCheckIcon,
@@ -107,6 +100,7 @@ import { CardRadioGroup } from "@/components/theme/CardRadioGroup";
 import { IconSegmentedControl } from "@/components/theme/IconSegmentedControl";
 import { PaletteChip, PaletteSwatchPreview } from "@/components/theme/AppearancePreviews";
 import { Button } from "@/components/ui/button";
+import { SegmentedControl, SegmentedControlItem } from "@/components/ui/segmented-control";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -207,10 +201,8 @@ import {
   type TerminalClipboardPreference,
 } from "@/lib/terminalClipboardPreferences";
 import {
-  readWorkspacePanelDefault,
   WORKSPACE_PANEL_DEFAULT,
   writeWorkspacePanelDefault,
-  type WorkspacePanelDefault,
 } from "@/lib/workspacePanelPreferences";
 import {
   readTranscriptViewDefault,
@@ -228,11 +220,8 @@ import {
   DEFAULT_WORKSPACE_TAB,
   defaultWorkspaceTabs,
   PINNED_WORKSPACE_TABS_STORAGE_KEY,
-  readDefaultWorkspaceTab,
-  readPinnedWorkspaceTabs,
   writeDefaultWorkspaceTab,
   writePinnedWorkspaceTabs,
-  type DefaultWorkspaceTab,
 } from "@/lib/workspaceTabPreferences";
 import { readDefaultBaseBranch, writeDefaultBaseBranch } from "@/lib/baseBranchPreferences";
 import { readAlwaysSteer, writeAlwaysSteer } from "@/lib/alwaysSteerPreferences";
@@ -423,7 +412,7 @@ function Section({
 }) {
   return (
     <section>
-      <h1 className="settings-page-title text-2xl font-semibold">{title}</h1>
+      <h1 className="settings-page-title text-2xl font-bold">{title}</h1>
       {description && (
         <p
           className={cn(
@@ -458,26 +447,6 @@ const transcriptViewCards: {
 }[] = [
   { value: "chat", label: "Chat", icon: MessagesSquareIcon },
   { value: "terminal", label: "Terminal", icon: TerminalIcon },
-];
-
-const workspacePanelCards: {
-  value: WorkspacePanelDefault;
-  label: string;
-  icon: typeof PanelRightIcon;
-}[] = [
-  { value: "open", label: "Open", icon: PanelRightIcon },
-  { value: "collapsed", label: "Collapsed", icon: PanelRightCloseIcon },
-];
-
-const workspaceTabCards: {
-  value: DefaultWorkspaceTab;
-  label: string;
-  icon: ComponentType<{ className?: string }>;
-}[] = [
-  { value: "files", label: "Files", icon: FilesIcon },
-  { value: "changes", label: "Changes", icon: FileDiffIcon },
-  { value: "github", label: "Pull Requests", icon: GitPullRequestIcon },
-  { value: "subagents", label: "Activity", icon: BotIcon },
 ];
 
 /** Centered icon + label body shared by the Mode and Terminal theme cards. */
@@ -599,159 +568,6 @@ function TranscriptViewDefaultControl() {
         }))}
       />
     </ThemeSubsection>
-  );
-}
-
-/**
- * Default open/collapsed state for the right Workspace rail on brand-new chats.
- * Only applies when a session has no saved per-chat open state — existing
- * sessions keep restoring whatever the user last left them as.
- */
-function WorkspacePanelDefaultControl() {
-  const [value, setValue] = useState(() => readWorkspacePanelDefault());
-  const labelId = useId();
-  const choose = useCallback((next: WorkspacePanelDefault) => {
-    setValue(next);
-    writeWorkspacePanelDefault(next);
-  }, []);
-  return (
-    <ThemeSubsection
-      labelId={labelId}
-      title="Workspace panel"
-      helper="Whether new chats open with the Files / Activity / Shells panel visible. Collapsing or expanding the panel updates this. Existing chats keep their last layout."
-    >
-      <CardRadioGroup<WorkspacePanelDefault>
-        labelledBy={labelId}
-        value={value}
-        onSelect={choose}
-        componentId="settings.appearance.workspace_panel"
-        className="grid grid-cols-2 gap-3"
-        cardClassName="items-center gap-2 p-4"
-        items={workspacePanelCards.map((card) => ({
-          value: card.value,
-          testId: `workspace-panel-default-${card.value}`,
-          body: iconCardBody(card.icon, card.label),
-        }))}
-      />
-    </ThemeSubsection>
-  );
-}
-
-/** Pinned pages and the first tab for sessions without a remembered selection. */
-function WorkspaceTabsControl() {
-  const [value, setValue] = useState(() => readDefaultWorkspaceTab());
-  const [pinned, setPinned] = useState(() => readPinnedWorkspaceTabs());
-  const labelId = useId();
-  const pinnedLabelId = useId();
-  const pinnedCards = workspaceTabCards.filter((card) => pinned.includes(card.value));
-  const firstTab = pinnedCards.find((card) => card.value === value) ?? pinnedCards[0];
-  const previewTabs = firstTab
-    ? [firstTab, ...pinnedCards.filter((card) => card !== firstTab)]
-    : [];
-  const choose = useCallback((next: DefaultWorkspaceTab) => {
-    setValue(next);
-    writeDefaultWorkspaceTab(next);
-  }, []);
-  const togglePin = (tab: DefaultWorkspaceTab, checked: boolean) => {
-    const next = defaultWorkspaceTabs.filter((item) =>
-      item === tab ? checked : pinned.includes(item),
-    );
-    setPinned(next);
-    writePinnedWorkspaceTabs(next);
-  };
-  return (
-    <div className="flex flex-col gap-4">
-      <ThemeSubsection
-        labelId={pinnedLabelId}
-        title="Sidebar tabs"
-        helper="Pin the pages you use most. Everything else stays in the + menu."
-      >
-        <div
-          role="img"
-          aria-label={`Sidebar preview: ${previewTabs.length ? `${previewTabs.map((tab) => tab.label).join(", ")} pinned` : "all pages in the + menu"}.`}
-          className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-muted/25 px-3 py-2.5"
-        >
-          <span className="text-sm text-muted-foreground">Sidebar preview</span>
-          <div aria-hidden="true" className="flex shrink-0 items-center gap-1">
-            {previewTabs.map(({ value: tab, icon: Icon }) => (
-              <span
-                key={tab}
-                className={cn(
-                  "flex size-7 items-center justify-center rounded-md text-muted-foreground",
-                  tab === firstTab?.value && "bg-background text-foreground shadow-xs",
-                )}
-              >
-                <Icon className="size-4" />
-              </span>
-            ))}
-            {previewTabs.length > 0 && <span className="mx-1 h-4 w-px bg-border" />}
-            <span className="flex size-7 items-center justify-center text-muted-foreground">
-              <PlusIcon className="size-4" />
-            </span>
-          </div>
-        </div>
-        <div role="group" aria-labelledby={pinnedLabelId} className="divide-y divide-border">
-          {workspaceTabCards.map(({ value: tab, label, icon: Icon }) => {
-            const isPinned = pinned.includes(tab);
-            return (
-              <div key={tab} className="flex items-center gap-3 py-2.5">
-                <Icon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
-                <span className="flex-1 text-ui">{label}</span>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  aria-label={`Pin ${label}`}
-                  aria-pressed={isPinned}
-                  title={`${isPinned ? "Unpin" : "Pin"} ${label}`}
-                  onClick={() => togglePin(tab, !isPinned)}
-                  className={cn(
-                    "min-w-24",
-                    isPinned
-                      ? "bg-primary/8 text-primary hover:bg-primary/12"
-                      : "text-muted-foreground",
-                  )}
-                  componentId={`settings.appearance.pin_workspace_${tab}`}
-                >
-                  <PinIcon
-                    aria-hidden="true"
-                    className={cn("size-3.5", isPinned && "fill-current")}
-                  />
-                  {isPinned ? "Pinned" : "Pin"}
-                </Button>
-              </div>
-            );
-          })}
-        </div>
-      </ThemeSubsection>
-      {firstTab && (
-        <div className="border-t border-border pt-4">
-          <ThemeSubsection
-            labelId={labelId}
-            title="Default Workspace tab"
-            helper="Shown first in Workspace. Changing this also updates existing chats when reopened or refreshed. Later tab choices are remembered. File links still open the linked file."
-          >
-            <CardRadioGroup<DefaultWorkspaceTab>
-              labelledBy={labelId}
-              value={firstTab.value}
-              onSelect={choose}
-              className={cn(
-                "grid gap-3",
-                pinnedCards.length > 1 && "grid-cols-2",
-                pinnedCards.length === 3 && "sm:grid-cols-3",
-                pinnedCards.length === 4 && "sm:grid-cols-4",
-              )}
-              cardClassName="items-center gap-2 p-4"
-              items={pinnedCards.map((card) => ({
-                value: card.value,
-                testId: `workspace-tab-default-${card.value}`,
-                body: iconCardBody(card.icon, card.label),
-              }))}
-            />
-          </ThemeSubsection>
-        </div>
-      )}
-    </div>
   );
 }
 
@@ -980,6 +796,62 @@ function FoldAssistantNarrationControl() {
   );
 }
 
+const fileOpeningHints: Record<FileOpeningMode, string> = {
+  same: "Tab in the current pane",
+  beside: "Neighbor, or split once",
+  split: "Split the current pane",
+  reuse: "File pane, otherwise here",
+};
+
+function FileOpeningSchematic({ mode }: { mode: FileOpeningMode }) {
+  const panes = mode === "same" ? 1 : mode === "split" ? 3 : 2;
+  const destination = mode === "same" ? 0 : 1;
+  return (
+    <span
+      aria-hidden="true"
+      className="flex h-18 w-full gap-1 rounded-md border border-border bg-background p-1"
+    >
+      {Array.from({ length: panes }, (_, index) => {
+        const target = index === destination;
+        return (
+          <span
+            key={index}
+            className={cn(
+              "flex min-w-0 flex-1 flex-col overflow-hidden rounded-sm border border-solid",
+              target ? "border-primary/60 bg-primary/15" : "border-border bg-muted/20",
+              mode === "split" && index === 2 && "flex-[2]",
+            )}
+          >
+            <span
+              className={cn(
+                "flex h-3 shrink-0 items-end gap-0.5 border-b px-1",
+                target ? "border-primary/30 bg-primary/10" : "border-border bg-muted",
+              )}
+            >
+              {(!target || mode === "same" || mode === "reuse") && (
+                <span className="h-1.5 w-4 rounded-t-sm bg-muted-foreground/25" />
+              )}
+              {target && <span className="h-1.5 w-4 rounded-t-sm bg-primary" />}
+            </span>
+            <span className="flex flex-1 flex-col gap-1 p-1.5">
+              {[0, 1, 2].map((line) => (
+                <span
+                  key={line}
+                  className={cn(
+                    "h-0.5 rounded",
+                    line === 1 ? "w-1/2" : "w-4/5",
+                    target ? "bg-primary/45" : "bg-muted-foreground/25",
+                  )}
+                />
+              ))}
+            </span>
+          </span>
+        );
+      })}
+    </span>
+  );
+}
+
 function FileOpeningControl() {
   const value = useFileOpening();
   const id = useId();
@@ -987,7 +859,7 @@ function FileOpeningControl() {
     <ThemeSubsection
       title="Open files from chat"
       labelId={id}
-      helper="Choose where file links open. Existing matching file tabs are reused."
+      helper="Choose where a new file tab opens."
     >
       <CardRadioGroup
         labelledBy={id}
@@ -996,9 +868,18 @@ function FileOpeningControl() {
         items={fileOpeningModes.map((mode) => ({
           value: mode,
           testId: `file-opening-${mode}`,
-          body: fileOpeningLabels[mode],
+          body: (
+            <>
+              <span className="w-full pr-5 text-ui font-bold">{fileOpeningLabels[mode]}</span>
+              <FileOpeningSchematic mode={mode} />
+              <span className="text-xs font-normal text-muted-foreground">
+                {fileOpeningHints[mode]}
+              </span>
+            </>
+          ),
         }))}
-        className="grid grid-cols-2 gap-2"
+        className="grid grid-cols-2 gap-2 md:grid-cols-4"
+        cardClassName="min-w-0 gap-2 p-2.5 text-left"
       />
     </ThemeSubsection>
   );
@@ -1007,56 +888,55 @@ function FileOpeningControl() {
 function ListDensityControl() {
   const density = useListDensity();
   const labelId = useId();
+  const { trackValueChange } = useOmnigentAnalytics();
   return (
-    <ThemeSubsection
-      title="List density"
-      labelId={labelId}
-      helper="Adjust navigation and list spacing without changing text size."
-    >
-      <CardRadioGroup
-        labelledBy={labelId}
-        value={density}
-        onSelect={writeListDensity}
-        componentId="settings.appearance.list_density"
-        className="grid grid-cols-2 gap-3"
-        cardClassName="gap-3 p-3"
-        items={[...listDensities].reverse().map((value) => {
-          const rowHeight = value === "compact" ? 36 : 48;
-          return {
-            value,
-            testId: `list-density-${value}`,
-            body: (
-              <>
-                <div
-                  aria-hidden
-                  className="h-36 w-full overflow-hidden rounded-lg border border-border bg-background px-2"
-                >
-                  {[0, 1, 2].map((row) => (
-                    <div
-                      key={row}
-                      className="flex items-center gap-2"
-                      style={{ height: rowHeight }}
-                    >
-                      <span className="size-3 shrink-0 rounded bg-muted-foreground/20" />
-                      <span
-                        className={cn(
-                          "h-2 rounded bg-muted-foreground/20",
-                          row === 1 ? "w-1/2" : "w-2/3",
-                        )}
-                      />
-                    </div>
-                  ))}
-                </div>
-                <span className="text-ui font-medium">
-                  {value === "compact" ? "Compact" : "Comfortable"}
-                </span>
-                <span className="text-sm text-muted-foreground">{rowHeight}px rows</span>
-              </>
-            ),
-          };
-        })}
+    <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between md:gap-4">
+      <SettingsLabel
+        label="List density"
+        labelId={labelId}
+        description="Adjust spacing without changing text size."
       />
-    </ThemeSubsection>
+      <SegmentedControl
+        aria-labelledby={labelId}
+        className="h-auto max-w-full p-0.5 [&>span]:min-w-0 [&>span]:flex-1"
+      >
+        {(["comfortable", "compact"] as const).map((value) => (
+          <SegmentedControlItem
+            key={value}
+            label={value === "compact" ? "Compact" : "Comfortable"}
+            active={density === value}
+            data-testid={`list-density-${value}`}
+            componentId="settings.appearance.list_density"
+            onClick={() => {
+              trackValueChange("settings.appearance.list_density", "select", value, {
+                valueHasNoPii: true,
+              });
+              writeListDensity(value);
+            }}
+            className="h-9 w-full gap-2 px-2.5 max-md:h-11"
+          >
+            <span
+              aria-hidden="true"
+              className={cn(
+                "flex size-4 shrink-0 flex-col justify-center",
+                value === "compact" ? "gap-0.5" : "gap-1",
+              )}
+            >
+              {[0, 1, 2].map((line) => (
+                <span
+                  key={line}
+                  className={cn(
+                    "h-0.5 w-full rounded",
+                    density === value ? "bg-primary" : "bg-muted-foreground/60",
+                  )}
+                />
+              ))}
+            </span>
+            {value === "compact" ? "Compact" : "Comfortable"}
+          </SegmentedControlItem>
+        ))}
+      </SegmentedControl>
+    </div>
   );
 }
 
@@ -1239,14 +1119,7 @@ function AppearanceSection() {
             </div>
           </SettingsGroup>
 
-          <SettingsGroup title="Workspace" testId="settings-group-workspace">
-            <WorkspacePanelDefaultControl />
-            <div className="mt-4 border-t border-border pt-4">
-              <WorkspaceTabsControl />
-            </div>
-          </SettingsGroup>
-
-          <SettingsGroup title="List spacing" testId="settings-group-density">
+          <SettingsGroup title="Layout" testId="settings-group-density">
             <ListDensityControl />
             <div className="mt-4 border-t border-border pt-4">
               <FileOpeningControl />
@@ -2713,7 +2586,7 @@ function UpdatesSection() {
         <div className="flex max-w-2xl flex-col gap-6">
           <SettingsGroup title="Preferences" testId="settings-group-update-preferences">
             <label className="flex flex-col gap-2">
-              <span className="text-ui font-normal md:font-medium">Update mode</span>
+              <span className="text-ui font-bold">Update mode</span>
               <Select
                 value={config.mode}
                 onValueChange={(value) => void persistConfig({ mode: value as UpdateMode })}
@@ -3046,7 +2919,7 @@ function ImportSection() {
       description="Pull local chats from a machine you're running into Triune. Sessions already imported are skipped."
     >
       <div className="flex flex-col gap-3">
-        <h2 className="text-ui font-medium">Import from a machine</h2>
+        <h2 className="text-ui font-bold">Import from a machine</h2>
         <div className="rounded-xl border border-border bg-card p-4">
           <ImportSessionsPanel />
         </div>
@@ -3344,7 +3217,7 @@ function ArchivedSection() {
             <div className="flex flex-col gap-4">
               {groupedArchived.map((group) => (
                 <div key={group.label}>
-                  <h3 className="mb-1 px-3 text-sm font-medium text-muted-foreground">
+                  <h3 className="mb-1 px-3 text-sm font-bold text-muted-foreground">
                     {group.label}
                   </h3>
                   <ul className="flex flex-col gap-0.5">

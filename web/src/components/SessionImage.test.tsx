@@ -1,3 +1,4 @@
+// Modified for Triune.
 // Tests for SessionImage — inline preview for a session image file resource.
 //
 // Two render paths branch on the host config's `fetcher`:
@@ -97,6 +98,23 @@ describe("SessionImage (standalone, no host fetcher)", () => {
 
     expect(screen.getByRole("img", { name: "pending" }).tagName).toBe("IMG");
   });
+
+  it("fits the preview wrapper to decoded dimensions and drops stale geometry on source changes", () => {
+    const view = render(<SessionImage path="/wide" alt="diagram" />);
+    const img = screen.getByRole("img", { name: "diagram" });
+    Object.defineProperties(img, {
+      naturalWidth: { value: 1600, configurable: true },
+      naturalHeight: { value: 800, configurable: true },
+    });
+    fireEvent.load(img);
+    expect(img.parentElement?.parentElement).toHaveStyle({ width: "512px" });
+    expect(img).toHaveClass("w-full", "h-auto", "max-h-64");
+    view.rerender(<SessionImage path="/tall" alt="diagram" />);
+    expect(img.parentElement?.parentElement?.style.width).toBe("");
+    Object.defineProperties(img, { naturalWidth: { value: 600 }, naturalHeight: { value: 1200 } });
+    fireEvent.load(img);
+    expect(img.parentElement?.parentElement).toHaveStyle({ width: "128px" });
+  });
 });
 
 describe("SessionImage (embedded, host fetcher present)", () => {
@@ -124,6 +142,9 @@ describe("SessionImage (embedded, host fetcher present)", () => {
     expect(img).toHaveClass("cls");
     expect(createObjectURL).toHaveBeenCalledWith(blob);
     expect(authenticatedFetch).toHaveBeenCalledWith("/p");
+    Object.defineProperties(img, { naturalWidth: { value: 400 }, naturalHeight: { value: 100 } });
+    fireEvent.load(img);
+    expect(img.parentElement?.parentElement).toHaveStyle({ width: "400px" });
   });
 
   it("renders the error fallback when the response is not ok", async () => {

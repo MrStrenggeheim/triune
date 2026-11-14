@@ -8,6 +8,7 @@ import type { ReactNode } from "react";
 import type * as AvailableAgentsModule from "@/hooks/useAvailableAgents";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -619,7 +620,8 @@ describe("SettingsPage", () => {
   it("renders the Appearance section and applies a theme on card click", () => {
     renderPage("/settings/appearance");
     const heading = screen.getByRole("heading", { name: "Appearance" });
-    expect(heading).toHaveClass("settings-page-title");
+    expect(heading).toHaveClass("settings-page-title", "font-bold");
+    expect(screen.getByRole("heading", { name: "Layout" })).toHaveClass("font-bold");
     expect(heading.closest("section")?.parentElement).toHaveClass("px-4", "md:px-8");
     expect(screen.getByRole("button", { name: "About Interface font size" })).toHaveClass(
       "md:hidden",
@@ -748,129 +750,78 @@ describe("SettingsPage", () => {
     expect(localStorage.getItem("omnigent:default-transcript-view")).toBe("terminal");
   });
 
-  it("selects and persists the default Workspace tab", () => {
-    renderPage("/settings/appearance");
-
-    const group = screen.getByRole("radiogroup", { name: "Default Workspace tab" });
-    const options = within(group).getAllByRole("radio");
-    expect(options).toHaveLength(4);
-    ["Files", "Changes", "Pull Requests", "Activity"].forEach((label, index) => {
-      expect(options[index]).toHaveAccessibleName(label);
-    });
-    expect(screen.getByTestId("workspace-tab-default-files")).toHaveAttribute(
-      "aria-checked",
-      "true",
-    );
-    expect(localStorage.getItem("omnigent:default-workspace-tab")).toBeNull();
-
-    fireEvent.click(screen.getByTestId("workspace-tab-default-subagents"));
-    expect(screen.getByTestId("workspace-tab-default-subagents")).toHaveAttribute(
-      "aria-checked",
-      "true",
-    );
-    expect(
-      screen.getByRole("img", {
-        name: "Sidebar preview: Activity, Files, Changes, Pull Requests pinned.",
-      }),
-    ).toBeInTheDocument();
-    expect(localStorage.getItem("omnigent:default-workspace-tab")).toBe("subagents");
-  });
-
-  it("seeds the preferred Workspace tab and restores it when repinned", () => {
-    localStorage.setItem("omnigent:default-workspace-tab", "changes");
-    renderPage("/settings/appearance");
-
-    expect(screen.getByTestId("workspace-tab-default-changes")).toHaveAttribute(
-      "aria-checked",
-      "true",
-    );
-    expect(
-      screen.getByRole("img", {
-        name: "Sidebar preview: Changes, Files, Pull Requests, Activity pinned.",
-      }),
-    ).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Pin Changes" }));
-    expect(screen.getByTestId("workspace-tab-default-files")).toHaveAttribute(
-      "aria-checked",
-      "true",
-    );
-    expect(localStorage.getItem("omnigent:default-workspace-tab")).toBe("changes");
-    fireEvent.click(screen.getByRole("button", { name: "Pin Changes" }));
-    expect(screen.getByTestId("workspace-tab-default-changes")).toHaveAttribute(
-      "aria-checked",
-      "true",
-    );
-  });
-
-  it("lets every workspace page be unpinned, remembers the choice, and selects a pinned default", () => {
-    writeSessionWorkspaceState("file", {
-      rightRailTab: "files",
-      openFiles: ["README.md"],
-      selectedFilePath: "README.md",
-    });
-    writeSessionWorkspaceState("browser", {
-      rightRailTab: "browser",
-      openBrowsers: ["one"],
-      selectedBrowserId: "one",
-    });
+  it("hides obsolete Workspace controls without changing compatibility preferences or chat state", () => {
+    const legacy = {
+      "omnigent:default-workspace-panel": "open",
+      "omnigent:default-workspace-tab": "changes",
+      "omnigent:pinned-workspace-tabs": '["files","changes"]',
+    };
+    for (const [key, value] of Object.entries(legacy)) localStorage.setItem(key, value);
+    writeSessionWorkspaceState("file", { openFiles: ["README.md"], selectedFilePath: "README.md" });
+    const saved = readSessionWorkspaceState("file");
     const page = renderPage("/settings/appearance");
-    for (const label of ["Files", "Changes", "Pull Requests", "Activity"]) {
-      const toggle = screen.getByRole("button", { name: `Pin ${label}` });
-      expect(toggle).toHaveAttribute("aria-pressed", "true");
-      fireEvent.click(toggle);
-      expect(toggle).toHaveAttribute("aria-pressed", "false");
-      expect(screen.queryByRole("radio", { name: label })).toBeNull();
-    }
+    expect(screen.queryByTestId("settings-group-workspace")).toBeNull();
+    expect(screen.queryByRole("radiogroup", { name: "Workspace panel" })).toBeNull();
     expect(screen.queryByRole("radiogroup", { name: "Default Workspace tab" })).toBeNull();
-    expect(
-      screen.getByRole("img", { name: "Sidebar preview: all pages in the + menu." }),
-    ).toBeInTheDocument();
-    expect(localStorage.getItem("omnigent:pinned-workspace-tabs")).toBe("[]");
-
+    expect(screen.queryByRole("button", { name: "Pin Files" })).toBeNull();
+    fireEvent.click(screen.getByTestId("list-density-compact"));
+    fireEvent.click(screen.getByTestId("file-opening-same"));
     page.unmount();
     renderPage("/settings/appearance");
-    expect(screen.getByRole("button", { name: "Pin Files" })).toHaveAttribute(
-      "aria-pressed",
-      "false",
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Pin Changes" }));
-    expect(screen.getByTestId("workspace-tab-default-changes")).toHaveAttribute(
-      "aria-checked",
-      "true",
-    );
-    expect(
-      screen.getByRole("img", { name: "Sidebar preview: Changes pinned." }),
-    ).toBeInTheDocument();
-    expect(localStorage.getItem("omnigent:default-workspace-tab")).toBeNull();
-    expect(readSessionWorkspaceState("file")).toEqual({
-      openFiles: ["README.md"],
-      selectedFilePath: "README.md",
-    });
-    expect(readSessionWorkspaceState("browser")).toEqual({
-      rightRailTab: "browser",
-      openBrowsers: ["one"],
-      selectedBrowserId: "one",
-    });
+    for (const [key, value] of Object.entries(legacy))
+      expect(localStorage.getItem(key)).toBe(value);
+    expect(readSessionWorkspaceState("file")).toEqual(saved);
   });
 
-  it("applies and restores list density without changing font preferences", () => {
+  it("offers the four existing file destinations through contained schematic radio cards", () => {
+    localStorage.setItem("triune:file-opening", "reuse");
+    const page = renderPage("/settings/appearance");
+    const group = screen.getByRole("radiogroup", { name: "Open files from chat" });
+    expect(group).toHaveClass("grid-cols-2", "md:grid-cols-4");
+    expect(within(group).getAllByRole("radio")).toHaveLength(4);
+    const selected = screen.getByTestId("file-opening-reuse");
+    expect(selected).toHaveAttribute("aria-checked", "true");
+    for (const mode of ["same", "beside", "split", "reuse"]) {
+      const option = screen.getByTestId(`file-opening-${mode}`);
+      expect(option).toHaveClass("relative", "min-w-0", "p-2.5");
+      expect(option.querySelectorAll(".border-solid")).toHaveLength(
+        mode === "same" ? 1 : mode === "split" ? 3 : 2,
+      );
+      fireEvent.click(option);
+      expect(option).toHaveAttribute("aria-checked", "true");
+      expect(localStorage.getItem("triune:file-opening")).toBe(mode);
+    }
+    fireEvent.keyDown(selected, { key: "ArrowRight" });
+    const same = screen.getByTestId("file-opening-same");
+    expect(same).toHaveFocus();
+    expect(same).toHaveAttribute("aria-checked", "true");
+    expect(screen.queryByText(/New file destination|Existing matching file tabs/)).toBeNull();
+    page.unmount();
+    renderPage("/settings/appearance");
+    expect(screen.getByTestId("file-opening-same")).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("applies and restores list density without changing font preferences", async () => {
     localStorage.setItem("omnigent:ui-font-size", "15");
     const page = renderPage("/settings/appearance");
-    expect(screen.getByRole("radiogroup", { name: "List density" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "List density" })).toHaveAttribute(
+      "data-slot",
+      "segmented-control",
+    );
     const comfortable = screen.getByTestId("list-density-comfortable");
     const compact = screen.getByTestId("list-density-compact");
-    expect(comfortable).toHaveAttribute("role", "radio");
-    expect(comfortable.querySelector("[aria-hidden] > div")).toHaveStyle({ height: "48px" });
-    expect(compact.querySelector("[aria-hidden] > div")).toHaveStyle({ height: "36px" });
-    fireEvent.keyDown(comfortable, { key: "ArrowRight" });
-    expect(compact).toHaveFocus();
-    expect(compact).toHaveAttribute("aria-checked", "true");
-    fireEvent.click(screen.getByTestId("list-density-compact"));
+    expect(comfortable).toHaveAttribute("aria-pressed", "true");
+    expect(comfortable.querySelector("[aria-hidden]")).toHaveClass("size-4", "gap-1");
+    expect(compact.querySelector("[aria-hidden]")).toHaveClass("size-4", "gap-0.5");
+    expect(screen.queryByText(/48px rows|36px rows/)).toBeNull();
+    compact.focus();
+    await userEvent.setup().keyboard("{Enter}");
+    expect(compact).toHaveAttribute("aria-pressed", "true");
     expect(document.documentElement).toHaveAttribute("data-list-density", "compact");
     expect(localStorage.getItem("omnigent:ui-font-size")).toBe("15");
     page.unmount();
     renderPage("/settings/appearance");
-    expect(screen.getByTestId("list-density-compact")).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByTestId("list-density-compact")).toHaveAttribute("aria-pressed", "true");
     fireEvent.click(screen.getByTestId("list-density-comfortable"));
     expect(document.documentElement).toHaveAttribute("data-list-density", "comfortable");
   });
@@ -1074,9 +1025,9 @@ describe("SettingsPage", () => {
       target: { value: "github" },
     });
     fireEvent.click(screen.getByTestId("transcript-view-default-terminal"));
-    fireEvent.click(screen.getByTestId("workspace-panel-default-open"));
-    fireEvent.click(screen.getByTestId("workspace-tab-default-subagents"));
-    fireEvent.click(screen.getByRole("button", { name: "Pin Changes" }));
+    localStorage.setItem("omnigent:default-workspace-panel", "open");
+    localStorage.setItem("omnigent:default-workspace-tab", "subagents");
+    localStorage.setItem("omnigent:pinned-workspace-tabs", '["files"]');
     fireEvent.click(screen.getByTestId("hide-unconfigured-harnesses-toggle"));
     fireEvent.click(screen.getByTestId("fold-assistant-narration-toggle"));
     fireEvent.click(screen.getByTestId("ui-font-size-inc"));
@@ -1111,7 +1062,7 @@ describe("SettingsPage", () => {
     fireEvent.click(screen.getByTestId("reset-appearance-confirm"));
 
     expect(localStorage.getItem("omnigent:list-density")).toBeNull();
-    expect(screen.getByTestId("list-density-comfortable")).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByTestId("list-density-comfortable")).toHaveAttribute("aria-pressed", "true");
     expect(document.documentElement).toHaveAttribute("data-list-density", "comfortable");
 
     // Mode is restored to "system".
@@ -1138,20 +1089,10 @@ describe("SettingsPage", () => {
       "aria-checked",
       "true",
     );
-    expect(screen.getByTestId("workspace-panel-default-collapsed")).toHaveAttribute(
-      "aria-checked",
-      "true",
-    );
-    expect(screen.getByTestId("workspace-tab-default-files")).toHaveAttribute(
-      "aria-checked",
-      "true",
-    );
+    expect(localStorage.getItem("omnigent:default-workspace-panel")).toBeNull();
     expect(localStorage.getItem("omnigent:default-workspace-tab")).toBeNull();
     expect(localStorage.getItem("omnigent:pinned-workspace-tabs")).toBeNull();
-    expect(screen.getByRole("button", { name: "Pin Changes" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
+    expect(screen.queryByTestId("settings-group-workspace")).toBeNull();
     expect(screen.getByTestId("hide-unconfigured-harnesses-toggle")).toHaveAttribute(
       "aria-checked",
       "false",

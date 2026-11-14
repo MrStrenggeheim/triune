@@ -1583,14 +1583,12 @@ html[data-electron-mac] .breadcrumb-folder {
   overflow-wrap: break-word;
 }
 
-/* KaTeX lays out radicals/fractions with positioned spans. Wide display math
- * gets its own horizontal scroll surface instead of relying on the surrounding
- * chat bubble to clip or wrap it. (No overflow-y override: with overflow-x
- * non-visible the browser forces overflow-y to compute as auto anyway.) */
+/* Positioned KaTeX glyphs need font-relative vertical clearance.
+ * Keep wide equations scrollable without an automatic vertical scrollbar. */
 .katex-display {
   max-width: 100%;
-  overflow-x: auto;
-  padding-block: 0.25rem;
+  overflow: auto hidden;
+  padding-block: 0.5em;
 }
 
 .katex {

@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { TooltipButton } from "@/components/ui/tooltip";
 import * as React from "react";
 import {
@@ -47,6 +48,32 @@ export function useLightbox(): LightboxContextValue {
   return useContext(LightboxContext) ?? NOOP;
 }
 
+export const IMAGE_PREVIEW_MAX_HEIGHT = 256;
+
+/** Fit intrinsic pixels without upscaling; CSS may further constrain the width. */
+export function fitImagePreviewSize(width: number, height: number, maxWidth = Infinity) {
+  if (!(width > 0 && height > 0 && maxWidth > 0) || !Number.isFinite(width + height))
+    return undefined;
+  const scale = Math.min(1, IMAGE_PREVIEW_MAX_HEIGHT / height, maxWidth / width);
+  return { width: width * scale, height: height * scale };
+}
+
+/** Keep decoded geometry tied to its source when a retained preview changes files. */
+export function useImagePreviewSize(src?: string) {
+  const [loaded, setLoaded] = useState<{
+    src?: string;
+    size: { width: number; height: number };
+  }>();
+  return {
+    size: loaded?.src === src ? loaded?.size : undefined,
+    onLoad: (event: React.SyntheticEvent<HTMLImageElement>) => {
+      const { naturalWidth, naturalHeight } = event.currentTarget;
+      const size = fitImagePreviewSize(naturalWidth, naturalHeight);
+      if (size) setLoaded({ src, size });
+    },
+  };
+}
+
 export interface ZoomableImageProps extends React.ComponentProps<"img"> {
   /** Display source. May be undefined while the image is still resolving. */
   src?: string;
@@ -67,7 +94,7 @@ export function ZoomableImage({ src, alt, className, ...imgProps }: ZoomableImag
     <TooltipButton
       type="button"
       aria-label={alt ? `Zoom image: ${alt}` : "Zoom image"}
-      className="m-0 inline-flex max-w-full cursor-zoom-in appearance-none border-0 bg-transparent p-0 leading-none"
+      className="m-0 inline-flex min-w-0 max-w-full cursor-zoom-in appearance-none border-0 bg-transparent p-0 leading-none"
       onClick={() => {
         if (src) open({ src, alt });
       }}

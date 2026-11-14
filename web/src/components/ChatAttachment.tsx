@@ -54,7 +54,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
-import { ZoomableImage } from "./ImageLightbox";
+import { useImagePreviewSize, ZoomableImage } from "./ImageLightbox";
 import { CodeBlock } from "./ai-elements/code-block";
 import { detectLang } from "@/shell/codeViewerHelpers";
 import { formatBytes } from "@/shell/fileStatusUtils";
@@ -429,6 +429,7 @@ export function ChatAttachment({
     details,
     size,
   } = resource;
+  const preview = useImagePreviewSize(blobUrl);
   const request: AttachmentPreviewRequest = {
     sessionId: sessionId ?? "",
     attachment,
@@ -486,7 +487,12 @@ export function ChatAttachment({
           className={
             compact
               ? "not-prose inline"
-              : "not-prose @container/attachment my-2 flex w-[640px] min-w-0 max-w-full flex-col gap-2 rounded-lg border border-border bg-background p-3"
+              : "not-prose @container/attachment my-2 flex w-[640px] min-w-0 max-w-[min(100%,640px)] flex-col gap-2 rounded-lg border border-border bg-background p-3"
+          }
+          style={
+            !compact && image && failedImage !== blobUrl && preview.size
+              ? { width: `calc(${preview.size.width}px + 1.5rem + 2px)` }
+              : undefined
           }
           data-testid="chat-attachment"
         >
@@ -494,7 +500,8 @@ export function ChatAttachment({
             <ZoomableImage
               src={blobUrl}
               alt={filename}
-              className="max-h-64 max-w-full rounded object-contain"
+              className="block h-auto w-full max-h-64 max-w-full rounded object-contain"
+              onLoad={preview.onLoad}
               onError={() => setFailedImage(blobUrl)}
             />
           )}
@@ -506,7 +513,7 @@ export function ChatAttachment({
               onClick={openPreview}
             />
           ) : (
-            <span className="flex min-w-0 items-center gap-3">
+            <span className="flex min-w-0 items-start gap-2">
               <span className="flex h-9 w-8 shrink-0 items-center justify-center rounded-md bg-muted">
                 <WorkspaceFileIcon
                   path={filename}
@@ -514,12 +521,12 @@ export function ChatAttachment({
                   className="size-5"
                 />
               </span>
-              <span className="flex min-w-0 flex-1 flex-col gap-1 @min-[30rem]/attachment:flex-row @min-[30rem]/attachment:items-center @min-[30rem]/attachment:gap-3">
+              <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1 self-center">
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <TooltipButton
                       type="button"
-                      className="block max-w-full truncate text-left text-sm font-semibold hover:text-link focus-visible:outline-ring @min-[30rem]/attachment:max-w-1/2"
+                      className="block min-w-0 max-w-full flex-[0_1_auto] truncate text-left text-sm font-semibold hover:text-link focus-visible:outline-ring"
                       onClick={openPreview}
                     >
                       {filename}
@@ -527,9 +534,21 @@ export function ChatAttachment({
                   </TooltipTrigger>
                   <TooltipContent className="break-all">{reference ?? filenameHint}</TooltipContent>
                 </Tooltip>
-                <span className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground @min-[30rem]/attachment:ml-auto @min-[30rem]/attachment:max-w-1/2">
-                  <span className="truncate">{details}</span>
-                  {size && <span className="shrink-0">{` · ${size}`}</span>}
+                <span
+                  className={cn(
+                    "flex min-w-0 items-center gap-2 text-xs text-muted-foreground",
+                    menuActions.path ? "flex-[1_1_8rem]" : "flex-[1_1_auto]",
+                  )}
+                >
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span tabIndex={0} className="min-w-0 flex-1 truncate">
+                        {details}
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent className="break-all">{details}</TooltipContent>
+                  </Tooltip>
+                  {size && <span className="shrink-0">{size}</span>}
                 </span>
               </span>
               <span className="flex shrink-0 items-center gap-0.5">

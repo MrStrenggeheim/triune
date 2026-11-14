@@ -100,6 +100,38 @@ it("loads images through authenticated storage URLs and downloads the original",
     expect.objectContaining({ signal: expect.any(AbortSignal) }),
   );
 });
+
+it.each([
+  [1600, 800, 512],
+  [600, 1200, 128],
+  [400, 100, 400],
+])(
+  "fits the image card to its %sx%s preview while preserving full-size lightbox content",
+  async (width, height, fittedWidth) => {
+    mount("chart ü.png", "image/png", "original-bytes");
+    const img = await screen.findByRole("img", { name: "chart ü.png" });
+    Object.defineProperties(img, {
+      naturalWidth: { value: width },
+      naturalHeight: { value: height },
+    });
+    fireEvent.load(img);
+    const card = screen.getByTestId("chat-attachment");
+    expect(card).toHaveStyle({ width: `calc(${fittedWidth}px + 1.5rem + 2px)` });
+    expect(card).toHaveClass("max-w-[min(100%,640px)]");
+    expect(img).toHaveClass("w-full", "h-auto", "max-h-64");
+    fireEvent.click(screen.getByRole("button", { name: "Zoom image: chart ü.png" }));
+    const original = within(screen.getByRole("dialog")).getByRole("img", { name: "chart ü.png" });
+    expect(original).toHaveAttribute("src", img.getAttribute("src"));
+    expect(original).not.toHaveClass("max-h-64");
+    fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
+    expect(original).toHaveStyle({ transform: "translate(0px, 0px) scale(1.5)" });
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    fireEvent.error(img);
+    expect(screen.getByRole("alert")).toHaveTextContent("could not be decoded");
+    expect(card.style.width).toBe("");
+  },
+);
+
 it("keeps local references filename-only and fetches their captured message only on activation", async () => {
   const reference = "/original/workspace/docs/My notes.md";
   mount("My notes.md", "text/markdown", "# Original workspace", {
@@ -297,6 +329,7 @@ it("opens the same inline menu on touch long press without docking", async () =>
     await screen.findByRole("menuitem", { name: "Open as tab" }, { timeout: 1500 }),
   ).toBeVisible();
   fireEvent.pointerUp(chip, { pointerType: "touch", pointerId: 1 });
+  fireEvent.click(chip);
   expect(openAttachment).not.toHaveBeenCalled();
 });
 
@@ -422,7 +455,7 @@ it("keeps denied captured previews actionable without exposing Reveal or a live-
 
 it("shows a compact metadata row with working overflow preview and original download", async () => {
   mount("report.pdf", "application/pdf", "original-pdf");
-  expect(await screen.findByText("· 12 B")).toBeInTheDocument();
+  expect(await screen.findByText("12 B")).toBeInTheDocument();
   expect(screen.getByText("application/pdf")).toBeInTheDocument();
   expect(
     screen.getByTestId("chat-attachment").querySelector("svg[data-file-type]"),
@@ -437,19 +470,24 @@ it("shows a compact metadata row with working overflow preview and original down
 });
 
 it("keeps path and size beside one set of footer controls for a long reference", async () => {
-  const reference = `/original/workspace/${"nested-directory/".repeat(12)}report.txt`;
+  const reference = `/original/workspace/My notes ü/${"nested-directory/".repeat(12)}report.txt`;
   const content = "Original reference bytes";
   mount("report.txt", "text/plain", content, {
     attachment: undefined,
     reference,
     itemId: "source/item",
   });
-  expect(screen.getByText(`${reference} · TXT`)).toBeInTheDocument();
+  const details = screen.getByText(`${reference} · TXT`);
+  expect(details).toBeInTheDocument();
+  fireEvent.focus(details);
+  expect(await screen.findByRole("tooltip")).toHaveTextContent(reference);
+  fireEvent.blur(details);
   expect(mocks.fetch).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("button", { name: "report.txt" }));
   await waitFor(() => expect(screen.getByRole("dialog")).toHaveTextContent(content));
   const card = screen.getByTestId("chat-attachment");
-  expect(card).toHaveTextContent(`${reference} · text/plain · ${content.length} B`);
+  expect(within(card).getByText(`${reference} · text/plain`)).toBeInTheDocument();
+  expect(within(card).getByText(`${content.length} B`)).not.toHaveTextContent("·");
   await userEvent.setup().keyboard("{Escape}");
   fireEvent.click(within(card).getByRole("button", { name: "Download report.txt" }));
   await waitFor(() => expect(mocks.download).toHaveBeenCalledOnce());
