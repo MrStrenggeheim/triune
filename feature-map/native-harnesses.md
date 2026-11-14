@@ -901,6 +901,8 @@ checks do not prove live providers, browser rendering or thought-signature parit
 ## Gotchas
 
 - Framework completion/blocked/resolved notices use authenticated stable dispatch and System receipts; ordinary user submissions cannot assert that origin.
+- Claude System echoes bind the registered input to the native session/prompt ID; the durable receipt confirms the original item instead of creating human speech.
+- Inbox wake instructions stay hidden when the task card and final reply already represent the event; receipt assertions must not require internal control text to be rendered.
 - Runtime-notice GET reads saved scoped observations without provider RPC or agent launch; live chooser responses still require a real request channel.
 - Final reports preserve provider phase or authoritative adapter results; shorter finals replace progress atomically within the captured dispatch.
 - Trusted user-submission metadata controls human appearance; framework recovery is registered as System before delivery, and unknown imported input remains External input.

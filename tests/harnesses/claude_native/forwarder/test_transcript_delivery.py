@@ -387,3 +387,61 @@ async def test_forwarder_posts_web_injected_terminal_transcript_items(tmp_path: 
         "agent": "claude-native-ui",
         "content": [{"type": "output_text", "text": "owned by executor"}],
     }
+
+
+async def test_native_prompt_receipt_is_forwarded_as_structured_input_id(tmp_path):
+    from omnigent.harnesses.claude_native import bridge
+    from omnigent.native.input_diagnostics import input_delivery_scope
+
+    input_id = "c" * 32
+    text = "An application instruction"
+    bridge.record_hook_event(
+        tmp_path, {"hook_event_name": "SessionStart", "session_id": "native-a"}
+    )
+    with input_delivery_scope({"input_stable_id": input_id, "input_origin_kind": "system"}):
+        bridge._arm_native_input_receipt(tmp_path, text)
+    bridge.record_hook_event(
+        tmp_path,
+        {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "native-a",
+            "prompt_id": "prompt-a",
+            "prompt": text,
+        },
+    )
+    transcript = tmp_path / "native.jsonl"
+    transcript.write_text(
+        json.dumps(
+            {
+                "type": "user",
+                "uuid": "user-a",
+                "promptId": "prompt-a",
+                "sessionId": "native-a",
+                "message": {"role": "user", "content": text},
+            }
+        )
+        + "\n"
+    )
+    posted = []
+
+    def transport(request):
+        posted.append(json.loads(request.content))
+        return httpx.Response(202)
+
+    async with httpx.AsyncClient(
+        base_url="http://local.test", transport=httpx.MockTransport(transport)
+    ) as client:
+        state = forwarder.TranscriptForwardState(transcript_path=transcript, line_cursor=0)
+        await forwarder._forward_available_items(
+            client=client,
+            session_id="parent",
+            bridge_dir=tmp_path,
+            agent_name="claude-native-ui",
+            state=state,
+            retry_tracker=forwarder._PostRetryTracker(),
+            dedupe=forwarder._ForwardDedupeState(),
+        )
+    assert len(posted) == 1
+    assert posted[0]["data"]["input_stable_id"] == input_id
+    assert posted[0]["data"]["source_id"] == "user-a:0:message"
+    assert "communication" not in posted[0]["data"]["item_data"]

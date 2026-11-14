@@ -3645,7 +3645,11 @@ def register_events_routes(
                     session_id,
                     exc_info=True,
                 )
-        if body.type == "message" and body.data.get("communication") is not None:
+        if (
+            body.type == "message"
+            and body.data.get("communication") is not None
+            and body.data["communication"].get("kind") != "system"
+        ):
             from omnigent.server.session_orchestration import require_peer_replay
 
             await asyncio.to_thread(

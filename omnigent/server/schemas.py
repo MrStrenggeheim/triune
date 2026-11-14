@@ -1146,6 +1146,7 @@ class CreateResponseRequest(BaseModel):
     injection_id: str | None = None
     # Server-side identity of the native web input, independent of native transcript matching.
     input_stable_id: str | None = None
+    input_origin_kind: Literal["system"] | None = None
     pending_id: str | None = None
     delivery_attempt_id: str | None = None
     input_enqueued_at_ms: int | None = None

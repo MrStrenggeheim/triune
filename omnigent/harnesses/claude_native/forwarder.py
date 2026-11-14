@@ -1988,6 +1988,7 @@ def _external_conversation_item_event(item: ClaudeTranscriptItem) -> dict[str, o
                 **({"phase": "final_answer"} if item.subagent_return_id else {}),
             },
             "response_id": item.response_id,
+            **({"input_stable_id": item.input_stable_id} if item.input_stable_id else {}),
             **(
                 {"subagent_return_id": item.subagent_return_id}
                 if item.subagent_return_id is not None
@@ -5429,6 +5430,15 @@ async def _forward_available_items(
             seen_source_ids.append(item.source_id)
             seen.add(item.source_id)
             continue
+        from omnigent.harnesses.claude_native.bridge import native_input_receipt_for_item
+
+        input_id, waiting_for_receipt = await asyncio.to_thread(
+            native_input_receipt_for_item, bridge_dir, item
+        )
+        if waiting_for_receipt:
+            return updated
+        if input_id is not None:
+            item = replace(item, input_stable_id=input_id)
         retry_key = f"item:{item.source_id}"
         if retry_tracker.retry_delay_s(retry_key) is not None:
             return updated
@@ -5926,6 +5936,7 @@ async def _post_external_conversation_item(
                     # the server derives the item's id from this and treats
                     # a re-post as a no-op instead of a duplicate.
                     "source_id": item.source_id,
+                    **({"input_stable_id": item.input_stable_id} if item.input_stable_id else {}),
                     **(
                         {"subagent_return_id": item.subagent_return_id}
                         if item.subagent_return_id is not None

@@ -15017,3 +15017,136 @@ def test_usable_composer_height_does_not_deliver_after_resize_failure(
         with claude_native_bridge._usable_composer_height("/tmp/sock", "main"):
             pytest.fail("delivery continued after a failed resize")
     assert run.call_count == 3, "restore even if the timed-out resize may have taken effect"
+
+
+def test_native_prompt_id_receipt_preserves_identity_without_system_text_classifier(tmp_path):
+    from dataclasses import replace
+
+    from omnigent.native.input_diagnostics import input_delivery_scope
+
+    bridge = claude_native_bridge
+    bridge.record_hook_event(
+        tmp_path, {"hook_event_name": "SessionStart", "session_id": "native-a"}
+    )
+    input_id = "a" * 32
+    text = "Framework event: an actual application submission"
+    with input_delivery_scope({"input_stable_id": input_id, "input_origin_kind": "system"}):
+        bridge._arm_native_input_receipt(tmp_path, text)
+    _, [item] = bridge._transcript_items_from_entry(
+        {
+            "type": "user",
+            "uuid": "user-a",
+            "promptId": "prompt-a",
+            "sessionId": "native-a",
+            "message": {"role": "user", "content": text},
+        },
+        line_number=1,
+        record_offset=None,
+        agent_name="claude-native-ui",
+        current_response_id=None,
+    )
+    assert bridge.native_input_receipt_for_item(tmp_path, item) == (None, True)
+    # A human quotation cannot acquire the application's input identity.
+    bridge.record_hook_event(
+        tmp_path,
+        {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "native-a",
+            "prompt_id": "human-quotation",
+            "prompt": "[System: quoted literal]",
+        },
+    )
+    assert bridge.native_input_receipt_for_item(tmp_path, item) == (None, True)
+    bridge.record_hook_event(
+        tmp_path,
+        {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "native-a",
+            "prompt_id": "prompt-a",
+            "prompt": text,
+        },
+    )
+    assert bridge.native_input_receipt_for_item(tmp_path, item) == (input_id, False)
+    peer = replace(item, data={**item.data, "communication": {"kind": "native_agent"}})
+    assert bridge.native_input_receipt_for_item(tmp_path, peer) == (None, False)
+    assert bridge.native_input_receipt_for_item(
+        tmp_path, replace(item, native_session_id="other")
+    ) == (None, False)
+    assert bridge.native_input_receipt_for_item(
+        tmp_path, replace(item, native_prompt_id="human-quotation")
+    ) == (None, False)
+
+
+def test_expired_native_submission_does_not_promote_a_later_prompt(tmp_path, monkeypatch):
+    from omnigent.native.input_diagnostics import input_delivery_scope
+
+    bridge = claude_native_bridge
+    bridge.record_hook_event(
+        tmp_path, {"hook_event_name": "SessionStart", "session_id": "native-a"}
+    )
+    with input_delivery_scope({"input_stable_id": "b" * 32, "input_origin_kind": "system"}):
+        bridge._arm_native_input_receipt(tmp_path, "A saved instruction")
+    observed = time.time()
+    monkeypatch.setattr(bridge.time, "time", lambda: observed + 61)
+    bridge.record_hook_event(
+        tmp_path,
+        {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "native-a",
+            "prompt_id": "later-prompt",
+            "prompt": "A saved instruction",
+        },
+    )
+    _, [item] = bridge._transcript_items_from_entry(
+        {
+            "type": "user",
+            "uuid": "later-user",
+            "promptId": "later-prompt",
+            "sessionId": "native-a",
+            "message": {"role": "user", "content": "A saved instruction"},
+        },
+        line_number=1,
+        record_offset=None,
+        agent_name="claude-native-ui",
+        current_response_id=None,
+    )
+    assert bridge.native_input_receipt_for_item(tmp_path, item) == (None, False)
+
+
+def test_ordinary_human_input_never_arms_system_receipt(tmp_path):
+    from omnigent.native.input_diagnostics import input_delivery_scope
+
+    bridge = claude_native_bridge
+    bridge.record_hook_event(
+        tmp_path, {"hook_event_name": "SessionStart", "session_id": "native-a"}
+    )
+    with input_delivery_scope({"input_stable_id": "d" * 32}):
+        bridge._arm_native_input_receipt(tmp_path, "[System: literal human quotation]")
+    _, [item] = bridge._transcript_items_from_entry(
+        {
+            "type": "user",
+            "uuid": "human-a",
+            "promptId": "prompt-a",
+            "sessionId": "native-a",
+            "message": {"role": "user", "content": "[System: literal human quotation]"},
+        },
+        line_number=1,
+        record_offset=None,
+        agent_name="claude-native-ui",
+        current_response_id=None,
+    )
+    assert bridge.native_input_receipt_for_item(tmp_path, item) == (None, False)
+
+
+def test_system_origin_identity_survives_existing_message_envelope():
+    from omnigent.native.input_diagnostics import INPUT_FIELDS, input_attributes
+    from omnigent.runtime.harnesses._scaffold import MessageEvent
+
+    identity = input_attributes({"input_stable_id": "e" * 32, "communication": {"kind": "system"}})
+    request = MessageEvent(
+        type="message", role="user", model="claude-native-ui", content="Saved event", **identity
+    ).to_create_request()
+    assert input_attributes(request.model_dump(include=set(INPUT_FIELDS))) == {
+        "input_stable_id": "e" * 32,
+        "input_origin_kind": "system",
+    }

@@ -59,7 +59,7 @@ import unicodedata
 import urllib.parse
 from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from http import HTTPStatus
 from http.client import HTTPConnection, HTTPException
@@ -919,6 +919,9 @@ class ClaudeTranscriptItem:
     subagent_return_id: str | None = None
     agent_message_candidate: bool = False
     failure_context: FailureContext | None = None
+    native_prompt_id: str | None = None
+    native_session_id: str | None = None
+    input_stable_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -2972,6 +2975,110 @@ def _merge_disallowed_tools(args: list[str], extra: tuple[str, ...]) -> list[str
     return args
 
 
+_NATIVE_INPUT_PENDING_KEY = "native_input_pending"
+_NATIVE_INPUT_RECEIPTS_KEY = "native_input_receipts"
+_NATIVE_INPUT_RECEIPT_TTL_S = 60.0
+
+
+def _native_input_prompt_hash(text: str) -> str:
+    return hashlib.sha256(_unwrap_pasted_content_markers(text).strip().encode()).hexdigest()
+
+
+def _arm_native_input_receipt(bridge_dir: Path, text: str) -> None:
+    """Bind only structured System submissions to their server-issued input identity."""
+    from omnigent.native.input_diagnostics import current_input_attributes
+
+    attributes = current_input_attributes()
+    input_id = (
+        attributes.get("input_stable_id")
+        if attributes.get("input_origin_kind") == "system"
+        else None
+    )
+    with _bridge_metadata_write_lock(bridge_dir):
+        state = _read_json_file(bridge_dir / _STATE_FILE)
+        state = state if isinstance(state, dict) else {}
+        state.pop(_NATIVE_INPUT_PENDING_KEY, None)
+        session_id = state.get("claude_session_id")
+        if (
+            isinstance(input_id, str)
+            and re.fullmatch(r"[0-9a-f]{32}", input_id)
+            and isinstance(session_id, str)
+            and session_id
+        ):
+            state[_NATIVE_INPUT_PENDING_KEY] = {
+                "input_id": input_id,
+                "session_id": session_id,
+                "prompt_hash": _native_input_prompt_hash(text),
+                "armed_at": time.time(),
+            }
+        _write_json_file(bridge_dir / _STATE_FILE, state)
+
+
+def _record_native_input_receipt(state: _JsonObject, payload: _JsonObject) -> None:
+    """Associate native hook prompt_id with the private injection record, never a text prefix."""
+    pending = state.get(_NATIVE_INPUT_PENDING_KEY)
+    prompt_id = payload.get("prompt_id")
+    prompt = payload.get("prompt")
+    if (
+        payload.get("hook_event_name") != "UserPromptSubmit"
+        or payload.get("agent_id")
+        or not isinstance(pending, dict)
+        or not isinstance(prompt_id, str)
+        or not prompt_id
+        or len(prompt_id) > 128
+        or not isinstance(prompt, str)
+        or payload.get("session_id") != pending.get("session_id")
+        or not 0 <= time.time() - pending.get("armed_at", 0) <= _NATIVE_INPUT_RECEIPT_TTL_S
+        or _native_input_prompt_hash(prompt) != pending.get("prompt_hash")
+    ):
+        return
+    receipts = state.get(_NATIVE_INPUT_RECEIPTS_KEY)
+    receipts = dict(receipts) if isinstance(receipts, dict) else {}
+    receipts[f"{payload['session_id']}:{prompt_id}"] = pending["input_id"]
+    state[_NATIVE_INPUT_RECEIPTS_KEY] = dict(list(receipts.items())[-64:])
+    state.pop(_NATIVE_INPUT_PENDING_KEY, None)
+
+
+def native_input_receipt_for_item(
+    bridge_dir: Path, item: ClaudeTranscriptItem
+) -> tuple[str | None, bool]:
+    """Return the exact native receipt, or hold its echo until the hook commits it."""
+    if (
+        item.item_type != "message"
+        or item.data.get("role") != "user"
+        or item.data.get("is_meta")
+        or item.data.get("communication")
+        or not item.native_prompt_id
+        or not item.native_session_id
+    ):
+        return None, False
+    state = _read_json_file(bridge_dir / _STATE_FILE)
+    if not isinstance(state, dict):
+        return None, False
+    receipts = state.get(_NATIVE_INPUT_RECEIPTS_KEY)
+    input_id = (
+        receipts.get(f"{item.native_session_id}:{item.native_prompt_id}")
+        if isinstance(receipts, dict)
+        else None
+    )
+    if isinstance(input_id, str) and re.fullmatch(r"[0-9a-f]{32}", input_id):
+        return input_id, False
+    pending = state.get(_NATIVE_INPUT_PENDING_KEY)
+    content = item.data.get("content")
+    text = "\n".join(
+        str(block.get("text", ""))
+        for block in (content if isinstance(content, list) else [])
+        if isinstance(block, dict)
+    )
+    waiting = (
+        isinstance(pending, dict)
+        and pending.get("session_id") == item.native_session_id
+        and 0 <= time.time() - pending.get("armed_at", 0) <= _NATIVE_INPUT_RECEIPT_TTL_S
+        and pending.get("prompt_hash") == _native_input_prompt_hash(text)
+    )
+    return None, waiting
+
+
 def record_hook_event(bridge_dir: Path, payload: _JsonObject) -> None:
     """
     Record one Claude Code hook payload in the bridge directory.
@@ -3024,6 +3131,7 @@ def record_hook_event(bridge_dir: Path, payload: _JsonObject) -> None:
                 claude_session_id,
                 pinned,
             )
+        _record_native_input_receipt(state, payload)
         state["updated_at"] = time.time()
         _write_json_file(bridge_dir / _STATE_FILE, state)
 
@@ -4497,6 +4605,7 @@ def _paste_and_submit(
         if transcript_path is not None and native_session_id is not None
         else None
     )
+    _arm_native_input_receipt(bridge_dir, text)
     _run_tmux(socket_path, "send-keys", "-t", tmux_target, "Enter")
     delivery_diagnostics.record_details(submit_sent=True)
     if not draft_seen:
@@ -8909,13 +9018,20 @@ def _transcript_items_from_entry(
         return current_response_id, []
     role = message.get("role")
     if role == "user":
-        return _user_transcript_items_from_entry(
+        response_id, items = _user_transcript_items_from_entry(
             entry,
             line_number=line_number,
             record_offset=record_offset,
             agent_name=agent_name,
             current_response_id=current_response_id,
         )
+        prompt_id, session_id = entry.get("promptId"), entry.get("sessionId")
+        if isinstance(prompt_id, str) and isinstance(session_id, str):
+            items = [
+                replace(item, native_prompt_id=prompt_id, native_session_id=session_id)
+                for item in items
+            ]
+        return response_id, items
     if role == "assistant":
         return _assistant_transcript_items_from_entry(
             entry,

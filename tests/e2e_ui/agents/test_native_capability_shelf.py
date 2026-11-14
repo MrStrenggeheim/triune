@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -12,8 +13,11 @@ import subprocess
 import sys
 import uuid
 from collections.abc import Iterator
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from threading import Thread
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 import pytest
@@ -22,6 +26,10 @@ from playwright.sync_api import Locator, Page, expect
 from tests._helpers.native_session import create_native_session
 from tests._helpers.polling import poll_until
 from tests._helpers.session import bind_session_runner
+from tests.e2e_ui.agents.test_subagent_transcript_stale_revisit import (
+    _release_gate,
+    _wait_for_gate_pending,
+)
 from tests.e2e_ui.approvals.test_ask_user_question import _pending_elicitations
 from tests.e2e_ui.approvals.test_stop_control_pending_elicitation import _session_snapshot
 from tests.e2e_ui.conftest import (
@@ -29,6 +37,7 @@ from tests.e2e_ui.conftest import (
     _server_state,
     _temp_omnigent_mock_config,
     configure_mock_llm,
+    native_claude_mock_session_context,
     reset_mock_llm,
     set_fallback_mock_llm,
 )
@@ -49,6 +58,263 @@ def _requests(mock_url: str) -> list[dict[str, Any]]:
     return response.json()["requests"]
 
 
+def _source_snapshot() -> dict[str, Any]:
+    """Identify dirty source and the exact parent-built SPA without building anything."""
+    root = Path(__file__).resolve().parents[3]
+    changed = subprocess.check_output(
+        ["git", "diff", "--binary", "HEAD", "--", "omnigent", "web/src", __file__], cwd=root
+    )
+    assets = root / "omnigent/server/static/web-ui"
+    source_files = (
+        subprocess.check_output(
+            [
+                "git",
+                "ls-files",
+                "-z",
+                "--cached",
+                "--others",
+                "--exclude-standard",
+                "--",
+                "omnigent",
+                "web/src",
+                __file__,
+            ],
+            cwd=root,
+        )
+        .decode()
+        .split("\x00")
+    )
+    return {
+        "root": str(root),
+        "commit": subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=root, text=True
+        ).strip(),
+        "source_diff_sha256": hashlib.sha256(changed).hexdigest(),
+        "source_sha256": {
+            name: hashlib.sha256((root / name).read_bytes()).hexdigest()
+            for name in sorted(set(source_files))
+            if name
+            and (root / name).is_file()
+            and not name.startswith("omnigent/server/static/web-ui/")
+        },
+        "spa_sha256": {
+            str(path.relative_to(assets)): hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in sorted(assets.rglob("*"))
+            if path.is_file()
+        },
+    }
+
+
+def _native_message(text: str, phase: str) -> dict[str, Any]:
+    return {
+        "type": "message",
+        "id": f"msg_{uuid.uuid4().hex}",
+        "role": "assistant",
+        "status": "completed",
+        "phase": phase,
+        "content": [{"type": "output_text", "text": text}],
+    }
+
+
+def _expand_activity(card: Locator) -> None:
+    disclosure = card.get_by_role("button", name="Expand activity", exact=True)
+    if disclosure.count():
+        disclosure.click()
+    expect(card.get_by_role("button", name="Collapse activity", exact=True)).to_have_attribute(
+        "aria-expanded", "true"
+    )
+
+
+def _framework_call(tools: dict[str, dict], name: str, call_id: str, **arguments: Any) -> dict:
+    if executor := tools.get("exec"):
+        code = (
+            "const tool = ALL_TOOLS.find(t => t.name === "
+            + json.dumps(f"mcp__omnigent__{name}")
+            + " || t.name === "
+            + json.dumps(name)
+            + ");"
+            + ' if (!tool) throw new Error("Requested Omnigent MCP tool is unavailable");'
+            + " text(await tools[tool.name]("
+            + json.dumps(arguments)
+            + "));"
+        )
+        return {
+            "type": "custom_tool_call",
+            "call_id": call_id,
+            "name": "exec",
+            "namespace": executor["namespace"],
+            "input": code,
+        }
+    advertised = f"mcp__omnigent__{name}"
+    return _call(tools, advertised if advertised in tools else name, call_id, **arguments)
+
+
+def _configure_native_script(
+    mock_url: str, responses: list[dict], *, key: str, match: str, model: str
+) -> None:
+    """Bind native scripts to their actual model; reviewer history can contain the same nonce."""
+    normalized = []
+    for response in responses:
+        response = dict(response)
+        calls = response.get("tool_calls")
+        if calls and any(call.get("type") == "custom_tool_call" for call in calls):
+            response["native_items"] = response.pop("tool_calls")
+        if response.get("native_items"):
+            response.setdefault("text", "")
+        normalized.append(response)
+    configure_mock_llm(
+        mock_url, normalized, key=key, match=match, required_tools=[], required_model=model
+    )
+
+
+def _capture_managed_boundary(base_url: str, session_id: str, evidence: Path) -> None:
+    """Retain canonical messages and child state before session fixtures delete them."""
+    result: dict[str, Any] = {}
+    for label, path, params in (
+        ("parent", f"/v1/sessions/{session_id}", {}),
+        ("items", f"/v1/sessions/{session_id}/items", {"limit": 100, "order": "asc"}),
+        ("children", f"/v1/sessions/{session_id}/child_sessions", {}),
+    ):
+        try:
+            response = httpx.get(base_url + path, params=params, timeout=10)
+            response.raise_for_status()
+            result[label] = response.json()
+        except httpx.HTTPError as error:
+            result[label] = {"capture_error": str(error)}
+    rows = result.get("items", {}).get("data", [])
+    result["message_boundary"] = [
+        {
+            "id": item.get("id"),
+            "role": item.get("role"),
+            "phase": item.get("phase"),
+            "communication_kind": (item.get("communication") or {}).get("kind"),
+            "source_title": (item.get("communication") or {}).get("source_title"),
+            "response_id": item.get("response_id"),
+            "status": item.get("status"),
+            "short": _item_text(item)[:160],
+        }
+        for item in rows
+        if item.get("type") == "message"
+    ]
+    result["pending_inputs"] = [
+        item for item in rows if item.get("response_id") == "pending_input"
+    ]
+    result["child_count"] = len(result.get("children", {}).get("data", []))
+    (evidence / "pre-teardown-boundary.json").write_text(json.dumps(result, indent=2))
+
+
+def _assert_no_framework_wake(base_url: str, session_id: str) -> None:
+    messages = _ordered_message_items(base_url, session_id)
+    assert not [
+        item
+        for item in messages
+        if (item.get("communication") or {}).get("source_title") == "Subagent results available"
+        or (
+            _item_text(item).startswith("[System: sub-agent ")
+            and "waiting in inbox" in _item_text(item)
+        )
+    ], "Vendor-owned children must not receive framework-managed completion wakes"
+
+
+@pytest.fixture
+def native_commentary_mock(mock_llm_server_url: str) -> Iterator[tuple[str, dict[str, str]]]:
+    """Add a Messages text block before scripted tool use; keep all requests in the shared mock."""
+    commentary_by_call: dict[str, str] = {}
+
+    class CommentaryProxy(BaseHTTPRequestHandler):
+        def log_message(self, _format: str, *args: Any) -> None:
+            pass
+
+        def do_GET(self) -> None:
+            self._forward()
+
+        def do_POST(self) -> None:
+            self._forward()
+
+        def _forward(self) -> None:
+            body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            response = httpx.request(
+                self.command,
+                f"{mock_llm_server_url}{self.path}",
+                content=body,
+                headers={"Content-Type": self.headers.get("Content-Type", "application/json")},
+                timeout=120,
+                trust_env=False,
+            )
+            payload = response.content
+            if urlsplit(self.path).path.endswith(
+                "/messages"
+            ) and "text/event-stream" in response.headers.get("content-type", ""):
+                events = [
+                    json.loads(line[6:])
+                    for line in response.text.splitlines()
+                    if line.startswith("data: ")
+                ]
+                commentary = next(
+                    (
+                        commentary_by_call[event["content_block"]["id"]]
+                        for event in events
+                        if event.get("content_block", {}).get("id") in commentary_by_call
+                    ),
+                    None,
+                )
+                if commentary:
+                    for event in events:
+                        if "index" in event:
+                            event["index"] += 1
+                    events[1:1] = [
+                        {
+                            "type": "content_block_start",
+                            "index": 0,
+                            "content_block": {"type": "text", "text": ""},
+                        },
+                        {
+                            "type": "content_block_delta",
+                            "index": 0,
+                            "delta": {"type": "text_delta", "text": commentary},
+                        },
+                        {"type": "content_block_stop", "index": 0},
+                    ]
+                    payload = "".join(
+                        f"event: {event['type']}\ndata: {json.dumps(event)}\n\n"
+                        for event in events
+                    ).encode()
+            self.send_response(response.status_code)
+            self.send_header(
+                "Content-Type", response.headers.get("content-type", "application/json")
+            )
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), CommentaryProxy)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}", commentary_by_call
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+@pytest.fixture
+def managed_final_report_session(
+    request: pytest.FixtureRequest,
+    harness: str,
+    live_server: str,
+    tmp_path_factory: pytest.TempPathFactory,
+    claude_managed_settings: None,
+) -> Iterator[tuple[tuple[str, str], dict[str, str]]]:
+    """Use each real installed CLI; only Claude needs the Messages commentary shim."""
+    if harness == "codex":
+        yield request.getfixturevalue("native_capability_codex_session"), {}
+        return
+    proxy_url, commentary_by_call = request.getfixturevalue("native_commentary_mock")
+    with native_claude_mock_session_context(live_server, proxy_url, tmp_path_factory) as session:
+        yield session, commentary_by_call
+
+
 @pytest.fixture
 def native_capability_evidence(
     request: pytest.FixtureRequest, tmp_path: Path, mock_llm_server_url: str
@@ -64,11 +330,20 @@ def native_capability_evidence(
         "commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
         "backend": "generic mock Responses/Messages with real native CLI",
         "feature_map": "feature-map/native-harnesses.md",
+        "source_snapshot": _source_snapshot(),
     }
     (evidence / "metadata.json").write_text(json.dumps(metadata, indent=2))
     yield evidence
+    if "managed_final_report_session" in request.fixturenames:
+        (base_url, session_id), _ = request.getfixturevalue("managed_final_report_session")
+        _capture_managed_boundary(base_url, session_id, evidence)
     (evidence / "final-requests.json").write_text(
         json.dumps(_requests(mock_llm_server_url), indent=2)
+    )
+    final_source = _source_snapshot()
+    (evidence / "final-source-snapshot.json").write_text(json.dumps(final_source, indent=2))
+    assert final_source == metadata["source_snapshot"], (
+        "Source or SPA changed during native verification"
     )
 
 
@@ -81,8 +356,8 @@ def native_capability_codex_session(
     tmp_path: Path,
 ) -> Iterator[tuple[str, str]]:
     """Pin the model advertising async questions while preserving the shared mock provider."""
-    capability = request.node.callspec.params["capability"]
-    if capability not in {"questions", "plan", "agents-v2"}:
+    capability = request.node.callspec.params.get("capability", "managed-reports")
+    if capability not in {"questions", "plan", "agents-v2", "managed-reports"}:
         yield request.getfixturevalue("native_codex_mock_session")
         return
     runner = _ensure_runner_online(live_server, tmp_path_factory)
@@ -95,7 +370,9 @@ def native_capability_codex_session(
             harness="codex",
             model="gpt-6.1-sol",
             metadata={
-                "workspace": str(tmp_path),
+                "workspace": str(Path(__file__).resolve().parents[3])
+                if capability == "managed-reports"
+                else str(tmp_path),
                 **(
                     {"terminal_launch_args": ["-c", "features.multi_agent_v2=true"]}
                     if capability == "agents-v2"
@@ -249,6 +526,22 @@ def _bootstrap(page: Page, session: tuple[str, str], mock_url: str, evidence: Pa
     )
     tools = _tools(native_request)
     (evidence / "advertised-tools.json").write_text(json.dumps(tools, indent=2))
+    (evidence / "protocol-capabilities.json").write_text(
+        json.dumps(
+            {
+                "model": native_request.get("model"),
+                "transport": "Messages" if "messages" in native_request else "Responses",
+                "client_metadata": native_request.get("client_metadata"),
+                "tool_names": sorted(tools),
+                "native_delegation": {
+                    name: tool
+                    for name, tool in tools.items()
+                    if name in ("spawn_agent", "wait_agent", "send_input", "Agent", "SendMessage")
+                },
+            },
+            indent=2,
+        )
+    )
     return tools, marker
 
 
@@ -629,6 +922,10 @@ def test_native_codex_capability_shelf(
         marker = f"spawn-{uuid.uuid4().hex}"
         child_marker = f"private-child-{uuid.uuid4().hex}"
         child_answer = f"CHILD_RESULT_{uuid.uuid4().hex}"
+        commentary_marker = f"CHILD_COMMENTARY_{uuid.uuid4().hex}"
+        commentary = (
+            f"{commentary_marker}\n" + "Still investigating the bounded native task.\n" * 90
+        )
         _script(
             mock_llm_server_url,
             marker,
@@ -644,7 +941,16 @@ def test_native_codex_capability_shelf(
         )
         configure_mock_llm(
             mock_llm_server_url,
-            [{"text": child_answer, "delay": 18}],
+            [
+                {
+                    "text": "",
+                    "native_items": [
+                        _native_message(commentary, "commentary"),
+                        _native_message(child_answer, "final_answer"),
+                    ],
+                    "delay": 18,
+                }
+            ],
             key=child_marker,
             match=child_marker,
             required_tools=["exec_command"],
@@ -690,12 +996,31 @@ def test_native_codex_capability_shelf(
         expect(card).to_have_attribute("data-child-session-id", children[0]["id"])
         reply = page.get_by_test_id("subagent-reply")
         expect(reply).to_have_count(1, timeout=30_000)
+        _expand_activity(reply)
         expect(reply).to_contain_text(child_answer)
+        expect(reply).not_to_contain_text(commentary_marker)
+        child_messages = _ordered_message_items(base_url, children[0]["id"])
+        assert any(
+            commentary_marker in _item_text(item) and item.get("phase") == "commentary"
+            for item in child_messages
+        ), child_messages
+        final = [item for item in child_messages if _item_text(item) == child_answer]
+        assert len(final) == 1 and final[0].get("phase") == "final_answer", final
+        _assert_no_framework_wake(base_url, session_id)
         expect(agents).to_have_count(0, timeout=30_000)
         _capture(page, evidence, "codex-child-returned")
         (evidence / "child-requests.json").write_text(
             json.dumps(_requests(mock_llm_server_url), indent=2)
         )
+        (evidence / "child-final-source.json").write_text(json.dumps(child_messages, indent=2))
+        page.reload()
+        _ensure_chat_view(page)
+        expect(card).to_have_count(1, timeout=30_000)
+        expect(reply).to_have_count(1)
+        _expand_activity(reply)
+        expect(reply).to_contain_text(child_answer)
+        expect(reply).not_to_contain_text(commentary_marker)
+        _assert_no_framework_wake(base_url, session_id)
 
         return
     if capability == "plan":
@@ -1033,6 +1358,16 @@ def test_native_codex_v2_named_task_survives_steer(
     marker = f"v2-parent-{uuid.uuid4().hex}"
     child_marker = f"v2-child-task-{uuid.uuid4().hex}"
     child_answer = f"V2_CHILD_REPORT_{uuid.uuid4().hex}"
+    commentary_marker = f"V2_CHILD_COMMENTARY_{uuid.uuid4().hex}"
+    commentary = f"{commentary_marker}\n" + "The named task is still in progress.\n" * 90
+    child_report = {
+        "text": "",
+        "native_items": [
+            _native_message(commentary, "commentary"),
+            _native_message(child_answer, "final_answer"),
+        ],
+        "delay": 35,
+    }
     prompt = f"Delegate one bounded native named task and wait for my steering message. {marker}"
     route = f"{bootstrap} {prompt}"
     reset_mock_llm(mock_llm_server_url)
@@ -1054,8 +1389,8 @@ def test_native_codex_v2_named_task_survives_steer(
             # Full-history V2 forks share user text; NEW_TASK is agent_message
             # content. Identical delayed replies hold both native requests
             # until steering gives the parent a distinct user-history route.
-            {"text": child_answer, "delay": 35},
-            {"text": child_answer, "delay": 35},
+            child_report,
+            child_report,
         ],
         key=marker,
         match=route,
@@ -1145,7 +1480,9 @@ def test_native_codex_v2_named_task_survives_steer(
     _capture(page, evidence, "v2-named-task-after-steer")
     reply = page.get_by_test_id("subagent-reply")
     expect(reply).to_have_count(1, timeout=60_000)
+    _expand_activity(reply)
     expect(reply).to_contain_text(child_answer)
+    expect(reply).not_to_contain_text(commentary_marker)
 
     configure_mock_llm(
         mock_llm_server_url,
@@ -1169,6 +1506,7 @@ def test_native_codex_v2_named_task_survives_steer(
     ), "The V2 child's private report never reached the native parent model input"
     expect(reply).to_have_count(1, timeout=30_000)
     expect(reply).to_contain_text(child_answer)
+    expect(reply).not_to_contain_text(commentary_marker)
     expect(card).to_have_count(1)
     expect(card).to_contain_text(task_name)
     expect(agents).to_have_count(0, timeout=30_000)
@@ -1178,7 +1516,18 @@ def test_native_codex_v2_named_task_survives_steer(
     expect(card).to_have_count(1, timeout=30_000)
     expect(card).to_contain_text(task_name)
     expect(reply).to_have_count(1)
+    _expand_activity(reply)
     expect(reply).to_contain_text(child_answer)
+    expect(reply).not_to_contain_text(commentary_marker)
+    child_messages = _ordered_message_items(base_url, child_id)
+    assert any(
+        commentary_marker in _item_text(item) and item.get("phase") == "commentary"
+        for item in child_messages
+    ), child_messages
+    final = [item for item in child_messages if _item_text(item) == child_answer]
+    assert len(final) == 1 and final[0].get("phase") == "final_answer", final
+    _assert_no_framework_wake(base_url, session_id)
+    (evidence / "v2-child-final-source.json").write_text(json.dumps(child_messages, indent=2))
 
 
 @pytest.mark.parametrize("question_response", ["full", "partial", "empty", "declined"])
@@ -1391,3 +1740,357 @@ def test_native_claude_capability_shelf(
     expect(approvals).to_have_count(0)
     assert side_effect.read_text() == "approved\n"
     _capture(page, evidence, "native-settled")
+
+
+@pytest.mark.parametrize("harness", ["codex", "claude"])
+@pytest.mark.timeout(360)
+def test_native_managed_child_final_reports_and_system_wake(
+    harness: str,
+    page: Page,
+    managed_final_report_session: tuple[tuple[str, str], dict[str, str]],
+    mock_llm_server_url: str,
+    native_capability_evidence: Path,
+) -> None:
+    """Reuse one real managed child; each dispatch returns one final and one System wake."""
+    session, commentary_by_call = managed_final_report_session
+    base_url, session_id = session
+    evidence = native_capability_evidence
+    for model in ("gpt-4o", "gpt-6.1-sol", "claude-sonnet-4-20250514"):
+        set_fallback_mock_llm(mock_llm_server_url, model, "")
+    set_fallback_mock_llm(
+        mock_llm_server_url,
+        "codex-auto-review",
+        json.dumps(
+            {
+                "risk_level": "low",
+                "user_authorization": "high",
+                "outcome": "allow",
+                "rationale": "The user requested this child in the isolated test environment.",
+            }
+        ),
+    )
+    tools, bootstrap = _bootstrap(page, session, mock_llm_server_url, evidence)
+    native_model = next(
+        request["model"]
+        for request in json.loads((evidence / "bootstrap-requests.json").read_text())
+        if _tools(request)
+    )
+    if harness == "claude":
+        query = f"root-phase-{uuid.uuid4().hex[:12]}"
+        root_progress = (
+            f"{query} progress\n" + "Checking the root Claude turn before its final reply.\n" * 90
+        )
+        root_final = f"{query} final"
+        call_id = "root_claude_phase_check"
+        commentary_by_call[call_id] = root_progress
+        reset_mock_llm(mock_llm_server_url)
+        configure_mock_llm(
+            mock_llm_server_url,
+            [
+                {
+                    "tool_calls": [
+                        _call(tools, "Bash", call_id, command="printf root-phase-complete")
+                    ]
+                },
+                {"text": root_final, "block": True},
+            ],
+            key=query,
+            match=query,
+            required_tools=["Bash"],
+        )
+        _send(page, f"Check this root turn and return its short final reply. {query}")
+        _wait_for_gate_pending(mock_llm_server_url, timeout_s=45)
+        poll_until(
+            lambda: any(
+                query in _item_text(item) and item.get("phase") == "commentary"
+                for item in _ordered_message_items(base_url, session_id)
+            ),
+            timeout_s=45,
+        )
+        _release_gate(mock_llm_server_url)
+        _settled(page, root_final)
+        root_items = [
+            item
+            for item in _ordered_message_items(base_url, session_id)
+            if query in _item_text(item)
+        ]
+        human = [
+            item
+            for item in root_items
+            if item.get("role") == "user" and item.get("user_authored") is True
+        ]
+        progress = [item for item in root_items if item.get("phase") == "commentary"]
+        final_items = [item for item in root_items if item.get("phase") == "final_answer"]
+        assert len(human) == len(progress) == len(final_items) == 1, root_items
+        assert _item_text(final_items[0]) == root_final, final_items
+        expected = {
+            "all": {human[0]["id"], progress[0]["id"], final_items[0]["id"]},
+            "final": {human[0]["id"], final_items[0]["id"]},
+            "user": {human[0]["id"]},
+        }
+        search_pages = {}
+        for message_filter, item_ids in expected.items():
+            response = httpx.get(
+                f"{base_url}/v1/sessions/search/messages",
+                params={
+                    "query": query,
+                    "session_id": session_id,
+                    "message_filter": message_filter,
+                    "include_titles": False,
+                },
+                timeout=15,
+            )
+            response.raise_for_status()
+            search_pages[message_filter] = response.json()
+            assert {hit["item_id"] for hit in response.json()["data"]} == item_ids, search_pages
+            assert not response.json()["has_more"], search_pages
+        (evidence / "root-claude-phase-search.json").write_text(
+            json.dumps(
+                {
+                    "items": root_items,
+                    "search_pages": search_pages,
+                    "provider_boundary": "Messages tool_use=commentary; end_turn=final_answer",
+                },
+                indent=2,
+            )
+        )
+        (evidence / "root-claude-phase-requests.json").write_text(
+            json.dumps(_requests(mock_llm_server_url), indent=2)
+        )
+        _capture(page, evidence, "claude-root-final-search-boundary")
+
+    snapshot = httpx.get(f"{base_url}/v1/sessions/{session_id}", timeout=10)
+    snapshot.raise_for_status()
+    source = snapshot.json()
+    (evidence / "protocol-capabilities.json").write_text(
+        json.dumps(
+            {
+                "harness": harness,
+                "tools": {
+                    name: tool
+                    for name, tool in tools.items()
+                    if any(
+                        part in name
+                        for part in (
+                            "session_create",
+                            "session_send",
+                            "read_inbox",
+                            "Bash",
+                            "exec_command",
+                        )
+                    )
+                },
+                "finality": "Responses phase=final_answer"
+                if harness == "codex"
+                else "native task Stop/result after text+tool_use",
+                "ownership": "framework-managed child; vendor-owned delegates are separate",
+                "commentary_transport": "Messages SSE text block before real Bash tool use"
+                if harness == "claude"
+                else "Responses message phase=commentary before real exec_command",
+                "session": source,
+            },
+            indent=2,
+        )
+    )
+    create_marker = f"managed-create-{uuid.uuid4().hex}"
+    create_prompt = f"Create one durable child for two bounded report dispatches. {create_marker}"
+    parent_route = f"{bootstrap} {create_prompt}" if harness == "codex" else bootstrap
+    create_call = _framework_call(
+        tools,
+        "sys_session_create",
+        "managed_create",
+        agent_id=source["agent_id"],
+        title="bounded-final-report",
+        model=native_model,
+    )
+    reset_mock_llm(mock_llm_server_url)
+    _configure_native_script(
+        mock_llm_server_url,
+        [{"tool_calls": [create_call]}, {"text": "MANAGED_CHILD_CREATED"}],
+        key=create_marker,
+        match=parent_route,
+        model=native_model,
+    )
+    _send(page, create_prompt)
+    _settled(page, "MANAGED_CHILD_CREATED")
+    children_response = httpx.get(
+        f"{base_url}/v1/sessions/{session_id}/child_sessions", timeout=10
+    )
+    children_response.raise_for_status()
+    children = children_response.json()["data"]
+    assert len(children) == 1, children
+    child_id = children[0]["id"]
+    output = _claude_output if harness == "claude" else _output
+    assert child_id in output(mock_llm_server_url, "managed_create")
+    (evidence / "managed-create-requests.json").write_text(
+        json.dumps(_requests(mock_llm_server_url), indent=2)
+    )
+    cards = page.locator(f'[data-testid="subagent-activity"][data-child-session-id="{child_id}"]')
+    replies = page.locator(f'[data-testid="subagent-reply"][data-child-session-id="{child_id}"]')
+    finals = []
+    for dispatch in (1, 2):
+        marker = f"managed-parent-{uuid.uuid4().hex}"
+        child_marker = f"managed-child-{uuid.uuid4().hex}"
+        commentary_marker = f"MANAGED_PROGRESS_{uuid.uuid4().hex}"
+        commentary = (
+            f"{commentary_marker}\n"
+            + "Inspecting the bounded dispatch before returning its answer.\n" * 90
+        )
+        final = f"FINAL_DISPATCH_{dispatch}_{uuid.uuid4().hex}"
+        finals.append(final)
+        progress_call = f"managed_progress_{dispatch}"
+        child_prompt = f"Run the bounded check and return its short final answer. {child_marker}"
+        reset_mock_llm(mock_llm_server_url)
+        _configure_native_script(
+            mock_llm_server_url,
+            [
+                {
+                    "tool_calls": [
+                        _framework_call(
+                            tools,
+                            "sys_session_send",
+                            f"managed_send_{dispatch}",
+                            session_id=child_id,
+                            args=child_prompt,
+                        )
+                    ]
+                },
+                {"text": f"MANAGED_DISPATCH_{dispatch}_STARTED"},
+                {
+                    "tool_calls": [
+                        _framework_call(tools, "sys_read_inbox", f"managed_collect_{dispatch}")
+                    ]
+                },
+                {"text": f"MANAGED_DISPATCH_{dispatch}_COLLECTED"},
+            ],
+            key=marker,
+            match=parent_route,
+            model=native_model,
+        )
+        if harness == "codex":
+            tool = _call(
+                tools,
+                "exec_command",
+                progress_call,
+                cmd="printf native-check-complete",
+                max_output_tokens=100,
+            )
+            responses = [
+                {
+                    "text": "",
+                    "native_items": [
+                        _native_message(commentary, "commentary"),
+                        {"type": "function_call", **tool},
+                    ],
+                },
+                {
+                    "text": "",
+                    "native_items": [_native_message(final, "final_answer")],
+                    "block": True,
+                },
+            ]
+        else:
+            commentary_by_call[progress_call] = commentary
+            responses = [
+                {
+                    "tool_calls": [
+                        _call(tools, "Bash", progress_call, command="printf native-check-complete")
+                    ]
+                },
+                {"text": final, "block": True},
+            ]
+        _configure_native_script(
+            mock_llm_server_url,
+            responses,
+            key=child_marker,
+            match=child_marker,
+            model=native_model,
+        )
+        _send(
+            page,
+            f"Dispatch the bounded report to the same child, then await its inbox wake. {marker}",
+        )
+        _settled(page, f"MANAGED_DISPATCH_{dispatch}_STARTED")
+        _wait_for_gate_pending(mock_llm_server_url, timeout_s=45)
+        poll_until(
+            lambda marker=commentary_marker: any(
+                marker in _item_text(item) for item in _ordered_message_items(base_url, child_id)
+            ),
+            timeout_s=45,
+        )
+        expect(replies).to_have_count(dispatch - 1)
+        _release_gate(mock_llm_server_url)
+        _settled(page, f"MANAGED_DISPATCH_{dispatch}_COLLECTED")
+        assert final in output(mock_llm_server_url, f"managed_collect_{dispatch}")
+        expect(cards).to_have_count(dispatch, timeout=30_000)
+        expect(replies).to_have_count(dispatch, timeout=30_000)
+        for index, answer in enumerate(finals):
+            reply = replies.nth(index)
+            _expand_activity(reply)
+            expect(reply).to_contain_text(answer)
+            expect(reply).not_to_contain_text("MANAGED_PROGRESS_")
+        child_messages = _ordered_message_items(base_url, child_id)
+        final_items = [item for item in child_messages if _item_text(item) == final]
+        assert len(final_items) == 1, final_items
+        if harness == "codex":
+            assert final_items[0].get("phase") == "final_answer", final_items
+        messages = _ordered_message_items(base_url, session_id)
+        wakes = [
+            item
+            for item in messages
+            if (item.get("communication") or {}).get("source_title")
+            == "Subagent results available"
+        ]
+        assert len(wakes) == dispatch, wakes
+        wake = wakes[-1]
+        origin = wake["communication"]
+        assert origin["kind"] == "system" and origin["source_agent_name"] == "System", wake
+        assert origin["destination_conversation_id"] == session_id, wake
+        assert origin["message_id"] == wake["id"], wake
+        assert origin["receipt"] == "transcript" and origin["delivery_state"] == "confirmed", wake
+        assert wake.get("user_authored") is not True, wake
+        assert "finished (completed)" in _item_text(wake), wake
+        assert "sys_read_inbox" in _item_text(wake), wake
+        requests = _requests(mock_llm_server_url)
+        native_inputs = [
+            item
+            for request in requests
+            for item in request.get("input", request.get("messages", []))
+            if item.get("role") == "user"
+            and f"event_id={origin['message_id']}" in _item_text(item)
+        ]
+        assert native_inputs and all(
+            "not authored by the user" in _item_text(item) for item in native_inputs
+        ), native_inputs
+        system = page.get_by_test_id("system-message").filter(
+            has_text="Subagent results available"
+        )
+        expect(system).to_have_count(0)
+        expect(page.locator(_USER).filter(has_text="finished (completed)")).to_have_count(0)
+        (evidence / f"dispatch-{dispatch}-requests.json").write_text(
+            json.dumps(requests, indent=2)
+        )
+        (evidence / f"dispatch-{dispatch}-parent-items.json").write_text(
+            json.dumps(messages, indent=2)
+        )
+        (evidence / f"dispatch-{dispatch}-child-items.json").write_text(
+            json.dumps(child_messages, indent=2)
+        )
+        _capture(page, evidence, f"{harness}-dispatch-{dispatch}-final-and-system-wake")
+        page.reload()
+        _ensure_chat_view(page)
+        expect(cards).to_have_count(dispatch, timeout=30_000)
+        expect(replies).to_have_count(dispatch)
+        expect(system).to_have_count(0)
+        for index, answer in enumerate(finals):
+            reply = replies.nth(index)
+            _expand_activity(reply)
+            expect(reply).to_contain_text(answer)
+            expect(reply).not_to_contain_text("MANAGED_PROGRESS_")
+        reloaded = _ordered_message_items(base_url, session_id)
+        assert len([item for item in reloaded if item.get("id") == wake["id"]]) == 1
+        children_response = httpx.get(
+            f"{base_url}/v1/sessions/{session_id}/child_sessions", timeout=10
+        )
+        children_response.raise_for_status()
+        assert [child["id"] for child in children_response.json()["data"]] == [child_id]

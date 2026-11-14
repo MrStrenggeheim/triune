@@ -52,6 +52,7 @@ Those previously Apache-licensed features retain their original permissions.
 
 - Unify message/chat search results, date ordering and All/Final/User filtering; reveal exact matches through collapsed and virtualized content.
 - Preserve authoritative final reports and framework wake attribution through native/SDK delivery, with scoped runtime notices.
+- Correlate Claude System input receipts by native session and prompt identity, preserving human quotations and hiding redundant inbox control text.
 - Reuse compact activity/message composition, static disclosure and matching controls without hidden message-footer space.
 - Fix selected queued-send lifecycle ownership, wrapping/width, preview footer alignment and shared plan/scrollbar treatment.
 - Retain offline shell output with safe errors and consistent outcome/Stop semantics.

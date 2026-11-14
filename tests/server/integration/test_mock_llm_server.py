@@ -1,3 +1,4 @@
+# Modified for Triune.
 import json
 import time
 from collections.abc import Iterator
@@ -225,6 +226,70 @@ def test_independent_content_queues_and_title_isolation(monkeypatch, endpoint, t
             assert response.status_code == 200
             assert marker in response.text
         assert all(mock_llm_server._state.queues[key].index == 1 for key in keys)
+
+
+def test_model_guard_keeps_guardian_from_consuming_cached_native_script(monkeypatch):
+    monkeypatch.setattr(mock_llm_server, "_state", MockState())
+    with TestClient(mock_llm_server.app) as client:
+        client.post(
+            "/mock/configure",
+            json={
+                "key": "parent-script",
+                "match": "parent-nonce",
+                "required_tools": [],
+                "required_model": "native-model",
+                "responses": [
+                    {
+                        "tool_calls": [
+                            {"call_id": "parent-call", "name": "Read", "arguments": "{}"}
+                        ]
+                    },
+                    {"text": "parent-done"},
+                ],
+            },
+        ).raise_for_status()
+        assessment = json.dumps(
+            {
+                "risk_level": "low",
+                "user_authorization": "high",
+                "outcome": "allow",
+                "rationale": "Isolated fixture action.",
+            }
+        )
+        client.post(
+            "/mock/set_fallback",
+            json={
+                "key": "codex-auto-review",
+                "text": assessment,
+            },
+        ).raise_for_status()
+        # Both requests can advertise functions; cached native turns can omit them.
+        history = [{"role": "user", "content": [{"type": "input_text", "text": "parent-nonce"}]}]
+        declarations = {
+            "type": "additional_tools",
+            "tools": [{"type": "namespace", "name": "functions", "tools": []}],
+        }
+        for first in (True, False):
+            guardian = client.post(
+                "/v1/responses",
+                json={
+                    "model": "codex-auto-review",
+                    "input": [declarations, *history],
+                },
+            )
+            guardian.raise_for_status()
+            assert guardian.json()["output"][0]["content"][0]["text"] == assessment
+            assert mock_llm_server._state.queues["parent-script"].index == (0 if first else 1)
+            native = client.post(
+                "/v1/responses",
+                json={
+                    "model": "native-model",
+                    "input": [declarations, *history] if first else history,
+                },
+            )
+            native.raise_for_status()
+            assert ("parent-call" if first else "parent-done") in native.text
+        assert mock_llm_server._state.queues["parent-script"].index == 2
 
 
 @pytest.mark.parametrize("key", [None, "default", "custom-model"])

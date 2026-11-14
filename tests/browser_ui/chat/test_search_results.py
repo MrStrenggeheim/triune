@@ -312,7 +312,10 @@ def test_unified_search_results_filters_and_commands(
     assert first.event_posts == []
     assert browser_errors == []
     needle_requests = [params for params in requests if params.get("query") == "needle"]
-    assert all(params.get("include_titles") == "true" for params in needle_requests)
+    assert all(
+        params.get("include_titles") == ("false" if params.get("session_id") else "true")
+        for params in needle_requests
+    )
     assert {
         (params.get("session_id"), params.get("message_filter")) for params in needle_requests
     } >= {

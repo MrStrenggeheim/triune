@@ -1,3 +1,4 @@
+# Modified for Triune.
 """
 Mock LLM server with keyed response queues for tests.
 
@@ -885,6 +886,7 @@ class _ResponseQueue:
         # servers. ``None`` preserves the default model/"default" routing.
         self.match: str | None = None
         self.required_tools: frozenset[str] | None = None
+        self.required_model: str | None = None
 
     def accepts_tools(self, tool_names: set[str]) -> bool:
         """Keep scripted tool calls out of requests without any tools.
@@ -917,6 +919,7 @@ class _ResponseQueue:
         self.index = 0
         self.match = None
         self.required_tools = None
+        self.required_model = None
 
 
 class MockState:
@@ -1057,6 +1060,8 @@ class MockState:
             best: _ResponseQueue | None = None
             best_score = (-1, -1)
             for queue in self.queues.values():
+                if queue.required_model not in (None, parsed.get("model")):
+                    continue
                 if not queue.match or not queue.accepts_tools(tool_names):
                     continue
                 position = user_text.rfind(queue.match)
@@ -1517,6 +1522,7 @@ async def configure(request: Request) -> dict[str, object]:
         queue.reset()
         queue.match = match
         queue.required_tools = guard
+        queue.required_model = body.get("required_model")
         for entry in body.get("responses", []):
             queue.responses.append(
                 QueuedResponse(

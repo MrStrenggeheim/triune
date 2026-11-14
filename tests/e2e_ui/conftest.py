@@ -1,3 +1,4 @@
+# Modified for Triune.
 """Fixtures for browser-driven e2e tests of the web SPA.
 
 The suite spawns a real ``omnigent server --agent`` subprocess against
@@ -622,6 +623,7 @@ def configure_mock_llm(
     key: str | None = None,
     match: str | None = None,
     required_tools: list[str] | None = None,
+    required_model: str | None = None,
 ) -> None:
     """Configure a keyed response queue on the mock LLM server.
 
@@ -649,6 +651,7 @@ def configure_mock_llm(
         Use this to exclude title-generation requests containing the same nonce.
         When omitted, the next scripted tool call requires a request with any
         tools. Pass an empty list to allow calls even on requests without tools.
+    :param required_model: Only this observed model may consume a matching content queue.
     """
     body: dict[str, Any] = {"responses": responses}
     if key is not None:
@@ -657,6 +660,8 @@ def configure_mock_llm(
         body["required_tools"] = required_tools
     if match is not None:
         body["match"] = match
+    if required_model is not None:
+        body["required_model"] = required_model
     resp = httpx.post(
         f"{mock_url}/mock/configure",
         json=body,

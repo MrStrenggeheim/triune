@@ -1,3 +1,4 @@
+# Modified for Triune; inherited notices remain applicable.
 """Content-free correlation for web messages delivered to native harnesses."""
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ _IDENTIFIERS = {
     "pending_id": re.compile(r"pending_[0-9a-f]{32}"),
     "delivery_attempt_id": re.compile(r"[0-9a-f]{32}"),
 }
-INPUT_FIELDS = frozenset((*_IDENTIFIERS, "input_enqueued_at_ms"))
+INPUT_FIELDS = frozenset((*_IDENTIFIERS, "input_enqueued_at_ms", "input_origin_kind"))
 _DETAIL_IDS = frozenset(
     {
         "response_id",
@@ -53,7 +54,7 @@ _input_context: ContextVar[dict[str, object] | None] = ContextVar(
 
 
 def input_attributes(source: Mapping[str, object] | None) -> dict[str, str | int]:
-    """Keep only server-generated IDs and the server's enqueue timestamp."""
+    """Keep server-issued input identity, enqueue time, and structured System origin."""
     attrs: dict[str, str | int] = {}
     if source is None:
         return attrs
@@ -61,6 +62,12 @@ def input_attributes(source: Mapping[str, object] | None) -> dict[str, str | int
         value = source.get(key)
         if isinstance(value, str) and pattern.fullmatch(value):
             attrs[key] = value
+    communication = source.get("communication")
+    origin = source.get("input_origin_kind")
+    if isinstance(communication, dict):
+        origin = communication.get("kind")
+    if "input_stable_id" in attrs and origin == "system":
+        attrs["input_origin_kind"] = "system"
     enqueued_at = source.get("input_enqueued_at_ms")
     if (
         isinstance(enqueued_at, int)

@@ -1894,3 +1894,38 @@ async def test_claude_provider_final_boundary_survives_forwarding_reload_and_fin
     )
     assert response.status_code == 200, response.text
     assert [hit["text"] for hit in response.json()["data"]] == ["needle final answer"]
+
+
+async def test_framework_system_replay_uses_real_dispatch_without_peer_ownership(
+    auth_client, auth_app, peers, db_uri
+):
+    from tests._helpers.polling import poll_until_async
+
+    source, _, captured = peers
+    auth_app.state.feature_flags = FeatureFlags()
+    store = SqlAlchemyConversationStore(db_uri)
+    child = store.create_conversation(parent_conversation_id=source["id"])
+    occurrence = uuid4().hex
+    response = await auth_client.post(
+        f"/v1/sessions/{source['id']}/events",
+        json={
+            "type": "framework_input",
+            "data": {
+                "occurrence_id": occurrence,
+                "child_id": child.id,
+                "kind": "completed",
+                "label": "Subagent finished",
+                "message": "Collect the saved result.",
+            },
+        },
+    )
+    assert response.status_code == 202, response.text
+    await poll_until_async(
+        lambda: any(path.endswith("/events") for path, _ in captured.get("posts", [])),
+        timeout_s=5,
+    )
+    saved = store.get_item(source["id"], occurrence)
+    assert saved is not None and saved.status != "failed"
+    assert saved.created_by is None and saved.data.communication.kind == "system"
+    assert not saved.data.user_authored
+    assert not any(row.type == "error" for row in store.list_items(source["id"]).data)
