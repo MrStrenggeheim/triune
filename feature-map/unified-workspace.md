@@ -58,6 +58,11 @@ Preconditions: follow the [verification skill](skills/verify-omnigent/SKILL.md),
 
 ## Gotchas
 
+- Touch tabs switch on one tap; stationary 500ms holds open the shared menu, while movement after 300ms beyond 10px begins dock dragging.
+- Early touch movement remains scrolling; second contacts, cancellation and held-menu release do not activate hidden controls.
+- Mobile sidebar clearance and nested guide geometry: `tests/browser_ui/chat/test_touch_refinement_iteration.py`, `web/src/lib/touchContextGesture.test.tsx` and `web/src/workbench/DockWorkspace.test.tsx`.
+- Appearance density and file-opening schematics: `web/src/pages/SettingsPage.test.tsx` and `tests/browser_ui/chat/test_current_refinement_iteration.py`.
+
 - Closing a view preserves its conversation, shell or schedule; explicit Stop/Delete retains its existing permission and confirmation checks.
 - Workspace headers are 48px Comfortable or 36px Compact; sidebar padding follows the same density setting.
 - Desktop tab/container headers and view headers remain separate even with one tab; mobile reuses scrolling tabs across all panes.

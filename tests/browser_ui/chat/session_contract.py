@@ -1,3 +1,4 @@
+# Modified for Triune; inherited notices remain applicable.
 """Deterministic backend contract for browser-only live-chat tests."""
 
 from __future__ import annotations
@@ -67,6 +68,7 @@ def message_item(
         "response_id": response_id,
         "type": "message",
         "role": role,
+        **({"user_authored": True} if role == "user" else {}),
         "status": "completed",
         "content": [{"type": content_type, "text": text}],
     }

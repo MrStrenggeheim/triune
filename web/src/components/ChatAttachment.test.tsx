@@ -105,8 +105,10 @@ it.each([
   [1600, 800, 512],
   [600, 1200, 128],
   [400, 100, 400],
+  [100, 1000, 25.6],
+  [1, 1, 1],
 ])(
-  "fits the image card to its %sx%s preview while preserving full-size lightbox content",
+  "fits the %sx%s preview without stretching it to the footer minimum and preserves full-size lightbox content",
   async (width, height, fittedWidth) => {
     mount("chart ü.png", "image/png", "original-bytes");
     const img = await screen.findByRole("img", { name: "chart ü.png" });
@@ -117,8 +119,16 @@ it.each([
     fireEvent.load(img);
     const card = screen.getByTestId("chat-attachment");
     expect(card).toHaveStyle({ width: `calc(${fittedWidth}px + 1.5rem + 2px)` });
-    expect(card).toHaveClass("max-w-[min(100%,640px)]");
-    expect(img).toHaveClass("w-full", "h-auto", "max-h-64");
+    expect(card).toHaveClass("min-w-[min(100%,12rem)]", "max-w-[min(100%,640px)]");
+    expect(img).toHaveStyle({ width: `${fittedWidth}px` });
+    expect(img).toHaveClass("h-auto", "max-h-64", "max-w-full");
+    expect(img).not.toHaveClass("w-full");
+    const zoom = screen.getByRole("button", { name: "Zoom image: chart ü.png" });
+    expect(zoom.parentElement).toHaveClass("flex", "min-w-0", "max-w-full", "justify-center");
+    expect(card).toContainElement(screen.getByRole("button", { name: "Download chart ü.png" }));
+    expect(card).toContainElement(
+      screen.getByRole("button", { name: "More actions for chart ü.png" }),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Zoom image: chart ü.png" }));
     const original = within(screen.getByRole("dialog")).getByRole("img", { name: "chart ü.png" });
     expect(original).toHaveAttribute("src", img.getAttribute("src"));

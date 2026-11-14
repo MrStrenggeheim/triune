@@ -6,6 +6,7 @@ Generated attachments keep their original bytes; workspace references use their 
 ## Sub-features
 
 - `responsive-footer`: wide media cards put filename, metadata and original download on one row; narrow cards retain two rows without horizontal overflow.
+- `image-geometry`: image and card fit the original ratio under a shared 256px media-height cap; footer paths use available width without fixed half-width limits.
 - `uploads`: the composer accepts ordinary files up to 50 MB independently of model interpretation; supported native filesystem delivery remains available within its quotas.
 - `images`: raster images and SVG render in image elements, open in the shared lightbox and download as originals.
 - `documents`: PDF uses the existing PDF viewer; Markdown uses the existing rendered preview; source code and structured text use bounded highlighted or plain text.
@@ -41,6 +42,7 @@ Preconditions: follow the [verification skill](skills/verify-omnigent/SKILL.md) 
 - Native viewed/generated events and local-reader bounds: `tests/native/test_attachment_upload.py`.
 - Filename-only path chips, original Markdown preview/download and deleted-source reload: `tests/e2e_ui/files/test_chat_attachments.py::test_inline_file_reference_keeps_filename_and_original_preview`.
 - File card, sandbox, media controls, errors and query identity: `web/src/components/ChatAttachment.test.tsx`.
+- Image fitting, lightbox and responsive footer geometry: `web/src/components/SessionImage.test.tsx`, `web/src/components/ImageLightbox.test.tsx` and `tests/browser_ui/chat/test_current_refinement_iteration.py`.
 - Live file-only messages and stream finalization: `web/src/lib/blockStream.test.ts`; fork references: `tests/stores/test_chat_attachment_fork.py`.
 
 ## Gotchas

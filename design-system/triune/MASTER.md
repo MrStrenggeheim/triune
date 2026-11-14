@@ -70,7 +70,8 @@ Desktop tab/container headers and view headers remain separate rows, including s
 Mobile reuses horizontally scrolling tabs, including views from other panes; only the selected view is shown.
 Narrow composer workspace controls collapse to an icon and chevron while retaining their accessible full location.
 The shell owns the device bottom safe area once; the mobile composer adds only an 8px content gutter.
-Remove pane docking menus and the app-bar Layout control; hover/focus replaces the tab type icon with its pin control, without reserving another slot.
+Remove pane docking menus and the app-bar Layout control; mouse hover or keyboard focus replaces the tab type icon with its pin control, without reserving another slot.
+Touch tabs switch on the first tap; pinning remains available through the shared context menu.
 Keep the chat content action menu as three dots; place the existing Chat/Terminal switch immediately before it.
 Keep conversation breadcrumbs in the view header.
 Center empty guidance within the entire available content area.
@@ -139,7 +140,7 @@ Every implementation report includes action/expected-result acceptance steps and
 - Shared buttons do not move vertically when pressed; modal close glyphs do not get redundant Close tooltips.
 - Search trigger and popup center on the full application width independently of adjacent controls.
 - On desktop, the primary + Open button sits immediately right of centered Search; preserve the existing mobile arrangement and shared menu.
-- Comfortable/Compact use the existing visual preference-card pattern, illustrating 48px and 36px header/list density.
+- Comfortable/Compact use a compact shared segmented selector; file destinations use pane schematics with solid outlines and contained selection marks.
 - File Editor headers show one copyable Host/path, Comments, Diff and the shared three-dot menu; the comments conversation selector belongs inside the comments sidebar.
 - Notifications and workspace-picker headers and entries follow the same density tokens; read-notification visibility is an explicit saved filter.
 - Keep mobile search centered on the app and expand its text within the measured space between controls.
@@ -171,3 +172,36 @@ Open resources in tabs; retain graph in the existing menu, without inspector mod
 Routine capture diagnostics, History coverage and Messages do not appear in Orchestration.
 Workspace selection starts from the captured source chat's Host and path; confirmation alone changes its source.
 Real errors remain visible; source attribution comes from trusted records, never from a text prefix.
+
+## Mobile, shelves and message origin
+
+Human message styling requires trusted human-submission metadata.
+Framework instructions use System wrappers; agent communication retains its attributed wrapper, and unclassified imported input uses External input.
+Quoting framework text in a genuine human submission does not change its origin.
+
+Queue and attention shelves share one gapless stack above the composer.
+Both entrance and exit take 200ms, moving behind the composer while the hidden slot collapses; reduced motion is immediate.
+Background count changes do not replay entrance or reset forms, drafts or transcript position.
+Queue spacing follows Comfortable/Compact with usable coarse-pointer targets.
+
+Agent and shell popups reuse the Orchestration two-line resource row, icon tile and natural-width status pill.
+The first line names the resource; the second shows its task or latest captured output, with one-line ellipsis.
+Keep both supported navigation controls: open the exact resource beside, and focus its originating Orchestration.
+For supported live resources, row hover reveals a pale-red Stop pill with a filled square; pill hover uses destructive fill and white foreground.
+Touch exposes Stop through the shared menu, without requiring hover.
+Native history is read-only captured output unless the runtime explicitly provides an interactive attachment capability.
+The agent's primary CLI is an agent resource, never a stoppable auxiliary shell entry.
+
+Questions use the existing accent choice controls and show Question N of M beside the needs-input heading.
+Previous and Skip/Next navigate; Submit accepts partial or empty answers, while Decline rejects the whole request.
+Closing a question popup preserves its answers and pending state.
+
+Stationary touch hold opens existing context menus at 500ms within 10px.
+Tabs arm dragging at 300ms, then movement beyond 10px starts the existing dock preview; early movement remains scrolling.
+Moving after a held menu begins dragging with the same contact; cancellation and release cannot activate a tab or menu item accidentally.
+Native safe-area clearance belongs to one owner, and nested sidebar fills start to the right of their hierarchy guide.
+
+In-chat image cards and images share their aspect ratio and a 256px media-height cap; footers add only their required height.
+Keep footer controls usable on tiny or very tall images; center the fitted image within the footer's minimum card width.
+Allocate footer width naturally to filename and full captured path, wrapping under pressure without fixed half-width limits or a size separator.
+Display equations retain horizontal scrolling and enough vertical clearance for complete glyphs without a vertical scrollbar.

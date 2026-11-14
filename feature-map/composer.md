@@ -341,6 +341,8 @@ sends a message. Run e2e tests through the instance:
 - Existing destination drafts retain their text before the quote: `tests/browser_ui/chat/test_workspace_iteration.py::test_selected_quote_menu_reuses_app_controls_and_retains_destination_draft`.
 - History boundaries and explicit-fork defaults: `web/src/lib/inheritedHistory.test.ts` and `web/src/components/chat/Transcript.virtualList.test.tsx`.
 - Shelf resolution and conversation changes: `web/src/components/composer/ComposerAttentionShelf.test.tsx`.
+- Density-aware gapless queue/shelf composition, 200ms motion and retained popup drafts: `web/src/components/composer/ComposerShelf.test.tsx`, `web/src/pages/QueuedMessagesStrip.test.tsx` and `tests/browser_ui/chat/test_current_refinement_iteration.py`.
+- Accent question controls, Skip/Next and always-enabled partial/empty Submit versus Decline: `web/src/components/blocks/AskUserQuestionForm.test.tsx`, `tests/server/routes/test_codex_elicitation.py` and `tests/e2e_ui/agents/test_native_capability_shelf.py`.
 - Initial-input identity and capability gating: `web/src/pages/ChatPage.test.ts`, `web/src/shell/NewChatDialog.flow.test.tsx`, and `web/src/store/chatStore.test.ts`.
 - Child ancestry, turn-targeted steering and unsupported runtime states: `tests/runner/test_native_child_controls.py` and `tests/server/routes/test_native_child_controls.py`.
 - Composer controls, PR/task retention and crowded phone geometry: `tests/browser_ui/chat/test_composer_acceptance.py`.

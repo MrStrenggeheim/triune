@@ -41,6 +41,12 @@ Those previously Apache-licensed features retain their original permissions.
 - Bridge native asynchronous questions and long-running command lifecycle into the composer shelf, enable supported plan tools and capture named native delegations.
 - Verify actual Codex and Claude capabilities through isolated CLI-to-browser journeys and preserve explicit-close guards while switching retained layouts.
 - Replace idle-only activation with a durable session restart inventory and owner-authorized recovery of interrupted work after release health checks.
+- Preserve trusted human, framework and external-input origin across native echoes, reloads and recovery; distinguish sent and received peer copies.
+- Unify two-line resource rows, targeted supported Stop controls, retained native shell output and captured-source navigation across shelves and Orchestration.
+- Accept partial and empty native question submissions independently of whole-request decline, using shared accent choices and retained popup drafts.
+- Consolidate density-aware composer shelves with reversible 200ms motion and reduced-motion support.
+- Restore first-tap touch tabs, coordinate held menus and dragging, and align nested sidebar guides and mobile safe-area clearance.
+- Simplify appearance controls with pane schematics, fit media cards and footers to available space, and preserve complete horizontally scrollable equations.
 
 [LICENSING.md](LICENSING.md) defines scope and the required notice.
 Git diffs against the imported baseline identify exact modified paths and lines.

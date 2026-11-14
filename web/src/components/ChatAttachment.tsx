@@ -487,7 +487,7 @@ export function ChatAttachment({
           className={
             compact
               ? "not-prose inline"
-              : "not-prose @container/attachment my-2 flex w-[640px] min-w-0 max-w-[min(100%,640px)] flex-col gap-2 rounded-lg border border-border bg-background p-3"
+              : "not-prose @container/attachment my-2 flex w-[640px] min-w-[min(100%,12rem)] max-w-[min(100%,640px)] flex-col gap-2 rounded-lg border border-border bg-background p-3"
           }
           style={
             !compact && image && failedImage !== blobUrl && preview.size
@@ -497,13 +497,16 @@ export function ChatAttachment({
           data-testid="chat-attachment"
         >
           {!compact && image && blobUrl && failedImage !== blobUrl && (
-            <ZoomableImage
-              src={blobUrl}
-              alt={filename}
-              className="block h-auto w-full max-h-64 max-w-full rounded object-contain"
-              onLoad={preview.onLoad}
-              onError={() => setFailedImage(blobUrl)}
-            />
+            <span className="flex min-w-0 max-w-full justify-center">
+              <ZoomableImage
+                src={blobUrl}
+                alt={filename}
+                className="block h-auto max-h-64 max-w-full rounded object-contain"
+                style={{ width: preview.size?.width }}
+                onLoad={preview.onLoad}
+                onError={() => setFailedImage(blobUrl)}
+              />
+            </span>
           )}
           {compact ? (
             <InlineFileReference

@@ -900,6 +900,12 @@ checks do not prove live providers, browser rendering or thought-signature parit
 
 ## Gotchas
 
+- Trusted user-submission metadata controls human appearance; framework recovery is registered as System before delivery, and unknown imported input remains External input.
+- Origin, native echo, forgery boundaries and outgoing/incoming peer rendering: `tests/server/integration/test_session_orchestration.py`, `tests/native/test_communication.py`, `web/src/lib/messageCommunication.test.ts` and `tests/browser_ui/chat/test_current_refinement_iteration.py`.
+- Native question empty/partial Submit and whole-request Decline remain distinct through `tests/e2e_ui/agents/test_native_capability_shelf.py` and `tests/harnesses/codex_native/forwarder/test_async_questions.py`.
+- Native shell records retain launch identity and output independently of assistant turns; provider controls are negotiated, never inferred from matching command text.
+- Codex resource/targeted-stop mapping: `tests/harnesses/codex_native/test_shell_controls.py`; Claude output and truthful unsupported-control handling: `tests/harnesses/claude_native/test_shell_resources.py`.
+
 - For user/project defaults and startup-argument precedence, use
   [Preferences and config defaults](./preferences.md). The read-only Startup
   configuration and plugin inventory do not expose shared-preference controls.

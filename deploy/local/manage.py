@@ -271,7 +271,7 @@ def build() -> None:
 
 
 def stage(release_id: str) -> None:
-    """Select a verified release for the next idle deployment."""
+    """Select a verified release for the guarded stop-and-recover deployment."""
     if Path(release_id).name != release_id:
         raise ValueError("supply a release name, not a path")
     target = RELEASES / release_id

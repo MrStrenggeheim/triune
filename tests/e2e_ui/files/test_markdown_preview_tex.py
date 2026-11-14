@@ -146,7 +146,8 @@ def test_markdown_preview_renders_tex_like_chat(
     _assert_display_math_layout(bubble)
 
     # File surface: open the seeded file and switch to Preview mode.
-    page.goto(f"{base_url}/c/{session_id}?view=explore")
+    page.get_by_role("button", name="Open view", exact=True).click()
+    page.get_by_role("menuitem", name="Explorer", exact=True).click()
     file_button = page.get_by_role("button", name=re.compile(rf"^{re.escape(_FILE_PATH)}\b"))
     expect(file_button).to_be_visible(timeout=30_000)
     file_button.click()

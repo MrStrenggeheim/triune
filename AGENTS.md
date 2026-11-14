@@ -138,6 +138,8 @@ Before completing a turn, reconcile every unchecked request with implementation 
 - Before delegating, identify existing components to reuse and define behavior, shared interfaces and focused checks.
 - Give each subagent a bounded task, explicit file ownership, acceptance checks and a concise handoff (files, results, risks); keep shared-file integration and delivery with the parent.
 - Run independent tasks in parallel when useful; avoid overlapping edits and duplicate checks.
+- Keep the built SPA unchanged during real-server browser journeys; rebuilding can remove hashed assets referenced by running servers.
+- Finish shared-checkout verification before commits whose hooks temporarily stash unstaged files; source files and tests must stay consistent during a check.
 - Once a pass enters verification, queue new requests and minor refinements for the next pass and name them in the implementation report; extend the current pass for material failures or explicit owner priority.
 - Use focused tests during development, then one integrated verification and build per stable candidate; repeat affected checks after fixes, retain required hooks and activate only with authorization.
 - Before reporting completion, reconcile the backlog and record commit, checks and activation state; finish ready passes without waiting for unrelated work.

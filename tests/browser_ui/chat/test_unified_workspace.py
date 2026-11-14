@@ -70,6 +70,7 @@ def workspace_journey(page: Page, browser_contract: BrowserContract) -> Iterator
             )
             for endpoint in ("peer-messages", "branches"):
                 contract.json(f"/v1/sessions/{chat.session_id}/{endpoint}", list_payload([]))
+            contract.json(f"/v1/sessions/{chat.session_id}/resources/shells", list_payload([]))
             contract.json(f"/v1/sessions/{chat.session_id}/comments", [])
         contract.json(
             "/v1/sessions", lambda _: list_payload([chat.session_snapshot() for chat in chats])

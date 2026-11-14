@@ -11,7 +11,8 @@ Activity combines the selected chat's main agent and subagents with recorded she
 - `provenance`: descendant activity preserves its source chat and agent; each descendant needs its own existing read permission.
 - `filters`: shared All, Agents and Shells control filters separate sections, including settled records, ordered by last observed activity.
 - `source`: current-chat origin or explicit originating link; alternative combined Host/workspace selector limits independent inventory.
-- `controls`: clickable two-line Markdown rows open named tabs; semantic status pills and supported Stop stay aligned, without redundant Open buttons.
+- `controls`: shared two-line rows in shelves and Orchestration show name, task/output, natural-width status and exact-resource side-opening controls.
+- `native-shells`: captured provider resource IDs preserve output and truthful capabilities; supported live records expose targeted Stop without joining commands by text.
 
 ## How to get to it (user POV)
 
@@ -31,6 +32,10 @@ Preconditions: use the isolated [verification environment](skills/verify-omnigen
 - Lifecycle capture, command versus shell completion and bounded durable history: `tests/terminals/test_activity_history.py`, `tests/runner/test_session_activity.py` and `tests/server/test_session_activity.py`.
 - Existing session resource permission gates: `tests/server/routes/test_shell_permission_gate.py`.
 - Markdown, source prefilling and absence of diagnostic/menu clutter: `web/src/shell/ChatActivityPanel.test.tsx` and `web/src/workbench/ActivityView.test.tsx`.
+- Shared rows, hover/touch Stop and shelf reuse: `web/src/components/ActivityRow.test.tsx`, `web/src/components/composer/BackgroundTaskIndicator.test.tsx` and `web/src/components/composer/SubagentTaskIndicator.test.tsx`.
+- Captured native output, query identity and read-only side views: `web/src/hooks/useSessionShellResources.test.tsx` and `web/src/workbench/ShellResourceView.test.tsx`.
+- Authenticated provider resources, retained history and targeted control: `tests/server/test_shell_resource_routes.py`, `tests/server/test_shell_resources.py` and `tests/runner/test_native_shell_resources.py`.
+- Actual native command lifecycle through the isolated browser: `tests/e2e_ui/agents/test_native_capability_shelf.py`.
 - Manually run a command in a shell while leaving the shell open, then end the shell: the command can complete while the shell is still live, and only the shell's actual end supplies its ended state.
 - Disconnect the runner and inspect recorded output; verify that disconnection does not invent a successful exit.
 
@@ -40,4 +45,7 @@ Preconditions: use the isolated [verification environment](skills/verify-omnigen
 - History retains at most 128 entries per chat and 8 KiB output snapshots; the runner's local capture is also bounded globally.
 - Native vendor commands are projected only where persisted tool records provide evidence; missing completion or exit information remains unknown.
 - Viewing historical output never launches, resumes or reruns a process.
+- Native shell controls reflect the installed runtime: Codex supports targeted termination where negotiated; Claude native TUI output is read-only when no incoming control channel exists.
+- Native primary CLI terminals are excluded from shell inventory and targeted Stop; stable provider call IDs deduplicate captured command history.
+- Codex may omit its initial yield buffer from live deltas; completion supplies complete aggregated output, while later streamed chunks are captured after the assistant turn ends.
 - Root activity scans at most 32 authorized sessions and does not expose inaccessible descendants.

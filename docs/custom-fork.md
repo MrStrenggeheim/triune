@@ -87,6 +87,14 @@ Late report capture updates the existing stored item and loaded transcript; stee
 Orchestration rows open on click, render scoped Markdown and align natural-width status badges outside the colored surface.
 Routine coverage diagnostics stay internal, and choosing Host/workspace starts from the selected chat's captured location.
 The original composer shelf reuses existing question, approval, shell, agent and plan components without dropdown chevrons.
+Queue and attention shelves share a gapless density-aware stack, with 200ms entrance/exit and immediate reduced-motion behavior.
+Question popups retain drafts and distinguish Previous, Skip/Next, partial or empty Submit, and whole-request Decline.
+Agent and shell popups reuse Orchestration's two-line rows, supported Stop status pills and exact-resource side-opening controls.
+Native shell records retain captured output across completion and reload without promising an interactive connection or unsupported targeted control.
+Only trusted human submissions use human message styling; framework recovery and other injected input retain explicit source wrappers.
+Peer copies say sent to in the source chat and from in the receiving chat, with authorized destination/source links.
+Touch tabs switch on one tap; stationary holds open their context menu, and held movement starts the existing dock placement preview.
+Appearance uses compact density controls and schematic file destinations, while media cards fit their aspect ratio and the shared 256px image-height limit.
 Native Codex command lifecycle events populate Shells, and structured asynchronous questions remain answerable after the turn ends or the page reloads without blocking a new message.
 New managed Codex homes enable the native plan tool unless the user already configured it explicitly; actual plan updates populate the shelf.
 Real Codex and Claude CLI journeys verify questions, approvals, task updates and delegation with an isolated scripted provider; this is transport/browser evidence, not a live-model claim.
