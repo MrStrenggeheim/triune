@@ -372,6 +372,18 @@ def _dispatch_metadata(
             and isinstance(item.data.resource, dict)
         ):
             saved = item.data.resource
+    managed_dispatch = None
+    if (
+        not native
+        and saved_dispatch
+        and saved is None
+        and child.labels.get("omnigent.subagent.completed_dispatch_id") != saved_dispatch
+    ):
+        from omnigent.server.routes._sessions.orchestration import _native_pane_harness
+
+        if is_native_harness(_native_pane_harness(child)):
+            # Keep the runner's assignment ID used by inbox receipts and restart recovery.
+            managed_dispatch = saved_dispatch
     if saved and (
         native or child.labels.get("omnigent.subagent.completed_dispatch_id") != saved_dispatch
     ):
@@ -415,7 +427,7 @@ def _dispatch_metadata(
         prompt = _message_text(request, role="user")
         if not native and not (saved and metadata.get("dispatch_id") == saved_dispatch):
             metadata.update(
-                dispatch_id=request.id,
+                dispatch_id=managed_dispatch or request.id,
                 task_input=prompt,
                 task_summary=short_task(prompt or ""),
                 task_input_captured=True,

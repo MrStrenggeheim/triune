@@ -312,6 +312,8 @@ async def test_reused_managed_child_keeps_each_dispatch_input_and_result(db_uri:
 async def test_managed_native_echo_records_each_assignment_without_creation_placeholder(
     db_uri: str, wrapper: str
 ) -> None:
+    from omnigent.runner.subagent_work import undelivered_subagent_dispatch_id
+
     store = SqlAlchemyConversationStore(db_uri)
     parent = store.create_conversation()
     child = store.create_conversation(
@@ -322,6 +324,8 @@ async def test_managed_native_echo_records_each_assignment_without_creation_plac
     await record_subagent_activity(child.id, "delegated", store)
     assert store.list_items(parent.id).data == []
     for index in range(2):
+        work_id = f"subagent_assignment_{index}"
+        store.set_labels(child.id, {"omnigent.subagent.dispatch_id": work_id})
         body = SessionEventInput(
             type="external_conversation_item",
             data={
@@ -356,6 +360,7 @@ async def test_managed_native_echo_records_each_assignment_without_creation_plac
         rows = store.list_items(parent.id).data
         assert len(rows) == 2 * index + 1
         assigned = rows[-1].data.resource
+        assert assigned["dispatch_id"] == work_id
         assert assigned["task_input"] == f"Inspect item {index}"
         assert assigned["task_input_ref"]["conversation_id"] == child.id
         store.append(
@@ -379,6 +384,8 @@ async def test_managed_native_echo_records_each_assignment_without_creation_plac
         returned = store.list_items(parent.id).data[-1].data.resource
         assert returned["dispatch_id"] == assigned["dispatch_id"]
         assert returned["result_text"] == f"Final {index}"
+        store.set_labels(child.id, {"omnigent.subagent.delivered_id": work_id})
+        assert undelivered_subagent_dispatch_id(store.get_conversation(child.id).labels) is None
 
 
 @pytest.mark.asyncio
