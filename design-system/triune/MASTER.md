@@ -131,6 +131,7 @@ Every implementation report includes action/expected-result acceptance steps and
 - Detection zones stay invisible; context-clicking a tab opens the shared view controls menu.
 - Overflowing surfaces reuse the transcript-style overlay scrollbar; content that fits has no track.
 - Composer and tab strips show no scrollbars; overflowing tabs scroll behind a right-side fade.
+Sidebar navigation, TurnRail and the command-palette list also hide native and overlay bars while preserving scrolling and keyboard focus.
 - Sidebar counts represent all unique descendants; guides and expander hover/cursor follow shared tree styles.
 - Add host is directly reachable in every workspace picker and reuses the existing server-specific CLI instructions.
 - Live workspace-file chips open the normal File Editor; folder references remain inline code.
@@ -156,13 +157,16 @@ Capture errors use the notification system and an explicit Retry action in that 
 
 ## Agent communication
 
-Peer messages use a slim accent edge and one header: bubble icon, actual agent name, source chat and message menu.
-Show at most three compact message lines with Show full/less, then reuse the user-message timestamp, Copy and Copy link footer.
-Task rows use the robot icon, recorded name/task, compact expandable input/result and semantic status icons.
+Agent task, reply, peer and System cards reuse ActivityRow's compact composition and slim accent edge.
+Bold the actual agent name and preserve the existing sent to/from annotation and linked chat name.
+Keep one title line, one compact excerpt line and vertically centered semantic status and controls.
+Controls are Open chat, Workflow/Orchestration, then disclosure; use the same ghost hover and Sidebar right/down chevron states without animation.
+Omit timestamp, Copy and Copy link footers and their reserved space from these card types for now; ordinary human and assistant footers stay intact.
 Keep one task card per dispatch and update its status in place; steering instructions do not rename the originating task.
-Returned answers use a distinct attributed Markdown reply at their chronological arrival, with the existing compact expansion and message footer.
+Returned answers use one attributed Markdown reply per dispatch at its chronological arrival, with the same compact card and expansion.
+Preserve authoritative adapter finality and exact source references; progress cannot replace a shorter final report.
 Do not repeat the task prompt as both title and preview or add an empty completion reply.
-A chat button opens the named child beside its parent; square-arrow-out opens the spawning chat's Orchestration and consumes its focus request.
+A chat button opens the named child beside its parent; Workflow opens the spawning chat's Orchestration and consumes its focus request.
 Use Orchestration with the Workflow icon for the view, while retaining internal compatibility identifiers.
 Its default list contains separate Agents and Shells sections, including settled work, each ordered by observed activity.
 Use the shared All/Agents/Shells control in the header and two-line resource entries with state and supported controls on the right.
@@ -182,7 +186,9 @@ Quoting framework text in a genuine human submission does not change its origin.
 Queue and attention shelves share one gapless stack above the composer.
 Both entrance and exit take 200ms, moving behind the composer while the hidden slot collapses; reduced motion is immediate.
 Background count changes do not replay entrance or reset forms, drafts or transcript position.
-Queue spacing follows Comfortable/Compact with usable coarse-pointer targets.
+Queue spacing retains the previous Comfortable geometry in both density modes, with usable coarse-pointer targets.
+Queue, attention shelf and composer share constrained width; long queued messages wrap.
+Sending a selected queued item reserves its admission independently of old-turn idle and network-finally events.
 
 Agent and shell popups reuse the Orchestration two-line resource row, icon tile and natural-width status pill.
 The first line names the resource; the second shows its task or latest captured output, with one-line ellipsis.
@@ -191,6 +197,9 @@ For supported live resources, row hover reveals a pale-red Stop pill with a fill
 Touch exposes Stop through the shared menu, without requiring hover.
 Native history is read-only captured output unless the runtime explicitly provides an interactive attachment capability.
 The agent's primary CLI is an agent resource, never a stoppable auxiliary shell entry.
+Captured shell history remains readable when the runtime is offline without launching a runner; availability, ACL and replica-routing failures retain distinct semantics.
+Use one shell outcome mapper: Completed for known success, Failed, acknowledged Stopped, Declined, or Ended for confirmed termination with unknown outcome.
+Unknown and Disconnected do not imply termination; badges transition colors without delaying status/Stop visibility.
 
 Questions use the existing accent choice controls and show Question N of M beside the needs-input heading.
 Previous and Skip/Next navigate; Submit accepts partial or empty answers, while Decline rejects the whole request.
@@ -205,3 +214,23 @@ In-chat image cards and images share their aspect ratio and a 256px media-height
 Keep footer controls usable on tiny or very tall images; center the fitted image within the footer's minimum card width.
 Allocate footer width naturally to filename and full captured path, wrapping under pressure without fixed half-width limits or a size separator.
 Display equations retain horizontal scrolling and enough vertical clearance for complete glyphs without a vertical scrollbar.
+
+## Search results and navigation
+
+Sidebar search and the palette's message/chat results reuse one authorized query and two-line result component, ordered newest first with stable ties.
+The header contains ChatName: SenderName and right-aligned date/time; current-chat scope omits ChatName.
+The second line is one highlighted excerpt; title hits highlight the chat title and preview its latest message.
+Do not insert chat-group headings, harness badges or action results into sidebar message/chat search; preserve dedicated palette commands.
+
+Reuse the existing segmented toggle for All / Final / User with canonical explanatory tooltips.
+All searches eligible chat history; Final includes user messages and confirmed final agent replies; User contains user messages only.
+Index/render source identity and adapter finality govern filtering and exact occurrence navigation.
+
+Search selection and Previous/Next load and reveal the owning containers, wait for measured layout and align the exact match under cancellable scroll ownership.
+Closed or unmounted content is pending reveal, not unavailable.
+Manual scrolling cancels pending alignment; background updates never focus or scroll.
+Keep the compact query/count/navigation/close bar without the redundant In this chat label.
+
+Runtime notices reuse the composer shelf and its existing compact popover.
+Show trusted provider information with supported actions, Open Agent CLI and UI-only Dismiss; notifications never fabricate a question response or spend credits.
+Framework completion/blocked/resolved wake instructions retain System origin through dispatch, echo and reload rather than ordinary human submission.

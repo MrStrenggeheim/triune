@@ -5,6 +5,7 @@ Generated attachments keep their original bytes; workspace references use their 
 
 ## Sub-features
 
+- `footer-alignment`: file icon, metadata block, size and controls center together on single-line and wrapped footers.
 - `responsive-footer`: wide media cards put filename, metadata and original download on one row; narrow cards retain two rows without horizontal overflow.
 - `image-geometry`: image and card fit the original ratio under a shared 256px media-height cap; footer paths use available width without fixed half-width limits.
 - `uploads`: the composer accepts ordinary files up to 50 MB independently of model interpretation; supported native filesystem delivery remains available within its quotas.

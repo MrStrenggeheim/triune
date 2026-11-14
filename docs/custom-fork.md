@@ -107,3 +107,21 @@ The draft contains a quote card and source annotation; inherited history appears
 An inherited source is not serialized into the model input a second time, and quote captures retain navigation metadata without unrelated tool arguments or output.
 The working shimmer crossfades static highlights through opacity, preserving reduced-motion behavior without repainting a moving text background every frame.
 Administrators can set `OMNIGENT_FEATURES=-session_orchestration` to disable the capability for the deployment; that startup override requires a restart.
+
+## Search and activity refinements
+
+Contextual sidebar and palette results share authorized newest-first queries, actor/date headers and one-line highlighted excerpts.
+All/Final/User uses the existing toggle; Final includes user messages and confirmed final agent replies.
+Search opens collapsed owners and original source when needed, preserving manual scrolling and drafts rather than reporting valid matches unavailable.
+
+Task, peer, final-reply and System cards share the compact accent-edge composition, Workflow navigation and static right/down disclosure.
+Their timestamp/copy/link footer slots are omitted for now; ordinary human and assistant message actions remain unchanged.
+One dispatch keeps one task card and an authoritative final report, with progress excluded from automatic replies.
+
+Selected queued sends retain lifecycle ownership so old idle events cannot release other drafts.
+Queues wrap within the composer width and use Comfortable geometry in both density modes.
+Plan status uses shared accent checkbox visuals without becoming editable, and sidebar/rail/palette scrollbars are hidden without removing scrolling.
+
+Offline shell history stays passive and readable, with typed authorization/routing failures preserved and safe notifications.
+Shared shell labels retain acknowledged Stop and distinguish unknown outcomes from known success.
+Provider notices use the existing composer popover with Open Agent CLI and UI-only Dismiss; no native answer or account purchase is inferred.

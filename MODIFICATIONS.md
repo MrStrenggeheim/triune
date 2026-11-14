@@ -48,5 +48,13 @@ Those previously Apache-licensed features retain their original permissions.
 - Restore first-tap touch tabs, coordinate held menus and dragging, and align nested sidebar guides and mobile safe-area clearance.
 - Simplify appearance controls with pane schematics, fit media cards and footers to available space, and preserve complete horizontally scrollable equations.
 
+## Search and activity corrections — 2026-11-14
+
+- Unify message/chat search results, date ordering and All/Final/User filtering; reveal exact matches through collapsed and virtualized content.
+- Preserve authoritative final reports and framework wake attribution through native/SDK delivery, with scoped runtime notices.
+- Reuse compact activity/message composition, static disclosure and matching controls without hidden message-footer space.
+- Fix selected queued-send lifecycle ownership, wrapping/width, preview footer alignment and shared plan/scrollbar treatment.
+- Retain offline shell output with safe errors and consistent outcome/Stop semantics.
+
 [LICENSING.md](LICENSING.md) defines scope and the required notice.
 Git diffs against the imported baseline identify exact modified paths and lines.

@@ -10,7 +10,7 @@ and steers messages while the agent is busy.
 
 ## Sub-features
 
-- `attention-shelf`: original inset tray above input, with Questions, Approvals, Shells, Agents and Plan; no chevrons, measured compact labels, hidden when empty.
+- `attention-shelf`: original inset tray above input, with Questions, Approvals, Notices, Shells, Agents and Plan; no chevrons, measured compact labels, hidden when empty.
 - `child-controls`: current runtime capabilities enable native child replies or steering; unsupported children keep a disabled composer with a reason.
 - `initial-input-recovery`: retain the first prompt, attachment bytes and create identity across failed startup/reload; clear drafts on acceptance.
 - `quote-subchat`: Ask Subchat and Send to new subchat create once, seed an unsent quote and open beside before runner readiness, without confirmation or internal JSON.
@@ -25,6 +25,10 @@ and steers messages while the agent is busy.
 
 - `empty-enter-steer`: the configured send key with an empty composer sends the next queued item immediately, preserving FIFO data and existing newline/permission behavior.
 - `selection-menu`: chat Reply and Ask in side chat share the file-preview selection-menu surface; file menus offer Add comment and Ask in chat.
+- `selected-queue-send`: sending one selected draft reserves its per-chat admission; an old idle edge cannot send remaining drafts.
+- `queue-geometry`: queued drafts wrap within the composer width and retain Comfortable spacing in both density modes; the shared stack still animates.
+- `runtime-notices`: observed native warnings use the shared popover, exact Agent CLI navigation and UI-only Dismiss; unsupported native choosers remain in the CLI.
+- `plan-status`: read-only plan entries reuse accent checkbox visuals with checked, indeterminate and pending states.
 - `durable-queue`: queued follow-ups survive reload/client restart on this browser profile, preserving FIFO order, text, attachments, reply context, agent and retry/host-wait flags; storage is scoped to the authenticated user and server.
 
 - `quiet-focus`: typing leaves the composer frame neutral, without an accent border or outline; individual keyboard controls retain their focus indicators.
@@ -340,6 +344,8 @@ sends a message. Run e2e tests through the instance:
 - Direct quote subchat, held host launch, clean drafts and history toggle: `tests/browser_ui/chat/test_workspace_iteration.py::test_quote_subchat_opens_before_launch_and_hides_inherited_history`.
 - Existing destination drafts retain their text before the quote: `tests/browser_ui/chat/test_workspace_iteration.py::test_selected_quote_menu_reuses_app_controls_and_retains_destination_draft`.
 - History boundaries and explicit-fork defaults: `web/src/lib/inheritedHistory.test.ts` and `web/src/components/chat/Transcript.virtualList.test.tsx`.
+- Runtime notice scope, dismissal revisions and no native response on Dismiss: `web/src/hooks/useRuntimeNotices.test.tsx` and `tests/server/test_runtime_notices.py`.
+- Selected-send lifecycle, failed restoration and retained-chat admission: focused scenarios in `web/src/store/chatStore.test.ts`; geometry: `web/src/pages/QueuedMessagesStrip.test.tsx` and `tests/browser_ui/chat/test_current_refinement_iteration.py`.
 - Shelf resolution and conversation changes: `web/src/components/composer/ComposerAttentionShelf.test.tsx`.
 - Density-aware gapless queue/shelf composition, 200ms motion and retained popup drafts: `web/src/components/composer/ComposerShelf.test.tsx`, `web/src/pages/QueuedMessagesStrip.test.tsx` and `tests/browser_ui/chat/test_current_refinement_iteration.py`.
 - Accent question controls, Skip/Next and always-enabled partial/empty Submit versus Decline: `web/src/components/blocks/AskUserQuestionForm.test.tsx`, `tests/server/routes/test_codex_elicitation.py` and `tests/e2e_ui/agents/test_native_capability_shelf.py`.

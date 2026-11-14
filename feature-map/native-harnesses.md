@@ -900,6 +900,9 @@ checks do not prove live providers, browser rendering or thought-signature parit
 
 ## Gotchas
 
+- Framework completion/blocked/resolved notices use authenticated stable dispatch and System receipts; ordinary user submissions cannot assert that origin.
+- Runtime-notice GET reads saved scoped observations without provider RPC or agent launch; live chooser responses still require a real request channel.
+- Final reports preserve provider phase or authoritative adapter results; shorter finals replace progress atomically within the captured dispatch.
 - Trusted user-submission metadata controls human appearance; framework recovery is registered as System before delivery, and unknown imported input remains External input.
 - Origin, native echo, forgery boundaries and outgoing/incoming peer rendering: `tests/server/integration/test_session_orchestration.py`, `tests/native/test_communication.py`, `web/src/lib/messageCommunication.test.ts` and `tests/browser_ui/chat/test_current_refinement_iteration.py`.
 - Native question empty/partial Submit and whole-request Decline remain distinct through `tests/e2e_ui/agents/test_native_capability_shelf.py` and `tests/harnesses/codex_native/forwarder/test_async_questions.py`.

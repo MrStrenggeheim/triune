@@ -12,6 +12,7 @@ Activity combines the selected chat's main agent and subagents with recorded she
 - `filters`: shared All, Agents and Shells control filters separate sections, including settled records, ordered by last observed activity.
 - `source`: current-chat origin or explicit originating link; alternative combined Host/workspace selector limits independent inventory.
 - `controls`: shared two-line rows in shelves and Orchestration show name, task/output, natural-width status and exact-resource side-opening controls.
+- `outcomes`: shared labels distinguish known Completed/Failed, acknowledged Stopped, Declined and confirmed Ended with unknown outcome; Disconnected never proves exit.
 - `native-shells`: captured provider resource IDs preserve output and truthful capabilities; supported live records expose targeted Stop without joining commands by text.
 
 ## How to get to it (user POV)
@@ -37,6 +38,7 @@ Preconditions: use the isolated [verification environment](skills/verify-omnigen
 - Authenticated provider resources, retained history and targeted control: `tests/server/test_shell_resource_routes.py`, `tests/server/test_shell_resources.py` and `tests/runner/test_native_shell_resources.py`.
 - Actual native command lifecycle through the isolated browser: `tests/e2e_ui/agents/test_native_capability_shelf.py`.
 - Manually run a command in a shell while leaving the shell open, then end the shell: the command can complete while the shell is still live, and only the shell's actual end supplies its ended state.
+- Typed offline, upstream permission/replica preservation and passive retained reads: `tests/server/test_shell_resource_routes.py`.
 - Disconnect the runner and inspect recorded output; verify that disconnection does not invent a successful exit.
 
 ## Gotchas
@@ -45,6 +47,8 @@ Preconditions: use the isolated [verification environment](skills/verify-omnigen
 - History retains at most 128 entries per chat and 8 KiB output snapshots; the runner's local capture is also bounded globally.
 - Native vendor commands are projected only where persisted tool records provide evidence; missing completion or exit information remains unknown.
 - Viewing historical output never launches, resumes or reruns a process.
+- All three navigation/disclosure controls share ghost hover; the trailing right/down disclosure has no animation and these message cards omit their footer slots.
+- Expected offline history uses captured output and safe notices; raw runner and conversation identifiers never appear in errors.
 - Native shell controls reflect the installed runtime: Codex supports targeted termination where negotiated; Claude native TUI output is read-only when no incoming control channel exists.
 - Native primary CLI terminals are excluded from shell inventory and targeted Stop; stable provider call IDs deduplicate captured command history.
 - Codex may omit its initial yield buffer from live deltas; completion supplies complete aggregated output, while later streamed chunks are captured after the assistant turn ends.
