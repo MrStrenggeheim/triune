@@ -307,6 +307,80 @@ async def test_reused_managed_child_keeps_each_dispatch_input_and_result(db_uri:
         assert returned.data.resource["result_text"] == f"Result {index}"
 
 
+@pytest.mark.parametrize("wrapper", ["codex-native-ui", "claude-code-native-ui"])
+@pytest.mark.asyncio
+async def test_managed_native_echo_records_each_assignment_without_creation_placeholder(
+    db_uri: str, wrapper: str
+) -> None:
+    store = SqlAlchemyConversationStore(db_uri)
+    parent = store.create_conversation()
+    child = store.create_conversation(
+        parent_conversation_id=parent.id,
+        title="Review",
+        labels={"omnigent.wrapper": wrapper, "omnigent.ui": "terminal"},
+    )
+    await record_subagent_activity(child.id, "delegated", store)
+    assert store.list_items(parent.id).data == []
+    for index in range(2):
+        body = SessionEventInput(
+            type="external_conversation_item",
+            data={
+                "source_id": f"request-{index}",
+                "response_id": f"turn-{index}",
+                "item_type": "message",
+                "item_data": {
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": f"Inspect item {index}"}],
+                },
+            },
+        )
+        for _ in range(2):
+            await _persist_external_conversation_item(child.id, child, body, store)
+        if index == 0:
+            await _persist_external_conversation_item(
+                child.id,
+                child,
+                SessionEventInput(
+                    type="external_conversation_item",
+                    data={
+                        **body.data,
+                        "source_id": "steering",
+                        "item_data": {
+                            "role": "user",
+                            "content": [{"type": "input_text", "text": "Include keyboard use"}],
+                        },
+                    },
+                ),
+                store,
+            )
+        rows = store.list_items(parent.id).data
+        assert len(rows) == 2 * index + 1
+        assigned = rows[-1].data.resource
+        assert assigned["task_input"] == f"Inspect item {index}"
+        assert assigned["task_input_ref"]["conversation_id"] == child.id
+        store.append(
+            child.id,
+            [
+                NewConversationItem(
+                    type="message",
+                    response_id=f"turn-{index}",
+                    data=MessageData(
+                        role="assistant",
+                        phase="final_answer",
+                        agent="reviewer",
+                        content=[{"type": "output_text", "text": f"Final {index}"}],
+                    ),
+                )
+            ],
+        )
+        await record_subagent_activity(
+            child.id, "returned", store, turn_id=f"turn-{index}", status="completed"
+        )
+        returned = store.list_items(parent.id).data[-1].data.resource
+        assert returned["dispatch_id"] == assigned["dispatch_id"]
+        assert returned["result_text"] == f"Final {index}"
+
+
 @pytest.mark.asyncio
 async def test_claude_original_call_and_clean_peer_return_project_into_cards(db_uri: str) -> None:
     import json

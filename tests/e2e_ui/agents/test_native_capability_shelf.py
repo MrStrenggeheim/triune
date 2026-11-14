@@ -150,7 +150,13 @@ def _framework_call(tools: dict[str, dict], name: str, call_id: str, **arguments
 
 
 def _configure_native_script(
-    mock_url: str, responses: list[dict], *, key: str, match: str, model: str
+    mock_url: str,
+    responses: list[dict],
+    *,
+    key: str,
+    match: str,
+    model: str,
+    required_tools: list[str] | None = None,
 ) -> None:
     """Bind native scripts to their actual model; reviewer history can contain the same nonce."""
     normalized = []
@@ -163,7 +169,12 @@ def _configure_native_script(
             response.setdefault("text", "")
         normalized.append(response)
     configure_mock_llm(
-        mock_url, normalized, key=key, match=match, required_tools=[], required_model=model
+        mock_url,
+        normalized,
+        key=key,
+        match=match,
+        required_tools=required_tools or [],
+        required_model=model,
     )
 
 
@@ -1926,6 +1937,7 @@ def test_native_managed_child_final_reports_and_system_wake(
         json.dumps(_requests(mock_llm_server_url), indent=2)
     )
     cards = page.locator(f'[data-testid="subagent-activity"][data-child-session-id="{child_id}"]')
+    expect(cards).to_have_count(0)
     replies = page.locator(f'[data-testid="subagent-reply"][data-child-session-id="{child_id}"]')
     finals = []
     for dispatch in (1, 2):
@@ -2005,6 +2017,7 @@ def test_native_managed_child_final_reports_and_system_wake(
             key=child_marker,
             match=child_marker,
             model=native_model,
+            required_tools=["request_user_input"] if harness == "codex" else [],
         )
         _send(
             page,

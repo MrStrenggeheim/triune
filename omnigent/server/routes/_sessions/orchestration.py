@@ -397,6 +397,7 @@ from omnigent.server.startup_inputs import (
 from omnigent.server.subagent_activity import (
     claude_subagent_completion_markers,
     record_claude_subagent_return,
+    record_native_subagent_dispatch,
     record_subagent_activity,
 )
 from omnigent.spec.types import (
@@ -3390,6 +3391,7 @@ async def _persist_external_conversation_item_unlocked(
         session_id, body, persisted, cleared_pending_id=cleared_pending_id
     )
     await record_claude_subagent_return(session_id, persisted, conversation_store)
+    await record_native_subagent_dispatch(conv, persisted, conversation_store)
     return persisted.id
 
 

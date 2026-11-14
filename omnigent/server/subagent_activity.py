@@ -743,6 +743,17 @@ async def record_subagent_activity(
         metadata["capture_version"] = 1
         if (
             phase == "delegated"
+            and metadata.get("dispatch_id") == child.id
+            and not metadata.get("task_input")
+            and not child.labels.get("omnigent.wrapper", "").endswith("-subagent")
+        ):
+            from omnigent.server.routes._sessions.orchestration import _native_pane_harness
+
+            if is_native_harness(await asyncio.to_thread(_native_pane_harness, child)):
+                # Creating a reusable native session does not assign its first task.
+                return
+        if (
+            phase == "delegated"
             and child.labels.get("omnigent.wrapper") == "codex-native-ui-subagent"
             and not (metadata.get("task_input") or metadata.get("task_summary"))
         ):
@@ -828,6 +839,24 @@ async def record_subagent_activity(
                 )
     except Exception:  # display metadata must not interrupt child delivery
         _logger.warning("Could not record subagent activity for %s", child_id, exc_info=True)
+
+
+async def record_native_subagent_dispatch(
+    child: Conversation, item: ConversationItem, store: ConversationStore
+) -> None:
+    """Capture a managed assignment only after its native input is committed."""
+    if (
+        child.parent_conversation_id is None
+        or child.labels.get("omnigent.wrapper", "").endswith("-subagent")
+        or not isinstance(item.data, MessageData)
+        or item.data.role != "user"
+        or item.data.is_meta
+        or item.data.communication is not None
+    ):
+        return
+    await record_subagent_activity(
+        child.id, "delegated", store, turn_id=item.response_id or item.id
+    )
 
 
 async def record_claude_subagent_return(

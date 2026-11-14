@@ -236,7 +236,7 @@ def test_model_guard_keeps_guardian_from_consuming_cached_native_script(monkeypa
             json={
                 "key": "parent-script",
                 "match": "parent-nonce",
-                "required_tools": [],
+                "required_tools": ["request_user_input"],
                 "required_model": "native-model",
                 "responses": [
                     {
@@ -263,11 +263,17 @@ def test_model_guard_keeps_guardian_from_consuming_cached_native_script(monkeypa
                 "text": assessment,
             },
         ).raise_for_status()
-        # Both requests can advertise functions; cached native turns can omit them.
+        # Cached native declarations remain in input; title declarations lack user input.
         history = [{"role": "user", "content": [{"type": "input_text", "text": "parent-nonce"}]}]
         declarations = {
             "type": "additional_tools",
-            "tools": [{"type": "namespace", "name": "functions", "tools": []}],
+            "tools": [
+                {
+                    "type": "namespace",
+                    "name": "functions",
+                    "tools": [{"type": "function", "name": "request_user_input"}],
+                }
+            ],
         }
         for first in (True, False):
             guardian = client.post(
@@ -280,11 +286,27 @@ def test_model_guard_keeps_guardian_from_consuming_cached_native_script(monkeypa
             guardian.raise_for_status()
             assert guardian.json()["output"][0]["content"][0]["text"] == assessment
             assert mock_llm_server._state.queues["parent-script"].index == (0 if first else 1)
+            title = client.post(
+                "/v1/responses",
+                json={
+                    "model": "native-model",
+                    "input": [
+                        {
+                            "type": "additional_tools",
+                            "tools": [{"type": "namespace", "name": "functions", "tools": []}],
+                        },
+                        *history,
+                    ],
+                },
+            )
+            title.raise_for_status()
+            assert "parent-call" not in title.text and "parent-done" not in title.text
+            assert mock_llm_server._state.queues["parent-script"].index == (0 if first else 1)
             native = client.post(
                 "/v1/responses",
                 json={
                     "model": "native-model",
-                    "input": [declarations, *history] if first else history,
+                    "input": [declarations, *history],
                 },
             )
             native.raise_for_status()

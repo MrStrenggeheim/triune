@@ -118,6 +118,7 @@ Task, peer, final-reply and System cards share the compact accent-edge compositi
 Their timestamp/copy/link footer slots are omitted for now; ordinary human and assistant message actions remain unchanged.
 One dispatch keeps one task card and an authoritative final report, with progress excluded from automatic replies.
 Framework wake dispatch preserves System authority, including Claude's correlated native prompt receipt; internal inbox instructions do not add a redundant visible message.
+Reusable native children create task cards from committed assignments rather than empty session creation, preserving each assignment and its final report.
 
 Selected queued sends retain lifecycle ownership so old idle events cannot release other drafts.
 Queues wrap within the composer width and use Comfortable geometry in both density modes.

@@ -1025,16 +1025,28 @@ class MockState:
 
     @staticmethod
     def tool_names(parsed: object) -> set[str]:
-        """Read advertised tool names across Messages, Responses and Chat APIs."""
+        """Read current and cached native declarations, including namespace members."""
         if not isinstance(parsed, dict):
             return set()
-        names = set()
-        for tool in parsed.get("tools") or []:
-            if isinstance(tool, dict):
-                schema = tool.get("function", tool)
-                name = schema.get("name") if isinstance(schema, dict) else None
-                if isinstance(name, str):
-                    names.add(name)
+        advertised = list(parsed.get("tools") or [])
+        for item in parsed.get("input") or []:
+            if isinstance(item, dict) and item.get("type") == "additional_tools":
+                advertised.extend(item.get("tools") or [])
+        names: set[str] = set()
+
+        def read(tool: object) -> None:
+            if not isinstance(tool, dict):
+                return
+            schema = tool.get("function", tool)
+            if not isinstance(schema, dict):
+                return
+            if isinstance(name := schema.get("name"), str):
+                names.add(name)
+            for member in schema.get("tools") or []:
+                read(member)
+
+        for tool in advertised:
+            read(tool)
         return names
 
     def resolve_queue_for_request(self, parsed: object) -> _ResponseQueue:
