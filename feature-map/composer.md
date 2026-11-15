@@ -10,6 +10,11 @@ and steers messages while the agent is busy.
 
 ## Sub-features
 
+- `question-batches`: Questions counts actual elicitation batches; each popup entry opens one batch and one question page, retaining drafts across switching and closing.
+- `question-forward`: one counted primary action says Skip or Next before the final page, then Submit; only Submit sends the complete permitted partial/empty batch.
+- `question-receipts`: pending questions transform into one durable answered batch, preserving original questions, category pills and exact non-secret answers; correlated native echoes stay represented once.
+- `activity-card-header`: System, peer, task, reply and question message cards reserve header geometry while complete content expands below the text column.
+
 - `attention-shelf`: original inset tray above input, with Questions, Approvals, Notices, Shells, Agents and Plan; no chevrons, measured compact labels, hidden when empty.
 - `child-controls`: current runtime capabilities enable native child replies or steering; unsupported children keep a disabled composer with a reason.
 - `initial-input-recovery`: retain the first prompt, attachment bytes and create identity across failed startup/reload; clear drafts on acceptance.
@@ -185,6 +190,9 @@ and steers messages while the agent is busy.
 
 ## How to get to it (user POV)
 
+- Open Questions above the composer; choose a batch when several are pending, then use header arrows or Previous and the counted forward action.
+- Submit from the final page; expand the resulting Answered card and use its header arrows to review every original question and answer.
+
 - Existing or new chat: the main input card contains machine → workspace → permissions and model → context usage → Send; open workspace selection from the folder control.
 **In-session composer** (open any session):
 
@@ -346,6 +354,8 @@ sends a message. Run e2e tests through the instance:
 - History boundaries and explicit-fork defaults: `web/src/lib/inheritedHistory.test.ts` and `web/src/components/chat/Transcript.virtualList.test.tsx`.
 - Runtime notice scope, dismissal revisions and no native response on Dismiss: `web/src/hooks/useRuntimeNotices.test.tsx` and `tests/server/test_runtime_notices.py`.
 - Selected-send lifecycle, failed restoration and retained-chat admission: focused scenarios in `web/src/store/chatStore.test.ts`; geometry: `web/src/pages/QueuedMessagesStrip.test.tsx` and `tests/browser_ui/chat/test_current_refinement_iteration.py`.
+- Batch forwarding, explicit empty answers and reload drafts: `web/src/components/blocks/AskUserQuestionForm.test.tsx`; pending-to-answered header/pager and secret display: `web/src/components/blocks/QuestionBatchCard.test.tsx`.
+- Durable canonical batch identity, stable-key answer mapping and trusted echo correlation: `web/src/lib/questionBatches.test.ts` and `tests/server/routes/test_question_receipts.py`.
 - Shelf resolution and conversation changes: `web/src/components/composer/ComposerAttentionShelf.test.tsx`.
 - Density-aware gapless queue/shelf composition, 200ms motion and retained popup drafts: `web/src/components/composer/ComposerShelf.test.tsx`, `web/src/pages/QueuedMessagesStrip.test.tsx` and `tests/browser_ui/chat/test_current_refinement_iteration.py`.
 - Accent question controls, Skip/Next and always-enabled partial/empty Submit versus Decline: `web/src/components/blocks/AskUserQuestionForm.test.tsx`, `tests/server/routes/test_codex_elicitation.py` and `tests/e2e_ui/agents/test_native_capability_shelf.py`.
@@ -698,6 +708,10 @@ Other connection providers alone do not enable the managed MCP picker.
 - Queue recovery, attachment restoration, deletion and ordered dispatch through a real reload: `tests/e2e_ui/chat/test_queued_message_reload.py::test_queued_messages_survive_reload_with_attachment_and_delete`; identity races, write ordering and unavailable storage: `web/src/lib/queuedMessagePersistence.test.ts`.
 
 ## Gotchas
+
+- Questions submit and decline whole elicitation batches; navigation and choice selection never submit independently.
+- Secret answers reach the provider unchanged, but canonical receipt history records only answered/redacted state and never saves secret drafts locally.
+- Receipt and echo correlation require trusted submission identity; matching answer text or a repeated `question_0` key is insufficient.
 
 - The Arclet dbcert preflight needs both the updated desktop shell and web UI,
   with Databricks-internal features enabled for the managed server. Browsers,

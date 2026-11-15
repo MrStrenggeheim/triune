@@ -53,6 +53,21 @@ Keep feature behavior, shared UI rules and setup instructions in this repository
 Record tasks in the fork's issues or the operator's supplied checklist; personal agent instructions and private KBs are optional.
 Before submitting a change, run the relevant existing checks and the required Git hooks.
 
+## Durable inputs and interactive outputs
+
+Composer drafts retain their text, attached bytes and captured context across reloads in viewer-scoped browser storage.
+Accepted follow-ups use a durable server queue and dispatch in order after eligible turn completion, including with every browser/app closed.
+Failed delivery, changed execution scope and revoked access require review; queued drafts and files stay private until their original author dispatches them.
+
+Uploaded HTML can render inline with an explicit `triune-artifact` code fence containing `{"file_id":"uploaded-id","title":"Optional title"}`.
+The shared isolated viewer retains complete bytes, local interactions and bounded state, with source, original download and self-contained export.
+The first-party artifact kit supplies Appearance-aware native controls without external CDNs.
+Its versioned assets and manifest ship beneath `artifacts/kit/`; see the [artifact feature map](../feature-map/artifacts.md).
+
+The packaged UI capability catalog and `sys_ui_capabilities` describe available rendering formats, tools, scopes and fallbacks.
+Harness adapters deliver product guidance through their supported startup/discovery channels while preserving author configuration.
+Mermaid diagrams use one shared pre-render Triune theme and retain source, expansion and download controls.
+
 ## File editing and navigation
 
 Live workspace-file chips open the normal editable File Editor; rendered embeds and attachments without a live path retain their preview/lightbox.
@@ -78,17 +93,20 @@ Rich editor/preview modules load when used, and substantial JSON responses negot
 Cross-chat agent communication and independent workers are enabled by default.
 Settings → General → Agent communication stores a personal choice on the server and applies it to new actions immediately.
 It does not disable ordinary subagents or cancel accepted work.
-Peer cards show the trusted sender and source chat, a compact expandable message, and the shared message footer.
+Peer cards show the trusted sender and source chat through the shared compact expandable message card.
 Orchestration defaults to the current chat and separates agents from shells, including completed work, with a shared category filter and supported Stop controls.
 Its alternative Host/workspace source uses the existing combined selector and limits inventory to the chosen root.
 Task rows retain dispatch-specific names, instructions and results; their buttons open the child or its originating Orchestration in tabs.
-One task card tracks each dispatch, while a captured child report appears separately as an attributed Markdown reply with expansion and the shared footer.
+One task card tracks each dispatch, while a captured child report appears separately as an attributed Markdown reply with shared expansion.
 Late report capture updates the existing stored item and loaded transcript; steering preserves the original task identity.
 Orchestration rows open on click, render scoped Markdown and align natural-width status badges outside the colored surface.
 Routine coverage diagnostics stay internal, and choosing Host/workspace starts from the selected chat's captured location.
 The original composer shelf reuses existing question, approval, shell, agent and plan components without dropdown chevrons.
 Queue and attention shelves share a gapless density-aware stack, with 200ms entrance/exit and immediate reduced-motion behavior.
-Question popups retain drafts and distinguish Previous, Skip/Next, partial or empty Submit, and whole-request Decline.
+Each actual question batch has one needs-input entry and one card that becomes its answered receipt.
+Pending and answered cards retain drafts and share header pagination; the forward action shows Skip, Next or final Submit with an answered/asked counter.
+Optional provider categories precede the original question; submissions and correlated native echoes do not create duplicate human-message cards.
+Submit and Decline apply to the batch, retaining supported partial or empty answers.
 Agent and shell popups reuse Orchestration's two-line rows, supported Stop status pills and exact-resource side-opening controls.
 Native shell records retain captured output across completion and reload without promising an interactive connection or unsupported targeted control.
 Only trusted human submissions use human message styling; framework recovery and other injected input retain explicit source wrappers.
@@ -116,14 +134,19 @@ Search opens collapsed owners and original source when needed, preserving manual
 
 Task, peer, final-reply and System cards share the compact accent-edge composition, Workflow navigation and static right/down disclosure.
 Their timestamp/copy/link footer slots are omitted for now; ordinary human and assistant message actions remain unchanged.
+Expanding a shared card retains its leading icon, status and controls in a stable header while the complete body opens below.
+Completed-turn work includes native task and reply cards; missing live activity items recover from authorized canonical history.
 One dispatch keeps one task card and an authoritative final report, with progress excluded from automatic replies.
 Framework wake dispatch preserves System authority, including Claude's correlated native prompt receipt; internal inbox instructions do not add a redundant visible message.
 Reusable native children create task cards from committed assignments rather than empty session creation, preserving each assignment and its final report.
 
 Selected queued sends retain lifecycle ownership so old idle events cannot release other drafts.
-Queues wrap within the composer width and use Comfortable geometry in both density modes.
-Plan status uses shared accent checkbox visuals without becoming editable, and sidebar/rail/palette scrollbars are hidden without removing scrolling.
+Queued previews use one-line ellipsis within the composer width and retain complete text/files through Edit.
+Active plan entries use a distinct light/outlined marker; completion remains read-only.
+Sidebar/rail/palette scrollbars are hidden without removing scrolling.
 
 Offline shell history stays passive and readable, with typed authorization/routing failures preserved and safe notifications.
 Shared shell labels retain acknowledged Stop and distinguish unknown outcomes from known success.
-Provider notices use the existing composer popover with Open Agent CLI and UI-only Dismiss; no native answer or account purchase is inferred.
+Exceptional provider Notices and a compact Usage control live in the conversation header.
+Usage separates observed context, session accounting and provider quota; ordinary healthy quota updates do not keep the composer shelf open.
+Information retains agent/session details, MCP controls, policies and version diagnostics.

@@ -118,6 +118,7 @@ user-visible behavior. It then uses exactly these four H2 sections in order:
 - [Contextual search](./context-search.md) covers region-aware find, sidebar search, synchronized occurrence navigation and authorized message-level results.
 - [Button tooltips](./tooltips.md) covers canonical hover/focus guidance, shortcuts, disabled reasons and duplicate suppression.
 - [Chat attachments](./chat-attachments.md) covers persistent files, safe previews, native agent uploads and captured workspace references.
+- [Interactive HTML artifacts](./artifacts.md) covers explicit uploaded artifacts, the local Triune kit, isolated interactions and durable previews.
 
 - [Independent workspaces](./workbench-workspaces.md) covers selected resource targets, persistent file/search state and independently owned manual terminals.
 - [Chat activity](./chat-activity.md) covers agents, live shell sessions and retained command/shell history.

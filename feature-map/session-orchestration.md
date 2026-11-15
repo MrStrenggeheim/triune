@@ -9,6 +9,12 @@ without restarting the server. Ordinary native/child subagents are unchanged.
 
 ## Sub-features
 
+- `dispatch-cards`: every recorded assignment has its own task card and separate child report; reusing a child preserves earlier dispatch inputs and results.
+- `native-identity`: a matching dispatch's late native nickname replaces generic attribution without changing captured task identity or an expanded card.
+- `task-labels`: identifier-like labels use readable words and sentence capitalization while preserving acronyms and full handoff text.
+- `child-handoff`: Codex registration saves the full parent handoff as an expandable, parent-attributed child transcript message without submitting another model input.
+- `completed-work`: completed parent turns fold task and reply cards with process work behind one Worked control; live and unresolved wake activity stays top-level.
+
 - `personal-setting`: Settings → General → Agent communication controls new peer messages and independent worker creation for the signed-in user. It defaults on; an administrator disable remains authoritative.
 
 - `message`: private sender, same owner and workspace; shared destinations are
@@ -85,6 +91,18 @@ can supply their own provider through the existing launcher interface.
 - Personal setting API/store checks: `tests/server/routes/test_preferences.py`, `tests/stores/test_preference_store.py` and `tests/server/integration/test_session_orchestration.py` cover strict input, identity isolation and immediate admission changes.
 
 ## Gotchas
+
+- Native echo suppression uses a registered client ID or exact native item/turn identity tied to the persisted dispatch.
+Missing correlation preserves the message, even when its text equals a prior handoff.
+- Repeated registration of the same native call does not duplicate its card or child handoff.
+A later call with a full prompt creates a distinct assignment; metadata-only discovery preserves the current one.
+- Task/reply and label checks: `web/src/lib/subagentActivity.test.ts`, `web/src/components/blocks/SubagentActivityMessage.test.tsx` and `SubagentTaskRow.test.tsx`.
+- Dispatch persistence and native input identity: `tests/server/routes/test_subagent_activity.py`, `tests/harnesses/codex_native/forwarder/test_subagents.py` and `test_user_messages.py`.
+- Completed-turn grouping, live activity, manual expansion and search reveal: `web/src/lib/renderItems.test.ts` and `web/src/components/blocks/BlockRenderer.test.tsx`.
+- Assign three different tasks, finish them, and inspect the parent and each child.
+Expect distinct task/report pairs, full expandable child handoffs, refreshed native names and one completed Worked fold.
+- Repeat identical text as genuine human input.
+It must remain visible unless its native identity exactly identifies an already persisted nonhuman receipt.
 
 - The administrator feature is a startup snapshot; changing its environment override needs a restart. Personal preference changes are checked on each new agent action.
 - Turning the personal switch off does not stop or delete existing chats, cancel accepted work, or disable ordinary child/native subagents.

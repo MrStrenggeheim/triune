@@ -10,6 +10,11 @@ Generated attachments keep their original bytes; workspace references use their 
 - `image-geometry`: image and card fit the original ratio under a shared 256px media-height cap; footer paths use available width without fixed half-width limits.
 - `uploads`: the composer accepts ordinary files up to 50 MB independently of model interpretation; supported native filesystem delivery remains available within its quotas.
 - `images`: raster images and SVG render in image elements, open in the shared lightbox and download as originals.
+- `image-gallery`: transcript previews open all authorized images in that chat in message order, including older and virtualized history.
+  Arrows, keyboard and the compact bottom thumbnails navigate; horizontal swipes navigate and vertical swipes dismiss at fit.
+  Zoomed drags retain pan ownership, and release clicks cannot close a newly selected image.
+  Opening the gallery scans bounded history pages; failures retain the clicked image and offer Retry rather than presenting an incomplete list as complete.
+  Remote images share the renderer's exact GitHub-asset allowlist and use browser image loads with no referrer or session request headers.
 - `documents`: PDF uses the existing PDF viewer; Markdown uses the existing rendered preview; source code and structured text use bounded highlighted or plain text.
 - `html`: isolated HTML preview has an opaque sandbox and restrictive content policy, with source and original download.
 - `media`: browser-supported audio/video plays with controls; unsupported codecs retain download access and a clear error.
@@ -44,6 +49,7 @@ Preconditions: follow the [verification skill](skills/verify-omnigent/SKILL.md) 
 - Filename-only path chips, original Markdown preview/download and deleted-source reload: `tests/e2e_ui/files/test_chat_attachments.py::test_inline_file_reference_keeps_filename_and_original_preview`.
 - File card, sandbox, media controls, errors and query identity: `web/src/components/ChatAttachment.test.tsx`.
 - Image fitting, lightbox and responsive footer geometry: `web/src/components/SessionImage.test.tsx`, `web/src/components/ImageLightbox.test.tsx` and `tests/browser_ui/chat/test_current_refinement_iteration.py`.
+- Message-order inventory, captured source identity, cursor progress and fit-only gesture decisions: `web/src/components/imageGallery.test.ts`.
 - Live file-only messages and stream finalization: `web/src/lib/blockStream.test.ts`; fork references: `tests/stores/test_chat_attachment_fork.py`.
 
 ## Gotchas

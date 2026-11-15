@@ -96,6 +96,25 @@ Do not add runtime dependencies, replacement icon sets, fonts or page-specific p
 
 Appearance density controls header height and sidebar entry padding through the shared density tokens.
 
+## Executable design contract
+
+`web/src/lib/designContract.ts` owns registered roles, geometry, exceptions and artifact aliases; `themePalette.ts` owns palette values.
+The existing palette generator exports the app contract, density tokens and versioned first-party artifact kit; its `--check` mode rejects stale outputs.
+Use complete shared components before native adapters, and retain Badge's pill, Tooltip's 7px corners and named legacy shape exceptions.
+
+Content/chrome hover, passive grouping, nested controls, close controls, press and selection have separate shared roles.
+Close hover mixes foreground over the row-hover surface so it stays visibly stronger across palettes; press deepens that same neutral surface.
+Keep the primary selected strip visible through hover and press.
+`--focus-color` follows the selected primary; `--ring` preserves the existing focus geometry and independent invalid/destructive cues.
+
+Use `CloseButton` for close appearance while keeping dismissal, propagation and async guards in the owning feature.
+Its default 24px surface centers the 14px glyph inside a separate target of at least 44px on coarse pointers.
+Coarse headers retain 48px height in both densities so expanded targets do not overlap; dialogs balance their top/right close insets.
+Popup composites use the shared inset, item-gap, text-gap and footer-gap roles independently of generic list density.
+
+The isolated artifact kit consumes generated aliases and explicit host-provided theme values, with no external CDN or full SPA stylesheet.
+Its manifest declares native form semantics and optional tabs, disclosure and tooltip helpers; it does not imply complete React/Radix behavior parity.
+
 ## Implementation guardrails
 
 The latest approved owner decisions above govern every implementation pass.

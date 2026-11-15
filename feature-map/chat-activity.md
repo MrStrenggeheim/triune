@@ -10,6 +10,7 @@ Activity combines the selected chat's main agent and subagents with recorded she
 - `history`: keep ended activity available offline with truthful per-entry state, without exposing internal capture diagnostics.
 - `provenance`: descendant activity preserves its source chat and agent; each descendant needs its own existing read permission.
 - `filters`: shared All, Agents and Shells control filters separate sections, including settled records, ordered by last observed activity.
+- `header`: the shared chat/host header measures pane width and moves filters into its existing options menu, preserving source, category and List/Graph state through resizing.
 - `source`: current-chat origin or explicit originating link; alternative combined Host/workspace selector limits independent inventory.
 - `controls`: shared two-line rows in shelves and Orchestration show name, task/output, natural-width status and exact-resource side-opening controls.
 - `outcomes`: shared labels distinguish known Completed/Failed, acknowledged Stopped, Declined and confirmed Ended with unknown outcome; Disconnected never proves exit.
@@ -34,6 +35,10 @@ Preconditions: use the isolated [verification environment](skills/verify-omnigen
 - Existing session resource permission gates: `tests/server/routes/test_shell_permission_gate.py`.
 - Markdown, source prefilling and absence of diagnostic/menu clutter: `web/src/shell/ChatActivityPanel.test.tsx` and `web/src/workbench/ActivityView.test.tsx`.
 - Shared rows, hover/touch Stop and shelf reuse: `web/src/components/ActivityRow.test.tsx`, `web/src/components/composer/BackgroundTaskIndicator.test.tsx` and `web/src/components/composer/SubagentTaskIndicator.test.tsx`.
+- Resize an Orchestration pane until filters move into Options, choose Shells there, then widen it; the inline Shells filter remains selected and the source stays unchanged.
+- Agents/Shells popups use one density-aware frame and the full shared resource row, including partial-detail states and existing focus/Stop behavior.
+- Active Plan items use a light outlined bullet; completed items keep the checkmark and pending items keep an empty checkbox, without adding interactive checkboxes.
+- Queue, attention and child-context shelf backgrounds continue behind both rounded composer corners; their existing 200ms entrance/exit and reduced-motion behavior remain.
 - Captured native output, query identity and read-only side views: `web/src/hooks/useSessionShellResources.test.tsx` and `web/src/workbench/ShellResourceView.test.tsx`.
 - Authenticated provider resources, retained history and targeted control: `tests/server/test_shell_resource_routes.py`, `tests/server/test_shell_resources.py` and `tests/runner/test_native_shell_resources.py`.
 - Actual native command lifecycle through the isolated browser: `tests/e2e_ui/agents/test_native_capability_shelf.py`.

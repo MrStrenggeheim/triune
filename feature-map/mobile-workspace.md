@@ -20,6 +20,7 @@ Follow [Unified workspace](unified-workspace.md) for those entry points; older r
 - `capabilities`: omit unavailable pages and omit the workspace button when no pages are available, while a session is pending or on the landing composer.
 - `selection`: close and reopen the last selected page in the current session; fall back to the first available page if that page disappears or the session changes.
 - `focus`: selecting a tab opens its page, updates selection and brings the active tab into view; keyboard navigation follows the available tabs.
+- `input-mapping`: dock tabs activate on the first touch tap; touch hold keeps the explicit context menu and drag continuation, while fine-pointer hover actions require current mouse or pen intent and keyboard actions retain their focus ring.
 - `files`: open Files or Changes, select a file and retain the shared workspace tabs in the phone's full-screen viewer.
 - `dirty-file`: switching workspace tabs from the file viewer uses the existing unsaved-edit confirmation before leaving the file.
 - `empty-shells`: expose Shells and New shell for shell-capable sessions before any user shells exist.
@@ -48,6 +49,7 @@ Seed a readable text file for the viewer journey; an empty Changes page in a non
 - Shells drawer before shell creation: `tests/e2e_ui/mobile/test_mobile_workflow.py::test_mobile_shells_drawer_exposes_new_shell_before_shells_exist` checks that Shells and New shell are reachable with zero user shells.
 - Header availability and chat-action separation: `web/src/shell/ChatHeader.test.tsx` covers owner and nonowner menus, workspace access without chat actions, unavailable controls and pending sessions.
 - Shared tab selection, focus, capability changes, session changes and deferred navigation confirmation: `web/src/shell/MobileWorkspace.test.tsx`.
+- Dock tab first-tap activation, held menus, drag continuation, pointer-intent actions and guarded close behavior: `web/src/workbench/DockWorkspace.test.tsx`.
 - Existing drawer routing, page availability and shell entry behavior: `web/src/shell/AppShell.test.tsx`.
 
 For full-screen viewer tab navigation, open the seeded file, confirm the same workspace tabs remain visible, and switch to Changes or Search.

@@ -14,6 +14,8 @@ local; automatic client sync and shared/machine scope controls remain deferred.
 
 - `accent-surfaces`: Share, navigation, message surfaces, links, focus and composer chrome follow the selected accent in light/dark mode while semantic status colors remain distinct.
 - `flat-transcript`: assistant prose stays unboxed, tool groups use compact disclosures and code has one technical frame.
+- `conversation-usage`: each captured chat header exposes Usage independently of Notices or the composer shelf, with separate context, cumulative session accounting and observed provider quota sections.
+- `runtime-notices`: scoped provider warnings and messages use the chat header; healthy quota snapshots remain in Usage and never imply an answerable request.
 
 - `user-defaults`: set, list, and remove defaults on this machine; cover empty
   config, invalid keys, legacy scalar harness settings, and custom config homes.
@@ -56,6 +58,15 @@ native terminal controls, and fork dialog have separate selection paths; see
 [Composer](./composer.md). Settings → Harnesses → select a host → a Claude or
 Codex card/gear → Settings shows read-only startup configuration. The Plugins
 tab shows inventory; both are covered in [Native harnesses](./native-harnesses.md).
+
+**Chat header:** open Usage in a docked or legacy conversation header to inspect its latest observed context, recorded session/descendant accounting and reported provider quota windows.
+Unknown capacity, accounting and quotas remain unavailable; a passed reported reset never confirms recovered availability, and provider credits are not converted into USD.
+Notices preserve provider messages and warnings, with UI-only Dismiss and Open Agent CLI where that action exists.
+Inactive retained views pause notice/quota polling, and revoked access hides cached observations.
+Conversation information retains the existing identity, session, MCP, policy and server/host version controls.
+
+Focused coverage: `web/src/hooks/useRuntimeNotices.test.tsx`, `web/src/components/ConversationHeaderStatus.test.tsx`, `web/src/workbench/ConversationView.header.test.tsx`, `web/src/shell/ChatHeader.test.tsx` and `tests/server/test_runtime_notices.py`.
+For candidate-browser acceptance, open Usage with healthy quota data and no Notices, inspect a warning without a question, switch chats and hide/reveal a pane, then open Information to verify its existing controls.
 
 **Shared operations API:** on an isolated server configured with
 `shared_preferences_authority_id`, use `GET /v1/preferences/shared` and
@@ -154,7 +165,7 @@ interpreter, server identity/auth mode and database; use synthetic settings.
   Supply `--plugin-opt-outs PATH` when checking a launcher's opt-out file.
 - For two-machine proof, run the server on the remote machine's loopback address
   and forward it from the laptop: `ssh -N -o ExitOnForwardFailure=yes -L
-  127.0.0.1:LOCAL_PORT:127.0.0.1:REMOTE_PORT USER@REMOTE` (replace placeholders).
+127.0.0.1:LOCAL_PORT:127.0.0.1:REMOTE_PORT USER@REMOTE` (replace placeholders).
   Use the forwarded port on the laptop and the server port remotely. Save on
   the laptop, decline/accept remotely, then repeat after a server restart and
   another laptop save. Two homes on one host are not two-machine coverage.

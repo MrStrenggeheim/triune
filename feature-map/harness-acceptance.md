@@ -8,6 +8,8 @@ differences can justify exceptions; maintainer assignment or support tier cannot
 
 ## Sub-features
 
+- `ui-contract`: verify the packaged catalog at the real adapter startup/prompt boundary, its actual tool inventory and its version; retain explicit template/version/reattachment limits.
+
 P0 is the usable-session baseline; P1 covers recovery and additional supported
 features. These are checklist priorities, not changes to the bench's probe
 priorities or CI gates. Scope a change to affected rows and consumers, and
@@ -69,6 +71,11 @@ does not prove behavior. Missing credentials or an unobservable transport are
 blocked/missing evidence, not reasons to mark a supported feature N/A.
 
 ### Existing coverage and gaps
+
+Product rendering guidance uses the [native contract transport checks](native-harnesses.md#product-rendering-contract).
+Inspect actual argv/config/plugin bytes or captured provider instructions with the version present on a fresh install without author instructions.
+Repeat cold resume separately from warm reattachment; an existing process retaining old startup text is not a delivery pass for the new version.
+The registered discovery tool must report its supplied inventory scope, rather than fabricate vendor-native tools or permissions.
 
 Bench dimensions below are reusable checks, not complete coverage of a row.
 Use the [bench transport matrix](../tests/harness_bench/README.md#coverage-by-transport)

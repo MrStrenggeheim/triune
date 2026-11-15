@@ -9,6 +9,8 @@ implements them separately, so a fix for one harness does not reach the others.
 
 ## Sub-features
 
+- `ui-contract`: packaged, versioned UI guidance uses each adapter's real startup/composed-prompt channel; `sys_ui_capabilities` discovers details from the actual supplied tool inventory.
+
 - `launch-web`: pick the harness in the new-session composer and start a session.
 - `agent-instructions`: Pi native delivers authored instructions at launch/resume;
   authors can keep or replace Pi's base prompt and disable automatic context files.
@@ -85,6 +87,10 @@ implements them separately, so a fix for one harness does not reach the others.
   dismisses the modal. Import sessions contains only session imports.
 
 ## How to get to it (user POV)
+
+**Product rendering guidance:** start a fresh chat or cold native launch, then use the advertised `sys_ui_capabilities` tool to inspect supported UI groups and their tool/permission constraints.
+The startup catalog covers formatting, question batches, plans, agents, shells, files, interactive artifacts, context, workspace navigation, background work and notices.
+Existing live native processes keep their previously loaded startup text; warm reattachment is not a new model-instruction delivery.
 
 **Web:** start a new session, choose the harness in the harness picker, open its
 configuration for model and effort, and send. Approval cards and the Terminal
@@ -195,6 +201,46 @@ doctor`) and the built web UI. Only Claude and Codex are configured with the
 mock model there. For any other harness, install its CLI, sign in with a test
 account, and run its tests with plain `uv run pytest` instead, or follow its dev
 skill when one is linked above.
+
+
+### Product rendering contract
+
+Canonical guidance is packaged in `omnigent/runtime/ui_contract.py`; it needs no personal KB, skill or AGENTS.md.
+Author startup text remains separate from dynamic per-turn policy.
+The registry exposes `ui_contract_delivery`, `ui_contract_version` and adapter notes separately from author `instruction_delivery`.
+
+| Adapter | Product channel | Relevant limit |
+| --- | --- | --- |
+| Codex native | Shared app-server builder; private developer instructions | Managed instruction sidecar preserves user config |
+| Claude native | Shared argv augmentation; append-system-prompt | Author CLI and agent prompts merge once |
+| Pi / Devin native | Final runner instruction file / owned rule or preamble | Existing discovery, rule ownership and fallback remain |
+| Kiro native | Scoped home; additive steering | Source profile stays intact |
+| Cursor native | Existing managed MCP discovery-tool description | Requires advertised MCP; no AgentSpec role claim |
+| Antigravity native | Isolated Gemini rule after session-home seeding | Original global rule remains intact |
+| Goose native | Final terminal MOIM environment | Top Of Mind must be enabled; 64 KiB context cap |
+| Hermes native | Private session config, cli/tui platform hints | Source config is never written through |
+| Kimi native / regular | Private enabled plugin with systemPromptPath | Kimi Code 0.31+ v2; explicit template opt-out |
+| Other composed SDK/CLI adapters | Existing composed prompt or first-user prefix | Preserve the adapter's session/turn boundary |
+
+The runtime tool manager reports its own registered names and accepts a lazy runner inventory getter through `set_ui_capability_runtime_tool_names`.
+It does not claim to have enumerated vendor-native builtins when that inventory was not supplied.
+Native attachment guidance uses resolved chat/server values with `triune attach-file`; it never assumes ambient session/server variables.
+
+Focused source/transport checks:
+
+- Catalog, real prompt composition and discovery: `tests/runtime/test_ui_contract.py`, `tests/runtime/test_prompt.py`, `tests/tools/test_ui_capabilities.py`.
+- Final captured launch argv/environment: `tests/runner/test_app_native_startup_instructions.py` and selected native auto-create scenarios in `tests/runner/test_app_sessions_native_terminals_autocreate.py`.
+- Codex private instruction/config restoration: `tests/harnesses/codex_native/app_server/test_instructions.py`.
+- Claude startup flags and author preservation: `tests/harnesses/claude_native/test_claude_native_bridge.py -k 'augment_claude_args or startup_contract or startup_product_contract'`.
+- Kiro/Antigravity profile/rule constructors: `tests/test_kiro_native.py` and `tests/harnesses/antigravity_native/test_antigravity_native.py`, selected by `-k ui_contract`.
+- Cursor canonical tool-description delivery and callable scoped discovery: `tests/runner/test_native_tool_metadata.py`.
+- Goose/Hermes startup helpers and Kimi private plugin state: the owning `tests/harnesses/*/test_startup_contract.py` and `tests/test_kimi_native_credentials.py` scenarios.
+
+Vendor channel references: [Goose persistent instructions](https://github.com/aaif-goose/goose/blob/main/documentation/docs/guides/context-engineering/using-persistent-instructions.md), [Hermes prompt assembly](https://github.com/NousResearch/hermes-agent/blob/main/website/docs/developer-guide/prompt-assembly.md), [Kimi plugin instructions](https://github.com/MoonshotAI/kimi-code/blob/main/docs/en/customization/plugins.md).
+Captured invocation tests establish launch transport; they do not certify every installed vendor version or a live model response.
+
+
+
 
 Claude Code also reads machine-wide managed settings outside `CLAUDE_CONFIG_DIR`.
 Native Claude mock fixtures reject a managed `ANTHROPIC_BASE_URL` pointing away
@@ -899,6 +945,10 @@ send a follow-up; expect no empty `function_response.name` error. These automate
 checks do not prove live providers, browser rendering or thought-signature parity.
 
 ## Gotchas
+
+- A registered UI catalog is discovery, not an execution grant or proof that an already-running process received new startup text.
+- Kimi templates that deliberately omit `${plugin_sections}` and `${base_prompt}` opt out of plugin instructions; do not silently rewrite those templates.
+- Inline HTML uses a completed `triune-artifact` fence containing an authorized uploaded `file_id`; unsupported clients retain the ordinary file-link fallback.
 
 - Framework completion/blocked/resolved notices use authenticated stable dispatch and System receipts; ordinary user submissions cannot assert that origin.
 - Claude System echoes bind the registered input to the native session/prompt ID; the durable receipt confirms the original item instead of creating human speech.

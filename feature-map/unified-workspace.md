@@ -58,6 +58,18 @@ Preconditions: follow the [verification skill](skills/verify-omnigent/SKILL.md),
 
 ## Gotchas
 
+- Sidebar selection identifies the owner of the displayed saved layout, independently of which embedded ordinary or native child receives focus.
+Selecting another sidebar chat switches its layout and highlight together; a layout with no chat owner does not borrow the focused chat's highlight.
+- Row actions appear for eligible mouse hover, visible keyboard focus or their explicit open menu.
+Pointer-retained DOM focus alone does not keep actions revealed, and activating a section header preserves its real focus.
+- Touch and hybrid contacts retain explicit action menus and first-tap primary actions.
+Explorer selection mode remains explicit; hover and focus do not create selected IDs or enter multiselect.
+- Focus and layout-owner checks: `web/src/shell/Sidebar.rowActions.test.tsx`, `Sidebar.projectHeaderChevron.test.tsx`, `Sidebar.branches.test.tsx`, `ExplorerActions.test.tsx` and `web/src/workbench/WorkbenchContext.test.tsx`.
+- Open a parent and child beside it, focus the child, then select a different sidebar chat and reload.
+Expect one matching layout-owner highlight, preserved child routing and restored saved layout.
+- Tab through a row's controls, click a section header, and open/dismiss Explorer actions with Escape.
+Expect visible focused controls and logical menu focus return without losing selected files.
+
 - Touch tabs switch on one tap; stationary 500ms holds open the shared menu, while movement after 300ms beyond 10px begins dock dragging.
 - Early touch movement remains scrolling; second contacts, cancellation and held-menu release do not activate hidden controls.
 - Mobile sidebar clearance and nested guide geometry: `tests/browser_ui/chat/test_touch_refinement_iteration.py`, `web/src/lib/touchContextGesture.test.tsx` and `web/src/workbench/DockWorkspace.test.tsx`.
