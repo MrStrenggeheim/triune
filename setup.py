@@ -42,8 +42,26 @@ class _GenerateBuildInfo(build_py):
         self._build_web_ui()
         self._write_build_info()
         super().run()
+        self._bundle_web_ui()
         self._bundle_examples()
         self._bundle_scripts()
+
+    def _bundle_web_ui(self) -> None:
+        """Replace staged frontend resources so obsolete hashed assets cannot ship."""
+        import shutil
+
+        root = Path(__file__).resolve().parent
+        source = root / "omnigent" / "server" / "static" / "web-ui"
+        destination = Path(self.build_lib) / "omnigent" / "server" / "static" / "web-ui"
+        if destination.resolve() == source.resolve():
+            return
+        if destination.is_symlink() or destination.is_file():
+            destination.unlink()
+        elif destination.is_dir():
+            shutil.rmtree(destination)
+        if source.is_dir():
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(source, destination)
 
     def _bundle_scripts(self) -> None:
         """Copy top-level maintenance scripts into package resources."""

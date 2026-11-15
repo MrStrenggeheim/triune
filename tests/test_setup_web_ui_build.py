@@ -8,7 +8,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from unittest import mock
 
 import pytest
@@ -50,6 +50,48 @@ def _run_node_version_check(module: ModuleType, version_output: str) -> str:
         mock.patch.object(module.subprocess, "run", return_value=completed),
     ):
         return module._require_supported_node()
+
+
+@pytest.mark.parametrize("include_bundle", [True, False])
+def test_frontend_staging_replaces_obsolete_assets(tmp_path: Path, include_bundle: bool) -> None:
+    module = _load_setup_module()
+    checkout = tmp_path / "checkout"
+    source = checkout / "omnigent/server/static/web-ui"
+    staged = tmp_path / "build/lib/omnigent/server/static/web-ui"
+    staged.mkdir(parents=True)
+    (staged / "old-hash.js").write_text("obsolete")
+    neighbor = staged.parent / "api_only_landing.html"
+    neighbor.write_text("keep")
+    if include_bundle:
+        source.mkdir(parents=True)
+        (source / "index.html").write_text("new entry")
+        (source / "current-hash.js").write_text("current")
+    command = SimpleNamespace(build_lib=str(tmp_path / "build/lib"))
+    with mock.patch.object(module, "__file__", str(checkout / "setup.py")):
+        module._GenerateBuildInfo._bundle_web_ui(command)
+    assert not (staged / "old-hash.js").exists()
+    assert neighbor.read_text() == "keep"
+    if include_bundle:
+        assert (staged / "index.html").read_text() == "new entry"
+        assert (staged / "current-hash.js").read_text() == "current"
+        assert sorted(path.name for path in source.iterdir()) == [
+            "current-hash.js",
+            "index.html",
+        ]
+    else:
+        assert not staged.exists()
+
+
+def test_frontend_staging_preserves_in_place_resources(tmp_path: Path) -> None:
+    module = _load_setup_module()
+    source = tmp_path / "omnigent/server/static/web-ui"
+    source.mkdir(parents=True)
+    entry = source / "index.html"
+    entry.write_text("retained")
+    command = SimpleNamespace(build_lib=str(tmp_path))
+    with mock.patch.object(module, "__file__", str(tmp_path / "setup.py")):
+        module._GenerateBuildInfo._bundle_web_ui(command)
+    assert entry.read_text() == "retained"
 
 
 def test_node_22_13_passes() -> None:
