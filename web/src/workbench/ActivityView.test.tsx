@@ -260,7 +260,7 @@ it("limits inventory to the selected host/root and keeps ended shells openable",
     sessionId: "",
     terminalId: "same-terminal-id",
   });
-  expect(within(region).getByText("Exited")).toBeVisible();
+  expect(within(region).getByText("Ended")).toBeVisible();
   expect(
     screen.queryByRole("region", { name: "Shell inventory · /other" }),
   ).not.toBeInTheDocument();

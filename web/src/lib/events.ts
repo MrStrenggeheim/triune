@@ -338,6 +338,12 @@ export interface MessageDone {
   messageId?: string;
 }
 
+/** Canonical durable question receipt delivered through output_item.done. */
+export interface QuestionReceiptEvent {
+  type: "question_receipt";
+  item: Record<string, unknown>;
+}
+
 /**
  * A persisted reasoning item from `output_item.done` (type `reasoning`).
  * Produced with no preceding reasoning deltas by native transcript
@@ -1035,6 +1041,7 @@ export type StreamEvent =
   | RoutingDecision
   | TerminalCommandEvent
   | MessageDone
+  | QuestionReceiptEvent
   | ReasoningDone
   | OutputFileDone
   | RetryEvent

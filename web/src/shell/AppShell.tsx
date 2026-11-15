@@ -3073,6 +3073,7 @@ export function LegacyAppShell() {
                           // the floating card (and in the title-bar strip on mac).
                           sidebarOpen={sidebarOpen}
                           settingsMode={inSettings}
+                          active={!inSettings && !extensionOwnsHeader}
                           onOpenSidebar={handleSidebarOpen}
                           isChildSession={isChildSession}
                           subAgentName={activeSession?.subAgentName ?? null}

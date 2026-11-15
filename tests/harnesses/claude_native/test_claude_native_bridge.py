@@ -4122,7 +4122,8 @@ def test_augment_claude_args_appends_caller_system_prompt(
 
     assert args.count("--append-system-prompt") == 1
     index = args.index("--append-system-prompt")
-    assert args[index + 1] == framework_instruction
+    assert args[index + 1].startswith(framework_instruction + "\n\n")
+    assert "Triune UI contract" in args[index + 1]
 
 
 def test_augment_claude_args_merges_caller_allowed_tools(tmp_path: Path) -> None:
@@ -4143,15 +4144,17 @@ def test_augment_claude_args_merges_caller_allowed_tools(tmp_path: Path) -> None
     ]
 
 
-def test_augment_claude_args_omits_unsupplied_system_prompt(tmp_path: Path) -> None:
-    """The bridge does not invent framework policy on its own."""
+def test_augment_claude_args_delivers_product_guidance_without_authored_prompt(
+    tmp_path: Path,
+) -> None:
+    """Static product guidance reaches a fresh native startup without author files."""
     args = augment_claude_args(
         (),
         bridge_dir=tmp_path,
         python_executable="/venv/bin/python",
     )
 
-    assert "--append-system-prompt" not in args
+    assert "Triune UI contract" in args[args.index("--append-system-prompt") + 1]
 
 
 def test_augment_claude_args_merges_user_disallowed_tools(tmp_path: Path) -> None:
@@ -15150,3 +15153,33 @@ def test_system_origin_identity_survives_existing_message_envelope():
         "input_stable_id": "e" * 32,
         "input_origin_kind": "system",
     }
+
+
+def test_startup_product_contract_preserves_an_explicit_cli_append_prompt(tmp_path: Path) -> None:
+    args = augment_claude_args(
+        ("--append-system-prompt", "CLI AUTHOR"),
+        bridge_dir=tmp_path,
+        python_executable="/venv/bin/python",
+        append_system_prompt="AGENT AUTHOR",
+    )
+    assert args.count("--append-system-prompt") == 1
+    text = args[args.index("--append-system-prompt") + 1]
+    assert text.startswith("AGENT AUTHOR\n\nCLI AUTHOR\n\n")
+    assert text.count("Triune UI contract") == 1
+
+
+def test_startup_contract_uses_resolved_chat_and_server_without_environment_defaults(
+    tmp_path: Path,
+) -> None:
+    args = augment_claude_args(
+        (),
+        bridge_dir=tmp_path,
+        session_id="resolved-chat",
+        ap_server_url="https://example.test/prefix",
+        python_executable="/venv/bin/python",
+    )
+    text = args[args.index("--append-system-prompt") + 1]
+    assert (
+        "triune attach-file PATH --session resolved-chat --server https://example.test/prefix"
+        in text
+    )

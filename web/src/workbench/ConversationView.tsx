@@ -6,6 +6,7 @@ import { ScopedConversationTerminal } from "./ScopedConversationTerminal";
 import { ViewModeToggle } from "@/shell/ViewModeToggle";
 import { ConversationScopeContext } from "@/components/chat/conversationScope";
 import { AgentInfoContent } from "@/components/AgentInfo";
+import { ConversationHeaderStatus } from "@/components/ConversationHeaderStatus";
 import { PermissionsModal } from "@/components/PermissionsModal";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { TooltipButton } from "@/components/ui/tooltip";
@@ -258,6 +259,14 @@ const ConversationViewContent = memo(function ConversationViewContent({
           {session?.title || (error ? "Conversation unavailable" : "Conversation")}
         </span>
       </nav>
+      {session && (
+        <ConversationHeaderStatus
+          conversationId={conversationId}
+          active={visible}
+          permissionLevel={session.permissionLevel}
+          harness={session.harness ?? session.labels?.["omnigent.wrapper"]}
+        />
+      )}
       <ViewModeToggle hotkeyEnabled={focused} alwaysVisible />
       {conversation && (
         <HeaderConversationMenu

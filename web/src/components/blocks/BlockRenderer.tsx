@@ -15,10 +15,10 @@ import { useScopedConversationId } from "@/components/chat/conversationScope";
 //    recent steps. Still-in-progress spinners and durable
 //    routing/fan-out cards never fold regardless of position.
 //
-// 2. Turn folding: once settled, each work run collapses behind a
-//    "Worked" row. Pending elicitations, agent task/reply cards,
-//    routing cards and assistant messages stay
-//    visible (all but the last message with opt-in `foldNarration`).
+// 2. Turn folding: once settled, process work collapses behind one
+//    "Worked" row. Pending elicitations, routing cards and assistant
+//    messages stay visible (all but the last message with opt-in
+//    `foldNarration`).
 
 import type { ReactNode } from "react";
 import { useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
@@ -175,7 +175,7 @@ function foldsNarration({
   );
 }
 
-/** Work folds after an assistant message or in a tool-bearing continuation. */
+/** Work folds beside an assistant message or in a tool-bearing continuation. */
 function hasFoldableShape(
   items: RenderItem[],
   { segments, latest }: TurnPartition,
@@ -250,7 +250,6 @@ export function BlockRenderer({
     foldsNarration({ items, turnLifecycle, foldNarration }),
     continued,
   );
-  const workRunCount = partition.segments.filter((segment) => segment.kind === "work").length;
   // Once the fold has SHOWN on a settled bubble, possibly-live no
   // longer reopens it. A scheduled wake (a /loop cron or wakeup
   // firing) flips the session to running — Working shimmer included —
@@ -332,11 +331,11 @@ export function BlockRenderer({
         );
         continue;
       }
-      // The available duration spans the entire turn, not each work run.
+      // The available duration spans the turn-level work fold.
       rendered.push(
         <TurnWorkedFold
           key={`worked:${segment.startIndex}`}
-          workedForS={workRunCount === 1 ? workedForS : undefined}
+          workedForS={workedForS}
           animateCollapse={animateCollapse}
           defaultOpen={defaultExpanded}
           searchOpen={segment.items.some(
@@ -474,7 +473,8 @@ interface TurnPartition {
 }
 
 type TurnSegment =
-  | { kind: "work" | "text"; items: RenderItem[]; startIndex: number }
+  | { kind: "work"; items: RenderItem[]; startIndex: number }
+  | { kind: "text"; items: RenderItem[]; startIndex: number }
   | { kind: "exempt"; item: RenderItem; index: number };
 
 // A trailing `turn_diff` belongs with earlier work, after the last message.
@@ -487,16 +487,16 @@ function isTrailingWrapup(item: RenderItem): boolean {
 }
 
 /**
- * Split work from assistant text while preserving order. Text lacks a
- * reliable final-answer marker, so every completed message stays visible
- * unless `foldNarration` asks to keep only the last one.
+ * Collect process work into one turn-level fold. Text lacks a reliable
+ * final-answer marker, so every completed message stays visible unless
+ * `foldNarration` asks to keep only the last one.
  */
 function partitionTurn(
   items: RenderItem[],
   foldNarration = false,
   continued = false,
 ): TurnPartition {
-  const latestStart = continued ? items.length : latestNewsStart(items);
+  const latestStart = latestNewsStart(items, continued);
   const settled = items.slice(0, latestStart);
   let end = settled.length;
   const wrapup: RenderItem[] = [];
@@ -509,11 +509,11 @@ function partitionTurn(
     ? settled.findLastIndex((item) => item.kind === "text" && item.text.trim() !== "")
     : -1;
   const built: TurnSegment[] = [];
+  let work: Extract<TurnSegment, { kind: "work" }> | undefined;
   for (let i = 0; i < end; i += 1) {
     const item = settled[i]!;
     if (
       isPendingElicitation(item) ||
-      item.kind === "subagent_activity" ||
       isPersistentToolCard(item) ||
       isInProgressTool(item) ||
       isSlashCommandCard(item)
@@ -523,14 +523,21 @@ function partitionTurn(
     }
     // Blank text after the answer stays with it rather than opening a second fold.
     const kind = item.kind === "text" && (answerIndex < 0 || i >= answerIndex) ? "text" : "work";
+    if (kind === "work") {
+      if (work) work.items.push(item);
+      else {
+        work = { kind: "work", items: [item], startIndex: i };
+        built.push(work);
+      }
+      continue;
+    }
     const previous = built[built.length - 1];
-    if (previous?.kind === kind) previous.items.push(item);
-    else built.push({ kind, items: [item], startIndex: i });
+    if (previous?.kind === "text") previous.items.push(item);
+    else built.push({ kind: "text", items: [item], startIndex: i });
   }
   const segments = built;
   if (wrapup.length > 0) {
-    const lastWork = segments.findLast((segment) => segment.kind === "work");
-    if (lastWork?.kind === "work") lastWork.items.push(...wrapup);
+    if (work) work.items.push(...wrapup);
     else segments.push({ kind: "work", items: wrapup, startIndex: end });
   }
   const latest =
@@ -545,11 +552,15 @@ function partitionTurn(
  * uncommitted output after them, which may belong to a response not named
  * yet. It stays visible after the fold until committed output follows.
  */
-function latestNewsStart(items: RenderItem[]): number {
+function latestNewsStart(items: RenderItem[], continued: boolean): number {
   let start = items.length;
   while (start > 0 && isNoticeOrUncommitted(items[start - 1]!)) start -= 1;
   const notice = items.findIndex((item, i) => i >= start && item.kind === "subagent_activity");
-  return notice < 0 ? items.length : notice;
+  if (notice < 0) return items.length;
+  const hasUncommittedOutput = items
+    .slice(notice)
+    .some((item) => item.kind !== "subagent_activity" && isProvisionalItem(item));
+  return continued || hasUncommittedOutput ? notice : items.length;
 }
 
 function isNoticeOrUncommitted(item: RenderItem): boolean {
@@ -587,7 +598,7 @@ function isProvisionalItem(item: RenderItem): boolean {
 }
 
 /**
- * Disclosure for one work run between visible assistant messages.
+ * Disclosure for the turn's collected process work.
  *
  * `animateCollapse` marks the render where the fold appeared while the
  * user was watching. The fold then MOUNTS OPEN — showing exactly the

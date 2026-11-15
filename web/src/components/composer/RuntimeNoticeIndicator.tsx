@@ -3,10 +3,10 @@
 import { useEffect, useState } from "react";
 import { InfoIcon, SquareTerminalIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { HeaderActionButton } from "@/components/HeaderActionButton";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import type { RuntimeNotice } from "@/hooks/useRuntimeNotices";
 import { useWorkbenchActions } from "@/workbench/WorkbenchContext";
-import { COMPOSER_WORKSPACE_COLLAPSED_LABEL_CLASS } from "./ChatComposer";
 
 function noticeColor(severity: RuntimeNotice["severity"]) {
   return severity === "error"
@@ -20,50 +20,48 @@ export function RuntimeNoticeIndicator({
   conversationId,
   notices,
   onDismiss,
+  active = true,
 }: {
   conversationId: string | null;
   notices: RuntimeNotice[];
   onDismiss: (notice: RuntimeNotice) => void;
+  active?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const workbench = useWorkbenchActions();
   useEffect(() => setOpen(false), [conversationId]);
   useEffect(() => {
-    if (!notices.length) setOpen(false);
-  }, [notices.length]);
+    if (!notices.length || !active) setOpen(false);
+  }, [notices.length, active]);
   if (!notices.length || !conversationId) return null;
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={active && open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <Button
-          variant="ghost"
-          size="xs"
-          type="button"
-          className="gap-1 px-1 font-normal tabular-nums"
-          aria-label={`Notices: ${notices.length}`}
-        >
+        <HeaderActionButton className="relative" aria-label={`Notices: ${notices.length}`}>
           <InfoIcon
-            className={`size-3.5 ${noticeColor(notices.some((notice) => notice.severity === "error") ? "error" : notices.some((notice) => notice.severity === "warning") ? "warning" : "info")}`}
+            className={`size-4 ${noticeColor(notices.some((notice) => notice.severity === "error") ? "error" : notices.some((notice) => notice.severity === "warning") ? "warning" : "info")}`}
           />
           <span
-            data-workspace-collapse-label=""
-            className={COMPOSER_WORKSPACE_COLLAPSED_LABEL_CLASS}
+            aria-hidden="true"
+            className="absolute -top-1 -right-1 min-w-3.5 rounded-full bg-primary px-0.5 text-center text-[9px] leading-3.5 text-primary-foreground"
           >
-            Notices
+            {notices.length}
           </span>
-          <span>{notices.length}</span>
-        </Button>
+        </HeaderActionButton>
       </PopoverTrigger>
       <PopoverContent
-        side="top"
-        align="start"
+        side="bottom"
+        align="end"
         collisionPadding={8}
         aria-label="Agent notices"
-        className="max-h-[min(24rem,var(--radix-popover-content-available-height))] w-[min(25rem,calc(100vw-2rem))] overflow-y-auto p-2"
+        onCloseAutoFocus={(event) => {
+          if (!active) event.preventDefault();
+        }}
+        className="max-h-[min(24rem,var(--radix-popover-content-available-height))] w-[min(25rem,calc(100vw-2rem))] overflow-y-auto gap-[var(--popup-item-gap)] p-[var(--popup-inset)]"
       >
-        <ul className="flex flex-col gap-2">
+        <ul className="flex flex-col gap-[var(--popup-item-gap)]">
           {notices.map((notice) => (
-            <li key={notice.id} className="rounded-md p-1 text-ui">
+            <li key={notice.id} className="flex flex-col gap-[var(--popup-text-gap)] text-ui">
               <div className="flex items-center gap-1.5 font-semibold">
                 <InfoIcon className={`size-4 shrink-0 ${noticeColor(notice.severity)}`} />
                 <span className="min-w-0">
@@ -71,15 +69,16 @@ export function RuntimeNoticeIndicator({
                   {notice.title}
                 </span>
               </div>
-              <p className="mt-1 whitespace-pre-wrap break-words text-muted-foreground">
+              <p className="whitespace-pre-wrap break-words text-muted-foreground">
                 {notice.message}
               </p>
               {notice.reset_at != null && (
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Resets {new Date(notice.reset_at * 1000).toLocaleString()}
+                <p className="text-xs text-muted-foreground">
+                  Last reported reset: {new Date(notice.reset_at * 1000).toLocaleString()}
+                  {notice.reset_at * 1000 <= Date.now() && " · Current availability unconfirmed"}
                 </p>
               )}
-              <div className="mt-2 flex items-center gap-1">
+              <div className="flex flex-wrap items-center gap-[var(--popup-footer-gap)]">
                 {workbench && (
                   <Button
                     type="button"

@@ -1,27 +1,13 @@
 /* Modified for Triune. Shared appearance density changes spacing without changing typography. */
+@import "./listDensity.generated.css";
+
+/* Queue geometry intentionally retains Comfortable spacing in both density modes. */
 :root,
 [data-list-density="comfortable"] {
-  --density-header-height: 48px;
-  --list-row-min-height: 36px;
-  --list-row-padding-block: 6px;
-  --list-row-padding-inline: 10px;
-  --list-row-gap: 8px;
-  --list-gap: 4px;
-  --tree-indent: 18px;
   --queue-shelf-padding-block: 6px;
   --queue-list-gap: 4px;
   --queue-row-padding-block: 2px;
   --queue-action-size: 24px;
-}
-
-[data-list-density="compact"] {
-  --density-header-height: 36px;
-  --list-row-min-height: 28px;
-  --list-row-padding-block: 2px;
-  --list-row-padding-inline: 8px;
-  --list-row-gap: 6px;
-  --list-gap: 2px;
-  --tree-indent: 14px;
 }
 
 .density-row {

@@ -4,7 +4,7 @@
 // which closes via Escape, the "x" button, or a click on the empty stage
 // around the image.
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 // getEmbedRoot decides the Radix portal container; null → portal to body.
@@ -13,6 +13,7 @@ vi.mock("@/lib/host", () => ({
 }));
 
 import { fitImagePreviewSize, ImageLightboxProvider, ZoomableImage } from "./ImageLightbox";
+import * as GalleryScope from "./ChatImageGallery";
 
 afterEach(cleanup);
 
@@ -160,7 +161,7 @@ describe("dismissing the lightbox by clicking outside the image", () => {
     const { stage } = openPreview();
     fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
 
-    fireEvent.pointerDown(stage, { pointerId: 1, clientX: 100, clientY: 100 });
+    fireEvent.pointerDown(stage, { isPrimary: true, pointerId: 1, clientX: 100, clientY: 100 });
     fireEvent.pointerMove(stage, { pointerId: 1, clientX: 180, clientY: 140 });
     fireEvent.pointerUp(stage, { pointerId: 1, clientX: 180, clientY: 140 });
     fireEvent.click(stage);
@@ -173,15 +174,132 @@ describe("dismissing the lightbox by clicking outside the image", () => {
     const { stage } = openPreview();
     fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
 
-    fireEvent.pointerDown(stage, { pointerId: 1, clientX: 100, clientY: 100 });
+    fireEvent.pointerDown(stage, { isPrimary: true, pointerId: 1, clientX: 100, clientY: 100 });
     fireEvent.pointerMove(stage, { pointerId: 1, clientX: 180, clientY: 140 });
     fireEvent.pointerUp(stage, { pointerId: 1, clientX: 180, clientY: 140 });
     fireEvent.click(stage);
 
-    fireEvent.pointerDown(stage, { pointerId: 2, clientX: 50, clientY: 50 });
+    fireEvent.pointerDown(stage, { isPrimary: true, pointerId: 2, clientX: 50, clientY: 50 });
     fireEvent.pointerUp(stage, { pointerId: 2, clientX: 50, clientY: 50 });
     fireEvent.click(stage);
 
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+});
+
+// Two indexed images have no mounted transcript preview in these cases.
+const galleryImages = ["Old history", "Current screenshot", "Later output"].map((alt, index) => ({
+  id: `message-${index}:0`,
+  itemId: `message-${index}`,
+  sessionId: "chat",
+  alt,
+  source: `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><text y="12">${index}</text></svg>`)}`,
+}));
+
+describe("whole-chat lightbox gallery", () => {
+  afterEach(() => vi.restoreAllMocks());
+  async function openGallery() {
+    vi.spyOn(GalleryScope, "useChatImageGallery").mockReturnValue({
+      conversationId: "chat",
+      load: async () => galleryImages,
+    });
+    render(
+      <ImageLightboxProvider>
+        <ZoomableImage
+          src="blob:current-preview"
+          alt="Current screenshot"
+          gallerySource={galleryImages[1].source}
+          galleryItemId="message-1"
+        />
+      </ImageLightboxProvider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Zoom image: Current screenshot" }));
+    await screen.findByRole("button", { name: "Previous image" });
+    return screen.getByRole("dialog");
+  }
+  it("opens the clicked occurrence and navigates history via arrows, keys and thumbnails", async () => {
+    const dialog = await openGallery();
+    expect(within(dialog).getByText("2 / 3")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Previous image" }));
+    expect(within(dialog).getByRole("img", { name: "Old history" })).toHaveAttribute(
+      "src",
+      galleryImages[0].source,
+    );
+    expect(screen.getByRole("button", { name: "Previous image" })).toBeDisabled();
+    fireEvent.keyDown(dialog, { key: "ArrowRight" });
+    fireEvent.click(screen.getByRole("button", { name: "View image 3: Later output" }));
+    expect(within(dialog).getByRole("img", { name: "Later output" })).toHaveAttribute(
+      "src",
+      galleryImages[2].source,
+    );
+    expect(screen.getByRole("button", { name: "Next image" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "View image 3: Later output" })).toHaveAttribute(
+      "aria-current",
+      "true",
+    );
+  });
+  it("loads remote main images and thumbnails directly without the authenticated session loader", async () => {
+    const sources = await import("./SessionImage");
+    const authenticatedImageLoader = vi.spyOn(sources, "loadSessionImageSource");
+    const asset = "https://github.com/user-attachments/assets/381e47c8-e3f1-4c3e-9b3d-aac5cfb3557b";
+    vi.spyOn(GalleryScope, "useChatImageGallery").mockReturnValue({
+      conversationId: "chat",
+      load: async () => [
+        galleryImages[1],
+        {
+          id: "remote:0",
+          itemId: "remote",
+          sessionId: "chat",
+          source: asset,
+          alt: "Remote screenshot",
+        },
+      ],
+    });
+    render(
+      <ImageLightboxProvider>
+        <ZoomableImage
+          src={galleryImages[1].source}
+          alt="Current screenshot"
+          gallerySource={galleryImages[1].source}
+        />
+      </ImageLightboxProvider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Zoom image: Current screenshot" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Next image" }));
+    await waitFor(() =>
+      expect(
+        within(screen.getByRole("dialog")).getByRole("img", { name: "Remote screenshot" }),
+      ).toHaveAttribute("src", asset),
+    );
+    const remoteImages = screen.getByRole("dialog").querySelectorAll(`img[src="${asset}"]`);
+    expect(remoteImages).toHaveLength(2);
+    for (const image of remoteImages)
+      expect(image).toHaveAttribute("referrerpolicy", "no-referrer");
+    expect(authenticatedImageLoader).not.toHaveBeenCalled();
+  });
+  it("swipes only at fit and suppresses the release click across image changes", async () => {
+    await openGallery();
+    const stage = screen.getByTestId("lightbox-stage");
+    stage.setPointerCapture = vi.fn();
+    fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
+    fireEvent.pointerDown(stage, { isPrimary: true, pointerId: 1, clientX: 200, clientY: 100 });
+    fireEvent.pointerMove(stage, { pointerId: 1, clientX: 100, clientY: 100 });
+    fireEvent.pointerUp(stage, { pointerId: 1, clientX: 100, clientY: 100 });
+    fireEvent.click(stage);
+    expect(screen.getByText("2 / 3")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Reset zoom" }));
+    fireEvent.pointerDown(stage, { isPrimary: true, pointerId: 2, clientX: 200, clientY: 100 });
+    fireEvent.pointerMove(stage, { pointerId: 2, clientX: 100, clientY: 100 });
+    fireEvent.pointerUp(stage, { pointerId: 2, clientX: 100, clientY: 100 });
+    fireEvent.click(screen.getByTestId("lightbox-stage"));
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByText("3 / 3")).toBeInTheDocument();
+  });
+  it("dismisses on a vertical swipe at fit", async () => {
+    await openGallery();
+    const stage = screen.getByTestId("lightbox-stage");
+    fireEvent.pointerDown(stage, { isPrimary: true, pointerId: 1, clientX: 100, clientY: 100 });
+    fireEvent.pointerUp(stage, { pointerId: 1, clientX: 110, clientY: 200 });
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 });

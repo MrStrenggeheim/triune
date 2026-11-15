@@ -78,3 +78,78 @@ it("isolates conversations and refuses malformed notice data", async () => {
   await waitFor(() => expect(result.current.error?.message).toBe("Invalid agent notice."));
   expect(result.current.notices[0].title).toBe(notice.title);
 });
+
+it("keeps healthy quotas available after a warning is dismissed and preserves typed source fields", async () => {
+  const quota = {
+    id: "quota-a",
+    provider: "codex",
+    window: "primary",
+    used_percent: 25,
+    reset_at: 200,
+    window_minutes: 300,
+    status: "allowed",
+    observed_at: 100,
+    source_kind: "native",
+  };
+  fetch.mockResolvedValue(
+    Response.json({
+      data: [
+        {
+          ...notice,
+          category: "quota",
+          source_kind: "native",
+          native_subtype: "rate_limit",
+          blocking: null,
+          observed_at: 100,
+        },
+        { ...notice, id: "healthy", category: "quota", severity: "info" },
+      ],
+      quotas: [quota],
+    }),
+  );
+  const { result } = renderHook(() => useRuntimeNotices("healthy-usage-chat", true), { wrapper });
+  await waitFor(() => expect(result.current.notices).toHaveLength(1));
+  expect(result.current.notices[0]).toMatchObject({
+    source_kind: "native",
+    native_subtype: "rate_limit",
+    blocking: null,
+    observed_at: 100,
+  });
+  expect(result.current.quotas).toEqual([quota]);
+  act(() => result.current.dismiss(result.current.notices[0]));
+  await waitFor(() => expect(result.current.notices).toHaveLength(0));
+  expect(result.current.quotas).toEqual([quota]);
+});
+
+it("hides cached notices and quota observations after access is denied", async () => {
+  const { result } = renderHook(() => useRuntimeNotices("revoked-chat", true), { wrapper });
+  await waitFor(() => expect(result.current.notices).toHaveLength(1));
+  fetch.mockResolvedValueOnce(
+    Response.json({ error: { code: "forbidden", message: "Access denied" } }, { status: 403 }),
+  );
+  await act(async () => {
+    await result.current.refetch();
+  });
+  await waitFor(() => expect(result.current.accessDenied).toBe(true));
+  expect(result.current.notices).toHaveLength(0);
+  expect(result.current.quotas).toHaveLength(0);
+});
+
+it("pauses observation polling when a retained conversation becomes inactive", async () => {
+  const { result, rerender } = renderHook(({ active }) => useRuntimeNotices("pause-chat", active), {
+    initialProps: { active: true },
+    wrapper,
+  });
+  await waitFor(() => expect(result.current.notices).toHaveLength(1));
+  vi.useFakeTimers();
+  try {
+    rerender({ active: false });
+    const calls = fetch.mock.calls.length;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+    expect(fetch).toHaveBeenCalledTimes(calls);
+  } finally {
+    vi.useRealTimers();
+  }
+});

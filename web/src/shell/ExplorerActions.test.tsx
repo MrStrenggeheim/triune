@@ -150,24 +150,26 @@ describe("Explorer actions", () => {
       const marker = row.querySelector("[data-file-status]");
       const metadata = marker?.closest("[data-explorer-meta]");
       const actions = within(row).getByRole("button", { name: `Actions for ${path}` });
-      expect(metadata).toHaveClass(
-        "[[data-explorer-entry]:hover_&]:opacity-0",
-        "[[data-explorer-entry]:focus-within_&]:opacity-0",
-        "[@media(hover:none)]:hidden",
-      );
+      expect(metadata?.className).not.toContain("focus-within");
+      expect(metadata?.className).toContain("(hover:hover)_and_(pointer:fine)");
+      expect(metadata?.className).toContain("data-input=mouse");
       expect(metadata?.parentElement).toBe(actions.parentElement);
-      expect(actions).toHaveClass(
-        "absolute",
-        "[@media(hover:none)]:static",
-        "[@media(hover:none)]:opacity-100",
-      );
+      expect(actions).toHaveClass("absolute", "focus-visible:ring-3");
+      expect(actions).toHaveAttribute("aria-haspopup", "menu");
+      fireEvent.pointerDown(row, { pointerType: "touch", pointerId: 1 });
+      fireEvent.pointerUp(row, { pointerType: "touch", pointerId: 1 });
+      expect(row).toHaveAttribute("data-input", "touch");
+      expect(row).toHaveAttribute("aria-selected", "false");
       expect(actions.parentElement).toHaveClass("min-w-6");
       if (path === "a.txt") expect(metadata?.querySelector("[data-file-size]")).not.toBeNull();
       actions.focus();
       await user.keyboard("{Enter}");
       expect(await screen.findByRole("menuitem", { name: "Copy" })).toBeInTheDocument();
+      expect(actions).toHaveAttribute("aria-expanded", "true");
+      expect(row).toHaveAttribute("data-menu-open", "true");
       await user.keyboard("{Escape}");
       expect(screen.queryByRole("menu")).toBeNull();
+      await waitFor(() => expect(actions).toHaveFocus());
     },
   );
 
@@ -178,7 +180,8 @@ describe("Explorer actions", () => {
     expect(within(row).queryByRole("button", { name: /Download|Copy.*path/ })).toBeNull();
     const actions = within(row).getByRole("button", { name: "Actions for a.txt" });
     expect(actions.parentElement).not.toHaveClass("w-[104px]");
-    expect(actions).toHaveClass("absolute", "opacity-0");
+    expect(actions).toHaveClass("absolute");
+    expect(actions.className).toContain(":not(:has(:focus-visible))");
     await rowMenu("a.txt");
     expect(screen.getByRole("menuitem", { name: "Move to trash…" })).toHaveAttribute(
       "data-variant",

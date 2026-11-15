@@ -55,6 +55,7 @@ export interface WorkbenchActions {
   ) => void;
   openView: (request: OpenWorkbenchView, options?: { beside?: boolean }) => void;
   focusedConversationId?: string;
+  layoutOwnerConversationId?: string | null;
   openConversationIds?: readonly string[];
 }
 
@@ -74,9 +75,10 @@ export function WorkbenchProvider({
   const actions = useMemo(() => ({ openConversation, openView }), [openConversation, openView]);
   const openConversationIds = useShallowStable(value.openConversationIds);
   const focusedConversationId = value.focusedConversationId;
+  const layoutOwnerConversationId = value.layoutOwnerConversationId;
   const selection = useMemo(
-    () => ({ ...actions, focusedConversationId, openConversationIds }),
-    [actions, focusedConversationId, openConversationIds],
+    () => ({ ...actions, focusedConversationId, layoutOwnerConversationId, openConversationIds }),
+    [actions, focusedConversationId, layoutOwnerConversationId, openConversationIds],
   );
   return (
     <WorkbenchActionsContext.Provider value={actions}>

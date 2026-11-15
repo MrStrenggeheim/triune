@@ -15,6 +15,7 @@ import userEvent from "@testing-library/user-event";
 
 const mocks = vi.hoisted(() => ({ fetch: vi.fn(), download: vi.fn(), copy: vi.fn() }));
 vi.mock("@/lib/identity", () => ({ authenticatedFetch: mocks.fetch }));
+vi.mock("@/hooks/useViewerId", () => ({ useViewerId: () => "test-viewer" }));
 vi.mock("@/lib/explorerOperations", () => ({ downloadBlob: mocks.download }));
 vi.mock("@/lib/clipboard", () => ({ copyText: mocks.copy }));
 vi.mock("@/shell/PdfViewer", () => ({ PdfViewer: () => <p>PDF document preview</p> }));
@@ -565,11 +566,25 @@ it("isolates HTML with a sandbox and restrictive content policy, while retaining
   mount("page.html", "text/html", "<h1>hello</h1><script>parent.pwned=true</script>");
   fireEvent.click(screen.getByRole("button", { name: "page.html" }));
   const frame = await screen.findByTitle("page.html");
-  expect(frame).toHaveAttribute("sandbox", "");
+  expect(frame).toHaveAttribute("sandbox", "allow-scripts");
   expect(frame.getAttribute("srcdoc")).toContain("default-src 'none'");
-  fireEvent.click(screen.getByRole("button", { name: "Source" }));
-  expect(document.querySelector("iframe")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Show artifact source" }));
+  expect(frame).not.toBeVisible();
   expect(screen.getByText("parent.pwned", { exact: false })).toBeInTheDocument();
+});
+
+it("keeps the complete HTML tail in source and the sandbox document beyond the text preview limit", async () => {
+  const html =
+    '<!doctype html><main class="ta-root">' +
+    " ".repeat(760 * 1024) +
+    '<button id="complete-tail">Complete tail</button></main>';
+  mount("large.html", "text/html", html);
+  fireEvent.click(screen.getByRole("button", { name: "large.html" }));
+  const frame = await screen.findByTitle("large.html");
+  expect(frame.getAttribute("srcdoc")).toContain("complete-tail");
+  expect(screen.queryByText(/Preview limited to 512 KiB/)).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Show artifact source" }));
+  expect(screen.getByText(/complete-tail/)).toHaveTextContent("Complete tail");
 });
 it.each([
   ["sound.mp3", "audio/mpeg", "audio"],

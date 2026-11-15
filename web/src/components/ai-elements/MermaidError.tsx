@@ -1,16 +1,11 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { mermaid } from "@streamdown/mermaid";
 import type { MermaidErrorComponentProps, MermaidOptions } from "streamdown";
 import { useResolvedThemeMode } from "@/components/theme/useResolvedThemeMode";
 import type { ResolvedThemeMode } from "@/components/theme/themeMode";
-
-const MERMAID_THEMES = {
-  light: { theme: "default" },
-  dark: { theme: "dark" },
-} as const;
+import { resolveMermaidAppearance, triuneMermaid, useMermaidAppearance } from "./mermaidTheme";
 
 export function mermaidOptionsForTheme(mode: ResolvedThemeMode): MermaidOptions {
-  return { config: MERMAID_THEMES[mode], errorComponent: MermaidError };
+  return { config: resolveMermaidAppearance(mode).config, errorComponent: MermaidError };
 }
 
 // Mermaid's parsers open every syntax error with this line.
@@ -208,6 +203,7 @@ type EscapedRender =
 // never reaches this component.
 function useEscapedRender(escaped: EscapedSemicolons | null): EscapedRender {
   const mode = useResolvedThemeMode();
+  const appearance = useMermaidAppearance(mode);
   const [state, setState] = useState<EscapedRender>({ status: escaped ? "rendering" : "skipped" });
   useEffect(() => {
     if (!escaped) {
@@ -217,8 +213,8 @@ function useEscapedRender(escaped: EscapedSemicolons | null): EscapedRender {
     let cancelled = false;
     setState({ status: "rendering" });
     const id = `mermaid-escaped-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-    mermaid
-      .getMermaid(MERMAID_THEMES[mode])
+    triuneMermaid
+      .getMermaid(appearance.config)
       .render(id, escaped.text)
       .then(({ svg }) => {
         if (cancelled) return;
@@ -230,7 +226,7 @@ function useEscapedRender(escaped: EscapedSemicolons | null): EscapedRender {
     return () => {
       cancelled = true;
     };
-  }, [escaped, mode]);
+  }, [escaped, appearance.key]);
   return state;
 }
 

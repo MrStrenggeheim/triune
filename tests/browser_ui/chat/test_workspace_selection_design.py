@@ -9,12 +9,13 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from playwright.sync_api import Locator, Page, Request, expect
+from playwright.sync_api import Locator, Page, Request, Route, expect
 
-from tests.browser_ui.chat.session_contract import list_payload
+from tests.browser_ui.chat.session_contract import list_payload, message_item
 from tests.browser_ui.chat.test_unified_workspace import (
     WorkspaceJourney,
     _capture,
+    _navigate_chat,
     _open,
     _view,
 )
@@ -37,6 +38,232 @@ def _close_navigation(page: Page) -> None:
     if close.is_visible():
         close.click()
     expect(page.get_by_role("button", name="Open navigation", exact=True)).to_be_visible()
+
+
+def _large_inline_artifact_html() -> bytes:
+    """Complete uploaded fixture: visible kit controls and an interactive tail after 760KiB."""
+    head = """<!doctype html><html><head><meta charset="utf-8"></head><body>
+<main class="ta-root ta-stack" data-ta-init style="padding:12px">
+<h1 class="ta-heading">Uploaded local tool</h1>
+<label class="ta-field">Artifact draft<input class="ta-input" value="Initial draft"></label>
+<details><summary>Local details</summary><p>Restored disclosure content</p></details>
+<p class="ta-list-row">Density follows Appearance</p>
+<!--"""
+    tail = """-->
+<button class="ta-btn" id="artifact-tail">Run tail action</button>
+<output aria-label="Artifact count">0</output>
+<script>
+window.artifactInstance=String(Date.now())+':'+String(Math.random());
+const saved=window.TriuneArtifactState.get();let count=Number(saved?.count)||0;
+const output=document.querySelector('output');output.textContent=String(count);
+document.querySelector('#artifact-tail').addEventListener('click',()=>{
+  output.textContent=String(++count);window.TriuneArtifactState.set({count});
+});
+</script></main></body></html>"""
+    return (head + "x" * (760 * 1024) + tail).encode()
+
+
+def test_uploaded_artifact_fence_retains_appearance_state_and_originals(
+    page: Page,
+    workspace_journey: WorkspaceJourney,
+    output_path: str,
+    tmp_path: Path,
+    browser_errors: list[str],
+) -> None:
+    """Real upload and chat rendering; capture outside the repo and leave source UI untouched."""
+    chat, other = workspace_journey.chats
+    chat.reject_uploads = False
+    file_id, filename, title = "browser-upload-1", "large-local-tool.html", "Large local tool"
+    html = _large_inline_artifact_html()
+    assert len(html) > 740 * 1024
+    evidence = Path(output_path).resolve()
+    if evidence.is_relative_to(Path(__file__).resolve().parents[3]):
+        evidence = tmp_path / "artifact-proof"
+    evidence.mkdir(parents=True, exist_ok=True)
+    metadata_reads: list[str] = []
+    content_reads: list[str] = []
+
+    def dispatched_by_author() -> bool:
+        return any(
+            block.get("file_id") == file_id
+            for event in chat.event_posts
+            for block in event["body"].get("data", {}).get("content", [])
+            if isinstance(block, dict)
+        )
+
+    def file_resource(route: Route) -> None:
+        path = urlparse(route.request.url).path
+        content = path.endswith("/content")
+        (content_reads if content else metadata_reads).append(path)
+        if path.startswith(f"/v1/sessions/{other.session_id}/") or not dispatched_by_author():
+            route.fulfill(status=404, json={"error": {"message": "File not found"}})
+        elif content:
+            route.fulfill(content_type="text/html;charset=utf-8", body=html)
+        else:
+            route.fulfill(
+                json={
+                    "id": file_id,
+                    "name": filename,
+                    "metadata": {"bytes": len(html), "content_type": "text/html"},
+                }
+            )
+
+    for source in (chat, other):
+        for suffix in ("", "/content"):
+            source.contract.route(
+                source.contract._matcher(
+                    f"/v1/sessions/{source.session_id}/resources/files/{file_id}{suffix}"
+                ),
+                file_resource,
+            )
+    page.set_viewport_size({"width": 1440, "height": 1000})
+    page.goto(chat.url)
+    chat.wait_for_stream()
+    composer = _view(page, "Chat A").get_by_label("Message the agent")
+    expect(composer).to_be_visible(timeout=30_000)
+    _view(page, "Chat A").locator('form.chat-composer-form input[type="file"]').set_input_files(
+        {"name": filename, "mimeType": "text/html", "buffer": html}
+    )
+    composer.fill("Use the uploaded complete local tool.")
+    with page.expect_response(
+        lambda response: response.url.endswith(f"/{chat.session_id}/events")
+    ):
+        composer.press("Enter")
+    assert len(chat.upload_requests) == 1
+    assert html in chat.upload_requests[0]["body_bytes"]
+    assert dispatched_by_author(), chat.event_posts
+    chat.emit_idle()
+    fence = "```triune-artifact\n" + json.dumps({"file_id": file_id, "title": title}) + "\n```"
+    chat.set_items(
+        [
+            message_item("artifact-answer", "assistant", fence, response_id="artifact-turn"),
+            message_item(
+                "artifact-request",
+                "user",
+                "Use the uploaded local tool.",
+                response_id="artifact-turn",
+            ),
+        ]
+    )
+    other.set_items(
+        [
+            message_item(
+                "foreign-artifact",
+                "assistant",
+                "```triune-artifact\n"
+                + json.dumps({"file_id": file_id, "title": "Denied local tool"})
+                + "\n```",
+                response_id="foreign-artifact-turn",
+            )
+        ]
+    )
+    page.reload()
+    chat.wait_for_stream()
+    view = page.get_by_role("tabpanel", name="Chat A", exact=True, include_hidden=True)
+    artifact = view.locator("[data-triune-artifact]").filter(has_text=title)
+    outer = artifact.get_by_title(title, exact=True)
+    expect(outer).to_be_visible(timeout=30_000)
+    inner = outer.content_frame.frame_locator("iframe")
+    expect(inner.get_by_role("button", name="Run tail action")).to_be_visible()
+    boot = inner.locator("body").evaluate("() => window.artifactInstance")
+    outer_identity = outer.element_handle()
+    inner.get_by_role("button", name="Run tail action").click()
+    expect(inner.get_by_label("Artifact count")).to_have_text("1")
+    inner.get_by_label("Artifact draft").fill("Draft survives Appearance and reload")
+    inner.get_by_text("Local details", exact=True).click()
+    expect(inner.get_by_text("Restored disclosure content")).to_be_visible()
+    _capture(page, str(evidence), "artifact-uploaded-interactive-tail")
+
+    _close_navigation(page)
+    page.get_by_role("banner", name="Application").get_by_role(
+        "button", name="Settings", exact=True
+    ).click()
+    page.get_by_test_id("settings-nav-appearance").click()
+    expect(outer).to_be_hidden()
+    page.get_by_test_id("ui-font-family-input").fill("Georgia")
+    size = page.get_by_test_id("ui-font-size-input")
+    size.fill("17")
+    size.press("Enter")
+    page.get_by_test_id("list-density-compact").click()
+    page.get_by_test_id("color-theme-select").click()
+    page.get_by_role("option", name="GitHub", exact=True).click()
+    page.get_by_role("radiogroup", name="Mode", exact=True).get_by_role(
+        "radio", name="Dark", exact=True
+    ).click()
+    root = inner.locator("main")
+    expect(root).to_have_attribute("data-theme", "dark")
+    expect(root).to_have_attribute("data-density", "compact")
+    expect(root).to_have_css("font-size", "17px")
+    expect(root).to_have_css("font-family", re.compile("Georgia"))
+    appearance = root.evaluate("""node => {
+        const style = getComputedStyle(node);
+        return {fontFamily: style.fontFamily, fontSize: style.fontSize,
+            mode: node.dataset.theme, density: node.dataset.density,
+            primary: style.getPropertyValue('--ta-primary').trim()};
+    }""")
+    assert outer.evaluate("(node, original) => node === original", outer_identity)
+    assert inner.locator("body").evaluate("() => window.artifactInstance") == boot
+    _capture(page, str(evidence), "artifact-selected-appearance")
+    page.get_by_role("link", name="Back", exact=True).click()
+    expect(page).to_have_url(chat.url)
+    expect(outer).to_be_visible()
+    assert inner.locator("body").evaluate("() => window.artifactInstance") == boot
+    expect(inner.get_by_label("Artifact draft")).to_have_value(
+        "Draft survives Appearance and reload"
+    )
+    _capture(page, str(evidence), "artifact-appearance-without-reset")
+
+    artifact.get_by_role("button", name="Show artifact source", exact=True).click()
+    expect(artifact.locator("pre")).to_be_visible()
+    assert artifact.locator("pre").text_content().encode() == html
+    artifact.get_by_role("button", name="Show artifact preview", exact=True).click()
+    assert inner.locator("body").evaluate("() => window.artifactInstance") == boot
+    with page.expect_download() as original_download:
+        artifact.get_by_role("button", name=f"Download {title}", exact=True).click()
+    original = original_download.value
+    assert original.suggested_filename == filename
+    assert Path(original.path()).read_bytes() == html
+    original.save_as(evidence / "artifact-original.html")
+    with page.expect_download() as export_download:
+        artifact.get_by_role("button", name="Download self-contained HTML", exact=True).click()
+    exported = export_download.value
+    complete = Path(exported.path()).read_text()
+    assert "data-triune-kit-embedded" in complete
+    assert "frame-src about:" in complete
+    assert complete.count("data-triune-kit-embedded") == 1
+    exported.save_as(evidence / "artifact-self-contained.html")
+    page.reload()
+    chat.wait_for_stream()
+    expect(outer).to_be_visible(timeout=30_000)
+    expect(inner.get_by_label("Artifact count")).to_have_text("1")
+    expect(inner.get_by_label("Artifact draft")).to_have_value(
+        "Draft survives Appearance and reload"
+    )
+    expect(inner.get_by_text("Restored disclosure content")).to_be_visible()
+    expect(root).to_have_css("font-size", "17px")
+    _capture(page, str(evidence), "artifact-reload-restored")
+    _navigate_chat(page, other)
+    denied = _view(page, "Chat B")
+    expect(denied.get_by_role("alert").filter(has_text="File not found")).to_be_visible()
+    expect(denied.get_by_title("Denied local tool", exact=True)).to_have_count(0)
+    assert not any(f"/{other.session_id}/" in path for path in content_reads)
+    assert any(f"/{other.session_id}/" in path for path in metadata_reads)
+    _capture(page, str(evidence), "artifact-cross-chat-denied")
+    (evidence / "artifact-proof.json").write_text(
+        json.dumps(
+            {
+                "file_id": file_id,
+                "bytes": len(html),
+                "metadata_reads": metadata_reads,
+                "content_reads": content_reads,
+                "retained_instance": boot,
+                "appearance": appearance,
+            },
+            indent=2,
+        )
+        + "\n"
+    )
+    assert browser_errors == []
 
 
 def test_mobile_composer_keeps_tabs_and_follows_appearance_density(

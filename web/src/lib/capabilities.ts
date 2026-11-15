@@ -115,6 +115,8 @@ export interface ServerInfo {
   durable_initial_input?: boolean;
   /** Host creates durably accept first input, including bundled attachments. */
   durable_host_initial_input?: boolean;
+  /** Queued follow-ups are accepted and dispatched without an open client. */
+  durable_message_queue?: boolean;
   /**
    * Short name of the backing sandbox provider (e.g. ``"modal"``,
    * ``"lakebox"``) used to label the new-session sandbox option per
@@ -406,6 +408,7 @@ export async function resolveServerInfo(): Promise<ServerInfo> {
           managed_sandboxes_enabled: data.managed_sandboxes_enabled === true,
           durable_initial_input: data.durable_initial_input === true,
           durable_host_initial_input: data.durable_host_initial_input === true,
+          durable_message_queue: data.durable_message_queue === true,
           sandbox_provider:
             typeof data.sandbox_provider === "string" ? data.sandbox_provider : null,
           sandbox_providers: Array.isArray(data.sandbox_providers)

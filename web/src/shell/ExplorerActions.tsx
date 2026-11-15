@@ -1,4 +1,5 @@
 // Modified for Triune.
+import { recordPointerInput, pointerInputProps } from "./sidebarPointerInteraction";
 import { useExplorerSelection } from "@/lib/explorerSelection";
 import { useResourceViewId, useResourceViewState } from "@/lib/panelFolder";
 import {
@@ -115,9 +116,10 @@ interface ExplorerContextValue {
   writable: boolean;
   selected: Map<string, ExplorerEntry>;
   selectionMode: boolean;
+  menuPath: string | null;
   focused: string | null;
   registerTree: (controls: TreeControls) => () => void;
-  openMenu: (entry: ExplorerEntry, x: number, y: number) => void;
+  openMenu: (entry: ExplorerEntry, x: number, y: number, trigger?: HTMLElement) => void;
   select: (entry: ExplorerEntry, additive: boolean, range: boolean) => void;
   setFocused: (path: string) => void;
   startDrag: (entry: ExplorerEntry, transfer: DataTransfer) => void;
@@ -162,9 +164,13 @@ export function useExplorerRow(path: string, directory: boolean, deleted = false
     relativizeToWorkspace(viewer.activeFilePath, viewer.workspaceRoot) ===
       relativizeToWorkspace(canonical, viewer.workspaceRoot);
   const currentProps = {
+    ...pointerInputProps,
     "aria-current": active ? ("true" as const) : undefined,
     "data-touch-context-menu": true,
-    onPointerDown: hold,
+    onPointerDown: (event: React.PointerEvent<HTMLElement>) => {
+      recordPointerInput(event);
+      hold(event);
+    },
   };
   const entry = { path: canonical, directory };
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -185,12 +191,14 @@ export function useExplorerRow(path: string, directory: boolean, deleted = false
   const props: HTMLAttributes<HTMLDivElement> & {
     "data-explorer-entry": string;
     "data-directory": string;
+    "data-menu-open": boolean | undefined;
   } = {
     ...currentProps,
     "data-explorer-entry": canonical,
     "data-directory": String(directory),
     role: "treeitem",
     "aria-selected": ctx.selected.has(canonical),
+    "data-menu-open": ctx.menuPath === canonical || undefined,
     tabIndex: ctx.focused === canonical ? 0 : -1,
     draggable: ctx.writable,
     onFocus: () => ctx.setFocused(canonical),
@@ -215,7 +223,12 @@ export function useExplorerRow(path: string, directory: boolean, deleted = false
       event.preventDefault();
       event.stopPropagation();
       const box = event.currentTarget.getBoundingClientRect();
-      ctx.openMenu(entry, event.clientX || box.left, event.clientY || box.bottom);
+      ctx.openMenu(
+        entry,
+        event.clientX || box.left,
+        event.clientY || box.bottom,
+        event.currentTarget,
+      );
     },
     onDragStart: (event) => {
       event.stopPropagation();
@@ -320,6 +333,8 @@ export function ExplorerActionsProvider({
     setDropTarget(element);
   }, []);
   const [point, setPoint] = useState<{ entry: ExplorerEntry; x: number; y: number } | null>(null);
+  const menuTrigger = useRef<HTMLElement | null>(null);
+  const menuDismissedOutside = useRef(false);
   const [dialog, setDialog] = useState<ActionDialog | null>(null);
   const [value, setValue] = useState("");
   const [overwrite, setOverwrite] = useState(false);
@@ -802,7 +817,9 @@ export function ExplorerActionsProvider({
     }
     setSelected(next);
   };
-  const openMenu = (entry: ExplorerEntry, x: number, y: number) => {
+  const openMenu = (entry: ExplorerEntry, x: number, y: number, trigger?: HTMLElement) => {
+    menuTrigger.current = trigger ?? null;
+    menuDismissedOutside.current = false;
     if (!selected.has(entry.path)) {
       setSelected(new Map([[entry.path, entry]]));
       anchor.current = entry.path;
@@ -877,6 +894,7 @@ export function ExplorerActionsProvider({
     writable,
     selected,
     selectionMode,
+    menuPath: point?.entry.path ?? null,
     focused,
     registerTree,
     openMenu,
@@ -1027,7 +1045,7 @@ export function ExplorerActionsProvider({
     ) {
       event.preventDefault();
       const box = active.getBoundingClientRect();
-      openMenu(entry, box.left, box.bottom);
+      openMenu(entry, box.left, box.bottom, active);
     }
   };
 
@@ -1112,7 +1130,22 @@ export function ExplorerActionsProvider({
             <DropdownMenuTrigger asChild>
               <span className="fixed" style={{ left: point.x, top: point.y }} />
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" onCloseAutoFocus={(event) => event.preventDefault()}>
+            <DropdownMenuContent
+              align="start"
+              onInteractOutside={() => {
+                menuDismissedOutside.current = true;
+              }}
+              onCloseAutoFocus={(event) => {
+                event.preventDefault();
+                if (
+                  menuDismissedOutside.current ||
+                  document.querySelector('[role="dialog"][data-state="open"]')
+                )
+                  return;
+                const target = menuTrigger.current;
+                if (target?.isConnected) target.focus({ preventScroll: true });
+              }}
+            >
               {menu(point.entry)}
             </DropdownMenuContent>
           </DropdownMenu>,
@@ -1405,10 +1438,11 @@ export function ExplorerRowActions({
   const ctx = useContext(ExplorerContext);
   const revealBase = useContext(RevealBaseContext);
   const entry = { path: joinBrowseLocation(ctx?.entryBase ?? revealBase, path), directory };
+  const menuOpen = ctx?.menuPath === entry.path;
   const restingMetaClass =
     ctx &&
     !deleted &&
-    "[[data-explorer-entry]:hover_&]:opacity-0 [[data-explorer-entry]:focus-within_&]:opacity-0 [@media(hover:none)]:hidden";
+    "[@media((hover:hover)_and_(pointer:fine))]:[[data-explorer-entry][data-input=mouse]:not(:hover):not(:has(:focus-visible)):not([data-menu-open])_&]:opacity-100 opacity-0";
   return (
     <span
       data-explorer-action
@@ -1442,11 +1476,13 @@ export function ExplorerRowActions({
             type="button"
             variant="ghost"
             size="icon-xs"
-            className="pointer-events-none absolute right-0 text-muted-foreground opacity-0 [[data-explorer-entry]:hover_&]:pointer-events-auto [[data-explorer-entry]:hover_&]:opacity-100 [[data-explorer-entry]:focus-within_&]:pointer-events-auto [[data-explorer-entry]:focus-within_&]:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:static [@media(hover:none)]:opacity-100"
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            className="absolute right-0 text-muted-foreground [@media((hover:hover)_and_(pointer:fine))]:[[data-explorer-entry][data-input=mouse]:not(:hover):not(:has(:focus-visible)):not([data-menu-open])_&]:pointer-events-none [@media((hover:hover)_and_(pointer:fine))]:[[data-explorer-entry][data-input=mouse]:not(:hover):not(:has(:focus-visible)):not([data-menu-open])_&]:opacity-0"
             aria-label={`Actions for ${path}`}
             onClick={(event) => {
               const box = event.currentTarget.getBoundingClientRect();
-              ctx.openMenu(entry, box.left, box.bottom);
+              ctx.openMenu(entry, box.left, box.bottom, event.currentTarget);
             }}
           >
             <MoreHorizontalIcon />

@@ -11,7 +11,7 @@ import { sessionNavigationSearch } from "@/lib/sessionNavigation";
 import {
   readSubagentActivity,
   subagentEventStatus,
-  subagentName,
+  subagentActivityName,
   recordedSubagentReturn,
   shouldRenderSubagentReply,
   subagentMatchesChild,
@@ -45,7 +45,7 @@ export function SubagentActivityMessage({ data }: { data: Record<string, unknown
     : ["completed", "failed", "cancelled", "killed", "stopped"].includes(activity.status ?? "")
       ? subagentEventStatus(activity)
       : undefined;
-  return queryClient && conversationId && activity.phase === "delegated" ? (
+  return queryClient && conversationId ? (
     <RecordedTask activity={activity} conversationId={conversationId} status={status} />
   ) : (
     <Task activity={activity} conversationId={conversationId} status={status} />
@@ -75,7 +75,7 @@ function RecordedTask({
     <Task
       activity={activity}
       conversationId={conversationId}
-      agentName={activity.agentName ?? (child && matchesTask ? subagentName(child) : undefined)}
+      agentName={subagentActivityName(activity, child)}
       status={
         status ??
         (activity.phase === "delegated" && child && hasCurrentState && matchesTask

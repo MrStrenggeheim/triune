@@ -34,6 +34,7 @@ from omnigent.harnesses.codex_native.app_server import (
     CodexAppServerResponseError,
     CodexMessage,
     client_for_transport,
+    is_stale_active_turn_error,
 )
 from omnigent.harnesses.codex_native.async_questions import (
     async_question_params,
@@ -479,6 +480,9 @@ class _CodexForwarderState:
     :param synced_item_keys: Stable item keys already posted to Omnigent this
         connection, e.g. ``{"thread_c:turn_c:item-1"}``. In-memory only;
         guards replay-vs-live overlap within one forwarder lifetime.
+    :param pending_native_input_echoes: Shared queue used by one stream to
+        suppress exactly one identity-correlated native echo for each
+        already-persisted input.
     :param surfaced_terminal_error_turns: Turn ids whose standalone terminal
         ``error`` notification was already surfaced. Used to suppress a later
         terminal boundary for the same turn.
@@ -539,6 +543,9 @@ class _CodexForwarderState:
     subscribed_child_threads: set[str] = field(default_factory=set)
     child_streams: dict[str, _CodexChildStream] = field(default_factory=dict)
     synced_item_keys: set[str] = field(default_factory=set)
+    pending_native_input_echoes: set[tuple[str, str, str | None, str | None]] = field(
+        default_factory=set
+    )
     surfaced_terminal_error_turns: set[str] = field(default_factory=set)
     posted_user_turns: set[str] = field(default_factory=set)
     posted_tool_calls: set[str] = field(default_factory=set)
@@ -694,11 +701,57 @@ class _CodexForwarderState:
         stream = self.child_streams.get(thread_id)
         if stream is None:
             stream = _CodexChildStream(
-                state=_CodexForwarderState(model=self.model, codex_client=self.codex_client),
+                state=_CodexForwarderState(
+                    model=self.model,
+                    codex_client=self.codex_client,
+                ),
                 delta_coalescer=_OutputTextDeltaCoalescer(client, session_id),
             )
             self.child_streams[thread_id] = stream
         return stream
+
+    def expect_native_input_echo(
+        self,
+        *,
+        correlation_id: str,
+        native_client_id: str | None = None,
+        native_item_id: str | None = None,
+        native_turn_id: str | None = None,
+    ) -> bool:
+        """Queue a persisted input only when Codex exposes a stable native identity."""
+        if not correlation_id or not (native_client_id or (native_item_id and native_turn_id)):
+            return False
+        self.pending_native_input_echoes.add(
+            (
+                correlation_id,
+                native_client_id or "",
+                native_item_id,
+                native_turn_id,
+            )
+        )
+        return True
+
+    def consume_native_input_echo(self, params: _JsonObject, item: _JsonObject) -> bool:
+        """Consume a queued input by native client id or exact item/turn identity."""
+        client_id = item.get("clientId") or item.get("client_id")
+        item_id = item.get("id")
+        turn_id = _turn_id_from_payload(params)
+        for expected in tuple(self.pending_native_input_echoes):
+            _, expected_client_id, expected_item_id, expected_turn_id = expected
+            matches_client = (
+                isinstance(client_id, str) and client_id and expected_client_id == client_id
+            )
+            matches_item = (
+                isinstance(item_id, str)
+                and item_id
+                and turn_id is not None
+                and expected_item_id == item_id
+                and expected_turn_id == turn_id
+            )
+            if matches_client or matches_item:
+                self.pending_native_input_echoes.remove(expected)
+                return True
+        return False
 
     async def close_child_streams(self) -> None:
         """Drain child output while the forwarder's HTTP client is still open."""
@@ -4705,6 +4758,29 @@ async def _handle_codex_elicitation_request(
             prepare_framework_input=prepare_framework_input,
         )
     else:
+        submission = result.pop("question_submission", None)
+        if (
+            event.get("method") == _CODEX_TOOL_REQUEST_USER_INPUT_METHOD
+            and isinstance(submission, dict)
+            and submission.get("action") == "decline"
+            and isinstance(params, dict)
+        ):
+            thread_id = _thread_id_from_params(params)
+            turn_id = _turn_id_from_payload(params)
+            if thread_id is None or turn_id is None:
+                _logger.warning(
+                    "Codex declined question lacks native turn identity: request_id=%r",
+                    request_id,
+                )
+                return
+            try:
+                await codex_client.request(
+                    "turn/interrupt", {"threadId": thread_id, "turnId": turn_id}
+                )
+            except CodexAppServerResponseError as exc:
+                if not is_stale_active_turn_error(exc):
+                    raise
+            return
         await codex_client.respond(request_id, result)
 
 
@@ -5508,6 +5584,10 @@ async def _handle_completed_item_inner(
     if source_id is None:
         return
     if item_type == "userMessage":
+        if forwarder_state is not None and forwarder_state.consume_native_input_echo(params, item):
+            if turn_id:
+                forwarder_state.note_user_message_posted(turn_id)
+            return
         posted = await _post_user_message(client, session_id, params, item, source_id=source_id)
         if posted and forwarder_state is not None:
             turn_id = _turn_id_from_payload(params)
@@ -5743,7 +5823,12 @@ async def _handle_collab_item(
     if parent_session_id is None:
         return
     parent_thread_id = _collab_parent_thread_id(params, item)
-    if item.get("tool") in {_CODEX_COLLAB_SPAWN_TOOL, "sendInput"}:
+    if item.get("tool") in {
+        _CODEX_COLLAB_SPAWN_TOOL,
+        "sendInput",
+        "sendMessage",
+        "followupTask",
+    }:
         for child_thread_id in _collab_receiver_thread_ids(item):
             await _ensure_child_session(
                 client,
@@ -6483,6 +6568,9 @@ async def _ensure_user_message_posted(
     source_id = _claim_completed_item(recovered_params, user_item, forwarder_state)
     if source_id is None:
         return
+    if forwarder_state.consume_native_input_echo(recovered_params, user_item):
+        forwarder_state.note_user_message_posted(turn_id)
+        return
     if await _post_user_message(
         client,
         session_id,
@@ -6570,7 +6658,10 @@ async def _post_user_message(
         native_peer_metadata(item.get("origin"), source_id or _source_id(params, item))
     )
     if not item_data.get("communication") and is_native_question_answer(item.get("clientId")):
-        item_data["user_authored"] = True
+        # The resolver persists the batch before releasing its native answer.
+        # Its trusted client ID identifies the echo without comparing text.
+        # Codex keeps the exact answer in its native history.
+        return True
     # Unclassified native input keeps its visible external origin. Human input
     # is confirmed by its saved submission identity, never by its wording.
     return await _post_external_item(

@@ -174,5 +174,30 @@ it("retains question selections when the shelf popup closes and reopens without 
   expect(draft).toHaveValue("keep typed draft");
   await user.click(trigger);
   expect(screen.getByRole("radio", { name: /Focused/ })).toBeChecked();
-  expect(screen.getAllByText("Question 1 of 1")).toHaveLength(1);
+  expect(screen.queryByText("Question 1 of 1")).toBeNull();
+});
+
+it("counts actual batches once and switches their forms without discarding drafts", () => {
+  const first = request("first", true);
+  const second = request("second", true);
+  second.askUserQuestion = {
+    questions: [
+      {
+        id: "other",
+        question: "Which other checks?",
+        options: [{ label: "Broader" }],
+        multiSelect: false,
+      },
+    ],
+  };
+  useChatStore.setState({ blocks: [first, first, second] });
+  openShelf();
+  fireEvent.click(screen.getByRole("button", { name: "Questions: 2" }));
+  fireEvent.click(screen.getByRole("radio", { name: /Focused/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Which other checks?" }));
+  expect(screen.queryByRole("radio", { name: /Focused/ })).toBeNull();
+  fireEvent.click(screen.getByRole("radio", { name: "Broader" }));
+  fireEvent.click(screen.getByRole("button", { name: "Which checks?" }));
+  expect(screen.getByRole("radio", { name: /Focused/ })).toBeChecked();
+  expect(screen.queryByRole("radio", { name: "Broader" })).toBeNull();
 });

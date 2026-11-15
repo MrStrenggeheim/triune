@@ -16,6 +16,8 @@ export interface SessionImageProps {
   path?: string;
   alt: string;
   className?: string;
+  galleryItemId?: string | null;
+  gallerySessionId?: string | null;
 }
 
 // Size the box to the image so short screenshots don't leave empty rows.
@@ -77,14 +79,37 @@ function UnavailableImage({ alt, className }: { alt: string; className?: string 
  * bytes through the host fetcher — which handles both — and render an object
  * URL, with explicit loading and error states.
  */
-export function SessionImage({ path, alt, className }: SessionImageProps) {
+export function SessionImage({
+  path,
+  alt,
+  className,
+  galleryItemId,
+  gallerySessionId,
+}: SessionImageProps) {
   // Host config is installed once at embed startup and never changes, so it's
   // safe to branch on it before any hooks. Hooks live in the embedded child.
   if (!getOmnigentHostConfig().fetcher) {
     // Share sizing and error handling with transcript-carried images.
-    return <InlineImage src={path ? withBasePath(path) : path} alt={alt} className={className} />;
+    return (
+      <InlineImage
+        src={path ? withBasePath(path) : path}
+        gallerySource={path}
+        alt={alt}
+        className={className}
+        galleryItemId={galleryItemId}
+        gallerySessionId={gallerySessionId}
+      />
+    );
   }
-  return <EmbeddedSessionImage path={path} alt={alt} className={className} />;
+  return (
+    <EmbeddedSessionImage
+      path={path}
+      alt={alt}
+      className={className}
+      galleryItemId={galleryItemId}
+      gallerySessionId={gallerySessionId}
+    />
+  );
 }
 
 /**
@@ -98,10 +123,16 @@ export function InlineImage({
   src,
   alt,
   className,
+  gallerySource,
+  galleryItemId,
+  gallerySessionId,
 }: {
   src?: string;
   alt: string;
   className?: string;
+  gallerySource?: string;
+  galleryItemId?: string | null;
+  gallerySessionId?: string | null;
 }) {
   // Tracked by source rather than as a bare flag, so a later block swapping in a
   // different `src` on the same slot retries instead of staying stuck failed.
@@ -116,6 +147,9 @@ export function InlineImage({
   return (
     <SessionImagePreview
       src={src}
+      gallerySource={gallerySource ?? src}
+      galleryItemId={galleryItemId}
+      gallerySessionId={gallerySessionId}
       alt={alt}
       className={className}
       // Offscreen history images cost nothing until scrolled to, and decoding
@@ -160,7 +194,7 @@ function cacheBlobUrl(path: string, url: string): void {
   }
 }
 
-function loadBlobUrl(path: string): Promise<string> {
+export function loadSessionImageSource(path: string): Promise<string> {
   const cached = blobUrlCache.get(path);
   if (cached) {
     // Re-insert to mark it most-recently-used.
@@ -189,7 +223,13 @@ function loadBlobUrl(path: string): Promise<string> {
   return request;
 }
 
-function EmbeddedSessionImage({ path, alt, className }: SessionImageProps) {
+function EmbeddedSessionImage({
+  path,
+  alt,
+  className,
+  galleryItemId,
+  gallerySessionId,
+}: SessionImageProps) {
   // Seed from cache so a revisited image paints on the first frame instead of
   // flashing the placeholder.
   const [blobUrl, setBlobUrl] = useState<string | null>(() =>
@@ -213,7 +253,7 @@ function EmbeddedSessionImage({ path, alt, className }: SessionImageProps) {
     setState("loading");
     setBlobUrl(null);
     let cancelled = false;
-    loadBlobUrl(path)
+    loadSessionImageSource(path)
       .then((url) => {
         if (cancelled) return;
         setBlobUrl(url);
@@ -247,5 +287,15 @@ function EmbeddedSessionImage({ path, alt, className }: SessionImageProps) {
     );
   }
 
-  return <SessionImagePreview src={blobUrl} alt={alt} className={className} decoding="async" />;
+  return (
+    <SessionImagePreview
+      src={blobUrl}
+      gallerySource={path}
+      galleryItemId={galleryItemId}
+      gallerySessionId={gallerySessionId}
+      alt={alt}
+      className={className}
+      decoding="async"
+    />
+  );
 }

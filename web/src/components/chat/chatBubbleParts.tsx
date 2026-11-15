@@ -69,6 +69,7 @@ import {
 } from "@/lib/blocks";
 import { type Bubble, type RenderItem, bubblesEqual } from "@/lib/renderItems";
 import { PeerMessage } from "@/components/blocks/PeerMessage";
+import { castAskUserQuestionPayload, parseAskUserQuestionPreview } from "@/lib/askUserQuestion";
 import { messageInputKind, type MessageCommunication } from "@/lib/messageCommunication";
 import { Link } from "@/lib/routing";
 import { getCurrentAuthorId } from "@/lib/identity";
@@ -1131,6 +1132,16 @@ function AssistantBubble({
   const hasSubagentNotice = bubble.items.some((it) => it.kind === "subagent_activity");
   const activityOnly =
     hasSubagentNotice && bubble.items.every((it) => it.kind === "subagent_activity");
+  const questionBatchOnly =
+    bubble.items.length > 0 &&
+    bubble.items.every(
+      (item) =>
+        item.kind === "elicitation" &&
+        Boolean(
+          castAskUserQuestionPayload(item.askUserQuestion) ??
+          parseAskUserQuestionPreview(item.contentPreview),
+        ),
+    );
 
   return (
     <>
@@ -1174,7 +1185,7 @@ function AssistantBubble({
           </p>
         )}
         {/* Skip fold-only and error-only bubbles. Order: actions, then timestamp. */}
-        {!foldOnly && !errorOnly && !activityOnly && (
+        {!foldOnly && !errorOnly && !activityOnly && !questionBatchOnly && (
           <div
             className={cn(
               "flex items-center gap-3 py-1",

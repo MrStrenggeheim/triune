@@ -312,7 +312,7 @@ describe("quick pin/unpin hover button", () => {
 
     fireEvent.pointerDown(screen.getByTestId("conversation-actions"), { button: 0 });
 
-    expect(screen.getByTestId("conversation-actions").parentElement).toHaveClass("md:w-auto");
+    expect(rowLink.closest("li")).toHaveAttribute("data-menu-open", "true");
   });
 
   it("sizes the project-folder header controls to match the session-row kebab", () => {
@@ -367,8 +367,8 @@ describe("quick pin/unpin hover button", () => {
     // Hover-capable desktop: fades out until the header is hovered / focused /
     // a menu opens.
     expect(wrapper).toHaveClass(
-      "[@media((hover:hover)_and_(pointer:fine))]:md:opacity-0",
-      "[@media((hover:hover)_and_(pointer:fine))]:md:group-hover/header:opacity-100",
+      "[@media((hover:hover)_and_(pointer:fine))]:md:group-[[data-input=mouse]:not(:hover):not(:has(:focus-visible)):not(:has([data-state=open]))]/header:opacity-0",
+      "[@media((hover:hover)_and_(pointer:fine))]:md:group-[[data-input=mouse]:hover]/header:opacity-100",
       "[@media((hover:hover)_and_(pointer:fine))]:md:has-[:focus-visible]:opacity-100",
     );
   });
@@ -500,7 +500,20 @@ describe("quick pin/unpin hover button", () => {
 
     const kebab = screen.getByTestId("conversation-actions");
     expect(kebab).not.toHaveClass("hidden");
-    expect(kebab).toHaveClass("md:group-focus-within/conversation:opacity-100");
+    const row = kebab.closest("li")!;
+    expect(row.innerHTML).not.toContain("group-focus-within");
+    expect(kebab).toHaveClass("focus-visible:ring-3");
+    expect(kebab.parentElement?.className).toContain(":not(:has(:focus-visible))");
+    fireEvent.pointerDown(row, { pointerType: "touch", pointerId: 1 });
+    expect(row).toHaveAttribute("data-input", "touch");
+    expect(screen.getByRole("complementary", { name: "Conversations" })).toHaveAttribute(
+      "data-input",
+      "touch",
+    );
+    fireEvent.pointerMove(row, { pointerType: "mouse" });
+    expect(row).toHaveAttribute("data-input", "mouse");
+    kebab.focus();
+    expect(kebab).toHaveFocus();
     expect(kebab).not.toHaveClass("md:block");
   });
 });

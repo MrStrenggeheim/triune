@@ -1,3 +1,4 @@
+// Modified for Triune.
 import * as React from "react";
 import * as DialogPrimitive from "radix-ui/dialog";
 
@@ -6,7 +7,7 @@ import { isIOSShell } from "@/lib/nativeBridge";
 import { SuppressBrowserView } from "@/hooks/useSuppressBrowserView";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { XIcon } from "lucide-react";
+import { CloseButton } from "@/components/CloseButton";
 
 function Dialog({ ...props }: React.ComponentProps<typeof DialogPrimitive.Root>) {
   return <DialogPrimitive.Root data-slot="dialog" {...props} />;
@@ -96,15 +97,7 @@ function DialogContent({
         {children}
         {showCloseButton && (
           <DialogPrimitive.Close data-slot="dialog-close" asChild>
-            <Button
-              variant="ghost"
-              className="absolute top-5 right-6"
-              size="icon-lg"
-              tooltip={false}
-            >
-              <XIcon className="size-5 text-muted-foreground" data-icon-size />
-              <span className="sr-only">Close</span>
-            </Button>
+            <CloseButton className="absolute top-6 right-6" />
           </DialogPrimitive.Close>
         )}
       </DialogPrimitive.Content>
@@ -150,7 +143,7 @@ function DialogTitle({ className, ...props }: React.ComponentProps<typeof Dialog
     <DialogPrimitive.Title
       data-slot="dialog-title"
       className={cn(
-        "font-heading min-h-8 leading-[32px] text-ui text-[1.25em] pr-10 font-[600]",
+        "font-heading min-h-8 leading-[32px] text-ui text-[1.25em] pr-12 font-[600]",
         className,
       )}
       {...props}

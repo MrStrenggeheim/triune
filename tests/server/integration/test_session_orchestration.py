@@ -1744,7 +1744,7 @@ async def test_runtime_notices_use_bound_transport_and_authorized_saved_get(
 ):
     source, target, _ = peers
     path = f"/v1/sessions/{source['id']}/runtime-notices"
-    assert (await auth_client.get(path)).json() == {"data": []}
+    assert (await auth_client.get(path)).json() == {"data": [], "quotas": []}
     event = {
         "type": "external_runtime_notice",
         "data": {
@@ -1757,19 +1757,27 @@ async def test_runtime_notices_use_bound_transport_and_authorized_saved_get(
             "sequence": 1,
             "observed_at": 123,
             "kind": "rate_limit",
-            "state": {"rateLimits": {"primary": {"usedPercent": 100}}},
+            "state": {"rateLimits": {"primary": {"usedPercent": 42}}},
         },
     }
+    posted = await auth_client.post(f"/v1/sessions/{source['id']}/events", json=event)
+    assert posted.status_code == 202, posted.text
+    healthy = (await auth_client.get(path)).json()
+    assert healthy["data"] == []
+    assert healthy["quotas"][0]["used_percent"] == 42
+    event["data"]["sequence"] = 2
+    event["data"]["state"]["rateLimits"]["primary"]["usedPercent"] = 100
     posted = await auth_client.post(f"/v1/sessions/{source['id']}/events", json=event)
     assert posted.status_code == 202, posted.text
     [notice] = (await auth_client.get(path)).json()["data"]
     assert notice["severity"] == "error" and notice["created_at"] == 123
     assert notice["reset_at"] is None and notice["revision"]
     assert (await auth_client.get(f"/v1/sessions/{target['id']}/runtime-notices")).json() == {
-        "data": []
+        "data": [],
+        "quotas": [],
     }
     auth_client.headers.pop(RUNNER_TUNNEL_TOKEN_HEADER)
-    event["data"]["sequence"] = 2
+    event["data"]["sequence"] = 3
     assert (
         await auth_client.post(f"/v1/sessions/{source['id']}/events", json=event)
     ).status_code == 403

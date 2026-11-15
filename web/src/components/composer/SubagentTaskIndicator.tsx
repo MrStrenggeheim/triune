@@ -201,7 +201,7 @@ export function SubagentTaskIndicator({
               closeReasonRef.current = null;
             }
           }}
-          className="max-h-[min(24rem,var(--radix-popover-content-available-height))] w-[min(25rem,calc(100vw-2rem))] overflow-y-auto p-2"
+          className="resource-popup max-h-[min(24rem,var(--radix-popover-content-available-height))] w-[min(25rem,calc(100vw-2rem))] overflow-y-auto"
         >
           <ul className="flex flex-col">
             {items.map((item) => (

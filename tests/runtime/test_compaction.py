@@ -1,5 +1,7 @@
 """Unit tests for omnigent.runtime.compaction."""
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import copy
@@ -122,6 +124,40 @@ class _ReturnsTextClient:
 # ---------------------------------------------------------------------------
 # Module-level helpers
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("conversation_id", ["conv_compaction", None])
+def test_prepare_messages_omits_uncaptured_attachment_server(
+    monkeypatch: pytest.MonkeyPatch, conversation_id: str | None
+) -> None:
+    from omnigent.runtime import workflow
+    from omnigent.runtime.compaction import _CompactionState
+    from omnigent.spec import AgentSpec
+
+    monkeypatch.setenv("OMNIGENT_SESSION_ID", "wrong_ambient_chat")
+    monkeypatch.setenv("OMNIGENT_SERVER_URL", "http://wrong-ambient.example")
+    monkeypatch.setenv("RUNNER_SERVER_URL", "http://wrong-runner.example")
+    monkeypatch.setattr(workflow, "get_file_store", lambda: None)
+    monkeypatch.setattr(workflow, "get_artifact_store", lambda: None)
+    monkeypatch.setattr(workflow, "count_tokens", lambda *_args: 1)
+    config = LLMConfig(model="test-model")
+    instructions, _, _ = workflow._prepare_messages(
+        AgentSpec(spec_version=1, name="test", instructions="Authored instructions."),
+        config,
+        [],
+        "Request instructions.",
+        [],
+        _CompactionState(context_window=None, last_summary=None, config=None, model=config.model),
+        {},
+        conversation_id=conversation_id,
+    )
+    assert "Authored instructions." in instructions
+    assert "Request instructions." in instructions
+    assert "Triune UI contract" in instructions
+    assert "triune attach-file PATH" not in instructions
+    assert "wrong_ambient_chat" not in instructions
+    assert "wrong-ambient.example" not in instructions
+    assert "wrong-runner.example" not in instructions
 
 
 @pytest.mark.asyncio

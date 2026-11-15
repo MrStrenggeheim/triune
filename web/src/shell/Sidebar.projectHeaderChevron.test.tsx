@@ -66,6 +66,10 @@ describe("project folder header icon/chevron", () => {
   it("shows the folder icon and overlays a chevron that swaps on desktop hover/focus", () => {
     renderSidebar();
     const header = headerButton("My Project");
+    header.focus();
+    fireEvent.click(header, { detail: 1 });
+    expect(header).toHaveFocus();
+    fireEvent.click(header, { detail: 1 });
 
     // Project folders are real rows, not muted section labels: use the shared
     // text-ui compact treatment with 8px insets/gap and foreground text.
@@ -88,7 +92,7 @@ describe("project folder header icon/chevron", () => {
 
     // The folder icon sits in a wrapper that fades out on desktop hover/focus.
     const folderWrapper = folder.parentElement as HTMLElement;
-    expect(classOf(folderWrapper)).toMatch(/md:group-hover:opacity-0/);
+    expect(classOf(folderWrapper)).toMatch(/group-hover:opacity-0/);
     expect(classOf(folderWrapper)).toMatch(/md:group-focus-visible:opacity-0/);
 
     // A chevron shares the icon slot (absolute), hidden by default and fading
@@ -97,7 +101,7 @@ describe("project folder header icon/chevron", () => {
     const swap = chevrons.find((c) => classOf(c).includes("absolute")) as HTMLElement;
     expect(swap).toBeTruthy();
     expect(classOf(swap)).toMatch(/opacity-0/);
-    expect(classOf(swap)).toMatch(/md:group-hover:opacity-100/);
+    expect(classOf(swap)).toMatch(/group-hover:opacity-100/);
     expect(classOf(swap)).toMatch(/md:group-focus-visible:opacity-100/);
 
     // The swap chevron lives in the same icon slot as the folder (not trailing
@@ -116,7 +120,7 @@ describe("project folder header icon/chevron", () => {
     // Trailing chevron is hidden on desktop (the swap replaces it there) and
     // shown on mobile where there's no hover.
     expect(classOf(trailing)).toMatch(/md:hidden/);
-    expect(classOf(trailing)).not.toMatch(/md:group-hover:opacity-100/);
+    expect(classOf(trailing)).not.toMatch(/group-hover:opacity-100/);
   });
 
   it("highlights the project row instead of global New session for a project-scoped composer", () => {
@@ -210,6 +214,6 @@ describe("project folder header icon/chevron", () => {
     const [chevron] = chevrons;
     expect(classOf(chevron)).not.toMatch(/\babsolute\b/);
     expect(classOf(chevron)).not.toMatch(/md:hidden/);
-    expect(classOf(chevron)).toMatch(/md:group-hover:opacity-100/);
+    expect(classOf(chevron)).toMatch(/group-hover:opacity-100/);
   });
 });

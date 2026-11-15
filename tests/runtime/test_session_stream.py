@@ -1299,3 +1299,28 @@ def test_failed_event_logs_omit_unrecognized_sources(
     for record in [*sse_records, *audit_records]:
         assert record.attributes["error_code"] == "failed"
         assert "error_source" not in record.attributes
+
+
+@pytest.mark.asyncio
+async def test_internal_observer_receives_events_without_claiming_a_browser_listener() -> None:
+    internal = session_stream.subscribe("queue-only", internal=True, ready_event={"type": "ready"})
+    external = session_stream.subscribe("queue-only", ready_event={"type": "ready"})
+    try:
+        assert await anext(internal) == {"type": "ready"}
+        assert not session_stream.has_subscribers("queue-only")
+        assert session_stream.publish("queue-only", {"type": "first"}) == 0
+        assert await asyncio.wait_for(anext(internal), 2) == {"type": "first"}
+        assert await anext(external) == {"type": "ready"}
+        assert session_stream.has_subscribers("queue-only")
+        assert session_stream.publish("queue-only", {"type": "both"}) == 1
+        assert await asyncio.wait_for(anext(internal), 2) == {"type": "both"}
+        assert await asyncio.wait_for(anext(external), 2) == {"type": "both"}
+        await external.aclose()
+        assert not session_stream.has_subscribers("queue-only")
+        session_stream.close("queue-only")
+        with pytest.raises(StopAsyncIteration):
+            await anext(internal)
+        assert not session_stream._internal_queues
+    finally:
+        await internal.aclose()
+        await external.aclose()

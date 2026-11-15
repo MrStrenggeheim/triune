@@ -9,6 +9,8 @@ import httpx
 import pytest
 
 from omnigent.harnesses.codex_native import forwarder as fwd
+from omnigent.server.routes._codex_elicitation import parse_codex_elicitation_request
+from omnigent.server.schemas import ElicitationResult
 
 
 class _FlakyElicitationClient:
@@ -76,6 +78,65 @@ _ELICITATION_EVENT: dict = {
     "method": "mcpServer/elicitation/request",
     "params": {"mode": "form", "message": "Pick a date"},
 }
+
+
+@pytest.mark.asyncio
+async def test_declined_blocking_question_interrupts_exact_native_turn_without_answer() -> None:
+    """A declined native question cancels its captured turn instead of inventing answers."""
+    event = {
+        "id": 0,
+        "method": "item/tool/requestUserInput",
+        "params": {
+            "threadId": "thread-exact",
+            "turnId": "turn-exact",
+            "itemId": "shelf_question",
+            "isBlocking": True,
+            "questions": [{"id": "choice", "question": "Pick one"}],
+        },
+    }
+    verdict = ElicitationResult(action="decline").model_copy(
+        update={"meta": {"question_submission": {"submission_id": "submission-exact"}}}
+    )
+    response = parse_codex_elicitation_request(event).build_response(verdict)
+    assert response == {
+        "answers": {},
+        "question_submission": {
+            "submission_id": "submission-exact",
+            "action": "decline",
+        },
+    }
+
+    class _HookClient:
+        async def post(self, *_args, **_kwargs):
+            return httpx.Response(200, json=response)
+
+    class _NativeClient:
+        def __init__(self) -> None:
+            self.requests: list[tuple[str, dict]] = []
+            self.responses: list[tuple[int | str, dict]] = []
+
+        async def request(self, method: str, params: dict) -> dict:
+            self.requests.append((method, params))
+            return {"result": {}}
+
+        async def respond(self, request_id: int | str, result: dict) -> None:
+            self.responses.append((request_id, result))
+
+    native = _NativeClient()
+    await fwd._handle_codex_elicitation_request(
+        _HookClient(),  # type: ignore[arg-type]
+        native,  # type: ignore[arg-type]
+        session_id="session-exact",
+        event=event,
+    )
+
+    assert native.requests == [
+        (
+            "turn/interrupt",
+            {"threadId": "thread-exact", "turnId": "turn-exact"},
+        )
+    ]
+    assert native.responses == []
 
 
 @pytest.mark.asyncio

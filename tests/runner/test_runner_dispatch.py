@@ -34,6 +34,8 @@ file): verdict-delivery failure retry/signal, ``_resync_turn_state``
 edge cases, and the three-factor causal chain.
 """
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import asyncio
@@ -2046,6 +2048,80 @@ async def _post_stream_message(http: httpx.AsyncClient, conv: str, **body: Any) 
         **body,
     }
     return await http.post(f"/v1/sessions/{conv}/events?stream=true", json=payload)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("harness", ["claude-sdk", "hermes"])
+@pytest.mark.parametrize("stream", [True, False], ids=["direct", "background"])
+@pytest.mark.parametrize("server_url", ["https://server.example/custom-prefix", None])
+async def test_composed_ui_instructions_capture_owning_chat_and_server(
+    monkeypatch: pytest.MonkeyPatch, harness: str, stream: bool, server_url: str | None
+) -> None:
+    """Both composition channels preserve author text and use captured coordinates."""
+    conv = "conv_ui_context"
+    for name, value in {
+        "OMNIGENT_SESSION_ID": "wrong_ambient_chat",
+        "OMNIGENT_SERVER_URL": "http://wrong-ambient.example",
+        "RUNNER_SERVER_URL": "http://wrong-runner.example",
+        "HARNESS_CLAUDE_BASE_URL": "https://model-gateway.example/v1",
+    }.items():
+        monkeypatch.setenv(name, value)
+
+    spec = AgentSpec(
+        spec_version=1,
+        name="context_test",
+        instructions="Keep the author's instructions.",
+        executor=ExecutorSpec(type="omnigent", config={"harness": harness}),
+    )
+
+    async def resolve(agent_id: str, session_id: str | None = None) -> AgentSpec:
+        return spec
+
+    server = NullServerClient()
+    if server_url is not None:
+        monkeypatch.setattr(server, "base_url", httpx.URL(server_url), raising=False)
+    recording = _RecordingHarnessClient(_INSTRUCTION_WARN_CHUNKS)
+    app = create_runner_app(
+        process_manager=cast(HarnessProcessManager, _FakeProcessManager(recording)),
+        spec_resolver=resolve,
+        server_client=server,  # type: ignore[arg-type]
+    )
+    async with _runner_test_client(app) as http:
+        created = await http.post(
+            "/v1/sessions", json={"session_id": conv, "agent_id": "ag_context_test"}
+        )
+        assert created.status_code == 201, created.text
+        response = await http.post(
+            f"/v1/sessions/{conv}/events" + ("?stream=true" if stream else ""),
+            json={
+                "type": "message",
+                "role": "user",
+                "agent_id": "ag_context_test",
+                "harness": harness,
+                "model": "x",
+                "content": [{"role": "user", "content": "hi"}],
+                "instructions": "Keep this request's instructions.",
+            },
+        )
+        assert response.status_code == (200 if stream else 202), response.text
+        if not stream:
+            await _await_bg_turn_task(conv)
+
+    instructions = recording.posted_bodies[-1]["instructions"]
+    assert "Keep the author's instructions." in instructions
+    assert "Keep this request's instructions." in instructions
+    assert instructions.index("Keep the author's instructions.") < instructions.index(
+        "Triune UI contract"
+    )
+    assert EMBEDDED_BROWSER_PRIORITY_INSTRUCTION in instructions
+    if server_url is not None:
+        assert f"triune attach-file PATH --session {conv} --server {server_url}" in instructions
+    else:
+        assert "triune attach-file PATH" not in instructions
+    assert "wrong_ambient_chat" not in instructions
+    assert "wrong-ambient.example" not in instructions
+    assert "wrong-runner.example" not in instructions
+    assert "model-gateway.example" not in instructions
 
 
 def test_build_spawn_env_applies_model_override(

@@ -2,11 +2,26 @@
  * Required Notice: Copyright 2026 MrStrenggeheim. Triune (https://github.com/MrStrenggeheim/triune).
  */
 .composer-shelf-stack {
+  --composer-shelf-background: color-mix(in srgb, var(--primary) 4%, var(--background));
+  position: relative;
   display: flex;
   min-width: 0;
   flex-direction: column;
   gap: 0;
   isolation: isolate;
+}
+
+/* Stay behind the composer corners while the last shelf completes its exit. */
+.composer-shelf-stack:has(.composer-shelf-presence)::after {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  top: 100%;
+  height: var(--radius-xl);
+  border-inline: 1px solid var(--border);
+  background: var(--composer-shelf-background);
+  pointer-events: none;
+  z-index: -1;
 }
 
 .composer-shelf-presence {
@@ -45,6 +60,36 @@
 
 .composer-shelf-stack .composer-workspace-surface {
   margin-bottom: 0;
+}
+
+.composer-shelf-stack
+  :is(.composer-workspace-surface, .composer-queued-surface, .composer-subagent-surface) {
+  background: var(--composer-shelf-background);
+}
+
+.composer-shelf-stack .composer-subagent-surface {
+  margin-inline: 0;
+}
+
+.composer-shelf-stack
+  .composer-shelf-presence
+  + .composer-shelf-presence
+  .composer-workspace-surface {
+  border-start-start-radius: 0;
+  border-start-end-radius: 0;
+}
+
+.resource-popup {
+  padding: var(--popup-inset);
+  gap: var(--popup-item-gap);
+}
+
+.resource-popup .density-row {
+  padding: 0;
+}
+
+.resource-popup > ul {
+  gap: var(--popup-item-gap);
 }
 
 .composer-attention-surface {

@@ -218,6 +218,11 @@ def _codex_request_user_input_response(
     :returns: Codex ``ToolRequestUserInputResponse`` payload.
     """
     response: dict[str, Any] = {"answers": {}}
+    if result.action == "decline":
+        source = result.meta.get("question_submission", {}) if result.meta else {}
+        if isinstance(source, dict) and source:
+            response["question_submission"] = {**source, "action": "decline"}
+        return response
     if result.action != "accept" or not isinstance(result.content, dict):
         return response
     questions_raw = params.get("questions")
@@ -678,9 +683,19 @@ def _codex_async_question_response(
             lines.append(f"{question['question']}\n{', '.join(values)}")
     if not lines:
         if result.action in {"accept", "decline"}:
-            return {"input": [], "question_submission": {"action": result.action}}
+            source = result.meta.get("question_submission", {}) if result.meta else {}
+            return {
+                "input": [],
+                "question_submission": {
+                    **(source if isinstance(source, dict) else {}),
+                    "action": result.action,
+                },
+            }
         return {"input": []}
-    return {"input": [{"type": "text", "text": "\n\n".join(lines)}]}
+    response: dict[str, Any] = {"input": [{"type": "text", "text": "\n\n".join(lines)}]}
+    if result.meta and isinstance(result.meta.get("question_submission"), dict):
+        response["question_submission"] = result.meta["question_submission"]
+    return response
 
 
 def _codex_command_approval_params(

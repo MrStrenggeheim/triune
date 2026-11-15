@@ -67,6 +67,13 @@ import { nativePolicyNameForAgentName } from "./nativeCodingAgents";
 import { routingExtrasFromWire } from "./routingDecision";
 import { taskNotificationMarkerContent } from "./systemMessage";
 import { readSubagentActivity } from "./subagentActivity";
+import {
+  isQuestionSubmissionEcho,
+  questionBatchFromItem,
+  questionReceiptBlock,
+  receiptCoversQuestionCall,
+  reconcileQuestionBatches,
+} from "./questionBatches";
 
 // Claude built-ins whose call is a question TO the user rather than work
 // the agent did on its own. The elicitation that carried the card is
@@ -108,8 +115,13 @@ export function itemsToBlocks(items: ConversationItem[]): AnyBlock[] {
   });
   const outputs = toolOutputsByCallId(normalizedItems);
   const agents = agentNamesByResponseId(normalizedItems);
+  const questionReceipts = normalizedItems.flatMap((item) => {
+    const receipt = questionBatchFromItem(item);
+    return receipt ? [receipt] : [];
+  });
   for (const item of normalizedItems) {
     if (!item.response_id) continue;
+    if (isQuestionSubmissionEcho(item, questionReceipts)) continue;
     const attachments = (item as unknown as Record<string, unknown>).omnigent_attachments;
     if (Array.isArray(attachments))
       blocks.push({
@@ -123,14 +135,14 @@ export function itemsToBlocks(items: ConversationItem[]): AnyBlock[] {
       const echo = skillEchoBlock(item);
       if (echo !== null) blocks.push(echo);
     }
-    if (isFunctionCallItem(item)) {
+    if (isFunctionCallItem(item) && !receiptCoversQuestionCall(item, questionReceipts)) {
       const card = answeredElicitationBlock(item, outputs.get(item.call_id));
       if (card !== null) blocks.push(card);
     }
     const block = itemToBlock(item, agents.get(item.response_id));
     if (block !== null) blocks.push(block);
   }
-  return blocks;
+  return reconcileQuestionBatches(blocks, questionReceipts[0]?.session_id ?? "");
 }
 
 function agentNamesByResponseId(items: ConversationItem[]): Map<string, string | null> {
@@ -265,6 +277,8 @@ function answersFromToolResult(
 
 function itemToBlock(item: ConversationItem, agentName?: string | null): AnyBlock | null {
   const data = item as unknown as Record<string, unknown>;
+  const questionReceipt = questionReceiptBlock(item, ctxFor(item));
+  if (questionReceipt) return questionReceipt;
   if (readSubagentActivity(data)) {
     return {
       type: "native_tool",

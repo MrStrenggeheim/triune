@@ -17,9 +17,17 @@ interface TodoPanelProps {
 function TodoIcon({ status }: { status: TodoItem["status"] }) {
   return (
     <>
-      <CheckboxVisual
-        checked={status === "in_progress" ? "indeterminate" : status === "completed"}
-      />
+      {status === "in_progress" ? (
+        <span
+          aria-hidden="true"
+          data-slot="plan-active-marker"
+          className="flex size-4 shrink-0 items-center justify-center"
+        >
+          <span className="size-2.5 rounded-full border border-primary bg-primary/10" />
+        </span>
+      ) : (
+        <CheckboxVisual checked={status === "completed"} />
+      )}
       <span className="sr-only">
         {status === "in_progress"
           ? "In progress"
@@ -50,7 +58,7 @@ export function TodoPanel({ frameless = false }: TodoPanelProps) {
         !frameless && "border-t border-b border-border",
       )}
     >
-      <ul className="overflow-y-auto px-2 py-2">
+      <ul className={cn("overflow-y-auto", !frameless && "p-2")}>
         {todos.map((todo, i) => (
           <li
             // eslint-disable-next-line react/no-array-index-key

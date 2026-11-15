@@ -89,6 +89,116 @@ async def test_collaboration_prompt_and_wait_result_keep_native_identity(status:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("tool", ["sendInput", "sendMessage", "followupTask"])
+async def test_collaboration_message_shapes_capture_full_handoff_once(tool: str) -> None:
+    posts = []
+
+    async def receive(request):
+        posts.append(json.loads(request.content))
+        return httpx.Response(200, json={"child_session_id": "child"})
+
+    state = fwd._CodexForwarderState(parent_session_id="parent")
+    state.note_child_thread("thread-child", "child")
+    item = {
+        "type": "collabAgentToolCall",
+        "id": "dispatch-2",
+        "tool": tool,
+        "senderThreadId": "parent-thread",
+        "receiverThreadIds": ["thread-child"],
+        "prompt": "Inspect the exact failure.\nPreserve the second line.",
+    }
+    async with httpx.AsyncClient(
+        base_url="http://test", transport=httpx.MockTransport(receive)
+    ) as client:
+        # Codex exposes the same item at started and completed boundaries.
+        await fwd._handle_collab_item(client, {}, item, state)
+        await fwd._handle_collab_item(client, {}, item, state)
+
+    assert [post["data"]["prompt"] for post in posts] == [
+        "Inspect the exact failure.\nPreserve the second line.",
+        "Inspect the exact failure.\nPreserve the second line.",
+    ]
+    assert all(post["data"]["dispatch_id"] == "dispatch-2" for post in posts)
+
+
+@pytest.mark.asyncio
+async def test_identity_correlated_native_input_echo_is_suppressed_exactly_once() -> None:
+    client = _RecordingClient()
+    state = fwd._CodexForwarderState()
+    assert state.expect_native_input_echo(
+        correlation_id="dispatch-1",
+        native_client_id="omnigent-input:dispatch-1",
+    )
+    params = {
+        "threadId": "thread-child",
+        "turnId": "turn-child",
+        "item": {
+            "type": "userMessage",
+            "id": "native-echo",
+            "clientId": "omnigent-input:dispatch-1",
+            "content": [{"type": "text", "text": "Original parent handoff"}],
+        },
+    }
+
+    await fwd._handle_completed_item(  # type: ignore[arg-type]
+        client, "child", params, forwarder_state=state
+    )
+    await fwd._handle_completed_item(  # replay of the same native item
+        client,
+        "child",
+        params,
+        forwarder_state=state,  # type: ignore[arg-type]
+    )
+
+    assert client.posts == []
+    assert state.pending_native_input_echoes == set()
+    assert state.has_posted_user_message("turn-child") is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("client_id", [None, "omnigent-input:different-submission"])
+async def test_identical_text_without_native_identity_is_preserved(client_id: str | None) -> None:
+    client = _RecordingClient()
+    state = fwd._CodexForwarderState()
+    assert not state.expect_native_input_echo(correlation_id="dispatch-1")
+    assert state.expect_native_input_echo(
+        correlation_id="dispatch-1",
+        native_client_id="omnigent-input:dispatch-1",
+    )
+    params = {
+        "threadId": "thread-child",
+        "turnId": "human-turn",
+        "item": {
+            "type": "userMessage",
+            "id": "human-message",
+            "content": [{"type": "text", "text": "Original parent handoff"}],
+        },
+    }
+    if client_id is not None:
+        params["item"]["clientId"] = client_id
+
+    await fwd._handle_completed_item(  # type: ignore[arg-type]
+        client, "child", params, forwarder_state=state
+    )
+
+    assert len(client.posts) == 1
+    assert state.pending_native_input_echoes
+
+
+def test_native_input_echo_requires_the_captured_item_and_turn_together() -> None:
+    state = fwd._CodexForwarderState()
+    assert not state.expect_native_input_echo(correlation_id="dispatch-1", native_item_id="item-1")
+    assert state.expect_native_input_echo(
+        correlation_id="dispatch-1", native_item_id="item-1", native_turn_id="turn-1"
+    )
+    item = {"type": "userMessage", "id": "item-1", "content": []}
+    assert not state.consume_native_input_echo({"turnId": "human-turn"}, item)
+    assert not state.consume_native_input_echo({"turnId": "turn-1"}, {**item, "id": "human-item"})
+    assert state.consume_native_input_echo({"turnId": "turn-1"}, item)
+    assert not state.consume_native_input_echo({"turnId": "turn-1"}, item)
+
+
+@pytest.mark.asyncio
 async def test_explicit_empty_plan_is_published_to_clear_the_shared_plan() -> None:
     client = _RecordingClient()
     await fwd._handle_turn_plan_updated(client, "child", {"plan": []})

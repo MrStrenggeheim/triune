@@ -2302,6 +2302,55 @@ async def test_upload_and_list_session_files(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("order", ["asc", "desc"])
+async def test_file_pagination_skips_private_pages_without_leaking_hidden_cursors(
+    file_client: httpx.AsyncClient,
+    file_store: Any,
+    order: str,
+) -> None:
+    from omnigent.server.queue_attachments import private_queue_metadata
+
+    session_id = "79b22ebd2309e48fdeb450c65611d51b"
+    private_ids = []
+    public_ids = []
+    for index in range(1, 7):
+        private = index not in (3, 5)
+        stored = file_store.create(
+            file_id=f"{index:032x}",
+            session_id=session_id,
+            filename=f"{'secret' if private else 'visible'}-{index}.txt",
+            bytes=3,
+            source_metadata=private_queue_metadata(None, "alice") if private else None,
+        )
+        (private_ids if private else public_ids).append(stored.id)
+    if order == "desc":
+        public_ids.reverse()
+    url = f"/v1/sessions/{session_id}/resources/files"
+    first = await file_client.get(url, params={"limit": 1, "order": order})
+    assert first.status_code == 200, first.text
+    assert [item["id"] for item in first.json()["data"]] == public_ids[:1]
+    assert first.json()["first_id"] == first.json()["last_id"] == public_ids[0]
+    assert first.json()["has_more"] is True
+    second = await file_client.get(
+        url,
+        params={"limit": 1, "order": order, "after": first.json()["last_id"]},
+    )
+    assert [item["id"] for item in second.json()["data"]] == public_ids[1:]
+    assert second.json()["has_more"] is False
+    hidden_only = await file_client.get(
+        url,
+        params={"limit": 1, "order": order, "before": public_ids[0]},
+    )
+    assert hidden_only.json()["data"] == []
+    assert hidden_only.json()["first_id"] is None
+    assert hidden_only.json()["last_id"] is None
+    assert hidden_only.json()["has_more"] is False
+    for response in (first, second, hidden_only):
+        assert "secret" not in response.text
+        assert all(private_id not in response.text for private_id in private_ids)
+
+
+@pytest.mark.asyncio
 async def test_get_session_file_validates_ownership(
     file_client: httpx.AsyncClient,
 ) -> None:

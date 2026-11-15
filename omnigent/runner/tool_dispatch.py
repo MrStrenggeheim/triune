@@ -324,6 +324,7 @@ _SESSION_QUERY_TOOLS = frozenset(
 
 _SESSION_SELF_WRITE_TOOLS = frozenset({SysSessionRenameTool.name()})
 _UI_TOOLS = frozenset({UiOpenFileTool.name()})
+_UI_CAPABILITY_TOOLS = frozenset({"sys_ui_capabilities"})
 
 # The title bound the rename tool advertises to the LLM — read once from the
 # tool schema so the dispatcher can never drift from the published contract.
@@ -484,6 +485,7 @@ _NATIVE_RELAY_BUILTIN_TOOLS = (
     | _SESSION_QUERY_TOOLS
     | _SESSION_SELF_WRITE_TOOLS
     | _UI_TOOLS
+    | _UI_CAPABILITY_TOOLS
     | _ASYNC_INBOX_TOOLS
     | _SUBAGENT_TOOLS
     | _LIST_MODELS_TOOLS
@@ -566,6 +568,7 @@ def build_native_relay_tool_schemas(spec: AgentSpec | None) -> list[_JsonObject]
         SysSessionGetInfoTool,
         SysSessionListTool,
     )
+    from omnigent.tools.builtins.ui_capabilities import SysUiCapabilitiesTool
     from omnigent.tools.builtins.update_comment import UpdateCommentTool
 
     schemas: list[_JsonObject] = []
@@ -618,6 +621,11 @@ def build_native_relay_tool_schemas(spec: AgentSpec | None) -> list[_JsonObject]
             function = _string_object_dict(fallback_schema.get("function"))
             if function is not None:
                 _append(function)
+        _append(
+            SysUiCapabilitiesTool(harness="unknown", tool_names=lambda: ()).get_schema()[
+                "function"
+            ]
+        )
 
     # Relay OS tools unconditionally for centralized policy enforcement.
     # Their schemas are static and need no OS environment or working directory.
@@ -885,6 +893,7 @@ _ALL_LOCAL_TOOLS = (
     | _SESSION_QUERY_TOOLS
     | _SESSION_SELF_WRITE_TOOLS
     | _UI_TOOLS
+    | _UI_CAPABILITY_TOOLS
     | _WEB_FETCH_TOOLS
     | _WEB_SEARCH_TOOLS
     | _WEB_READ_TOOLS
@@ -6837,6 +6846,14 @@ async def execute_tool(
                 agent_spec=agent_spec,
                 runner_workspace=runner_workspace,
             )
+        elif tool_name in _UI_CAPABILITY_TOOLS:
+            output = _execute_ui_capability_tool(
+                arguments,
+                agent_spec=agent_spec,
+                effective_harness=effective_harness,
+                conversation_id=conversation_id,
+                server_client=server_client,
+            )
         elif tool_name in _UI_TOOLS:
             output = await _open_file_via_rest(args, conversation_id, server_client)
         elif tool_name in _SESSION_SELF_WRITE_TOOLS:
@@ -9106,6 +9123,37 @@ def _inject_orchestrator_skills(
             skills.append(spec)
             break
     return skills
+
+
+def _execute_ui_capability_tool(
+    arguments: str,
+    *,
+    agent_spec: AgentSpec | None,
+    effective_harness: str | None,
+    conversation_id: str | None,
+    server_client: httpx.AsyncClient | None,
+) -> str:
+    """Read-only discovery against the actual advertised runner/native surface."""
+    from omnigent.tools.base import ToolContext
+    from omnigent.tools.builtins.ui_capabilities import SysUiCapabilitiesTool
+
+    harness = effective_harness or (agent_spec.executor.harness_kind if agent_spec else "unknown")
+    if is_native_harness(harness) or agent_spec is None:
+        names = [
+            name
+            for schema in build_native_relay_tool_schemas(agent_spec)
+            if isinstance(name := schema.get("name"), str)
+        ]
+    else:
+        names = list(_granted_tool_names(agent_spec, harness))
+    tool = SysUiCapabilitiesTool(
+        harness=harness,
+        tool_names=lambda: names,
+        server_url=str(server_client.base_url) if server_client is not None else None,
+    )
+    return tool.invoke(
+        arguments, ToolContext(task_id="", agent_id="", conversation_id=conversation_id)
+    )
 
 
 def _execute_skill_tool(

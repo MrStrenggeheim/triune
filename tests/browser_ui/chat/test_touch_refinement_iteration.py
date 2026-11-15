@@ -244,6 +244,7 @@ def test_touch_sidebar_has_one_safe_area_and_guides_outside_selected_rows(
     dark: bool,
 ) -> None:
     """Representative light/comfortable and dark/compact drawers retain density and hierarchy."""
+    page.emulate_media(reduced_motion="reduce")
     for chat in workspace_journey.chats:
         chat.update_session(project_id="touch-project", labels={"omni_project": "Touch hierarchy"})
     browser_contract.json(
@@ -253,7 +254,9 @@ def test_touch_sidebar_has_one_safe_area_and_guides_outside_selected_rows(
         "/v1/sessions/projects", [{"id": "touch-project", "name": "Touch hierarchy"}]
     )
     page.goto(workspace_journey.chats[0].url)
-    expect(_view(page, "Chat A").get_by_label("Message the agent")).to_be_visible()
+    editor = _view(page, "Chat A").get_by_label("Message the agent")
+    expect(editor).to_be_visible()
+    editor.fill("Keep the owner's draft through touch navigation")
     page.evaluate(
         """({density,dark}) => {
       document.documentElement.style.setProperty('--omnigent-safe-top', '32px');
@@ -293,10 +296,42 @@ def test_touch_sidebar_has_one_safe_area_and_guides_outside_selected_rows(
         icon["x"] + icon["width"] / 2, abs=TOLERANCE
     )
     assert fill["x"] >= guide["x"] + guide["width"] + 2
+    actions = row.get_by_role("button", name="Conversation actions", exact=True)
+    expect(actions).to_be_visible()
+    assert actions.evaluate(
+        """element => {
+          const bounds = element.getBoundingClientRect();
+          return element.contains(document.elementFromPoint(
+            bounds.x + bounds.width / 2, bounds.y + bounds.height / 2));
+        }"""
+    )
+    # Keyboard focus exposes the same owned-row menu as a direct touch.
+    row.get_by_role("link", name="Chat A", exact=True).focus()
+    page.keyboard.press("Tab")
+    expect(actions).to_be_focused()
+    actions.tap()
+    expect(page.get_by_role("menuitem", name="Rename", exact=True)).to_be_enabled()
+    expect(page.get_by_role("menuitem", name="Archive", exact=True)).to_be_enabled()
+    page.keyboard.press("Escape")
+    expect(actions).to_be_focused()
+    expect(row.get_by_role("link", name="Chat A", exact=True)).to_have_attribute(
+        "aria-current", "page"
+    )
     _evidence(
         page,
         output_path,
         f"sidebar-touch-{density}",
         {"appbar": appbar, "drawer": drawer, "icon": icon, "guide": guide, "fill": fill},
+    )
+    sidebar.get_by_role("link", name="Chat B", exact=True).tap()
+    expect(_view(page, "Chat B").get_by_label("Message the agent")).to_be_visible()
+    expect(
+        page.get_by_role("complementary", name="Conversations", include_hidden=True)
+    ).to_have_attribute("aria-hidden", "true")
+    page.get_by_role("button", name="Open navigation", exact=True).tap()
+    sidebar.get_by_role("link", name="Chat A", exact=True).tap()
+    expect(editor).to_have_value("Keep the owner's draft through touch navigation")
+    assert all(
+        chat.session_patches == [] and chat.event_posts == [] for chat in workspace_journey.chats
     )
     assert browser_errors == []

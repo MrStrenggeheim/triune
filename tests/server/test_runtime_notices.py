@@ -4,7 +4,11 @@
 
 import pytest
 
-from omnigent.server.runtime_notices import observe_runtime_notice, runtime_notices
+from omnigent.server.runtime_notices import (
+    observe_runtime_notice,
+    runtime_notices,
+    runtime_quotas,
+)
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
 
 
@@ -31,14 +35,20 @@ def test_quota_sparse_revision_reset_and_account_scope(db_uri):
     }
     assert observe_runtime_notice(store, conv.id, {**base, "state": state})
     rows = runtime_notices(store.get_conversation(conv.id), now=150)
-    assert len(rows) == 2
-    assert rows[0].severity == "warning"
+    assert len(rows) == 1
+    assert rows[0].severity == "warning" and not rows[0].requires_action
     revision = rows[0].revision
+    quotas = runtime_quotas(store.get_conversation(conv.id))
+    assert [(row.window, row.used_percent) for row in quotas] == [
+        ("quota:primary", 95.0),
+        ("quota:secondary", 20.0),
+    ]
+    assert all(row.source_kind == "unknown" for row in quotas)
     store.set_session_state(conv.id, {"policy": "kept"})
     store.set_session_todos(conv.id, [])
     restored = store.get_conversation(conv.id)
     assert restored.session_state == {"policy": "kept"}
-    assert len(runtime_notices(restored, now=150)) == 2
+    assert len(runtime_notices(restored, now=150)) == 1
     assert observe_runtime_notice(
         store,
         conv.id,
@@ -67,7 +77,7 @@ def test_quota_sparse_revision_reset_and_account_scope(db_uri):
     assert rows[0].id == runtime_notices(store.get_conversation(conv.id), now=150)[0].id
     assert rows[0].revision != revision and rows[0].reset_at == 200
     assert "unconfirmed" in rows[0].message and rows[0].severity == "error"
-    assert len(rows) == 2
+    assert len(rows) == 1
     escalation_revision = rows[0].revision
     assert observe_runtime_notice(
         store,
@@ -94,9 +104,11 @@ def test_quota_sparse_revision_reset_and_account_scope(db_uri):
             "state": {"rateLimits": {"primary": {"usedPercent": 10}}},
         },
     )
-    assert len(runtime_notices(store.get_conversation(conv.id))) == 1
+    assert runtime_notices(store.get_conversation(conv.id)) == []
+    assert runtime_quotas(store.get_conversation(conv.id))[0].used_percent == 10
     store.set_runner_id(conv.id, "new-runner")
     assert runtime_notices(store.get_conversation(conv.id)) == []
+    assert runtime_quotas(store.get_conversation(conv.id)) == []
 
 
 def test_unknown_account_and_claude_notifications_are_bounded(db_uri):
@@ -120,24 +132,33 @@ def test_unknown_account_and_claude_notifications_are_bounded(db_uri):
             conv.id,
             {
                 "provider": "claude",
-                "source_instance": "claude-s",
+                "source_instance": "claude-native:claude-s",
                 "native_session_id": "native-a",
                 "kind": "nativeNotification",
                 "sequence": index,
                 "observed_at": 100 + index,
                 "source_event_id": str(index),
-                "state": {"message": f"Observed {index}"},
+                "state": {
+                    "message": f"Observed {index}",
+                    "notification_type": "permission_prompt",
+                    "request_id": f"request-{index}",
+                    "blocking": index == 39,
+                },
             },
         )
     rows = runtime_notices(store.get_conversation(conv.id))
     assert len(rows) == 32 and rows[-1].message == "Observed 39"
-    assert rows[-1].reset_at is None and not rows[-1].requires_action
+    assert rows[-1].native_subtype == "permission_prompt"
+    assert rows[-1].request_id == "request-39"
+    assert rows[-1].blocking is True and rows[-1].requires_action
+    assert rows[-1].source_kind == "native" and rows[-1].observed_at == 139
+    assert rows[-1].reset_at is None
     observe_runtime_notice(
         store,
         conv.id,
         {
             "provider": "claude",
-            "source_instance": "claude-s",
+            "source_instance": "claude-native:claude-s",
             "native_session_id": "native-b",
             "kind": "nativeNotification",
             "sequence": 40,
@@ -147,6 +168,57 @@ def test_unknown_account_and_claude_notifications_are_bounded(db_uri):
     assert [row.message for row in runtime_notices(store.get_conversation(conv.id))] == [
         "New session"
     ]
+
+
+def test_claude_healthy_quota_is_not_a_notice_and_preserves_sdk_provenance(db_uri):
+    store = SqlAlchemyConversationStore(db_uri)
+    conv = store.create_conversation()
+    base = {
+        "provider": "claude",
+        "source_instance": "claude-sdk:native-a",
+        "source_kind": {},
+        "native_session_id": "native-a",
+        "kind": "rate_limit",
+        "sequence": 1,
+        "observed_at": 123.5,
+    }
+    assert observe_runtime_notice(
+        store,
+        conv.id,
+        {
+            **base,
+            "state": {
+                "status": "allowed",
+                "rate_limit_type": "five_hour",
+                "utilization": 0.42,
+                "resets_at": 456,
+            },
+        },
+    )
+    saved = store.get_conversation(conv.id)
+    assert runtime_notices(saved) == []
+    [quota] = runtime_quotas(saved)
+    assert quota.window == "five_hour"
+    assert quota.used_percent == 42
+    assert quota.reset_at == 456
+    assert quota.status == "allowed"
+    assert quota.observed_at == 123.5
+    assert quota.source_kind == "sdk"
+
+    assert observe_runtime_notice(
+        store,
+        conv.id,
+        {
+            **base,
+            "sequence": 2,
+            "state": {"status": "allowed_warning", "utilization": float("inf")},
+        },
+    )
+    [notice] = runtime_notices(store.get_conversation(conv.id))
+    assert notice.category == "quota" and notice.blocking is None
+    assert not notice.requires_action
+    [quota] = runtime_quotas(store.get_conversation(conv.id))
+    assert quota.used_percent is None
 
 
 @pytest.mark.parametrize(

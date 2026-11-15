@@ -881,7 +881,7 @@ describe("ApprovalCard — AskUserQuestion form (parsed from content_preview)", 
     );
 
     expect(screen.getByTestId("ask-user-question-form")).toBeDefined();
-    expect(screen.getByText("Which framework?")).toBeDefined();
+    expect(screen.getByRole("group", { name: "Which framework?" })).toBeDefined();
     expect(screen.getByText("Framework")).toBeDefined();
     // 2 option radios + 1 custom-row radio (free-form).
     const radios = screen.getAllByRole("radio");
@@ -1037,7 +1037,7 @@ describe("ApprovalCard — AskUserQuestion form (parsed from content_preview)", 
       />,
     );
 
-    expect(screen.getByText("Codex needs input")).toBeDefined();
+    expect(screen.getByText("Needs input")).toBeDefined();
     expect(screen.queryByText("Claude has questions")).toBeNull();
   });
 
@@ -1068,7 +1068,7 @@ describe("ApprovalCard — AskUserQuestion form (parsed from content_preview)", 
       />,
     );
 
-    expect(screen.getByText("Antigravity needs your input")).toBeDefined();
+    expect(screen.getByText("Needs input")).toBeDefined();
     expect(screen.queryByText("Claude has questions")).toBeNull();
   });
 
@@ -1099,7 +1099,7 @@ describe("ApprovalCard — AskUserQuestion form (parsed from content_preview)", 
       />,
     );
 
-    expect(screen.getByText("Cursor has questions")).toBeDefined();
+    expect(screen.getByText("Needs input")).toBeDefined();
     expect(screen.queryByText("Claude has questions")).toBeNull();
   });
 
@@ -1138,14 +1138,14 @@ describe("ApprovalCard — AskUserQuestion form (parsed from content_preview)", 
     },
   ])(
     "submits a $harness $name using its supported inputs",
-    ({ options, isOther, value, harness, textInput }) => {
+    ({ name, options, isOther, value, harness, textInput }) => {
       const submitSpy = vi.fn().mockResolvedValue(undefined);
       useChatStore.setState({ submitApproval: submitSpy } as Partial<
         ReturnType<typeof useChatStore.getState>
       >);
       render(
         <ApprovalCard
-          elicitationId="elic_pi"
+          elicitationId={`elic_pi_${name}`}
           message="Pi question"
           phase={harness === "Pi" ? "pi_extension_ui" : "codex_request_user_input"}
           policyName={
@@ -1169,9 +1169,7 @@ describe("ApprovalCard — AskUserQuestion form (parsed from content_preview)", 
           }}
         />,
       );
-      expect(
-        screen.getByText(harness === "Pi" ? "Pi needs your input" : "Codex needs input"),
-      ).toBeDefined();
+      expect(screen.getByText("Needs input")).toBeDefined();
       expect(screen.queryByText("Claude has questions")).toBeNull();
       const submit = screen.getByTestId("ask-user-question-submit");
       expect(submit).toBeEnabled();
@@ -1190,7 +1188,7 @@ describe("ApprovalCard — AskUserQuestion form (parsed from content_preview)", 
       }
       expect(submit.hasAttribute("disabled")).toBe(false);
       fireEvent.click(submit);
-      expect(submitSpy).toHaveBeenCalledWith("elic_pi", "accept", { "0": value });
+      expect(submitSpy).toHaveBeenCalledWith(`elic_pi_${name}`, "accept", { "0": value });
     },
   );
 
@@ -1250,7 +1248,7 @@ describe("ApprovalCard — AskUserQuestion form (parsed from content_preview)", 
     );
 
     expect(screen.getByTestId("ask-user-question-form")).toBeDefined();
-    expect(screen.getByText("Which database?")).toBeDefined();
+    expect(screen.getByRole("group", { name: "Which database?" })).toBeDefined();
     expect(screen.getByLabelText("Postgres")).toBeDefined();
     expect(screen.getByLabelText("MySQL")).toBeDefined();
   });
@@ -1291,24 +1289,29 @@ describe("ApprovalCard — AskUserQuestion form (parsed from content_preview)", 
     // Only the first question's fieldset is rendered.
     const progress = screen.getByTestId("ask-user-question-progress");
     expect(progress.textContent).toBe("Question 1 of 2");
-    expect(progress.parentElement).toHaveTextContent("Claude has questions");
+    expect(progress.closest(".activity-message-header")).toHaveTextContent("Needs input");
+    expect(
+      screen
+        .getByTestId("ask-user-question-form")
+        .querySelector("[data-testid=ask-user-question-progress]"),
+    ).toBeNull();
     expect(screen.getByTestId("ask-user-question-next")).toHaveTextContent("Skip");
     expect(screen.getByRole("button", { name: "Previous" })).toBeDisabled();
-    expect(screen.getByText("First?")).toBeDefined();
+    expect(screen.getByRole("group", { name: "First?" })).toBeDefined();
     expect(screen.queryByText("Second?")).toBeNull();
 
     // Next reveals the second question.
     fireEvent.click(screen.getByTestId("ask-user-question-next"));
     expect(screen.getByTestId("ask-user-question-progress").textContent).toBe("Question 2 of 2");
     expect(screen.queryByText("First?")).toBeNull();
-    expect(screen.getByText("Second?")).toBeDefined();
+    expect(screen.getByRole("group", { name: "Second?" })).toBeDefined();
 
     // Prev returns to the first.
     fireEvent.click(screen.getByTestId("ask-user-question-prev"));
-    expect(screen.getByText("First?")).toBeDefined();
+    expect(screen.getByRole("group", { name: "First?" })).toBeDefined();
   });
 
-  it("shows enabled Submit on every question", () => {
+  it("shows one counted forward action and submits only from the final page", () => {
     render(
       <ApprovalCard
         elicitationId="elic_submit_last"
@@ -1338,7 +1341,8 @@ describe("ApprovalCard — AskUserQuestion form (parsed from content_preview)", 
       />,
     );
 
-    expect(screen.getByTestId("ask-user-question-submit")).toBeEnabled();
+    expect(screen.queryByTestId("ask-user-question-submit")).toBeNull();
+    expect(screen.getByTestId("ask-user-question-next")).toHaveTextContent("Skip (0/2)");
     fireEvent.click(screen.getByTestId("ask-user-question-next"));
     expect(screen.getByTestId("ask-user-question-submit")).toBeEnabled();
   });
@@ -1492,7 +1496,7 @@ describe("ApprovalCard — AskUserQuestion form (parsed from content_preview)", 
     expect(screen.getByTestId("ask-user-question-previews").textContent).toContain("[editor only]");
   });
 
-  it("renders 'Submitted' with the answer summary in the responded state", () => {
+  it("renders 'Answered' with the original question and answer summary in the responded state", () => {
     // After submit the card retains the response so the user (and
     // anyone scrolling history) can see what was chosen rather than
     // a generic "Approved" pill. ``content`` is the flat MCP map.
@@ -1512,7 +1516,7 @@ describe("ApprovalCard — AskUserQuestion form (parsed from content_preview)", 
       />,
     );
 
-    expect(screen.getByText(/Submitted/)).toBeDefined();
+    expect(screen.getByText("Answered")).toBeDefined();
     expect(screen.getByText(/Vue/)).toBeDefined();
     // The user already answered, so the pending-tense gating message
     // ("wants to call AskUserQuestion") would read as if the prompt

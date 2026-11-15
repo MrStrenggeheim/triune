@@ -139,3 +139,145 @@ describe("session drafts", () => {
     expect(renders).toBe(before);
   });
 });
+
+// Full payloads live in scoped IndexedDB; legacy sessionStorage remains a text fallback.
+describe("durable composer snapshots", () => {
+  beforeEach(async () => {
+    const { IDBFactory } = await import("fake-indexeddb");
+    vi.stubGlobal("indexedDB", new IDBFactory());
+    sessionStorage.clear();
+    vi.resetModules();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    sessionStorage.clear();
+  });
+
+  it("restores files-only snapshots with duplicate names, exact bytes and metadata", async () => {
+    const drafts = await import("./sessionDrafts");
+    drafts.initializeSessionDraftPersistence("server/alice");
+    await drafts.hydrateSessionDraft("chat");
+    drafts.setSessionDraft("chat", {
+      text: "",
+      files: [
+        new File([new Uint8Array([0, 255, 1])], "same.txt", {
+          type: "application/octet-stream",
+          lastModified: 12,
+        }),
+        new File(["second"], "same.txt", { type: "text/plain", lastModified: 34 }),
+      ],
+      mentionedItems: [{ path: "src/", isDir: true }],
+    });
+    await drafts.waitForSessionDraftSave();
+    vi.resetModules();
+    const fresh = await import("./sessionDrafts");
+    fresh.initializeSessionDraftPersistence("server/alice");
+    const restored = await fresh.hydrateSessionDraft("chat");
+    expect(restored?.text).toBe("");
+    expect(restored?.files).toHaveLength(2);
+    expect(restored?.files[0]).toMatchObject({
+      name: "same.txt",
+      type: "application/octet-stream",
+      lastModified: 12,
+    });
+    expect(restored?.files[1]).toMatchObject({
+      name: "same.txt",
+      type: "text/plain",
+      lastModified: 34,
+    });
+    const { writeComposerDrafts, readComposerDrafts } = await import("./queuedMessagePersistence");
+    await writeComposerDrafts("bytes", new Map([["chat", restored!]]));
+    const copied = (await readComposerDrafts("bytes")).get("chat")!;
+    const buffer = await new Promise<ArrayBuffer>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as ArrayBuffer);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsArrayBuffer(copied.files[0]!);
+    });
+    expect([...new Uint8Array(buffer)]).toEqual([0, 255, 1]);
+    expect(restored?.mentionedItems).toEqual([{ path: "src/", isDir: true }]);
+  });
+
+  it("preserves quotes/references on promotion and ignores stale hydration after typing/removal", async () => {
+    const { writeComposerDrafts, readComposerDrafts } = await import("./queuedMessagePersistence");
+    const replyDraft: StoredReplyDraft = {
+      version: 1,
+      quotes: [{ before: "before", text: "quote" }],
+      text: "after",
+    };
+    const snapshot = {
+      text: serializeReplyDraft(replyDraft),
+      replyDraft,
+      files: [new File(["bytes"], "a.txt")],
+      mentionedItems: [{ path: "notes", isDir: false }],
+    };
+    await writeComposerDrafts(
+      "owner",
+      new Map([
+        ["chat", snapshot],
+        ["removed", snapshot],
+      ]),
+    );
+    const drafts = await import("./sessionDrafts");
+    drafts.initializeSessionDraftPersistence("owner");
+    drafts.setSessionDraft("chat", { text: "newer typing", files: [] });
+    drafts.setSessionDraft("removed", { text: "", files: [] });
+    await drafts.hydrateSessionDraft("chat");
+    expect(drafts.getSessionDraft("chat")?.text).toBe("newer typing");
+    expect(drafts.getSessionDraft("removed")).toBeUndefined();
+    drafts.setSessionDraft("temp:new", snapshot);
+    drafts.promoteSessionDraft("temp:new", "real");
+    drafts.setSessionDraft("temp:new", { text: "late cleanup", files: [] });
+    await drafts.waitForSessionDraftSave();
+    const saved = await readComposerDrafts("owner");
+    expect(saved.has("temp:new")).toBe(false);
+    expect(saved.get("real")).toMatchObject({
+      text: snapshot.text,
+      replyDraft,
+      mentionedItems: snapshot.mentionedItems,
+    });
+    expect(saved.get("real")?.files).toHaveLength(1);
+  });
+
+  it("promotes the saved bytes when a temporary ID changes before hydration completes", async () => {
+    const { writeComposerDrafts, readComposerDrafts } = await import("./queuedMessagePersistence");
+    await writeComposerDrafts(
+      "owner",
+      new Map([
+        ["temp:pending", { text: "saved", files: [new File(["retained bytes"], "pending.txt")] }],
+      ]),
+    );
+    const drafts = await import("./sessionDrafts");
+    drafts.initializeSessionDraftPersistence("owner");
+    drafts.promoteSessionDraft("temp:pending", "real-chat");
+    expect((await drafts.hydrateSessionDraft("real-chat"))?.files[0]?.name).toBe("pending.txt");
+    expect(drafts.getSessionDraft("temp:pending")).toBeUndefined();
+    await drafts.waitForSessionDraftSave();
+    const saved = await readComposerDrafts("owner");
+    expect(saved.has("temp:pending")).toBe(false);
+    expect(saved.get("real-chat")?.files).toHaveLength(1);
+  });
+
+  it("rejects another account's late restoration and reports denied storage without claiming success", async () => {
+    const drafts = await import("./sessionDrafts");
+    drafts.initializeSessionDraftPersistence("alice");
+    await drafts.hydrateSessionDraft("chat");
+    drafts.setSessionDraft("chat", { text: "alice private", files: [] });
+    await drafts.waitForSessionDraftSave();
+    drafts.initializeSessionDraftPersistence("bob");
+    expect(await drafts.hydrateSessionDraft("chat")).toBeUndefined();
+    expect(drafts.getSessionDraft("chat")).toBeUndefined();
+    const report = vi.fn();
+    vi.stubGlobal("indexedDB", {
+      open: () => {
+        throw new Error("Storage denied");
+      },
+    });
+    drafts.initializeSessionDraftPersistence("denied", report);
+    await drafts.hydrateSessionDraft("chat");
+    drafts.setSessionDraft("chat", { text: "kept locally", files: [new File(["data"], "a.txt")] });
+    await expect(drafts.waitForSessionDraftSave()).rejects.toThrow("Storage denied");
+    expect(report).toHaveBeenCalled();
+    expect(drafts.getSessionDraft("chat")?.files).toHaveLength(1);
+  });
+});

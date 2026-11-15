@@ -372,11 +372,13 @@ async def test_auto_create_pi_terminal_launches_required_terminal(
             path.parent
             == Path(captured["spec"].env[pi_native_bridge.PI_NATIVE_CONFIG_ENV_VAR]).parent
         )
-        assert path.read_text() == instructions
+        assert path.read_text().startswith(instructions + "\n\n")
+        assert "Triune UI contract" in path.read_text()
         assert instructions not in args
     else:
-        assert args.count("--append-system-prompt") == 1
-        assert not instructions_path.exists()
+        assert args.count("--append-system-prompt") == 2
+        assert "Triune UI contract" in instructions_path.read_text()
+        assert "Stale role" not in instructions_path.read_text()
 
 
 @pytest.mark.asyncio
@@ -1188,6 +1190,11 @@ async def test_auto_create_kiro_terminal_launches_required_terminal_with_isolate
         "hello",
     ]
     assert spec.inherit_env is False
+    contract_files = list(
+        (Path(spec.env["KIRO_HOME"]) / "steering").glob("triune-native-ui-contract*.md")
+    )
+    assert len(contract_files) == 1
+    assert "Triune UI contract" in contract_files[0].read_text()
     assert "OPENAI_API_KEY" not in spec.env
     assert "OPENAI_API_KEY" in spec.env_unset
     assert spec.env[kiro_native_bridge.KIRO_NATIVE_BRIDGE_DIR_ENV_VAR] == str(

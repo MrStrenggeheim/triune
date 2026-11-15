@@ -1214,6 +1214,8 @@ def create_runner_app(
     import hmac
 
     app = FastAPI(title="omnigent-runner")
+    server_base_url = getattr(server_client, "base_url", None)
+    instruction_server_url = str(server_base_url) if server_base_url else None
 
     from omnigent.runner.logging_context import RunnerLogContextMiddleware
 
@@ -5171,13 +5173,19 @@ def create_runner_app(
             _authored_bg = raw_author_instructions(cached_spec) is not None
             if harness_name in _GATED_COMPOSED_INSTRUCTION_HARNESSES:
                 instructions = build_instructions_nullable(
-                    cached_spec, _raw_per_request_instructions, []
+                    cached_spec,
+                    _raw_per_request_instructions,
+                    [],
+                    session_id=conv,
+                    server_url=instruction_server_url,
                 )
             else:
                 instructions = build_instructions(
                     cached_spec,
                     _raw_per_request_instructions,
                     [],
+                    session_id=conv,
+                    server_url=instruction_server_url,
                 )
             # Warn once per (conversation, harness, delivery) if the agent has
             # authored instructions but the harness can't deliver them.
@@ -5846,7 +5854,11 @@ def create_runner_app(
                         _ic_ds = InstructionComposition(
                             authored_present=_authored_ds,
                             composed=build_instructions_nullable(
-                                _instr_spec_ds, _per_req_instr, []
+                                _instr_spec_ds,
+                                _per_req_instr,
+                                [],
+                                session_id=conv_id,
+                                server_url=instruction_server_url,
                             ),
                         )
                         # Gated harnesses get nullable — skip the fallback literal.
@@ -5858,7 +5870,11 @@ def create_runner_app(
                             _instr_body = {
                                 **body,
                                 "instructions": build_instructions(
-                                    _instr_spec_ds, _per_req_instr, []
+                                    _instr_spec_ds,
+                                    _per_req_instr,
+                                    [],
+                                    session_id=conv_id,
+                                    server_url=instruction_server_url,
                                 ),
                             }
                         if _authored_ds and harness_name:

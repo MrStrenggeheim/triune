@@ -1,7 +1,8 @@
 // Modified for Triune.
 import type { ReactNode } from "react";
-import { CheckIcon, CircleAlertIcon, InfoIcon, Loader2Icon, XIcon } from "lucide-react";
+import { CheckIcon, CircleAlertIcon, InfoIcon, Loader2Icon } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { CloseButton } from "@/components/CloseButton";
 import { cn } from "@/lib/utils";
 import { absoluteTime, relativeTime } from "@/lib/relativeTime";
 import {
@@ -11,6 +12,7 @@ import {
   setNotificationPaused,
   type NotificationEntry,
 } from "@/lib/notifications";
+import "./notifications.css";
 
 function content(value: NotificationEntry["title"]): ReactNode {
   return typeof value === "function" ? value() : value;
@@ -64,7 +66,7 @@ export function NotificationCard({
       role={history ? undefined : entry.type === "error" ? "alert" : "status"}
       aria-busy={active || entry.actionPending || undefined}
       className={cn(
-        "density-row grid grid-cols-[1rem_minmax(0,1fr)_1.5rem] items-start text-ui",
+        "notification-card density-row text-ui",
         !history &&
           "rounded-xl bg-popover text-popover-foreground shadow-menu ring-1 ring-foreground/10",
       )}
@@ -76,41 +78,42 @@ export function NotificationCard({
           setNotificationPaused(entry.id, false, "focus");
       }}
     >
-      <Icon
-        aria-hidden
-        className={cn(
-          "mt-1 size-4 shrink-0 text-muted-foreground",
-          active && "animate-spin text-primary motion-reduce:animate-none",
-          entry.type === "error" && "text-destructive",
-          entry.type === "warning" && "text-warning",
-          entry.type === "success" && "text-success",
+      <span className="notification-icon" aria-hidden="true">
+        <Icon
+          className={cn(
+            "size-4 shrink-0 text-muted-foreground",
+            active && "animate-spin text-primary motion-reduce:animate-none",
+            entry.type === "error" && "text-destructive",
+            entry.type === "warning" && "text-warning",
+            entry.type === "success" && "text-success",
+          )}
+        />
+      </span>
+      <div className="notification-body min-w-0 space-y-[var(--popup-text-gap)] break-words [overflow-wrap:anywhere]">
+        {entry.title && (
+          <div className="notification-title font-medium leading-5">{content(entry.title)}</div>
         )}
-      />
-      <div className="min-w-0 space-y-[var(--list-gap)] break-words [overflow-wrap:anywhere]">
-        {entry.title && <div className="font-medium leading-5">{content(entry.title)}</div>}
         {entry.description && (
-          <div className="text-sm leading-5 text-muted-foreground">
+          <div className="notification-description text-sm leading-5 text-muted-foreground">
             {content(entry.description)}
           </div>
         )}
         {entry.jsx}
       </div>
       {entry.dismissible !== false && (
-        <Button
-          type="button"
-          size="icon-xs"
-          variant="ghost"
-          className="-mt-0.5 text-muted-foreground"
+        <CloseButton
+          className="notification-dismiss"
           aria-label={history && !active ? "Remove notification" : "Hide notification"}
           onClick={() =>
             history && !active ? removeNotification(entry.id) : hideNotification(entry.id)
           }
-        >
-          <XIcon className="size-3.5" />
-        </Button>
+        />
       )}
       {entry.progress && (
-        <div className="col-start-2 col-end-4 space-y-[var(--list-gap)]" data-notification-progress>
+        <div
+          className="notification-progress space-y-[var(--popup-text-gap)]"
+          data-notification-progress
+        >
           <div
             role="progressbar"
             aria-label={entry.progress.label || "Activity progress"}
@@ -141,18 +144,22 @@ export function NotificationCard({
         </div>
       )}
       {(entry.action || entry.cancel || history) && (
-        <div className="col-start-2 col-end-4 flex flex-wrap items-center justify-end gap-[var(--list-row-gap)]">
+        <div className="notification-footer">
           {history && (
             <time
-              className="mr-auto text-10 text-muted-foreground"
+              className="text-10 text-muted-foreground"
               dateTime={new Date(entry.createdAt).toISOString()}
               title={absoluteTime(entry.createdAt)}
             >
               {relativeTime(entry.createdAt)}
             </time>
           )}
-          {action("cancel")}
-          {action("action")}
+          {(entry.cancel || entry.action) && (
+            <div className="notification-actions">
+              {action("cancel")}
+              {action("action")}
+            </div>
+          )}
         </div>
       )}
     </article>

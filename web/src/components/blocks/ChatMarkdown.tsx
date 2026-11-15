@@ -18,7 +18,7 @@ import { useScopedConversationId } from "@/components/chat/conversationScope";
 // without importing the block dispatcher that renders them.
 
 import type React from "react";
-import { useMemo, useContext } from "react";
+import { useMemo, useContext, lazy, Suspense } from "react";
 import { GitPullRequestIcon } from "lucide-react";
 import { defaultRemarkPlugins } from "streamdown";
 import remarkBreaks from "remark-breaks";
@@ -49,6 +49,11 @@ import {
   useWorkspaceFileExists,
 } from "@/hooks/useWorkspaceChangedFiles";
 import { showToast } from "@/components/ui/toast";
+import { splitArtifactMarkdown } from "@/artifacts/artifactProtocol";
+
+const UploadedArtifact = lazy(() =>
+  import("@/artifacts/UploadedArtifact").then((module) => ({ default: module.UploadedArtifact })),
+);
 
 // Streamdown hands each component override the source hast node alongside the
 // element's own props. Overrides here spread their props onto a DOM element, so
@@ -568,6 +573,10 @@ export function FilePathAwareMessageResponse({
     [isString, children],
   );
   const throttledText = useThrottledValue(normalizedText, STREAM_MARKDOWN_THROTTLE_MS);
+  const artifactParts = useMemo(
+    () => (isString ? splitArtifactMarkdown(throttledText) : []),
+    [isString, throttledText],
+  );
 
   // Defense-in-depth: a string child that is huge or carries a
   // giant unbroken token (e.g. a base64 data URL serialized into the text
@@ -584,14 +593,37 @@ export function FilePathAwareMessageResponse({
 
   return (
     <ChatAttachmentContext.Provider value={scope}>
-      <MessageResponse
-        {...props}
-        components={components}
-        remarkPlugins={remarkPlugins}
-        markFileLinks
-      >
-        {isString ? throttledText : children}
-      </MessageResponse>
+      {isString ? (
+        artifactParts.map((part) =>
+          part.kind === "artifact" ? (
+            <Suspense
+              key={`artifact:${part.offset}`}
+              fallback={<p role="status">Loading artifact…</p>}
+            >
+              <UploadedArtifact sessionId={sessionId} reference={part.reference} />
+            </Suspense>
+          ) : (
+            <MessageResponse
+              key={`markdown:${part.offset}`}
+              {...props}
+              components={components}
+              remarkPlugins={remarkPlugins}
+              markFileLinks
+            >
+              {part.text}
+            </MessageResponse>
+          ),
+        )
+      ) : (
+        <MessageResponse
+          {...props}
+          components={components}
+          remarkPlugins={remarkPlugins}
+          markFileLinks
+        >
+          {children}
+        </MessageResponse>
+      )}
     </ChatAttachmentContext.Provider>
   );
 }

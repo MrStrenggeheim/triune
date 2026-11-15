@@ -1,0 +1,95 @@
+/* Triune additions: PolyForm Noncommercial 1.0.0; see LICENSING.md.
+ * Required Notice: Copyright 2026 MrStrenggeheim. Triune (https://github.com/MrStrenggeheim/triune).
+ */
+.notification-card,
+.notification-center-header {
+  --notification-target: 24px;
+}
+
+.notification-card.density-row {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) var(--notification-target);
+  align-items: start;
+  padding: var(--popup-inset);
+  column-gap: var(--popup-item-gap);
+  row-gap: var(--popup-text-gap);
+}
+
+.notification-card:not(:has([data-close-button])) {
+  grid-template-columns: 16px minmax(0, 1fr);
+}
+
+.notification-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-block-size: var(--notification-target);
+}
+
+.notification-title,
+.notification-description:first-child {
+  display: flex;
+  align-items: center;
+  min-block-size: var(--notification-target);
+}
+
+.notification-dismiss {
+  grid-column: 3;
+  grid-row: 1;
+}
+
+.notification-progress,
+.notification-footer {
+  grid-column: 2 / -1;
+  min-inline-size: 0;
+}
+
+.notification-footer {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--popup-footer-gap);
+}
+
+.notification-actions {
+  grid-column: 2;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--popup-item-gap);
+  min-inline-size: 0;
+}
+
+.notification-footer:not(:has(time)) .notification-actions {
+  grid-column: 1 / -1;
+}
+
+.notification-center-header {
+  --notification-header-inset: max(
+    var(--list-gap),
+    calc((var(--density-header-height) - var(--notification-target)) / 2)
+  );
+  display: flex;
+  align-items: center;
+  gap: var(--list-gap);
+  block-size: calc(var(--notification-target) + 2 * var(--notification-header-inset));
+  padding-inline: var(--notification-header-inset);
+}
+
+.notification-center-header > button,
+.notification-card [data-close-button] {
+  inline-size: var(--notification-target);
+  block-size: var(--notification-target);
+}
+
+@media (max-width: 767.98px), (any-pointer: coarse) {
+  .notification-card,
+  .notification-center-header {
+    --notification-target: 44px;
+  }
+
+  .notification-actions button {
+    min-block-size: 44px;
+    min-inline-size: 44px;
+  }
+}

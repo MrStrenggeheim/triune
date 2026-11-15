@@ -14,6 +14,7 @@ import { RunningDot } from "@/components/RunningDot";
 import { Badge } from "@/components/ui/badge";
 import type { AgentStatus } from "@/shell/subagentStatus";
 import { cn } from "@/lib/utils";
+import { formatSubagentTask } from "@/lib/subagentActivity";
 
 export function SubagentTaskStatus({ status, label }: { status: AgentStatus; label?: string }) {
   const running = status.activity === "working" || status.activity === "launching";
@@ -69,6 +70,7 @@ export function SubagentTaskRow({
   preview?: string;
   children?: ReactNode;
 }) {
+  const label = formatSubagentTask(description);
   return (
     <ActivityRow
       presentation="message"
@@ -76,13 +78,13 @@ export function SubagentTaskRow({
       title={
         <>
           <strong className="shrink-0 font-semibold">{agentName}</strong>{" "}
-          <span className="truncate">· {description}</span>
+          <span className="truncate">· {label}</span>
         </>
       }
       preview={preview}
       status={<SubagentTaskStatus status={status} />}
       actions={action}
-      summary={preview ?? description}
+      summary={preview ?? label}
     >
       {children}
     </ActivityRow>

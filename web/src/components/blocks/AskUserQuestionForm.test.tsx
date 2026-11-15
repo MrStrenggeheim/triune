@@ -22,7 +22,7 @@ describe("question submissions", () => {
     );
     const next = screen.getByTestId("ask-user-question-next");
     expect(next).toHaveTextContent("Skip");
-    expect(screen.getByTestId("ask-user-question-submit")).toBeEnabled();
+    expect(screen.queryByTestId("ask-user-question-submit")).toBeNull();
     fireEvent.click(next);
     expect(onSubmit).not.toHaveBeenCalled();
     expect(onReject).not.toHaveBeenCalled();
@@ -43,7 +43,8 @@ describe("question submissions", () => {
     expect(screen.getByRole("textbox")).toHaveValue("Draft");
     fireEvent.click(screen.getByRole("button", { name: "Previous" }));
     expect(screen.getByRole("radio", { name: "A" })).toBeChecked();
-    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+    fireEvent.click(screen.getByTestId("ask-user-question-next"));
+    fireEvent.click(screen.getByRole("button", { name: /^Submit/ }));
     expect(onSubmit).toHaveBeenCalledWith({ first: "A", second: ["B", "Draft"] });
   });
 
@@ -53,7 +54,7 @@ describe("question submissions", () => {
     fireEvent.click(screen.getByTestId("ask-user-question-next"));
     fireEvent.click(screen.getByRole("checkbox", { name: "B" }));
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "  " } });
-    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Submit/ }));
     expect(onSubmit).toHaveBeenCalledWith({ second: ["B"] });
   });
 
@@ -70,8 +71,9 @@ describe("question submissions", () => {
       />,
     );
     fireEvent.change(screen.getByRole("textbox"), { target: { value } });
-    expect(screen.getByTestId("ask-user-question-next")).toHaveTextContent("Next");
-    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+    expect(screen.getByTestId("ask-user-question-next")).toHaveTextContent("Next (1/2)");
+    fireEvent.click(screen.getByTestId("ask-user-question-next"));
+    fireEvent.click(screen.getByRole("button", { name: /^Submit/ }));
     expect(onSubmit).toHaveBeenCalledWith({ first: value });
   });
 
@@ -85,4 +87,48 @@ describe("question submissions", () => {
     expect(onReject).toHaveBeenCalledOnce();
     expect(onSubmit).not.toHaveBeenCalled();
   });
+});
+
+it("counts every forward action and submits an empty batch only from its final page", () => {
+  const submit = vi.fn();
+  render(<AskUserQuestionForm questions={questions} onSubmit={submit} onReject={vi.fn()} />);
+  fireEvent.click(screen.getByRole("button", { name: "Skip (0/2)" }));
+  expect(submit).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Submit (0/2)" }));
+  expect(submit).toHaveBeenCalledWith({});
+});
+
+it("retains choices and the page after unmounting the same request", () => {
+  const props = {
+    questions,
+    onSubmit: vi.fn(),
+    onReject: vi.fn(),
+    draftKey: "question-draft:reload-test",
+  };
+  const view = render(<AskUserQuestionForm {...props} />);
+  fireEvent.click(screen.getByRole("radio", { name: "A" }));
+  expect(props.onSubmit).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Next (1/2)" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "B" }));
+  view.unmount();
+  render(<AskUserQuestionForm {...props} />);
+  expect(screen.getByRole("checkbox", { name: "B" })).toBeChecked();
+  expect(screen.getByRole("button", { name: "Submit (2/2)" })).toBeEnabled();
+  fireEvent.click(screen.getByRole("button", { name: "Previous" }));
+  expect(screen.getByRole("radio", { name: "A" })).toBeChecked();
+});
+
+it("skips an untouched blank editor while retaining its legal empty batch payload", () => {
+  const submit = vi.fn();
+  render(
+    <AskUserQuestionForm
+      questions={[{ ...questions[0], options: [], textInput: { default: "" } }, questions[1]]}
+      onSubmit={submit}
+      onReject={vi.fn()}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Skip (0/2)" }));
+  expect(submit).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Submit (0/2)" }));
+  expect(submit).toHaveBeenCalledWith({ first: "" });
 });

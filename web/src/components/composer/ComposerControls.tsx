@@ -56,7 +56,7 @@ export function ComposerWorkspaceBar({
     <div
       ref={barRef}
       className={cn(
-        "composer-workspace-surface group/composer-workspace relative z-0 -mb-px flex h-7 min-w-0 items-center gap-0.5 rounded-t-2xl border border-b-0 border-border py-0.5 md:h-[37px] md:gap-2 md:py-1.5",
+        "composer-workspace-surface group/composer-workspace relative z-0 -mb-px flex h-auto min-h-7 min-w-0 items-center gap-1 rounded-t-2xl border border-b-0 border-border py-0.5 md:min-h-[37px] md:gap-2 md:py-1.5",
         shelfInset ? "composer-attention-surface" : COMPOSER_CONTENT_INSET_CLASS,
         !shelfInset && COMPOSER_TRAY_INSET_CLASS,
         className,

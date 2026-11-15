@@ -15,10 +15,66 @@ import { itemsToBlocks } from "@/lib/itemsToBlocks";
 import { buildBubbles } from "@/lib/renderItems";
 import type { MessageItem } from "@/lib/conversationItems";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import type { ElicitationBlock } from "@/lib/blocks";
 
 const fetchMock = vi.fn();
 const initialStoreState = useChatStore.getState();
 const continuation = "Please continue from where you left off.";
+
+describe("question batch composition", () => {
+  it.each(["pending", "responded"] as const)(
+    "keeps a %s shared card free of the outer message footer",
+    (status) => {
+      const block: ElicitationBlock = {
+        type: "elicitation",
+        ctx: {
+          agent: null,
+          depth: 0,
+          turn: 0,
+          timestamp: 0,
+          responseId: "question-turn",
+          itemId: "question-item",
+          createdAtS: 1_700_000_000,
+        },
+        elicitationId: "question-batch",
+        message: "",
+        phase: "codex_request_user_input",
+        policyName: "codex_native_request_user_input",
+        contentPreview: "",
+        requestedSchema: {},
+        askUserQuestion: {
+          questions: [
+            {
+              id: "choice",
+              question: "Which source?",
+              options: [{ label: "Current chat" }],
+              multiSelect: false,
+            },
+          ],
+        },
+        status,
+        ...(status === "responded"
+          ? { response: { action: "accept" as const, content: { choice: "Current chat" } } }
+          : { response: null }),
+      };
+      const [bubble] = buildBubbles([block], null);
+      if (!bubble) throw new Error("Missing question bubble");
+      render(
+        <MemoryRouter>
+          <QueryClientProvider client={new QueryClient()}>
+            <ForkDialogContextProvider value={{ canFork: true, openForkDialog: vi.fn() }}>
+              <BubbleView bubble={bubble} />
+            </ForkDialogContextProvider>
+          </QueryClientProvider>
+        </MemoryRouter>,
+      );
+      expect(screen.getByText(status === "pending" ? "Needs input" : "Answered")).toBeVisible();
+      expect(screen.queryByTestId("fork-from-response")).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Copy link" })).not.toBeInTheDocument();
+      expect(screen.queryByTestId("message-timestamp")).not.toBeInTheDocument();
+    },
+  );
+});
 
 describe("input attribution", () => {
   function renderInput(item: MessageItem) {

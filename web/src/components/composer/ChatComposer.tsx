@@ -1,3 +1,4 @@
+// Modified for Triune.
 import {
   forwardRef,
   useLayoutEffect,
@@ -11,6 +12,7 @@ import {
 import { ArrowUpIcon, Loader2Icon, SquareIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { COMPOSER_FOCUS_CLASS } from "@/lib/designContract";
 import { isImeCompositionKeyEvent } from "@/lib/ime";
 import {
   isComposerAltNewlineKey,
@@ -108,7 +110,8 @@ export const ChatComposer = forwardRef<HTMLDivElement, ChatComposerProps>(functi
       ref={ref}
       data-composer-card
       className={cn(
-        "composer-reference-surface relative flex w-full flex-col rounded-xl border transition-shadow duration-150 has-[textarea:focus]:shadow-[var(--composer-shadow-focus)] md:min-h-[105px]",
+        "composer-reference-surface relative flex w-full flex-col rounded-xl border transition-shadow duration-150 md:min-h-[105px]",
+        COMPOSER_FOCUS_CLASS,
         className,
       )}
       {...props}

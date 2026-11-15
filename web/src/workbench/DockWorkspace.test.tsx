@@ -544,6 +544,32 @@ describe("sidebar conversation drops", () => {
 });
 
 describe("dock tab controls", () => {
+  it("uses the current pointer intent and activates a touch tab on its first tap", () => {
+    const change = vi.fn();
+    render(
+      <DockWorkspace
+        layout={createDockLayout([view("a"), view("b")])}
+        onLayoutChange={change}
+        onPinView={vi.fn()}
+        renderView={() => null}
+        compact
+      />,
+    );
+    const tab = screen.getByRole("tab", { name: "b" });
+    const group = tab.closest(".dock-tab-group")!;
+    expect(screen.getByRole("button", { name: "Close b" })).toHaveAttribute("data-close-button");
+    fireEvent.pointerMove(tab, { pointerType: "mouse", pointerId: 1 });
+    expect(group).toHaveAttribute("data-input", "mouse");
+    fireEvent.pointerDown(tab, { pointerType: "touch", pointerId: 2 });
+    fireEvent.pointerUp(tab, { pointerType: "touch", pointerId: 2 });
+    fireEvent.click(tab);
+    expect(group).toHaveAttribute("data-input", "touch");
+    expect(change).toHaveBeenCalledTimes(1);
+    expect(
+      change.mock.calls[0][0](createDockLayout([view("a"), view("b")])).panes[0],
+    ).toHaveProperty("selectedViewId", "b");
+  });
+
   it("allows touch swipes and activates docking only after a hold and movement", () => {
     vi.useFakeTimers();
     try {

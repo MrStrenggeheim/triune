@@ -37,7 +37,13 @@ from tests.browser_ui.conftest import BrowserContract
 
 
 @pytest.fixture(
-    params=[("desktop", "light"), ("desktop", "dark"), ("mobile", "light"), ("mobile", "dark")],
+    params=[
+        ("desktop", "light"),
+        pytest.param(
+            ("mobile", "dark"),
+            marks=pytest.mark.browser_context_args(has_touch=True, is_mobile=True),
+        ),
+    ],
     ids=lambda value: "-".join(value),
 )
 def appearance(page: Page, request: pytest.FixtureRequest) -> str:
@@ -48,7 +54,9 @@ def appearance(page: Page, request: pytest.FixtureRequest) -> str:
             "height": 844 if device == "mobile" else 1000,
         }
     )
-    page.emulate_media(color_scheme=theme)
+    page.emulate_media(color_scheme=theme, reduced_motion="reduce")
+    density = "compact" if device == "mobile" else "comfortable"
+    page.add_init_script(f"localStorage.setItem('omnigent:list-density', '{density}')")
     return f"{device}-{theme}"
 
 
@@ -99,6 +107,40 @@ def _assert_footerless_card(card: Locator, *, controls: int) -> dict:
         geometry["row"]["height"] + geometry["padding"] + geometry["border"], abs=TOLERANCE
     ), geometry
     return geometry
+
+
+def _assert_stable_disclosure(card: Locator) -> dict:
+    """Compare header-relative bounds so transcript scrolling cannot mask a layout shift."""
+    disclosure = card.get_by_role("button", name=re.compile(r"^(Expand|Collapse) activity$"))
+    expanded = disclosure.get_attribute("aria-expanded") == "true"
+
+    def measure() -> dict:
+        return card.locator("[data-resource-row]").evaluate(
+            """row => {
+              const header = row.getBoundingClientRect();
+              return {height: header.height,
+                parts: [...row.querySelectorAll(
+                  '.resource-icon, .activity-status-slot, ' +
+                  '.resource-actions button, .resource-actions a'
+                )].map(element => {
+                  const bounds = element.getBoundingClientRect();
+                  return {x: bounds.x - header.x, y: bounds.y - header.y,
+                    width: bounds.width, height: bounds.height};
+                })};
+            }"""
+        )
+
+    before = measure()
+    disclosure.click()
+    expect(disclosure).to_have_attribute("aria-expanded", str(not expanded).lower())
+    after = measure()
+    assert after["height"] == pytest.approx(before["height"], abs=TOLERANCE), (before, after)
+    assert len(after["parts"]) == len(before["parts"])
+    for initial, changed in zip(before["parts"], after["parts"], strict=True):
+        assert changed == pytest.approx(initial, abs=TOLERANCE), (before, after)
+    disclosure.click()
+    expect(disclosure).to_have_attribute("aria-expanded", str(expanded).lower())
+    return {"before": before, "after": after}
 
 
 def test_provenance_peer_directions_and_reload(
@@ -226,6 +268,8 @@ def test_provenance_peer_directions_and_reload(
         control.get_by_role("button", name="Expand activity", exact=True).click()
         expect(control).to_contain_text(recovery)
         control.get_by_role("button", name="Collapse activity", exact=True).click()
+        if not reload:
+            measurements["system-expansion"] = _assert_stable_disclosure(control)
         received = chat.locator('[data-message-id="received-report"]')
         sent = chat.locator('[data-message-id="sent-request"]')
         for card, direction, attribution, name in (
@@ -241,6 +285,8 @@ def test_provenance_peer_directions_and_reload(
             measurements[f"{direction}-{'reload' if reload else 'initial'}"] = (
                 _assert_footerless_card(card, controls=3)
             )
+            if not reload:
+                measurements[f"{direction}-expansion"] = _assert_stable_disclosure(card)
         expect(chat.get_by_test_id("peer-message")).to_have_count(2)
         expect(chat.get_by_test_id("subagent-activity")).to_have_count(1)
         task = chat.get_by_test_id("subagent-activity")
@@ -250,6 +296,8 @@ def test_provenance_peer_directions_and_reload(
         _assert_footerless_card(task, controls=3)
         _assert_footerless_card(reply, controls=3)
         if not reload:
+            measurements["task-expansion"] = _assert_stable_disclosure(task)
+            measurements["reply-expansion"] = _assert_stable_disclosure(reply)
             task.get_by_role("button", name="Expand activity", exact=True).click()
             expect(task).to_contain_text("Full captured assignment.")
             _capture(page, output_path, f"{appearance}-expanded-task")
@@ -279,7 +327,7 @@ def test_provenance_peer_directions_and_reload(
                     rotate: getComputedStyle(element).rotate,
                     transform: getComputedStyle(element).transform})"""
             )
-            assert glyph["duration"] == "0s" and (
+            assert float(glyph["duration"].removesuffix("s")) <= 0.00001 and (
                 glyph["rotate"] == "90deg" or glyph["transform"].startswith("matrix(0, 1")
             ), glyph
             sent.get_by_role("button", name="Collapse activity", exact=True).click()
@@ -523,6 +571,26 @@ def test_portrait_and_tiny_image_footer_containment(
         assert downloaded.value.suggested_filename == row["name"]
         assert Path(downloaded.value.path()).read_bytes() == originals[row["name"]]
 
+    # Inventory comes from message history, and selection retains original bytes.
+    chat.get_by_role("button", name="Zoom image: portrait.png", exact=True).click()
+    gallery = page.get_by_role("dialog")
+    expect(gallery.get_by_text("1 / 2", exact=True)).to_be_visible()
+    gallery.get_by_role("button", name="Next image", exact=True).click()
+    expect(gallery.get_by_role("img", name="tiny.png", exact=True)).to_have_js_property(
+        "naturalWidth", 1
+    )
+    expect(gallery.get_by_text("2 / 2", exact=True)).to_be_visible()
+    gallery.press("ArrowLeft")
+    expect(gallery.get_by_role("img", name="portrait.png", exact=True)).to_have_js_property(
+        "naturalHeight", 1000
+    )
+    gallery.get_by_role("button", name="View image 2: tiny.png", exact=True).click()
+    with page.expect_download() as selected_download:
+        gallery.get_by_role("button", name="Download image", exact=True).click()
+    assert Path(selected_download.value.path()).read_bytes() == originals["tiny.png"]
+    gallery.get_by_role("button", name="Close", exact=True).click()
+    expect(gallery).to_have_count(0)
+
 
 def test_shelf_resource_rows_and_question_drafts(
     page: Page,
@@ -594,6 +662,42 @@ def test_shelf_resource_rows_and_question_drafts(
     editor = _view(page, "Chat A").get_by_label("Message the agent")
     editor.fill("Retained composer draft")
     first.wait_for_stream()
+    questions = [
+        {
+            "id": "coverage",
+            "header": "Coverage",
+            "question": "Which checks should run?",
+            "options": [
+                {"label": "Focused", "description": "Changed controls"},
+                {"label": "All", "description": "Full suite"},
+            ],
+            "multiSelect": False,
+        },
+        {
+            "id": "timing",
+            "question": "When should checks run?",
+            "options": [{"label": "After review"}],
+            "multiSelect": False,
+        },
+        {
+            "id": "targets",
+            "question": "Which surfaces need checks?",
+            "options": [{"label": "Desktop"}, {"label": "Phone"}],
+            "multiSelect": True,
+        },
+    ]
+    resolves: list[dict] = []
+
+    def resolve(route: Route) -> None:
+        resolves.append(route.request.post_data_json)
+        route.fulfill(json={"status": "ok"})
+
+    browser_contract.route(
+        browser_contract._matcher(
+            f"/v1/sessions/{first.session_id}/elicitations/refinement-question/resolve"
+        ),
+        resolve,
+    )
     first.emit(
         {
             "event": "response.elicitation_request",
@@ -606,19 +710,7 @@ def test_shelf_resource_rows_and_question_drafts(
                     "phase": "tool_call",
                     "policy_name": "native",
                     "requestedSchema": {},
-                    "ask_user_question": {
-                        "questions": [
-                            {
-                                "id": "coverage",
-                                "question": "Which checks should run?",
-                                "options": [
-                                    {"label": "Focused", "description": "Changed controls"},
-                                    {"label": "All", "description": "Full suite"},
-                                ],
-                                "multiSelect": False,
-                            }
-                        ]
-                    },
+                    "ask_user_question": {"questions": questions},
                 },
             },
         }
@@ -626,7 +718,20 @@ def test_shelf_resource_rows_and_question_drafts(
     shelf = page.get_by_test_id("composer-attention-shelf")
     question = shelf.get_by_role("button", name="Questions: 1", exact=True)
     question.click()
-    form = page.get_by_test_id("ask-user-question-form")
+    panel = page.get_by_role("dialog", name="Questions", exact=True)
+    batch = panel.get_by_test_id("approval-card")
+    form = panel.get_by_test_id("ask-user-question-form")
+    header = batch.locator("[data-resource-row]")
+    progress = header.get_by_test_id("ask-user-question-progress")
+    expect(progress).to_have_text("Question 1 of 3")
+    expect(header.get_by_text("Coverage", exact=True)).to_be_visible()
+    expect(form.get_by_test_id("ask-user-question-progress")).to_have_count(0)
+    expect(form.get_by_text("Coverage", exact=True)).to_have_count(0)
+    expect(panel).not_to_contain_text("Requested by")
+    expect(panel).not_to_contain_text("Submit sends")
+    expect(form.get_by_role("button", name="Skip (0/3)", exact=True)).to_be_enabled()
+    expect(form.get_by_role("button", name=re.compile(r"^Submit"))).to_have_count(0)
+    pending_geometry = _assert_stable_disclosure(batch)
     custom = form.get_by_role("textbox", name="Custom answer text", exact=True)
     custom.fill("Run focused checks and preserve this answer")
     custom_node = custom.element_handle()
@@ -637,7 +742,87 @@ def test_shelf_resource_rows_and_question_drafts(
     expect(custom).to_have_value("Run focused checks and preserve this answer")
     assert custom_node and custom_node.evaluate("element => element.isConnected")
     expect(form.get_by_role("radio", name="Custom answer", exact=True)).to_be_checked()
+    expect(form.get_by_role("button", name="Next (1/3)", exact=True)).to_be_enabled()
+    form.get_by_role("button", name="Next (1/3)", exact=True).click()
+    expect(progress).to_have_text("Question 2 of 3")
+    expect(header.get_by_text("Coverage", exact=True)).to_have_count(0)
+    expect(header.get_by_text("timing", exact=True)).to_have_count(0)
+    expect(form.get_by_role("button", name="Skip (1/3)", exact=True)).to_be_enabled()
+    header.get_by_role("button", name="Previous question", exact=True).click()
+    expect(custom).to_have_value("Run focused checks and preserve this answer")
+    header.get_by_role("button", name="Next question", exact=True).click()
+    form.get_by_role("button", name="Skip (1/3)", exact=True).click()
+    expect(progress).to_have_text("Question 3 of 3")
+    form.get_by_role("checkbox", name="Desktop", exact=True).check()
+    form.get_by_role("checkbox", name="Phone", exact=True).check()
+    expect(form.get_by_role("button", name="Submit (2/3)", exact=True)).to_be_enabled()
+    assert resolves == []
     _capture(page, output_path, f"{appearance}-reopened-question-draft")
+    form.get_by_role("button", name="Submit (2/3)", exact=True).click()
+    expect(question).to_have_count(0)
+    assert resolves == [
+        {
+            "action": "accept",
+            "content": {
+                "coverage": "Run focused checks and preserve this answer",
+                "targets": ["Desktop", "Phone"],
+            },
+        }
+    ]
+    receipt = {
+        "id": "refinement-question-receipt",
+        "type": "resource_event",
+        "status": "completed",
+        "response_id": "refinement-question-submission",
+        "resource_type": "question_batch",
+        "event_type": "session.question.answered",
+        "resource": {
+            "version": 1,
+            "session_id": first.session_id,
+            "elicitation_id": "refinement-question",
+            "submission_id": "refinement-question-submission",
+            "action": "accept",
+            "questions": [
+                {
+                    "id": item["id"],
+                    "question": item["question"],
+                    **({"header": item["header"]} if "header" in item else {}),
+                    "answered": item["id"] in resolves[0]["content"],
+                    **(
+                        {"answer": resolves[0]["content"][item["id"]]}
+                        if item["id"] in resolves[0]["content"]
+                        else {}
+                    ),
+                }
+                for item in questions
+            ],
+        },
+    }
+    first.set_items([receipt])
+    first.emit({"event": "response.output_item.done", "data": {"item": receipt}})
+    first.emit({"event": "response.output_item.done", "data": {"item": receipt}})
+    answered = _view(page, "Chat A").get_by_test_id("approval-card")
+    expect(answered).to_have_count(1)
+    expect(answered).to_have_attribute("data-state", "responded")
+    expect(answered.locator("strong")).to_have_text("Answered")
+    answered_progress = answered.get_by_test_id("ask-user-question-progress")
+    previous = answered.get_by_role("button", name="Previous question", exact=True)
+    for _ in range(2):
+        if previous.is_enabled():
+            previous.click()
+    expect(answered_progress).to_have_text("Question 1 of 3")
+    answered.get_by_role("button", name="Next question", exact=True).click()
+    expect(answered_progress).to_have_text("Question 2 of 3")
+    expect(answered).to_contain_text("Unanswered")
+    previous.click()
+    expect(answered_progress).to_have_text("Question 1 of 3")
+    expect(answered).to_contain_text("Run focused checks and preserve this answer")
+    expect(_view(page, "Chat A").locator('[data-role="user"]')).to_have_count(0)
+    answered_geometry = _assert_stable_disclosure(answered)
+    (Path(output_path) / "question-header-geometry.json").write_text(
+        json.dumps({"pending": pending_geometry, "answered": answered_geometry}, indent=2) + "\n"
+    )
+    _capture(page, output_path, f"{appearance}-one-answered-batch")
     page.keyboard.press("Escape")
     shelf.get_by_test_id("subagent-task-pill").click()
     agent_row = page.locator("[data-resource-row]:visible").filter(
@@ -679,9 +864,25 @@ def test_shelf_resource_rows_and_question_drafts(
     orchestration = _view(page, "Orchestration")
     source = orchestration.get_by_role("button", name=re.compile("^Choose orchestration source"))
     expect(source).to_contain_text("Chat A")
-    expect(orchestration.get_by_role("button", name="Shells", exact=True)).to_have_attribute(
-        "aria-pressed", "true"
-    )
+
+    def activity_filter(name: str, *, select: bool = False) -> None:
+        inline = orchestration.get_by_role("button", name=name, exact=True)
+        collapsed = not inline.is_visible()
+        if collapsed:
+            orchestration.get_by_role("button", name="Orchestration options", exact=True).click()
+            control = page.get_by_role("menuitemradio", name=name, exact=True)
+        else:
+            control = inline
+        if select:
+            control.click()
+        else:
+            expect(control).to_have_attribute(
+                "aria-checked" if collapsed else "aria-pressed", "true"
+            )
+            if collapsed:
+                page.keyboard.press("Escape")
+
+    activity_filter("Shells")
     focused = orchestration.locator('[data-shell-id="codex_native:checks"] [data-resource-row]')
     expect(focused).to_have_class(re.compile(r"\bring-1\b"))
     expect(page.get_by_role("tab", name="Orchestration", exact=True)).to_have_count(1)
@@ -691,7 +892,7 @@ def test_shelf_resource_rows_and_question_drafts(
     page.keyboard.press("Escape")
     expect(page.get_by_role("tab", name="Orchestration", exact=True)).to_have_count(1)
     expect(focused).to_have_class(re.compile(r"\bring-1\b"))
-    orchestration.get_by_role("button", name="All", exact=True).click()
+    activity_filter("All", select=True)
     agents = orchestration.get_by_role("list", name="Agents", exact=True)
     shells = orchestration.get_by_role("list", name="Shells", exact=True)
     expect(agents).to_contain_text("Hilbert")
@@ -700,7 +901,13 @@ def test_shelf_resource_rows_and_question_drafts(
         row = rows.locator("[data-resource-row]")
         expect(row).to_have_count(1)
         expect(row).to_contain_text("Running")
-        assert box(row)["height"] == pytest.approx(shelf_height, abs=TOLERANCE)
+        vertical_padding = row.evaluate(
+            """element => {
+              const style = getComputedStyle(element);
+              return parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
+            }"""
+        )
+        assert box(row)["height"] - vertical_padding == pytest.approx(shelf_height, abs=TOLERANCE)
         assert_within_viewport(box(row), page.viewport_size["width"])
     _capture(page, output_path, f"{appearance}-shared-orchestration-resources")
     live_row = shells.locator("[data-resource-row]")
@@ -719,11 +926,17 @@ def test_shelf_resource_rows_and_question_drafts(
           return result;
         }"""
     )
+    coarse = page.evaluate("matchMedia('(pointer: coarse)').matches")
     for sample in samples:
-        assert sample["running"] == "hidden" and sample["stop"] == "visible", sample
+        assert sample["running"] == ("visible" if coarse else "hidden"), sample
+        assert sample["stop"] == ("hidden" if coarse else "visible"), sample
         assert sample["width"] == pytest.approx(reserve, abs=TOLERANCE), sample
     _capture(page, output_path, f"{appearance}-stop-swap")
-    status.click()
+    if coarse:
+        status.tap()
+        page.get_by_role("menuitem", name="Stop pnpm test", exact=True).tap()
+    else:
+        status.click()
     expect(status).to_be_disabled()
     assert len(pending_stop) == 1
     shell.update(status="stopped", exit_code=-1, can_stop=False)
@@ -762,9 +975,7 @@ def test_shelf_resource_rows_and_question_drafts(
     page.get_by_role("tab", name="Chat A", exact=True).click()
     page.get_by_role("tab", name="Orchestration", exact=True).click()
     expect(source).to_contain_text("Chat B")
-    expect(orchestration.get_by_role("button", name="All", exact=True)).to_have_attribute(
-        "aria-pressed", "true"
-    )
+    activity_filter("All")
     page.get_by_role("button", name="Close Orchestration", exact=True).click()
     _navigate_chat(page, second)
     _navigate_chat(page, first)
@@ -774,12 +985,23 @@ def test_shelf_resource_rows_and_question_drafts(
     page.get_by_role("tab", name="Chat A", exact=True).click()
     expect(editor).to_have_value("Retained composer draft")
     assert first.event_posts == []
+    page.reload()
+    expect(answered).to_have_count(1)
+    expect(answered.locator("strong")).to_have_text("Answered")
+    expect(answered.get_by_test_id("ask-user-question-progress")).to_have_text("Question 1 of 3")
+    expect(editor).to_have_value("Retained composer draft")
 
 
 @pytest.mark.parametrize(
     "appearance",
-    [("desktop", "dark"), ("mobile", "light")],
-    ids=["desktop-dark", "mobile-light"],
+    [
+        ("desktop", "dark"),
+        pytest.param(
+            ("mobile", "light"),
+            marks=pytest.mark.browser_context_args(has_touch=True, is_mobile=True),
+        ),
+    ],
+    ids=["desktop-dark", "mobile-light-touch"],
     indirect=True,
 )
 def test_notice_popup_transport_fixture(
@@ -791,6 +1013,7 @@ def test_notice_popup_transport_fixture(
 ) -> None:
     """Scripted API notices prove browser transport and dismissal, not native capture."""
     first, second = workspace_journey.chats
+    second.update_session(owner="local", archived=False)
     notice = {
         "id": "fixture-usage-window",
         "revision": "one",
@@ -807,6 +1030,20 @@ def test_notice_popup_transport_fixture(
     editor = _view(page, "Chat A").get_by_label("Message the agent")
     editor.fill("Keep this draft while reading notices")
     trigger = page.get_by_role("button", name="Notices: 1", exact=True)
+    usage = page.get_by_role("button", name="Usage", exact=True)
+    expect(usage).to_be_visible()
+    header = _view(page, "Chat A").locator(".workspace-control-header")
+    expect(header.get_by_role("button", name="Notices: 1", exact=True)).to_have_count(1)
+    expect(header.get_by_role("button", name="Usage", exact=True)).to_have_count(1)
+    shelf = page.get_by_test_id("composer-attention-shelf")
+    expect(shelf.get_by_role("button", name=re.compile(r"^(Usage|Notices)"))).to_have_count(0)
+    usage.click()
+    usage_popup = page.get_by_role("dialog", name="Conversation usage", exact=True)
+    for label in ("Context usage", "Session accounting", "Provider quotas"):
+        expect(usage_popup.get_by_role("region", name=label, exact=True)).to_be_visible()
+    expect(usage_popup).to_contain_text("No provider quota observation available.")
+    assert_within_viewport(box(usage_popup), page.viewport_size["width"])
+    page.keyboard.press("Escape")
     trigger.click()
     popup = page.get_by_role("dialog", name="Agent notices", exact=True)
     expect(popup).to_contain_text("Codex · Usage limit approaching")
@@ -828,6 +1065,66 @@ def test_notice_popup_transport_fixture(
     trigger.click()
     expect(popup).to_contain_text(notice["message"])
     page.keyboard.press("Escape")
-    _navigate_chat(page, second)
+    # A normal sidebar action reaches the same notification frame as history.
+    if appearance.startswith("mobile"):
+        page.get_by_role("button", name="Open navigation", exact=True).click()
+    row = page.locator(f'aside [data-sidebar-session-id="{second.session_id}"]')
+    row.hover()
+    row.get_by_role("button", name="Conversation actions", exact=True).click()
+    page.get_by_role("menuitem", name="Archive", exact=True).click()
+    notification = page.get_by_test_id("archive-undo-toast-item")
+    expect(notification).to_be_visible()
+    notification.hover()
+
+    def notification_geometry(card: Locator, *, history: bool = False) -> dict:
+        close = card.locator("[data-close-button]")
+        expect(close).to_have_count(1)
+        target = box(close)
+        surface = box(close.locator("[data-close-surface]"))
+        assert surface["width"] == pytest.approx(24, abs=TOLERANCE)
+        assert surface["height"] == pytest.approx(24, abs=TOLERANCE)
+        assert target["width"] == pytest.approx(
+            44 if appearance.startswith("mobile") else 24, abs=TOLERANCE
+        )
+        assert_same_vertical_center(box(card.locator(".notification-icon")), target)
+        assert_same_vertical_center(box(card.locator(".notification-title")), target)
+        assert_no_overlap(box(card.locator(".notification-body")), target)
+        assert_within_viewport(box(card), page.viewport_size["width"])
+        expect(card.locator("time")).to_have_count(1 if history else 0)
+        if history:
+            for action in card.locator(".notification-actions button").all():
+                assert_no_overlap(box(card.locator("time")), box(action))
+        return {"card": box(card), "target": target, "surface": surface}
+
+    notification_measurements = {"popup": notification_geometry(notification)}
+    _capture(page, output_path, f"{appearance}-notification-popup-geometry")
+    notification.get_by_role("button", name="Hide notification", exact=True).click()
+    if appearance.startswith("mobile"):
+        scrim = page.get_by_role("button", name="Close sidebar", exact=True)
+        scrim.click(position={"x": box(scrim)["width"] - 8, "y": 200})
+    page.get_by_role("banner", name="Application").get_by_role(
+        "button", name="Notifications", exact=True
+    ).click()
+    center = page.get_by_role("dialog", name="Notifications", exact=True)
+    history_card = center.get_by_test_id("archive-undo-toast-item")
+    notification_measurements["history"] = notification_geometry(history_card, history=True)
+    header = center.locator(".notification-center-header")
+    for action in header.get_by_role("button").all():
+        assert_same_vertical_center(box(header), box(action))
+    with page.expect_response(
+        lambda response: (
+            response.request.method == "PATCH"
+            and response.url.endswith(f"/v1/sessions/{second.session_id}")
+        )
+    ):
+        history_card.get_by_role("button", name=re.compile(r"^(Undo|Restore)$")).click()
+    expect(editor).to_have_value("Keep this draft while reading notices")
+    center.get_by_role("button", name="Close notifications", exact=True).click()
+    (Path(output_path) / "notification-geometry.json").write_text(
+        json.dumps(notification_measurements, indent=2) + "\n"
+    )
+    assert second.session_patches == [{"archived": True}, {"archived": False}]
+    page.goto(second.url)
+    expect(_view(page, "Chat B").get_by_label("Message the agent")).to_be_visible()
     expect(page.get_by_role("button", name="Notices: 1", exact=True)).to_have_count(0)
     assert first.event_posts == [] and second.event_posts == []

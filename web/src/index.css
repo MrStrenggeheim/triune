@@ -6,6 +6,7 @@
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/geist-mono";
 @import "./themePalettes.generated.css";
+@import "./designContract.generated.css";
 
 /* Streamdown ships utility classes pre-compiled in its dist; this @source
  * pragma tells Tailwind v4 to scan those files so the classes survive the
@@ -133,13 +134,9 @@
   --color-tray: var(--tray);
   --color-foreground: var(--foreground);
   --color-background: var(--background);
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
   --radius-xl: calc(var(--radius) * 1.4);
   --radius-2xl: calc(var(--radius) * 1.8);
   --radius-3xl: calc(var(--radius) * 2.2);
-  --radius-4xl: calc(var(--radius) * 2.6);
   --shadow-composer: 0 0 12px -6px rgb(var(--ui-shadow-neutral-rgb) / 0.12);
   --shadow-composer-focus: 0 0 20px -4px rgb(var(--ui-shadow-neutral-rgb) / 0.12);
   --shadow-xs: 0 2px 8px rgb(var(--ui-shadow-neutral-rgb) / 0.04);
@@ -284,13 +281,7 @@
 
   /* Tertiary gray for lighter/disabled/placeholder text. */
   --foreground-tertiary: #a1a1aa;
-  --destructive: #c8324c;
   --destructive-foreground: #fff;
-  /* success/warning/info repointed onto the named status hues below so
-     * the ~45 existing badges/indicators adopt the brand status palette. */
-  --success: #2ea65c;
-  --warning: #d4972a;
-  --info: #3b8ff5;
   /* Session active / idle-alive blue — a deeper, saturated azure
      * that harmonizes with the brand blues (#2272b4 / #3b8ff5) and reads
      * with strong contrast on the white card surface. */
@@ -309,7 +300,6 @@
   --chart-3: #2ea65c;
   --chart-4: #d4972a;
   --chart-5: #8e99a4;
-  --radius: 0.5rem;
   --radius-otto-button: 6px;
   --radius-otto-sm: 8px;
   --radius-otto-md: 12px;
@@ -325,13 +315,7 @@
   --onboarding-modal-shadow: 0 24px 80px 8px #00000038;
   --composer-shadow: 0 0 12px -6px rgb(0 0 0 / 80%);
   --composer-shadow-focus: 0 0 14px -8px rgb(0 0 0 / 90%);
-  --destructive: #e65b77;
   --destructive-foreground: #fff;
-  /* success/warning/info repointed onto the status hues below, mirroring
-     * light mode so dark mode doesn't carry a second green/yellow/blue. */
-  --success: #2ea65c;
-  --warning: #d4972a;
-  --info: #3b8ff5;
   /* Session active / idle-alive blue, lightened for the dark glass card so
      * the small dot keeps adequate contrast against the dark canvas (the
      * light-mode #2f7fd4 reads too dim here). */
@@ -377,7 +361,7 @@
 :root:not(.dark)[data-theme],
 .dark:not([data-theme]),
 .dark[data-theme] {
-  --ring: var(--primary);
+  --ring: var(--focus-color);
   --accent: color-mix(in srgb, var(--primary) 12%, var(--background));
   --accent-foreground: var(--foreground);
   --selection-background: color-mix(in srgb, var(--primary) 18%, transparent);
@@ -391,25 +375,6 @@
   --sidebar-active: var(--accent);
   --sidebar-active-foreground: var(--foreground);
   --tag-pink: color-mix(in srgb, var(--primary) 12%, transparent);
-  --workspace-content: #ffffff;
-  --workspace-chrome: color-mix(in srgb, var(--brand-accent) 10%, var(--workspace-content));
-  --workspace-selected: color-mix(in srgb, var(--brand-accent) 28%, var(--workspace-content));
-  --workspace-appbar: var(--workspace-selected);
-  --workspace-hover-on-content: color-mix(
-    in srgb,
-    var(--brand-accent) 8%,
-    var(--workspace-content)
-  );
-  --workspace-hover-on-chrome: color-mix(in srgb, var(--foreground) 6%, var(--workspace-chrome));
-  --primary-hover: color-mix(in srgb, var(--primary) 95%, black);
-  --primary-active: color-mix(in srgb, var(--primary) 90%, black);
-  --secondary-hover: color-mix(in srgb, var(--secondary-foreground) 6%, var(--secondary));
-  --secondary-active: color-mix(in srgb, var(--secondary-foreground) 10%, var(--secondary));
-}
-
-.dark:not([data-theme]),
-.dark[data-theme] {
-  --workspace-content: #18181b;
 }
 
 /* Main-sidebar item labels use the same text-ui semantic step as Appearance
@@ -1326,6 +1291,22 @@ html[data-electron-mac] .breadcrumb-folder {
   ::selection {
     background: var(--selection-background);
     color: var(--selection-foreground);
+  }
+}
+
+.close-control-button {
+  min-inline-size: 24px;
+  min-block-size: 24px;
+}
+@media (any-pointer: coarse) {
+  .close-control-button {
+    min-inline-size: 44px;
+    min-block-size: 44px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-close-surface] {
+    transition: none;
   }
 }
 

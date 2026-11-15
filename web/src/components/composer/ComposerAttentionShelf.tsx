@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ListTodoIcon, MessageCircleQuestionMarkIcon, ShieldCheckIcon } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
-import { useConversationChatStore, useConversationChatVisible } from "@/workbench/ScopedChatStore";
+import { useConversationChatStore } from "@/workbench/ScopedChatStore";
 import type { ElicitationBlock } from "@/lib/blocks";
 import { castAskUserQuestionPayload, parseAskUserQuestionPreview } from "@/lib/askUserQuestion";
 import { ElicitationCard } from "@/components/blocks/ApprovalCard";
@@ -16,9 +16,6 @@ import { COMPOSER_WORKSPACE_COLLAPSED_LABEL_CLASS } from "./ChatComposer";
 import { ComposerShelf } from "./ComposerShelf";
 import { useChildSessions } from "@/hooks/useChildSessions";
 import { childStatus } from "@/shell/subagentStatus";
-import { useRuntimeNotices } from "@/hooks/useRuntimeNotices";
-import { RuntimeNoticeIndicator } from "./RuntimeNoticeIndicator";
-import { useNotificationNotice } from "@/hooks/useNotificationNotice";
 
 export function isQuestionRequest(block: ElicitationBlock): boolean {
   if (block.codexCommand || block.exitPlanMode) return false;
@@ -34,22 +31,6 @@ export function isQuestionRequest(block: ElicitationBlock): boolean {
 export function ComposerAttentionShelf() {
   const useChatStore = useConversationChatStore();
   const conversationId = useChatStore((state) => state.conversationId);
-  const visible = useConversationChatVisible();
-  const runtimeNotices = useRuntimeNotices(conversationId, visible);
-  const { error: runtimeNoticeError, refetch: refetchRuntimeNotices } = runtimeNotices;
-  const noticeError = useMemo(
-    () =>
-      visible && runtimeNoticeError
-        ? {
-            title: "Could not refresh agent notices",
-            description: "Try again to check the agent's current notices.",
-            type: "error" as const,
-            action: { label: "Retry", onClick: () => void refetchRuntimeNotices() },
-          }
-        : null,
-    [visible, runtimeNoticeError, refetchRuntimeNotices],
-  );
-  useNotificationNotice(`agent-notices:${conversationId}`, noticeError);
   const backgroundCount = useChatStore((state) => state.backgroundTaskCount);
   const { children } = useChildSessions(conversationId);
   const hasAgents = children.some((child) =>
@@ -69,10 +50,19 @@ export function ComposerAttentionShelf() {
   const completed = todos.filter((todo) => todo.status === "completed").length;
   const requests = useMemo(
     () => ({
-      questions: pending.filter(isQuestionRequest),
+      questions: [
+        ...new Map(
+          pending
+            .filter(isQuestionRequest)
+            .map((block) => [
+              `${block.targetSessionId ?? conversationId}:${block.elicitationId}`,
+              block,
+            ]),
+        ).values(),
+      ],
       approvals: pending.filter((block) => !isQuestionRequest(block)),
     }),
-    [pending],
+    [pending, conversationId],
   );
   const [open, setOpen] = useState<"questions" | "approvals" | "plan" | null>(null);
   const [mountedRequests, setMountedRequests] = useState({
@@ -90,13 +80,7 @@ export function ComposerAttentionShelf() {
     <ComposerShelf
       key={conversationId}
       retainContent={false}
-      present={
-        pending.length > 0 ||
-        todos.length > 0 ||
-        backgroundCount > 0 ||
-        hasAgents ||
-        runtimeNotices.notices.length > 0
-      }
+      present={pending.length > 0 || todos.length > 0 || backgroundCount > 0 || hasAgents}
     >
       <ComposerWorkspaceBar
         shelfInset
@@ -163,25 +147,24 @@ export function ComposerAttentionShelf() {
                     setOpen(null);
                   }}
                 >
-                  <div className="flex flex-col gap-2">
-                    {items.map((block) => (
-                      <ElicitationCard
-                        key={block.elicitationId}
-                        item={{ ...block, kind: "elicitation", itemId: block.ctx.itemId }}
-                        className="rounded-none border-0 p-1 shadow-none"
-                      />
-                    ))}
-                  </div>
+                  {kind === "questions" ? (
+                    <QuestionRequests items={items} />
+                  ) : (
+                    <div className="flex flex-col gap-2">
+                      {items.map((block) => (
+                        <ElicitationCard
+                          key={block.elicitationId}
+                          item={{ ...block, kind: "elicitation", itemId: block.ctx.itemId }}
+                          className="rounded-none border-0 p-1 shadow-none"
+                        />
+                      ))}
+                    </div>
+                  )}
                 </PopoverContent>
               )}
             </Popover>
           );
         })}
-        <RuntimeNoticeIndicator
-          conversationId={conversationId}
-          notices={runtimeNotices.notices}
-          onDismiss={runtimeNotices.dismiss}
-        />
         <span className="flex-1" />
         <BackgroundTaskIndicator shelf />
         <SubagentTaskIndicator conversationId={conversationId} shelf />
@@ -220,5 +203,54 @@ export function ComposerAttentionShelf() {
         )}
       </ComposerWorkspaceBar>
     </ComposerShelf>
+  );
+}
+
+/** One selector entry per real batch; only its current question is presented. */
+function QuestionRequests({ items }: { items: ElicitationBlock[] }) {
+  const [selected, setSelected] = useState(items[0]?.elicitationId);
+  const [visited, setVisited] = useState(() => new Set([items[0]?.elicitationId]));
+  const active =
+    items.find((item) => item.elicitationId === selected)?.elicitationId ?? items[0]?.elicitationId;
+  return (
+    <div className="flex min-w-0 flex-col gap-2">
+      {items.length > 1 && (
+        <nav aria-label="Question batches" className="flex min-w-0 flex-col gap-1">
+          {items.map((block) => {
+            const payload =
+              castAskUserQuestionPayload(block.askUserQuestion) ??
+              parseAskUserQuestionPreview(block.contentPreview);
+            return (
+              <Button
+                key={block.elicitationId}
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="min-w-0 justify-start"
+                aria-pressed={block.elicitationId === active}
+                onClick={() => {
+                  setSelected(block.elicitationId);
+                  setVisited((current) => new Set(current).add(block.elicitationId));
+                }}
+              >
+                <span className="min-w-0 truncate">
+                  {payload?.questions[0]?.question ?? block.message}
+                </span>
+              </Button>
+            );
+          })}
+        </nav>
+      )}
+      {items
+        .filter((block) => block.elicitationId === active || visited.has(block.elicitationId))
+        .map((block) => (
+          <div key={block.elicitationId} hidden={block.elicitationId !== active}>
+            <ElicitationCard
+              item={{ ...block, kind: "elicitation", itemId: block.ctx.itemId }}
+              className="rounded-none border-0 p-1 shadow-none"
+            />
+          </div>
+        ))}
+    </div>
   );
 }

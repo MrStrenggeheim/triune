@@ -348,6 +348,9 @@ def native_capability_evidence(
     if "managed_final_report_session" in request.fixturenames:
         (base_url, session_id), _ = request.getfixturevalue("managed_final_report_session")
         _capture_managed_boundary(base_url, session_id, evidence)
+    elif "native_capability_codex_session" in request.fixturenames:
+        base_url, session_id = request.getfixturevalue("native_capability_codex_session")
+        _capture_managed_boundary(base_url, session_id, evidence)
     (evidence / "final-requests.json").write_text(
         json.dumps(_requests(mock_llm_server_url), indent=2)
     )
@@ -441,7 +444,13 @@ def _call(tools: dict[str, dict[str, Any]], name: str, call_id: str, **arguments
 
 
 def _script(
-    mock_url: str, marker: str, calls: list[dict], done: str, *, match: str | None = None
+    mock_url: str,
+    marker: str,
+    calls: list[dict],
+    done: str,
+    *,
+    match: str | None = None,
+    model: str | None = None,
 ) -> None:
     reset_mock_llm(mock_url)
     incremental = calls[0].get("type") == "custom_tool_call"
@@ -453,6 +462,7 @@ def _script(
         # The full native user-history boundary excludes title requests when
         # incremental declarations prevent the mock's top-level tool guard.
         required_tools=[] if match else [calls[0].get("namespace", calls[0]["name"])],
+        required_model=model,
     )
 
 
@@ -514,12 +524,24 @@ def _capture(page: Page, evidence: Path, name: str) -> None:
     page.set_viewport_size({"width": 1365, "height": 1000})
 
 
-def _bootstrap(page: Page, session: tuple[str, str], mock_url: str, evidence: Path) -> tuple:
+def _bootstrap(
+    page: Page,
+    session: tuple[str, str],
+    mock_url: str,
+    evidence: Path,
+    *,
+    model: str | None = None,
+) -> tuple:
     base_url, session_id = session
     reset_mock_llm(mock_url)
     marker = f"native-shelf-{uuid.uuid4().hex}"
     configure_mock_llm(
-        mock_url, [{"text": "NATIVE_SHELF_READY"}] * 4, key=marker, match=marker, required_tools=[]
+        mock_url,
+        [{"text": "NATIVE_SHELF_READY"}] * 4,
+        key=marker,
+        match=marker,
+        required_tools=[],
+        required_model=model,
     )
     page.goto(f"{base_url}/c/{session_id}")
     _ensure_chat_view(page)
@@ -571,18 +593,79 @@ def _question_resolutions(page: Page) -> list[dict[str, Any]]:
     return resolutions
 
 
-def _navigate_question_form(page: Page, panel: Locator, response: str, title: str) -> None:
+def _question_receipt(
+    base_url: str,
+    session_id: str,
+    elicitation_id: str,
+    params: dict[str, Any],
+    action: str,
+    answers: dict[str, str],
+) -> dict[str, Any]:
+    response = httpx.get(
+        f"{base_url}/v1/sessions/{session_id}/items",
+        params={"limit": 100, "order": "asc"},
+        timeout=10,
+    )
+    response.raise_for_status()
+    receipts = [
+        item
+        for item in response.json()["data"]
+        if item.get("type") == "resource_event"
+        and item.get("resource_type") == "question_batch"
+        and item.get("resource_id") == elicitation_id
+    ]
+    assert len(receipts) == 1, receipts
+    receipt = receipts[0]
+    assert receipt["event_type"] == "session.question.answered", receipt
+    resource = receipt["resource"]
+    assert resource["version"] == 1 and resource["session_id"] == session_id, resource
+    assert resource["elicitation_id"] == elicitation_id and resource["action"] == action, resource
+    assert re.fullmatch(r"question_submission_[0-9a-f]{32}", resource["submission_id"]), resource
+    assert receipt["response_id"] == resource["submission_id"], receipt
+    assert resource["request"] == params, resource
+    expected = []
+    for question in params["ask_user_question"]["questions"]:
+        key = question["id"]
+        expected.append(
+            {
+                "id": key,
+                "question": question["question"],
+                "answered": key in answers,
+                **({"header": question["header"]} if question.get("header") else {}),
+                **({"answer": answers[key]} if key in answers else {}),
+            }
+        )
+    assert resource["questions"] == expected, resource
+    for key in ("thread_id", "turn_id", "item_id"):
+        assert resource["source"][key] == params[key], resource
+    return receipt
+
+
+def _assert_no_question_echo(base_url: str, session_id: str, resource: dict[str, Any]) -> None:
+    for item in _ordered_message_items(base_url, session_id):
+        submission = item.get("question_submission") or (item.get("communication") or {}).get(
+            "question_submission"
+        )
+        assert not (
+            submission and submission.get("elicitation_id") == resource["elicitation_id"]
+        ), item
+
+
+def _navigate_question_form(page: Page, panel: Locator, response: str) -> None:
     """Exercise the same carousel interaction on real Codex and Claude requests."""
     progress = panel.get_by_test_id("ask-user-question-progress")
     expect(progress).to_have_text("Question 1 of 2")
-    expect(progress.locator("..")).to_contain_text(title)
+    expect(panel.locator(".activity-message-header")).to_contain_text("Needs input")
+    expect(
+        panel.locator(".activity-message-body").get_by_test_id("ask-user-question-progress")
+    ).to_have_count(0)
     expect(panel.get_by_role("button", name="Previous", exact=True)).to_be_disabled()
-    expect(panel.get_by_test_id("ask-user-question-submit")).to_be_enabled()
+    expect(panel.get_by_test_id("ask-user-question-submit")).to_have_count(0)
     forward = panel.get_by_test_id("ask-user-question-next")
-    expect(forward).to_have_text("Skip")
+    expect(forward).to_have_text("Skip (0/2)")
     if response in {"full", "declined"}:
         panel.get_by_role("radio", name=re.compile(r"^Bravo\b")).check()
-        expect(forward).to_have_text("Next")
+        expect(forward).to_have_text("Next (1/2)")
     forward.click()
     expect(progress).to_have_text("Question 2 of 2")
     expect(panel.get_by_test_id("ask-user-question-submit")).to_be_enabled()
@@ -596,16 +679,60 @@ def _navigate_question_form(page: Page, panel: Locator, response: str, title: st
         "button", name="Questions: 1", exact=True
     ).click()
     expect(progress).to_have_text("Question 1 of 2")
+    page.reload()
+    _ensure_chat_view(page)
+    page.get_by_test_id("composer-attention-shelf").get_by_role(
+        "button", name="Questions: 1", exact=True
+    ).click()
+    expect(progress).to_have_text("Question 1 of 2")
     expect(panel.get_by_role("radio", name=re.compile(r"^Bravo\b"))).to_be_checked(
         checked=response in {"full", "declined"}
     )
-    expect(forward).to_have_text("Next" if response in {"full", "declined"} else "Skip")
+    answered = {"full": 2, "partial": 1, "empty": 0, "declined": 1}[response]
+    expect(forward).to_have_text(
+        f"Next ({answered}/2)" if response in {"full", "declined"} else f"Skip ({answered}/2)"
+    )
     forward.click()
     expect(panel.get_by_role("radio", name=re.compile(r"^Delta\b"))).to_be_checked(
         checked=response in {"full", "partial"}
     )
-    panel.get_by_role("button", name="Previous", exact=True).click()
-    expect(panel.get_by_test_id("ask-user-question-submit")).to_be_enabled()
+    expect(panel.get_by_test_id("ask-user-question-submit")).to_have_text(f"Submit ({answered}/2)")
+    expect(panel.get_by_test_id("ask-user-question-next")).to_have_count(0)
+
+
+def _assert_answered_question_batch(
+    page: Page, elicitation_id: str, titles: list[str], response: str
+) -> None:
+    card = page.locator(
+        f'[data-testid="approval-card"][data-elicitation-id={json.dumps(elicitation_id)}][data-state="responded"]'
+    )
+    expect(card).to_have_count(1)
+    same_batch = page.locator('[data-testid="approval-card"][data-state="responded"]').filter(
+        has_text=re.compile("|".join(re.escape(title) for title in titles))
+    )
+    expect(same_batch).to_have_count(1)
+    expect(card.locator("strong").first).to_have_text(
+        "Declined" if response == "declined" else "Answered"
+    )
+    _expand_activity(card)
+    progress = card.get_by_test_id("ask-user-question-progress")
+    previous = card.get_by_role("button", name="Previous question", exact=True)
+    if previous.is_enabled():
+        previous.click()
+    body = card.locator(".activity-message-body")
+    expect(body.get_by_test_id("ask-user-question-progress")).to_have_count(0)
+    expected = {
+        "full": ("Bravo", "Delta"),
+        "partial": ("Unanswered", "Delta"),
+        "empty": ("Unanswered", "Unanswered"),
+        "declined": ("Declined", "Declined"),
+    }[response]
+    for index, (title, answer) in enumerate(zip(titles, expected, strict=True)):
+        if index:
+            card.get_by_role("button", name="Next question", exact=True).click()
+        expect(progress).to_have_text(f"Question {index + 1} of 2")
+        expect(body.get_by_text(title, exact=True)).to_be_visible()
+        expect(body.get_by_text(answer, exact=True)).to_be_visible()
 
 
 @pytest.mark.parametrize(
@@ -637,8 +764,9 @@ def test_native_codex_capability_shelf(
     evidence = native_capability_evidence
     set_fallback_mock_llm(mock_llm_server_url, "gpt-4o", "")
     set_fallback_mock_llm(mock_llm_server_url, "gpt-6.1-sol", "")
+    native_model = "gpt-6.1-sol" if capability in {"questions", "plan"} else "gpt-4o"
     tools, bootstrap_marker = _bootstrap(
-        page, native_capability_codex_session, mock_llm_server_url, evidence
+        page, native_capability_codex_session, mock_llm_server_url, evidence, model=native_model
     )
     shelf = page.get_by_test_id("composer-attention-shelf")
     if capability == "shells":
@@ -1116,6 +1244,7 @@ def test_native_codex_capability_shelf(
             ],
             "NATIVE_QUESTION_PENDING" if asynchronous else "NATIVE_QUESTION_ANSWERED",
             match=f"{bootstrap_marker} {prompt}" if asynchronous else None,
+            model=native_model,
         )
         resolutions = _question_resolutions(page)
         _send(page, prompt)
@@ -1123,6 +1252,7 @@ def test_native_codex_capability_shelf(
         expect(questions).to_be_visible(timeout=45_000)
         pending = _pending_elicitations(base_url, session_id)
         assert len(pending) == 1, pending
+        elicitation_id = pending[0]["elicitation_id"]
         native_params = pending[0]["params"]
         assert len(native_params["ask_user_question"]["questions"]) == 2, native_params
         if asynchronous:
@@ -1146,7 +1276,7 @@ def test_native_codex_capability_shelf(
         question = page.get_by_role("dialog", name="Questions", exact=True)
         expect(question.get_by_test_id("ask-user-question-form")).to_have_count(1)
         _capture(page, evidence, "codex-pending-question")
-        _navigate_question_form(page, question, question_response, "Codex needs input")
+        _navigate_question_form(page, question, question_response)
         assert not resolutions, "Question navigation or dismissal submitted a verdict"
         assert _pending_elicitations(base_url, session_id), (
             "Navigation resolved the native request"
@@ -1158,6 +1288,7 @@ def test_native_codex_capability_shelf(
                 key=marker,
                 match=f"{bootstrap_marker} {prompt}",
                 required_tools=[],
+                required_model=native_model,
             )
         action = "decline" if question_response == "declined" else "accept"
         with page.expect_response(
@@ -1167,26 +1298,30 @@ def test_native_codex_capability_shelf(
                 and response.request.method == "POST"
             )
         ) as acknowledgement:
-            question.get_by_role(
-                "button",
-                name="Decline" if question_response == "declined" else "Submit",
-                exact=True,
-            ).click()
+            if question_response == "declined":
+                question.get_by_role("button", name="Decline", exact=True).click()
+            else:
+                question.get_by_test_id("ask-user-question-submit").click()
         assert acknowledgement.value.ok, acknowledgement.value.text()
         assert len(resolutions) == 1, resolutions
         assert resolutions[0]["body"]["action"] == action
         assert resolutions[0]["body"].get("content", {}) == answers
+        receipt = _question_receipt(
+            base_url, session_id, elicitation_id, native_params, action, answers
+        )
+        resource = receipt["resource"]
+        (evidence / "question-batch-receipt.json").write_text(json.dumps(receipt, indent=2))
         blocking_decline = not asynchronous and question_response == "declined"
         if blocking_decline:
+            poll_until(lambda: _session_snapshot(base_url, session_id)["status"] == "idle")
+            expect(page.locator(_WORKING)).to_have_count(0, timeout=30_000)
+            expect(page.get_by_placeholder("Send a message…")).to_be_editable()
             interrupted = page.get_by_test_id("assistant-interrupted-indicator")
             expect(interrupted).to_have_count(1, timeout=30_000)
             expect(
                 interrupted.locator("xpath=ancestor::*[@data-testid='message-bubble'][1]")
             ).to_have_attribute("data-message-id", f"codex_{native_params['turn_id']}")
-            expect(page.locator(_WORKING)).to_have_count(0, timeout=30_000)
-            expect(page.get_by_placeholder("Send a message…")).to_be_editable()
             expect(page.locator(_ASSISTANT, has_text="NATIVE_QUESTION_ANSWERED")).to_have_count(0)
-            poll_until(lambda: _session_snapshot(base_url, session_id)["status"] == "idle")
             assert not any(
                 item.get("call_id") == "shelf_question"
                 and item.get("type") in {"function_call_output", "custom_tool_call_output"}
@@ -1221,21 +1356,15 @@ def test_native_codex_capability_shelf(
                     if item.get("role") == "user" and _item_text(item) == expected_text
                 ]
                 assert len(native_answers) == 1, native_answers
-                poll_until(
-                    lambda: any(
-                        item.get("role") == "user" and _item_text(item) == expected_text
-                        for item in _ordered_message_items(base_url, session_id)
-                    )
-                )
-                saved = [
+                assert not [
                     item
                     for item in _ordered_message_items(base_url, session_id)
                     if item.get("role") == "user" and _item_text(item) == expected_text
                 ]
-                assert len(saved) == 1, saved
-                assert saved[0].get("user_authored") is True, saved[0]
-                assert saved[0].get("communication") is None, saved[0]
-                expect(page.locator(_USER).filter(has_text=expected_text)).to_have_count(1)
+                assert resource["source"]["native_client_id"].startswith(
+                    "omnigent-codex-question:"
+                ), resource
+                expect(page.locator(_USER).filter(has_text=expected_text)).to_have_count(0)
             else:
                 label = (
                     "Question request declined"
@@ -1243,38 +1372,30 @@ def test_native_codex_capability_shelf(
                     else "Questions submitted without answers"
                 )
 
-                def controls():
-                    return [
-                        item
-                        for item in _ordered_message_items(base_url, session_id)
-                        if (item.get("communication") or {}).get("kind") == "system"
-                        and (item.get("communication") or {}).get("source_title") == label
-                    ]
-
-                poll_until(
-                    lambda: any(
-                        item["communication"].get("delivery_state") == "confirmed"
-                        and item["communication"].get("receipt") == "transcript"
-                        for item in controls()
-                    )
-                )
-                saved = controls()
-                assert len(saved) == 1, saved
-                origin = saved[0]["communication"]
-                assert re.fullmatch(r"[0-9a-f]{32}", origin["message_id"]), origin
-                assert saved[0]["id"] == origin["message_id"], saved[0]
-                assert origin["source_agent_name"] == "System", origin
-                assert origin["delivery_state"] == "confirmed", origin
-                assert origin["receipt"] == "transcript", origin
-                assert origin["destination_conversation_id"] == session_id, origin
-                assert saved[0].get("user_authored") is not True, saved[0]
-                event = json.loads(_item_text(saved[0]))
-                assert event == {
+                framework_id = resource["source"]["framework_input_id"]
+                assert re.fullmatch(r"[0-9a-f]{32}", framework_id), resource
+                event = {
                     "event": "question_submission",
                     "item_id": native_params["item_id"],
                     "action": action,
                     "answers": {},
-                }, event
+                }
+                saved_controls = [
+                    item
+                    for item in _ordered_message_items(base_url, session_id)
+                    if item["id"] == framework_id
+                ]
+                assert len(saved_controls) == 1, saved_controls
+                control = saved_controls[0]
+                origin = control["communication"]
+                assert origin["kind"] == "system" and origin["source_title"] == label, origin
+                assert origin["message_id"] == framework_id, origin
+                assert origin["source_agent_name"] == "System", origin
+                assert origin["destination_conversation_id"] == session_id, origin
+                assert origin["delivery_state"] == "confirmed", origin
+                assert origin["receipt"] == "transcript", origin
+                assert control.get("user_authored") is not True, control
+                assert json.loads(_item_text(control)) == event, control
                 native_request = next(
                     request
                     for request in reversed(requests)
@@ -1282,7 +1403,7 @@ def test_native_codex_capability_shelf(
                     == native_params["thread_id"]
                     and any(
                         item.get("role") == "user"
-                        and f"event_id={origin['message_id']}" in _item_text(item)
+                        and f"event_id={framework_id}" in _item_text(item)
                         for item in request.get("input", [])
                     )
                 )
@@ -1290,15 +1411,16 @@ def test_native_codex_capability_shelf(
                     item
                     for item in native_request["input"]
                     if item.get("role") == "user"
-                    and f"event_id={origin['message_id']}" in _item_text(item)
+                    and f"event_id={framework_id}" in _item_text(item)
                 ]
                 assert len(native_controls) == 1, native_controls
                 assert "not authored by the user" in _item_text(native_controls[0])
                 assert json.dumps(event) in _item_text(native_controls[0])
                 expect(page.get_by_test_id("system-message").filter(has_text=label)).to_have_count(
-                    1
+                    0
                 )
                 expect(page.locator(_USER).filter(has_text="question_submission")).to_have_count(0)
+            _assert_no_question_echo(base_url, session_id, resource)
         elif not blocking_decline:
             output = json.loads(_output(mock_llm_server_url, "shelf_question"))
             assert output == {
@@ -1312,26 +1434,68 @@ def test_native_codex_capability_shelf(
                 "Keep this draft while answering the native async question."
             )
             if answers:
-                expect(page.locator(_USER).filter(has_text=expected_text)).to_have_count(1)
-                reloaded = [
+                expect(page.locator(_USER).filter(has_text=expected_text)).to_have_count(0)
+                assert not [
                     item
                     for item in _ordered_message_items(base_url, session_id)
                     if item.get("role") == "user" and _item_text(item) == expected_text
                 ]
-                assert len(reloaded) == 1 and reloaded[0]["id"] == saved[0]["id"], reloaded
-                assert reloaded[0].get("user_authored") is True, reloaded
             else:
-                reloaded = controls()
-                assert len(reloaded) == 1 and reloaded[0]["id"] == saved[0]["id"], reloaded
-                assert reloaded[0]["communication"] == origin, reloaded
+                assert [
+                    item
+                    for item in _ordered_message_items(base_url, session_id)
+                    if item["id"] == framework_id
+                ] == saved_controls
                 expect(page.get_by_test_id("system-message").filter(has_text=label)).to_have_count(
-                    1
+                    0
                 )
                 expect(page.locator(_USER).filter(has_text="question_submission")).to_have_count(0)
+            _assert_no_question_echo(base_url, session_id, resource)
+        assert (
+            _question_receipt(base_url, session_id, elicitation_id, native_params, action, answers)
+            == receipt
+        )
+        _assert_answered_question_batch(page, elicitation_id, titles, question_response)
         assert not _pending_elicitations(base_url, session_id), (
             "Native request remained parked after the model acknowledged its response"
         )
         assert len(resolutions) == 1, resolutions
+        if asynchronous and question_response == "full":
+            configure_mock_llm(
+                mock_llm_server_url,
+                [{"text": "NATIVE_GENUINE_ANSWER_TEXT_RECEIVED"}],
+                key=marker,
+                match=f"{bootstrap_marker} {prompt}",
+                required_tools=[],
+                required_model=native_model,
+            )
+            _send(page, expected_text)
+            _settled(page, "NATIVE_GENUINE_ANSWER_TEXT_RECEIVED")
+            saved_human = [
+                item
+                for item in _ordered_message_items(base_url, session_id)
+                if item.get("role") == "user" and _item_text(item) == expected_text
+            ]
+            assert len(saved_human) == 1 and saved_human[0].get("user_authored") is True, (
+                saved_human
+            )
+            assert not saved_human[0].get("question_submission"), saved_human
+            page.reload()
+            _ensure_chat_view(page)
+            expect(page.locator(_USER).filter(has_text=expected_text)).to_have_count(1)
+            assert [
+                item
+                for item in _ordered_message_items(base_url, session_id)
+                if item.get("role") == "user" and _item_text(item) == expected_text
+            ] == saved_human
+            _assert_no_question_echo(base_url, session_id, resource)
+            assert (
+                _question_receipt(
+                    base_url, session_id, elicitation_id, native_params, action, answers
+                )
+                == receipt
+            )
+            _assert_answered_question_batch(page, elicitation_id, titles, question_response)
         (evidence / "question-requests.json").write_text(
             json.dumps(_requests(mock_llm_server_url), indent=2)
         )
@@ -1674,7 +1838,8 @@ def test_native_claude_capability_shelf(
     question = page.get_by_role("dialog", name="Questions", exact=True)
     expect(question.get_by_test_id("ask-user-question-form")).to_have_count(1)
     _capture(page, evidence, "native-question")
-    _navigate_question_form(page, question, question_response, "Claude has questions")
+    elicitation_id = _pending_elicitations(base_url, session_id)[0]["elicitation_id"]
+    _navigate_question_form(page, question, question_response)
     assert not resolutions, "Question navigation or dismissal submitted a verdict"
     assert _pending_elicitations(base_url, session_id), "Navigation resolved the native request"
     with page.expect_response(
@@ -1684,9 +1849,10 @@ def test_native_claude_capability_shelf(
             and response.request.method == "POST"
         )
     ) as acknowledgement:
-        question.get_by_role(
-            "button", name="Decline" if question_response == "declined" else "Submit", exact=True
-        ).click()
+        if question_response == "declined":
+            question.get_by_role("button", name="Decline", exact=True).click()
+        else:
+            question.get_by_test_id("ask-user-question-submit").click()
     assert acknowledgement.value.ok, acknowledgement.value.text()
     assert len(resolutions) == 1, resolutions
     assert resolutions[0]["body"]["action"] == (
@@ -1707,6 +1873,7 @@ def test_native_claude_capability_shelf(
     page.reload()
     _ensure_chat_view(page)
     expect(questions).to_have_count(0)
+    _assert_answered_question_batch(page, elicitation_id, titles, question_response)
     assert not _pending_elicitations(base_url, session_id), (
         "Claude left its question pending after the native tool result"
     )

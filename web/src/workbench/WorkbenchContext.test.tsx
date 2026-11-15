@@ -62,3 +62,34 @@ it("keeps navigation consumers isolated, updates selection and dispatches old ac
   expect(screen.getByRole("status")).toHaveTextContent("b:a,b,c");
   expect(navigationRender).toHaveBeenCalledOnce();
 });
+
+it.each(["ordinary", "native"])(
+  "keeps the parent layout owner when an embedded %s child receives focus",
+  (childKind) => {
+    const Selection = () => {
+      const workbench = useWorkbench();
+      return (
+        <output>
+          {`${workbench?.layoutOwnerConversationId}:${workbench?.focusedConversationId}`}
+        </output>
+      );
+    };
+    const renderSelection = (focusedConversationId: string) => (
+      <WorkbenchProvider
+        value={{
+          focusedConversationId,
+          layoutOwnerConversationId: "parent",
+          openConversation: vi.fn(),
+          openView: vi.fn(),
+        }}
+      >
+        <Selection />
+      </WorkbenchProvider>
+    );
+    const { rerender } = render(renderSelection("parent"));
+
+    rerender(renderSelection(`${childKind}-child`));
+
+    expect(screen.getByRole("status")).toHaveTextContent(`parent:${childKind}-child`);
+  },
+);

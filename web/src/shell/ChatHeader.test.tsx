@@ -697,7 +697,7 @@ describe("ChatHeader — floating mobile controls", () => {
         expect(surface).toHaveClass(
           "size-6",
           "pointer-events-none",
-          "group-hover/button:bg-muted",
+          "group-hover/button:bg-[var(--workspace-control-hover)]",
           "group-focus-visible/button:ring-3",
         );
         expect(surface.querySelector("svg")).toHaveClass("size-4");

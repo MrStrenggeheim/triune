@@ -184,3 +184,21 @@ it("retains a resource summary during expansion", () => {
   expect(screen.getByText("Resource preview")).toBeVisible();
   expect(screen.getByText("Resource output")).toBeVisible();
 });
+
+it("retains a form's DOM and draft when a message is folded", () => {
+  render(
+    <ActivityRow presentation="message" keepMounted icon={<span>Icon</span>} title="Questions">
+      <textarea aria-label="Retained answer" defaultValue="" />
+    </ActivityRow>,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Expand activity" }));
+  const input = screen.getByRole("textbox", { name: "Retained answer" });
+  fireEvent.change(input, { target: { value: "Keep this draft" } });
+  const header = input.closest(".activity-row")!.querySelector(".activity-message-header");
+  fireEvent.click(screen.getByRole("button", { name: "Collapse activity" }));
+  expect(input).not.toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Expand activity" }));
+  expect(screen.getByRole("textbox", { name: "Retained answer" })).toBe(input);
+  expect(input).toHaveValue("Keep this draft");
+  expect(input.closest(".activity-row")!.querySelector(".activity-message-header")).toBe(header);
+});

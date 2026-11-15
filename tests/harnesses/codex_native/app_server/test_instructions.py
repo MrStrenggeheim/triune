@@ -654,3 +654,40 @@ def test_routed_spawn_note_appends_then_restores_the_user_base(tmp_path: Path) -
 
     resumed = tomllib.loads(config_path.read_text(encoding="utf-8"))
     assert resumed["developer_instructions"] == "Keep user guidance."
+
+
+def test_real_startup_builder_appends_ui_contract_and_preserves_author_config(
+    tmp_path: Path,
+) -> None:
+    """Managed and CLI callers share this final app-server startup owner."""
+    from omnigent.runtime.ui_contract import UI_CONTRACT_VERSION
+
+    home = tmp_path / "codex-home"
+    home.mkdir()
+    config = home / "config.toml"
+    config.write_text('developer_instructions = "USER BASE"\n', encoding="utf-8")
+    server = app_server.build_codex_native_server(
+        socket_path=tmp_path / "codex.sock",
+        codex_home=home,
+        cwd=tmp_path,
+        model=None,
+        profile=None,
+        bridge_dir=tmp_path / "bridge",
+        codex_path="/mock/codex",
+        session_id="chat-1",
+        ap_server_url="https://example.test/prefix",
+        developer_instructions="  AUTHOR  ",
+    )
+    assert server.developer_instructions is not None
+    assert server.developer_instructions.startswith("  AUTHOR  \n\n")
+    assert f"Triune UI contract {UI_CONTRACT_VERSION}" in server.developer_instructions
+    assert "--session chat-1 --server https://example.test/prefix" in server.developer_instructions
+    _sync_codex_developer_instructions(home, server.developer_instructions)
+    _sync_codex_developer_instructions(home, server.developer_instructions)
+    captured = tomllib.loads(config.read_text(encoding="utf-8"))["developer_instructions"]
+    assert captured.startswith("USER BASE\n\n")
+    assert captured.count(f"Triune UI contract {UI_CONTRACT_VERSION}") == 1
+    _sync_codex_developer_instructions(home, None)
+    assert (
+        tomllib.loads(config.read_text(encoding="utf-8"))["developer_instructions"] == "USER BASE"
+    )

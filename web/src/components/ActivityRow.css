@@ -1,0 +1,65 @@
+/* Triune additions: PolyForm Noncommercial 1.0.0; see LICENSING.md.
+ * Required Notice: Copyright 2026 MrStrenggeheim. Triune (https://github.com/MrStrenggeheim/triune).
+ */
+.activity-row--message {
+  container-type: inline-size;
+}
+
+.activity-message-text {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  block-size: calc(max(1lh, 20px) + 1rem);
+}
+
+.activity-message-text > :first-child {
+  flex-shrink: 0;
+}
+
+.activity-message-body {
+  padding-inline-start: calc(28px + 10px);
+  overflow-wrap: anywhere;
+}
+
+.activity-message-body[hidden] {
+  display: none;
+}
+
+@media (max-width: 767.98px), (any-pointer: coarse) {
+  .activity-message-body {
+    padding-inline-start: calc(4px + 32px + 6px);
+  }
+}
+
+@container (max-width: 480px) {
+  .activity-message-header {
+    display: grid;
+    grid-template-columns: 32px minmax(0, 1fr);
+    column-gap: 6px;
+    row-gap: 0;
+    align-items: center;
+  }
+
+  .activity-message-header > .resource-icon {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .activity-message-text {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .activity-message-header > .activity-status-slot {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    justify-self: start;
+  }
+
+  .activity-message-header > .resource-actions {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    justify-self: end;
+    gap: 0;
+  }
+}

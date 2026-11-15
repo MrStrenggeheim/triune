@@ -3,6 +3,8 @@ import { getEmbedRoot } from "@/lib/host";
 import type { ComponentProps, ReactNode, RefObject } from "react";
 import { cloneElement, isValidElement, useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useResolvedThemeMode } from "@/components/theme/useResolvedThemeMode";
+import { useMermaidAppearance } from "./mermaidTheme";
 
 // Streamdown portals fullscreen to document.body, outside the embed's scoped CSS.
 export const MERMAID_NO_FULLSCREEN = { fullscreen: false } as const;
@@ -71,7 +73,7 @@ function MermaidFullscreen({ blockRef }: { blockRef: RefObject<HTMLDivElement | 
               <FullscreenIcon />
             </Button>
             <div
-              className="flex size-full items-center justify-center p-8 [&>svg]:h-auto [&>svg]:max-h-full [&>svg]:w-auto [&>svg]:max-w-full"
+              className="flex size-full overflow-auto p-8 [&>svg]:m-auto [&>svg]:h-auto [&>svg]:max-w-none [&>svg]:shrink-0"
               // The cloned SVG is Mermaid's own trusted, already-sanitized render.
               dangerouslySetInnerHTML={{ __html: svgMarkup }}
               onClick={(e) => {
@@ -105,9 +107,14 @@ function MermaidFullscreen({ blockRef }: { blockRef: RefObject<HTMLDivElement | 
 // The .chat-mermaid rule reserves a slot beside Streamdown's download/copy toolbar.
 export function MermaidBlock({ block }: { block: ReactNode }) {
   const blockRef = useRef<HTMLDivElement>(null);
+  const mode = useResolvedThemeMode();
+  const appearance = useMermaidAppearance(mode);
   return (
-    <div ref={blockRef} className="chat-mermaid relative">
-      {block}
+    <div
+      ref={blockRef}
+      className="chat-mermaid relative [&_[data-streamdown=mermaid]_svg]:shrink-0"
+    >
+      {isValidElement(block) ? cloneElement(block, { key: appearance.key }) : block}
       <div className="absolute top-2 right-2 z-20 flex items-center rounded-md border border-sidebar bg-sidebar/80 px-1.5 py-1 supports-[backdrop-filter]:bg-sidebar/70 supports-[backdrop-filter]:backdrop-blur">
         <MermaidFullscreen blockRef={blockRef} />
       </div>

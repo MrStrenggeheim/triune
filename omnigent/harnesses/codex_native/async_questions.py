@@ -19,6 +19,18 @@ from omnigent.native.communication import NATIVE_INPUT_CLIENT_ID_PREFIX
 from omnigent.util.json_types import JsonObject
 
 
+def async_question_answer_client_id(thread_id: str, item_id: str) -> str:
+    """Return the native replay identity for this exact async question item."""
+    digest = hashlib.sha256(f"{thread_id}:{item_id}".encode()).hexdigest()
+    return f"omnigent-codex-question:{digest}"
+
+
+def async_question_framework_input_id(thread_id: str, item_id: str) -> str:
+    """Return the registered System identity for an empty or declined batch."""
+    answer_id = async_question_answer_client_id(thread_id, item_id)
+    return uuid.uuid5(uuid.NAMESPACE_URL, f"{answer_id}:system").hex
+
+
 def async_question_params(params: JsonObject) -> JsonObject | None:
     """Normalize observed async message fields into the shared question form."""
     item = params.get("item")
@@ -82,9 +94,8 @@ async def submit_async_question_answer(
     item_id = item.get("id") if isinstance(item, dict) else None
     if not isinstance(thread_id, str) or not thread_id or not isinstance(item_id, str):
         raise ValueError("Native async question is missing thread or item identity")
-    digest = hashlib.sha256(f"{thread_id}:{item_id}".encode()).hexdigest()
-    answer_id = f"omnigent-codex-question:{digest}"
-    framework_id = uuid.uuid5(uuid.NAMESPACE_URL, f"{answer_id}:system").hex
+    answer_id = async_question_answer_client_id(thread_id, item_id)
+    framework_id = async_question_framework_input_id(thread_id, item_id)
     framework_client_id = f"{NATIVE_INPUT_CLIENT_ID_PREFIX}{framework_id}"
     client_id = framework_client_id if generated else answer_id
     replay_ids = {answer_id, framework_client_id}

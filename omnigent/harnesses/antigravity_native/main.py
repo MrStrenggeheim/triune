@@ -153,6 +153,7 @@ from omnigent.native.native_terminal import (
 from omnigent.native.native_terminal import (
     terminal_attach_url as _attach_url,
 )
+from omnigent.runtime.ui_contract import append_ui_contract
 
 _logger = logging.getLogger(__name__)
 
@@ -164,6 +165,37 @@ _SESSION_LABELS = {
     _UI_MODE_LABEL_KEY: _UI_MODE_TERMINAL_VALUE,
     _WRAPPER_LABEL_KEY: _WRAPPER_LABEL_VALUE,
 }
+
+_AGY_GLOBAL_RULE_FILE = "GEMINI.md"
+
+
+def write_antigravity_ui_contract(
+    bridge_dir: Path,
+    *,
+    session_id: str | None = None,
+    server_url: str | None = None,
+    author_instructions: str | None = None,
+) -> Path:
+    """Write Triune's static UI contract into agy's isolated global rule."""
+    rule_path = agy_gemini_dir(bridge_dir) / _AGY_GLOBAL_RULE_FILE
+    author_rule_path = Path.home() / ".gemini" / _AGY_GLOBAL_RULE_FILE
+    try:
+        author_text = author_rule_path.read_text(encoding="utf-8")
+    except OSError:
+        author_text = ""
+    sections = [author_text.rstrip()] if author_text.strip() else []
+    sections.append(
+        append_ui_contract(
+            author_instructions,
+            "antigravity-native",
+            tools=(),
+            session_id=session_id,
+            server_url=server_url,
+        ).rstrip()
+    )
+    rule_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    rule_path.write_text("\n\n".join(sections) + "\n", encoding="utf-8")
+    return rule_path
 
 
 @dataclass(frozen=True)
@@ -1018,6 +1050,11 @@ async def _launch_and_record(
             trusted_workspace=Path.cwd().resolve(),
         ),
     }
+    await asyncio.to_thread(
+        write_antigravity_ui_contract,
+        bridge_dir,
+        session_id=session_id,
+    )
     # agy's feedback survey shares its "esc to cancel" footer with the running-turn
     # marker, so a web turn injected into this CLI-launched session while the survey
     # is up would be silently lost (#1494). Disable it in the isolated dir agy reads

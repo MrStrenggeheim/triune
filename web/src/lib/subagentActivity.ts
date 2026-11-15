@@ -49,11 +49,20 @@ function itemRef(value: unknown): SubagentItemRef | null {
   return conversationId && itemId ? { conversationId, itemId } : null;
 }
 
+export function nativeSubagentName(
+  labels?: Readonly<Record<string, unknown>> | null,
+): string | null {
+  return (
+    text(labels?.["omnigent.codex_native.agent_nickname"]) ??
+    text(labels?.["omnigent.claude_native.agent_name"])
+  );
+}
+
 /** Agent identity and task text are separate; native tool labels can contain task text. */
 export function subagentName(child: ChildSessionInfo): string {
   const labels = child.labels;
   const title = text(child.title);
-  const task = subagentTaskDescription(child);
+  const task = rawSubagentTaskDescription(child);
   const tool = text(child.tool);
   const titleAgent =
     title?.includes(":") && title !== task
@@ -62,8 +71,7 @@ export function subagentName(child: ChildSessionInfo): string {
         : title.slice(0, title.lastIndexOf(":"))
       : null;
   return (
-    text(labels?.["omnigent.codex_native.agent_nickname"]) ??
-    text(labels?.["omnigent.claude_native.agent_name"]) ??
+    nativeSubagentName(labels) ??
     text(child.agent_name) ??
     text(labels?.["omnigent.codex_native.agent_role"]) ??
     text(labels?.["omnigent.antigravity_native.agent_role"]) ??
@@ -73,7 +81,7 @@ export function subagentName(child: ChildSessionInfo): string {
   );
 }
 
-export function subagentTaskDescription(child: ChildSessionInfo): string | null {
+function rawSubagentTaskDescription(child: ChildSessionInfo): string | null {
   return (
     text(child.labels?.["omnigent.subagent.task_summary"]) ??
     text(child.labels?.["omnigent.codex_native.task_name"]) ??
@@ -82,6 +90,34 @@ export function subagentTaskDescription(child: ChildSessionInfo): string | null 
     text(child.labels?.["omnigent.codex_native.prompt"]) ??
     text(child.labels?.["omnigent.claude_native.prompt"])
   );
+}
+
+/** Display identifiers as labels without changing saved task input or acronyms. */
+export function formatSubagentTask(value: string): string {
+  const label = value.trim();
+  const words = /^[\p{L}\p{N}]+(?:_[\p{L}\p{N}]+)+$/u.test(label)
+    ? label
+        .split("_")
+        .map((word) => (word === word.toUpperCase() ? word : word.toLowerCase()))
+        .join(" ")
+    : label;
+  return words.replace(/^\p{Ll}/u, (initial) => initial.toUpperCase());
+}
+
+export function subagentTaskDescription(child: ChildSessionInfo): string | null {
+  const task = rawSubagentTaskDescription(child);
+  return task ? formatSubagentTask(task) : null;
+}
+
+/** Enrich a captured dispatch only with the same dispatch's authoritative native name. */
+export function subagentActivityName(activity: SubagentActivity, child?: ChildSessionInfo): string {
+  const recorded = activity.agentName ?? activity.agentRole;
+  if (activity.agentNameSource === "native" && activity.agentName) return activity.agentName;
+  if (child && subagentMatchesChild(activity, child)) {
+    const native = nativeSubagentName(child.labels);
+    return native ?? recorded ?? subagentName(child);
+  }
+  return recorded ?? "Agent";
 }
 
 export function subagentEventStatus(activity: SubagentActivity): AgentStatus {

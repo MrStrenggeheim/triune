@@ -1,3 +1,4 @@
+# Modified for Triune.
 """Pure pub-sub in-process live stream for real-time SSE delivery.
 
 This module is a fan-out broadcaster keyed by ``conversation_id``.
@@ -30,6 +31,7 @@ import asyncio
 import contextlib
 import logging
 import threading
+import weakref
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
 from typing import Any
 
@@ -68,6 +70,8 @@ _subscribers: WorkspaceScopedCache[
     set[tuple[asyncio.Queue[dict[str, Any] | object], asyncio.AbstractEventLoop]],
 ] = WorkspaceScopedCache()
 _lock = threading.Lock()
+# Queue objects have process-unique identity and disappear with their subscriptions.
+_internal_queues: weakref.WeakSet[asyncio.Queue[Any]] = weakref.WeakSet()
 
 
 def _enqueue_or_overflow(
@@ -109,7 +113,7 @@ def _schedule_delivery(
             if not subs:
                 _subscribers.pop(conversation_id, None)
             return False
-        return True
+        return queue not in _internal_queues
 
 
 # ── SSE-event debug logging (ZeroBus table and/or local file; see
@@ -368,7 +372,9 @@ def has_subscribers(conversation_id: str) -> bool:
     :returns: ``True`` when at least one subscriber slot is registered.
     """
     with _lock:
-        return bool(_subscribers.get(conversation_id))
+        return any(
+            queue not in _internal_queues for queue, _ in _subscribers.get(conversation_id, ())
+        )
 
 
 def close(conversation_id: str) -> None:
@@ -411,6 +417,7 @@ def shutdown_all() -> None:
 async def subscribe(
     conversation_id: str,
     *,
+    internal: bool = False,
     heartbeat_interval_s: float | None = None,
     ready_event: dict[str, Any] | None = None,
     pre_ready_snapshot: Callable[[], Iterable[dict[str, Any]]] | None = None,
@@ -453,6 +460,8 @@ async def subscribe(
         own independent cadence. ``None`` (default) preserves the
         pure event-driven shape used by harness-internal
         consumers that don't need keepalive.
+    :param internal: Receive events without advertising a browser listener through
+        has_subscribers or publish's recipient count.
     :param ready_event: Optional event yielded immediately after
         this subscriber's slot is registered, e.g.
         ``{"type": "session.heartbeat"}``. This gives HTTP/SSE
@@ -491,6 +500,8 @@ async def subscribe(
     entry = (queue, loop)
     with _lock:
         _subscribers.setdefault(conversation_id, set()).add(entry)
+        if internal:
+            _internal_queues.add(queue)
     # Read the pre-ready snapshot synchronously here — after slot
     # registration, before the ``yield`` below suspends. On the Omnigent event
     # loop (where the relay calls ``publish``) nothing runs in between, so
@@ -557,6 +568,7 @@ async def subscribe(
             yield item
     finally:
         with _lock:
+            _internal_queues.discard(queue)
             subs = _subscribers.get(conversation_id)
             if subs is not None:
                 subs.discard(entry)

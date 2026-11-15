@@ -295,6 +295,7 @@ _BUILTIN_REGISTRY: dict[str, _BuiltinFactory | None] = {
     "browser_type": None,
     "browser_screenshot": None,
     "ui_open_file": None,
+    "sys_ui_capabilities": None,
 }
 
 # Hindsight long-term memory (optional ``hindsight`` extra). Registered only

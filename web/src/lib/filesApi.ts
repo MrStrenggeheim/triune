@@ -9,12 +9,16 @@ export interface UploadedFile {
   created_at: number;
 }
 
-export async function uploadFile(sessionId: string, file: File): Promise<UploadedFile> {
+export async function uploadFile(
+  sessionId: string,
+  file: File,
+  options: { privateQueue?: boolean } = {},
+): Promise<UploadedFile> {
   const form = new FormData();
   const filename = attachmentFilename(file);
   form.append("file", file, filename);
   const res = await authenticatedFetch(
-    `/v1/sessions/${encodeURIComponent(sessionId)}/resources/files?presentation=true`,
+    `/v1/sessions/${encodeURIComponent(sessionId)}/resources/files?presentation=true${options.privateQueue ? "&private_queue=true" : ""}`,
     {
       method: "POST",
       body: form,

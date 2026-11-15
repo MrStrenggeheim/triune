@@ -6000,6 +6000,153 @@ describe("Composer sub-agent tray", () => {
   });
 });
 
+describe("Composer queue acceptance", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    clearSessionDrafts();
+    setComposerState({ conversationId: "conv_acceptance", skills: [] });
+  });
+
+  afterEach(() => {
+    cleanup();
+    clearSessionDrafts();
+    vi.restoreAllMocks();
+  });
+
+  function pendingSend() {
+    let resolve!: (accepted: boolean) => void;
+    let reject!: (error: Error) => void;
+    const acceptance = new Promise<boolean>((accept, fail) => {
+      resolve = accept;
+      reject = fail;
+    });
+    return { onSend: vi.fn(() => acceptance), resolve, reject };
+  }
+
+  function attach(file: File) {
+    fireEvent.change(document.querySelector('input[type="file"]') as HTMLInputElement, {
+      target: { files: [file] },
+    });
+  }
+
+  it.each([false, true])(
+    "retains the payload until acceptance and clears after rerender (files only: %s)",
+    async (filesOnly) => {
+      const pending = pendingSend();
+      const props = composerProps({ onSend: pending.onSend });
+      const view = render(<Composer {...props} />);
+      const file = new File(["exact bytes"], "context.txt", { type: "text/plain" });
+      attach(file);
+      if (!filesOnly) fireEvent.change(textarea(), { target: { value: "queued follow-up" } });
+      fireEvent.keyDown(textarea(), { key: "Enter" });
+      fireEvent.keyDown(textarea(), { key: "Enter" });
+      expect(pending.onSend).toHaveBeenCalledExactlyOnceWith(filesOnly ? "" : "queued follow-up", [
+        file,
+      ]);
+      expect(screen.getByText("context.txt")).toBeTruthy();
+      expect(getSessionDraft("conv_acceptance")?.files).toEqual([file]);
+      view.rerender(<Composer {...props} isWorking />);
+      await act(async () => pending.resolve(true));
+      expect(textarea()).toHaveValue("");
+      expect(screen.queryByText("context.txt")).toBeNull();
+      expect(getSessionDraft("conv_acceptance")).toBeUndefined();
+    },
+  );
+
+  it.each(["refused", "rejected"])(
+    "retains the complete draft when acceptance is %s",
+    async (failure) => {
+      const pending = pendingSend();
+      vi.spyOn(toast, "error").mockReturnValue("queue-failure");
+      render(<Composer {...composerProps({ onSend: pending.onSend })} />);
+      const file = new File(["retry bytes"], "retry.txt", { type: "text/plain" });
+      attach(file);
+      fireEvent.change(textarea(), { target: { value: "keep this draft" } });
+      fireEvent.keyDown(textarea(), { key: "Enter" });
+      await act(async () => {
+        if (failure === "refused") pending.resolve(false);
+        else pending.reject(new Error("storage unavailable"));
+      });
+      expect(textarea()).toHaveValue("keep this draft");
+      expect(screen.getByText("retry.txt")).toBeTruthy();
+      expect(getSessionDraft("conv_acceptance")).toMatchObject({
+        text: "keep this draft",
+        files: [file],
+      });
+      fireEvent.keyDown(textarea(), { key: "Enter" });
+      expect(pending.onSend).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it.each(["text", "file", "mention"])(
+    "preserves a newer %s edit after acceptance",
+    async (edit) => {
+      const pending = pendingSend();
+      render(<Composer {...composerProps({ onSend: pending.onSend })} />);
+      fireEvent.change(textarea(), { target: { value: "queued follow-up" } });
+      fireEvent.keyDown(textarea(), { key: "Enter" });
+      if (edit === "text") fireEvent.change(textarea(), { target: { value: "next message" } });
+      if (edit === "file") attach(new File(["new"], "new.txt", { type: "text/plain" }));
+      if (edit === "mention") {
+        act(() =>
+          useChatStore.setState({ pendingComposerAttachments: [{ path: "new.ts", isDir: false }] }),
+        );
+      }
+      await act(async () => pending.resolve(true));
+      expect(textarea()).toHaveValue(edit === "text" ? "next message" : "queued follow-up");
+      if (edit === "file") expect(screen.getByText("new.txt")).toBeTruthy();
+      if (edit === "mention") expect(screen.getByText("@new.ts")).toBeTruthy();
+    },
+  );
+
+  it("clears an unchanged restored draft after switching away and back", async () => {
+    const pending = pendingSend();
+    render(<Composer {...composerProps({ onSend: pending.onSend })} />);
+    attach(new File(["unchanged"], "restored.txt", { type: "text/plain" }));
+    fireEvent.change(textarea(), { target: { value: "queued follow-up" } });
+    fireEvent.keyDown(textarea(), { key: "Enter" });
+    act(() => setComposerState({ conversationId: "conv_other", skills: [] }));
+    act(() => setComposerState({ conversationId: "conv_acceptance", skills: [] }));
+    await act(async () => pending.resolve(true));
+    expect(textarea()).toHaveValue("");
+    expect(screen.queryByText("restored.txt")).toBeNull();
+  });
+
+  it("leaves another chat's draft intact and does not block its submit", async () => {
+    const pending = pendingSend();
+    render(<Composer {...composerProps({ onSend: pending.onSend })} />);
+    fireEvent.change(textarea(), { target: { value: "first chat" } });
+    fireEvent.keyDown(textarea(), { key: "Enter" });
+    act(() => setComposerState({ conversationId: "conv_other", skills: [] }));
+    fireEvent.change(textarea(), { target: { value: "other chat" } });
+    fireEvent.keyDown(textarea(), { key: "Enter" });
+    expect(pending.onSend).toHaveBeenCalledTimes(2);
+    await act(async () => pending.resolve(false));
+    expect(textarea()).toHaveValue("other chat");
+    expect(getSessionDraft("conv_acceptance")?.text).toBe("first chat");
+  });
+
+  it("clears a native void send synchronously and accepts the next keyboard send", () => {
+    const onSend = vi.fn();
+    setComposerState({
+      conversationId: "conv_acceptance",
+      sessionHarness: "codex-native",
+      skills: [],
+    });
+    render(<Composer {...composerProps({ onSend })} />);
+    fireEvent.change(textarea(), { target: { value: "first" } });
+    fireEvent.keyDown(textarea(), { key: "Enter" });
+    expect(textarea()).toHaveValue("");
+    fireEvent.change(textarea(), { target: { value: "second" } });
+    fireEvent.keyDown(textarea(), { key: "Enter" });
+    expect(onSend.mock.calls).toEqual([
+      ["first", undefined],
+      ["second", undefined],
+    ]);
+    expect(textarea()).toHaveValue("");
+  });
+});
+
 describe("Composer — Enter sends the next queued message", () => {
   let previous: ChatState;
   const send = vi.fn().mockResolvedValue(undefined);

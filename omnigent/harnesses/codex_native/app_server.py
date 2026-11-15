@@ -3596,9 +3596,9 @@ def build_codex_native_server(
     :param extra_config_overrides: Additional ``-c`` config overrides
         appended after Databricks routing overrides, e.g. MCP server
         registration for the Omnigent tool relay.
-    :param developer_instructions: Optional raw ``AgentSpec.instructions``
-        (author-supplied, not framework-composed) appended to Codex's
-        private per-session config.
+    :param developer_instructions: Optional raw author instructions. The static
+        product UI contract is appended separately in this startup owner before
+        writing the private per-session config; turn policy is not copied here.
     :param bypass_sandbox: When ``True``, append config overrides that put
         the app-server's threads into the full-bypass stance
         (``approval_policy="never"`` + ``sandbox_mode="danger-full-access"``)
@@ -3681,6 +3681,14 @@ def build_codex_native_server(
         override.split("=", 1)[0] == "model" for override in config_overrides
     ):
         config_overrides.append(f"model={json.dumps(pinned_model)}")
+    from omnigent.runtime.ui_contract import append_ui_contract
+
+    developer_instructions = append_ui_contract(
+        developer_instructions,
+        "codex-native",
+        session_id=session_id,
+        server_url=ap_server_url,
+    )
     return CodexNativeAppServer(
         codex_path=resolved_codex,
         socket_path=socket_path,

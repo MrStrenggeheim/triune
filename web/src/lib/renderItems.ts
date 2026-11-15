@@ -409,6 +409,7 @@ export function buildBubbles(
         new Map(),
         superseded,
         liveTurnId,
+        sessionRunning,
       ).bubbles,
       activeResponse,
     );
@@ -450,6 +451,7 @@ export function buildBubbles(
       subIndexSeed,
       superseded,
       liveTurnId,
+      sessionRunning,
     );
     cache.blocks = blocks;
     cache.activeResponse = activeResponse;
@@ -472,6 +474,7 @@ export function buildBubbles(
     new Map(),
     superseded,
     liveTurnId,
+    sessionRunning,
   );
   cache.blocks = blocks;
   cache.activeResponse = activeResponse;
@@ -811,6 +814,7 @@ function walkBubbles(
   subIndexByResp: Map<string, number>,
   superseded: ReadonlySet<number>,
   liveTurnId: string | null = null,
+  sessionRunning = false,
 ): { bubbles: Bubble[]; lastBubbleStart: number; lastBubbleCount: number } {
   const bubbles: Bubble[] = [...seedBubbles];
   // One cross-bubble result index per walk: the relay backdates a
@@ -855,22 +859,38 @@ function walkBubbles(
       continue;
     }
 
-    // A sub-agent notice joins the assistant work beside it so it folds with
-    // that work. With no work after it yet it stands alone, and the run is one
-    // re-walk region so all of it can join the work that arrives next.
+    // A settled notice after the parent's answer belongs to that completed
+    // turn. While the session is live it stays standalone until named work
+    // establishes whether it opens a woken response instead.
     if (isSubagentActivityBlock(b) && workBesideNotice(blocks, i, 1) === undefined) {
       lastBubbleStart = i;
       lastBubbleCount = 0;
+      const previous = bubbles[bubbles.length - 1];
+      const joinsCompletedParent =
+        !sessionRunning &&
+        activeResponse?.state !== "streaming" &&
+        previous?.kind === "assistant" &&
+        previous.lifecycle === "completed" &&
+        previous.items.some((item) => item.kind === "text" && item.text.trim() !== "");
+      const joined: RenderItem[] = [];
       for (; i < blocks.length && isNoticeTransparent(blocks[i]!); i += 1) {
         const notice = blocks[i]!;
         if (isNonRenderingBlock(notice)) expandNextAssistantResponseId = null;
         if (!isSubagentActivityBlock(notice)) continue;
-        bubbles.push({
+        const item: RenderItem = {
           kind: "subagent_activity",
           itemId: notice.ctx.itemId ?? `subagent_activity_${i}`,
           data: notice.data,
-        });
-        lastBubbleCount += 1;
+        };
+        if (joinsCompletedParent) joined.push(item);
+        else {
+          bubbles.push({ kind: "subagent_activity", itemId: item.itemId!, data: item.data });
+          lastBubbleCount += 1;
+        }
+      }
+      if (joinsCompletedParent && previous?.kind === "assistant") {
+        bubbles[bubbles.length - 1] = { ...previous, items: [...previous.items, ...joined] };
+        lastBubbleCount = 1;
       }
       continue;
     }
@@ -1056,7 +1076,10 @@ function walkBubbles(
         // that has shown never reopens to show the new response streaming.
         if (
           i > groupStart &&
-          (groupOpenedOnSentinel || noticeSeparatesResponses(blocks, groupStart, i))
+          (groupOpenedOnSentinel ||
+            noticeSeparatesResponses(blocks, groupStart, i) ||
+            ((sessionRunning || activeResponse?.state === "streaming") &&
+              workBesideNotice(blocks, i, 1) === undefined))
         ) {
           break;
         }

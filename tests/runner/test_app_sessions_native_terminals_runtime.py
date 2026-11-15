@@ -2676,6 +2676,11 @@ async def _run_antigravity_auto_create(
             assert terminal_name == "antigravity"
             assert session_key == "main"
             assert resource_role == ANTIGRAVITY_NATIVE_TERMINAL_ROLE
+            gemini_arg = next(arg for arg in spec.args if arg.startswith("--gemini_dir="))
+            rule = Path(gemini_arg.removeprefix("--gemini_dir=")) / "GEMINI.md"
+            guidance = rule.read_text(encoding="utf-8")
+            assert "Triune UI contract" in guidance
+            assert f"--session {session_id} --server" in guidance
             return SessionResourceView(
                 id="terminal_antigravity_main",
                 type="terminal",

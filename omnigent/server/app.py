@@ -1975,6 +1975,7 @@ def create_app(
                 await managed_sandbox_reaper.start()
 
         try:
+            await startup_inputs.message_queue.recover_all(app_inst)
             with monitor_event_loop():
                 yield
         finally:
@@ -2040,11 +2041,22 @@ def create_app(
     app.state.runner_session_initializer = runner_session_initializer
     app.state.background_title_coordinator = background_title_coordinator
     app.state.host_registry = host_registry
-    from omnigent.server.startup_inputs import ManagedStartupInputs
+    from omnigent.server.message_queue import QueuedStartupInputs
+    from omnigent.server.routes.message_queue import create_message_queue_router
 
     # Peer delivery uses the same durable queue on personal and managed hosts.
-    startup_inputs = ManagedStartupInputs(conversation_store, host_registry)
+    startup_inputs = QueuedStartupInputs(conversation_store, host_registry)
     app.state.startup_inputs = startup_inputs
+    app.include_router(
+        create_message_queue_router(
+            startup_inputs.message_queue,
+            auth_provider=auth_provider,
+            permission_store=permission_store,
+            file_store=file_store,
+        ),
+        prefix="/v1",
+        tags=["queued messages"],
+    )
     app.state.host_store = host_store
     app.state.mcp_gateway_backend = mcp_gateway_backend
     app.state.mcp_registry = mcp_registry
@@ -3351,6 +3363,7 @@ def create_app(
                     sandbox_config is not None and sandbox_config.managed_launch_supported
                 ),
                 "durable_host_initial_input": app.state.startup_inputs is not None,
+                "durable_message_queue": app.state.startup_inputs.message_queue is not None,
                 "sandbox_provider": sandbox_provider,
                 "sandbox_providers": sandbox_providers,
                 "sandbox_provider_capabilities": sandbox_provider_capabilities,

@@ -1,3 +1,4 @@
+// Modified for Triune; inherited notices remain applicable.
 import { useState } from "react";
 import { MessageSquareIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -23,13 +24,14 @@ export function ConversationSourcePicker({
       <Button
         variant="ghost"
         size="sm"
-        className="min-w-0 gap-1 truncate"
-        aria-label={`Choose ${label.toLowerCase()} conversation`}
+        className="min-w-0 max-w-full shrink gap-1 truncate"
+        aria-label={`Choose ${label.toLowerCase()} conversation · ${conversationId ? session?.title || "Conversation" : "Choose chat"}`}
         onClick={() => setOpen(true)}
       >
-        <MessageSquareIcon className="size-3.5" />
+        <MessageSquareIcon className="size-3.5 shrink-0" />
         <span className="truncate">
-          {label}: {conversationId ? session?.title || "Conversation" : "Choose chat"}
+          {label === "Chat" ? "" : `${label}: `}
+          {conversationId ? session?.title || "Conversation" : "Choose chat"}
         </span>
       </Button>
       <CommandPalette

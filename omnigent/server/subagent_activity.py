@@ -22,6 +22,7 @@ from omnigent.entities import (
     ResourceEventData,
     SlashCommandData,
 )
+from omnigent.entities.communication import MessageCommunication
 from omnigent.harness_aliases import is_native_harness
 from omnigent.harnesses.codex_native.side_chat import is_side_chat_child
 from omnigent.native.child_metadata import child_metadata, short_task
@@ -356,7 +357,7 @@ def _dispatch_metadata(
             and isinstance(prior.data, ResourceEventData)
             and isinstance(prior.data.resource, dict)
         ):
-            captured = dict(prior.data.resource)
+            captured = _refresh_native_identity(metadata, prior.data.resource)
             _refresh_task_input(captured, store)
             return {**captured, **report}
 
@@ -387,7 +388,7 @@ def _dispatch_metadata(
     if saved and (
         native or child.labels.get("omnigent.subagent.completed_dispatch_id") != saved_dispatch
     ):
-        metadata = {**metadata, **saved}
+        metadata = _refresh_native_identity(metadata, saved)
     elif not native:
         for key in ("task_summary", "task_input", "dispatch_id"):
             metadata.pop(key, None)
@@ -486,6 +487,66 @@ def _dispatch_metadata(
     if turn_id:
         metadata["turn_id"] = turn_id
     return {**metadata, **report}
+
+
+def _refresh_native_identity(
+    current: dict[str, object], captured: dict[str, object]
+) -> dict[str, object]:
+    """Refresh a native name only for the dispatch that captured the task."""
+    merged = {**current, **captured}
+    current_dispatch = current.get("dispatch_id")
+    if (
+        current.get("agent_name_source") == "native"
+        and current_dispatch
+        and current_dispatch == captured.get("dispatch_id")
+    ):
+        merged["agent_name"] = current["agent_name"]
+        merged["agent_name_source"] = "native"
+    return merged
+
+
+def delegation_message_item(
+    parent_id: str,
+    child_id: str,
+    metadata: dict[str, object],
+    *,
+    parent_name: str | None = None,
+) -> NewConversationItem | None:
+    """Build a trusted, display-only child handoff from captured dispatch metadata."""
+    prompt = metadata.get("task_input")
+    dispatch_id = metadata.get("dispatch_id")
+    if not isinstance(prompt, str) or not prompt or not isinstance(dispatch_id, str):
+        return None
+    ref = metadata.get("task_input_ref")
+    source_item_id = (
+        ref.get("item_id")
+        if isinstance(ref, dict)
+        and ref.get("conversation_id") == parent_id
+        and isinstance(ref.get("item_id"), str)
+        else None
+    )
+    stable_id = _activity_id(child_id, "delegation-message", dispatch_id)
+    return NewConversationItem(
+        type="message",
+        stable_id=stable_id,
+        response_id="subagent_" + stable_id,
+        data=MessageData(
+            role="user",
+            is_meta=True,
+            content=[{"type": "input_text", "text": prompt}],
+            communication=MessageCommunication(
+                kind="peer",
+                message_id=source_item_id or dispatch_id,
+                source_conversation_id=parent_id,
+                source_agent_name=parent_name,
+                source_title="Parent agent",
+                destination_conversation_id=child_id,
+                task_id=dispatch_id,
+                delivery_state="confirmed",
+                receipt="transcript",
+            ),
+        ),
+    )
 
 
 def _fully_captured_activity(

@@ -41,6 +41,7 @@ class CodexRuntimeNotices:
                 "data": {
                     "provider": "codex",
                     "source_instance": self.source_instance,
+                    "source_kind": "native",
                     "scope_kind": "captured_parent",
                     "scope_epoch": self.scope_epoch,
                     "account": self.account,

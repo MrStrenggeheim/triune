@@ -20,6 +20,96 @@ import type {
 import type { ConversationItem, ErrorItem } from "./conversationItems";
 import { itemsToBlocks } from "./itemsToBlocks";
 
+function questionReceiptItem(): ConversationItem {
+  return {
+    type: "resource_event",
+    id: "batch-receipt",
+    response_id: "question-response",
+    status: "completed",
+    resource_type: "question_batch",
+    event_type: "session.question.answered",
+    resource_id: "batch-1",
+    resource: {
+      version: 1,
+      session_id: "chat-1",
+      elicitation_id: "batch-1",
+      submission_id: "submission-1",
+      action: "accept",
+      questions: [
+        { id: "question_0", question: "Gallery scope?", answered: true, answer: "Whole chat" },
+        { id: "question_1", question: "Thumbnail strip?", answered: false },
+      ],
+    },
+  } as ConversationItem;
+}
+
+describe("durable question receipts", () => {
+  it("restores the original question batch and retains a deliberate partial answer", () => {
+    const blocks = itemsToBlocks([questionReceiptItem()]);
+    expect(blocks).toHaveLength(1);
+    const block = blocks[0] as ElicitationBlock;
+    expect(block.type).toBe("elicitation");
+    expect(block.elicitationId).toBe("batch-1");
+    expect(block.status).toBe("responded");
+    expect(block.response?.content).toEqual({ question_0: "Whole chat" });
+    expect(
+      castAskUserQuestionPayload(block.askUserQuestion)?.questions.map((q) => q.question),
+    ).toEqual(["Gallery scope?", "Thumbnail strip?"]);
+  });
+
+  it("deduplicates replayed receipts by the batch identity", () => {
+    const receipt = questionReceiptItem();
+    expect(itemsToBlocks([receipt, receipt])).toHaveLength(1);
+  });
+
+  it.each([true, false])(
+    "replaces legacy question reconstruction only for the recorded call (%s)",
+    (sameCall) => {
+      const receipt = questionReceiptItem() as ConversationItem & {
+        resource: { source?: Record<string, string> };
+      };
+      receipt.resource.source = { tool_use_id: sameCall ? "native-question-call" : "other-call" };
+      const call = functionCall("resp_question", "native-question-call", "AskUserQuestion", {
+        questions: [
+          {
+            question: "Gallery scope?",
+            header: "Gallery",
+            options: [{ label: "Whole chat" }],
+            multiSelect: false,
+          },
+        ],
+      });
+      const output = functionCallOutput(
+        "resp_question",
+        "native-question-call",
+        'User has answered your questions: "Gallery scope?"="Whole chat".',
+      );
+      const cards = itemsToBlocks([call, output, receipt]).filter(
+        (block) => block.type === "elicitation",
+      );
+      expect(cards).toHaveLength(sameCall ? 1 : 2);
+    },
+  );
+
+  it("hides a correlated native answer echo while preserving identical human text", () => {
+    const receipt = questionReceiptItem();
+    const human = userMessage("human-response", "Whole chat", "human-input");
+    const echo = {
+      ...userMessage("native-response", "Whole chat", "native-echo"),
+      question_submission: {
+        session_id: "chat-1",
+        elicitation_id: "batch-1",
+        submission_id: "submission-1",
+      },
+    } as ConversationItem;
+    const blocks = itemsToBlocks([receipt, echo, human]);
+    expect(blocks.filter((block) => block.type === "elicitation")).toHaveLength(1);
+    expect(
+      blocks.filter((block) => block.type === "user_message").map((block) => block.ctx.itemId),
+    ).toEqual(["human-input"]);
+  });
+});
+
 function userMessage(
   responseId: string,
   text: string,

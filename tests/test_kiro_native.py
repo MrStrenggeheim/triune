@@ -32,6 +32,7 @@ from omnigent.harnesses.kiro_native.main import (
     build_kiro_launch,
     kiro_terminal_resource_id,
     list_kiro_cli_model_options,
+    prepare_kiro_ui_contract_home,
     resolve_kiro_executable,
     run_kiro_native,
 )
@@ -97,6 +98,25 @@ def test_materialized_kiro_agent_spec_passes_current_validator(tmp_path: Path) -
     spec = load_omnigent_yaml(path)
 
     assert spec.executor.config["harness"] == "kiro-native"
+
+
+def test_prepare_kiro_ui_contract_home_preserves_author_profile(tmp_path: Path) -> None:
+    """The sidecar adds steering without replacing author configuration."""
+    source = tmp_path / "source"
+    (source / "steering").mkdir(parents=True)
+    (source / "settings").mkdir()
+    author = source / "steering" / "author.md"
+    author.write_text("author\n", encoding="utf-8")
+
+    sidecar = tmp_path / "sidecar"
+    env = prepare_kiro_ui_contract_home(sidecar, source_home=source, session_id="conv_kiro")
+
+    assert env == {"KIRO_HOME": str(sidecar)}
+    assert (sidecar / "settings").is_symlink()
+    assert (sidecar / "steering" / "author.md").read_text() == "author\n"
+    rule = (sidecar / "steering" / "triune-native-ui-contract.md").read_text()
+    assert rule.startswith("Triune UI contract")
+    assert "triune-artifact" in rule
 
 
 def test_launched_kiro_terminal_decodes_tmux_metadata() -> None:

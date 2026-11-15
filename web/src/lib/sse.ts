@@ -1,6 +1,7 @@
 // Modified for Triune.
 import { readMessageCommunication } from "./messageCommunication";
 import { parseNativePermissionDelivery } from "./nativePermissionDelivery";
+import { questionBatchFromItem } from "./questionBatches";
 // Mirrors sdks/python-client/omnigent_client/_sse.py.
 //
 // Parses raw `text/event-stream` bytes into typed `StreamEvent`
@@ -1288,6 +1289,8 @@ function parseOutputItem(data: Record<string, unknown>): StreamEvent | null {
   const itemId = String(rec.id ?? "");
   const responseId = String(rec.response_id ?? "");
   const messageId = typeof data.message_id === "string" ? data.message_id : undefined;
+
+  if (questionBatchFromItem(rec)) return { type: "question_receipt", item: rec };
 
   if (itemType === "function_call") {
     const argsStr = String(rec.arguments ?? "{}");

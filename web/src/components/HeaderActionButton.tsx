@@ -23,7 +23,7 @@ export const HeaderActionButton = forwardRef<
     >
       <span
         data-header-action-surface
-        className="pointer-events-none relative flex size-6 shrink-0 items-center justify-center rounded-[var(--radius-md)] transition-colors [&_svg:not([data-icon-size])]:size-4 [&_svg:not([data-icon-size])]:p-0 group-hover/button:bg-muted dark:group-hover/button:bg-muted/50 group-aria-expanded/button:bg-muted group-focus-visible/button:ring-3 group-focus-visible/button:ring-ring/50"
+        className="pointer-events-none relative flex size-6 shrink-0 items-center justify-center rounded-[var(--radius-md)] transition-colors [&_svg:not([data-icon-size])]:size-4 [&_svg:not([data-icon-size])]:p-0 group-hover/button:bg-[var(--workspace-control-hover)] group-active/button:bg-[var(--workspace-control-active)] group-aria-expanded/button:bg-[var(--workspace-control-active)] group-focus-visible/button:ring-3 group-focus-visible/button:ring-ring/50"
       >
         {children}
       </span>

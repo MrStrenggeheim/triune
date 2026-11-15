@@ -26,6 +26,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from dev.lint import (
+    lint_design_contract,
     lint_session_list_visibility,
     lint_workspace_scoped_cache,
     lint_young_dependency_floor,
@@ -52,6 +53,11 @@ RULES: list[Rule] = [
         name=lint_session_list_visibility.RULE_NAME,
         check=lint_session_list_visibility.check,
         hint=lint_session_list_visibility.HINT,
+    ),
+    Rule(
+        name=lint_design_contract.RULE_NAME,
+        check=lint_design_contract.check,
+        hint=lint_design_contract.HINT,
     ),
     Rule(
         name=lint_young_dependency_floor.RULE_NAME,

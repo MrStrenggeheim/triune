@@ -1,5 +1,6 @@
 // Modified for Triune; inherited notices remain applicable.
 import { messageSearchSource } from "./messageSearchSource";
+import { questionReceiptBlock } from "./questionBatches";
 import { attachmentsFromContent } from "./chatAttachments";
 // Mirrors sdks/python-client/omnigent_client/_stream.py.
 //
@@ -928,6 +929,23 @@ function* processEvent(state: ReducerState, event: StreamEvent): Generator<AnyBl
         status: event.response.status,
         response: event.response,
       } satisfies ResponseEndBlock;
+      return;
+    }
+
+    case "question_receipt": {
+      yield* closeReasoning(state);
+      yield* closeText(state);
+      const block = questionReceiptBlock(event.item);
+      if (block) {
+        // Keep the active turn while rendering this backdated resource.
+        yield {
+          ...block,
+          ctx: {
+            ...ctx(state, block.ctx.itemId, block.ctx.responseId),
+            ...(block.ctx.createdAtS !== undefined ? { createdAtS: block.ctx.createdAtS } : {}),
+          },
+        };
+      }
       return;
     }
 

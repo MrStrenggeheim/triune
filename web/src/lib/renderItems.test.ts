@@ -353,11 +353,9 @@ describe("sub-agent timeline events", () => {
         kind: "assistant",
         responseId: "parent_turn",
         lifecycle: streaming ? "streaming" : "completed",
-        items: [
-          { kind: "tool", state: "input-available" },
-          { kind: "subagent_activity", itemId: "notice_1" },
-        ],
+        items: [{ kind: "tool", state: "input-available" }],
       },
+      { kind: "subagent_activity", itemId: "notice_1" },
     ]);
     expect(liveCandidateAssistantIndex(bubbles)).toBe(0);
   });
@@ -503,6 +501,29 @@ describe("sub-agent timeline events", () => {
         responseId: "parent_turn",
         items: [{ kind: "subagent_activity" }, { kind: "subagent_activity" }, { kind: "text" }],
       },
+    ]);
+    expect(buildStreamed([answer, ...notices])).toMatchObject([
+      {
+        kind: "assistant",
+        responseId: "parent_turn",
+        items: [
+          { kind: "text" },
+          { kind: "subagent_activity", itemId: "started" },
+          { kind: "subagent_activity", itemId: "returned" },
+        ],
+      },
+    ]);
+    expect(
+      buildBubbles([prompt, answer, ...notices], {
+        responseId: "parent_turn",
+        state: "streaming",
+        error: null,
+      }),
+    ).toMatchObject([
+      { kind: "user" },
+      { kind: "assistant", lifecycle: "streaming", items: [{ kind: "text" }] },
+      { kind: "subagent_activity", itemId: "started" },
+      { kind: "subagent_activity", itemId: "returned" },
     ]);
     // File artifacts remain visible alongside the following work.
     const file: AnyBlock = {

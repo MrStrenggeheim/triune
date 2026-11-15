@@ -66,6 +66,50 @@ afterEach(() => {
 });
 
 describe("sub-agent task and reply", () => {
+  it.each(["delegated", "returned"] as const)(
+    "replaces generic %s attribution when the same dispatch receives its native nickname",
+    async (phase) => {
+      const client = queryClient(summary);
+      const data = activity(phase, {
+        agent_name: "Codex",
+        agent_name_source: "role",
+        task_summary: "orchestration_header_intake",
+        task_input: originalInput,
+        result_text: phase === "returned" ? "Original captured report" : undefined,
+      });
+      render(
+        <MemoryRouter>
+          <QueryClientProvider client={client}>
+            <SubagentActivityMessage data={data} />
+          </QueryClientProvider>
+        </MemoryRouter>,
+      );
+      const card = screen.getByTestId(
+        phase === "delegated" ? "subagent-activity" : "subagent-reply",
+      );
+      expect(card).toHaveTextContent("Codex");
+      fireEvent.click(screen.getByRole("button", { name: "Expand activity" }));
+      await act(async () =>
+        client.setQueryData(childSessionsQueryKey("parent"), [
+          {
+            ...summary,
+            labels: {
+              ...summary.labels,
+              "omnigent.codex_native.agent_nickname": "Hooke",
+            },
+          },
+        ]),
+      );
+      await waitFor(() => expect(card).toHaveTextContent("Hooke"));
+      expect(screen.getByRole("button", { name: "Collapse activity" })).toBeInTheDocument();
+      if (phase === "delegated") {
+        expect(card).toHaveTextContent("Orchestration header intake");
+        expect(card).toHaveTextContent("all instructions");
+      } else expect(card).toHaveTextContent("Original captured report");
+      expect(data.resource.agent_name).toBe("Codex");
+    },
+  );
+
   it("updates the same dispatch from Running to Completed without showing instructions or an empty reply", async () => {
     const client = queryClient(summary);
     const delegated = activity("delegated", { task_input: originalInput });

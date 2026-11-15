@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import shutil
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
 
@@ -152,6 +153,7 @@ class ToolManager:
         self._pre_resolved_os_env = os_env
         self._started = False
         self._tools: dict[str, Tool] = {}
+        self._ui_capability_runtime_tool_names: Callable[[], Iterable[str]] | None = None
         self._srt_available = is_srt_available()
         self._uv_available = shutil.which("uv") is not None
         # Track the OS environment instance the spec opts into so
@@ -193,6 +195,38 @@ class ToolManager:
         self._register_policy_tools()
         self._register_scheduled_task_tools()
         self._register_browser_tools()
+        self._register_ui_capabilities_tool()
+
+    def _register_ui_capabilities_tool(self) -> None:
+        """Register read-only discovery against this manager's live registry."""
+        from omnigent.tools.builtins.ui_capabilities import SysUiCapabilitiesTool
+
+        tool = SysUiCapabilitiesTool(
+            harness=self._spec.executor.harness_kind,
+            tool_names=self._get_ui_capability_tool_names,
+        )
+        if tool.name() in self._tools:
+            raise ValueError(f"framework tool {tool.name()!r} collides with a registered tool")
+        self._tools[tool.name()] = tool
+
+    def _get_ui_capability_tool_names(self) -> Iterable[str]:
+        """Return manager names plus runner-supplied advertised names."""
+        names = set(self.get_tool_names())
+        if self._ui_capability_runtime_tool_names is not None:
+            names.update(self._ui_capability_runtime_tool_names())
+        return names
+
+    def set_ui_capability_runtime_tool_names(
+        self,
+        getter: Callable[[], Iterable[str]] | None,
+    ) -> None:
+        """Bind a lazy getter for runner-owned tools advertised beside this manager.
+
+        The manager does not discover or execute runner-native MCP tools. The runner
+        may bind its authoritative advertised-name getter after discovery; passing
+        ``None`` restores the manager-only projection.
+        """
+        self._ui_capability_runtime_tool_names = getter
 
     def _register_policy_tools(self) -> None:
         """

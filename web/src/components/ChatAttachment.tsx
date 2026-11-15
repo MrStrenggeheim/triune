@@ -55,6 +55,7 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { useImagePreviewSize, ZoomableImage } from "./ImageLightbox";
+import { galleryAttachmentSource } from "./imageGallery";
 import { CodeBlock } from "./ai-elements/code-block";
 import { detectLang } from "@/shell/codeViewerHelpers";
 import { formatBytes } from "@/shell/fileStatusUtils";
@@ -63,6 +64,9 @@ import type { FileContentResponse } from "@/hooks/useFileContent";
 const PdfViewer = lazy(() => import("@/shell/PdfViewer").then((m) => ({ default: m.PdfViewer })));
 const MarkdownPreview = lazy(() =>
   import("@/shell/CodeViewer").then((m) => ({ default: m.MarkdownPreview })),
+);
+const ArtifactFrame = lazy(() =>
+  import("@/artifacts/ArtifactFrame").then((module) => ({ default: module.ArtifactFrame })),
 );
 export const ChatAttachmentContext = createContext<{
   sessionId: string | null;
@@ -371,6 +375,7 @@ function useAttachmentResource(
     download,
     details,
     size,
+    resourceKey: JSON.stringify([sessionId, fileId ?? itemId, reference]),
   };
 }
 
@@ -501,6 +506,13 @@ export function ChatAttachment({
               <ZoomableImage
                 src={blobUrl}
                 alt={filename}
+                gallerySource={
+                  sessionId
+                    ? galleryAttachmentSource(sessionId, attachment, reference, itemId)
+                    : undefined
+                }
+                galleryItemId={itemId}
+                gallerySessionId={sessionId}
                 className="block h-auto max-h-64 max-w-full rounded object-contain"
                 style={{ width: preview.size?.width }}
                 onLoad={preview.onLoad}
@@ -754,6 +766,7 @@ function AttachmentPreviewBody({
       url={blobUrl}
       filename={filename}
       sessionId={sessionId}
+      artifactIdentity={resource.resourceKey}
     />
   );
 }
@@ -763,14 +776,19 @@ export function AttachmentPreview({
   url,
   filename,
   sessionId,
+  artifactIdentity,
 }: {
   blob: Blob;
   url: string;
   filename: string;
   sessionId: string;
+  artifactIdentity?: string;
 }) {
   const lang = detectLang(filename);
+  const html =
+    /\.html?$/i.test(filename) || /^(text\/html|application\/xhtml\+xml)(;|$)/i.test(blob.type);
   const isText =
+    html ||
     blob.type.startsWith("text/") ||
     /\.(md|txt|log|json|ya?ml|csv|tsv|[cm]?[jt]sx?|py|sh|rs|go|html?)$/i.test(filename);
   const [text, setText] = useState<string>();
@@ -779,7 +797,7 @@ export function AttachmentPreview({
     let active = true;
     if (isText)
       void blob
-        .slice(0, TEXT_BYTES)
+        .slice(0, html ? blob.size : TEXT_BYTES)
         .text()
         .then((value) => {
           if (active) setText(value);
@@ -787,7 +805,7 @@ export function AttachmentPreview({
     return () => {
       active = false;
     };
-  }, [blob, isText]);
+  }, [blob, isText, html]);
   if (blob.type.startsWith("image/") || /\.(svg|png|jpe?g|webp|avif|gif)$/i.test(filename))
     return (
       <ZoomableImage src={url} alt={filename} className="max-h-[65dvh] max-w-full object-contain" />
@@ -823,11 +841,20 @@ export function AttachmentPreview({
       </p>
     );
   if (text === undefined) return <p role="status">Loading text…</p>;
-  const html = /\.html?$/i.test(filename);
+  if (html)
+    return (
+      <Suspense fallback={<p role="status">Preparing artifact…</p>}>
+        <ArtifactFrame
+          html={text}
+          identity={artifactIdentity ?? `${sessionId}:${filename}`}
+          title={filename}
+        />
+      </Suspense>
+    );
   const markdown = lang === "markdown";
   return (
     <div className="space-y-2">
-      {(html || markdown) && (
+      {markdown && (
         <Button type="button" variant="outline" size="sm" onClick={() => setSource(!source)}>
           {source ? "Preview" : "Source"}
         </Button>
@@ -837,15 +864,7 @@ export function AttachmentPreview({
           Preview limited to 512 KiB. Download for the complete file.
         </p>
       )}
-      {html && !source ? (
-        <iframe
-          title={filename}
-          sandbox=""
-          referrerPolicy="no-referrer"
-          className="h-[60dvh] w-full border-0"
-          srcDoc={`<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; form-action 'none'; base-uri 'none'">${text}`}
-        />
-      ) : markdown && !source ? (
+      {markdown && !source ? (
         <Suspense fallback={<p>Loading Markdown…</p>}>
           <MarkdownPreview content={text} path={null} tocOpen={false} onTocOpenChange={() => {}} />
         </Suspense>

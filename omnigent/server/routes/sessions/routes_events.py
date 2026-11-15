@@ -986,7 +986,7 @@ def register_events_routes(
 
     @router.get("/sessions/{session_id}/runtime-notices")
     async def get_runtime_notices(request: Request, session_id: str) -> RuntimeNoticesResponse:
-        from omnigent.server.runtime_notices import runtime_notices
+        from omnigent.server.runtime_notices import runtime_notices, runtime_quotas
 
         await _require_access(
             _get_user_id(request, auth_provider),
@@ -998,7 +998,7 @@ def register_events_routes(
         conv = await asyncio.to_thread(conversation_store.get_conversation, session_id)
         if conv is None:
             raise _session_not_found()
-        return RuntimeNoticesResponse(data=runtime_notices(conv))
+        return RuntimeNoticesResponse(data=runtime_notices(conv), quotas=runtime_quotas(conv))
 
     @router.get("/sessions/{session_id}/native-child-capabilities")
     async def get_native_child_capabilities(request: Request, session_id: str) -> dict[str, Any]:
@@ -1553,6 +1553,9 @@ def register_events_routes(
                     stored = await asyncio.to_thread(file_store.get, file_id)
                     if stored is None or stored.session_id not in (None, session_id):
                         continue
+                    from omnigent.server.queue_attachments import require_queue_file_visible
+
+                    require_queue_file_visible(stored, user_id)
                     if stored.filename is not None and uses_filesystem_delivery(
                         stored.filename, stored.source_metadata
                     ):
@@ -2761,6 +2764,24 @@ def register_events_routes(
                     status,
                     runner_result,
                 )
+            message_queue = getattr(
+                getattr(request.app.state, "startup_inputs", None), "message_queue", None
+            )
+            if message_queue is not None:
+                harness = await asyncio.to_thread(
+                    _native_pane_harness, conv, agent_store=agent_store, agent_cache=agent_cache
+                )
+                outcome = native_subagent_terminal_status(
+                    status,
+                    harness=harness,
+                    turn_outcome=data.get("turn_outcome"),
+                    turn_completed=data.get("turn_completed"),
+                )
+                if status == "running" or outcome is not None:
+                    queue_status = "idle" if outcome == "completed" else status
+                    if outcome in {"failed", "cancelled"}:
+                        queue_status = "failed"
+                    await message_queue.status(request.app, session_id, queue_status, response_id)
             return {"queued": False}
         if body.type == _EXTERNAL_COMPACTION_STATUS_TYPE:
             # Terminal-observed compaction edge (claude-native forwarder):

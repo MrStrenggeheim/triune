@@ -320,6 +320,7 @@ def test_build_argv_minimal() -> None:
     argv = ex._build_argv(prompt_text="hi")
     assert argv[0] == "kimi"
     assert argv[1:3] == ["--output-format", "stream-json"]
+    assert "--agent-file" not in argv
     # ``-p`` always lands at the tail (it consumes a single argument).
     assert argv[-2:] == ["-p", "hi"]
     # No --print, --yolo, --afk, --thinking, --work-dir on the upstream binary.
@@ -519,9 +520,14 @@ class _FakeProcess:
         pass
 
 
-async def _collect(ex: KimiExecutor, messages: list[dict[str, Any]]) -> list[Any]:
+async def _collect(
+    ex: KimiExecutor,
+    messages: list[dict[str, Any]],
+    *,
+    system_prompt: str = "",
+) -> list[Any]:
     out: list[Any] = []
-    async for evt in ex.run_turn(messages=messages, tools=[], system_prompt=""):
+    async for evt in ex.run_turn(messages=messages, tools=[], system_prompt=system_prompt):
         out.append(evt)
     return out
 
@@ -542,16 +548,24 @@ def test_run_turn_streams_text_and_emits_turn_complete(monkeypatch: pytest.Monke
     fake = _FakeProcess(stdout_lines, b"", returncode=0)
 
     captured_argv: list[str] = []
+    captured_env: dict[str, str] = {}
 
-    async def _fake_spawn(*args: Any, **_kwargs: Any) -> _FakeProcess:
+    async def _fake_spawn(*args: Any, **kwargs: Any) -> _FakeProcess:
         captured_argv.extend(args)
+        captured_env.update(kwargs["env"])
         return fake
 
     monkeypatch.setattr(kimi_executor, "_create_subprocess_exec", _fake_spawn)
     monkeypatch.setattr(kimi_executor.shutil, "which", lambda _binary: "/usr/local/bin/kimi")
 
     ex = KimiExecutor(binary_path="kimi", model="kimi-k2-turbo")
-    events = asyncio.run(_collect(ex, [{"role": "user", "content": "hi"}]))
+    events = asyncio.run(
+        _collect(
+            ex,
+            [{"role": "user", "content": "hi"}],
+            system_prompt="author startup instructions",
+        )
+    )
 
     text_chunks = [e for e in events if isinstance(e, TextChunk)]
     turn_completes = [e for e in events if isinstance(e, TurnComplete)]
@@ -566,6 +580,11 @@ def test_run_turn_streams_text_and_emits_turn_complete(monkeypatch: pytest.Monke
     assert "--print" not in captured_argv
     assert "--output-format" in captured_argv
     assert "stream-json" in captured_argv
+    assert captured_env["KIMI_CODE_HOME"] == str(ex._session_home)
+    product_prompt = (
+        ex._session_home / "plugins" / "managed" / "triune-ui-contract" / "SYSTEM.md"
+    ).read_text(encoding="utf-8")
+    assert product_prompt.startswith("author startup instructions\n\nTriune UI contract")
 
 
 def test_run_turn_uses_session_resume_on_second_turn(monkeypatch: pytest.MonkeyPatch) -> None:

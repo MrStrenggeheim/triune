@@ -96,6 +96,7 @@ _ALWAYS_PRESENT_TOOLS: frozenset[str] = frozenset(
         "browser_click",
         "browser_type",
         "browser_screenshot",
+        "sys_ui_capabilities",
     }
 )
 

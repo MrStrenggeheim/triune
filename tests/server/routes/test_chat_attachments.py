@@ -766,6 +766,48 @@ async def test_presentation_upload_keeps_original_bytes_without_model_support(
     assert other.status_code == 404
 
 
+async def test_html_artifact_content_is_complete_durable_and_session_scoped(
+    file_client, file_store, artifact_store, tmp_path
+):
+    """The artifact fence resolves durable uploaded bytes, never a supplied path or foreign id."""
+    tail = b"<script>window.__triuneArtifactTail = true</script></body></html>"
+    html = b"<!doctype html><html><body>" + b"x" * (740 * 1024) + tail
+    source = tmp_path / "large artifact.html"
+    source.write_bytes(html)
+
+    stored = file_store.create(
+        session_id=SESSION,
+        filename=source.name,
+        bytes=len(html),
+        content_type="text/html",
+        source_metadata={"original": True},
+    )
+    artifact_store.put(stored.id, source.read_bytes())
+    source.unlink()
+
+    metadata = await file_client.get(f"/v1/sessions/{SESSION}/resources/files/{stored.id}")
+    assert metadata.status_code == 200, metadata.text
+    assert metadata.json()["id"] == stored.id
+    assert metadata.json()["name"] == source.name
+    assert metadata.json()["metadata"]["bytes"] == len(html)
+
+    url = f"/v1/sessions/{SESSION}/resources/files/{stored.id}/content"
+    for _reload in range(2):
+        content = await file_client.get(url)
+        assert content.status_code == 200, content.text
+        assert content.content == html
+        assert content.content.endswith(tail)
+        assert content.headers["content-disposition"] == (
+            "attachment; filename=\"large artifact.html\"; filename*=UTF-8''large%20artifact.html"
+        )
+        assert content.headers["x-content-type-options"] == "nosniff"
+
+    foreign = await file_client.get(
+        f"/v1/sessions/405bfe154d5c0e795a2b87021bc897bf/resources/files/{stored.id}/content"
+    )
+    assert foreign.status_code == 404
+
+
 async def test_explicit_agent_attachment_persists_a_message_and_survives_source_deletion(
     file_client, file_conv_store, tmp_path
 ):

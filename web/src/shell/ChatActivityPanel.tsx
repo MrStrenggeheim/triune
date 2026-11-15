@@ -1,5 +1,13 @@
 // Modified for Triune.
-import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  lazy,
+  Suspense,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import {
   BotIcon,
   EllipsisIcon,
@@ -46,8 +54,10 @@ import { useScrollRestore } from "./useScrollRestore";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuLabel,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
@@ -95,6 +105,7 @@ export interface ChatActivityPanelProps {
 }
 
 export type ActivityFilter = "All" | "Agents" | "Shells";
+const ACTIVITY_FILTERS: readonly ActivityFilter[] = ["All", "Agents", "Shells"];
 
 export function ActivityFilterControl({
   value,
@@ -105,7 +116,7 @@ export function ActivityFilterControl({
 }) {
   return (
     <SegmentedControl aria-label="Orchestration filter" className="ml-auto">
-      {(["All", "Agents", "Shells"] as const).map((filter) => (
+      {ACTIVITY_FILTERS.map((filter) => (
         <SegmentedControlItem
           key={filter}
           label={filter}
@@ -116,6 +127,102 @@ export function ActivityFilterControl({
         </SegmentedControlItem>
       ))}
     </SegmentedControl>
+  );
+}
+
+/** Keep source and filter state mounted while pane width moves filters into the menu. */
+export function ActivityHeader({
+  source,
+  filter,
+  onFilterChange,
+  active = true,
+  options,
+  actions,
+}: {
+  source: ReactNode;
+  filter: ActivityFilter;
+  onFilterChange: (value: ActivityFilter) => void;
+  active?: boolean;
+  options?: ReactNode;
+  actions?: ReactNode;
+}) {
+  const headerRef = useRef<HTMLElement>(null);
+  const filtersRef = useRef<HTMLDivElement>(null);
+  const controlsRef = useRef<HTMLDivElement>(null);
+  const [collapsed, setCollapsed] = useState(false);
+  const [optionsOpen, setOptionsOpen] = useState(false);
+  useLayoutEffect(() => {
+    const header = headerRef.current;
+    const filters = filtersRef.current;
+    const controls = controlsRef.current;
+    if (!active || !header || !filters || !controls) return;
+    const measure = () => {
+      if (!header.clientWidth) return;
+      const style = getComputedStyle(header);
+      const insets = parseFloat(style.paddingLeft || "0") + parseFloat(style.paddingRight || "0");
+      const gap = parseFloat(style.columnGap) || 0;
+      // The filter probe keeps its intrinsic width in both layouts, avoiding resize oscillation.
+      setCollapsed(
+        header.clientWidth - insets < filters.scrollWidth + controls.offsetWidth + 96 + 2 * gap,
+      );
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(header);
+    observer.observe(filters);
+    observer.observe(controls);
+    return () => observer.disconnect();
+  }, [active]);
+  return (
+    <header
+      ref={headerRef}
+      data-activity-header=""
+      data-filters-collapsed={collapsed}
+      className="workspace-control-header relative flex min-w-0 shrink-0 items-center gap-1 border-b bg-[var(--workspace-content)] px-2"
+    >
+      <div className="min-w-0 flex-1 overflow-hidden [&>button]:max-w-full">{source}</div>
+      <div
+        ref={filtersRef}
+        data-activity-filter=""
+        aria-hidden={collapsed || undefined}
+        className={collapsed ? "pointer-events-none invisible absolute w-max" : "w-max shrink-0"}
+      >
+        <ActivityFilterControl value={filter} onChange={onFilterChange} />
+      </div>
+      <div ref={controlsRef} data-activity-actions="" className="flex shrink-0 items-center gap-1">
+        {actions}
+        <DropdownMenu open={active && optionsOpen} onOpenChange={setOptionsOpen}>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon-sm" aria-label="Orchestration options">
+              <EllipsisIcon className="size-3.5" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuLabel>Show</DropdownMenuLabel>
+            <DropdownMenuRadioGroup
+              value={filter}
+              onValueChange={(value) => {
+                if (ACTIVITY_FILTERS.includes(value as ActivityFilter))
+                  onFilterChange(value as ActivityFilter);
+              }}
+            >
+              {ACTIVITY_FILTERS.map((value) => (
+                <DropdownMenuRadioItem key={value} value={value}>
+                  {value}
+                </DropdownMenuRadioItem>
+              ))}
+            </DropdownMenuRadioGroup>
+            {options && (
+              <>
+                <DropdownMenuSeparator />
+                {options}
+              </>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    </header>
   );
 }
 
@@ -243,7 +350,6 @@ function ChatActivityContent({
     "activity-mode",
     "list",
   );
-  const [optionsOpen, setOptionsOpen] = useState(false);
   const [highlightedAgent, setHighlightedAgent] = useState<string>();
   const [highlightedShell, setHighlightedShell] = useState<string>();
   const consumedIntent = useRef<string | null>(null);
@@ -402,31 +508,25 @@ function ChatActivityContent({
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden bg-[var(--workspace-content)]">
-      <header className="workspace-control-header flex min-w-0 shrink-0 items-center gap-1 border-b bg-[var(--workspace-content)] px-2">
-        {sourceControl ?? (
-          <h2 className="min-w-0 truncate pl-1 font-medium text-ui">Orchestration</h2>
-        )}
-        <ActivityFilterControl
-          value={filter}
-          onChange={(value) => {
-            setFilter(value);
-            setViewMode("list");
-          }}
-        />
-        <DropdownMenu open={active && optionsOpen} onOpenChange={setOptionsOpen}>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon-sm" aria-label="Orchestration options">
-              <EllipsisIcon className="size-3.5" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuRadioGroup value={viewMode} onValueChange={setViewMode}>
-              <DropdownMenuRadioItem value="list">List view</DropdownMenuRadioItem>
-              <DropdownMenuRadioItem value="graph">Graph view</DropdownMenuRadioItem>
-            </DropdownMenuRadioGroup>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </header>
+      <ActivityHeader
+        active={active}
+        source={
+          sourceControl ?? (
+            <h2 className="min-w-0 truncate pl-1 font-medium text-ui">Orchestration</h2>
+          )
+        }
+        filter={filter}
+        onFilterChange={(value) => {
+          setFilter(value);
+          setViewMode("list");
+        }}
+        options={
+          <DropdownMenuRadioGroup value={viewMode} onValueChange={setViewMode}>
+            <DropdownMenuRadioItem value="list">List view</DropdownMenuRadioItem>
+            <DropdownMenuRadioItem value="graph">Graph view</DropdownMenuRadioItem>
+          </DropdownMenuRadioGroup>
+        }
+      />
       <div ref={rowsRef} onScroll={handleScroll} className="min-h-0 flex-1 overflow-y-auto">
         {viewMode === "list" && (
           <>

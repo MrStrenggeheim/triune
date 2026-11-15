@@ -66,12 +66,17 @@ import logging
 import os
 import re
 import shutil
+import tempfile
 import time
 from collections.abc import AsyncIterator, Mapping, Sequence
 from pathlib import Path
 
 from omnigent.harness_startup_config import resolve_harness_path
-from omnigent.harnesses.kimi_native.credentials import resolve_user_kimi_home
+from omnigent.harnesses.kimi_native.credentials import (
+    KIMI_CODE_HOME_ENV_VAR,
+    build_kimi_session_home,
+    resolve_user_kimi_home,
+)
 from omnigent.inner.agent_env import clean_agent_env, declared_passthrough
 from omnigent.inner.datamodel import OSEnvSandboxSpec, OSEnvSpec
 from omnigent.inner.executor import (
@@ -90,6 +95,7 @@ from omnigent.inner.executor import (
     TurnComplete,
 )
 from omnigent.llms._usage_observer import notify_from_dict as _notify_usage_from_dict
+from omnigent.runtime.ui_contract import append_ui_contract
 
 _logger = logging.getLogger(__name__)
 
@@ -410,6 +416,12 @@ class KimiExecutor(Executor):
         self._binary_path = binary_path or _resolve_kimi_binary()
         self._plan = plan
         self._continue_last_session = continue_last_session
+        self._session_home_dir = tempfile.TemporaryDirectory(prefix="omnigent-kimi-home-")
+        self._session_home = Path(self._session_home_dir.name)
+        try:
+            self._user_kimi_home = resolve_user_kimi_home()
+        except RuntimeError:
+            self._user_kimi_home = self._session_home
         self._skills_dirs = list(skills_dirs or [])
 
         # Per-session state: kimi session id captured from the prior turn's
@@ -454,10 +466,12 @@ class KimiExecutor(Executor):
         # Deny-by-default: base + kimi's own families + the spec's
         # env_passthrough. Keeps the documented ambient KIMI_/MOONSHOT_ auth
         # while no longer handing the CLI every other provider's key (#3445).
-        return clean_agent_env(
+        env = clean_agent_env(
             allow_prefixes=("KIMI_", "MOONSHOT_"),
             extra_allowed=declared_passthrough(self._os_env),
         )
+        env[KIMI_CODE_HOME_ENV_VAR] = str(self._session_home)
+        return env
 
     def _sandbox_launch_path(self, spawn_env_names: Sequence[str]) -> str:
         """Return the path to spawn for kimi — sandbox launcher or bare binary.
@@ -502,12 +516,14 @@ class KimiExecutor(Executor):
             # kimi is a curl-installed single binary: it must read its own
             # install dir and write its config dir ($KIMI_CODE_HOME, default
             # ~/.kimi-code), or it can't start inside the jail.
-            from omnigent.harnesses.kimi_native.credentials import resolve_user_kimi_home
-
             resolved_bin = shutil.which(self._binary_path) or self._binary_path
             bin_dir = Path(resolved_bin).resolve(strict=False).parent
-            sandbox = with_additional_read_roots(sandbox, [bin_dir])
-            sandbox = with_additional_write_roots(sandbox, [resolve_user_kimi_home()])
+            try:
+                user_kimi_home = resolve_user_kimi_home()
+            except RuntimeError:
+                user_kimi_home = self._user_kimi_home
+            sandbox = with_additional_read_roots(sandbox, [bin_dir, self._session_home])
+            sandbox = with_additional_write_roots(sandbox, [self._session_home, user_kimi_home])
             sandbox = with_spawn_env_allowlist(sandbox, spawn_env_names)
             return create_exec_launcher(resolved_bin, sandbox)
         except (OSError, ImportError, NotImplementedError) as exc:
@@ -565,7 +581,9 @@ class KimiExecutor(Executor):
             # first read starts at 0, gated on the recorded floor instead.
             return
         try:
-            wire = _find_wire_log(resolve_user_kimi_home(), session_id)
+            wire = _find_wire_log(self._session_home, session_id) or _find_wire_log(
+                self._user_kimi_home, session_id
+            )
             if wire is not None:
                 self._wire_offsets[session_id] = wire.stat().st_size
         except Exception:
@@ -588,7 +606,9 @@ class KimiExecutor(Executor):
         if not session_id:
             return None
         try:
-            wire_path = _find_wire_log(resolve_user_kimi_home(), session_id)
+            wire_path = _find_wire_log(self._session_home, session_id) or _find_wire_log(
+                self._user_kimi_home, session_id
+            )
             if wire_path is None:
                 _warn_once(
                     f"wire-missing:{session_id}",
@@ -707,7 +727,7 @@ class KimiExecutor(Executor):
         self,
         messages: list[Message],
         tools: list[ToolSpec],
-        system_prompt: str,  # noqa: ARG002 — kimi's own agent spec carries instructions
+        system_prompt: str,
         config: ExecutorConfig | None = None,  # noqa: ARG002 — per-turn override not yet plumbed
     ) -> AsyncIterator[ExecutorEvent]:
         if tools and not self._warned_tools_without_bridge:
@@ -737,6 +757,14 @@ class KimiExecutor(Executor):
             yield TurnComplete(response=None)
             return
 
+        product_guidance = append_ui_contract(system_prompt or None, "kimi")
+        build_kimi_session_home(
+            self._session_home,
+            bridge_dir=self._session_home / "bridge",
+            product_guidance=product_guidance,
+            include_hooks=False,
+            private_sessions=False,
+        )
         argv = self._build_argv(prompt_text=prompt_text)
         env = self._build_spawn_env()
         # Resolve argv[0]: the bare binary, or a sandbox launcher wrapping it

@@ -220,6 +220,7 @@ def test_forwarder_keeps_streaming_when_native_tui_answers_codex_elicitation(
                 "item_data": {
                     "role": "assistant",
                     "agent": "codex-native-ui",
+                    "phase": None,
                     "content": [{"type": "output_text", "text": "after approval"}],
                 },
                 "response_id": "codex_turn_123",

@@ -29,6 +29,7 @@ import {
 import { AgentInfoButton } from "@/components/AgentInfo";
 import { HeaderActionButton } from "@/components/HeaderActionButton";
 import { NotificationBell } from "@/components/NotificationCenter";
+import { ConversationHeaderStatus } from "@/components/ConversationHeaderStatus";
 import { ConversationBreadcrumb } from "./ConversationBreadcrumb";
 import { HeaderConversationMenu } from "./HeaderConversationMenu";
 import { SessionActionMenuItem } from "@/components/SessionActionMenuItem";
@@ -146,6 +147,7 @@ interface ChatHeaderProps {
   onToggleRightPanel: () => void;
   /** Show dependency-free disabled chrome while the server session is pending. */
   pending?: boolean;
+  active?: boolean;
   /** Gating + handlers for the mobile session-menu FAB. */
   mobileMenu: MobileSessionMenuProps;
 }
@@ -284,6 +286,7 @@ export function ChatHeader({
   rightPanelOpen,
   onToggleRightPanel,
   pending = false,
+  active = true,
   mobileMenu,
 }: ChatHeaderProps) {
   const isMobile = useIsMobileViewport();
@@ -435,6 +438,14 @@ export function ChatHeader({
       </div>
 
       <div className="flex shrink-0 items-center gap-2 max-md:gap-0 max-md:empty:hidden">
+        {!pending && conversationId && (
+          <ConversationHeaderStatus
+            conversationId={conversationId}
+            active={active}
+            permissionLevel={permissionLevel}
+            harness={wrapperLabel}
+          />
+        )}
         {!isMobile && <NotificationBell />}
         {/* Other users currently viewing this session (presence).
             Self-contained — reads the chat store directly, renders

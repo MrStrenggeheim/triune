@@ -11,7 +11,7 @@ import importlib
 import importlib.metadata
 import logging
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TypeVar, cast
 
 from omnigent._wrapper_labels import (
@@ -44,6 +44,7 @@ from omnigent.harness_capabilities import (
     Resume,
 )
 from omnigent.harness_install_spec import HarnessInstallSpec
+from omnigent.runtime.ui_contract import UI_CONTRACT_VERSION
 
 _logger = logging.getLogger(__name__)
 
@@ -438,7 +439,7 @@ _BUILTIN_CAPABILITIES: dict[str, HarnessCapabilities] = {
         fork_history=_FH.NONE,
         shell_tool_name="shell",
         shell_tool_prompt=_SHELL_PROMPT,
-        instruction_delivery=_ID.NOT_DELIVERED,
+        instruction_delivery=_ID.AGENT_STARTUP_ADDITIVE,
     ),
     "antigravity-native": _C(
         _IM.NATIVE_TUI,
@@ -468,7 +469,7 @@ _BUILTIN_CAPABILITIES: dict[str, HarnessCapabilities] = {
         fork_history=_FH.NONE,
         shell_tool_name="developer__shell",
         shell_tool_prompt=_SHELL_PROMPT,
-        instruction_delivery=_ID.NOT_DELIVERED,
+        instruction_delivery=_ID.AGENT_STARTUP_ADDITIVE,
     ),
     # streaming=False is LIVE-VERIFIED: a bench run observed 0 text deltas.
     "qwen-native": _C(
@@ -484,7 +485,7 @@ _BUILTIN_CAPABILITIES: dict[str, HarnessCapabilities] = {
         fork_history=_FH.REBUILD,
         shell_tool_name="run_shell_command",
         shell_tool_prompt=_SHELL_PROMPT,
-        instruction_delivery=_ID.NOT_DELIVERED,
+        instruction_delivery=_ID.AGENT_STARTUP_ADDITIVE,
     ),
     "kimi-native": _C(
         _IM.NATIVE_TUI,
@@ -499,7 +500,7 @@ _BUILTIN_CAPABILITIES: dict[str, HarnessCapabilities] = {
         fork_history=_FH.NONE,
         shell_tool_name="Bash",
         shell_tool_prompt=_BASH_PROMPT,
-        instruction_delivery=_ID.NOT_DELIVERED,
+        instruction_delivery=_ID.AGENT_STARTUP_ADDITIVE,
     ),
     "opencode-native": _C(
         _IM.NATIVE_SERVER,
@@ -576,7 +577,7 @@ _BUILTIN_CAPABILITIES: dict[str, HarnessCapabilities] = {
         fork_history=_FH.REBUILD,
         shell_tool_name="terminal",
         shell_tool_prompt=_SHELL_PROMPT,
-        instruction_delivery=_ID.NOT_DELIVERED,
+        instruction_delivery=_ID.AGENT_STARTUP_ADDITIVE,
     ),
     # SDK / subprocess harnesses (run the vendor model directly). The first four
     # are bench-verified interrupt=streaming=True.
@@ -703,7 +704,7 @@ _BUILTIN_CAPABILITIES: dict[str, HarnessCapabilities] = {
         subagents=False,
         interrupt=True,
         streaming=True,
-        instruction_delivery=_ID.NOT_DELIVERED,
+        instruction_delivery=_ID.COMPOSED_SESSION_SNAPSHOT,
     ),
     "hermes": _C(
         _IM.CLI_SUBPROCESS,
@@ -747,6 +748,51 @@ _BUILTIN_CAPABILITIES: dict[str, HarnessCapabilities] = {
         instruction_delivery=_ID.COMPOSED_PER_TURN,
     ),
 }
+
+# Product guidance has a separate delivery declaration: an adapter can preserve
+# author instructions yet still need a startup-specific product channel.
+for _name, _capability in tuple(_BUILTIN_CAPABILITIES.items()):
+    _ui_delivery = _ID.NOT_DELIVERED
+    if _capability.instruction_delivery in {
+        _ID.COMPOSED_PER_TURN,
+        _ID.COMPOSED_SESSION_SNAPSHOT,
+        _ID.FIRST_USER_PREFIX,
+    }:
+        _ui_delivery = _capability.instruction_delivery
+    elif _capability.integration_mode in {_IM.NATIVE_TUI, _IM.NATIVE_SERVER} or _name == "kimi":
+        _ui_delivery = _ID.AGENT_STARTUP_ADDITIVE
+    if _name == "cursor-native":
+        _ui_delivery = _ID.TOOL_SCHEMA
+    _BUILTIN_CAPABILITIES[_name] = replace(
+        _capability,
+        ui_contract_delivery=_ui_delivery,
+        ui_contract_version=(
+            UI_CONTRACT_VERSION if _ui_delivery is not _ID.NOT_DELIVERED else None
+        ),
+        ui_contract_note={
+            "cursor-native": (
+                "Product guidance is in the managed MCP sys_ui_capabilities "
+                "description when advertised; this does not deliver AgentSpec roles."
+            ),
+            "kimi-native": (
+                "Requires Kimi Code 0.31+ v2. Plugin sections need the default/base prompt "
+                "or an explicit "
+                "plugin_sections placeholder. Custom templates may opt out; existing "
+                "persisted prompts refresh at provider-supported rebuild boundaries."
+            ),
+            "kimi": (
+                "Kimi Code 0.31+ v2 plugin instructions form a session snapshot; custom templates "
+                "omitting plugin/base sections opt out and resume keeps its saved prompt."
+            ),
+            "goose-native": (
+                "Requires Goose Top Of Mind; combined persistent context is capped at 64 KiB."
+            ),
+            "devin-native": (
+                "An owned workspace rule is preferred; scope conflicts "
+                "use the existing first-turn preamble."
+            ),
+        }.get(_name),
+    )
 
 # Builtin ACP CLI harnesses (omnigent/acp_cli_harnesses.py) run through the
 # same generic wrap as the "acp" harness, so they share its declared profile.

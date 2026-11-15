@@ -1,3 +1,4 @@
+import type { SessionDraft } from "./sessionDrafts";
 import type { QueuedMessage } from "@/store/chatStore";
 import { readComposerDraft } from "./replyDraft";
 import { randomUUID } from "./randomUUID";
@@ -20,7 +21,7 @@ interface QueueStore {
   subscribe: (listener: (state: QueueState, previous: QueueState) => void) => () => void;
 }
 
-async function transaction(scope: string, value?: StoredMessage[]): Promise<unknown> {
+async function transaction(scope: string, value?: unknown): Promise<unknown> {
   const database = await new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open(DATABASE, 1);
     request.onupgradeneeded = () => {
@@ -36,7 +37,7 @@ async function transaction(scope: string, value?: StoredMessage[]): Promise<unkn
       const request =
         value === undefined
           ? tx.objectStore(STORE).get(scope)
-          : tx.objectStore(STORE).put({ version: 1, messages: value }, scope);
+          : tx.objectStore(STORE).put(value, scope);
       tx.oncomplete = () => resolve(request.result);
       tx.onerror = () => reject(tx.error);
       tx.onabort = () => reject(tx.error ?? new Error("Queue storage transaction aborted"));
@@ -75,7 +76,7 @@ export async function writeQueuedMessages(scope: string, messages: QueuedMessage
         : {}),
     })),
   );
-  await transaction(scope, stored);
+  await transaction(scope, { version: 1, messages: stored });
 }
 
 export async function readQueuedMessages(scope: string): Promise<QueuedMessage[]> {
@@ -112,6 +113,18 @@ export async function readQueuedMessages(scope: string): Promise<QueuedMessage[]
           ? message.stableId
           : randomUUID().replace(/-/g, ""),
       ...(message.agentId ? { agentId: message.agentId } : {}),
+      ...(typeof message.hostId === "string" ? { hostId: message.hostId } : {}),
+      ...(typeof message.workspaceRoot === "string"
+        ? { workspaceRoot: message.workspaceRoot }
+        : {}),
+      ...(typeof message.workspaceRevision === "string"
+        ? { workspaceRevision: message.workspaceRevision }
+        : {}),
+      ...(message.serverState ? { serverState: message.serverState } : {}),
+      ...(message.serverContent ? { serverContent: message.serverContent } : {}),
+      ...(message.fileMetadata ? { fileMetadata: message.fileMetadata } : {}),
+      ...(message.dispatching ? { dispatching: true } : {}),
+      ...(message.deliveryError ? { deliveryError: message.deliveryError } : {}),
       ...(files?.length ? { files } : {}),
       ...(message.command === "compact" ? { command: "compact" as const } : {}),
       ...(message.requiresRetry || !message.stableId ? { requiresRetry: true } : {}),
@@ -139,7 +152,9 @@ export function persistMessageQueue({
   let writes = Promise.resolve();
   let hydration = Promise.resolve();
   let reported = false;
+  let lastError: unknown;
   const failure = (error: unknown) => {
+    lastError = error;
     if (!stopped && !reported) {
       reported = true;
       reportError(error);
@@ -150,6 +165,7 @@ export function persistMessageQueue({
       .then(() => writeQueuedMessages(owner, messages))
       .then(() => {
         reported = false;
+        lastError = undefined;
       })
       .catch(failure);
   };
@@ -201,9 +217,78 @@ export function persistMessageQueue({
       await hydration;
       await writes;
     },
+    saved: async () => {
+      await hydration;
+      await writes;
+      if (lastError) throw lastError instanceof Error ? lastError : new Error(String(lastError));
+    },
     dispose: () => {
       stopped = true;
       unsubscribe();
     },
   };
+}
+
+/** Composer snapshots share the queue's byte-preserving, scoped IDB transaction. */
+export async function writeComposerDrafts(
+  scope: string,
+  drafts: Map<string, SessionDraft>,
+): Promise<void> {
+  const entries = await Promise.all(
+    [...drafts].map(async ([id, { files, ...draft }]) => [
+      id,
+      {
+        ...draft,
+        files: await Promise.all(
+          files.map(async (file) => ({
+            name: file.name,
+            type: file.type,
+            lastModified: file.lastModified,
+            data: await fileBytes(file),
+          })),
+        ),
+      },
+    ]),
+  );
+  await transaction(`composer:${scope}`, { version: 1, drafts: Object.fromEntries(entries) });
+}
+
+export async function readComposerDrafts(scope: string): Promise<Map<string, SessionDraft>> {
+  const saved = (await transaction(`composer:${scope}`)) as
+    | {
+        version: number;
+        drafts: Record<string, Omit<SessionDraft, "files"> & { files: StoredFile[] }>;
+      }
+    | undefined;
+  if (saved === undefined) return new Map();
+  if (saved.version !== 1 || !saved.drafts || typeof saved.drafts !== "object")
+    throw new Error("Invalid saved composer");
+  return new Map(
+    Object.entries(saved.drafts).map(([id, value]) => {
+      const draft = readComposerDraft(value);
+      if (!draft || !Array.isArray(value.files)) throw new Error("Invalid saved composer draft");
+      const files = value.files.map((file) => {
+        if (
+          !file ||
+          typeof file.name !== "string" ||
+          typeof file.type !== "string" ||
+          typeof file.lastModified !== "number" ||
+          Object.prototype.toString.call(file.data) !== "[object ArrayBuffer]"
+        )
+          throw new Error("Composer attachment unavailable");
+        return new File([file.data], file.name, {
+          type: file.type,
+          lastModified: file.lastModified,
+        });
+      });
+      return [
+        id,
+        {
+          ...draft,
+          files,
+          ...(Array.isArray(value.mentionedItems) ? { mentionedItems: value.mentionedItems } : {}),
+        },
+      ];
+    }),
+  );
 }

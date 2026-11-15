@@ -59,7 +59,7 @@ export function ActivitySourcePicker({
     source?.kind === "host"
       ? `Host: ${hosts.data?.find((host) => host.host_id === source.hostId)?.name || source.hostId} · ${source.workspace?.root || "Choose path"}`
       : source?.kind === "chat"
-        ? `Chat: ${session?.title || source.conversationId}`
+        ? session?.title || source.conversationId
         : "Choose source";
 
   useEffect(() => {
@@ -101,11 +101,11 @@ export function ActivitySourcePicker({
         <Button
           variant="ghost"
           size="sm"
-          aria-label={`Choose orchestration source · ${label}`}
+          aria-label={`Choose orchestration source · ${source?.kind === "chat" ? `Chat: ${label}` : label}`}
           aria-haspopup="dialog"
           aria-expanded={open}
           data-view-retain={open || workspaceOpen || busy || undefined}
-          className="min-w-0 gap-1"
+          className="min-w-20 max-w-full shrink gap-1"
           onClick={() => {
             setError(null);
             setOpen(true);

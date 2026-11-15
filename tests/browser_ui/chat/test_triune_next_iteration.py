@@ -2,6 +2,7 @@
 """Shared controls and retained resources for the next Triune iteration."""
 
 import json
+import re
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
@@ -190,7 +191,13 @@ def test_original_composer_shelf_requests_and_counts(
                             "question": "Which checks should run?",
                             "options": [{"label": "Focused", "description": "Changed controls"}],
                             "multiSelect": False,
-                        }
+                        },
+                        {
+                            "id": "timing",
+                            "question": "Run them now?",
+                            "options": [{"label": "After review"}],
+                            "multiSelect": False,
+                        },
                     ]
                 }
             },
@@ -223,9 +230,22 @@ def test_original_composer_shelf_requests_and_counts(
     assert shelf.locator(".lucide-chevron-down").count() == 0
     assert shelf.evaluate("el => el.scrollWidth <= el.clientWidth + 1")
     shelf.get_by_role("button", name="Questions: 1", exact=True).click()
-    expect(page.get_by_test_id("ask-user-question-form")).to_contain_text(
+    panel = page.get_by_role("dialog", name="Questions", exact=True)
+    expect(panel.get_by_test_id("ask-user-question-form")).to_contain_text(
         "Which checks should run?"
     )
+    expect(panel.get_by_test_id("ask-user-question-progress")).to_have_text("Question 1 of 2")
+    expect(panel.get_by_role("button", name="Skip (0/2)", exact=True)).to_be_visible()
+    panel.get_by_role("radio", name=re.compile(r"^Focused")).check()
+    expect(panel.get_by_role("button", name="Next (1/2)", exact=True)).to_be_visible()
+    panel.get_by_role("button", name="Next question", exact=True).click()
+    expect(panel.get_by_test_id("ask-user-question-progress")).to_have_text("Question 2 of 2")
+    expect(panel.get_by_role("button", name="Submit (1/2)", exact=True)).to_be_enabled()
+    expect(
+        panel.locator(".activity-message-body").get_by_test_id("ask-user-question-progress")
+    ).to_have_count(0)
+    panel.get_by_role("button", name="Previous", exact=True).click()
+    expect(panel.get_by_role("radio", name=re.compile(r"^Focused"))).to_be_checked()
     _capture(page, output_path, f"shelf-question-{width}")
     page.keyboard.press("Escape")
     expect(editor).to_have_value("Keep this draft")

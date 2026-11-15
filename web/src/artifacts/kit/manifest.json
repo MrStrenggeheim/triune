@@ -1,0 +1,141 @@
+{
+  "kit_id": "triune-artifact",
+  "version": "1.0.0",
+  "public_base_path": "artifacts/kit/1.0.0/",
+  "namespace": "ta-* / --ta-*",
+  "assets": {
+    "triune-artifact.css": {
+      "bytes": 15328,
+      "sha256": "73348884c6d53bffc7ff62e9671ffc30b240714590083f24f040d868a90940e8"
+    },
+    "triune-artifact.js": {
+      "bytes": 4267,
+      "sha256": "3d2488883ab52e892f6de06f3ab103b80eca7cc69ff96ac3b7ee3ed983651498",
+      "optional": true
+    },
+    "triune-icons.svg": {
+      "bytes": 1317,
+      "sha256": "c8e224873962f802896ed9d13586edbd48cf15e175a96249164c0615f5ef70d6",
+      "license": "Lucide ISC; see LUCIDE-LICENSE.txt"
+    }
+  },
+  "budgets_bytes": {
+    "css": 20480,
+    "javascript": 12288
+  },
+  "runtime": {
+    "dependencies": [],
+    "external_cdns": false,
+    "entry": "window.TriuneArtifact.init(root)",
+    "automatic_mount": "[data-ta-init]",
+    "network": "none"
+  },
+  "native_behavior": {
+    "supported": ["tabs", "disclosure", "arrowless tooltip", "theme control", "density control"],
+    "parity_limits": [
+      "Native adapters do not import React or Radix behavior.",
+      "Native select popups and radio paint remain browser-owned.",
+      "Content tabs do not reproduce dock layout, pinning, or selection strips.",
+      "Host tokens override fallbacks through getArtifactThemeVariables(root)."
+    ]
+  },
+  "components": {
+    "button": {
+      "export": "Button",
+      "module": "@/components/ui/button",
+      "radii": [8, 6, 4]
+    },
+    "field": {
+      "export": "Input",
+      "module": "@/components/ui/input",
+      "radii": [8]
+    },
+    "textarea": {
+      "export": "Textarea",
+      "module": "@/components/ui/textarea",
+      "radii": [8]
+    },
+    "checkbox": {
+      "export": "Checkbox",
+      "module": "@/components/ui/checkbox",
+      "radii": [4]
+    },
+    "select": {
+      "export": "SelectTrigger",
+      "module": "@/components/ui/select",
+      "radii": [8, 6]
+    },
+    "headerAction": {
+      "export": "HeaderActionButton",
+      "module": "@/components/HeaderActionButton",
+      "radii": [6]
+    },
+    "close": {
+      "export": "CloseButton",
+      "module": "@/components/CloseButton",
+      "radii": [4]
+    }
+  },
+  "exceptions": {
+    "badge": {
+      "module": "@/components/ui/badge",
+      "shape": "20.8px pill"
+    },
+    "tooltip": {
+      "module": "@/components/ui/tooltip",
+      "radius": 7
+    },
+    "switch": {
+      "module": "@/components/ui/switch",
+      "shape": "native toggle capsule"
+    },
+    "selectPopup": {
+      "module": "@/components/ui/select",
+      "radius": 12
+    },
+    "dialog": {
+      "module": "@/components/ui/dialog",
+      "radius": 30
+    }
+  },
+  "token_aliases": {
+    "--ta-font": "font-family",
+    "--ta-ui": "font-size",
+    "--ta-primary": "--primary",
+    "--ta-primary-foreground": "--primary-foreground",
+    "--ta-brand": "--brand-accent",
+    "--ta-content": "--workspace-content",
+    "--ta-text": "--foreground",
+    "--ta-muted": "--muted-foreground",
+    "--ta-secondary": "--secondary",
+    "--ta-border": "--border",
+    "--ta-success": "--success",
+    "--ta-warning": "--warning",
+    "--ta-error": "--destructive",
+    "--ta-info": "--info",
+    "--ta-ring": "--focus-color",
+    "--ta-chrome": "--workspace-chrome",
+    "--ta-appbar": "--workspace-appbar",
+    "--ta-selected": "--workspace-selected",
+    "--ta-control-surface": "--workspace-group",
+    "--ta-hover": "--workspace-hover-on-content",
+    "--ta-hover-chrome": "--workspace-hover-on-chrome",
+    "--ta-control-hover": "--workspace-control-hover",
+    "--ta-control-active": "--workspace-control-active",
+    "--ta-close-hover": "--workspace-close-hover",
+    "--ta-close-active": "--workspace-close-active",
+    "--ta-primary-hover": "--primary-hover",
+    "--ta-primary-active": "--primary-active",
+    "--ta-secondary-hover": "--secondary-hover",
+    "--ta-secondary-active": "--secondary-active",
+    "--ta-radius-sm": "--radius-sm",
+    "--ta-radius-md": "--radius-md",
+    "--ta-radius-lg": "--radius-lg",
+    "--ta-radius-tooltip": "--radius-tooltip",
+    "--ta-radius-base": "--radius",
+    "--ta-radius-4xl": "--radius-4xl",
+    "--ta-row-min": "--list-row-min-height",
+    "--ta-row-y": "--list-row-padding-block",
+    "--ta-row-x": "--list-row-padding-inline"
+  }
+}

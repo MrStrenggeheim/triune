@@ -126,8 +126,11 @@ function QueuedRow({
   };
   const hasText = message.text.trim().length > 0;
   const files = message.files ?? [];
-  const attachmentNames = files.map(attachmentFilename);
-  const AttachmentIcon = files.every((file) => file.type.startsWith("image/"))
+  const attachmentNames = files.length
+    ? files.map(attachmentFilename)
+    : (message.fileMetadata?.map((file) => file.name || "image.png") ?? []);
+  const attachmentTypes = files.length ? files : (message.fileMetadata ?? []);
+  const AttachmentIcon = attachmentTypes.every((file) => file.type.startsWith("image/"))
     ? ImageIcon
     : PaperclipIcon;
 
@@ -167,10 +170,7 @@ function QueuedRow({
       )}
       <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 max-md:flex-col max-md:items-start max-md:gap-0.5">
         {hasText && (
-          <span
-            className="min-w-0 max-w-full whitespace-pre-wrap [overflow-wrap:anywhere]"
-            title={message.text}
-          >
+          <span className="min-w-0 max-w-full truncate" title={message.text}>
             {message.text}
           </span>
         )}
@@ -203,7 +203,19 @@ function QueuedRow({
           </Badge>
         )}
       </div>
-      {message.requiresRetry && (
+      {message.serverState === "saving" && (
+        <span className="shrink-0 text-xs text-muted-foreground">Saving…</span>
+      )}
+      {message.deliveryError && (
+        <span
+          role="status"
+          title={message.deliveryError}
+          className="max-w-32 truncate text-xs text-destructive"
+        >
+          {message.deliveryError}
+        </span>
+      )}
+      {message.requiresRetry && !message.deliveryError && (
         <span className="shrink-0 text-xs text-destructive">Send failed</span>
       )}
       {message.waitingForHost && !message.requiresRetry && (

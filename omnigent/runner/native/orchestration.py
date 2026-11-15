@@ -2722,7 +2722,15 @@ async def _auto_create_pi_terminal(
         workspace=launch_config.workspace,
         server_client=server_client,
     )
-    raw_instructions = _native_startup_raw_instructions_from_spec(agent_spec)
+    from omnigent.runtime.ui_contract import append_ui_contract
+
+    raw_instructions = append_ui_contract(
+        _native_startup_raw_instructions_from_spec(agent_spec),
+        "pi-native",
+        tools=[str(tool["name"]) for tool in pi_tools if isinstance(tool.get("name"), str)],
+        session_id=session_id,
+        server_url=launch_config.server_url,
+    )
     instructions_path = write_agent_instructions(bridge_dir, raw_instructions)
     pi_spec = agent_spec.spec if isinstance(agent_spec, ResolvedSpec) else agent_spec
     context_files = True
@@ -3431,6 +3439,15 @@ async def _auto_create_goose_terminal(
         "GOOSE_TELEMETRY_OFF": "1",
         "GOOSE_MODE": "smart_approve",
     }
+    from omnigent.harnesses.goose_native.startup import goose_product_startup_env
+
+    goose_env["GOOSE_MOIM_MESSAGE_TEXT"] = os.environ.get("GOOSE_MOIM_MESSAGE_TEXT", "")
+    goose_env = goose_product_startup_env(
+        goose_env,
+        session_id=session_id,
+        server_url=_required_runner_env("RUNNER_SERVER_URL"),
+        author_instructions=_native_startup_raw_instructions_from_spec(agent_spec),
+    )
     # Launch-unique Goose session name. `goose session --name X` (without
     # --resume) creates a NEW sessions row each launch (verified, Goose 1.38),
     # so a per-launch-unique name lets the forwarder bind to EXACTLY this
@@ -3643,6 +3660,17 @@ async def _auto_create_hermes_terminal(
     # to place the cloned state.db, and the env block after needs it for the
     # HERMES_HOME env var.
     _hermes_home_path = read_hermes_home(bridge_dir)
+    if _hermes_home_path is None:
+        raise RuntimeError("Hermes startup requires its isolated session home.")
+    from omnigent.harnesses.hermes_native.startup import install_hermes_product_guidance
+
+    await asyncio.to_thread(
+        install_hermes_product_guidance,
+        _hermes_home_path,
+        session_id=session_id,
+        server_url=_hermes_server_url,
+        author_instructions=_native_startup_raw_instructions_from_spec(agent_spec),
+    )
     # Fork with history: clone the source Hermes session's state.db into the
     # new session's HERMES_HOME so the TUI loads the prior conversation context
     # under a fresh session id (true fork, not a shared --resume).
@@ -3877,6 +3905,18 @@ async def _auto_create_kiro_terminal(
         resume_id=launch_config.external_session_id,
         model=launch_config.model_override,
     )
+    from omnigent.harnesses.kiro_native.main import prepare_kiro_ui_contract_home
+
+    kiro_env = build_kiro_native_terminal_env(session_id)
+    kiro_env.update(
+        prepare_kiro_ui_contract_home(
+            bridge_dir / "kiro-home",
+            source_home=Path(os.environ.get("KIRO_HOME", str(Path.home() / ".kiro"))),
+            session_id=session_id,
+            server_url=_required_runner_env("RUNNER_SERVER_URL"),
+            author_instructions=_native_startup_raw_instructions_from_spec(agent_spec),
+        )
+    )
     launch_epoch_ms = int(time.time() * 1000)
     # Inherit the agent's os_env so its declared sandbox (e.g. ``type: none``),
     # egress_rules and env_passthrough are honoured. Without ``sandbox`` here
@@ -3897,7 +3937,7 @@ async def _auto_create_kiro_terminal(
             ),
             command=kiro_launch.executable,
             args=kiro_launch.argv[1:],
-            env=build_kiro_native_terminal_env(session_id),
+            env=kiro_env,
             env_unset=list(KIRO_NATIVE_ENV_UNSET),
             inherit_env=False,
             scrollback=100_000,
@@ -4035,7 +4075,14 @@ async def _auto_create_devin_terminal(
     # would not be session-scoped — a home-directory workspace Devin reads from
     # every cwd, or one another agent's live rule already owns — the instructions
     # ride the first message instead, which is weaker but stays in this session.
-    raw_instructions = _native_startup_raw_instructions_from_spec(agent_spec)
+    from omnigent.runtime.ui_contract import append_ui_contract
+
+    raw_instructions = append_ui_contract(
+        _native_startup_raw_instructions_from_spec(agent_spec),
+        "devin-native",
+        session_id=session_id,
+        server_url=_required_runner_env("RUNNER_SERVER_URL"),
+    )
     rule_is_live = write_devin_agent_rule(workspace_path, raw_instructions, session_id=session_id)
     if raw_instructions and not rule_is_live:
         write_agent_instructions_preamble(bridge_dir, raw_instructions)
@@ -4464,6 +4511,9 @@ async def _auto_create_qwen_terminal(
     # ``terminal_launch_args`` (e.g. ``-m <model>``) precede them. Approval stays
     # the default in-terminal prompt (the embedded pane shows it) — Omnigent-side
     # gating via ``confirmation_response`` is a follow-up (see design doc).
+    from omnigent.harnesses.qwen_native.main import _with_product_system_prompt
+    from omnigent.runtime.ui_contract import append_ui_contract
+
     qwen_args = [
         *(launch_config.terminal_launch_args or []),
         *resume_args,
@@ -4473,6 +4523,17 @@ async def _auto_create_qwen_terminal(
         "--json-file",
         str(out_path),
     ]
+    qwen_args = list(
+        _with_product_system_prompt(
+            tuple(qwen_args),
+            append_ui_contract(
+                _native_startup_raw_instructions_from_spec(agent_spec),
+                "qwen-native",
+                session_id=session_id,
+                server_url=_required_runner_env("RUNNER_SERVER_URL"),
+            ),
+        )
+    )
     # Inherit the agent's os_env so its declared sandbox (e.g. ``type: none``),
     # egress_rules and env_passthrough are honoured. Without ``sandbox`` here
     # and ``parent_os_env`` below, launch_required_terminal falls back to
@@ -4682,7 +4743,7 @@ async def _auto_create_kimi_terminal(
     # those first. The hook gets a one-shot token snapshot (a quick
     # request/reply, like claude-native's permission hook); ``None`` factory is
     # a safe no-op for local unauthenticated runs.
-    server_url = os.environ.get("RUNNER_SERVER_URL", "http://localhost:6767").rstrip("/")
+    server_url = _required_runner_env("RUNNER_SERVER_URL").rstrip("/")
     _auth_factory = await asyncio.to_thread(_make_auth_token_factory)
     _auth_token = await asyncio.to_thread(_auth_factory) if _auth_factory is not None else None
     # The hook subprocess replays these static headers from its config (no
@@ -4696,9 +4757,17 @@ async def _auto_create_kimi_terminal(
         headers=_runner_headers,
         session_id=session_id,
     )
+    from omnigent.runtime.ui_contract import append_ui_contract
+
     kimi_env = build_kimi_session_home(
         bridge_dir / "kimi-code-home",
         bridge_dir=bridge_dir,
+        product_guidance=append_ui_contract(
+            _native_startup_raw_instructions_from_spec(agent_spec),
+            "kimi-native",
+            session_id=session_id,
+            server_url=server_url,
+        ),
     )
     # Inherit the agent's os_env so its declared sandbox (e.g. ``type: none``),
     # egress_rules and env_passthrough are honoured. Without ``sandbox`` here
@@ -6637,6 +6706,7 @@ async def _auto_create_antigravity_terminal(
     *,
     server_client: httpx.AsyncClient | None = None,
     ensure_comment_relay: _EnsureCommentRelay | None = None,
+    agent_spec: AgentSpec | ResolvedSpec | None = None,
 ) -> SessionResourceView:
     """
     Auto-create the native Antigravity (agy) terminal for a session.
@@ -6814,6 +6884,15 @@ async def _auto_create_antigravity_terminal(
             trusted_workspace=workspace,
         ),
     }
+    from omnigent.harnesses.antigravity_native.main import write_antigravity_ui_contract
+
+    await asyncio.to_thread(
+        write_antigravity_ui_contract,
+        bridge_dir,
+        session_id=session_id,
+        server_url=_required_runner_env("RUNNER_SERVER_URL"),
+        author_instructions=_native_startup_raw_instructions_from_spec(agent_spec),
+    )
     # agy's periodic feedback survey shares its "esc to cancel" footer with the
     # running-turn marker, so a web turn injected while it is up is misread as an
     # active turn and lost (#1494). Disable it before launch. agy now runs under
@@ -9452,6 +9531,7 @@ async def _auto_create_claude_terminal(
     claude_args = augment_claude_args(
         base_claude_args,
         bridge_dir=bridge_dir,
+        session_id=session_id,
         workspace=Path(workspace),
         ap_server_url=server_url,
         ap_auth_headers=_runner_headers,
@@ -10286,6 +10366,7 @@ async def _launch_antigravity(ctx: NativeLaunchContext) -> SessionResourceView:
         ctx.publish_event,
         server_client=ctx.server_client,
         ensure_comment_relay=ctx.ensure_comment_relay,
+        agent_spec=ctx.agent_spec,
     )
 
 

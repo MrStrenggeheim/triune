@@ -16,8 +16,12 @@ import pytest
 
 from omnigent.harnesses.codex_native import forwarder as fwd
 from omnigent.harnesses.codex_native.app_server import CodexAppServerResponseError
-from omnigent.harnesses.codex_native.async_questions import submit_async_question_answer
+from omnigent.harnesses.codex_native.async_questions import (
+    async_question_answer_client_id,
+    submit_async_question_answer,
+)
 from omnigent.server.routes._codex_elicitation import parse_codex_elicitation_request
+from omnigent.server.routes._question_receipts import build_question_receipt_payload
 from omnigent.server.schemas import ElicitationResult
 from tests.harnesses.codex_native.session._support import _write_forwarder_bridge
 
@@ -60,6 +64,66 @@ class _NativeAnswerClient:
 
     async def respond(self, request_id, result):
         raise AssertionError("Native async messages have no RPC question-response channel")
+
+
+@pytest.mark.asyncio
+async def test_canonical_receipt_correlates_native_echo_without_consuming_equal_human_text():
+    event = _question_event()
+    request = parse_codex_elicitation_request({"id": "call-question", **event})
+    verdict = ElicitationResult(action="accept", content={"question_0": "Blue"})
+    receipt = build_question_receipt_payload(
+        "session", "elicitation", request.params.model_dump(), verdict.model_dump()
+    )
+    identity = {
+        **receipt["source"],
+        "session_id": "session",
+        "elicitation_id": "elicitation",
+        "submission_id": receipt["submission_id"],
+    }
+    response = request.build_response(
+        verdict.model_copy(update={"meta": {"question_submission": identity}})
+    )
+    assert response["question_submission"] == identity
+    native = _NativeAnswerClient()
+    await submit_async_question_answer(native, event["params"], response)
+    _, sent = native.calls[-1]
+    assert sent["input"] == [{"type": "text", "text": "Choose native color\nBlue"}]
+    assert (
+        sent["clientUserMessageId"]
+        == identity["native_client_id"]
+        == async_question_answer_client_id("thread", "call-question")
+    )
+    posts = []
+
+    def handle(post):
+        posts.append(json.loads(post.content))
+        return httpx.Response(200, json={})
+
+    async with httpx.AsyncClient(
+        base_url="http://test", transport=httpx.MockTransport(handle)
+    ) as client:
+        for client_id in [
+            sent["clientUserMessageId"],
+            "genuine-human-input",
+            "omnigent-codex-question:invalid",
+        ]:
+            assert await fwd._post_user_message(
+                client,
+                "session",
+                event["params"],
+                {
+                    "id": client_id,
+                    "type": "userMessage",
+                    "clientId": client_id,
+                    "content": [{"type": "text", "text": "Choose native color\nBlue"}],
+                },
+            )
+    assert len(posts) == 2
+    assert all(
+        body["data"]["item_data"]["content"]
+        == [{"type": "input_text", "text": "Choose native color\nBlue"}]
+        for body in posts
+    )
 
 
 @pytest.mark.asyncio

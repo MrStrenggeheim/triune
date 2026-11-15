@@ -58,6 +58,12 @@ from omnigent.server.auth import (
 from omnigent.server.feature_flags import Feature, FeatureFlags
 from omnigent.server.host_registry import HostRegistry
 from omnigent.server.permissions import check_session_access
+from omnigent.server.queue_attachments import (
+    QUEUE_AUTHOR,
+    private_queue_metadata,
+    queue_file_visible,
+    require_queue_file_visible,
+)
 from omnigent.server.routes._auth_helpers import (
     get_user_id as _get_user_id,
 )
@@ -351,6 +357,8 @@ def register_resources_routes(
                 limit=1000,
             )
             for stored in file_page.data:
+                if not queue_file_visible(stored, _get_user_id(request, auth_provider)):
+                    continue
                 resource_dict = _stored_file_to_resource(
                     session_id,
                     stored,
@@ -1954,20 +1962,31 @@ def register_resources_routes(
                 status_code=501,
                 detail="file store not configured",
             )
-        page = file_store.list(
-            session_id=session_id,
-            limit=limit,
-            after=after,
-            before=before,
-            order=order,
-        )
-        data = [_stored_file_to_resource(session_id, f) for f in page.data]
+        user_id = _get_user_id(request, auth_provider)
+        visible: list[StoredFile] = []
+        cursor = after
+        while len(visible) <= limit:
+            page = await asyncio.to_thread(
+                file_store.list,
+                session_id=session_id,
+                limit=min(limit + 1, 1000),
+                after=cursor,
+                before=before,
+                order=order,
+            )
+            visible.extend(stored for stored in page.data if queue_file_visible(stored, user_id))
+            if len(visible) > limit or not page.has_more:
+                break
+            if page.last_id is None or page.last_id == cursor:
+                raise RuntimeError("File pagination did not advance")
+            cursor = page.last_id
+        data = [_stored_file_to_resource(session_id, stored) for stored in visible[:limit]]
         return {
             "object": "list",
             "data": data,
-            "first_id": page.first_id,
-            "last_id": page.last_id,
-            "has_more": page.has_more,
+            "first_id": data[0]["id"] if data else None,
+            "last_id": data[-1]["id"] if data else None,
+            "has_more": len(visible) > limit,
         }
 
     @router.post(
@@ -2012,6 +2031,7 @@ def register_resources_routes(
         presentation: bool = False,
     ) -> dict[str, Any]:
         conv = await _validate_session(session_id, request, LEVEL_EDIT)
+        private_upload = request.query_params.get("private_queue") == "true" and not initial_input
         if file_store is None or artifact_store is None:
             raise HTTPException(
                 status_code=501,
@@ -2179,6 +2199,10 @@ def register_resources_routes(
                     )
                 ):
                     source_metadata["delivery"] = "display"
+            if private_upload:
+                source_metadata = private_queue_metadata(
+                    source_metadata, _get_user_id(request, auth_provider)
+                )
             import hashlib
 
             key = request.headers.get("idempotency-key") if presentation else None
@@ -2192,6 +2216,7 @@ def register_resources_routes(
             if stable_file_id:
                 existing = file_store.get(stable_file_id, session_id=session_id)
                 if existing is not None:
+                    require_queue_file_visible(existing, _get_user_id(request, auth_provider))
                     return _stored_file_to_resource(session_id, existing)
             stored = file_store.create(
                 file_id=stable_file_id,
@@ -2228,14 +2253,15 @@ def register_resources_routes(
                     code=ErrorCode.INTERNAL_ERROR,
                 ) from exc
         resource = _stored_file_to_resource(session_id, stored)
-        _publish_and_persist_resource_event(
-            session_id,
-            "session.resource.created",
-            resource_id=stored.id,
-            resource_type="file",
-            conversation_store=conversation_store,
-            resource=resource,
-        )
+        if not private_upload:
+            _publish_and_persist_resource_event(
+                session_id,
+                "session.resource.created",
+                resource_id=stored.id,
+                resource_type="file",
+                conversation_store=conversation_store,
+                resource=resource,
+            )
         return resource
 
     @router.post(
@@ -2311,6 +2337,7 @@ def register_resources_routes(
                 "File not found",
                 code=ErrorCode.NOT_FOUND,
             )
+        require_queue_file_visible(stored, _get_user_id(request, auth_provider))
         return _stored_file_to_resource(session_id, stored)
 
     @router.get(
@@ -2349,14 +2376,20 @@ def register_resources_routes(
         # source share the browser cache for the same bytes. Transcripts
         # re-render the same attachments on every load, and originals run to
         # megabytes.
+        require_queue_file_visible(stored, _get_user_id(request, auth_provider))
         blob_key = stored.blob_key or stored.id
+        cache_control = (
+            "no-store"
+            if QUEUE_AUTHOR in (stored.source_metadata or {})
+            else FILE_CONTENT_CACHE_CONTROL
+        )
         etag = _file_content_etag(blob_key)
         if _if_none_match_matches(request.headers.get("if-none-match"), etag):
             return Response(
                 status_code=304,
                 headers={
                     "ETag": etag,
-                    "Cache-Control": FILE_CONTENT_CACHE_CONTROL,
+                    "Cache-Control": cache_control,
                 },
             )
         content = await asyncio.to_thread(artifact_store.get, blob_key)
@@ -2380,7 +2413,7 @@ def register_resources_routes(
                 "Content-Disposition": _attachment_disposition(stored.filename),
                 "X-Content-Type-Options": "nosniff",
                 "ETag": etag,
-                "Cache-Control": FILE_CONTENT_CACHE_CONTROL,
+                "Cache-Control": cache_control,
             },
         )
 
@@ -2415,6 +2448,7 @@ def register_resources_routes(
                 "File not found",
                 code=ErrorCode.NOT_FOUND,
             )
+        require_queue_file_visible(stored, _get_user_id(request, auth_provider))
         blob_key = stored.blob_key or stored.id
         if not await asyncio.to_thread(file_store.delete, file_id, session_id=session_id):
             raise OmnigentError(
@@ -2426,13 +2460,14 @@ def register_resources_routes(
         # 404 after the source deletes its copy.
         if await asyncio.to_thread(file_store.is_blob_key_orphaned, blob_key):
             await asyncio.to_thread(artifact_store.delete, blob_key)
-        _publish_and_persist_resource_event(
-            session_id,
-            "session.resource.deleted",
-            resource_id=file_id,
-            resource_type="file",
-            conversation_store=conversation_store,
-        )
+        if QUEUE_AUTHOR not in (stored.source_metadata or {}):
+            _publish_and_persist_resource_event(
+                session_id,
+                "session.resource.deleted",
+                resource_id=file_id,
+                resource_type="file",
+                conversation_store=conversation_store,
+            )
         return {
             "id": file_id,
             "object": "session.resource.deleted",
@@ -2529,6 +2564,7 @@ def register_resources_routes(
                     f"File '{file_id}' not found in source session",
                     code=ErrorCode.NOT_FOUND,
                 )
+            require_queue_file_visible(stored, _get_user_id(request, auth_provider))
             total_bytes += stored.bytes
             if total_bytes > max_total_bytes:
                 raise OmnigentError(
@@ -2627,6 +2663,8 @@ def register_resources_routes(
         # those events — clients would see phantom files that no longer
         # exist. Keep the create + event all-or-nothing together.
         for new in copied:
+            if QUEUE_AUTHOR in (new.source_metadata or {}):
+                continue
             _publish_and_persist_resource_event(
                 session_id,
                 "session.resource.created",

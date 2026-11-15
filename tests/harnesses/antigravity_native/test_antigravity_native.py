@@ -683,6 +683,26 @@ async def test_launch_and_record_isolates_gemini_dir_and_wires_relay(
     assert user_settings.read_text(encoding="utf-8") == '{"model":"gemini-3-pro"}'
 
 
+def test_write_ui_contract_targets_isolated_rule_and_preserves_author_text(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The startup rule preserves author text and appends the static contract."""
+    monkeypatch.setattr(bridge_mod, "_BRIDGE_ROOT", tmp_path / "antigravity-native")
+    real_home = tmp_path / "real-home"
+    (real_home / ".gemini").mkdir(parents=True)
+    author_rule = real_home / ".gemini" / "GEMINI.md"
+    author_rule.write_text("Author rule stays intact.\n", encoding="utf-8")
+    monkeypatch.setattr(Path, "home", classmethod(lambda _cls: real_home))
+
+    bridge_dir = bridge_mod.bridge_dir_for_bridge_id("bridge_contract")
+    _mod.write_antigravity_ui_contract(bridge_dir, session_id="conv_contract")
+    isolated_rule = bridge_mod.agy_gemini_dir(bridge_dir) / "GEMINI.md"
+    text = isolated_rule.read_text(encoding="utf-8")
+    assert text.startswith("Author rule stays intact.\n\nTriune UI contract")
+    assert "triune-artifact" in text
+    assert author_rule.read_text(encoding="utf-8") == "Author rule stays intact.\n"
+
+
 # ---------------------------------------------------------------------------
 # _attach_terminal teardown: the eager terminal-close decision
 # ---------------------------------------------------------------------------

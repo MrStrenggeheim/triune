@@ -199,6 +199,24 @@ def run_qwen_native(
         )
 
 
+def _with_product_system_prompt(
+    qwen_args: tuple[str, ...], product_guidance: str
+) -> tuple[str, ...]:
+    """Add product guidance while retaining an authored append prompt."""
+    args = list(qwen_args)
+    for index in range(len(args) - 1, -1, -1):
+        value = args[index]
+        if value == "--append-system-prompt" and index + 1 < len(args):
+            args[index + 1] = f"{args[index + 1]}\n\n{product_guidance}"
+            return tuple(args)
+        prefix = "--append-system-prompt="
+        if value.startswith(prefix):
+            authored = value.removeprefix(prefix)
+            args[index] = f"{prefix}{authored}\n\n{product_guidance}"
+            return tuple(args)
+    return (*qwen_args, "--append-system-prompt", product_guidance)
+
+
 def _materialize_qwen_agent_spec(tmpdir: Path) -> Path:
     """
     Write the terminal-first agent spec used by ``omnigent qwen``.

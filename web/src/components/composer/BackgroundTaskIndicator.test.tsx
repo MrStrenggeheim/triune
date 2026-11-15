@@ -9,6 +9,7 @@ import { useChatStore } from "@/store/chatStore";
 import type { BackgroundTaskInfo } from "@/lib/types";
 import { WorkbenchProvider } from "@/workbench/WorkbenchContext";
 import { authenticatedFetch } from "@/lib/identity";
+import { getNotificationSnapshot, toast } from "@/lib/notifications";
 import type * as IdentityModule from "@/lib/identity";
 import type * as ShellResourcesModule from "@/hooks/useSessionShellResources";
 import { BackgroundTaskIndicator } from "./BackgroundTaskIndicator";
@@ -60,6 +61,7 @@ const flushRadix = () =>
   });
 
 beforeEach(() => {
+  toast.dismiss();
   shellQuery.mockReturnValue({ data: undefined, error: null } as ReturnType<
     typeof useSessionShellResources
   >);
@@ -69,6 +71,7 @@ beforeEach(() => {
 afterEach(() => {
   setBackground(0, [], null);
   cleanup();
+  toast.dismiss();
   client.clear();
   vi.clearAllMocks();
 });
@@ -114,7 +117,8 @@ describe("BackgroundTaskIndicator", () => {
     const items = screen.getAllByRole("listitem");
     expect(items[0]).toHaveTextContent("First task");
     expect(items[1]).toHaveTextContent("Second task");
-    expect(screen.getAllByRole("status", { name: "Running" })).toHaveLength(2);
+    expect(screen.getAllByRole("status", { name: "Unknown" })).toHaveLength(2);
+    expect(screen.queryByRole("status", { name: "Running" })).toBeNull();
 
     fireEvent.click(trigger);
     expect(trigger).toHaveAttribute("aria-expanded", "false");
@@ -546,6 +550,15 @@ describe("shell resource contracts", () => {
     act(() => setBackground(1, [{ ...task }]));
     expect(screen.queryByRole("button", { name: /Actions for/ })).toBeNull();
     expect(screen.getByText("captured last line")).toBeInTheDocument();
-    expect(screen.getByRole("alert")).toHaveTextContent("Runner offline");
+    const notice = getNotificationSnapshot().entries.find(
+      (entry) => entry.id === "shell-popup:conv-1",
+    );
+    expect(notice).toMatchObject({
+      title: "Could not refresh shell history",
+      type: "error",
+      visible: true,
+      description: "Could not refresh shell history. Try again.",
+      action: { label: "Retry" },
+    });
   });
 });

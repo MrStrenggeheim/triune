@@ -23,6 +23,7 @@ import type { ComponentProps } from "react";
 import type { ChatFileLocation } from "@/lib/chatFileReferences";
 
 vi.mock("@/components/ui/toast", () => ({ showToast: vi.fn() }));
+vi.mock("@/hooks/useViewerId", () => ({ useViewerId: () => "test-viewer" }));
 import { showToast } from "@/components/ui/toast";
 
 const { copyTextMock } = vi.hoisted(() => ({
@@ -171,6 +172,42 @@ function renderMarkdown(
   );
   return client;
 }
+
+it("renders a complete canonical uploaded artifact inline using the source chat's authorized file route", async () => {
+  const original =
+    '<main class="ta-root">' +
+    " ".repeat(760 * 1024) +
+    '<button id="end-of-file">Complete</button></main>';
+  fetchMock.mockImplementation(async (url: string) => {
+    if (url === "/v1/sessions/conv_1/resources/files/uploaded-file")
+      return jsonResponse({
+        name: "complete.html",
+        metadata: { bytes: original.length, content_type: "text/html" },
+      });
+    if (url === "/v1/sessions/conv_1/resources/files/uploaded-file/content")
+      return new Response(original, { headers: { "Content-Type": "text/html" } });
+    throw new Error(`Unexpected artifact request: ${url}`);
+  });
+  renderMarkdown(
+    'Before\n\n```triune-artifact\n{"file_id":"uploaded-file","title":"Local tool"}\n```\nAfter',
+  );
+  const frame = await screen.findByTitle("Local tool");
+  expect(frame).toHaveAttribute("sandbox", "allow-scripts");
+  expect(frame.getAttribute("srcdoc")).toContain("end-of-file");
+  expect(screen.getByText("Before")).toBeInTheDocument();
+  expect(screen.getByText("After")).toBeInTheDocument();
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/v1/sessions/conv_1/resources/files/uploaded-file/content",
+    expect.objectContaining({ signal: expect.any(AbortSignal) }),
+  );
+});
+
+it("keeps ordinary HTML fences as code without fetching an artifact", () => {
+  renderMarkdown("```html\n<button>Unsafe code</button>\n```");
+  expect(document.querySelector("iframe")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Unsafe code" })).toBeNull();
+  expect(fetchMock).not.toHaveBeenCalled();
+});
 
 describe("implicit captured file references", () => {
   it("keeps menu placement and copied paths scoped to the message's originating chat", async () => {

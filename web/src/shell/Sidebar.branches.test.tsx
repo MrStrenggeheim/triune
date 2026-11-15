@@ -88,16 +88,21 @@ afterEach(() => {
   cleanup();
   vi.clearAllMocks();
 });
-function renderTree(initial = "root") {
+function renderTree(initial = "root", owner?: string | null) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   function Harness() {
     const [focusedConversationId, setFocused] = useState(initial);
+    const [layoutOwnerConversationId, setOwner] = useState(owner);
     const navigation = {
       focusedConversationId,
+      layoutOwnerConversationId,
       openConversationIds: ["root", "two"],
       openConversation: (id: string, options?: { beside?: boolean }) => {
         actions.open(id, options);
-        if (!options?.beside) setFocused(id);
+        if (!options?.beside) {
+          setFocused(id);
+          if (owner !== undefined) setOwner(id);
+        }
       },
       openView: vi.fn(),
     };
@@ -165,7 +170,7 @@ it("uses trailing parent-only count/disclosure without reserving a leading root 
   expect(expand).toHaveTextContent("4");
   expect(expand).toHaveClass(
     "cursor-pointer",
-    "hover:bg-[color-mix(in_srgb,var(--foreground)_6%,var(--workspace-hover-on-chrome))]",
+    "[@media((hover:hover)_and_(pointer:fine))]:group-data-[input=mouse]/sidebar:hover:bg-[color-mix(in_srgb,var(--foreground)_6%,var(--workspace-hover-on-chrome))]",
   );
   expect(root.lastElementChild).toBe(expand);
   expect(root.style.getPropertyValue("--sidebar-row-inset")).toBe("0px");
@@ -456,4 +461,24 @@ it("respects a hidden child project without hiding its individually unfiled desc
   expect(screen.queryByRole("link", { name: "one" })).toBeNull();
   expect(await screen.findByRole("link", { name: "two" })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Beta" })).toBeNull();
+});
+
+it.each(["two", "native-child"])(
+  "keeps the saved layout owner selected while %s is focused",
+  async (focused) => {
+    renderTree(focused, "root");
+    const owner = await screen.findByRole("link", { name: "root" });
+    expect(owner).toHaveAttribute("aria-current", "page");
+    expect(screen.getAllByRole("link").filter((row) => row.hasAttribute("aria-current"))).toEqual([
+      owner,
+    ]);
+  },
+);
+
+it("does not substitute the focused chat when the layout explicitly has no owner", async () => {
+  renderTree("two", null);
+  await screen.findByRole("link", { name: "root" });
+  expect(
+    screen.getAllByRole("link").filter((row) => row.hasAttribute("aria-current")),
+  ).toHaveLength(0);
 });

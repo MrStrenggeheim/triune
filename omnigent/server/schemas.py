@@ -1357,6 +1357,20 @@ class ElicitationResult(BaseModel):
 # ── Sessions (/v1/sessions) ────────────────────────────────────
 
 
+class RuntimeQuota(BaseModel):
+    """A provider-reported account quota observation."""
+
+    id: str
+    provider: str
+    window: str
+    used_percent: float | None = None
+    reset_at: float | None = None
+    window_minutes: float | None = None
+    status: str | None = None
+    observed_at: float
+    source_kind: Literal["native", "sdk", "unknown"]
+
+
 class RuntimeNotice(BaseModel):
     """An observed provider notice with no implied native response action."""
 
@@ -1366,6 +1380,12 @@ class RuntimeNotice(BaseModel):
     message: str
     severity: Literal["info", "warning", "error"]
     provider: str | None = None
+    category: Literal["quota", "provider"] = "provider"
+    source_kind: Literal["native", "sdk", "unknown"] = "unknown"
+    native_subtype: str | None = None
+    request_id: str | None = None
+    blocking: bool | None = None
+    observed_at: float | None = None
     created_at: float
     reset_at: float | None = None
     requires_action: bool = False
@@ -1373,6 +1393,7 @@ class RuntimeNotice(BaseModel):
 
 class RuntimeNoticesResponse(BaseModel):
     data: list[RuntimeNotice]
+    quotas: list[RuntimeQuota] = Field(default_factory=list)
 
 
 class SessionEventInput(BaseModel):

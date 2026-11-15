@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import tomllib
 from pathlib import Path
 
@@ -139,3 +140,68 @@ def test_build_session_home_without_user_home_writes_hooks_only(
 
     parsed = tomllib.loads((session_home / "config.toml").read_text(encoding="utf-8"))
     assert {h["event"] for h in parsed["hooks"]} == {"PreToolUse", "PermissionRequest"}
+
+
+def test_build_session_home_uses_private_additive_product_plugin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user_home = _fake_user_home(tmp_path, monkeypatch)
+    user_plugin = user_home / "plugins" / "managed" / "author-plugin"
+    user_plugin.mkdir(parents=True)
+    (user_plugin / "kimi.plugin.json").write_text('{"name":"author-plugin"}\n')
+    user_registry = {
+        "version": 1,
+        "plugins": [{"id": "author-plugin", "enabled": False, "source": "local-path"}],
+    }
+    (user_home / "plugins" / "installed.json").write_text(
+        json.dumps(user_registry), encoding="utf-8"
+    )
+    session_home = tmp_path / "session-home"
+    bridge_dir = tmp_path / "bridge"
+    bridge_dir.mkdir()
+
+    build_kimi_session_home(
+        session_home, bridge_dir=bridge_dir, product_guidance="product contract"
+    )
+
+    session_plugins = session_home / "plugins"
+    assert session_plugins.is_dir() and not session_plugins.is_symlink()
+    assert (session_plugins / "managed" / "author-plugin").is_symlink()
+    product = session_plugins / "managed" / "triune-ui-contract"
+    assert not product.is_symlink()
+    assert (product / "SYSTEM.md").read_text(encoding="utf-8") == "product contract\n"
+    assert json.loads((product / "kimi.plugin.json").read_text())["systemPromptPath"] == (
+        "./SYSTEM.md"
+    )
+    registry = json.loads((session_plugins / "installed.json").read_text())
+    assert registry["plugins"][0] == user_registry["plugins"][0]
+    product_record = registry["plugins"][1]
+    assert product_record == {
+        "id": "triune-ui-contract",
+        "root": str(product.resolve()),
+        "enabled": True,
+        "source": "local-path",
+        "origin": "custom",
+        "installedAt": "2026-11-15T00:00:00.000Z",
+        "originalSource": str(product),
+    }
+    assert json.loads((user_home / "plugins" / "installed.json").read_text()) == user_registry
+
+
+def test_build_session_home_replaces_stale_user_plugins_symlink(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user_home = _fake_user_home(tmp_path, monkeypatch)
+    (user_home / "plugins").mkdir()
+    session_home = tmp_path / "session-home"
+    session_home.mkdir()
+    (session_home / "plugins").symlink_to(user_home / "plugins")
+    bridge_dir = tmp_path / "bridge"
+    bridge_dir.mkdir()
+
+    build_kimi_session_home(
+        session_home, bridge_dir=bridge_dir, product_guidance="product contract"
+    )
+
+    assert not (session_home / "plugins").is_symlink()
+    assert not (user_home / "plugins" / "managed").exists()

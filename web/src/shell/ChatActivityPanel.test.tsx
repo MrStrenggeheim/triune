@@ -1,5 +1,5 @@
 // Modified for Triune.
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -110,6 +110,64 @@ function options() {
 function choose(value: string) {
   fireEvent.click(options().getByRole("menuitemradio", { name: value }));
 }
+
+it("moves filters into the existing menu at narrow pane widths and preserves the chosen category", () => {
+  let width = 500;
+  let resize = () => {};
+  const available = vi
+    .spyOn(HTMLElement.prototype, "clientWidth", "get")
+    .mockImplementation(function (this: HTMLElement) {
+      return this.hasAttribute("data-activity-header") ? width : 0;
+    });
+  const filters = vi
+    .spyOn(HTMLElement.prototype, "scrollWidth", "get")
+    .mockImplementation(function (this: HTMLElement) {
+      return this.hasAttribute("data-activity-filter") ? 180 : 0;
+    });
+  const actions = vi
+    .spyOn(HTMLElement.prototype, "offsetWidth", "get")
+    .mockImplementation(function (this: HTMLElement) {
+      return this.hasAttribute("data-activity-actions") ? 28 : 0;
+    });
+  const previousObserver = globalThis.ResizeObserver;
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      private callback: () => void;
+      constructor(callback: () => void) {
+        this.callback = callback;
+      }
+      observe(target: Element) {
+        if (target.hasAttribute("data-activity-header")) resize = this.callback;
+      }
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  try {
+    render(panel());
+    fireEvent.click(screen.getByRole("button", { name: "Agents" }));
+    width = 280;
+    act(() => resize());
+    expect(screen.queryByRole("group", { name: "Orchestration filter" })).toBeNull();
+    expect(options().getByRole("menuitemradio", { name: "Agents" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Shells" }));
+    width = 500;
+    act(() => resize());
+    expect(screen.getByRole("button", { name: "Shells" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("group", { name: "Orchestration filter" })).toBeVisible();
+  } finally {
+    cleanup();
+    available.mockRestore();
+    filters.mockRestore();
+    actions.mockRestore();
+    vi.stubGlobal("ResizeObserver", previousObserver);
+  }
+});
+
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(useSessionShellResources).mockReturnValue({

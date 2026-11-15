@@ -7,6 +7,8 @@ import {
   shortTaskText,
   subagentName,
   subagentTaskDescription,
+  formatSubagentTask,
+  subagentActivityName,
   subagentMatchesChild,
   sameSubagentDispatch,
   recordedSubagentReturn,
@@ -26,6 +28,34 @@ const child = (fields: Partial<ChildSessionInfo>): ChildSessionInfo => ({
   pending_elicitations_count: 0,
   last_message_preview: null,
   ...fields,
+});
+
+it.each([
+  ["orchestration_header_intake", "Orchestration header intake"],
+  ["native_delegation_intake", "Native delegation intake"],
+  ["orchestration_Header_Intake", "Orchestration header intake"],
+  ["PEPS_contraction_intake", "PEPS contraction intake"],
+  ["Research complexity of PEPS contraction", "Research complexity of PEPS contraction"],
+  ["Inspect foo_bar.py with the CLI", "Inspect foo_bar.py with the CLI"],
+])("formats task label %s without changing meaningful text", (input, expected) => {
+  expect(formatSubagentTask(input)).toBe(expected);
+  expect(subagentTaskDescription(child({ task_summary: input }))).toBe(expected);
+});
+
+it("uses a late native nickname only for the matching captured dispatch", () => {
+  const activity = readSubagentActivity(event("delegated", { agent_name: "Codex" }))!;
+  const native = child({
+    id: "child",
+    labels: {
+      "omnigent.subagent.dispatch_id": "dispatch-1",
+      "omnigent.codex_native.agent_nickname": "Hooke",
+    },
+  });
+  expect(subagentActivityName(activity, native)).toBe("Hooke");
+  expect(subagentActivityName({ ...activity, dispatchId: "earlier" }, native)).toBe("Codex");
+  expect(
+    subagentActivityName({ ...activity, agentName: "Curie", agentNameSource: "native" }, native),
+  ).toBe("Curie");
 });
 
 it("keeps real Codex nicknames ahead of role, tool and task-derived labels", () => {

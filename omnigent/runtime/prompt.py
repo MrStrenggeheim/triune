@@ -22,6 +22,7 @@ from omnigent.runtime.tool_result_replay import (
     image_omitted_placeholder,
     strip_unparseable_image_output,
 )
+from omnigent.runtime.ui_contract import native_ui_contract
 from omnigent.spec import AgentSpec
 
 BRANCH_REFERENCE_INSTRUCTIONS = (
@@ -98,6 +99,28 @@ def _framework_instructions_for(spec: AgentSpec) -> list[str]:
     return instructions
 
 
+def ui_instructions_for_spec(
+    spec: AgentSpec,
+    tool_schemas: list[dict[str, Any]],
+    *,
+    session_id: str | None = None,
+    server_url: str | None = None,
+) -> str:
+    """Project static guidance through advertised tools and captured chat coordinates.
+
+    Missing coordinates remain unknown; no ambient attachment destination is assumed.
+    """
+    harness = spec.executor.harness_kind
+    tools = [
+        name
+        for schema in tool_schemas
+        if isinstance(name := schema.get("function", {}).get("name") or schema.get("name"), str)
+    ]
+    return native_ui_contract(
+        str(harness), tools=tools, session_id=session_id, server_url=server_url
+    )
+
+
 def append_framework_instructions(
     instructions: str | None,
     framework_instructions: Sequence[str],
@@ -157,6 +180,8 @@ def build_instructions(
     tool_schemas: list[dict[str, Any]],
     *,
     framework_instructions: Sequence[str] = (),
+    session_id: str | None = None,
+    server_url: str | None = None,
 ) -> str:
     """
     Build the system instructions string from the agent's
@@ -176,6 +201,8 @@ def build_instructions(
         for this turn, appended after user-authored agent/request instructions
         and after the spec-level framework instructions (the sub-agent
         wake-notice announcement for agents that can dispatch sub-agents).
+    :param session_id: Captured owning chat, when available.
+    :param server_url: Captured server base URL, including any deployment prefix.
     :returns: The assembled instructions string.
     """
     parts = _assemble_instruction_parts(spec, per_request_instructions, tool_schemas)
@@ -183,7 +210,13 @@ def build_instructions(
     return (
         append_framework_instructions(
             base_instructions,
-            [*_framework_instructions_for(spec), *framework_instructions],
+            [
+                ui_instructions_for_spec(
+                    spec, tool_schemas, session_id=session_id, server_url=server_url
+                ),
+                *_framework_instructions_for(spec),
+                *framework_instructions,
+            ],
         )
         or base_instructions
     )
@@ -195,14 +228,16 @@ def build_instructions_nullable(
     tool_schemas: list[dict[str, Any]],
     *,
     framework_instructions: Sequence[str] = (),
+    session_id: str | None = None,
+    server_url: str | None = None,
 ) -> str | None:
     """Like :func:`build_instructions`, but returns ``None`` instead of seeding
     the fabricated ``"You are a helpful assistant."`` fallback when there is
     truly nothing to compose (no author text, no per-request text, no skills
     hint, no applicable spec-level or per-turn framework instructions).
-    The embedded-browser guidance makes this rare, but a spec that sets
-    ``tool_groups.browser: false`` with no author text and no sub-agents
-    composes to ``None``.
+    The packaged UI catalog now normally supplies static guidance even when
+    author, browser and sub-agent instructions are absent. The nullable return
+    remains compatible with callers that omit every framework channel.
 
     Delivery channels that must not leak the fallback literal (e.g. a warn
     check, or a first-user-turn prefix) call this instead of comparing
@@ -217,7 +252,13 @@ def build_instructions_nullable(
     base_instructions = "\n\n".join(parts) if parts else None
     return append_framework_instructions(
         base_instructions,
-        [*_framework_instructions_for(spec), *framework_instructions],
+        [
+            ui_instructions_for_spec(
+                spec, tool_schemas, session_id=session_id, server_url=server_url
+            ),
+            *_framework_instructions_for(spec),
+            *framework_instructions,
+        ],
     )
 
 

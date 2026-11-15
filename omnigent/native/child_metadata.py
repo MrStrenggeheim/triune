@@ -2,6 +2,8 @@
 # Required Notice: Copyright 2026 MrStrenggeheim. Triune (https://github.com/MrStrenggeheim/triune).
 """Shared child identity and task projection, independent of transport and UI."""
 
+import re
+
 from omnigent.entities import Conversation
 from omnigent.entities.conversation import synthesize_conversation_title
 
@@ -9,6 +11,18 @@ from omnigent.entities.conversation import synthesize_conversation_title
 def short_task(prompt: str) -> str | None:
     """Use the recorded delegation input, never inherited conversation history."""
     return synthesize_conversation_title([{"type": "input_text", "text": prompt}], limit=120)
+
+
+def display_task_summary(summary: str | None) -> str | None:
+    """Format identifier-like adapter labels without changing authored summaries."""
+    if not summary or re.fullmatch(r"[A-Za-z0-9]+(?:_[A-Za-z0-9]+)+", summary) is None:
+        return summary
+    words = summary.split("_")
+    if not words[0].isupper():
+        words[0] = words[0][:1].upper() + words[0][1:].lower()
+    return " ".join(
+        word if index == 0 or word.isupper() else word.lower() for index, word in enumerate(words)
+    )
 
 
 def child_metadata(child: Conversation) -> dict[str, str]:
@@ -28,7 +42,7 @@ def child_metadata(child: Conversation) -> dict[str, str]:
     prompt = labels.get("omnigent.codex_native.prompt") or labels.get(
         "omnigent.claude_native.prompt"
     )
-    summary = (
+    summary = display_task_summary(
         labels.get("omnigent.subagent.task_summary")
         or labels.get("omnigent.codex_native.task_name")
         or child.task_summary

@@ -167,6 +167,7 @@ from omnigent.server.managed_hosts import (
     read_managed_repo_workspaces,
 )
 from omnigent.server.permissions import check_session_access
+from omnigent.server.queue_attachments import publish_queue_attachments
 from omnigent.server.routes._auth_helpers import (
     attribution_user as _attribution_user,
 )
@@ -379,6 +380,7 @@ from omnigent.server.schemas import (
     ErrorDetail,
     NativeModelOption,
     NativeUsageBaseline,
+    OutputItemDoneEvent,
     SessionCreateInput,
     SessionCreateMetadata,
     SessionEventInput,
@@ -396,6 +398,7 @@ from omnigent.server.startup_inputs import (
 )
 from omnigent.server.subagent_activity import (
     claude_subagent_completion_markers,
+    delegation_message_item,
     record_claude_subagent_return,
     record_native_subagent_dispatch,
     record_subagent_activity,
@@ -2371,6 +2374,19 @@ async def _resolve_elicitation(
     runner_router: RunnerRouter | None,
     conversation_store: ConversationStore | None = None,
 ) -> None:
+    """Resolve one verdict, serializing receipt persistence with native wakeup."""
+    from omnigent.server.routes._question_receipts import question_resolution_lock
+
+    async with question_resolution_lock(session_id, str(data.get("elicitation_id", ""))):
+        await _resolve_elicitation_unlocked(session_id, data, runner_router, conversation_store)
+
+
+async def _resolve_elicitation_unlocked(
+    session_id: str,
+    data: dict[str, Any],
+    runner_router: RunnerRouter | None,
+    conversation_store: ConversationStore | None = None,
+) -> None:
     """
     Resolve one outstanding elicitation from an approval payload.
 
@@ -2427,6 +2443,50 @@ async def _resolve_elicitation(
     ):
         return
     harness_future = _harness_elicitation_registry.get(elicitation_id)
+    # Persist the original batch before waking the native long-poll waiter.
+    # Its pending params disappear when resolution fans out below.
+    if conversation_store is not None and isinstance(elicitation_id, str) and elicitation_id:
+        from omnigent.server.routes._question_receipts import record_question_receipt
+
+        pending_question = pending_elicitations.lookup(elicitation_id, conversation_id=session_id)
+        if pending_question is not None and (
+            harness_future is None or _harness_elicitation_owners.get(elicitation_id) == session_id
+        ):
+            question_params = pending_question[1].get("params")
+            if isinstance(question_params, dict) and question_params.get("target_session_id") in (
+                None,
+                session_id,
+            ):
+                try:
+                    question_verdict = ElicitationResult.model_validate(
+                        {key: value for key, value in data.items() if key != "elicitation_id"}
+                    )
+                except ValidationError:
+                    question_verdict = None
+                if question_verdict is not None:
+                    receipt = await record_question_receipt(
+                        conversation_store,
+                        session_id,
+                        elicitation_id,
+                        question_params,
+                        question_verdict.model_dump(exclude_none=True),
+                    )
+                    if receipt is not None:
+                        resource = receipt["resource"]
+                        data = {
+                            **data,
+                            "_meta": {
+                                **(question_verdict.meta or {}),
+                                "question_submission": {
+                                    **resource["source"],
+                                    "session_id": session_id,
+                                    "elicitation_id": elicitation_id,
+                                    "submission_id": resource["submission_id"],
+                                },
+                            },
+                        }
+                        event = OutputItemDoneEvent(type="response.output_item.done", item=receipt)
+                        session_stream.publish(session_id, event.model_dump(exclude_none=True))
     if harness_future is not None and not harness_future.done():
         # Only the session that owns this elicitation
         # may resolve its server-side Future. A mismatch skips
@@ -2799,6 +2859,25 @@ async def _persist_external_antigravity_subagent_start(
     )
 
 
+async def _persist_codex_delegation_message(
+    parent_id: str,
+    child_id: str,
+    dispatch_id: str | None,
+    task_input: str | None,
+    conversation_store: ConversationStore,
+) -> None:
+    """Publish one captured handoff without submitting another model input."""
+    item = delegation_message_item(
+        parent_id, child_id, {"dispatch_id": dispatch_id, "task_input": task_input}
+    )
+    if item is None:
+        return
+    [persisted] = await asyncio.to_thread(conversation_store.append, child_id, [item])
+    if not persisted.deduplicated:
+        event = OutputItemDoneEvent(type="response.output_item.done", item=persisted.to_api_dict())
+        session_stream.publish(child_id, event.model_dump())
+
+
 async def _persist_external_codex_subagent_start(
     parent_id: str,
     parent_conv: Conversation,
@@ -2832,6 +2911,8 @@ async def _persist_external_codex_subagent_start(
             "create a codex-native sub-agent child",
             code=ErrorCode.INVALID_INPUT,
         )
+    from omnigent.native.child_metadata import short_task
+
     existing = await asyncio.to_thread(
         _find_codex_native_subagent_child, conversation_store, parent_id, thread_id
     )
@@ -2841,18 +2922,45 @@ async def _persist_external_codex_subagent_start(
         labels["omnigent.codex_native.task_name"] = task_name
     prompt = body.data.get("prompt")
     task_input = prompt if isinstance(prompt, str) and prompt.strip() else None
+    call_id = body.data.get("tool_call_id")
+    if not isinstance(call_id, str) or not call_id:
+        call_id = None
     if existing is not None:
-        original_call = existing.labels.get("omnigent.codex_native.collab_tool_call_id")
-        if original_call and body.data.get("tool_call_id") != original_call:
-            task_input = None
-            labels.pop("omnigent.codex_native.prompt", None)
-        for key in (
-            "omnigent.codex_native.prompt",
-            "omnigent.codex_native.collab_tool_call_id",
-            "omnigent.codex_native.task_name",
-        ):
-            if existing.labels.get(key):
-                labels.pop(key, None)
+        current_call = existing.labels.get("omnigent.codex_native.collab_tool_call_id")
+        if call_id and task_input and call_id != current_call:
+            captured = delegation_message_item(
+                parent_id, existing.id, {"dispatch_id": call_id, "task_input": task_input}
+            )
+            if (
+                captured is not None
+                and captured.stable_id is not None
+                and await asyncio.to_thread(
+                    conversation_store.get_item, existing.id, captured.stable_id
+                )
+            ):
+                # An old registration replay cannot reactivate a completed dispatch.
+                return existing.id
+            # Each native send has its own captured task; old cards retain theirs.
+            summary = (
+                task_name
+                if isinstance(task_name, str) and task_name.strip()
+                else short_task(task_input)
+            )
+            labels["omnigent.subagent.dispatch_id"] = call_id
+            labels["omnigent.subagent.task_summary"] = summary or "Delegated task"
+            labels["omnigent.codex_native.task_name"] = summary or "Delegated task"
+            labels["omnigent.subagent.task_input"] = task_input
+        else:
+            # Name-only discovery and replay must not replace the original task.
+            for key in (
+                "omnigent.codex_native.prompt",
+                "omnigent.codex_native.collab_tool_call_id",
+                "omnigent.codex_native.task_name",
+            ):
+                if existing.labels.get(key):
+                    labels.pop(key, None)
+            if call_id and current_call and call_id != current_call:
+                task_input = None
         await asyncio.to_thread(conversation_store.set_labels, existing.id, labels)
         await record_subagent_activity(
             existing.id,
@@ -2861,13 +2969,25 @@ async def _persist_external_codex_subagent_start(
             parent_id=parent_id,
             task_input=task_input,
         )
+        await _persist_codex_delegation_message(
+            parent_id, existing.id, call_id or current_call, task_input, conversation_store
+        )
         return existing.id
+    # Labels are bounded previews; persist the full handoff before publishing it.
+    prompt_label = labels.pop("omnigent.codex_native.prompt", None)
     child_id = await _create_and_publish_codex_child(
         parent_id, parent_conv, thread_id, labels, conversation_store
     )
+    if prompt_label is not None:
+        await asyncio.to_thread(
+            conversation_store.set_labels, child_id, {"omnigent.codex_native.prompt": prompt_label}
+        )
     if task_input:
         await record_subagent_activity(
             child_id, "delegated", conversation_store, parent_id=parent_id, task_input=task_input
+        )
+        await _persist_codex_delegation_message(
+            parent_id, child_id, call_id, task_input, conversation_store
         )
     return child_id
 
@@ -8301,6 +8421,9 @@ async def _dispatch_session_event_to_runner_impl(
             conversation_store, session_id
         ):
             return _SessionEventDispatchResult(item_id=None, pending_id=None)
+        await asyncio.to_thread(
+            publish_queue_attachments, file_store, session_id, body.data.get("content"), created_by
+        )
         pending_id: str | None = (
             pending_inputs.record(
                 session_id,
@@ -8517,6 +8640,9 @@ async def _dispatch_session_event_to_runner_impl(
         return _SessionEventDispatchResult(item_id=None, pending_id=pending_id)
     if startup_input is not None and not await startup_input.claim(conversation_store, session_id):
         return _SessionEventDispatchResult(item_id=None, pending_id=None)
+    await asyncio.to_thread(
+        publish_queue_attachments, file_store, session_id, body.data.get("content"), created_by
+    )
     item_id = await _forward_event_to_runner(
         session_id,
         conv,

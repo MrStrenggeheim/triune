@@ -67,6 +67,7 @@ import { hasPendingOwnElicitation } from "@/lib/blocks";
 import { cn } from "@/lib/utils";
 import { QueuedMessagesStrip } from "@/pages/QueuedMessagesStrip";
 import { ComposerShelf } from "@/components/composer/ComposerShelf";
+import { ChatImageGalleryProvider } from "@/components/ChatImageGallery";
 import {
   serverSwitcherHiddenForSurface,
   useSurfaceFrontmost,
@@ -147,6 +148,7 @@ import {
 import { useMentionBrowser } from "@/hooks/useMentionBrowser";
 import {
   getSessionDraft,
+  hydrateSessionDraft,
   promoteSessionDraft,
   setSessionDraft,
   type SessionDraft,
@@ -990,7 +992,7 @@ export function ChatPage({
     });
 
   const onSend = useCallback(
-    (text: string, files?: File[], replyDraft?: StoredReplyDraft) => {
+    (text: string, files?: File[], replyDraft?: StoredReplyDraft): void | Promise<boolean> => {
       if (!agentId) return;
       // No server session yet (still creating) — nothing to POST to.
       if (isTempConvId(urlConvId)) return;
@@ -1036,8 +1038,7 @@ export function ChatPage({
           holdsInitialDraft(chat),
         )
       ) {
-        chat.enqueueMessage(text, files, replyDraft);
-        return;
+        return chat.enqueueMessage(text, files, replyDraft);
       }
       void useChatStore.getState().send(text, agentId, files, {
         replyDraft,
@@ -1413,7 +1414,7 @@ interface MainAgentSurfaceProps {
   liveness: SessionLiveness;
   agentsError: unknown;
   disabled: boolean;
-  onSend: (text: string, files?: File[], replyDraft?: StoredReplyDraft) => void;
+  onSend: (text: string, files?: File[], replyDraft?: StoredReplyDraft) => void | Promise<boolean>;
   /**
    * Invoke a skill via the `slash_command` event path. Gated off inside
    * `MainAgentSurface` for terminal-first (native) sessions, where `/skill`
@@ -1894,23 +1895,25 @@ const MainAgentSurface = memo(function MainAgentSurfaceImpl({
           {/* The scrolling transcript column owns every streaming-hot store
           subscription and the bubble pipeline, so an SSE frame re-renders it
           alone — this surface's composer and chrome below bail out. */}
-          <Transcript
-            branch={branch}
-            hideInheritedHistory={hideInheritedHistory}
-            hostId={hostId}
-            setConversationEl={setConversationEl}
-            containerEl={containerEl}
-            scroller={scroller}
-            setScroller={setScroller}
-            sendScrollNonce={sendScrollNonce}
-            hasMoreHistory={hasMoreHistory}
-            loadingMoreHistory={loadingMoreHistory}
-            isMobileViewport={isMobileViewport}
-            showsWorking={showsWorking}
-            agentsError={agentsError}
-            sandboxLaunching={sandboxLaunching}
-            spacerMeasureRef={spacerMeasureRef}
-          />
+          <ChatImageGalleryProvider conversationId={conversationId}>
+            <Transcript
+              branch={branch}
+              hideInheritedHistory={hideInheritedHistory}
+              hostId={hostId}
+              setConversationEl={setConversationEl}
+              containerEl={containerEl}
+              scroller={scroller}
+              setScroller={setScroller}
+              sendScrollNonce={sendScrollNonce}
+              hasMoreHistory={hasMoreHistory}
+              loadingMoreHistory={loadingMoreHistory}
+              isMobileViewport={isMobileViewport}
+              showsWorking={showsWorking}
+              agentsError={agentsError}
+              sandboxLaunching={sandboxLaunching}
+              spacerMeasureRef={spacerMeasureRef}
+            />
+          </ChatImageGalleryProvider>
           {/* Floating reply button — scoped to the conversation container.
           Withheld when the composer refuses quotes (read-only grant or a
           structurally non-interactive session), as SideChatPane does. */}
@@ -2039,7 +2042,7 @@ interface ComposerProps {
   /** Local stream OR cross-client `session.status: running`. */
   isWorking: boolean;
   disabled: boolean;
-  onSend: (text: string, files?: File[], replyDraft?: StoredReplyDraft) => void;
+  onSend: (text: string, files?: File[], replyDraft?: StoredReplyDraft) => void | Promise<boolean>;
   /**
    * Send a recognised skill as a `slash_command` event (the REPL's wire
    * shape) instead of plaintext. When present and the typed command names
@@ -2544,6 +2547,7 @@ function ComposerImpl(
   // draft-restore effect.
   const [settledConversationId, setSettledConversationId] = useState<string | null>(null);
   const draftConversationIdRef = useRef<string | null>(null);
+  const queueSubmitPendingRef = useRef(new Set<string | null>());
   // Nonce bumped when bare "/model" is submitted; opens the AgentPicker
   // dropdown instead of sending (see submit()).
   const [pickerOpenNonce, setPickerOpenNonce] = useState(0);
@@ -2895,6 +2899,7 @@ function ComposerImpl(
   attachmentsRef.current = { restoreFiles, replaceFiles };
 
   useEffect(() => {
+    let cancelled = false;
     const previousConversationId = draftConversationIdRef.current;
     const promoted =
       conversationId &&
@@ -2916,7 +2921,28 @@ function ComposerImpl(
     draftConversationIdRef.current = conversationId ?? null;
     if (focusedRef.current && !isMobileRef.current) textareaRef.current?.focus();
 
+    if (conversationId) {
+      void hydrateSessionDraft(conversationId).then(
+        (saved) => {
+          if (
+            cancelled ||
+            !saved ||
+            dirtyRef.current ||
+            draftConversationIdRef.current !== conversationId
+          )
+            return;
+          replaceText(saved.text, saved.replyDraft);
+          attachmentsRef.current.restoreFiles(saved.files);
+        },
+        (error) => {
+          console.warn("Draft restoration failed", error);
+          toast.error("Could not restore the saved draft.");
+        },
+      );
+    }
+
     return () => {
+      cancelled = true;
       if (!conversationId || !dirtyRef.current) return;
       setSessionDraft(conversationId, {
         text: valueRef.current,
@@ -3785,7 +3811,8 @@ function ComposerImpl(
     resetNativeInputSession = false,
   }: { resetNativeInputSession?: boolean } = {}) => {
     // The /btw overlay locks the composer — never send while it's open.
-    if (composerLockedByBtw) return;
+    if (composerLockedByBtw || queueSubmitPendingRef.current.has(draftConversationIdRef.current))
+      return;
     const trimmed = fullText.trim();
     const sideCommand = workbench && draft.text.trimStart().match(/^\/side(?:\s+|$)/i);
     if (sideCommand) {
@@ -3924,6 +3951,28 @@ function ComposerImpl(
     // interrupts.
     if (trimmed) appendEntry(fullText, storedReplyDraft);
     const sendFiles = files.length > 0 ? files : undefined;
+    const submittedOwner = draftConversationIdRef.current;
+    const submittedText = valueRef.current;
+    const submittedFiles = [...filesRef.current];
+    const submittedReply = JSON.stringify(replyDraftRef.current);
+    const submittedMentions = JSON.stringify(mentionedItemsRef.current);
+    const clearSubmittedDraft = () => {
+      if (
+        draftConversationIdRef.current !== submittedOwner ||
+        valueRef.current !== submittedText ||
+        filesRef.current.length !== submittedFiles.length ||
+        filesRef.current.some((file, index) => file !== submittedFiles[index]) ||
+        JSON.stringify(replyDraftRef.current) !== submittedReply ||
+        JSON.stringify(mentionedItemsRef.current) !== submittedMentions
+      )
+        return;
+      dirtyRef.current = true;
+      clearComposerAfterSend(resetNativeInputSession);
+      clearAttachments();
+      setMentionedItems([]);
+      setMention(null);
+    };
+    let acceptance: void | Promise<boolean>;
     if (draft.quotes.length > 0) {
       // Preserve authored whitespace and quote provenance, including mention markers.
       const outgoing = {
@@ -3932,16 +3981,27 @@ function ComposerImpl(
           index === 0 ? { ...quote, before: mentionPreamble + quote.before } : quote,
         ),
       };
-      onSend(serializeReplyDraft(outgoing), sendFiles, snapshotReplyDraft(outgoing));
+      acceptance = onSend(serializeReplyDraft(outgoing), sendFiles, snapshotReplyDraft(outgoing));
     } else {
       const message = isSlashCommandText(trimmed) ? trimmed : fullText.trimEnd();
-      onSend(mentionPreamble + message, sendFiles);
+      acceptance = onSend(mentionPreamble + message, sendFiles);
     }
-    dirtyRef.current = true;
-    clearComposerAfterSend(resetNativeInputSession);
-    clearAttachments();
-    setMentionedItems([]);
-    setMention(null);
+    if (acceptance) {
+      // Queue acceptance owns durability; native/direct void sends keep synchronous clearing.
+      queueSubmitPendingRef.current.add(submittedOwner);
+      void acceptance
+        .then((accepted) => {
+          if (accepted) clearSubmittedDraft();
+        })
+        .catch(() => {
+          toast.error("Queued message could not be accepted. Your draft is still here.");
+        })
+        .finally(() => {
+          queueSubmitPendingRef.current.delete(submittedOwner);
+        });
+    } else {
+      clearSubmittedDraft();
+    }
   };
 
   const handleSubmit = (e: FormEvent) => {

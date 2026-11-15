@@ -50,6 +50,7 @@ from omnigent.native.native_terminal import (
     normalize_extra_args as _normalize_extra_args,
 )
 from omnigent.native.native_terminal import url_component
+from omnigent.runtime.ui_contract import append_ui_contract
 from omnigent.util.json_types import JsonObject as _JsonObject
 
 _DEFAULT_KIRO_COMMAND = "kiro-cli"
@@ -76,6 +77,51 @@ _SESSION_LABELS = {
     "omnigent.ui": "terminal",
     _WRAPPER_LABEL_KEY: _WRAPPER_LABEL_VALUE,
 }
+
+_KIRO_CONTRACT_STEERING_FILE = "triune-native-ui-contract.md"
+
+
+def prepare_kiro_ui_contract_home(
+    sidecar_home: Path,
+    *,
+    source_home: Path | None = None,
+    session_id: str | None = None,
+    server_url: str | None = None,
+    author_instructions: str | None = None,
+) -> dict[str, str]:
+    """Build an additive Kiro profile sidecar and return its startup environment."""
+    source_home = Path.home() / ".kiro" if source_home is None else source_home
+    sidecar_home.mkdir(mode=0o700, parents=True, exist_ok=True)
+    for source in source_home.iterdir() if source_home.is_dir() else ():
+        if source.name == "steering":
+            continue
+        target = sidecar_home / source.name
+        if not target.exists() and not target.is_symlink():
+            target.symlink_to(source.resolve(), target_is_directory=source.is_dir())
+    source_steering = source_home / "steering"
+    sidecar_steering = sidecar_home / "steering"
+    sidecar_steering.mkdir(mode=0o700, parents=True, exist_ok=True)
+    for source in source_steering.iterdir() if source_steering.is_dir() else ():
+        target = sidecar_steering / source.name
+        if not target.exists() and not target.is_symlink():
+            target.symlink_to(source.resolve(), target_is_directory=source.is_dir())
+    contract_name = _KIRO_CONTRACT_STEERING_FILE
+    suffix = 1
+    while (source_steering / contract_name).exists():
+        contract_name = f"triune-native-ui-contract-{suffix}.md"
+        suffix += 1
+    (sidecar_steering / contract_name).write_text(
+        append_ui_contract(
+            author_instructions,
+            "kiro-native",
+            tools=(),
+            session_id=session_id,
+            server_url=server_url,
+        ).rstrip()
+        + "\n",
+        encoding="utf-8",
+    )
+    return {"KIRO_HOME": str(sidecar_home)}
 
 
 @dataclass(frozen=True)

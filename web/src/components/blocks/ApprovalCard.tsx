@@ -70,6 +70,8 @@ import {
 } from "@/components/chat/conversationScope";
 import { AskUserQuestionForm, type AskUserQuestionAnswers } from "./AskUserQuestionForm";
 import { ElicitationMessage } from "./ElicitationMessage";
+import { QuestionBatchCard } from "./QuestionBatchCard";
+import { readResourceViewState } from "@/lib/resourceViewStorage";
 import {
   type ElicitationAnswers,
   ElicitationSchemaForm,
@@ -268,7 +270,16 @@ export function ApprovalCard({
   requester,
   className,
 }: ApprovalCardProps) {
-  const [questionIndex, setQuestionIndex] = useState(0);
+  const ownerConversationId = useScopedConversationId();
+  const askPayload: AskUserQuestionPayload | null =
+    castAskUserQuestionPayload(askUserQuestion) ?? parseAskUserQuestionPreview(contentPreview);
+  const questionDraftKey =
+    ownerConversationId && !askPayload?.questions.some((question) => question.isSecret)
+      ? `question-draft:${JSON.stringify([ownerConversationId, elicitationId, askPayload])}`
+      : undefined;
+  const [questionIndex, setQuestionIndex] = useState(() =>
+    questionDraftKey ? (readResourceViewState<{ index: number }>(questionDraftKey)?.index ?? 0) : 0,
+  );
   // In a side-chat pane this resolves to the child id, so the verdict targets
   // the child's elicitation rather than the main conversation's. null (the main
   // transcript) leaves submitApproval on its active-conversation default.
@@ -352,8 +363,6 @@ export function ApprovalCard({
   // (full, non-truncated); fall back to parsing the content_preview
   // JSON for backwards compatibility with elicitations published
   // before the structured field was added.
-  const askPayload: AskUserQuestionPayload | null =
-    castAskUserQuestionPayload(askUserQuestion) ?? parseAskUserQuestionPreview(contentPreview);
   // ExitPlanMode plan review: the server stamps the full tool_input
   // as `exit_plan_mode`; a usable plan card needs the `plan` markdown
   // string. Anything else falls back to the binary card.
@@ -639,6 +648,37 @@ export function ApprovalCard({
           )}
         </AlertDescription>
       </Alert>
+    );
+  }
+
+  if (askPayload?.questions.length) {
+    const index = Math.max(0, Math.min(questionIndex, askPayload.questions.length - 1));
+    return (
+      <div
+        data-testid="approval-card"
+        data-state={status}
+        data-elicitation-id={elicitationId}
+        className={cn("min-w-0", className)}
+      >
+        <QuestionBatchCard
+          questions={askPayload.questions}
+          index={index}
+          onIndexChange={setQuestionIndex}
+          status={status}
+          response={response}
+        >
+          <AskUserQuestionForm
+            questions={askPayload.questions}
+            currentIndex={index}
+            onCurrentIndexChange={setQuestionIndex}
+            showProgress={false}
+            showHeader={false}
+            draftKey={questionDraftKey}
+            onSubmit={submitAnswers}
+            onReject={() => submitBinary("decline")}
+          />
+        </QuestionBatchCard>
+      </div>
     );
   }
 

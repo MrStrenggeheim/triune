@@ -1,8 +1,9 @@
 import { cjk } from "@streamdown/cjk";
 import { createMathPlugin } from "@streamdown/math";
-import { mermaid } from "@streamdown/mermaid";
+import { triuneMermaid as mermaid } from "./mermaidTheme";
 import { defaultRehypePlugins, type LinkSafetyConfig, type StreamdownProps } from "streamdown";
 import { lazyCodePlugin } from "./lazyCodePlugin";
+import { isAllowedRemoteImageSource } from "@/lib/remoteImagePolicy";
 
 type StreamdownRehypePlugins = NonNullable<StreamdownProps["rehypePlugins"]>;
 type StreamdownRehypePlugin = StreamdownRehypePlugins[number];
@@ -37,10 +38,6 @@ export const GITHUB_ATTACHMENT_STREAMDOWN_REHYPE_PLUGINS = createStreamdownRehyp
   true,
 );
 
-// An image GitHub hosts for a PR or issue, e.g. a pasted screenshot. Exact shape
-// only, so loading it can reach nothing but GitHub's asset store.
-const GITHUB_ATTACHMENT_IMAGE =
-  /^https:\/\/github\.com\/user-attachments\/assets\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 // The only attributes a restored image keeps, so nothing like `srcset` can load elsewhere.
 const GITHUB_IMAGE_ATTRIBUTES = ["src", "alt", "title", "width", "height"];
 // Harden checks only `img` tags, so a parked image passes through it untouched.
@@ -239,7 +236,7 @@ function parkGitHubAttachmentImages() {
   return (tree: HastElement) => {
     visitElements(tree, (node) => {
       const src = node.properties?.src;
-      if (node.tagName === "img" && typeof src === "string" && GITHUB_ATTACHMENT_IMAGE.test(src)) {
+      if (node.tagName === "img" && typeof src === "string" && isAllowedRemoteImageSource(src)) {
         node.tagName = PARKED_GITHUB_IMAGE_TAG;
       }
     });

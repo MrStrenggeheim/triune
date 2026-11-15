@@ -93,6 +93,14 @@ describe("sandboxProviderOptions", () => {
 
 describe("resolveServerInfo sandbox_providers", () => {
   it.each([undefined, false, "true", true])(
+    "parses durable message queues only when explicitly enabled (%s)",
+    async (value) => {
+      expect((await probe({ durable_message_queue: value })).durable_message_queue).toBe(
+        value === true,
+      );
+    },
+  );
+  it.each([undefined, false, "true", true])(
     "parses host initial-input support explicitly (%s)",
     async (value) => {
       expect((await probe({ durable_host_initial_input: value })).durable_host_initial_input).toBe(

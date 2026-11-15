@@ -1,4 +1,6 @@
 // Modified for Triune.
+import { reconcileQuestionBatches } from "@/lib/questionBatches";
+import { getCachedServerInfo } from "@/lib/capabilities";
 import { persistMessageQueue } from "@/lib/queuedMessagePersistence";
 import {
   messageInputKind,
@@ -71,6 +73,7 @@ import { emitBrowserActionRequest } from "@/lib/browserActionBus";
 import { emitUiOpenFile } from "@/lib/uiFileRequests";
 import {
   ApiError,
+  apiErrorFromResponse,
   approve as approveElicitation,
   bindOnlyOnlineRunner,
   createSession,
@@ -121,7 +124,12 @@ import {
   type ConversationsInfiniteData,
 } from "@/lib/sessionListCache";
 import { recordOptimisticTitle } from "@/lib/optimisticTitles";
-import { getSessionDraft, setSessionDraft } from "@/lib/sessionDrafts";
+import {
+  initializeSessionDraftPersistence,
+  getSessionDraft,
+  setSessionDraft,
+  type SessionDraft,
+} from "@/lib/sessionDrafts";
 import { forgetUnsentSend, peekUnsentSend, rememberUnsentSend } from "@/lib/unsentSends";
 import { isSideChatCommand, usesNativeSideChatFork } from "@/lib/sideChat";
 // Re-exported below so existing `@/store/chatStore` importers keep working; the
@@ -149,6 +157,7 @@ import { claudePermissionModeFromSession } from "@/lib/claudePermissionMode";
 import { codexApprovalModeFromSession } from "@/lib/codexApprovalMode";
 import { codexPlanModeFromSession, isCodexNativeSession } from "@/lib/codexPlanMode";
 import {
+  authenticatedFetch,
   getCurrentAuthorId,
   getCurrentUserId,
   resolveSessionHost,
@@ -623,16 +632,14 @@ export interface PendingUserMessage {
   sentMidTurn?: boolean;
 }
 
-/**
- * A message the user submitted while the agent was busy. It is held
- * client-side — NOT yet POSTed — and shown in the docked queue strip above
- * the composer until the agent goes idle, when the head is flushed FIFO (one
- * per turn). This is the opposite of {@link PendingUserMessage}, which is
- * already POSTed and renders as an optimistic bubble in the transcript.
- *
- * Persisted per authenticated user and server in IndexedDB, including files.
- */
+/** A follow-up waiting for after-turn admission; IndexedDB retains unsynced payloads. */
 export interface QueuedMessage {
+  hostId?: string;
+  serverState?: "saving" | "accepted" | "error";
+  deliveryError?: string;
+  serverContent?: ContentBlock[];
+  fileMetadata?: { name: string; type: string; lastModified: number }[];
+  dispatching?: boolean;
   workspaceRoot?: string;
   workspaceRevision?: string;
   /** Captured at enqueue time so background dispatch preserves the control. */
@@ -1240,11 +1247,14 @@ export interface ChatActions {
     files?: File[],
     replyDraft?: StoredReplyDraft,
     conversationId?: string,
-  ) => void;
+  ) => void | Promise<boolean>;
   /** Let a conversation's messages held for an offline host flush again. */
   releaseHostHeldMessages: (conversationId: string) => void;
   /** Remove a queued message by id (the strip's per-row delete). */
   dequeueMessage: (queueId: string) => void;
+  /** Await remote deletion before consuming the source of an edited queue item. */
+  deleteQueuedMessage: (queueId: string) => Promise<boolean>;
+  loadQueuedMessageDraft: (queueId: string) => Promise<SessionDraft | undefined>;
   /**
    * Reorder a queued message within its own conversation (the strip's
    * drag-to-reorder). Moves `queueId` so it sits before `beforeQueueId`, or to
@@ -1909,10 +1919,14 @@ const uploadedFileBlockCache = new WeakMap<File, Map<string, ContentBlock>>();
  * a failed post (or a later file's upload failing) doesn't re-upload files
  * that already landed when the message is retried.
  */
-async function uploadFileBlock(sessionId: string, file: File): Promise<ContentBlock> {
+async function uploadFileBlock(
+  sessionId: string,
+  file: File,
+  privateQueue = false,
+): Promise<ContentBlock> {
   const cached = uploadedFileBlockCache.get(file)?.get(sessionId);
   if (cached !== undefined) return cached;
-  const uploaded = await uploadFile(sessionId, file);
+  const uploaded = await uploadFile(sessionId, file, { privateQueue });
   const block: ContentBlock = file.type.startsWith("image/")
     ? { type: "input_image", file_id: uploaded.id, filename: uploaded.filename }
     : { type: "input_file", file_id: uploaded.id, filename: uploaded.filename };
@@ -1928,12 +1942,13 @@ async function uploadFileBlock(sessionId: string, file: File): Promise<ContentBl
 async function uploadFileBlocks(
   sessionId: string,
   files: readonly File[],
+  privateQueue = false,
 ): Promise<ContentBlock[]> {
   const blocks: ContentBlock[] = [];
   // Stop at the first failure so later uploads cannot outlive a requeued send.
   for (const file of files) {
     // oxlint-disable-next-line no-await-in-loop
-    blocks.push(await uploadFileBlock(sessionId, file));
+    blocks.push(await uploadFileBlock(sessionId, file, privateQueue));
   }
   return blocks;
 }
@@ -2001,10 +2016,187 @@ export function bindConversationForTest(
  * through the cache or invalidate the conversations query when a new
  * conversation is created.
  */
+function draftPersistenceScope(): string | null {
+  const user = getCurrentUserId();
+  const server = getOmnigentServerIdentity();
+  return user && server ? JSON.stringify([server, getBasePath(), user]) : null;
+}
+
+export function serverOwnsMessageQueue(): boolean {
+  return (
+    (getCachedServerInfo() as { durable_message_queue?: boolean } | null)?.durable_message_queue ===
+    true
+  );
+}
+
+let waitForQueueSnapshot: () => Promise<void> = () => Promise.resolve();
+const queueOperations = new Map<string, Promise<void>>();
+const queueRefreshes = new Map<string, Promise<void>>();
+
+async function queueRequest(
+  conversationId: string,
+  suffix = "",
+  init?: RequestInit,
+): Promise<QueuedMessage[]> {
+  const owner = draftPersistenceScope();
+  const response = await authenticatedFetch(
+    `/v1/sessions/${encodeURIComponent(conversationId)}/queued-messages${suffix}`,
+    init,
+  );
+  if (!response.ok) throw await apiErrorFromResponse(response);
+  if (owner !== draftPersistenceScope()) throw new Error("Queue identity changed");
+  const { data } = (await response.json()) as {
+    data: (QueuedMessage & { event: { data: { content: ContentBlock[] } } })[];
+  };
+  return data.map((message) => ({
+    ...message,
+    conversationId,
+    serverState: "accepted",
+    serverContent: message.event.data.content,
+  }));
+}
+
+function applyServerQueue(conversationId: string, messages: QueuedMessage[]): void {
+  const current = useChatStore.getState().queuedMessages;
+  const prior = new Map(
+    current.filter((m) => m.conversationId === conversationId).map((m) => [m.stableId, m]),
+  );
+  const ids = new Set(messages.map((m) => m.stableId));
+  const pending = current.filter(
+    (m) =>
+      m.conversationId === conversationId && m.serverState !== "accepted" && !ids.has(m.stableId),
+  );
+  const next: QueuedMessage[] = [
+    ...current.filter((m) => m.conversationId !== conversationId),
+    ...messages.map((m) => ({
+      ...m,
+      ...(prior.get(m.stableId)?.files ? { files: prior.get(m.stableId)!.files } : {}),
+    })),
+    ...pending,
+  ];
+  if (JSON.stringify(next) !== JSON.stringify(current))
+    useChatStore.setState({ queuedMessages: next });
+}
+
+async function refreshServerQueue(conversationId: string): Promise<void> {
+  if (!serverOwnsMessageQueue() || isTempConvId(conversationId)) return;
+  const existing = queueRefreshes.get(conversationId);
+  if (existing) return existing;
+  const owner = draftPersistenceScope();
+  const operation = queueRequest(conversationId)
+    .then((messages) => {
+      if (owner === draftPersistenceScope()) applyServerQueue(conversationId, messages);
+    })
+    .catch((error) => {
+      toast.error(
+        `Could not refresh queued messages: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    })
+    .finally(() => {
+      queueRefreshes.delete(conversationId);
+    });
+  queueRefreshes.set(conversationId, operation);
+  return operation;
+}
+
+function queueOperation(conversationId: string, operation: () => Promise<void>): Promise<void> {
+  const previous = queueOperations.get(conversationId) ?? Promise.resolve();
+  const owner = draftPersistenceScope();
+  const next = previous
+    .catch(() => {})
+    .then(async () => {
+      if (owner !== draftPersistenceScope()) return;
+      await operation();
+    });
+  queueOperations.set(conversationId, next);
+  void next
+    .finally(() => {
+      if (queueOperations.get(conversationId) === next) queueOperations.delete(conversationId);
+    })
+    .catch(() => {});
+  return next;
+}
+
+function queueFailure(queueId: string, error: unknown): void {
+  const detail = error instanceof Error ? error.message : String(error);
+  useChatStore.setState((s) => ({
+    queuedMessages: s.queuedMessages.map((m) =>
+      m.queueId === queueId
+        ? {
+            ...m,
+            serverState: m.serverState === "accepted" ? "accepted" : "error",
+            requiresRetry: true,
+            deliveryError: detail,
+          }
+        : m,
+    ),
+  }));
+  toast.error(`Queued message needs attention: ${detail}`);
+}
+
+function acceptServerQueuedMessage(message: QueuedMessage): Promise<void> {
+  return queueOperation(message.conversationId, async () => {
+    const owner = draftPersistenceScope();
+    try {
+      const fileBlocks =
+        message.serverContent?.filter((b) => b.type !== "input_text") ??
+        (await uploadFileBlocks(message.conversationId, message.files ?? [], true));
+      const content: ContentBlock[] = [
+        ...fileBlocks,
+        ...(message.text.trim() ? [{ type: "input_text" as const, text: message.text }] : []),
+      ];
+      if (owner !== draftPersistenceScope()) return;
+      setActive((s) => ({
+        queuedMessages: s.queuedMessages.map((m) =>
+          m.queueId === message.queueId ? { ...m, serverContent: content } : m,
+        ),
+      }));
+      await waitForQueueSnapshot();
+      const rows = await queueRequest(message.conversationId, "", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          command: message.command,
+          queueId: message.queueId,
+          stableId: message.stableId,
+          text: message.text,
+          replyDraft: message.replyDraft,
+          hostId: message.hostId,
+          workspaceRoot: message.workspaceRoot,
+          workspaceRevision: message.workspaceRevision,
+          agentId: message.agentId,
+          requiresRetry: message.requiresRetry ?? false,
+          fileMetadata:
+            message.fileMetadata ??
+            message.files?.map(({ name, type, lastModified }) => ({ name, type, lastModified })),
+          event: { type: "message", data: { role: "user", content, stable_id: message.stableId } },
+        }),
+      });
+      if (owner === draftPersistenceScope()) {
+        setActive((s) => ({
+          queuedMessages: s.queuedMessages.map((m) =>
+            m.queueId === message.queueId ? { ...m, serverState: "accepted" } : m,
+          ),
+        }));
+        applyServerQueue(message.conversationId, rows);
+      }
+    } catch (error) {
+      if (owner === draftPersistenceScope()) queueFailure(message.queueId, error);
+      throw error;
+    }
+  });
+}
+
 export function initChatStore(client: QueryClient): void {
   stopQueuedMessagePersistence?.();
   stopQueuedMessagePersistence = null;
+  waitForQueueSnapshot = () => Promise.resolve();
   if (typeof indexedDB !== "undefined") {
+    const refreshComposerScope = () =>
+      initializeSessionDraftPersistence(draftPersistenceScope(), () =>
+        toast.error("Composer draft could not be saved completely. Keep this draft open."),
+      );
+    refreshComposerScope();
     const persistence = persistMessageQueue({
       store: useChatStore,
       scope: () => {
@@ -2017,11 +2209,25 @@ export function initChatStore(client: QueryClient): void {
           "Queued messages could not be saved on this client. Keep it open until they are sent.",
         ),
       restored: () => {
-        useChatStore.getState().maybeFlushQueuedHead();
-        useChatStore.getState().flushBackgroundQueues();
+        if (serverOwnsMessageQueue()) {
+          const ids = new Set(useChatStore.getState().queuedMessages.map((m) => m.conversationId));
+          void Promise.all([...ids].map(refreshServerQueue)).then(() => {
+            for (const message of useChatStore.getState().queuedMessages) {
+              if (message.serverState !== "accepted")
+                void acceptServerQueuedMessage(message).catch(() => {});
+            }
+          });
+        } else {
+          useChatStore.getState().maybeFlushQueuedHead();
+          useChatStore.getState().flushBackgroundQueues();
+        }
       },
     });
-    const unsubscribeIdentity = subscribeIdentity(persistence.refreshScope);
+    waitForQueueSnapshot = persistence.saved;
+    const unsubscribeIdentity = subscribeIdentity(() => {
+      refreshComposerScope();
+      persistence.refreshScope();
+    });
     stopQueuedMessagePersistence = () => {
       unsubscribeIdentity();
       persistence.dispose();
@@ -2266,7 +2472,7 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
   abortController: null,
   historyGeneration: 0,
 
-  enqueueMessage: (text, files, replyDraft, targetId) => {
+  enqueueMessage: (text, files, replyDraft, targetId): void | Promise<boolean> => {
     const target = queueTarget(get, targetId);
     if (target === null) return;
     const { conversationId, boundAgentId, sessionHarness, startupPending } = target.state;
@@ -2305,10 +2511,78 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
     // A message queued while the agent is idle (a race where the send routed
     // to the queue but the turn had already ended) would otherwise wait for an
     // idle edge that never comes — flush now.
-    get().maybeFlushQueuedHead(targetId);
+    const queued = get().queuedMessages.find((m) => m.queueId === queueId);
+    if (queued && serverOwnsMessageQueue() && !isTempConvId(conversationId)) {
+      setActive((s) => ({
+        queuedMessages: s.queuedMessages.map((m) =>
+          m.queueId === queueId ? { ...m, serverState: "saving" } : m,
+        ),
+      }));
+      return acceptServerQueuedMessage(queued).then(
+        () => true,
+        () => false,
+      );
+    } else get().maybeFlushQueuedHead(targetId);
+  },
+
+  deleteQueuedMessage: async (queueId) => {
+    const message = get().queuedMessages.find((m) => m.queueId === queueId);
+    if (!message) return false;
+    if (serverOwnsMessageQueue() && !isTempConvId(message.conversationId)) {
+      try {
+        await queueOperation(message.conversationId, async () => {
+          const rows = await queueRequest(
+            message.conversationId,
+            `/${encodeURIComponent(queueId)}`,
+            { method: "DELETE" },
+          );
+          const current = get().queuedMessages.filter((m) => m.queueId !== queueId);
+          setActive({ queuedMessages: current });
+          applyServerQueue(message.conversationId, rows);
+        });
+        return true;
+      } catch (error) {
+        queueFailure(queueId, error);
+        return false;
+      }
+    }
+    setActive((s) => ({ queuedMessages: s.queuedMessages.filter((m) => m.queueId !== queueId) }));
+    return true;
+  },
+
+  loadQueuedMessageDraft: async (queueId) => {
+    const owner = draftPersistenceScope();
+    const message = get().queuedMessages.find((m) => m.queueId === queueId);
+    if (!message) return undefined;
+    let files = message.files ?? [];
+    if (!files.length && message.serverContent) {
+      const blocks = message.serverContent.filter((b) => b.type !== "input_text");
+      files = await Promise.all(
+        blocks.map(async (block, i) => {
+          const resource = block as { file_id?: string; filename?: string };
+          if (!resource.file_id) throw new Error("Queued attachment unavailable");
+          const response = await authenticatedFetch(
+            `/v1/sessions/${encodeURIComponent(message.conversationId)}/resources/files/${encodeURIComponent(resource.file_id)}/content`,
+          );
+          if (!response.ok) throw await apiErrorFromResponse(response);
+          const blob = await response.blob();
+          const metadata = message.fileMetadata?.[i];
+          return new File([blob], metadata?.name ?? resource.filename ?? "attachment", {
+            type: metadata?.type ?? blob.type,
+            lastModified: metadata?.lastModified,
+          });
+        }),
+      );
+    }
+    if (owner !== draftPersistenceScope()) return undefined;
+    return { text: message.text, replyDraft: message.replyDraft, files };
   },
 
   dequeueMessage: (queueId) => {
+    if (serverOwnsMessageQueue()) {
+      void get().deleteQueuedMessage(queueId);
+      return;
+    }
     setActive((s) => ({
       queuedMessages: s.queuedMessages.filter((m) => m.queueId !== queueId),
     }));
@@ -2330,6 +2604,20 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
   },
 
   reorderQueuedMessage: (queueId, beforeQueueId) => {
+    const message = get().queuedMessages.find((m) => m.queueId === queueId);
+    if (message && serverOwnsMessageQueue()) {
+      void queueOperation(message.conversationId, async () => {
+        applyServerQueue(
+          message.conversationId,
+          await queueRequest(message.conversationId, `/${encodeURIComponent(queueId)}/move`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ beforeQueueId }),
+          }),
+        );
+      }).catch((error) => queueFailure(queueId, error));
+      return;
+    }
     setActive((s) => {
       const moved = s.queuedMessages.find((m) => m.queueId === queueId);
       if (moved === undefined || queueId === beforeQueueId) return {};
@@ -2364,6 +2652,26 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
     const agentId = target?.agentId ?? s.boundAgentId;
     if (target === undefined || agentId === null) return;
     if (target.command === "compact" && rejectBusyCompact(target.conversationId)) return;
+    if (serverOwnsMessageQueue()) {
+      const prepare =
+        target.serverState !== "accepted"
+          ? acceptServerQueuedMessage({ ...target, requiresRetry: false })
+          : Promise.resolve();
+      void prepare
+        .then(() =>
+          queueOperation(target.conversationId, async () => {
+            applyServerQueue(
+              target.conversationId,
+              await queueRequest(target.conversationId, `/${encodeURIComponent(queueId)}/send`, {
+                method: "POST",
+              }),
+            );
+          }),
+        )
+        .catch((error) => queueFailure(queueId, error));
+      return;
+    }
+
     // Nothing can be steered past a first message still held for startup; it stays queued.
     const targetState = setterForState(target.conversationId);
     if (targetState !== null && (holdsInitialDraft(targetState) || targetState.workspaceSwitching))
@@ -2387,6 +2695,10 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
     const s = get();
     const own = s.queuedMessages.filter((m) => m.conversationId === conversationId);
     if (own.length === 0) return;
+    if (serverOwnsMessageQueue()) {
+      for (const m of own) get().steerMessage(m.queueId);
+      return;
+    }
     const state = setterForState(conversationId);
     if (state !== null && (holdsInitialDraft(state) || state.workspaceSwitching)) return;
     // When the first one will be held for startup, the rest stay queued behind it.
@@ -2446,6 +2758,26 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
   },
 
   maybeFlushQueuedHead: (targetId) => {
+    if (serverOwnsMessageQueue()) {
+      const id = targetId ?? get().conversationId;
+      for (const message of get().queuedMessages) {
+        if (
+          message.conversationId === id &&
+          !message.serverState &&
+          !isTempConvId(message.conversationId)
+        ) {
+          setActive((s) => ({
+            queuedMessages: s.queuedMessages.map((m) =>
+              m.queueId === message.queueId ? { ...m, serverState: "saving" } : m,
+            ),
+          }));
+          void acceptServerQueuedMessage(message).catch(() => {});
+        }
+      }
+      if (id && !get().queuedMessages.some((m) => m.conversationId === id))
+        void refreshServerQueue(id);
+      return;
+    }
     const target = queueTarget(get, targetId);
     if (target === null) return;
     const s = target.state;
@@ -2500,6 +2832,11 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
 
   flushBackgroundQueues: () => {
     const s = get();
+    if (serverOwnsMessageQueue()) {
+      for (const id of new Set(s.queuedMessages.map((m) => m.conversationId)))
+        void refreshServerQueue(id);
+      return;
+    }
     if (queryClient === null || s.queuedMessages.length === 0) return;
 
     // Conversations (other than the active one) that have a queued message.
@@ -2934,8 +3271,9 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
       if (initialDraft && !(await waitForInitialDispatch(sessionId, tempId))) return;
 
       if (compacts) {
-        // Compact controls emit turn status edges, but no user
-        // message acknowledgement. Keep the send latch without a pending bubble.
+        // A cold bind's idle snapshot can clear the latch: compact has no pending
+        // user bubble. Re-arm at dispatch and retain the active response's owner.
+        setterFor(sessionId)({ status: "streaming", sendLatchedAt: Date.now() });
         await postEvent(sessionId, { type: "compact", data: {} });
         queryClient?.invalidateQueries({ queryKey: ["conversations"] });
         return;
@@ -4034,6 +4372,7 @@ export function rejectBusyCompact(conversationId: string | null): boolean {
 function queuedWorkspaceContext(sessionId: string) {
   const session = queryClient?.getQueryData<Session>(["session", sessionId]);
   return {
+    ...(session?.hostId ? { hostId: session.hostId } : {}),
     ...(session?.workspace ? { workspaceRoot: session.workspace } : {}),
     ...(session?.workspaceRevision ? { workspaceRevision: session.workspaceRevision } : {}),
   };
@@ -7446,7 +7785,10 @@ export async function pumpStreamEvents(
             .map((b) => b.elicitationId),
         );
         fresh = fresh.filter(
-          (b) => b.type !== "elicitation" || !committedElicitations.has(b.elicitationId),
+          (b) =>
+            b.type !== "elicitation" ||
+            b.phase === "question_receipt" ||
+            !committedElicitations.has(b.elicitationId),
         );
       }
       if (fresh.length === 0) return extra ?? {};
@@ -7464,7 +7806,13 @@ export async function pumpStreamEvents(
               mcpStartupLaunch: { ...s.mcpStartupLaunch, dismissed: true },
             }
           : {}),
-        blocks: [...s.blocks, ...fresh],
+        blocks: fresh.some(
+          (b) =>
+            (b.type === "elicitation" && b.phase === "question_receipt") ||
+            (b.type === "user_message" && b.communication?.kind === "system"),
+        )
+          ? reconcileQuestionBatches([...s.blocks, ...fresh], id)
+          : [...s.blocks, ...fresh],
       };
     });
   };
@@ -7557,7 +7905,7 @@ export async function pumpStreamEvents(
       // carrying an in-flight user verdict) stays untouched, and a card
       // the deferred clear flipped to "Resolved elsewhere" is revived
       // to answerable in place.
-      if (block.type === "elicitation") {
+      if (block.type === "elicitation" && block.phase !== "question_receipt") {
         const eid = block.elicitationId;
         const buffered = buffer.findIndex(
           (b) => b.type === "elicitation" && b.elicitationId === eid,
@@ -8373,6 +8721,163 @@ function contentKeyOf(content: MessageContentBlock[]): string {
   return JSON.stringify(canonical(content));
 }
 
+const resourceItemRecoveries = new WeakMap<ConversationEntry, Set<string>>();
+
+/** Restore a missed activity item only from authorized history and canonical neighbors. */
+async function recoverMissingUpdatedResourceItem(
+  conversationId: string,
+  itemId: string,
+  generation: number,
+): Promise<void> {
+  const entry = conversationRegistry.peek(conversationId);
+  if (!entry || entry.disposed) return;
+  const initial = entry.getState();
+  if (
+    initial.historyGeneration !== generation ||
+    initial.blocks.some((block) => block.ctx.itemId === itemId)
+  )
+    return;
+
+  const scopeNow = () =>
+    JSON.stringify([getOmnigentServerIdentity(), getBasePath(), getCurrentUserId()]);
+  const scope = scopeNow();
+  const fetcher = getOmnigentHostConfig().fetcher;
+  const binding = initial.abortController;
+  const current = () =>
+    conversationRegistry.peek(conversationId) === entry &&
+    !entry.disposed &&
+    entry.getState().historyGeneration === generation &&
+    entry.getState().abortController === binding &&
+    binding?.signal.aborted !== true &&
+    scopeNow() === scope &&
+    getOmnigentHostConfig().fetcher === fetcher;
+  if (!current()) return;
+  const key = JSON.stringify([scope, conversationId, generation, itemId]);
+  const pending = resourceItemRecoveries.get(entry) ?? new Set<string>();
+  if (pending.has(key)) return;
+  pending.add(key);
+  resourceItemRecoveries.set(entry, pending);
+
+  const noticeId = `activity-recovery:${key}`;
+  const unavailable = () =>
+    toast.info("Activity update is unavailable in the loaded history.", { id: noticeId });
+  const oldestId =
+    initial.oldestItemId ?? initial.blocks.find((block) => block.ctx.itemId)?.ctx.itemId;
+  const loadedIds = new Set(initial.blocks.map((block) => block.ctx.itemId));
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  binding?.signal.addEventListener("abort", abort, { once: true });
+  const timeout = setTimeout(abort, ACTIVE_SESSION_STATUS_RECONCILE_TIMEOUT_MS);
+  try {
+    if (!oldestId) {
+      unavailable();
+      return;
+    }
+    let items: ConversationItem[] = [];
+    let cursor: string | undefined;
+    const cursors = new Set<string>();
+    // Each page depends on the previous cursor; never scan past the loaded window.
+    /* oxlint-disable no-await-in-loop */
+    for (;;) {
+      const page = await fetchSessionItemsPage(conversationId, {
+        olderThan: cursor,
+        limit: INITIAL_WINDOW_ITEMS,
+        signal: controller.signal,
+      });
+      if (!current() || entry.getState().blocks.some((block) => block.ctx.itemId === itemId))
+        return;
+      items = [...page.items, ...items];
+      const oldestIndex = items.findIndex((item) => item.id === oldestId);
+      if (oldestIndex >= 0) items = items.slice(oldestIndex);
+      const found = items.some((item) => item.id === itemId);
+      if (
+        oldestIndex >= 0 ||
+        !page.hasMore ||
+        (found && items.some((item) => loadedIds.has(item.id)))
+      )
+        break;
+      cursor = page.items[0]?.id;
+      if (!cursor || cursors.has(cursor))
+        throw new Error("Activity history cursor did not advance");
+      cursors.add(cursor);
+    }
+    /* oxlint-enable no-await-in-loop */
+
+    const canonical = items.find((item) => item.id === itemId && item.type === "resource_event");
+    if (!canonical) {
+      unavailable();
+      return;
+    }
+    const canonicalBlocks = itemsToBlocks(items);
+    const recoveredIndex = canonicalBlocks.findIndex(
+      (block) =>
+        block.ctx.itemId === itemId &&
+        block.type === "native_tool" &&
+        block.toolType === "subagent_activity",
+    );
+    if (recoveredIndex < 0) {
+      unavailable();
+      return;
+    }
+    const recovered = canonicalBlocks[recoveredIndex]!;
+    let inserted = false;
+    entrySetter(entry)((state) => {
+      if (!current() || state.blocks.some((block) => block.ctx.itemId === itemId)) return {};
+      let previous = -1;
+      let next = -1;
+      for (let index = recoveredIndex - 1; index >= 0; index -= 1) {
+        const neighborId = canonicalBlocks[index]!.ctx.itemId;
+        if (!neighborId) continue;
+        previous = state.blocks.findLastIndex((block) => block.ctx.itemId === neighborId);
+        if (previous >= 0) break;
+      }
+      for (let index = recoveredIndex + 1; index < canonicalBlocks.length; index += 1) {
+        const neighborId = canonicalBlocks[index]!.ctx.itemId;
+        if (!neighborId) continue;
+        next = state.blocks.findIndex((block) => block.ctx.itemId === neighborId);
+        if (next >= 0) break;
+      }
+      if ((previous < 0 && next < 0) || (next >= 0 && previous >= next)) return {};
+      const insertion = previous >= 0 ? previous + 1 : next;
+      inserted = true;
+      return {
+        blocks: [...state.blocks.slice(0, insertion), recovered, ...state.blocks.slice(insertion)],
+      };
+    });
+    if (inserted) toast.dismiss(noticeId);
+    else if (current()) unavailable();
+  } catch (error) {
+    if (!current() || entry.getState().blocks.some((block) => block.ctx.itemId === itemId)) return;
+    const status = error instanceof ApiError ? error.status : null;
+    if (status === 401 || status === 403 || status === 404) {
+      toast.error(
+        status === 401
+          ? "Sign in again to restore this activity update."
+          : status === 403
+            ? "Activity update is unavailable because access was denied."
+            : "Activity update is no longer available.",
+        { id: noticeId },
+      );
+    } else {
+      toast.error("Activity update could not be restored.", {
+        id: noticeId,
+        action: {
+          label: "Retry",
+          onClick: () => {
+            if (current())
+              return recoverMissingUpdatedResourceItem(conversationId, itemId, generation);
+            return undefined;
+          },
+        },
+      });
+    }
+  } finally {
+    clearTimeout(timeout);
+    binding?.signal.removeEventListener("abort", abort);
+    pending.delete(key);
+  }
+}
+
 /**
  * Apply store side effects for a `session.*` SSE event.
  *
@@ -8460,6 +8965,21 @@ export function handleSessionEvent(event: StreamEvent, streamConversationId?: st
         const blocks = updateLoadedResourceItems(state.blocks, [event.item]);
         return blocks === state.blocks ? {} : { blocks };
       });
+      const itemId = event.item.id;
+      if (
+        sourceConversationId &&
+        typeof itemId === "string" &&
+        event.item.type === "resource_event"
+      ) {
+        const state = setterForState(sourceConversationId);
+        if (state && !state.blocks.some((block) => block.ctx.itemId === itemId)) {
+          void recoverMissingUpdatedResourceItem(
+            sourceConversationId,
+            itemId,
+            state.historyGeneration,
+          );
+        }
+      }
       break;
     }
     case "response_completed":
@@ -8780,13 +9300,25 @@ export function handleSessionEvent(event: StreamEvent, streamConversationId?: st
       }
       return;
     case "session_status": {
+      if (serverOwnsMessageQueue() && sourceConversationId)
+        void refreshServerQueue(sourceConversationId);
       // Captured BEFORE the patch below adopts event.responseId, so a
       // running/waiting status carrying an unseen id marks a new turn.
       const prevResponseId = useChatStore.getState().activeResponse?.responseId;
       // The status patch is conversation-scoped; the cache/query side effects
       // further down are deliberately NOT (they are keyed by explicit id, so a
       // sub-agent's status still refreshes its parent's rail).
+      let staleTerminal = false;
       applyToNamedConversation(event.conversationId, (s) => {
+        if (
+          event.responseId !== undefined &&
+          s.activeResponse?.state === "streaming" &&
+          s.activeResponse.responseId !== event.responseId &&
+          (event.status === "idle" || event.status === "failed" || event.status === "waiting")
+        ) {
+          staleTerminal = true;
+          return {};
+        }
         const responseId = event.responseId ?? s.activeResponse?.responseId;
         if (event.responseId && event.status === "running") {
           selectedQueueTurn(event.conversationId, event.responseId);
@@ -8796,13 +9328,8 @@ export function handleSessionEvent(event: StreamEvent, streamConversationId?: st
         ) {
           selectedQueueTurn(event.conversationId, responseId, true);
         }
-        // `sessionStatus` tracks the server's session-level status 1:1 — a
-        // server `idle` means the session is idle, full stop, and the
-        // "Working…" indicator (which reads only `sessionStatus`) turns off.
-        // There is exactly one idle heuristic and it lives server-side (the
-        // runner's PTY-activity watcher); the client must not second-guess it.
-        // The bubble lifecycle below (`status`/`activeResponse`) still defers
-        // to response_end, but that is separate from the session-level status.
+        // Follow the current turn's status edge or the runner's unscoped edge.
+        // The local send lifecycle settles separately below.
         const patch: Partial<ChatState> = {
           sessionStatus: event.status,
           // Not sticky, unlike the background tally: every edge carries the
@@ -8875,7 +9402,10 @@ export function handleSessionEvent(event: StreamEvent, streamConversationId?: st
         // "Working…" spinner and sidebar dot keep reflecting the background work.
         if (event.status === "idle" || event.status === "failed" || event.status === "waiting") {
           if (event.responseId !== undefined && s.activeResponse?.responseId === event.responseId) {
-            patch.status = "idle";
+            // A repeated terminal for the old response cannot release a newly armed control.
+            if (s.activeResponse.state === "streaming" || s.status !== "streaming") {
+              patch.status = "idle";
+            }
             if (s.activeResponse.state === "streaming") settledResponseId = event.responseId;
             if (s.activeResponse.state !== "cancelled") {
               patch.activeResponse = {
@@ -9000,6 +9530,7 @@ export function handleSessionEvent(event: StreamEvent, streamConversationId?: st
         }
         return patch;
       });
+      if (staleTerminal) return;
       // Refetch the snapshot at turn START too: the runner persists
       // turn-scoped labels (e.g. the cost advisor's `cost_control.plan`
       // verdict) before the harness runs, so the verdict can render
@@ -9055,6 +9586,8 @@ export function handleSessionEvent(event: StreamEvent, streamConversationId?: st
       return;
     }
     case "session_input_consumed":
+      if (serverOwnsMessageQueue() && sourceConversationId)
+        void refreshServerQueue(sourceConversationId);
       acknowledgeSelectedQueueSend(sourceConversationId, event);
       if (readMessageCommunication(event.data.communication)) {
         const communication = readMessageCommunication(event.data.communication)!;
@@ -9083,30 +9616,32 @@ export function handleSessionEvent(event: StreamEvent, streamConversationId?: st
                 communication.destination_conversation_id);
           const matched = state.pendingUserMessages.find(matchesReceipt);
           const committed = hasCommittedItem(state.blocks, event.itemId);
+          const blocks = committed
+            ? reconcileCommittedInput(state.blocks, event, matched, communication)
+            : [
+                ...state.blocks,
+                {
+                  ...committedUserBlock(
+                    event.itemId,
+                    preserveInputAttachments(content, matched?.content ?? null),
+                    matched?.tempId,
+                    event.createdBy ?? matched?.author,
+                    matched?.createdAtS,
+                    false,
+                    isMetaInput(event),
+                  ),
+                  communication,
+                },
+              ];
           return {
             startupPending: false,
             pendingUserMessages: state.pendingUserMessages.filter(
               (pending) => !matchesReceipt(pending),
             ),
-            ...(committed
-              ? { blocks: reconcileCommittedInput(state.blocks, event, matched, communication) }
-              : {
-                  blocks: [
-                    ...state.blocks,
-                    {
-                      ...committedUserBlock(
-                        event.itemId,
-                        preserveInputAttachments(content, matched?.content ?? null),
-                        matched?.tempId,
-                        event.createdBy ?? matched?.author,
-                        matched?.createdAtS,
-                        false,
-                        isMetaInput(event),
-                      ),
-                      communication,
-                    },
-                  ],
-                }),
+            blocks: reconcileQuestionBatches(
+              blocks,
+              sourceConversationId ?? state.conversationId ?? "",
+            ),
           };
         });
         return;
@@ -9331,9 +9866,31 @@ export function handleSessionEvent(event: StreamEvent, streamConversationId?: st
       if (event.responseId !== undefined) {
         const interruptedResponseId = event.responseId;
         applyToConversation((s) => {
-          if (s.interruptedResponseIds.includes(interruptedResponseId)) return {};
           return {
-            interruptedResponseIds: [...s.interruptedResponseIds, interruptedResponseId],
+            interruptedResponseIds: s.interruptedResponseIds.includes(interruptedResponseId)
+              ? s.interruptedResponseIds
+              : [...s.interruptedResponseIds, interruptedResponseId],
+            blocks: s.blocks.map((block) => {
+              if (
+                block.type !== "elicitation" ||
+                block.phase !== "question_receipt" ||
+                block.response?.action !== "decline" ||
+                block.targetSessionId !== sourceConversationId
+              )
+                return block;
+              const source = block.response["_meta"]?.question_submission;
+              if (!source || typeof source !== "object" || Array.isArray(source)) return block;
+              const identity = source as Record<string, unknown>;
+              if (
+                identity.session_id !== sourceConversationId ||
+                typeof identity.thread_id !== "string" ||
+                typeof identity.turn_id !== "string" ||
+                interruptedResponseId !== `codex_${identity.turn_id}`
+              )
+                return block;
+              // Reloaded requests have a synthetic context until their native turn is known.
+              return { ...block, ctx: { ...block.ctx, responseId: interruptedResponseId } };
+            }),
           };
         });
       }
@@ -9341,7 +9898,7 @@ export function handleSessionEvent(event: StreamEvent, streamConversationId?: st
       // Stopping the turn stops its compaction, and the idle that follows a
       // native stop may name no turn, so the stop itself retires the spinner.
       applyToConversation((s) => {
-        const stopped = s.activeResponse?.responseId;
+        const stopped = event.responseId ?? s.activeResponse?.responseId;
         const blocks = stopped ? withoutSettledCompactionSpinners(s.blocks, stopped) : null;
         return blocks === null ? {} : { blocks };
       });
@@ -9703,9 +10260,17 @@ function finalizeCurrentActive(
   const target = conversationId ?? useChatStore.getState().conversationId;
   setterFor(target)((s) => {
     if (s.activeResponse === null && responseIdOverride === undefined) return {};
+    if (
+      responseIdOverride !== undefined &&
+      s.activeResponse !== null &&
+      s.activeResponse.responseId !== responseIdOverride
+    )
+      return {};
     const responseId = s.activeResponse?.responseId ?? responseIdOverride ?? "";
     return {
       activeResponse: { responseId, state, error: null, completedAt: Date.now() },
+      // A cancelled live turn releases its latch; a newly armed send keeps its own.
+      ...(s.activeResponse?.state === "streaming" ? { status: "idle", sendLatchedAt: null } : {}),
     };
   });
 }

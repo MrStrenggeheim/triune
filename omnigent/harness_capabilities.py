@@ -99,6 +99,7 @@ class InstructionDelivery(str, Enum):
     COMPOSED_SESSION_SNAPSHOT = "composed-session-snapshot"
     AGENT_STARTUP_ADDITIVE = "agent-startup-additive"
     FIRST_USER_PREFIX = "first-user-prefix"
+    TOOL_SCHEMA = "tool-schema"  # static product guidance, never an authored role
     NOT_DELIVERED = "not-delivered"
     UNKNOWN = "unknown"
 
@@ -160,6 +161,9 @@ class HarnessCapabilities:
     shell_tool_name: str | None = None
     shell_tool_prompt: str | None = None
     instruction_delivery: InstructionDelivery = InstructionDelivery.UNKNOWN
+    ui_contract_delivery: InstructionDelivery = InstructionDelivery.UNKNOWN
+    ui_contract_version: str | None = None
+    ui_contract_note: str | None = None
 
     def as_dict(self) -> dict[str, str | bool | None]:
         """Return a JSON-serializable view for the ``/v1/harnesses`` catalog."""
@@ -181,4 +185,7 @@ class HarnessCapabilities:
             "shell_tool_name": self.shell_tool_name,
             "shell_tool_prompt": self.shell_tool_prompt,
             "instruction_delivery": self.instruction_delivery.value,
+            "ui_contract_delivery": self.ui_contract_delivery.value,
+            "ui_contract_version": self.ui_contract_version,
+            "ui_contract_note": self.ui_contract_note,
         }

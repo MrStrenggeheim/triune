@@ -18,6 +18,7 @@ import {
 import { toast } from "@/lib/notifications";
 import { Link } from "@/lib/routing";
 import "@/components/composer/composerShelves.css";
+import "./ActivityRow.css";
 
 /** Shared unboxed activity disclosure for messages, agents and shell history. */
 export function ActivityRow({
@@ -37,6 +38,7 @@ export function ActivityRow({
   summary,
   expanded: controlledExpanded,
   onExpandedChange,
+  keepMounted = false,
 }: {
   icon: ReactNode;
   title: ReactNode;
@@ -55,6 +57,8 @@ export function ActivityRow({
   summary?: ReactNode;
   expanded?: boolean;
   onExpandedChange?: (expanded: boolean) => void;
+  /** Forms retain their local drafts while the disclosure is folded. */
+  keepMounted?: boolean;
 }) {
   const [localExpanded, setLocalExpanded] = useState(false);
   const expanded = controlledExpanded ?? localExpanded;
@@ -85,7 +89,7 @@ export function ActivityRow({
   const row = (
     <div
       data-resource-row=""
-      className={`resource-row ${message ? "gap-2.5" : "density-row gap-2 rounded-[var(--radius-md)] px-2 hover:bg-[var(--workspace-hover-on-content)]"} flex min-w-0 items-center text-sm ${selected ? "bg-[var(--workspace-hover-on-content)] ring-1 ring-ring" : ""}`}
+      className={`resource-row ${message ? "activity-message-header gap-2.5" : "density-row gap-2 rounded-[var(--radius-md)] px-2 hover:bg-[var(--workspace-hover-on-content)]"} flex min-w-0 items-center text-sm ${selected ? "bg-[var(--workspace-hover-on-content)] ring-1 ring-ring" : ""}`}
       onClick={(event) => {
         if (!(event.target instanceof Element) || event.target.closest("button, a")) return;
         if (!event.currentTarget.contains(event.target)) return;
@@ -98,7 +102,7 @@ export function ActivityRow({
       >
         {icon}
       </span>
-      <div className="min-w-0 flex-1">
+      <div className={`min-w-0 flex-1 ${message ? "activity-message-text" : ""}`}>
         {onOpen ? (
           <Button
             type="button"
@@ -153,7 +157,7 @@ export function ActivityRow({
         )}
       </div>
       {status && (
-        <span className="flex shrink-0 items-center justify-end text-xs">
+        <span className="activity-status-slot flex shrink-0 items-center justify-end text-xs">
           {onStop ? (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -241,16 +245,16 @@ export function ActivityRow({
   );
   return (
     <div
-      className={`activity-row min-w-0 text-sm ${message ? "border-l-2 border-primary/60 py-1 pl-2.5 sm:pl-3" : ""}`}
+      className={`activity-row min-w-0 text-sm ${message ? "activity-row--message border-l-2 border-primary/60 py-1 pl-2.5 sm:pl-3" : ""}`}
     >
       {openingRow}
       {children && (
         <div
           id={contentId}
           hidden={!expanded}
-          className="min-w-0 pt-1 pl-9 text-foreground [&_p]:my-1"
+          className={`min-w-0 pt-1 pl-9 text-foreground [&_p]:my-1 ${message ? "activity-message-body" : ""}`}
         >
-          {expanded && children}
+          {(expanded || keepMounted) && children}
         </div>
       )}
     </div>

@@ -27,6 +27,14 @@ from tests._image_fixtures import _TINY_PNG_BASE64
 _SAMPLE_FRAMEWORK_INSTRUCTION = "Framework instruction for testing build_instructions_nullable."
 
 
+@pytest.fixture(autouse=True)
+def isolate_dynamic_prompt_policy(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Static product composition has real integration checks in test_ui_contract."""
+    monkeypatch.setattr(
+        "omnigent.runtime.prompt.ui_instructions_for_spec", lambda *_args, **_kwargs: ""
+    )
+
+
 def _spec(
     instructions: str | None,
     *,

@@ -2726,7 +2726,10 @@ def _prepare_messages(
         used to verify session-scoped file ownership.
     :returns: Tuple of (system_instructions, messages, sys_tokens).
     """
-    sys_instructions = build_instructions(spec, instructions, tool_schemas)
+    # Compaction has no captured server URL; omit CLI attachment commands.
+    sys_instructions = build_instructions(
+        spec, instructions, tool_schemas, session_id=conversation_id
+    )
     file_store = get_file_store()
     artifact_store = get_artifact_store()
     resolved = history

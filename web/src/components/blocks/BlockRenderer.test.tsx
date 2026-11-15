@@ -6,7 +6,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ReactNode } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
@@ -17,6 +17,8 @@ import { FileViewerContext } from "@/shell/FileViewerContext";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ConversationScopeContext } from "@/components/chat/conversationScope";
 import { normalizeExplicitMathDelimiters } from "@/components/ai-elements/mathMarkdown";
+import { ChatSearchRevealContext } from "@/lib/chatSearchHighlights";
+import { AttachmentPreviewContext } from "@/components/ChatAttachment";
 import { BlockRenderer, rendersOnlyWorkedFold } from "./BlockRenderer";
 
 afterEach(cleanup);
@@ -27,6 +29,13 @@ afterEach(cleanup);
 const lockState = { isAtBottom: true, escapedFromLock: false };
 const lockStopScroll = vi.fn();
 const lockValue = { stopScroll: lockStopScroll, state: lockState };
+
+const settledTaskReveal = {
+  revealedItems: new Set(["n1"]),
+  originalSources: new Map(),
+  reveal: vi.fn(),
+  showOriginal: vi.fn(),
+};
 
 const FILE_VIEWER_NOOP = {
   openFile: () => {},
@@ -613,7 +622,7 @@ describe("BlockRenderer dispatch", () => {
       expect(screen.getByText("All done here.")).toBeDefined();
     });
 
-    it("keeps the answer and follow-up in order around separate work runs", () => {
+    it("keeps the answer and follow-up visible beside one turn-level work fold", () => {
       const items: RenderItem[] = [
         { kind: "reasoning", itemId: "r0", text: "Considering the request.", duration: 4 },
         tool(1, "Bash"),
@@ -623,32 +632,20 @@ describe("BlockRenderer dispatch", () => {
       ];
       render(<BlockRenderer items={items} sessionStatus="idle" workedForS={128} />);
 
-      const folds = screen.getAllByRole("button", { name: "Worked" });
+      const fold = screen.getByRole("button", { name: "Worked for 2m 8s" });
       const answer = screen.getByText("Here is the substantive answer.");
       const followUp = screen.getByText("Quick tick: the check passed.");
-      expect(folds).toHaveLength(2);
-      expect(folds[0]).toHaveAttribute("aria-expanded", "false");
-      expect(folds[1]).toHaveAttribute("aria-expanded", "false");
+      expect(fold).toHaveAttribute("aria-expanded", "false");
+      expect(fold.compareDocumentPosition(answer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
       expect(
-        folds[0]!.compareDocumentPosition(answer) & Node.DOCUMENT_POSITION_FOLLOWING,
-      ).toBeTruthy();
-      expect(
-        answer.compareDocumentPosition(folds[1]!) & Node.DOCUMENT_POSITION_FOLLOWING,
-      ).toBeTruthy();
-      expect(
-        folds[1]!.compareDocumentPosition(followUp) & Node.DOCUMENT_POSITION_FOLLOWING,
+        answer.compareDocumentPosition(followUp) & Node.DOCUMENT_POSITION_FOLLOWING,
       ).toBeTruthy();
       expect(screen.queryByText("Considering the request.")).toBeNull();
-      fireEvent.click(folds[0]!);
-      expect(folds[0]).toHaveAttribute("aria-expanded", "true");
-      expect(folds[1]).toHaveAttribute("aria-expanded", "false");
-      expect(screen.getByText("Ran 1 shell command")).toBeDefined();
+      fireEvent.click(fold);
+      expect(fold).toHaveAttribute("aria-expanded", "true");
+      expect(screen.getByText("Ran 1 shell command, called 1 other tool")).toBeDefined();
       fireEvent.click(screen.getByText(/Thought for/));
       expect(screen.getByText("Considering the request.")).toBeDefined();
-      fireEvent.click(folds[1]!);
-      expect(folds[0]).toHaveAttribute("aria-expanded", "true");
-      expect(folds[1]).toHaveAttribute("aria-expanded", "true");
-      expect(screen.getByText("Called 1 tool")).toBeDefined();
       expect(answer).toBeVisible();
       expect(followUp).toBeVisible();
     });
@@ -663,18 +660,14 @@ describe("BlockRenderer dispatch", () => {
       ];
       render(<BlockRenderer items={items} sessionStatus="idle" defaultExpanded />);
 
-      const folds = screen.getAllByRole("button", { name: "Worked" });
-      expect(folds).toHaveLength(2);
-      for (const fold of folds) expect(fold).toHaveAttribute("aria-expanded", "true");
+      const fold = screen.getByRole("button", { name: "Worked" });
+      expect(fold).toHaveAttribute("aria-expanded", "true");
       expect(screen.getByText("Checking.")).toBeDefined();
       expect(screen.getByText("No conflict.")).toBeDefined();
       expect(screen.getByText("Merged.")).toBeDefined();
 
-      fireEvent.click(folds[0]!);
-      expect(folds[0]).toHaveAttribute("aria-expanded", "false");
-      expect(folds[1]).toHaveAttribute("aria-expanded", "true");
-      fireEvent.click(folds[1]!);
-      expect(folds[1]).toHaveAttribute("aria-expanded", "false");
+      fireEvent.click(fold);
+      expect(fold).toHaveAttribute("aria-expanded", "false");
       expect(screen.getByText("No conflict.")).toBeDefined();
       expect(screen.getByText("Merged.")).toBeDefined();
     });
@@ -688,19 +681,16 @@ describe("BlockRenderer dispatch", () => {
         { kind: "text", itemId: "m2", text: "Merged.", final: true },
       ];
       const view = render(<BlockRenderer items={items} sessionStatus="idle" />);
-      const folds = screen.getAllByRole("button", { name: "Worked" });
-      expect(folds).toHaveLength(2);
-      for (const fold of folds) expect(fold).toHaveAttribute("aria-expanded", "false");
+      const fold = screen.getByRole("button", { name: "Worked" });
+      expect(fold).toHaveAttribute("aria-expanded", "false");
 
       view.rerender(<BlockRenderer items={items} sessionStatus="idle" defaultExpanded />);
-      for (const fold of folds) expect(fold).toHaveAttribute("aria-expanded", "true");
+      expect(fold).toHaveAttribute("aria-expanded", "true");
 
-      fireEvent.click(folds[0]!);
-      expect(folds[0]).toHaveAttribute("aria-expanded", "false");
-      expect(folds[1]).toHaveAttribute("aria-expanded", "true");
+      fireEvent.click(fold);
+      expect(fold).toHaveAttribute("aria-expanded", "false");
       view.rerender(<BlockRenderer items={items} sessionStatus="idle" defaultExpanded />);
-      expect(folds[0]).toHaveAttribute("aria-expanded", "false");
-      expect(folds[1]).toHaveAttribute("aria-expanded", "true");
+      expect(fold).toHaveAttribute("aria-expanded", "false");
     });
 
     it("labels the Worked row with the turn duration when provided", () => {
@@ -1400,7 +1390,7 @@ describe("BlockRenderer dispatch", () => {
           node.getAttribute("data-phase") === "returned" ? "Completed Peirce" : "Started Peirce",
         );
 
-      it("keeps task and reply cards outside the work around them", () => {
+      it("folds task and reply cards with process work behind one row", () => {
         renderTurn([
           tool(1, "spawn_agent"),
           notice("n1", "delegated"),
@@ -1409,21 +1399,22 @@ describe("BlockRenderer dispatch", () => {
           text("m1", "Peirce finished the recording."),
         ]);
         expect(screen.getByText("Peirce finished the recording.")).toBeDefined();
-        expect(noticeLabels()).toEqual(["Started Peirce", "Completed Peirce"]);
+        expect(screen.getAllByRole("button", { name: "Worked" })).toHaveLength(1);
+        expect(noticeLabels()).toEqual([]);
 
-        fireEvent.click(screen.getAllByRole("button", { name: "Worked" })[0]);
+        fireEvent.click(screen.getByRole("button", { name: "Worked" }));
         expect(noticeLabels()).toEqual(["Started Peirce", "Completed Peirce"]);
       });
 
       it.each([false, true])(
-        "keeps trailing tasks visible when the turn continues (continued = %s)",
+        "folds settled trailing tasks unless the turn continues (continued = %s)",
         (continued) => {
           renderTurn(
             [text("m1", "Starting Peirce."), tool(1, "spawn_agent"), notice("n1", "delegated")],
             continued,
           );
           expect(screen.getAllByRole("button", { name: "Worked" })).toHaveLength(1);
-          expect(noticeLabels()).toEqual(["Started Peirce"]);
+          expect(noticeLabels()).toEqual(continued ? ["Started Peirce"] : []);
         },
       );
 
@@ -1467,30 +1458,54 @@ describe("BlockRenderer dispatch", () => {
           ],
           labels: ["Completed Peirce"],
         },
-      ])("keeps task replies outside work, $shape", ({ continued, items, labels }) => {
-        render(
-          <MemoryRouter>
-            <BlockRenderer
-              items={items}
-              sessionStatus="idle"
-              continued={continued}
-              workedForS={42}
-            />
-          </MemoryRouter>,
-        );
-        expect(noticeLabels()).toEqual(labels);
-        // One timed row: the notices add no row of their own.
-        fireEvent.click(screen.getByRole("button", { name: "Worked for 42s" }));
-        expect(noticeLabels()).toEqual(labels);
-      });
+      ])(
+        "folds settled replies but keeps continued wake boundaries, $shape",
+        ({ continued, items, labels }) => {
+          render(
+            <MemoryRouter>
+              <BlockRenderer
+                items={items}
+                sessionStatus="idle"
+                continued={continued}
+                workedForS={42}
+              />
+            </MemoryRouter>,
+          );
+          expect(noticeLabels()).toEqual(
+            continued ? labels.filter((label) => label === "Completed Peirce") : [],
+          );
+          fireEvent.click(screen.getByRole("button", { name: "Worked for 42s" }));
+          expect(noticeLabels()).toEqual(labels);
+        },
+      );
 
-      it("keeps notices visible in a turn with no work to fold them into", () => {
+      it("folds settled task replies even when they are the only process work", () => {
         renderTurn([
           text("m1", "Peirce is recording."),
           notice("n1", "returned"),
           text("m2", "Peirce finished."),
         ]);
-        expect(screen.queryByTestId("turn-worked-fold")).toBeNull();
+        expect(screen.getAllByTestId("turn-worked-fold")).toHaveLength(1);
+        expect(noticeLabels()).toEqual([]);
+        fireEvent.click(screen.getByRole("button", { name: "Worked" }));
+        expect(noticeLabels()).toEqual(["Completed Peirce"]);
+      });
+
+      it("opens the shared fold when exact reveal targets a settled task card", () => {
+        render(
+          <MemoryRouter>
+            <ChatSearchRevealContext.Provider value={settledTaskReveal}>
+              <BlockRenderer
+                items={[notice("n1", "returned"), text("m1", "Peirce finished.")]}
+                sessionStatus="idle"
+              />
+            </ChatSearchRevealContext.Provider>
+          </MemoryRouter>,
+        );
+        expect(screen.getByRole("button", { name: "Worked" })).toHaveAttribute(
+          "aria-expanded",
+          "true",
+        );
         expect(noticeLabels()).toEqual(["Completed Peirce"]);
       });
 
@@ -2245,62 +2260,10 @@ describe("BlockRenderer dispatch", () => {
 });
 
 // ── Inline file-path linkification ───────────────────────────────────────────
-//
-// Inline-code spans that name a real workspace file become clickable links
-// that open the FileViewer. Coverage was previously gated on the agent
-// *changed-files* list, so a file the agent only *referenced* (present on
-// disk but not modified this session) rendered as inert code. These tests
-// pin the broader rule: any path-shaped span pointing at a file that exists
-// in the workspace is linkified, verified against the runner filesystem API.
+// Captured paths belong to their source message, independently of the selected
+// workspace and its changed-files list.
 
 const EXISTING_PATH = "projects/dais-2026-outlines/foo.md";
-const EXISTING_PARENT = "projects/dais-2026-outlines";
-
-function dirListingResponse(parent: string, names: string[]): Response {
-  return {
-    ok: true,
-    status: 200,
-    json: async () => ({
-      object: "list",
-      data: names.map((name) => ({
-        id: `${parent}/${name}`,
-        name,
-        path: `${parent}/${name}`,
-        type: "file",
-        bytes: 10,
-        modified_at: 1,
-      })),
-      has_more: false,
-    }),
-  } as unknown as Response;
-}
-
-/** Root-directory listing: entries carry bare-basename paths (no parent). */
-function rootListingResponse(names: string[]): Response {
-  return {
-    ok: true,
-    status: 200,
-    json: async () => ({
-      object: "list",
-      data: names.map((name) => ({
-        id: name,
-        name,
-        path: name,
-        type: "file",
-        bytes: 10,
-        modified_at: 1,
-      })),
-      has_more: false,
-    }),
-  } as unknown as Response;
-}
-
-const NOT_FOUND_RESPONSE = {
-  ok: false,
-  status: 404,
-  statusText: "Not Found",
-  json: async () => ({ error: { code: "not_found" } }),
-} as unknown as Response;
 
 interface TestFileViewerContext {
   openFile: (path: string) => void;
@@ -2338,6 +2301,9 @@ function renderMessage(
     workspaceRoot?: string | null;
     workspaceHome?: string | null;
   },
+  itemId: string | null = "original-item",
+  sourceSessionId = "conv_1",
+  previewContext: ComponentProps<typeof AttachmentPreviewContext.Provider>["value"] = {},
 ) {
   const fullCtx: TestFileViewerContext = {
     openGithubTab: () => {},
@@ -2345,16 +2311,18 @@ function renderMessage(
     workspaceHome: null,
     ...ctx,
   };
-  // Legacy messages use the FileViewer; captured messages use attachment snapshots.
-  const items: RenderItem[] = [{ kind: "text", itemId: null, text, final: true }];
-  const qc = new QueryClient({
-    defaultOptions: { queries: { retry: false, staleTime: 0 } },
-  });
-  return render(
+  const items: RenderItem[] = [{ kind: "text", itemId, text, final: true }];
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+  render(
     <TestProviders queryClient={qc} fileViewerContext={fullCtx}>
-      <BlockRenderer items={items} sessionStatus="idle" />
+      <ConversationScopeContext.Provider value={sourceSessionId}>
+        <AttachmentPreviewContext.Provider value={previewContext}>
+          <BlockRenderer items={items} sessionStatus="idle" />
+        </AttachmentPreviewContext.Provider>
+      </ConversationScopeContext.Provider>
     </TestProviders>,
   );
+  return qc;
 }
 
 describe("BlockRenderer inline file-path linkification", () => {
@@ -2370,197 +2338,158 @@ describe("BlockRenderer inline file-path linkification", () => {
     vi.resetAllMocks();
   });
 
+  function mockReference(citedPath: string, kind = "file", sessionId = "conv_1") {
+    const contentUrl = `/v1/sessions/${sessionId}/attachments/references/original-item?${new URLSearchParams({ path: citedPath })}`;
+    const metadataUrl = contentUrl.replace("?", "/metadata?");
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url === metadataUrl)
+        return new Response(
+          JSON.stringify({
+            kind,
+            path: citedPath,
+            workspace: {
+              id: "original-workspace",
+              host_id: "original-host",
+              target_kind: "host",
+              root: "/original/workspace",
+              capabilities: ["files"],
+            },
+          }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      if (url === contentUrl)
+        return new Response("Captured file contents", {
+          headers: { "Content-Type": "text/plain" },
+        });
+      throw new Error(`Unexpected reference request: ${url}`);
+    });
+    return { contentUrl, metadataUrl };
+  }
+
   it("opens a captured reference in its original conversation and message instead of the selected FileViewer", async () => {
-    fetchMock.mockResolvedValue(
-      new Response("Captured file contents", { headers: { "Content-Type": "text/plain" } }),
+    const { contentUrl, metadataUrl } = mockReference(
+      "/original/workspace/notes.txt",
+      "file",
+      "original-chat",
     );
     const openFile = vi.fn();
-    render(
-      <TestProviders
-        queryClient={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
-        fileViewerContext={{
-          openFile,
-          openGithubTab: () => {},
-          isChangedPath: () => true,
-          conversationId: "selected-chat",
-          workspaceRoot: "/selected/workspace",
-          workspaceHome: "/home/agent",
-        }}
-      >
-        <ConversationScopeContext.Provider value="original-chat">
-          <BlockRenderer
-            items={[
-              {
-                kind: "text",
-                itemId: "original-item",
-                text: "Read [the notes](/original/workspace/notes.txt).",
-                final: true,
-              },
-            ]}
-            sessionStatus="idle"
-          />
-        </ConversationScopeContext.Provider>
-      </TestProviders>,
+    renderMessage(
+      "Read [the notes](/original/workspace/notes.txt).",
+      {
+        openFile,
+        isChangedPath: () => true,
+        conversationId: "selected-chat",
+        workspaceRoot: "/selected/workspace",
+        workspaceHome: "/home/agent",
+      },
+      "original-item",
+      "original-chat",
     );
-    const chip = screen.getByRole("button", { name: "notes.txt" });
+    const chip = await screen.findByRole("button", { name: "notes.txt" });
     expect(chip).toHaveTextContent(/^notes\.txt$/);
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledExactlyOnceWith(
+      metadataUrl,
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
     fireEvent.click(chip);
     await waitFor(() =>
       expect(screen.getByRole("dialog")).toHaveTextContent("Captured file contents"),
     );
     expect(fetchMock).toHaveBeenCalledWith(
-      "/v1/sessions/original-chat/attachments/references/original-item?path=%2Foriginal%2Fworkspace%2Fnotes.txt",
+      contentUrl,
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(openFile).not.toHaveBeenCalled();
   });
 
-  it("linkifies a file that exists in the workspace but was not agent-changed", async () => {
-    // Repro for the reported bug: the file is real (present on disk) but not
-    // in the changed-files list, so the old changed-files-only gate left it as
-    // plain code. It must now resolve via the filesystem existence check.
-    fetchMock.mockResolvedValue(dirListingResponse(EXISTING_PARENT, ["foo.md"]));
+  it.each([
+    [EXISTING_PATH, "foo.md", false],
+    ["src/app/main.ts", "main.ts", true],
+    ["~/ws/foo.md", "foo.md", false],
+    ["/home/u/ws/src/app.ts", "app.ts", false],
+    ["/etc/hosts", "hosts", false],
+  ] as const)(
+    "resolves %s at its source (%s, selected workspace changed=%s)",
+    async (citedPath, filename, changed) => {
+      const { metadataUrl } = mockReference(citedPath);
+      const openFile = vi.fn();
+      const openAttachment = vi.fn();
+      renderMessage(
+        `See \`${citedPath}\`.`,
+        {
+          openFile,
+          isChangedPath: () => changed,
+          conversationId: "different-chat",
+          workspaceRoot: "/different/workspace",
+          workspaceHome: "/different/home",
+        },
+        "original-item",
+        "conv_1",
+        { openAttachment },
+      );
+      const chip = await screen.findByRole("button", { name: filename });
+      expect(chip).toHaveTextContent(filename);
+      expect(fetchMock).toHaveBeenCalledExactlyOnceWith(
+        metadataUrl,
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
+      fireEvent.click(chip);
+      expect(openAttachment).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          sessionId: "conv_1",
+          itemId: "original-item",
+          reference: citedPath,
+          filename,
+        }),
+        { placement: "default" },
+      );
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(openFile).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["missing", "directory"])(
+    "keeps a %s captured reference as code despite a selected-workspace change",
+    async (kind) => {
+      const citedPath = "projects/ghost/missing.md";
+      const { metadataUrl } = mockReference(citedPath, kind);
+      const openFile = vi.fn();
+      const qc = renderMessage(`See \`${citedPath}\`.`, {
+        openFile,
+        isChangedPath: () => true,
+        conversationId: "different-chat",
+      });
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+      await waitFor(() => expect(qc.isFetching()).toBe(0));
+      expect(screen.getByText(citedPath).tagName).toBe("CODE");
+      expect(screen.queryByRole("button", { name: "missing.md" })).toBeNull();
+      expect(fetchMock).toHaveBeenCalledWith(
+        metadataUrl,
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
+      expect(openFile).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ["git status", "original-item"],
+    ["src/app/main.ts", null],
+  ])("keeps unresolvable code %s inert without a current-workspace lookup", (text, itemId) => {
     const openFile = vi.fn();
-    renderMessage(`I added this to \`${EXISTING_PATH}\` already.`, {
-      openFile,
-      isChangedPath: () => false,
-      conversationId: "conv_1",
-    });
-
-    // The span becomes a clickable button once the parent-dir listing
-    // confirms the file exists. A failure here means the existence check
-    // didn't run or didn't linkify a real, unchanged workspace file.
-    const link = await screen.findByRole("button", { name: EXISTING_PATH });
-    link.click();
-    expect(openFile).toHaveBeenCalledWith(EXISTING_PATH);
-
-    // Existence is checked by listing the PARENT directory, not by reading
-    // the file content or walking the whole tree.
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock.mock.calls[0][0]).toContain(`/filesystem/${EXISTING_PARENT}`);
-  });
-
-  it("leaves a path-shaped span as plain code when no such file exists", async () => {
-    // Parent dir listing comes back 404 (or without the file) → not a real
-    // file → must stay inert code, never a link. Guards against linkifying
-    // every path-shaped string.
-    fetchMock.mockResolvedValue(NOT_FOUND_RESPONSE);
-    const openFile = vi.fn();
-    renderMessage("See `projects/ghost/missing.md` for details.", {
-      openFile,
-      isChangedPath: () => false,
-      conversationId: "conv_1",
-    });
-
-    // The existence check must have fired (path-shaped) and resolved negative.
-    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
-    const span = await screen.findByText("projects/ghost/missing.md");
-    expect(span.tagName).toBe("CODE");
-    expect(screen.queryByRole("button", { name: "projects/ghost/missing.md" })).toBeNull();
-  });
-
-  it("links an agent-changed file without any filesystem round-trip", async () => {
-    // Changed files are known synchronously (and may be uncommitted or
-    // deleted), so they must linkify with zero network calls — the fast path.
-    const openFile = vi.fn();
-    renderMessage("Edited `src/app/main.ts` just now.", {
-      openFile,
-      isChangedPath: (p) => p === "src/app/main.ts",
-      conversationId: "conv_1",
-    });
-
-    const link = await screen.findByRole("button", { name: "src/app/main.ts" });
-    link.click();
-    expect(openFile).toHaveBeenCalledWith("src/app/main.ts");
-    // No existence check needed when the path is already a known change.
+    renderMessage(
+      `Run \`${text}\` to check.`,
+      {
+        openFile,
+        isChangedPath: () => true,
+        conversationId: "different-chat",
+      },
+      itemId,
+    );
+    expect(screen.getByText(text).tagName).toBe("CODE");
+    expect(screen.queryByRole("button")).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it("does not treat non-path inline code as a file (no spurious fetch)", async () => {
-    // `git status` has whitespace and no directory segment → fails the
-    // path-shape heuristic, so no existence request is made and it stays code.
-    const openFile = vi.fn();
-    renderMessage("Run `git status` to check.", {
-      openFile,
-      isChangedPath: () => false,
-      conversationId: "conv_1",
-    });
-
-    const span = await screen.findByText("git status");
-    expect(span.tagName).toBe("CODE");
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it("linkifies a '~'-relative path under the workspace root, opening the relative path", async () => {
-    // The reported bug: the agent writes `~/ws/foo.md` while the working dir
-    // is `~/ws`. With home + root known, this resolves to the root-level file
-    // `foo.md` — a bare basename the path-shape heuristic alone would reject.
-    // Existence is checked by listing the workspace ROOT (bare /filesystem).
-    // Root-level entries carry bare-basename paths (no parent prefix).
-    fetchMock.mockResolvedValue(rootListingResponse(["foo.md"]));
-    const openFile = vi.fn();
-    renderMessage("I wrote `~/ws/foo.md` for you.", {
-      openFile,
-      isChangedPath: () => false,
-      conversationId: "conv_1",
-      workspaceRoot: "/home/u/ws",
-      workspaceHome: "/home/u",
-    });
-
-    // The span shows the original `~/ws/foo.md` text but links to the resolved
-    // workspace-relative `foo.md` — failure means tilde-expand/strip-root or
-    // the root-level existence check broke.
-    const link = await screen.findByRole("button", { name: "~/ws/foo.md" });
-    link.click();
-    expect(openFile).toHaveBeenCalledWith("foo.md");
-    // Parent of a root-level file is the workspace root → bare /filesystem,
-    // not /filesystem/<dir>.
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock.mock.calls[0][0]).toContain("/environments/default/filesystem?");
-  });
-
-  it("linkifies an absolute path under the workspace root", async () => {
-    // Absolute paths were rejected outright before; now an absolute path under
-    // the root strips to its relative form and links.
-    fetchMock.mockResolvedValue(dirListingResponse("src", ["app.ts"]));
-    const openFile = vi.fn();
-    renderMessage("See `/home/u/ws/src/app.ts`.", {
-      openFile,
-      isChangedPath: () => false,
-      conversationId: "conv_1",
-      workspaceRoot: "/home/u/ws",
-      workspaceHome: "/home/u",
-    });
-
-    const link = await screen.findByRole("button", { name: "/home/u/ws/src/app.ts" });
-    link.click();
-    expect(openFile).toHaveBeenCalledWith("src/app.ts");
-    expect(fetchMock.mock.calls[0][0]).toContain("/filesystem/src?");
-  });
-
-  it("linkifies an absolute path OUTSIDE the workspace root via a base=host listing", async () => {
-    // `/etc/hosts` is absolute and not under the root. Previously that was
-    // unresolvable dead text; now it stays host-absolute, its ABSOLUTE parent
-    // is listed via base=host (the files panel's browse-anywhere plumbing —
-    // entries echo names relative to the listed dir, same wire shape as a
-    // root listing), and a confirmed file linkifies and opens host-absolute.
-    fetchMock.mockResolvedValue(rootListingResponse(["hosts"]));
-    const openFile = vi.fn();
-    renderMessage("Check `/etc/hosts` on the box.", {
-      openFile,
-      isChangedPath: () => false,
-      conversationId: "conv_1",
-      workspaceRoot: "/home/u/ws",
-      workspaceHome: "/home/u",
-    });
-
-    const link = await screen.findByRole("button", { name: "/etc/hosts" });
-    link.click();
-    expect(openFile).toHaveBeenCalledWith("/etc/hosts");
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const url = fetchMock.mock.calls[0][0] as string;
-    expect(url).toContain("/filesystem/etc?");
-    expect(url).toContain("base=host");
+    expect(openFile).not.toHaveBeenCalled();
   });
 });

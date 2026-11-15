@@ -1488,8 +1488,20 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
     [dock.layout.views],
   );
   const workbench = useMemo(
-    () => ({ openConversation, openView, focusedConversationId, openConversationIds }),
-    [openConversation, openView, focusedConversationId, openConversationIds],
+    () => ({
+      openConversation,
+      openView,
+      focusedConversationId,
+      layoutOwnerConversationId: dock.activeConversationId,
+      openConversationIds,
+    }),
+    [
+      openConversation,
+      openView,
+      focusedConversationId,
+      dock.activeConversationId,
+      openConversationIds,
+    ],
   );
   return (
     <WorkbenchProvider value={workbench}>

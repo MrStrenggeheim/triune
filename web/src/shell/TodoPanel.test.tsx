@@ -48,7 +48,7 @@ describe("TodoPanel", () => {
     expect(screen.getByText("Ship it")).toBeInTheDocument();
     const rows = screen.getAllByRole("listitem");
     expect(rows).toHaveLength(3);
-    for (const [index, state] of ["unchecked", "checked", "indeterminate"].entries()) {
+    for (const [index, state] of ["unchecked", "checked"].entries()) {
       const visual = rows[index]!.querySelector('[data-slot="checkbox-visual"]')!;
       expect(visual).toHaveAttribute("data-state", state);
       expect(visual).toHaveAttribute("aria-hidden", "true");
@@ -57,6 +57,14 @@ describe("TodoPanel", () => {
       fireEvent.keyDown(visual, { key: " " });
       expect(visual).toHaveAttribute("data-state", state);
     }
+    const active = rows[2]!.querySelector('[data-slot="plan-active-marker"]')!;
+    expect(active).toHaveAttribute("aria-hidden", "true");
+    expect(active.querySelector("span")).toHaveClass(
+      "rounded-full",
+      "border-primary",
+      "bg-primary/10",
+    );
+    expect(rows[2]!.querySelector('[data-slot="checkbox-visual"]')).toBeNull();
     expect(screen.getByText("Pending")).toHaveClass("sr-only");
     expect(screen.getByText("In progress")).toHaveClass("sr-only");
     expect(screen.queryByRole("checkbox")).toBeNull();

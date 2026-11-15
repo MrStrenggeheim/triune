@@ -155,3 +155,51 @@ async def test_cold_turn_schemas_preserve_local_tools_without_os_environment(
     names = {schema["function"]["name"] for schema in harness.posted_bodies[0]["tools"]}
     assert names >= tool_dispatch._OS_ENV_TOOLS | {"local_probe", "sys_timer_set"}
     create_env.assert_not_called()
+
+
+def test_managed_cursor_relay_advertises_canonical_ui_guidance_and_discovery() -> None:
+    """Verify the actual relay schema, independent of user/project rule files."""
+    from omnigent.runtime.ui_contract import UI_CONTRACT_VERSION
+    from tests.runner.native_helpers import _harness_spec
+
+    schemas = tool_dispatch.build_native_relay_tool_schemas(_harness_spec("cursor-native"))
+    schema = next(tool for tool in schemas if tool["name"] == "sys_ui_capabilities")
+    description = schema["description"]
+    assert f"Triune UI contract {UI_CONTRACT_VERSION}" in description
+    assert "triune-artifact" in description and '"file_id":"authorized-upload-id"' in description
+    assert "whole elicitation batches" in description
+    assert "counted Skip/Next/final Submit" in description
+    assert 'data-triune-kit="1"' in description
+    assert "no external CDN" in description
+    assert '{"group":"artifacts"}' in description
+    assert "group" in schema["parameters"]["properties"]
+
+
+async def test_managed_cursor_ui_discovery_is_callable_with_real_scope() -> None:
+    import json
+
+    import httpx
+
+    from tests.runner.native_helpers import _harness_spec
+
+    spec = _harness_spec("cursor-native")
+    assert tool_dispatch.should_dispatch_locally("sys_ui_capabilities")
+    async with httpx.AsyncClient(base_url="https://server.example/prefix") as server:
+        result = await tool_dispatch.execute_tool(
+            tool_name="sys_ui_capabilities",
+            arguments="{}",
+            agent_spec=spec,
+            effective_harness="cursor-native",
+            conversation_id="chat-cursor",
+            server_client=server,
+        )
+    projection = json.loads(result)
+    actual = {tool["name"] for tool in tool_dispatch.build_native_relay_tool_schemas(spec)}
+    assert set(projection["tool_inventory"]["names"]) == actual
+    assert (
+        "--session chat-cursor --server https://server.example/prefix"
+        in projection["groups"]["files"]["attach_command"]
+    )
+    assert "sys_ui_capabilities" in {
+        tool["name"] for tool in tool_dispatch.build_native_relay_tool_schemas(None)
+    }

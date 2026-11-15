@@ -31,7 +31,8 @@ import {
   sortableKeyboardCoordinates,
   useSortable,
 } from "@dnd-kit/sortable";
-import { Pin, X, PlusIcon } from "lucide-react";
+import { Pin, PlusIcon } from "lucide-react";
+import { CloseButton } from "@/components/CloseButton";
 import { TooltipButton } from "@/components/ui/tooltip";
 import { OpenViewMenu } from "./OpenViewMenu";
 import type { WorkbenchOpenAction } from "./WorkbenchAppBar";
@@ -847,10 +848,11 @@ function DockTab({
           data-conversation-drop-pane={pane.id}
           data-conversation-drop-index={index}
           onPointerDownCapture={(event) => {
-            event.currentTarget.dataset.input = event.pointerType;
+            if (event.pointerType) event.currentTarget.dataset.input = event.pointerType;
           }}
           onPointerMoveCapture={(event) => {
-            if (event.pointerType === "mouse") event.currentTarget.dataset.input = "mouse";
+            if (event.pointerType === "mouse" || event.pointerType === "pen")
+              event.currentTarget.dataset.input = event.pointerType;
           }}
           onKeyDownCapture={(event) => {
             event.currentTarget.dataset.input = "keyboard";
@@ -912,8 +914,7 @@ function DockTab({
               <Pin size={14} fill={pinned ? "currentColor" : "none"} />
             </TooltipButton>
           )}
-          <button
-            type="button"
+          <CloseButton
             className="dock-tab-close"
             aria-label={`Close ${view.title}`}
             disabled={closing}
@@ -922,9 +923,7 @@ function DockTab({
               event.stopPropagation();
               onClose();
             }}
-          >
-            <X size={14} />
-          </button>
+          />
         </div>
       </ContextMenuTrigger>
       <ContextMenuContent>{menu}</ContextMenuContent>

@@ -12,9 +12,9 @@ import {
   type ReactNode,
   type CSSProperties,
 } from "react";
-import { BellIcon, CheckCheckIcon, EyeIcon, EyeOffIcon, Loader2Icon, XIcon } from "lucide-react";
+import { BellIcon, CheckCheckIcon, EyeIcon, EyeOffIcon, Loader2Icon } from "lucide-react";
 import type { ToasterProps } from "sonner";
-import { Button } from "@/components/ui/button";
+import { CloseButton } from "@/components/CloseButton";
 import { HeaderActionButton } from "./HeaderActionButton";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -170,9 +170,9 @@ export function NotificationBell() {
           role="dialog"
           aria-label="Notifications"
         >
-          <header className="flex h-[var(--density-header-height)] shrink-0 items-center gap-[var(--list-gap)] border-b border-border px-[var(--list-row-padding-inline)]">
+          <header className="notification-center-header shrink-0 border-b border-border">
             <h2 className="mr-auto font-medium">Notifications</h2>
-            <Button
+            <HeaderActionButton
               type="button"
               size="icon-xs"
               variant="ghost"
@@ -183,8 +183,8 @@ export function NotificationBell() {
               onClick={() => setShowReadNotifications(!showRead)}
             >
               {showRead ? <EyeIcon className="size-4" /> : <EyeOffIcon className="size-4" />}
-            </Button>
-            <Button
+            </HeaderActionButton>
+            <HeaderActionButton
               type="button"
               size="icon-xs"
               variant="ghost"
@@ -194,16 +194,8 @@ export function NotificationBell() {
               disabled={!completed.length}
             >
               <CheckCheckIcon className="size-4" />
-            </Button>
-            <Button
-              type="button"
-              size="icon-xs"
-              variant="ghost"
-              aria-label="Close notifications"
-              onClick={() => onOpenChange(false)}
-            >
-              <XIcon className="size-4" />
-            </Button>
+            </HeaderActionButton>
+            <CloseButton aria-label="Close notifications" onClick={() => onOpenChange(false)} />
           </header>
           <div
             className="max-h-[60vh] overflow-y-auto overscroll-contain"

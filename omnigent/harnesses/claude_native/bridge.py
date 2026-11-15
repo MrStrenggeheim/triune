@@ -2764,6 +2764,7 @@ def augment_claude_args(
     claude_args: tuple[str, ...],
     *,
     bridge_dir: Path,
+    session_id: str | None = None,
     python_executable: str | None = None,
     ap_server_url: str | None = None,
     ap_auth_headers: dict[str, str] | None = None,
@@ -2817,9 +2818,8 @@ def augment_claude_args(
         / ``"none"`` / list of skill names), mapped to
         ``--setting-sources`` exactly as the SDK executor maps it onto
         ``setting_sources``. Defaults to ``"all"``.
-    :param append_system_prompt: Optional raw ``AgentSpec.instructions``
-        (author-supplied, not framework-composed) to append through Claude
-        Code's native ``--append-system-prompt`` flag.
+    :param append_system_prompt: Optional raw author startup text. Static
+        product guidance is appended separately; per-turn policy is not copied.
     :param allowed_tools: Optional narrowly scoped Claude tool names to merge
         into ``--allowedTools`` without replacing the user's allowlist.
     :param subagent_router_dir: Directory advertising the runner's
@@ -2859,8 +2859,39 @@ def augment_claude_args(
             str(settings_path),
         ]
     )
-    if append_system_prompt:
-        args.extend(["--append-system-prompt", append_system_prompt])
+    from omnigent.runtime.ui_contract import append_ui_contract
+
+    cli_prompt = _arg_value(claude_args, "--append-system-prompt")
+    if cli_prompt is not None:
+        # One effective flag preserves the user's prompt instead of letting a
+        # later framework flag silently replace it in the vendor CLI parser.
+        retained: list[str] = []
+        index = 0
+        while index < len(args):
+            argument = args[index]
+            if argument == "--append-system-prompt" and index + 1 < len(args):
+                index += 2
+                continue
+            if argument.startswith("--append-system-prompt="):
+                index += 1
+                continue
+            retained.append(argument)
+            index += 1
+        args = retained
+    author_prompt = (
+        "\n\n".join(part for part in (append_system_prompt, cli_prompt) if part) or None
+    )
+    args.extend(
+        [
+            "--append-system-prompt",
+            append_ui_contract(
+                author_prompt,
+                "claude-native",
+                session_id=session_id or read_active_session_id(bridge_dir),
+                server_url=ap_server_url,
+            ),
+        ]
+    )
     # Imported here: bundle-skills parsing rides the spec graph; launch-only.
     from omnigent.inner.bundle_skills import claude_agents_skill_args, claude_native_skill_args
 

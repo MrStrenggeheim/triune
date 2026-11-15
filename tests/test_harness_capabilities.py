@@ -160,6 +160,9 @@ def test_optional_bench_capabilities_default_to_unknown() -> None:
         "shell_tool_name": None,
         "shell_tool_prompt": None,
         "instruction_delivery": "unknown",
+        "ui_contract_delivery": "unknown",
+        "ui_contract_version": None,
+        "ui_contract_note": None,
     }
 
 
@@ -364,7 +367,7 @@ def test_every_canonical_harness_declares_instruction_delivery() -> None:
 def test_hermes_and_hermes_native_deliver_differently() -> None:
     caps = harness_capabilities()
     assert caps["hermes"].instruction_delivery is InstructionDelivery.FIRST_USER_PREFIX
-    assert caps["hermes-native"].instruction_delivery is InstructionDelivery.NOT_DELIVERED
+    assert caps["hermes-native"].instruction_delivery is InstructionDelivery.AGENT_STARTUP_ADDITIVE
 
 
 def test_native_startup_additive_instruction_delivery() -> None:
@@ -375,9 +378,9 @@ def test_native_startup_additive_instruction_delivery() -> None:
         )
 
 
-def test_kiro_native_is_not_delivered() -> None:
+def test_kiro_native_uses_additive_startup_steering() -> None:
     caps = harness_capabilities()
-    assert caps["kiro-native"].instruction_delivery is InstructionDelivery.NOT_DELIVERED
+    assert caps["kiro-native"].instruction_delivery is InstructionDelivery.AGENT_STARTUP_ADDITIVE
 
 
 def test_sdk_harnesses_only_advertise_effort_their_executor_applies() -> None:
@@ -406,3 +409,24 @@ def test_sdk_harnesses_only_advertise_effort_their_executor_applies() -> None:
     ):
         assert caps[harness].effort is not EffortFamily.NONE, harness
         assert "reasoning_effort" in inspect.getsource(module), harness
+
+
+def test_product_contract_delivery_is_separate_from_author_instruction_delivery() -> None:
+    from omnigent.runtime.ui_contract import UI_CONTRACT_VERSION
+
+    caps = harness_capabilities()
+    for name in ("codex-native", "claude-native"):
+        assert caps[name].ui_contract_delivery is InstructionDelivery.AGENT_STARTUP_ADDITIVE
+        assert caps[name].ui_contract_version == UI_CONTRACT_VERSION
+    for name in ("claude-sdk", "open-responses"):
+        assert caps[name].ui_contract_version == UI_CONTRACT_VERSION
+    assert caps["goose-native"].ui_contract_delivery is InstructionDelivery.AGENT_STARTUP_ADDITIVE
+    assert "Top Of Mind" in (caps["goose-native"].ui_contract_note or "")
+    assert "opt out" in (caps["kimi-native"].ui_contract_note or "")
+
+
+def test_cursor_product_schema_delivery_does_not_claim_authored_instructions() -> None:
+    caps = harness_capabilities()["cursor-native"]
+    assert caps.instruction_delivery is InstructionDelivery.NOT_DELIVERED
+    assert caps.ui_contract_delivery is InstructionDelivery.TOOL_SCHEMA
+    assert "when advertised" in (caps.ui_contract_note or "")

@@ -107,7 +107,7 @@ export function BackgroundTaskIndicator({ shelf = false }: { shelf?: boolean }) 
             }
             closeReasonRef.current = null;
           }}
-          className="max-h-[min(24rem,var(--radix-popover-content-available-height))] w-[min(25rem,calc(100vw-2rem))] overflow-y-auto p-2"
+          className="resource-popup max-h-[min(24rem,var(--radix-popover-content-available-height))] w-[min(25rem,calc(100vw-2rem))] overflow-y-auto"
         >
           <BackgroundTasksList
             conversationId={conversationId}
@@ -169,12 +169,12 @@ function BackgroundTasksList({
           ))}
         </ul>
       ) : (
-        <p className="px-1 py-2 text-sm text-muted-foreground">
+        <p className="density-row text-sm text-muted-foreground">
           {count} background task{count === 1 ? "" : "s"} — details unavailable
         </p>
       )}
       {tasks.length > 0 && undetailed > 0 && (
-        <p className="border-t border-border/60 px-1 pb-1 pt-2 text-sm text-muted-foreground">
+        <p className="density-row border-t border-border/60 text-sm text-muted-foreground">
           +{undetailed} more — details unavailable
         </p>
       )}

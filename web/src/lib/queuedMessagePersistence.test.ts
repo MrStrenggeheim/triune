@@ -52,6 +52,8 @@ it("restores FIFO, files, reply context and retry flags after a fresh client boo
     replyDraft,
     files: [new File(["attachment bytes"], "notes.txt", { type: "text/plain", lastModified: 123 })],
     requiresRetry: true,
+    workspaceRoot: "/captured/root",
+    workspaceRevision: "captured-revision",
   };
   original.setState({
     queuedMessages: [queued, { ...message("b"), conversationId: "chat-b", waitingForHost: true }],
@@ -74,6 +76,8 @@ it("restores FIFO, files, reply context and retry flags after a fresh client boo
     stableId: "stable-a",
     requiresRetry: true,
     agentId: "agent-a",
+    workspaceRoot: "/captured/root",
+    workspaceRevision: "captured-revision",
     replyDraft,
   });
   expect(rows[1]).toMatchObject({ conversationId: "chat-b", waitingForHost: true });

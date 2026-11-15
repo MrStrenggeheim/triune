@@ -9,12 +9,13 @@ import pytest
 from sqlalchemy import event
 
 from omnigent.entities import MessageData, NewConversationItem
+from omnigent.native.child_metadata import child_metadata, display_task_summary
 from omnigent.server.routes._sessions.orchestration import (
     _persist_external_conversation_item,
     _persist_external_conversation_items,
 )
 from omnigent.server.schemas import SessionEventInput
-from omnigent.server.subagent_activity import record_subagent_activity
+from omnigent.server.subagent_activity import delegation_message_item, record_subagent_activity
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
 
 
@@ -92,6 +93,43 @@ async def test_side_chat_child_records_no_lifecycle_notices(
 
 def _message(text: str) -> dict[str, Any]:
     return {"role": "user", "is_meta": True, "content": [{"type": "input_text", "text": text}]}
+
+
+@pytest.mark.parametrize(
+    ("summary", "expected"),
+    [
+        ("native_delegation_intake", "Native delegation intake"),
+        ("PEPS_contraction_methods", "PEPS contraction methods"),
+        ("Review ACL behavior", "Review ACL behavior"),
+        ("Inspect foo_bar.py with CLI", "Inspect foo_bar.py with CLI"),
+    ],
+)
+def test_identifier_task_summaries_are_formatted_for_display(summary: str, expected: str) -> None:
+    assert display_task_summary(summary) == expected
+
+
+def test_delegation_message_is_display_only_and_keeps_parent_provenance() -> None:
+    item = delegation_message_item(
+        "parent",
+        "child",
+        {
+            "dispatch_id": "spawn-1",
+            "task_input": "Full original handoff",
+            "task_input_ref": {"conversation_id": "parent", "item_id": "call-1"},
+        },
+        parent_name="Coordinator",
+    )
+
+    assert item is not None and isinstance(item.data, MessageData)
+    assert item.data.is_meta is True
+    assert item.data.content == [{"type": "input_text", "text": "Full original handoff"}]
+    assert item.data.communication is not None
+    assert item.data.communication.kind == "peer"
+    assert item.data.communication.message_id == "call-1"
+    assert item.data.communication.source_conversation_id == "parent"
+    assert item.data.communication.source_agent_name == "Coordinator"
+    assert item.data.communication.destination_conversation_id == "child"
+    assert item.data.communication.task_id == "spawn-1"
 
 
 @pytest.mark.parametrize(
@@ -655,11 +693,141 @@ async def test_native_v2_registration_keeps_named_task_without_inventing_prompt(
     )
     [delegated] = store.list_items(parent.id).data
     assert delegated.data.resource["dispatch_id"] == "spawn-1"
-    assert delegated.data.resource["task_summary"] == "sleep_three_minutes"
+    assert delegated.data.resource["task_summary"] == "Sleep three minutes"
     assert "task_input" not in delegated.data.resource
     child = store.get_conversation(child_id)
     assert child.labels["omnigent.codex_native.task_name"] == "sleep_three_minutes"
     assert child.labels["omnigent.codex_native.collab_tool_call_id"] == "spawn-1"
+
+
+@pytest.mark.asyncio
+async def test_native_registration_persists_each_full_handoff_once_without_call_source(
+    client,
+    db_uri: str,
+) -> None:
+    from omnigent.server.routes._sessions.orchestration import (
+        _persist_external_codex_subagent_start,
+    )
+    from tests.server.helpers import create_test_agent
+
+    agent = await create_test_agent(client)
+    store = SqlAlchemyConversationStore(db_uri)
+    parent = store.create_conversation(agent_id=agent["id"])
+    first_prompt = "First full delegation without a parent call. " * 20
+    first = SessionEventInput(
+        type="external_codex_subagent_start",
+        data={
+            "thread_id": "thread-full-handoffs",
+            "tool_call_id": "spawn-first",
+            "task_name": "first_assignment",
+            "prompt": first_prompt,
+        },
+    )
+    child_id = await _persist_external_codex_subagent_start(parent.id, parent, first, store)
+
+    def activities():
+        return store.list_items(parent.id, type="resource_event").data
+
+    def handoffs():
+        return [
+            row
+            for row in store.list_items(child_id, type="message").data
+            if isinstance(row.data, MessageData)
+            and row.data.is_meta
+            and row.data.communication is not None
+            and row.data.communication.source_conversation_id == parent.id
+        ]
+
+    [first_activity] = activities()
+    [first_handoff] = handoffs()
+    first_snapshot = dict(first_activity.data.resource)
+    assert len(first_prompt) > 256
+    assert first_snapshot["dispatch_id"] == "spawn-first"
+    assert first_snapshot["task_input"] == first_prompt
+    assert first_handoff.data.content == [{"type": "input_text", "text": first_prompt}]
+    assert first_handoff.data.communication is not None
+    assert first_handoff.data.communication.kind == "peer"
+    assert first_handoff.data.communication.task_id == "spawn-first"
+
+    await _persist_external_codex_subagent_start(parent.id, parent, first, store)
+    assert len(activities()) == 1
+    assert len(handoffs()) == 1
+
+    second_prompt = "Second distinct full delegation. " * 18
+    second = SessionEventInput(
+        type="external_codex_subagent_start",
+        data={
+            "thread_id": "thread-full-handoffs",
+            "tool_call_id": "spawn-second",
+            "task_name": "second_assignment",
+            "prompt": second_prompt,
+        },
+    )
+    assert (
+        await _persist_external_codex_subagent_start(parent.id, parent, second, store) == child_id
+    )
+    first_after, second_activity = activities()
+    first_message, second_message = handoffs()
+    assert first_after.data.resource == first_snapshot
+    assert second_activity.data.resource["dispatch_id"] == "spawn-second"
+    assert second_activity.data.resource["task_input"] == second_prompt
+    assert first_message.id == first_handoff.id
+    assert first_message.data.content == [{"type": "input_text", "text": first_prompt}]
+    assert second_message.data.content == [{"type": "input_text", "text": second_prompt}]
+
+    await _persist_external_codex_subagent_start(parent.id, parent, first, store)
+    assert len(activities()) == 2
+    assert len(handoffs()) == 2
+    child = store.get_conversation(child_id)
+    assert child.labels["omnigent.subagent.dispatch_id"] == "spawn-second"
+    assert child.labels["omnigent.codex_native.collab_tool_call_id"] == "spawn-second"
+    assert child.labels["omnigent.codex_native.task_name"] == "second_assignment"
+    assert activities()[0].data.resource == first_snapshot
+
+
+@pytest.mark.asyncio
+async def test_late_native_name_refreshes_only_the_same_dispatch(db_uri: str) -> None:
+    store = SqlAlchemyConversationStore(db_uri)
+    parent = store.create_conversation()
+    child = store.create_conversation(
+        parent_conversation_id=parent.id,
+        labels={
+            "omnigent.wrapper": "codex-native-ui-subagent",
+            "omnigent.codex_native.subagent_thread_id": "thread-1",
+            "omnigent.codex_native.collab_tool_call_id": "spawn-1",
+            "omnigent.codex_native.agent_role": "Codex",
+            "omnigent.codex_native.task_name": "research_PEPS_contraction",
+            "omnigent.codex_native.prompt": "Full original handoff",
+        },
+    )
+    await record_subagent_activity(child.id, "delegated", store)
+    [delegated] = store.list_items(parent.id).data
+    assert delegated.data.resource["agent_name"] == "Codex"
+    assert delegated.data.resource["task_summary"] == "Research PEPS contraction"
+
+    store.set_labels(child.id, {"omnigent.codex_native.agent_nickname": "Hooke"})
+    refreshed = store.get_conversation(child.id)
+    await record_subagent_activity(refreshed.id, "delegated", store)
+    [delegated] = store.list_items(parent.id).data
+    assert delegated.data.resource["agent_name"] == "Hooke"
+    assert delegated.data.resource["task_input"] == "Full original handoff"
+
+    old_metadata = dict(delegated.data.resource)
+    store.set_labels(
+        child.id,
+        {
+            "omnigent.codex_native.agent_nickname": "Peirce",
+            "omnigent.codex_native.collab_tool_call_id": "spawn-2",
+            "omnigent.codex_native.task_name": "new_assignment",
+            "omnigent.subagent.dispatch_id": "spawn-2",
+        },
+    )
+    current = child_metadata(store.get_conversation(child.id))
+    from omnigent.server.subagent_activity import _refresh_native_identity
+
+    unchanged = _refresh_native_identity(current, old_metadata)
+    assert unchanged["agent_name"] == "Hooke"
+    assert unchanged["task_summary"] == "Research PEPS contraction"
 
 
 @pytest.mark.parametrize("allowed", [False, True])
@@ -940,6 +1108,9 @@ async def test_full_native_input_survives_label_limit_and_exact_reference(
         "conversation_id": parent.id,
         "item_id": source.id,
     }
+    original = dict(delegated.data.resource)
+    [original_handoff] = store.list_items(child_id, type="message").data
+    followup_prompt = "Steering instructions " * 100
     await _persist_external_codex_subagent_start(
         parent.id,
         parent,
@@ -948,13 +1119,19 @@ async def test_full_native_input_survives_label_limit_and_exact_reference(
             data={
                 "thread_id": "long-task",
                 "tool_call_id": "steer-long",
-                "prompt": "Steering instructions " * 100,
+                "prompt": followup_prompt,
             },
         ),
         store,
     )
-    [delegated] = store.list_items(parent.id, type="resource_event").data
-    assert delegated.data.resource["task_input"] == prompt
+    first, second = store.list_items(parent.id, type="resource_event").data
+    assert first.data.resource == original
+    assert second.data.resource["dispatch_id"] == "steer-long"
+    assert second.data.resource["task_input"] == followup_prompt
+    first_handoff, second_handoff = store.list_items(child_id, type="message").data
+    assert first_handoff.id == original_handoff.id
+    assert first_handoff.data.content == [{"type": "input_text", "text": prompt}]
+    assert second_handoff.data.content == [{"type": "input_text", "text": followup_prompt}]
 
 
 @pytest.mark.asyncio

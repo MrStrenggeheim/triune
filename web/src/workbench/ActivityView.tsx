@@ -11,7 +11,7 @@ import { useResourceViewState } from "@/lib/panelFolder";
 import { apiErrorFromResponse } from "@/lib/sessionsApi";
 import type { WorkbenchWorkspace } from "@/lib/workbenchWorkspace";
 import {
-  ActivityFilterControl,
+  ActivityHeader,
   ChatActivityPanel,
   type ActivityFilter,
   type ChatActivityPanelProps,
@@ -200,26 +200,30 @@ function HostActivity({
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-[var(--workspace-content)]">
-      <header className="workspace-control-header flex shrink-0 items-center gap-1 border-b bg-[var(--workspace-content)] px-2">
-        {sourceControl}
-        <ActivityFilterControl value={filter} onChange={setFilter} />
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          aria-label="Refresh host activity"
-          disabled={workspaces.isFetching}
-          onClick={() => {
-            void hosts.refetch();
-            void workspaces.refetch();
-            for (const workspace of roots)
-              void queryClient.invalidateQueries({
-                queryKey: ["workbench-terminal-history", workspace.id],
-              });
-          }}
-        >
-          <RefreshCwIcon className="size-3.5" />
-        </Button>
-      </header>
+      <ActivityHeader
+        active={active}
+        source={sourceControl}
+        filter={filter}
+        onFilterChange={setFilter}
+        actions={
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Refresh host activity"
+            disabled={workspaces.isFetching}
+            onClick={() => {
+              void hosts.refetch();
+              void workspaces.refetch();
+              for (const workspace of roots)
+                void queryClient.invalidateQueries({
+                  queryKey: ["workbench-terminal-history", workspace.id],
+                });
+            }}
+          >
+            <RefreshCwIcon className="size-3.5" />
+          </Button>
+        }
+      />
       <div className="min-h-0 flex-1 overflow-auto">
         {workspaces.error && (
           <p role="alert" className="p-3 text-sm text-destructive">

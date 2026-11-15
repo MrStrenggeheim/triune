@@ -18,12 +18,12 @@ export const SIDEBAR_INDICATOR_GAP = "gap-[var(--list-row-gap)]";
 
 /** A disclosure needs feedback above the row's chrome-hover surface. */
 export const SIDEBAR_DISCLOSURE_HOVER =
-  "cursor-pointer hover:bg-[color-mix(in_srgb,var(--foreground)_6%,var(--workspace-hover-on-chrome))] hover:text-foreground";
+  "cursor-pointer [@media((hover:hover)_and_(pointer:fine))]:group-data-[input=mouse]/sidebar:hover:bg-[color-mix(in_srgb,var(--foreground)_6%,var(--workspace-hover-on-chrome))] [@media((hover:hover)_and_(pointer:fine))]:group-data-[input=mouse]/sidebar:hover:text-foreground";
 
 // Match the Settings sidebar's ghost-button hover treatment across every home
 // sidebar row.
 export const SIDEBAR_HOVER_HIGHLIGHT =
-  "hover:bg-muted hover:text-foreground dark:hover:bg-muted/50";
+  "[@media((hover:hover)_and_(pointer:fine))]:group-data-[input=mouse]/sidebar:hover:bg-muted [@media((hover:hover)_and_(pointer:fine))]:group-data-[input=mouse]/sidebar:hover:text-foreground dark:[@media((hover:hover)_and_(pointer:fine))]:group-data-[input=mouse]/sidebar:hover:bg-muted/50";
 // Keep a project-folder row highlighted while its actions menu is open (kebab
 // or header context menu, both flagged `data-state=open` inside `group/header`).
 // A right-click opens the context menu in a portal, dropping `:hover` from the

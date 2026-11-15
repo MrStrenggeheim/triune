@@ -1,3 +1,4 @@
+// Modified for Triune; inherited notices remain applicable.
 import { McpRegistryPicker } from "@/components/McpRegistry";
 // Agent info surface: the MCP-server and policy badges, and the
 // header info-icon popover that displays them.
@@ -179,7 +180,11 @@ const MODEL_TOKEN_ROWS: readonly { key: keyof ModelUsage; label: string }[] = [
  *
  * @param usageByModel - Map of raw harness model id to its cumulative usage.
  */
-function ModelUsageBreakdown({ usageByModel }: { usageByModel: Record<string, ModelUsage> }) {
+export function ModelUsageBreakdown({
+  usageByModel,
+}: {
+  usageByModel: Record<string, ModelUsage>;
+}) {
   const [isOpen, setIsOpen] = useState(false);
   // Stable display order: most total tokens first, so the dominant model
   // leads. Falls back to 0 for models that haven't recorded a total yet.

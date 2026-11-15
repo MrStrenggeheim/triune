@@ -81,8 +81,8 @@ describe("QueuedMessagesStrip", () => {
     expect(screen.getByText("+2")).toBeInTheDocument();
     if (text) {
       const preview = screen.getByText(text);
-      expect(preview).toHaveClass("whitespace-pre-wrap", "[overflow-wrap:anywhere]");
-      expect(preview).not.toHaveClass("truncate");
+      expect(preview).toHaveClass("truncate");
+      expect(preview).toHaveAttribute("title", text);
       expect(preview).toHaveAttribute("title", text);
       expect(preview.parentElement).toBe(chip.parentElement);
     } else {
@@ -111,7 +111,7 @@ describe("QueuedMessagesStrip", () => {
     expect(screen.getAllByRole("listitem")).toHaveLength(2);
   });
 
-  it("wraps the full message including newlines and unbroken words", () => {
+  it("truncates multiline and unbroken previews while retaining the exact editable text", () => {
     const text = `First line\n${"unbroken".repeat(100)}`;
     render(
       <QueuedMessagesStrip messages={[msg("q_1", text)]} onDelete={vi.fn()} onEdit={vi.fn()} />,
@@ -119,8 +119,8 @@ describe("QueuedMessagesStrip", () => {
     const preview = screen.getByTitle(text, { normalizer: (value) => value });
     expect(preview).toHaveAttribute("title", text);
     expect(preview.textContent).toBe(text);
-    expect(preview).toHaveClass("whitespace-pre-wrap", "[overflow-wrap:anywhere]");
-    expect(preview).not.toHaveClass("truncate");
+    expect(preview).toHaveClass("truncate");
+    expect(preview).not.toHaveClass("whitespace-pre-wrap");
   });
 
   it.each([
@@ -189,7 +189,7 @@ describe("QueuedMessagesStrip", () => {
   it.each([
     ["short", "Look at this"],
     ["long", "Explain the layout in this screenshot. ".repeat(30).trim()],
-  ])("wraps %s text beside the attachment preview", (_length, text) => {
+  ])("truncates %s text beside the attachment preview", (_length, text) => {
     render(
       <QueuedMessagesStrip
         messages={[{ ...msg("q_1", text), files: [new File([], "screenshot.png")] }]}
@@ -199,8 +199,8 @@ describe("QueuedMessagesStrip", () => {
     );
     const textPreview = screen.getByText(text);
     const attachmentPreview = screen.getByText("screenshot.png");
-    expect(textPreview).toHaveClass("whitespace-pre-wrap", "[overflow-wrap:anywhere]");
-    expect(textPreview).not.toHaveClass("truncate");
+    expect(textPreview).toHaveClass("truncate");
+    expect(textPreview).not.toHaveClass("whitespace-pre-wrap");
     expect(textPreview).toHaveAttribute("title", text);
     expect(attachmentPreview).toHaveClass("truncate");
     const chip = screen.getByTestId("queued-message-attachments");

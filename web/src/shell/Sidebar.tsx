@@ -1,4 +1,5 @@
 // Modified for Triune.
+import { recordPointerInput, pointerInputProps } from "./sidebarPointerInteraction";
 import { TouchContextSensor } from "@/lib/touchContextGesture";
 import {
   branchRoots,
@@ -1035,11 +1036,17 @@ function SidebarImpl({
         )}
       <aside
         data-context-search-region="sidebar"
+        data-input="mouse"
+        onPointerMoveCapture={recordPointerInput}
+        onPointerDownCapture={recordPointerInput}
         aria-label="Conversations"
         onAnimationEnd={(event) => {
           if (event.target === event.currentTarget) setPeekInteractive(true);
         }}
-        onPointerEnter={cancelPeekClose}
+        onPointerEnter={(event) => {
+          recordPointerInput(event);
+          cancelPeekClose();
+        }}
         onPointerLeave={() => {
           if (!peek) return;
           cancelPeekClose();
@@ -1059,7 +1066,7 @@ function SidebarImpl({
           // conversations-sidebar only matters under the macOS Electron
           // shell, where it pushes the card below the traffic lights
           // (see the [data-electron-mac] rules in index.css).
-          "conversations-sidebar flex flex-col bg-card md:select-none",
+          "group/sidebar conversations-sidebar flex flex-col bg-card md:select-none",
           // Mobile (default): a fixed drawer that slides in via translate-x
           // and stops short of the right edge, leaving a tappable strip of the
           // chat behind it. The floating-card treatment below is desktop-only.
@@ -1850,7 +1857,10 @@ function ConversationList({
   const branches = useConversationBranches({
     enabled: !!workbench,
     rows: branchInputs,
-    activeId: workbench?.focusedConversationId ?? branchRouteId,
+    activeId:
+      workbench?.layoutOwnerConversationId !== undefined
+        ? (workbench.layoutOwnerConversationId ?? undefined)
+        : (workbench?.focusedConversationId ?? branchRouteId),
     filter: activeTab,
     searchQuery,
     openIds: workbench?.openConversationIds,
@@ -1931,7 +1941,10 @@ function ConversationList({
   // out from under you. Snapshot is dropped on navigate-away so the
   // chat snaps back to its real position once you've left.
   const { conversationId: routeActiveId } = useParams<{ conversationId: string }>();
-  const activeId = workbench?.focusedConversationId ?? routeActiveId;
+  const activeId =
+    workbench?.layoutOwnerConversationId !== undefined
+      ? (workbench.layoutOwnerConversationId ?? undefined)
+      : (workbench?.focusedConversationId ?? routeActiveId);
   // Resolve the active conversation's top-level root once here (rows get a plain
   // `isActive` prop, not their own query). Falls back to the raw id while the
   // parent walk loads — a top-level session resolves to itself.
@@ -3383,7 +3396,6 @@ function SectionHeader({
   active = false,
   hasAction,
   hasPersistentAction,
-  actionFocusVisible,
   collapsed,
   onToggleCollapsed,
   contextMenu,
@@ -3406,9 +3418,6 @@ function SectionHeader({
       Sessions filter), which the collapsed badges must clear even at rest on
       hover-capable desktops. */
   hasPersistentAction?: boolean;
-  /** Match badge fades to an overlay revealed by focus-visible rather than
-      focus-within. Section groups use this to ignore pointer-returned focus. */
-  actionFocusVisible?: boolean;
   collapsed: boolean;
   onToggleCollapsed: () => void;
   /** Optional context-menu content for the header button. */
@@ -3428,10 +3437,9 @@ function SectionHeader({
         : "[@media((hover:hover)_and_(pointer:fine))]:md:mr-1"
       : "[@media((hover:hover)_and_(pointer:fine))]:md:mr-2";
   const markerFade =
-    "[@media((hover:hover)_and_(pointer:fine))]:md:group-hover/section:opacity-0 [@media((hover:hover)_and_(pointer:fine))]:md:group-has-[[data-state=open]]/header:opacity-0";
-  const actionFocusFade = actionFocusVisible
-    ? "[@media((hover:hover)_and_(pointer:fine))]:md:group-has-[[data-header-controls]_:focus-visible]/header:opacity-0"
-    : "[@media((hover:hover)_and_(pointer:fine))]:md:group-has-[[data-header-controls]:focus-within]/header:opacity-0";
+    "[@media((hover:hover)_and_(pointer:fine))]:md:group-[[data-input=mouse]:hover]/header:opacity-0 [@media((hover:hover)_and_(pointer:fine))]:md:group-has-[[data-state=open]]/header:opacity-0";
+  const actionFocusFade =
+    "[@media((hover:hover)_and_(pointer:fine))]:md:group-has-[[data-header-controls]_:focus-visible]/header:opacity-0";
   const button = (
     <TooltipButton
       ref={
@@ -3451,13 +3459,7 @@ function SectionHeader({
       type="button"
       aria-expanded={!collapsed}
       aria-current={active ? "page" : undefined}
-      onClick={(event) => {
-        // A pointer click would otherwise leave the header focus-within,
-        // keeping the hover-revealed controls up at rest. Keyboard toggles
-        // (detail 0) keep focus for the ring.
-        if (event.detail > 0) event.currentTarget.blur();
-        onToggleCollapsed();
-      }}
+      onClick={onToggleCollapsed}
       className={cn(
         headerDrag &&
           !headerDrag.attributes["aria-disabled"] &&
@@ -3474,7 +3476,7 @@ function SectionHeader({
               active && SIDEBAR_ACTIVE_HIGHLIGHT,
               hasAction &&
                 !showsMarker &&
-                "pr-8 [@media((hover:hover)_and_(pointer:fine))]:pr-14 [@media((hover:hover)_and_(pointer:fine))]:md:pr-2 [@media((hover:hover)_and_(pointer:fine))]:md:group-hover/header:pr-14 [@media((hover:hover)_and_(pointer:fine))]:md:group-has-[[data-header-controls]:focus-within]/header:pr-14 [@media((hover:hover)_and_(pointer:fine))]:md:group-has-[[data-state=open]]/header:pr-14",
+                "pr-8 [@media((hover:hover)_and_(pointer:fine))]:pr-14 [@media((hover:hover)_and_(pointer:fine))]:md:pr-2 [@media((hover:hover)_and_(pointer:fine))]:md:group-[[data-input=mouse]:hover]/header:pr-14 [@media((hover:hover)_and_(pointer:fine))]:md:group-has-[[data-header-controls]_:focus-visible]/header:pr-14 [@media((hover:hover)_and_(pointer:fine))]:md:group-has-[[data-state=open]]/header:pr-14",
             )
           : cn(
               SIDEBAR_HEADING,
@@ -3489,14 +3491,14 @@ function SectionHeader({
         // rather than trailing the name. Mobile (no hover) keeps the folder
         // icon and shows the trailing chevron below.
         <span className="relative flex size-4 shrink-0 items-center justify-center">
-          <span className="flex transition-none md:group-hover:opacity-0 md:group-focus-visible:opacity-0">
+          <span className="flex transition-none [@media((hover:hover)_and_(pointer:fine))]:md:group-data-[input=mouse]/sidebar:group-hover:opacity-0 md:group-focus-visible:opacity-0">
             {icon}
           </span>
           <ChevronRightIcon
             className={cn(
               "absolute size-3.5 opacity-0 transition-none",
               !collapsed && "rotate-90",
-              "hidden md:flex md:group-hover:opacity-100 md:group-focus-visible:opacity-100",
+              "hidden md:flex [@media((hover:hover)_and_(pointer:fine))]:md:group-data-[input=mouse]/sidebar:group-hover:opacity-100 md:group-focus-visible:opacity-100",
             )}
           />
         </span>
@@ -3511,7 +3513,7 @@ function SectionHeader({
           !collapsed && "rotate-90",
           icon
             ? "md:hidden"
-            : "md:opacity-0 md:group-hover:opacity-100 md:group-focus-visible:opacity-100",
+            : "md:opacity-0 [@media((hover:hover)_and_(pointer:fine))]:md:group-data-[input=mouse]/sidebar:group-hover:opacity-100 md:group-focus-visible:opacity-100",
         )}
       />
       {/* A hidden row inside this collapsed section carries a marker — surface
@@ -3906,12 +3908,11 @@ function SectionGroup({
 }) {
   return (
     <section>
-      <div className="group/header relative">
+      <div {...pointerInputProps} className="group/header relative">
         <SectionHeader
           title={title}
           hasAction={headerAction != null}
           hasPersistentAction={persistentHeaderAction != null}
-          actionFocusVisible
           collapsed={collapsed}
           onToggleCollapsed={onToggleCollapsed}
         />
@@ -3921,7 +3922,7 @@ function SectionGroup({
             className="-translate-y-1/2 absolute top-1/2 right-1 flex items-center gap-0.5"
           >
             {headerAction && (
-              <div className="flex items-center gap-0.5 transition-opacity [@media((hover:hover)_and_(pointer:fine))]:md:opacity-0 [@media((hover:hover)_and_(pointer:fine))]:md:has-[:focus-visible]:opacity-100 [@media((hover:hover)_and_(pointer:fine))]:md:group-has-[[data-state=open]]/header:opacity-100 [@media((hover:hover)_and_(pointer:fine))]:md:group-hover/header:opacity-100">
+              <div className="flex items-center gap-0.5 transition-opacity [@media((hover:hover)_and_(pointer:fine))]:md:group-[[data-input=mouse]:not(:hover):not(:has(:focus-visible)):not(:has([data-state=open]))]/header:opacity-0 [@media((hover:hover)_and_(pointer:fine))]:md:has-[:focus-visible]:opacity-100 [@media((hover:hover)_and_(pointer:fine))]:md:group-has-[[data-state=open]]/header:opacity-100 [@media((hover:hover)_and_(pointer:fine))]:md:group-[[data-input=mouse]:hover]/header:opacity-100">
                 {headerAction}
               </div>
             )}
@@ -3940,7 +3941,7 @@ function SectionGroup({
             // clicked button keeps focus afterward.
             <div
               data-header-controls
-              className="-translate-y-1/2 absolute top-1/2 right-1 flex items-center transition-opacity [@media((hover:hover)_and_(pointer:fine))]:md:opacity-0 [@media((hover:hover)_and_(pointer:fine))]:md:has-[:focus-visible]:opacity-100 [@media((hover:hover)_and_(pointer:fine))]:md:group-has-[[data-state=open]]/header:opacity-100 [@media((hover:hover)_and_(pointer:fine))]:md:group-hover/header:opacity-100"
+              className="-translate-y-1/2 absolute top-1/2 right-1 flex items-center transition-opacity [@media((hover:hover)_and_(pointer:fine))]:md:group-[[data-input=mouse]:not(:hover):not(:has(:focus-visible)):not(:has([data-state=open]))]/header:opacity-0 [@media((hover:hover)_and_(pointer:fine))]:md:has-[:focus-visible]:opacity-100 [@media((hover:hover)_and_(pointer:fine))]:md:group-has-[[data-state=open]]/header:opacity-100 [@media((hover:hover)_and_(pointer:fine))]:md:group-[[data-input=mouse]:hover]/header:opacity-100"
             >
               {headerAction}
             </div>
@@ -4038,7 +4039,10 @@ function ConversationSection({
         // Header + its hover-revealed kebab share a `group/header` scope so the
         // kebab keys off hovering the header alone — NOT the whole section,
         // which would also reveal it when hovering a child row.
-        <div className={cn("group/header relative", headerStatus && "flex items-center gap-1")}>
+        <div
+          {...pointerInputProps}
+          className={cn("group/header relative", headerStatus && "flex items-center gap-1")}
+        >
           <SectionHeader
             title={title}
             status={headerStatus}
@@ -4072,19 +4076,15 @@ function ConversationSection({
                   ? "ml-auto flex shrink-0 items-center gap-0.5 pr-1"
                   : "-translate-y-1/2 absolute top-1/2 right-1 flex items-center gap-0.5",
                 protectsCollapsedBadge &&
-                  "[@media((hover:hover)_and_(pointer:fine))]:md:pointer-events-none [@media((hover:hover)_and_(pointer:fine))]:md:group-has-[[data-header-controls]:focus-within]/header:pointer-events-auto [@media((hover:hover)_and_(pointer:fine))]:md:group-hover/header:pointer-events-auto [@media((hover:hover)_and_(pointer:fine))]:md:group-has-[[data-state=open]]/header:pointer-events-auto [@media((hover:hover)_and_(pointer:fine))]:md:group-has-[[data-testid=session-filter][aria-expanded=true]]/header:pointer-events-auto [@media((hover:hover)_and_(pointer:fine))]:md:has-[[aria-expanded=true]]:pointer-events-auto",
+                  "[@media((hover:hover)_and_(pointer:fine))]:md:pointer-events-none [@media((hover:hover)_and_(pointer:fine))]:md:group-has-[[data-header-controls]_:focus-visible]/header:pointer-events-auto [@media((hover:hover)_and_(pointer:fine))]:md:group-[[data-input=mouse]:hover]/header:pointer-events-auto [@media((hover:hover)_and_(pointer:fine))]:md:group-has-[[data-state=open]]/header:pointer-events-auto [@media((hover:hover)_and_(pointer:fine))]:md:group-has-[[data-testid=session-filter][aria-expanded=true]]/header:pointer-events-auto",
               )}
             >
               {headerAction && (
-                // Reveal keys off focus WITHIN the controls cluster (not the
-                // whole header): clicking the toggle to expand/collapse focuses
-                // the toggle inside SectionHeader — not this cluster — so it no
-                // longer pins the actions visible, and keyboard-focusing the
-                // control itself still reveals it.
+                // Keyboard indication and this menu's open state reveal controls.
                 <div
                   className={cn(
                     "flex items-center rounded transition-opacity",
-                    "[@media((hover:hover)_and_(pointer:fine))]:md:opacity-0 [@media((hover:hover)_and_(pointer:fine))]:md:group-has-[[data-header-controls]:focus-within]/header:opacity-100 [@media((hover:hover)_and_(pointer:fine))]:md:group-hover/header:opacity-100 [@media((hover:hover)_and_(pointer:fine))]:md:group-has-[[data-state=open]]/header:opacity-100 [@media((hover:hover)_and_(pointer:fine))]:md:group-has-[[data-testid=session-filter][aria-expanded=true]]/header:opacity-100 [@media((hover:hover)_and_(pointer:fine))]:md:has-[[aria-expanded=true]]:opacity-100",
+                    "[@media((hover:hover)_and_(pointer:fine))]:md:group-[[data-input=mouse]:not(:hover):not(:has(:focus-visible)):not(:has([data-state=open]))]/header:opacity-0 [@media((hover:hover)_and_(pointer:fine))]:md:group-has-[[data-header-controls]_:focus-visible]/header:opacity-100 [@media((hover:hover)_and_(pointer:fine))]:md:group-[[data-input=mouse]:hover]/header:opacity-100 [@media((hover:hover)_and_(pointer:fine))]:md:group-has-[[data-state=open]]/header:opacity-100 [@media((hover:hover)_and_(pointer:fine))]:md:group-has-[[data-testid=session-filter][aria-expanded=true]]/header:opacity-100",
                   )}
                 >
                   {headerAction}
@@ -4898,6 +4898,7 @@ function ConversationRowImpl({
   // The kebab menu is controlled so the project submenu can close the whole
   // menu after a pick (a plain click inside the submenu wouldn't otherwise).
   const [menuOpen, setMenuOpen] = useState(false);
+  const [contextMenuOpen, setContextMenuOpen] = useState(false);
   // Opt-in "delete local branch" checkbox (worktree sessions only).
   const [deleteBranch, setDeleteBranch] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
@@ -5337,6 +5338,8 @@ function ConversationRowImpl({
     // it. `setRowRef` merges the drag node ref with the scroll-into-view ref.
     <li
       ref={setRowRef}
+      {...pointerInputProps}
+      data-menu-open={menuOpen || contextMenuOpen || undefined}
       data-sidebar-session-id={conversation.id}
       data-sidebar-drop={isPinned && pinOrder ? "pin-order" : undefined}
       data-open-elsewhere={openElsewhere || undefined}
@@ -5389,7 +5392,7 @@ function ConversationRowImpl({
       {selectionMode ? (
         rowLink
       ) : (
-        <ContextMenu>
+        <ContextMenu onOpenChange={setContextMenuOpen}>
           <ContextMenuTrigger asChild touchDrag={!!dragListeners?.onTouchStart}>
             {rowLink}
           </ContextMenuTrigger>
@@ -5418,12 +5421,13 @@ function ConversationRowImpl({
       ) : null}
       {/* Actions take their own width before the persistent status and disclosure. */}
       {!selectionMode && (
-        <ContextMenu>
+        <ContextMenu onOpenChange={setContextMenuOpen}>
           <ContextMenuTrigger asChild>
             <div
               className={cn(
-                "flex shrink-0 items-center gap-0.5 md:w-0 md:overflow-hidden md:group-hover/conversation:w-auto md:group-hover/conversation:overflow-visible md:group-focus-within/conversation:w-auto md:group-focus-within/conversation:overflow-visible",
-                menuOpen && "md:w-auto md:overflow-visible",
+                "flex shrink-0 items-center gap-0.5",
+                "[@media((hover:hover)_and_(pointer:fine))]:md:group-[[data-input=mouse]:not(:hover):not(:has(:focus-visible)):not([data-menu-open])]/conversation:w-0",
+                "[@media((hover:hover)_and_(pointer:fine))]:md:group-[[data-input=mouse]:not(:hover):not(:has(:focus-visible)):not([data-menu-open])]/conversation:overflow-hidden",
                 (metaEnvironment !== null || metaRepo !== null || metaBranch !== null) &&
                   "self-start mt-[var(--list-row-padding-block)]",
               )}
@@ -5457,8 +5461,6 @@ function ConversationRowImpl({
                         // display when revealing it.
                         "text-muted-foreground transition-opacity",
                         "hidden md:inline-flex",
-                        "md:opacity-0 md:group-hover/conversation:opacity-100",
-                        "md:group-focus-within/conversation:opacity-100 md:group-has-[[data-testid=conversation-actions][aria-expanded=true]]/conversation:opacity-100",
                       )}
                       onClick={(e) => {
                         // Keep the toggle click off the surrounding Link (no navigation).
@@ -5493,8 +5495,6 @@ function ConversationRowImpl({
                       className={cn(
                         "text-muted-foreground transition-opacity",
                         "hidden md:inline-flex",
-                        "md:opacity-0 md:group-hover/conversation:opacity-100",
-                        "md:group-focus-within/conversation:opacity-100 md:group-has-[[data-testid=conversation-actions][aria-expanded=true]]/conversation:opacity-100",
                       )}
                       onClick={(e) => {
                         // Keep the toggle click off the surrounding Link (no navigation).
@@ -5526,11 +5526,7 @@ function ConversationRowImpl({
                     aria-label="Conversation actions"
                     data-testid="conversation-actions"
                     // Touch keeps the menu reachable; desktop reveals it on hover or focus.
-                    className={cn(
-                      "text-muted-foreground transition-opacity",
-                      "md:opacity-0 md:group-hover/conversation:opacity-100 md:group-focus-within/conversation:opacity-100",
-                      "md:group-has-[[data-testid=conversation-actions][aria-expanded=true]]/conversation:opacity-100",
-                    )}
+                    className={cn("text-muted-foreground transition-opacity")}
                     onClick={(e) => {
                       // Keep the trigger click from bubbling into the Link.
                       e.preventDefault();

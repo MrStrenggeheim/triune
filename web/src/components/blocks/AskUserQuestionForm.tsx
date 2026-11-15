@@ -2,10 +2,11 @@
 // Question carousel for structured elicitation, with optional answers.
 
 import { CheckIcon, ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
-import { type ChangeEvent, useState } from "react";
+import { type ChangeEvent, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import type { ClaudeQuestion } from "@/lib/askUserQuestion";
 import { cn } from "@/lib/utils";
+import { readResourceViewState, writeResourceViewState } from "@/lib/resourceViewStorage";
 
 /**
  * Map from question id/text → either a single selected label
@@ -20,6 +21,8 @@ interface AskUserQuestionFormProps {
   currentIndex?: number;
   onCurrentIndexChange?: (index: number) => void;
   showProgress?: boolean;
+  showHeader?: boolean;
+  draftKey?: string;
 }
 
 /**
@@ -66,9 +69,22 @@ export function AskUserQuestionForm({
   currentIndex: controlledIndex,
   onCurrentIndexChange,
   showProgress = true,
+  showHeader = true,
+  draftKey,
 }: AskUserQuestionFormProps) {
-  // Currently-visible question (carousel index).
-  const [localIndex, setLocalIndex] = useState(0);
+  const storageKey = questions.some((question) => question.isSecret) ? undefined : draftKey;
+  const [saved] = useState(() =>
+    storageKey
+      ? readResourceViewState<{
+          index: number;
+          selections: Record<string, string | string[]>;
+          customSelected: Record<string, boolean>;
+          customInputs: Record<string, string>;
+          customTouched?: Record<string, boolean>;
+        }>(storageKey)
+      : undefined,
+  );
+  const [localIndex, setLocalIndex] = useState(saved?.index ?? 0);
   const currentIndex = Math.min(controlledIndex ?? localIndex, questions.length - 1);
   const setCurrentIndex = (index: number) => {
     setLocalIndex(index);
@@ -82,7 +98,7 @@ export function AskUserQuestionForm({
     for (const q of questions) {
       initial[questionKey(q)] = q.multiSelect ? [] : "";
     }
-    return initial;
+    return { ...initial, ...saved?.selections };
   });
 
   // Per-question custom-input state. ``text`` is what the user
@@ -92,13 +108,27 @@ export function AskUserQuestionForm({
   const [customSelected, setCustomSelected] = useState<Record<string, boolean>>(() => {
     const initial: Record<string, boolean> = {};
     for (const q of questions) initial[questionKey(q)] = q.textInput !== undefined;
-    return initial;
+    return { ...initial, ...saved?.customSelected };
   });
   const [customInputs, setCustomInputs] = useState<Record<string, string>>(() => {
     const initial: Record<string, string> = {};
     for (const q of questions) initial[questionKey(q)] = q.textInput?.default ?? "";
-    return initial;
+    return { ...initial, ...saved?.customInputs };
   });
+  const [customTouched, setCustomTouched] = useState<Record<string, boolean>>(
+    saved?.customTouched ?? {},
+  );
+
+  useEffect(() => {
+    if (storageKey)
+      writeResourceViewState(storageKey, {
+        index: currentIndex,
+        selections,
+        customSelected,
+        customInputs,
+        customTouched,
+      });
+  }, [storageKey, currentIndex, selections, customSelected, customInputs, customTouched]);
 
   const handleSingleSelect = (key: string, label: string) => {
     // Single-select mutex: clicking a real option clears the
@@ -135,6 +165,7 @@ export function AskUserQuestionForm({
   const handleCustomInput = (key: string, e: ChangeEvent<HTMLTextAreaElement>) => {
     const text = e.target.value;
     setCustomInputs((prev) => ({ ...prev, [key]: text }));
+    setCustomTouched((prev) => ({ ...prev, [key]: true }));
     // Typing implies intent to use the custom answer — auto-check
     // the custom radio/checkbox so the user doesn't have to click
     // twice. Clearing the text doesn't auto-uncheck (the user may
@@ -164,18 +195,25 @@ export function AskUserQuestionForm({
     onSubmit(finalAnswers);
   };
 
+  const answeredForNavigation = (question: ClaudeQuestion) => {
+    const key = questionKey(question);
+    const answer = answerForQuestion(
+      question,
+      selections[key] ?? "",
+      customSelected[key] ?? false,
+      customInputs[key] ?? "",
+    );
+    if (question.textInput && typeof answer === "string" && !answer.trim())
+      return customTouched[key] === true;
+    return answer !== null;
+  };
+  const answeredCount = questions.filter(answeredForNavigation).length;
   const current = questions[currentIndex];
   if (!current) return null;
   const currentKey = questionKey(current);
   const isFirst = currentIndex === 0;
   const isLast = currentIndex === questions.length - 1;
-  const currentAnswered =
-    answerForQuestion(
-      current,
-      selections[currentKey] ?? "",
-      customSelected[currentKey] ?? false,
-      customInputs[currentKey] ?? "",
-    ) !== null;
+  const currentAnswered = answeredForNavigation(current);
 
   // Selected labels drive the preview render. Only PREDEFINED
   // options contribute previews — the custom row has no preview
@@ -201,14 +239,14 @@ export function AskUserQuestionForm({
 
   return (
     <div className="flex flex-col gap-2 text-foreground" data-testid="ask-user-question-form">
-      {(showProgress || current.header) && (
+      {(showProgress || (showHeader && current.header)) && (
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           {showProgress && (
             <span data-testid="ask-user-question-progress">
               Question {currentIndex + 1} of {questions.length}
             </span>
           )}
-          {current.header && (
+          {showHeader && current.header && (
             <span className="text-muted-foreground text-sm rounded bg-muted px-1.5 py-0.5">
               {current.header}
             </span>
@@ -331,30 +369,26 @@ export function AskUserQuestionForm({
           <ChevronLeftIcon className="mr-1 size-3.5" />
           Previous
         </Button>
-        {!isLast && (
+        <div className="ml-auto flex items-center gap-2">
           <Button
+            type="button"
             size="sm"
             variant="outline"
-            onClick={() => setCurrentIndex(currentIndex + 1)}
-            data-testid="ask-user-question-next"
-            componentId="question.next"
+            onClick={onReject}
+            componentId="question.cancel"
           >
-            {currentAnswered ? "Next" : "Skip"}
-            <ChevronRightIcon className="ml-1 size-3.5" />
-          </Button>
-        )}
-        <div className="ml-auto flex items-center gap-2">
-          <Button size="sm" variant="outline" onClick={onReject} componentId="question.cancel">
             Decline
           </Button>
           <Button
+            type="button"
             size="sm"
-            onClick={handleSubmit}
-            data-testid="ask-user-question-submit"
-            componentId="question.submit"
+            onClick={isLast ? handleSubmit : () => setCurrentIndex(currentIndex + 1)}
+            data-testid={isLast ? "ask-user-question-submit" : "ask-user-question-next"}
+            componentId={isLast ? "question.submit" : "question.next"}
           >
-            <CheckIcon className="mr-1 size-3.5" />
-            Submit
+            {isLast ? <CheckIcon className="mr-1 size-3.5" /> : null}
+            {isLast ? "Submit" : currentAnswered ? "Next" : "Skip"} ({answeredCount}/
+            {questions.length}){!isLast && <ChevronRightIcon className="ml-1 size-3.5" />}
           </Button>
         </div>
       </div>

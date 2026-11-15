@@ -6441,6 +6441,7 @@ async def _launch_claude_terminal(
         claude_args,
         command=command,
         bridge_dir=bridge_dir,
+        session_id=session_id,
         ap_server_url=str(client.base_url),
         ap_auth_headers=dict(client.headers),
         claude_config=claude_config,
@@ -6588,6 +6589,7 @@ def _claude_terminal_request(
     *,
     command: str,
     bridge_dir: Path,
+    session_id: str | None = None,
     ap_server_url: str | None = None,
     ap_auth_headers: dict[str, str] | None = None,
     claude_config: ClaudeNativeUcodeConfig | None = None,
@@ -6622,6 +6624,7 @@ def _claude_terminal_request(
     args = augment_claude_args(
         claude_args,
         bridge_dir=bridge_dir,
+        session_id=session_id,
         workspace=Path.cwd(),
         ap_server_url=ap_server_url,
         ap_auth_headers=ap_auth_headers,

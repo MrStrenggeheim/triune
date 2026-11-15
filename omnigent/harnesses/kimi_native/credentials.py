@@ -24,6 +24,7 @@ array is always valid regardless of what section preceded it.
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import shlex
 import sys
@@ -35,7 +36,9 @@ _CONFIG_FILE = "config.toml"
 #: Global-home entries kept session-private instead of symlinked: config.toml
 #: is rebuilt with the Omnigent hooks, and the sessions store + its index stay
 #: per-session so parallel kimi sessions cannot adopt each other's wire logs.
-_PRIVATE_ENTRIES = frozenset({_CONFIG_FILE, "sessions", "session_index.jsonl"})
+_PRIVATE_ENTRIES = frozenset({_CONFIG_FILE, "plugins", "sessions", "session_index.jsonl"})
+_PRODUCT_PLUGIN_ID = "triune-ui-contract"
+_PRODUCT_PLUGIN_INSTALLED_AT = "2026-11-15T00:00:00.000Z"
 
 
 def resolve_user_kimi_home() -> Path:
@@ -106,6 +109,9 @@ def build_kimi_session_home(
     *,
     bridge_dir: Path,
     python_executable: str | None = None,
+    product_guidance: str | None = None,
+    include_hooks: bool = True,
+    private_sessions: bool = True,
 ) -> dict[str, str]:
     """Materialize a session-scoped ``KIMI_CODE_HOME`` with Omnigent hooks.
 
@@ -144,18 +150,101 @@ def build_kimi_session_home(
 
     # Drop stale global-store symlinks from a session home built before the
     # sessions store went private, then ensure the private store exists.
-    for name in ("sessions", "session_index.jsonl"):
-        link = session_home / name
-        if link.is_symlink():
-            with contextlib.suppress(OSError):
-                link.unlink()
-    with contextlib.suppress(OSError):
-        (session_home / "sessions").mkdir(exist_ok=True)
+    if private_sessions:
+        for name in ("sessions", "session_index.jsonl"):
+            link = session_home / name
+            if link.is_symlink():
+                with contextlib.suppress(OSError):
+                    link.unlink()
+        with contextlib.suppress(OSError):
+            (session_home / "sessions").mkdir(exist_ok=True)
+    else:
+        for name in ("sessions", "session_index.jsonl"):
+            source = user_home / name
+            target = session_home / name
+            if source.exists() and not target.exists() and not target.is_symlink():
+                with contextlib.suppress(OSError):
+                    target.symlink_to(source, target_is_directory=source.is_dir())
 
-    hooks = render_kimi_hooks_toml(bridge_dir=bridge_dir, python_executable=python_executable)
+    _build_session_plugins(
+        user_home=user_home,
+        session_home=session_home,
+        product_guidance=product_guidance,
+    )
+
+    hooks = (
+        render_kimi_hooks_toml(bridge_dir=bridge_dir, python_executable=python_executable)
+        if include_hooks
+        else ""
+    )
     # Ensure a clean separation if the user's config has no trailing newline.
     if base_config and not base_config.endswith("\n"):
         base_config += "\n"
     (session_home / _CONFIG_FILE).write_text(base_config + hooks, encoding="utf-8")
 
     return {KIMI_CODE_HOME_ENV_VAR: str(session_home)}
+
+
+def _build_session_plugins(
+    *, user_home: Path, session_home: Path, product_guidance: str | None
+) -> None:
+    """Clone plugin registry state and add the session-only product plugin."""
+    user_plugins = user_home / "plugins"
+    session_plugins = session_home / "plugins"
+    if session_plugins.is_symlink():
+        with contextlib.suppress(OSError):
+            session_plugins.unlink()
+    managed = session_plugins / "managed"
+    managed.mkdir(parents=True, exist_ok=True)
+
+    user_managed = user_plugins / "managed"
+    if user_managed.is_dir():
+        for entry in user_managed.iterdir():
+            if entry.name == _PRODUCT_PLUGIN_ID:
+                continue
+            target = managed / entry.name
+            if not target.exists() and not target.is_symlink():
+                with contextlib.suppress(OSError):
+                    target.symlink_to(entry, target_is_directory=entry.is_dir())
+
+    registry_path = session_plugins / "installed.json"
+    registry: dict[str, object] = {"version": 1, "plugins": []}
+    user_registry = user_plugins / "installed.json"
+    with contextlib.suppress(OSError, ValueError, TypeError):
+        loaded = json.loads(user_registry.read_text(encoding="utf-8"))
+        if isinstance(loaded, dict) and isinstance(loaded.get("plugins"), list):
+            registry = loaded
+
+    raw_plugins = registry.get("plugins")
+    existing_plugins = raw_plugins if isinstance(raw_plugins, list) else []
+    plugins = [
+        item
+        for item in existing_plugins
+        if isinstance(item, dict) and item.get("id") != _PRODUCT_PLUGIN_ID
+    ]
+    if product_guidance:
+        plugin_root = managed / _PRODUCT_PLUGIN_ID
+        plugin_root.mkdir(parents=True, exist_ok=True)
+        (plugin_root / "SYSTEM.md").write_text(product_guidance + "\n", encoding="utf-8")
+        manifest = {
+            "name": _PRODUCT_PLUGIN_ID,
+            "version": "1.0.0",
+            "description": "Triune product rendering contract",
+            "systemPromptPath": "./SYSTEM.md",
+        }
+        (plugin_root / "kimi.plugin.json").write_text(
+            json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
+        )
+        plugins.append(
+            {
+                "id": _PRODUCT_PLUGIN_ID,
+                "root": str(plugin_root.resolve()),
+                "enabled": True,
+                "source": "local-path",
+                "origin": "custom",
+                "installedAt": _PRODUCT_PLUGIN_INSTALLED_AT,
+                "originalSource": str(plugin_root),
+            }
+        )
+    registry["plugins"] = plugins
+    registry_path.write_text(json.dumps(registry, indent=2) + "\n", encoding="utf-8")
