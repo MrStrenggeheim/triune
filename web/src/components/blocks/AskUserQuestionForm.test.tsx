@@ -1,7 +1,7 @@
 // Triune additions: PolyForm Noncommercial 1.0.0; see LICENSING.md.
 // Required Notice: Copyright 2026 MrStrenggeheim. Triune (https://github.com/MrStrenggeheim/triune).
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ClaudeQuestion } from "@/lib/askUserQuestion";
 import { AskUserQuestionForm } from "./AskUserQuestionForm";
@@ -87,6 +87,39 @@ describe("question submissions", () => {
     expect(onReject).toHaveBeenCalledOnce();
     expect(onSubmit).not.toHaveBeenCalled();
   });
+});
+
+it("keeps the popup footer on one row with an accessible icon only Previous", () => {
+  const props = { questions, onSubmit: vi.fn(), onReject: vi.fn() };
+  const { rerender } = render(<AskUserQuestionForm {...props} presentation="popup" />);
+  const previous = screen.getByRole("button", { name: "Previous" });
+  const footer = previous.parentElement!;
+  expect(footer).toHaveClass("flex-nowrap");
+  expect(footer).not.toHaveClass("flex-wrap");
+  expect(previous).toHaveClass("min-w-11");
+  expect(previous).toHaveAttribute("data-size", "sm");
+  expect(previous.querySelector(".lucide-chevron-left")).toBeInTheDocument();
+  expect(previous.textContent).toBe("");
+  expect(previous).toBeDisabled();
+  expect(footer).toContainElement(screen.getByRole("button", { name: "Decline" }));
+  const skip = screen.getByRole("button", { name: "Skip (0/2)" });
+  expect(footer).toContainElement(skip);
+  act(() => skip.focus());
+  fireEvent.click(skip);
+  expect(previous).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Submit (0/2)" })).toHaveFocus();
+  act(() => previous.focus());
+  fireEvent.click(previous);
+  expect(previous).toHaveFocus();
+  expect(previous).toBeDisabled();
+  expect(props.onSubmit).not.toHaveBeenCalled();
+
+  rerender(<AskUserQuestionForm {...props} />);
+  const messagePrevious = screen.getByRole("button", { name: "Previous" });
+  expect(messagePrevious.parentElement).toHaveClass("flex-wrap");
+  expect(messagePrevious.parentElement).not.toHaveClass("flex-nowrap");
+  expect(messagePrevious).not.toHaveClass("min-w-11");
+  expect(messagePrevious).toHaveTextContent("Previous");
 });
 
 it("counts every forward action and submits an empty batch only from its final page", () => {

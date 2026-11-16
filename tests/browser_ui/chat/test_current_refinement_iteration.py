@@ -12,6 +12,7 @@ import json
 import re
 import time
 from collections.abc import Iterator
+from itertools import pairwise
 from pathlib import Path
 
 import pytest
@@ -788,6 +789,15 @@ def test_shelf_resource_rows_and_question_drafts(
     form.get_by_role("checkbox", name="Desktop", exact=True).check()
     form.get_by_role("checkbox", name="Phone", exact=True).check()
     expect(form.get_by_role("button", name="Submit (2/3)", exact=True)).to_be_enabled()
+    footer = [
+        box(form.get_by_role("button", name=name, exact=True))
+        for name in ("Previous", "Decline", "Submit (2/3)")
+    ]
+    for left, right in pairwise(footer):
+        assert_same_vertical_center(left, right)
+        assert_no_overlap(left, right)
+    for control in footer:
+        assert_within_viewport(control, page.viewport_size["width"])
     assert resolves == []
     _capture(page, output_path, f"{appearance}-reopened-question-draft")
     form.get_by_role("button", name="Submit (2/3)", exact=True).click()

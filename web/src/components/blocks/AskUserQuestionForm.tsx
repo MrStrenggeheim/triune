@@ -364,17 +364,24 @@ export function AskUserQuestionForm({
         )}
       </fieldset>
 
-      <div className="flex flex-wrap items-center gap-2">
+      <div
+        className={cn(
+          "flex items-center gap-2",
+          presentation === "popup" ? "flex-nowrap" : "flex-wrap",
+        )}
+      >
         <Button
           size="sm"
           variant="outline"
+          className={presentation === "popup" ? "min-w-11" : undefined}
+          aria-label={presentation === "popup" ? "Previous" : undefined}
           onClick={() => setCurrentIndex(currentIndex - 1)}
           disabled={isFirst}
           data-testid="ask-user-question-prev"
           componentId="question.prev"
         >
-          <ChevronLeftIcon className="mr-1 size-3.5" />
-          Previous
+          <ChevronLeftIcon className={cn("size-3.5", presentation !== "popup" && "mr-1")} />
+          {presentation !== "popup" && "Previous"}
         </Button>
         <div className="ml-auto flex items-center gap-2">
           <Button
