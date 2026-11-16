@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import re
+import shutil
+from io import BytesIO
 from pathlib import Path
 from typing import Any
+from urllib.parse import urljoin, urlsplit
 
 import httpx
 import pytest
+from PIL import Image
 
 from omnigent.runtime.agent_cache import AgentCache
 from omnigent.server import app as app_module
@@ -315,3 +320,92 @@ async def test_base_path_read_from_env(
         root = await client.get("/absproxy/6767/")
     assert root.status_code == 200
     assert 'window.__OMNIGENT_BASE_PATH__ = "/absproxy/6767"' in root.text
+
+
+@pytest.mark.parametrize("proxy_strips_prefix", [False, True])
+@pytest.mark.parametrize(
+    ("configured_base", "prefix"),
+    [
+        ("", ""),
+        ("/", ""),
+        ("/omnigent", "/omnigent"),
+        ("/omnigent/", "/omnigent"),
+        ("omnigent", "/omnigent"),
+        ("/proxy/6767/", "/proxy/6767"),
+    ],
+)
+async def test_pwa_manifest_uses_canonical_home_from_every_route(
+    runtime_init: None,
+    db_uri: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    configured_base: str,
+    prefix: str,
+    proxy_strips_prefix: bool,
+) -> None:
+    """The source manifest resolves under either proxy style without widening scope."""
+    web = Path(__file__).resolve().parents[3] / "web"
+    dist = _make_web_ui(tmp_path)
+    # Exercise the real source link and public assets without rebuilding the SPA.
+    (dist / "index.html").write_text((web / "index.html").read_text().replace("%BASE_URL%", "./"))
+    for name in ("manifest.webmanifest", "pwa-192.png", "pwa-512.png"):
+        shutil.copyfile(web / "public" / name, dist / name)
+    monkeypatch.setattr(app_module, "_WEB_UI_DIST", dist)
+    monkeypatch.setenv("OMNIGENT_WEB_BASE_PATH", configured_base)
+    app = _make_app(db_uri, tmp_path, None)
+    transport = httpx.ASGITransport(app=app)
+    origin = "https://triune.example.test:8443"
+    request_prefix = "" if proxy_strips_prefix else prefix
+    async with httpx.AsyncClient(transport=transport, base_url=origin) as client:
+        for route in (
+            "",
+            "/",
+            "?project=example%2Fworkspace",
+            "/?project=example%2Fworkspace",
+            "/c/session_123?view=files",
+            "/settings?section=appearance",
+        ):
+            response = await client.get(f"{request_prefix}{route}" or "/")
+            assert response.status_code == 200
+            assert "location" not in response.headers
+            assert urlsplit(str(response.url)).query == urlsplit(route).query
+            document_url = urljoin(f"{origin}/", f"{prefix}{route}" or "/")
+            (href,) = re.findall(r'<link rel="manifest" href="([^"]+)"', response.text)
+            manifest_url = urljoin(document_url, href)
+            assert manifest_url == f"{origin}{prefix}/manifest.webmanifest"
+            manifest_response = await client.get(f"{request_prefix}/manifest.webmanifest")
+            assert manifest_response.status_code == 200
+            assert manifest_response.headers["content-type"] == "application/manifest+json"
+            assert manifest_response.headers["cache-control"] == "no-cache"
+            manifest = manifest_response.json()
+            assert manifest["name"] == manifest["short_name"] == "Triune"
+            assert manifest["display"] == "standalone"
+            # Manifest URLs resolve against the manifest; identity uses the start origin.
+            start = urljoin(manifest_url, manifest["start_url"])
+            start_parts = urlsplit(start)
+            identity = urljoin(f"{start_parts.scheme}://{start_parts.netloc}/", manifest["id"])
+            scope = urljoin(manifest_url, manifest["scope"])
+            assert identity == start == scope == f"{origin}{prefix or '/'}"
+            assert document_url.startswith(scope)
+            if prefix:
+                assert not f"{origin}/knowledge/".startswith(scope)
+                # The owner selected a bare-prefix scope, which also covers this sibling.
+                assert f"{origin}{prefix}-other".startswith(scope)
+            else:
+                assert scope == f"{origin}/"  # A root deployment necessarily has root scope.
+            assert {icon["sizes"] for icon in manifest["icons"]} == {"192x192", "512x512"}
+            for icon in manifest["icons"]:
+                icon_url = urljoin(manifest_url, icon["src"])
+                assert icon_url.startswith(f"{origin}{prefix}/pwa-")
+                icon_path = urlsplit(icon_url).path
+                icon_response = await client.get(
+                    icon_path.removeprefix(prefix) if proxy_strips_prefix else icon_path
+                )
+                assert icon_response.status_code == 200
+                assert icon_response.headers["content-type"] == icon["type"] == "image/png"
+                with Image.open(BytesIO(icon_response.content)) as image:
+                    assert icon["sizes"] == f"{image.width}x{image.height}"
+        head = await client.head(f"{request_prefix}/manifest.webmanifest")
+        assert head.status_code == 200
+        assert head.content == b""
+        assert (await client.post(f"{request_prefix}/manifest.webmanifest")).status_code == 404

@@ -30,6 +30,10 @@ Triune retains the inherited `omnigent` Python package, `omnigent.*` API/schema/
 The `omnigent` and `omni` CLI aliases remain compatibility entry points; new instructions use `triune`.
 Local user data and credentials still live under `~/.omnigent` by default, independently of the checkout.
 Existing `OMNIGENT_*` environment variables, configuration keys and service identifiers retain their names; a branding change does not migrate state.
+The browser build links a Triune web app manifest with standalone display and existing brand icons.
+The server rebases its identity, launch URL and scope to the configured deployment prefix, retaining the canonical home address without a trailing slash.
+For `/omnigent`, all three manifest values are `/omnigent`, keeping Knowledge's `/knowledge/` outside Triune's scope.
+Existing installations with another inferred identity may need reinstalling; a separately installed portal with scope `/` still overlaps applications on this origin.
 The VS Code extension displays Triune while retaining `omnigent.serverUrl`, `omnigent.open` and its existing view/panel IDs.
 Keep this directory and Docker's generated `.env` private.
 Docker stores database and artifact data in its existing named volumes; see the [deployment guide](../deploy/docker/README.md).

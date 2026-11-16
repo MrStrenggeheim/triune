@@ -16,6 +16,7 @@ local; automatic client sync and shared/machine scope controls remain deferred.
 - `flat-transcript`: assistant prose stays unboxed, tool groups use compact disclosures and code has one technical frame.
 - `conversation-usage`: each captured chat header exposes Usage independently of Notices or the composer shelf, with a context summary, compact session totals and separate observed provider quota windows; token and observation details expand on demand.
 - `runtime-notices`: scoped provider warnings and messages use the chat header; healthy quota snapshots remain in Usage and never imply an answerable request.
+- `pwa-installation`: the browser build links a standalone Triune manifest with deployment-aware identity, launch URL, scope and 192/512px icons; root and deep-link entry points share the same manifest.
 
 - `user-defaults`: set, list, and remove defaults on this machine; cover empty
   config, invalid keys, legacy scalar harness settings, and custom config homes.
@@ -58,6 +59,10 @@ native terminal controls, and fork dialog have separate selection paths; see
 [Composer](./composer.md). Settings → Harnesses → select a host → a Claude or
 Codex card/gear → Settings shows read-only startup configuration. The Plugins
 tab shows inventory; both are covered in [Native harnesses](./native-harnesses.md).
+
+**PWA installation:** install from the configured home path; the explicit manifest preserves that canonical address, including `/omnigent` without a trailing slash.
+Verify its processed identity, launch URL, scope and icon responses from home and deep chat routes with `tests/server/integration/test_base_path.py`.
+Existing browser-profile identity and an installed enclosing portal may require separate manual checks; correcting Triune does not change another app's scope.
 
 **Chat header:** open Usage in a docked or legacy conversation header to inspect its latest observed context, recorded session/descendant accounting and reported provider quota windows.
 The compact summary shows context used/capacity, recorded session cost and token totals, with thin bars consistently encoding percentage used.

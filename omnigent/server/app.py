@@ -312,6 +312,7 @@ def _register_web_mimetypes() -> None:
         (".mjs", "text/javascript"),
         (".css", "text/css"),
         (".json", "application/json"),
+        (".webmanifest", "application/manifest+json"),
         (".map", "application/json"),
         (".wasm", "application/wasm"),
         (".svg", "image/svg+xml"),
@@ -5044,6 +5045,15 @@ class _SPAStaticFiles(StaticFiles):
             html = _rewrite_web_ui_index(index_file.read_text(encoding="utf-8"), base_path)
             self._index_html = html.encode("utf-8")
             self._index_etag = f'"{hashlib.md5(self._index_html).hexdigest()}"'
+        self._manifest: dict[str, Any] | None = None
+        manifest_file = Path(self.directory) / "manifest.webmanifest"  # type: ignore[arg-type]
+        if manifest_file.is_file():
+            manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
+            # Match the router's canonical home, including the bare prefix.
+            # Manifest scope uses a string prefix, not a directory boundary.
+            for member in ("id", "start_url", "scope"):
+                manifest[member] = base_path or "/"
+            self._manifest = manifest
 
     def _shell_response(self, scope: Scope) -> Response:
         """Serve the rebased HTML shell from memory, honoring ``If-None-Match``."""
@@ -5072,6 +5082,16 @@ class _SPAStaticFiles(StaticFiles):
 
     async def get_response(self, path: str, scope: Scope) -> Response:
         served_path = path
+        if (
+            path == "manifest.webmanifest"
+            and self._manifest is not None
+            and scope["method"] in {"GET", "HEAD"}
+        ):
+            return JSONResponse(
+                self._manifest,
+                media_type="application/manifest+json",
+                headers={"Cache-Control": _WEB_UI_HTML_CACHE_CONTROL},
+            )
         # The HTML shell (root, directory, or SPA history fallback) is served
         # from the rebased in-memory copy rather than the file on disk, so
         # asset refs and the injected base-path global reflect `base_path`.
