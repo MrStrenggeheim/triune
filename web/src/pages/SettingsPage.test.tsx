@@ -801,6 +801,15 @@ describe("SettingsPage", () => {
     expect(screen.getByTestId("file-opening-same")).toHaveAttribute("aria-checked", "true");
   });
 
+  it("stores the startup choice independently of the current session", () => {
+    renderPage("/settings/appearance");
+    expect(screen.getByTestId("startup-continue")).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(screen.getByTestId("startup-new"));
+    expect(screen.getByTestId("startup-new")).toHaveAttribute("aria-checked", "true");
+    expect(localStorage.getItem("triune:startup-destination")).toBe("new");
+    expect(screen.getByRole("heading", { name: "Appearance" })).toBeInTheDocument();
+  });
+
   it("applies and restores list density without changing font preferences", async () => {
     localStorage.setItem("omnigent:ui-font-size", "15");
     const page = renderPage("/settings/appearance");
@@ -1014,6 +1023,9 @@ describe("SettingsPage", () => {
     localStorage.clear();
     renderPage("/settings/appearance");
 
+    fireEvent.click(screen.getByTestId("startup-new"));
+    expect(screen.getByTestId("startup-new")).toHaveAttribute("aria-checked", "true");
+
     fireEvent.click(screen.getByTestId("list-density-compact"));
     expect(localStorage.getItem("omnigent:list-density")).toBe("compact");
 
@@ -1063,6 +1075,7 @@ describe("SettingsPage", () => {
 
     expect(localStorage.getItem("omnigent:list-density")).toBeNull();
     expect(screen.getByTestId("list-density-comfortable")).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByTestId("startup-continue")).toHaveAttribute("aria-checked", "true");
     expect(document.documentElement).toHaveAttribute("data-list-density", "comfortable");
 
     // Mode is restored to "system".

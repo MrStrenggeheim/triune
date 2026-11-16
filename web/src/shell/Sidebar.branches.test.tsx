@@ -238,6 +238,139 @@ it.each([
   },
 );
 
+it("rolls up independent raw descendant facts only while collapsed, regardless of intermediate disclosure", async () => {
+  const child = {
+    id: "one",
+    status: "idle" as const,
+    updated_at: 100,
+    pending_elicitations_count: 2,
+    viewer_last_seen: 99,
+  };
+  const grandchild = {
+    ...child,
+    id: "two",
+    status: "running" as const,
+    pending_elicitations_count: 0,
+  };
+  const parent = {
+    ...rows[0],
+    status: "running" as const,
+    activity: {
+      own_status: "failed" as const,
+      descendant_running: true,
+      descendants_complete: true,
+      descendants: [child, grandchild],
+    },
+  };
+  const branchRows = [
+    parent,
+    {
+      ...rows[1],
+      activity: {
+        own_status: "idle" as const,
+        descendant_running: true,
+        descendants_complete: true,
+        descendants: [grandchild],
+      },
+    },
+    ...rows.slice(2),
+  ];
+  vi.mocked(useConversations).mockReturnValue(conversationPage([parent]));
+  vi.mocked(authenticatedFetch).mockImplementation(async (url) => {
+    const parsed = new URL(String(url), "http://test");
+    if (parsed.pathname === "/v1/sessions")
+      return new Response(JSON.stringify({ data: branchRows, has_more: false }));
+    return new Response("{}", { status: 404 });
+  });
+  renderTree("root");
+  const row = (await screen.findByRole("link", { name: "root" })).closest("li")!;
+  await screen.findByRole("button", { name: "Expand subchats of root" });
+  const badges = () =>
+    within(row)
+      .queryAllByTestId("session-state-badge")
+      .map((badge) => badge.dataset.state);
+  expect(badges()).toEqual(["error", "running"]);
+  act(() => setSessionDraft("one", { text: "child draft", files: [] }));
+  expect(row).toHaveTextContent("2 approval prompts waiting");
+  expect(row).toHaveTextContent("New messages");
+  expect(row).toHaveTextContent("Draft");
+  expect(row).toHaveAttribute("data-status-coverage", "partial");
+  fireEvent.click(await screen.findByRole("button", { name: "Expand subchats of root" }));
+  expect(badges()).toEqual(["error"]);
+  expect(row).not.toHaveTextContent("Draft");
+  expect(row).not.toHaveAttribute("data-status-coverage");
+  fireEvent.click(await screen.findByRole("button", { name: "Expand subchats of one" }));
+  expect(badges()).toEqual(["error"]);
+  fireEvent.click(screen.getByRole("button", { name: "Collapse subchats of root" }));
+  expect(badges()).toEqual(["error", "running"]);
+  expect(row).toHaveTextContent("Draft");
+});
+
+it.each([false, true])(
+  "excludes filtered and delegation-only facts, and never revives revoked members: revoked=%s",
+  async (revoked) => {
+    const visible = {
+      id: "one",
+      status: "idle" as const,
+      updated_at: 100,
+      pending_elicitations_count: 0,
+      latest_error: null,
+    };
+    const hidden = {
+      ...visible,
+      id: "archived-or-filtered-out",
+      status: "failed" as const,
+      pending_elicitations_count: 5,
+    };
+    const parent = {
+      ...rows[0],
+      status: "running" as const,
+      activity: {
+        own_status: "idle" as const,
+        descendant_running: true,
+        descendants_complete: true,
+        descendants: [
+          ...(revoked ? [] : [visible]),
+          { ...visible, id: "two", status: revoked ? ("running" as const) : ("idle" as const) },
+          hidden,
+          { ...visible, id: "delegation-only", status: "running" as const },
+        ],
+      },
+    };
+    vi.mocked(useConversations).mockReturnValue(conversationPage([parent]));
+    vi.mocked(authenticatedFetch).mockImplementation(async (url) => {
+      const parsed = new URL(String(url), "http://test");
+      if (parsed.pathname === "/v1/sessions")
+        return new Response(
+          JSON.stringify({
+            data: [
+              parent,
+              {
+                ...rows[1],
+                status: "failed",
+                activity: { own_status: "failed", descendant_running: false },
+              },
+              rows[2],
+              { ...conversation("delegation-only"), parent_session_id: "root" },
+            ],
+            has_more: false,
+          }),
+        );
+      return new Response("{}", { status: 404 });
+    });
+    setSessionDraft(hidden.id, { text: "hidden browser draft", files: [] });
+    markConversationUnread(hidden.id, 100);
+    renderTree("root");
+    const row = (await screen.findByRole("link", { name: "root" })).closest("li")!;
+    await screen.findByRole("button", { name: "Expand subchats of root" });
+    expect(within(row).queryAllByTestId("session-state-badge")).toHaveLength(0);
+    expect(row).not.toHaveTextContent("Draft");
+    expect(row).not.toHaveTextContent("New messages");
+    expect(row).not.toHaveTextContent("approval prompts waiting");
+    if (revoked) expect(row).toHaveAttribute("data-status-coverage", "partial");
+  },
+);
+
 it.each(["menu", "context"])(
   "opens beside exactly once through the %s without ordinary navigation",
   async (entry) => {
@@ -538,18 +671,27 @@ it.each([
         {
           ...rows[0],
           status: descendant ? "running" : own,
-          activity: { own_status: own, descendant_running: descendant },
+          activity: {
+            own_status: own,
+            descendant_running: descendant,
+            descendants_complete: descendant !== null,
+            descendants: descendant
+              ? [{ id: "one", status: "running", updated_at: 100, pending_elicitations_count: 0 }]
+              : [],
+          },
         },
       ]),
     );
     renderTree("two");
     const row = (await screen.findByRole("link", { name: "root" })).closest("li")!;
-    const before = within(row).queryByTestId("session-state-badge");
+    const expand = await screen.findByRole("button", { name: "Expand subchats of root" });
+    const before = within(row).queryAllByTestId("session-state-badge");
     if (own === "running" || (descendant && own === "idle"))
-      expect(before).toHaveAttribute("data-state", "running");
-    else if (own === "failed") expect(before).toHaveAttribute("data-state", "error");
-    else expect(before).toBeNull();
-    fireEvent.click(await screen.findByRole("button", { name: "Expand subchats of root" }));
+      expect(before.map((badge) => badge.dataset.state)).toContain("running");
+    else if (own === "failed") {
+      expect(before.map((badge) => badge.dataset.state)).toEqual(["error", "running"]);
+    } else expect(before).toHaveLength(0);
+    fireEvent.click(expand);
     const after = within(row).queryByTestId("session-state-badge");
     if (expandedState) expect(after).toHaveAttribute("data-state", expandedState);
     else expect(after).toBeNull();

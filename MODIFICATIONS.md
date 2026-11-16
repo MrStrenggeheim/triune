@@ -72,5 +72,21 @@ These entries describe source changes, without asserting release activation.
 - Align sidebar selection, status, pin/copy-link menus and shortcut labels; preserve search reveal ownership, bounded shell output and notification placement.
 - Normalize exported OpenAPI operation IDs per HTTP verb for shared multi-method handlers; add drift coverage and create browser-evidence directories before writes.
 
+## Iteration6 source changes — 2026-11-16
+
+These entries describe source only; the previous installed release remains `0.20.0-3c12d054fd99`.
+Integrated build verification and activation belong to the parent release workflow and are not asserted here.
+
+- Match native top clearance, browser theme-color and standalone status paint to the resolved application bar, retaining one shell owner for safe-area insets.
+- Apply Comfortable/Compact spacing to queue and attention shelves and mobile composer gutters, preserving coarse controls and moving shelf surfaces.
+- Default Appearance → On startup to Continue last session using the saved layout owner; explicit links and New chat take precedence, with safe fallback for unavailable owners.
+- Render active plan tasks with the shared unchecked box and active border; preserve read-only completion and accessible status text.
+- Match header/shelf popup clearance to the visible control inset at the actual row edge and opening side, retaining collision handling.
+- Add bounded two-contact pinch/pan; fresh gestures starting at Fit alone navigate or dismiss image galleries.
+- Roll up only currently revealable descendant facts on collapsed sidebar parents, preserving own-only expanded rows, both original status priorities and unknown coverage.
+- Restore the top-bar Open button's mobile appearance with separate transparent hit expansion and existing desktop spacing.
+- Insert positioned activity canonically, enrich loaded cards in place and recover tracked old-card mutations by authorized point reads; retain full reset for expired/untracked changes.
+- Adapt shared resource text, status labels and message-card controls to narrow containers while retaining accessible state and navigation.
+
 [LICENSING.md](LICENSING.md) defines scope and the required notice.
 Git diffs against the imported baseline identify exact modified paths and lines.

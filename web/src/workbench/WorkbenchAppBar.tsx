@@ -94,13 +94,7 @@ export function WorkbenchAppBar({
           style={{ left: `calc(50% + ${searchWidth / 2 + 8}px)` }}
         >
           <OpenViewMenu actions={openActions}>
-            <Button
-              ref={openButton}
-              variant="default"
-              size="sm"
-              className="max-md:size-11! max-md:p-0 pointer-coarse:min-h-11! pointer-coarse:min-w-11!"
-              aria-label="Open view"
-            >
+            <Button ref={openButton} variant="default" size="sm" aria-label="Open view">
               <PlusIcon data-icon="inline-start" />
               <span className="hidden md:inline">Open</span>
             </Button>

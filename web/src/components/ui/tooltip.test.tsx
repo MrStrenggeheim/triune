@@ -1,7 +1,7 @@
 // Modified for Triune.
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "./collapsible";
 import { createRef } from "react";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Button } from "./button";
@@ -25,6 +25,28 @@ function panel() {
 }
 
 describe("canonical button tooltips", () => {
+  it("inherits a provider side while preserving an explicit content side", async () => {
+    const view = render(
+      <TooltipProvider side="bottom">
+        <Tooltip defaultOpen>
+          <TooltipTrigger>Notifications</TooltipTrigger>
+          <TooltipContent avoidCollisions={false}>Guidance</TooltipContent>
+        </Tooltip>
+      </TooltipProvider>,
+    );
+    expect(panel()).toHaveAttribute("data-side", "bottom");
+    view.rerender(
+      <TooltipProvider side="bottom">
+        <Tooltip defaultOpen>
+          <TooltipTrigger>Notifications</TooltipTrigger>
+          <TooltipContent side="top" avoidCollisions={false}>
+            Guidance
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>,
+    );
+    await waitFor(() => expect(panel()).toHaveAttribute("data-side", "top"));
+  });
   it.each([Button, TooltipButton])(
     "supports explicit tooltip suppression on %s",
     async (Control) => {

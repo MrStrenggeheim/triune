@@ -16,6 +16,7 @@ import {
 
 type TooltipShortcut = readonly string[] | readonly (readonly string[])[];
 const TooltipProviderContext = React.createContext(false);
+const TooltipSideContext = React.createContext<"top" | "bottom">("top");
 const TooltipTriggerContext = React.createContext(false);
 const TooltipKeyboardFocusContext = React.createContext<React.RefObject<EventTarget | null> | null>(
   null,
@@ -104,8 +105,9 @@ function TooltipProvider({
   // Keep incidental pointer movement from flashing tooltips. Callers can still
   // override the delay per provider.
   delayDuration = 600,
+  side = "top",
   ...props
-}: React.ComponentProps<typeof TooltipPrimitive.Provider>) {
+}: React.ComponentProps<typeof TooltipPrimitive.Provider> & { side?: "top" | "bottom" }) {
   const keyboardFocusTarget = React.useRef<EventTarget | null>(null);
   React.useEffect(() => {
     let keyboardNavigationPending = false;
@@ -136,15 +138,17 @@ function TooltipProvider({
     };
   }, []);
   return (
-    <TooltipProviderContext.Provider value={true}>
-      <TooltipKeyboardFocusContext.Provider value={keyboardFocusTarget}>
-        <TooltipPrimitive.Provider
-          data-slot="tooltip-provider"
-          delayDuration={delayDuration}
-          {...props}
-        />
-      </TooltipKeyboardFocusContext.Provider>
-    </TooltipProviderContext.Provider>
+    <TooltipSideContext.Provider value={side}>
+      <TooltipProviderContext.Provider value={true}>
+        <TooltipKeyboardFocusContext.Provider value={keyboardFocusTarget}>
+          <TooltipPrimitive.Provider
+            data-slot="tooltip-provider"
+            delayDuration={delayDuration}
+            {...props}
+          />
+        </TooltipKeyboardFocusContext.Provider>
+      </TooltipProviderContext.Provider>
+    </TooltipSideContext.Provider>
   );
 }
 
@@ -318,7 +322,7 @@ function ButtonTooltip({
 
 function TooltipContent({
   className,
-  side = "top",
+  side: requestedSide,
   children,
   shortcut,
   description,
@@ -331,14 +335,24 @@ function TooltipContent({
   shortcut?: TooltipShortcut;
   description?: React.ReactNode;
 }) {
-  const bounds = useAnchoredPopupBounds(collisionPadding, { maxWidth: 272, ...style });
+  const providerSide = React.useContext(TooltipSideContext);
+  const side = requestedSide ?? providerSide;
+  const bounds = useAnchoredPopupBounds(
+    collisionPadding,
+    { maxWidth: 272, ...style },
+    true,
+    side === "bottom" ? "bottom" : "top",
+    8,
+  );
   return (
     <TooltipPrimitive.Portal container={getEmbedRoot() ?? undefined}>
       <TooltipPrimitive.Content
+        ref={bounds.ref}
         data-slot="tooltip-content"
         side={side === "bottom" ? "bottom" : "top"}
         align="center"
-        sideOffset={8}
+        sideOffset={bounds.sideOffset}
+        data-popup-row-anchor={bounds["data-popup-row-anchor"]}
         collisionPadding={bounds.collisionPadding}
         className={cn(
           "z-50 w-fit max-w-[272px] origin-(--radix-tooltip-content-transform-origin)",

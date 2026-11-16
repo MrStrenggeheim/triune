@@ -12,7 +12,9 @@ Activity combines the selected chat's main agent and subagents with recorded she
 - `filters`: shared All, Agents and Shells control filters separate sections, including settled records, ordered by last observed activity.
 - `header`: the shared chat/host header measures pane width and moves filters into its existing options menu, preserving source, category and List/Graph state through resizing.
 - `source`: current-chat origin or explicit originating link; alternative combined Host/workspace selector limits independent inventory.
-- `controls`: shared two-line rows in shelves and Orchestration show name, task/output, natural-width status and exact-resource side-opening controls.
+- `controls`: shared two-line rows ellipsize task/output, preserve exact-resource controls and collapse narrow status text to accessible icons; message-card controls move below text when needed.
+- `positioned-updates`: missing activity with canonical identity/position inserts once in order; loaded cards enrich without replacing their identity, while unpositioned legacy updates retain bounded recovery.
+- `old-card-recovery`: same-epoch recovery point-reads tracked old-card mutations before replaying appended items; expired/untracked changes still require a full authorized reset.
 - `outcomes`: shared labels distinguish known Completed/Failed, acknowledged Stopped, Declined and confirmed Ended with unknown outcome; Disconnected never proves exit.
 - `native-shells`: captured provider resource IDs preserve output and truthful capabilities; supported live records expose targeted Stop without joining commands by text.
 
@@ -35,9 +37,14 @@ Preconditions: use the isolated [verification environment](skills/verify-omnigen
 - Existing session resource permission gates: `tests/server/routes/test_shell_permission_gate.py`.
 - Markdown, source prefilling and absence of diagnostic/menu clutter: `web/src/shell/ChatActivityPanel.test.tsx` and `web/src/workbench/ActivityView.test.tsx`.
 - Shared rows, hover/touch Stop and shelf reuse: `web/src/components/ActivityRow.test.tsx`, `web/src/components/composer/BackgroundTaskIndicator.test.tsx` and `web/src/components/composer/SubagentTaskIndicator.test.tsx`.
+- Iteration6 candidate narrow popup text, status and separate controls: `tests/browser_ui/chat/test_iteration6.py::test_queue_plan_popup_and_synthetic_safe_top_follow_density`.
+- Positioned updates into an empty transcript or before its loaded window, deduplication and loaded-context retention: `web/src/store/chatStore.test.ts`, under `SYNC-ACCEPTANCE canonical resource update`.
+- Changed-card replay, mutations during replay, authorization before point reads and reset fallback: `tests/server/routes/test_session_recovery.py`.
+- After parent freeze/build, narrow an agent popup or Orchestration pane: title detail and preview each stay on one ellipsized line; status and navigation remain reachable.
+- Narrow a task message card below 480px: status and actions move beneath the text without overlap; below 440px resource rows retain accessible status while hiding its visible label.
 - Resize an Orchestration pane until filters move into Options, choose Shells there, then widen it; the inline Shells filter remains selected and the source stays unchanged.
 - Agents/Shells popups use one density-aware frame and the full shared resource row, including partial-detail states and existing focus/Stop behavior.
-- Active Plan items use a light outlined bullet; completed items keep the checkmark and pending items keep an empty checkbox, without adding interactive checkboxes.
+- Active and pending Plan items share the empty checkbox; active uses the shared active border and accessible In progress text, while completion keeps the read-only checkmark.
 - Queue, attention and child-context shelf backgrounds continue behind both rounded composer corners; their existing 200ms entrance/exit and reduced-motion behavior remain.
 - Captured native output, query identity and read-only side views: `web/src/hooks/useSessionShellResources.test.tsx` and `web/src/workbench/ShellResourceView.test.tsx`.
 - Authenticated provider resources, retained history and targeted control: `tests/server/test_shell_resource_routes.py`, `tests/server/test_shell_resources.py` and `tests/runner/test_native_shell_resources.py`.
@@ -48,6 +55,8 @@ Preconditions: use the isolated [verification environment](skills/verify-omnigen
 
 ## Gotchas
 
+- Iteration6 source acceptance remains separate from the installed release and parent-owned compiled verification; a positioned-update fix does not establish the cause of a reported production disconnect.
+- Unpositioned legacy recovery still needs authorized history and can report a genuine unavailable item; missing positioned cards should not trigger that fallback.
 - Activity records usage and provenance; workspace manual terminals remain independently owned resources.
 - History retains at most 128 entries per chat and 8 KiB output snapshots; the runner's local capture is also bounded globally.
 - Native vendor commands are projected only where persisted tool records provide evidence; missing completion or exit information remains unknown.

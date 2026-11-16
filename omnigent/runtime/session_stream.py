@@ -72,6 +72,9 @@ _subscribers: WorkspaceScopedCache[
 _lock = threading.Lock()
 # Process-local invalidation, never a second transcript or body cache.
 _item_revisions: WorkspaceScopedCache[str, tuple[int, int]] = WorkspaceScopedCache()
+_ITEM_MUTATION_HISTORY_LIMIT = 128
+# IDs only; the floor records mutations whose exact identities are no longer retained.
+_item_mutations: WorkspaceScopedCache[str, tuple[int, dict[str, int]]] = WorkspaceScopedCache()
 
 
 def item_revision(conversation_id: str) -> tuple[int, int]:
@@ -80,12 +83,33 @@ def item_revision(conversation_id: str) -> tuple[int, int]:
         return _item_revisions.get(conversation_id, (0, 0))
 
 
-def mark_items_changed(conversation_id: str, *, reset: bool = False) -> None:
+def mark_items_changed(
+    conversation_id: str, *, reset: bool = False, item_id: str | None = None
+) -> None:
     """Invalidate after a durable commit; epoch changes invalidate lost process state."""
     with _lock:
         revision, reset_revision = _item_revisions.get(conversation_id, (0, 0))
         revision += 1
         _item_revisions[conversation_id] = (revision, revision if reset else reset_revision)
+        if reset:
+            floor, mutations = _item_mutations.get(conversation_id, (0, {}))
+            if item_id is None:
+                floor, mutations = revision, {}
+            else:
+                mutations.pop(item_id, None)
+                mutations[item_id] = revision
+                if len(mutations) > _ITEM_MUTATION_HISTORY_LIMIT:
+                    floor = max(floor, mutations.pop(next(iter(mutations))))
+            _item_mutations[conversation_id] = (floor, mutations)
+
+
+def item_mutations_since(conversation_id: str, revision: int) -> tuple[str, ...] | None:
+    """Return coalesced changed IDs, or require reset after untracked/expired mutations."""
+    with _lock:
+        floor, mutations = _item_mutations.get(conversation_id, (0, {}))
+        if revision < floor:
+            return None
+        return tuple(item_id for item_id, changed_at in mutations.items() if changed_at > revision)
 
 
 # Queue objects have process-unique identity and disappear with their subscriptions.

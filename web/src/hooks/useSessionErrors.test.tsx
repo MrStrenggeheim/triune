@@ -1,3 +1,4 @@
+// Modified for Triune.
 import type { ReactNode } from "react";
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -8,6 +9,14 @@ import { latestActivityErrorState } from "@/lib/sessionError";
 import { fetchSessionItemsPage, type SessionItemsPage } from "@/lib/sessionsApi";
 import { conversationRegistry } from "@/store/conversationRegistry";
 import { useSessionErrors, useSessionErrorStates } from "./useSessionErrors";
+import { useSidebarStatusRollup } from "./useSidebarStatusRollup";
+import { clearSessionDrafts, setSessionDraft } from "@/lib/sessionDrafts";
+import {
+  markConversationRead,
+  markConversationUnread,
+  resetReadStateForTests,
+} from "./useUnseenConversations";
+import type { SessionActivityDescendant } from "./useConversations";
 
 vi.mock("@/lib/sessionsApi", () => ({
   ApiError: class ApiError extends Error {},
@@ -78,6 +87,80 @@ beforeEach(() => {
   fetchPage.mockReset();
   fetchPage.mockResolvedValue(normalPage);
   conversationRegistry.clear();
+  clearSessionDrafts();
+  resetReadStateForTests();
+});
+
+describe("descendant facts without transcript hydration", () => {
+  const descendant: SessionActivityDescendant = {
+    ...session,
+    pending_elicitations_count: 0,
+    viewer_last_seen: 99,
+  };
+
+  it("retains unknown errors and reacts to exact-version cached errors without fetching", async () => {
+    const { client, wrapper } = harness();
+    const hook = renderHook(() => useSessionErrorStates([session], { fetchMissing: false }), {
+      wrapper,
+    });
+    expect(hook.result.current).toEqual([undefined]);
+    expect(client.getQueryCache().getAll()).toHaveLength(0);
+    act(() => {
+      client.setQueryData(["session-latest-error", session.id, 100, "idle", undefined], "error");
+    });
+    await waitFor(() => expect(hook.result.current).toEqual(["error"]));
+    act(() => {
+      client.setQueryData(["session-latest-error", session.id, 100, "idle", undefined], null);
+    });
+    await waitFor(() => expect(hook.result.current).toEqual([null]));
+    await act(() => client.invalidateQueries({ queryKey: ["session-latest-error", session.id] }));
+    expect(hook.result.current).toEqual([undefined]);
+    expect(fetchPage).not.toHaveBeenCalled();
+  });
+
+  it("folds unique raw descendants, updates viewer state and clears revoked members", async () => {
+    const { wrapper } = harness();
+    const rows: SessionActivityDescendant[] = [
+      { ...descendant, status: "failed", pending_elicitations_count: 2 },
+      { ...descendant, status: "failed", pending_elicitations_count: 2 },
+      { ...descendant, id: "grandchild", status: "running", pending_elicitations_count: 3 },
+    ];
+    const hook = renderHook(({ members }) => useSidebarStatusRollup(members, "parent"), {
+      wrapper,
+      initialProps: { members: rows },
+    });
+    expect(hook.result.current.states).toEqual([
+      { kind: "error" },
+      { kind: "awaiting", count: 5 },
+      { kind: "unseen" },
+      { kind: "running" },
+    ]);
+    act(() => setSessionDraft(descendant.id, { text: "draft", files: [] }));
+    expect(hook.result.current.hasDraft).toBe(true);
+    act(() => markConversationRead(descendant.id, 100));
+    expect(hook.result.current.states.some((state) => state.kind === "unseen")).toBe(false);
+    act(() => markConversationUnread("grandchild", 100));
+    expect(hook.result.current.states.some((state) => state.kind === "unseen")).toBe(true);
+    hook.rerender({ members: [] });
+    expect(hook.result.current).toEqual({ states: [], hasDraft: false, incomplete: false });
+    expect(fetchPage).not.toHaveBeenCalled();
+  });
+
+  it("suppresses only the active member's draft and automatic unread, preserving explicit unread", () => {
+    const { wrapper } = harness();
+    setSessionDraft(descendant.id, { text: "active draft", files: [] });
+    const hook = renderHook(({ activeId }) => useSidebarStatusRollup([descendant], activeId), {
+      wrapper,
+      initialProps: { activeId: descendant.id },
+    });
+    expect(hook.result.current.hasDraft).toBe(false);
+    expect(hook.result.current.states).toEqual([]);
+    expect(hook.result.current.incomplete).toBe(true);
+    act(() => markConversationUnread(descendant.id, 100));
+    expect(hook.result.current.states).toEqual([{ kind: "unseen" }]);
+    hook.rerender({ activeId: "parent" });
+    expect(hook.result.current.hasDraft).toBe(true);
+  });
 });
 afterEach(() => {
   cleanup();

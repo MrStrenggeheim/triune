@@ -157,11 +157,197 @@ async def test_revision_covers_mutation_removal_and_noops(saved):
         stream_epoch=inflight_text.stream_epoch(),
     )
     frames = await _events(recovery)
-    assert frames[0]["reset"]
+    assert not frames[0]["reset"]
     assert frames[1]["item"]["resource"]["result_text"] == "longer final"
     before = session_stream.item_revision(sid)
     await store.delete_conversation(sid)
     assert session_stream.item_revision(sid)[1] > before[0]
+
+
+async def test_activity_enrichments_replay_only_changed_ids_in_a_long_chat(saved, monkeypatch):
+    store, sid = saved
+    [activity, *messages] = store.append(
+        sid,
+        [
+            NewConversationItem(
+                type="resource_event",
+                response_id="turn",
+                data=ResourceEventData(
+                    event_type="session.subagent.returned",
+                    resource_id="child",
+                    resource_type="session",
+                    resource={"dispatch_id": "dispatch", "task_input": "original"},
+                ),
+            ),
+            *[_message(str(index)) for index in range(401)],
+        ],
+    )
+    revision = session_stream.item_revision(sid)[0]
+    for index in range(20):
+        store.enrich_resource_event(
+            sid, activity.id, {"dispatch_id": "dispatch", "task_input": "expanded" * (index + 2)}
+        )
+    read = Mock(wraps=store.list_items)
+    get_item = Mock(wraps=store.get_item)
+    monkeypatch.setattr(store, "list_items", read)
+    monkeypatch.setattr(store, "get_item", get_item)
+    recovery = SessionRecovery(
+        store,
+        sid,
+        _allowed,
+        enabled=True,
+        after_position=messages[-1].position,
+        after_revision=revision,
+        stream_epoch=inflight_text.stream_epoch(),
+    )
+    frames = await _events(recovery)
+    assert not frames[0]["reset"]
+    assert [event["item"]["id"] for event in frames if "item" in event] == [activity.id]
+    assert frames[1]["item"]["position"] == activity.position == 0
+    assert frames[1]["item"]["resource"]["task_input"] == "expanded" * 21
+    read.assert_not_called()
+    get_item.assert_called_once_with(sid, activity.id)
+    assert not (await recovery.prepare({"type": "session.heartbeat"}))["reconcile_required"]
+
+
+async def test_mutation_during_delta_replay_is_recovered_without_another_full_reset(saved):
+    store, sid = saved
+    [activity] = store.append(
+        sid,
+        [
+            NewConversationItem(
+                type="resource_event",
+                response_id="turn",
+                data=ResourceEventData(
+                    event_type="session.subagent.returned",
+                    resource_id="child",
+                    resource_type="session",
+                    resource={"dispatch_id": "dispatch", "task_input": "original"},
+                ),
+            )
+        ],
+    )
+    revision = session_stream.item_revision(sid)[0]
+    store.enrich_resource_event(
+        sid, activity.id, {"dispatch_id": "dispatch", "task_input": "first update"}
+    )
+    changed = False
+
+    async def project(items):
+        nonlocal changed
+        if not changed:
+            changed = True
+            store.enrich_resource_event(
+                sid, activity.id, {"dispatch_id": "dispatch", "task_input": "newest longer update"}
+            )
+        return items
+
+    recovery = SessionRecovery(
+        store,
+        sid,
+        _allowed,
+        enabled=True,
+        after_position=activity.position,
+        after_revision=revision,
+        stream_epoch=inflight_text.stream_epoch(),
+        project=project,
+    )
+    frames = await _events(recovery)
+    heartbeat = await recovery.prepare({"type": "session.heartbeat"})
+    assert heartbeat["reconcile_required"]
+    resumed = await _events(
+        SessionRecovery(
+            store,
+            sid,
+            _allowed,
+            enabled=True,
+            after_position=activity.position,
+            after_revision=frames[-1]["item_revision"],
+            stream_epoch=inflight_text.stream_epoch(),
+        )
+    )
+    assert not resumed[0]["reset"]
+    assert resumed[1]["item"]["resource"]["task_input"] == "newest longer update"
+    assert resumed[1]["item"]["position"] == activity.position
+
+
+def test_mutation_tracking_coalesces_bounds_and_isolates_workspaces(monkeypatch):
+    sid = uuid4().hex
+    monkeypatch.setattr(session_stream, "_ITEM_MUTATION_HISTORY_LIMIT", 2)
+    for _ in range(20):
+        session_stream.mark_items_changed(sid, reset=True, item_id="first")
+    assert session_stream.item_mutations_since(sid, 0) == ("first",)
+    with workspace_scope(99):
+        assert session_stream.item_mutations_since(sid, 0) == ()
+        session_stream.mark_items_changed(sid, reset=True, item_id="other-workspace")
+        assert session_stream.item_mutations_since(sid, 0) == ("other-workspace",)
+    checkpoint = session_stream.item_revision(sid)[0]
+    session_stream.mark_items_changed(sid, reset=True, item_id="second")
+    session_stream.mark_items_changed(sid, reset=True, item_id="third")
+    assert session_stream.item_mutations_since(sid, 0) is None
+    assert session_stream.item_mutations_since(sid, checkpoint) == ("second", "third")
+    session_stream.mark_items_changed(sid, reset=True)
+    assert session_stream.item_mutations_since(sid, checkpoint) is None
+
+
+@pytest.mark.parametrize("expired", [False, True])
+async def test_untracked_or_expired_mutations_still_require_full_reset(
+    saved, monkeypatch, expired
+):
+    store, sid = saved
+    items = store.append(sid, [_message(str(index)) for index in range(3)])
+    revision = session_stream.item_revision(sid)[0]
+    monkeypatch.setattr(session_stream, "_ITEM_MUTATION_HISTORY_LIMIT", 2)
+    if expired:
+        for item in items:
+            session_stream.mark_items_changed(sid, reset=True, item_id=item.id)
+    else:
+        session_stream.mark_items_changed(sid, reset=True)
+    frames = await _events(
+        SessionRecovery(
+            store,
+            sid,
+            _allowed,
+            enabled=True,
+            after_position=items[-1].position,
+            after_revision=revision,
+            stream_epoch=inflight_text.stream_epoch(),
+        )
+    )
+    assert frames[0]["reset"]
+    assert [frame["item"]["id"] for frame in frames if "item" in frame] == [
+        item.id for item in items
+    ]
+
+
+async def test_delta_replay_rechecks_authorization_before_point_reads(saved, monkeypatch):
+    store, sid = saved
+    [item] = store.append(sid, [_message()])
+    revision = session_stream.item_revision(sid)[0]
+    session_stream.mark_items_changed(sid, reset=True, item_id=item.id)
+    authorizations = 0
+
+    async def revoked():
+        nonlocal authorizations
+        authorizations += 1
+        if authorizations > 1:
+            raise OmnigentError("Conversation not found", code=ErrorCode.NOT_FOUND)
+
+    read = Mock(wraps=store.get_item)
+    monkeypatch.setattr(store, "get_item", read)
+    with pytest.raises(OmnigentError):
+        await _events(
+            SessionRecovery(
+                store,
+                sid,
+                revoked,
+                enabled=True,
+                after_position=item.position,
+                after_revision=revision,
+                stream_epoch=inflight_text.stream_epoch(),
+            )
+        )
+    read.assert_not_called()
 
 
 async def test_idle_heartbeats_do_not_rescan_unchanged_history(saved, monkeypatch):

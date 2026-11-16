@@ -3,6 +3,7 @@ import { expect, it } from "vitest";
 import {
   branchRoots,
   branchDescendantCounts,
+  branchDescendants,
   branchSectionAssignments,
   branchSource,
   visibleBranchRows,
@@ -18,6 +19,38 @@ function branch(id: string, parent?: string): BranchConversation {
       : null,
   };
 }
+
+it("collects only revealable filtered descendants, independently of disclosure and delegation", () => {
+  const rows = [
+    branch("root"),
+    branch("child", "root"),
+    branch("grandchild", "child"),
+    { ...branch("delegation-only"), parent_session_id: "root" },
+    branch("another-section", "root"),
+    branch("hidden-path-child", "filtered-out-parent"),
+  ];
+  const sections = new Map([
+    ["root", "sessions"],
+    ["child", "sessions"],
+    ["grandchild", "sessions"],
+    ["another-section", "pinned"],
+  ]);
+  expect(branchDescendants(rows, "root", sections).map((row) => row.id)).toEqual([
+    "child",
+    "grandchild",
+  ]);
+  expect(branchDescendants(rows, "root", sections, 2).map((row) => row.id)).toEqual(["child"]);
+  expect(
+    branchDescendants(
+      rows.filter((row) => row.id !== "child"),
+      "root",
+      sections,
+    ),
+  ).toEqual([]);
+  expect(
+    branchDescendants([branch("root", "grandchild"), ...rows.slice(1)], "root", sections),
+  ).toHaveLength(2);
+});
 it("walks four levels in visible order and retains unreachable ancestors as orphans", () => {
   const rows = [
     branch("root"),

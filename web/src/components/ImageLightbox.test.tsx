@@ -201,6 +201,48 @@ const galleryImages = ["Old history", "Current screenshot", "Later output"].map(
   source: `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><text y="12">${index}</text></svg>`)}`,
 }));
 
+/** Supply the layout and capture APIs that jsdom cannot measure or dispatch. */
+function measureGestureStage(stage: HTMLElement) {
+  const image = stage.querySelector("img")!;
+  const dimensions = { width: 400, height: 600, imageWidth: 400, imageHeight: 600 };
+  Object.defineProperties(stage, {
+    clientWidth: { get: () => dimensions.width },
+    clientHeight: { get: () => dimensions.height },
+  });
+  Object.defineProperties(image, {
+    offsetWidth: { get: () => dimensions.imageWidth },
+    offsetHeight: { get: () => dimensions.imageHeight },
+  });
+  stage.getBoundingClientRect = () =>
+    DOMRect.fromRect({ width: dimensions.width, height: dimensions.height });
+  const captured = new Set<number>();
+  stage.setPointerCapture = vi.fn((pointerId) => {
+    captured.add(pointerId);
+  });
+  stage.hasPointerCapture = (pointerId) => captured.has(pointerId);
+  stage.releasePointerCapture = vi.fn((pointerId) => {
+    captured.delete(pointerId);
+  });
+  return { image, dimensions, captured };
+}
+
+function touch(
+  stage: HTMLElement,
+  phase: "pointerDown" | "pointerMove" | "pointerUp" | "pointerCancel" | "lostPointerCapture",
+  pointerId: number,
+  clientX: number,
+  clientY: number,
+) {
+  fireEvent[phase](stage, {
+    pointerId,
+    pointerType: "touch",
+    isPrimary: pointerId === 1,
+    button: 0,
+    clientX,
+    clientY,
+  });
+}
+
 describe("whole-chat lightbox gallery", () => {
   afterEach(() => vi.restoreAllMocks());
   async function openGallery() {
@@ -402,6 +444,145 @@ describe("whole-chat lightbox gallery", () => {
       expect(image).toHaveAttribute("referrerpolicy", "no-referrer");
     expect(authenticatedImageLoader).not.toHaveBeenCalled();
   });
+  it.each([1, 2])(
+    "pinches then pans with the surviving touch after lifting pointer %s",
+    async (lifted) => {
+      await openGallery();
+      const stage = screen.getByTestId("lightbox-stage");
+      const { image, captured } = measureGestureStage(stage);
+      touch(stage, "pointerDown", 1, 150, 300);
+      touch(stage, "pointerDown", 2, 250, 300);
+      touch(stage, "pointerMove", 1, 100, 300);
+      touch(stage, "pointerMove", 2, 300, 300);
+      expect(image).toHaveStyle({ transform: "translate(0px, 0px) scale(2)" });
+      expect(screen.getByRole("button", { name: "Reset zoom" })).toHaveTextContent("200%");
+      const remaining = lifted === 1 ? 2 : 1;
+      const origin = remaining === 1 ? 100 : 300;
+      touch(stage, "pointerUp", lifted, lifted === 1 ? 100 : 300, 300);
+      expect(image).toHaveStyle({ transform: "translate(0px, 0px) scale(2)" });
+      expect(captured).toEqual(new Set([remaining]));
+      touch(stage, "pointerMove", remaining, origin + 40, 320);
+      expect(image).toHaveStyle({ transform: "translate(40px, 20px) scale(2)" });
+      touch(stage, "pointerUp", remaining, origin + 40, 320);
+      fireEvent.click(stage);
+      expect(captured.size).toBe(0);
+      expect(screen.getByText("2 / 3")).toBeVisible();
+      expect(screen.getByRole("button", { name: "Close" })).toBeVisible();
+    },
+  );
+
+  it("anchors pinch zoom at its midpoint, clamps zoom and pan, and keeps edge drags in the image", async () => {
+    await openGallery();
+    const stage = screen.getByTestId("lightbox-stage");
+    const { image } = measureGestureStage(stage);
+    touch(stage, "pointerDown", 1, 150, 250);
+    touch(stage, "pointerDown", 2, 250, 250);
+    touch(stage, "pointerMove", 2, 350, 250);
+    expect(image).toHaveStyle({ transform: "translate(50px, 50px) scale(2)" });
+    touch(stage, "pointerMove", 2, 1150, 250);
+    expect(screen.getByRole("button", { name: "Reset zoom" })).toHaveTextContent("800%");
+    touch(stage, "pointerMove", 2, 151, 250);
+    expect(image).toHaveStyle({ transform: "translate(0px, 0px) scale(1)" });
+    touch(stage, "pointerUp", 2, 151, 250);
+    touch(stage, "pointerMove", 1, 20, 250);
+    touch(stage, "pointerUp", 1, 20, 250);
+    expect(screen.getByText("2 / 3")).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
+    touch(stage, "pointerDown", 1, 200, 300);
+    touch(stage, "pointerMove", 1, -2000, -2000);
+    expect(image).toHaveStyle({ transform: "translate(-100px, -150px) scale(1.5)" });
+    touch(stage, "pointerMove", 1, -1990, -1990);
+    expect(image).toHaveStyle({ transform: "translate(-90px, -140px) scale(1.5)" });
+    touch(stage, "pointerMove", 1, 2000, 2000);
+    expect(image).toHaveStyle({ transform: "translate(100px, 150px) scale(1.5)" });
+    touch(stage, "pointerUp", 1, 2000, 2000);
+    fireEvent.click(stage);
+    expect(screen.getByText("2 / 3")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Close" })).toBeVisible();
+  });
+
+  it.each(["pointerCancel", "lostPointerCapture"] as const)(
+    "clears both contacts on %s and accepts a fresh fit swipe",
+    async (cancel) => {
+      await openGallery();
+      const stage = screen.getByTestId("lightbox-stage");
+      const { captured } = measureGestureStage(stage);
+      touch(stage, "pointerDown", 1, 150, 300);
+      touch(stage, "pointerDown", 2, 250, 300);
+      touch(stage, cancel, 2, 250, 300);
+      touch(stage, "pointerMove", 1, 20, 300);
+      touch(stage, "pointerUp", 1, 20, 300);
+      fireEvent.click(stage);
+      expect(captured.size).toBe(0);
+      expect(screen.getByText("2 / 3")).toBeVisible();
+      expect(screen.getByRole("button", { name: "Close" })).toBeVisible();
+      touch(stage, "pointerDown", 1, 200, 300);
+      touch(stage, "pointerMove", 1, 100, 300);
+      touch(stage, "pointerUp", 1, 100, 300);
+      expect(screen.getByText("3 / 3")).toBeVisible();
+    },
+  );
+
+  it("reclamps on viewport/image changes and discards in-flight contacts across selection", async () => {
+    await openGallery();
+    const stage = screen.getByTestId("lightbox-stage");
+    const { image, dimensions, captured } = measureGestureStage(stage);
+    fireEvent.doubleClick(stage);
+    touch(stage, "pointerDown", 1, 200, 300);
+    touch(stage, "pointerMove", 1, 2000, 2000);
+    expect(image).toHaveStyle({ transform: "translate(200px, 300px) scale(2)" });
+    dimensions.width = 600;
+    dimensions.height = 800;
+    fireEvent(window, new Event("resize"));
+    expect(captured.size).toBe(0);
+    expect(image).toHaveStyle({ transform: "translate(100px, 200px) scale(2)" });
+    touch(stage, "pointerMove", 1, -2000, -2000);
+    touch(stage, "pointerUp", 1, -2000, -2000);
+    expect(image).toHaveStyle({ transform: "translate(100px, 200px) scale(2)" });
+    dimensions.imageWidth = 20;
+    dimensions.imageHeight = 20;
+    fireEvent.load(image);
+    expect(image).toHaveStyle({ transform: "translate(0px, 0px) scale(2)" });
+    touch(stage, "pointerDown", 1, 150, 300);
+    touch(stage, "pointerDown", 2, 250, 300);
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "ArrowRight" });
+    expect(captured.size).toBe(0);
+    const nextStage = screen.getByTestId("lightbox-stage");
+    touch(nextStage, "pointerMove", 1, 20, 300);
+    touch(nextStage, "pointerUp", 1, 20, 300);
+    fireEvent.click(nextStage);
+    expect(screen.getByText("3 / 3")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Close" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Reset zoom" })).toHaveTextContent("100%");
+  });
+
+  it("clamps endpoints and permits a vertical dismiss only on a fresh fit gesture", async () => {
+    await openGallery();
+    let stage = screen.getByTestId("lightbox-stage");
+    measureGestureStage(stage);
+    fireEvent.click(screen.getByRole("button", { name: "Next image" }));
+    stage = screen.getByTestId("lightbox-stage");
+    touch(stage, "pointerDown", 1, 200, 300);
+    touch(stage, "pointerUp", 1, 100, 300);
+    fireEvent.click(stage);
+    expect(screen.getByText("3 / 3")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Previous image" }));
+    fireEvent.click(screen.getByRole("button", { name: "Previous image" }));
+    stage = screen.getByTestId("lightbox-stage");
+    touch(stage, "pointerDown", 1, 100, 300);
+    touch(stage, "pointerUp", 1, 200, 300);
+    expect(screen.getByText("1 / 3")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
+    touch(stage, "pointerDown", 1, 200, 300);
+    touch(stage, "pointerUp", 1, 200, 500);
+    expect(screen.getByRole("dialog")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Reset zoom" }));
+    touch(stage, "pointerDown", 1, 200, 300);
+    touch(stage, "pointerUp", 1, 200, 500);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
   it("swipes only at fit and suppresses the release click across image changes", async () => {
     await openGallery();
     const stage = screen.getByTestId("lightbox-stage");

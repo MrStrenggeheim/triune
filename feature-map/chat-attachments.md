@@ -11,8 +11,10 @@ Generated attachments keep their original bytes; workspace references use their 
 - `uploads`: the composer accepts ordinary files up to 50 MB independently of model interpretation; supported native filesystem delivery remains available within its quotas.
 - `images`: raster images and SVG render in image elements, open in the shared lightbox and download as originals.
 - `image-gallery`: transcript previews open all authorized images in that chat in message order, including older and virtualized history.
-  Arrows, keyboard and the compact bottom thumbnails navigate; horizontal swipes navigate and vertical swipes dismiss at fit.
-  Zoomed drags retain pan ownership, and release clicks cannot close a newly selected image.
+  Arrows, keyboard and the compact bottom thumbnails navigate; only fresh single-contact gestures starting at Fit navigate horizontally or dismiss vertically.
+  Two-contact midpoint pinch supports 1×–8× zoom with bounded pan and smooth continuation after either finger lifts.
+  Zoomed drags and pinch continuations retain pan ownership; cancellation, lost capture, resize and image changes clear stale gestures.
+  Selection resets to Fit, and release clicks cannot close a newly selected image.
   Opening the gallery scans bounded history pages; failures retain the clicked image and offer Retry rather than presenting an incomplete list as complete.
   Remote images share the renderer's exact GitHub-asset allowlist and use browser image loads with no referrer or session request headers.
 - `documents`: PDF uses the existing PDF viewer; Markdown uses the existing rendered preview; source code and structured text use bounded highlighted or plain text.
@@ -36,6 +38,7 @@ Generated attachments keep their original bytes; workspace references use their 
 - SDK agent: use `upload_file` for a workspace file; the result card remains outside folded tool details.
 - Markdown: local images, file links and path citations open the original message's authorized resource; explicitly attach temporary files outside the workspace.
 - Phone: use the same cards and dialogs within the narrow conversation layout.
+- In the image lightbox, pinch to zoom and drag to pan; reset to Fit before swiping between images or vertically to close.
 
 ## Driving it with the repro environment
 
@@ -51,10 +54,14 @@ Preconditions: follow the [verification skill](skills/verify-omnigent/SKILL.md) 
 - File card, sandbox, media controls, errors and query identity: `web/src/components/ChatAttachment.test.tsx`.
 - Image fitting, lightbox and responsive footer geometry: `web/src/components/SessionImage.test.tsx`, `web/src/components/ImageLightbox.test.tsx` and `tests/browser_ui/chat/test_current_refinement_iteration.py`.
 - Message-order inventory, captured source identity, cursor progress and fit-only gesture decisions: `web/src/components/imageGallery.test.ts`.
+- Iteration6 candidate CDP touch pinch, surviving-contact pan, bounds, cancellation, Fit swipes and desktop wheel/navigation: `tests/browser_ui/chat/test_iteration6.py::test_gallery_native_pinch_pan_and_fit_navigation`.
+- After parent freeze/build, pinch a portrait image, lift either finger and pan to an edge, then reverse; expect bounded motion without jumping, navigation or dismissal.
+- Reset to 100%, swipe across both gallery endpoints and dismiss vertically; expect centered selection, stable stage geometry, retained transcript position and unchanged original download bytes.
 - Live file-only messages and stream finalization: `web/src/lib/blockStream.test.ts`; fork references: `tests/stores/test_chat_attachment_fork.py`.
 
 ## Gotchas
 
+- The iteration6 gesture journey uses Chromium touch injection against a built candidate; its presence is not a successful-run or physical-device claim.
 - Preview/download availability does not promise that the selected model can interpret the contents.
 - Use explicit attachment registration for delivery that must survive immediate deletion; a Markdown path is snapshotted only after an authorized preview/download.
 - Messages written before captured scopes existed require explicit attachments; they do not silently bind to today's workspace.

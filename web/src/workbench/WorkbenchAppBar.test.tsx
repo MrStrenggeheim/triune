@@ -5,7 +5,7 @@ import { WorkbenchAppBar } from "./WorkbenchAppBar";
 
 afterEach(cleanup);
 
-it("reuses the small leading-icon button and coarse target while preserving Open actions", () => {
+it("reuses the small leading-icon button without forcing a large mobile face and preserves Open actions", () => {
   const run = vi.fn();
   render(
     <WorkbenchAppBar
@@ -18,13 +18,15 @@ it("reuses the small leading-icon button and coarse target while preserving Open
   );
   const button = screen.getByRole("button", { name: "Open view" });
   expect(button).toHaveAttribute("data-size", "sm");
-  expect(button).toHaveClass(
-    "gap-1",
-    "px-2.5",
-    "has-data-[icon=inline-start]:pl-1.5",
+  expect(button).toHaveClass("gap-1", "px-2.5", "has-data-[icon=inline-start]:pl-1.5");
+  expect(button).not.toHaveClass(
+    "p-[5px]",
+    "h-8",
+    "gap-1.5",
     "max-md:size-11!",
+    "pointer-coarse:min-h-11!",
+    "pointer-coarse:min-w-11!",
   );
-  expect(button).not.toHaveClass("p-[5px]", "h-8", "gap-1.5");
   const icon = button.querySelector("svg")!;
   expect(icon).toHaveAttribute("data-icon", "inline-start");
   expect(icon).not.toHaveAttribute("data-icon-size");

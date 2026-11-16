@@ -18,6 +18,11 @@ import { DEFAULT_MODELS_STORAGE_KEY } from "./defaultModelPreferences";
 import { DEFAULT_AGENT_STORAGE_KEY } from "./defaultAgentPreferences";
 import { FOLD_ASSISTANT_NARRATION_STORAGE_KEY } from "./foldNarrationPreferences";
 import {
+  STARTUP_DESTINATION_KEY,
+  readStartupDestination,
+  writeStartupDestination,
+} from "./startupPreferences";
+import {
   resetSessionWorkspaceTabSelections,
   unpinSessionWorkspaceTabs,
 } from "./sessionWorkspaceState";
@@ -29,6 +34,7 @@ import {
 
 /** localStorage keys that constitute exportable user preferences. */
 const EXPORTABLE_KEYS = [
+  STARTUP_DESTINATION_KEY,
   LIST_DENSITY_STORAGE_KEY,
   "omnigent:ui-font-size",
   "omnigent:ui-font-family",
@@ -168,6 +174,7 @@ export function applyImportedSettings(imported: ExportedSettings): number {
     }
   }
   writeListDensity(readListDensity());
+  writeStartupDestination(readStartupDestination());
   const nextPins = readPinnedWorkspaceTabs();
   const removedPins = previousPins.filter((tab) => !nextPins.includes(tab));
   unpinSessionWorkspaceTabs(removedPins);

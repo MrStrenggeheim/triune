@@ -9166,7 +9166,7 @@ export function handleSessionEvent(event: StreamEvent, streamConversationId?: st
         if (
           typeof event.item.id === "string" &&
           typeof event.item.position === "number" &&
-          event.item.type !== "resource_event"
+          (event.item.type !== "resource_event" || !hasCommittedItem(state.blocks, event.item.id))
         ) {
           return { blocks: upsertCanonicalItem(state.blocks, event.item as ConversationItem) };
         }

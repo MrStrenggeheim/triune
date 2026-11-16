@@ -50,7 +50,7 @@ export function SubagentTaskStatus({ status, label }: { status: AgentStatus; lab
         ) : (
           <CircleIcon aria-hidden="true" />
         ))}
-      {statusLabel}
+      <span className="resource-status-text">{statusLabel}</span>
     </Badge>
   );
 }

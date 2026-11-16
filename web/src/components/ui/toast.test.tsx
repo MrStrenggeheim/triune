@@ -174,6 +174,64 @@ describe("shared notifications", () => {
     expect(preview.style.right).toContain("400px");
   });
 
+  it.each([
+    { name: "comfortable", height: 48, target: 24, gap: 12.5 },
+    { name: "compact", height: 36, target: 24, gap: 6.5 },
+    { name: "coarse", height: 48, target: 44, gap: 12.5 },
+  ])(
+    "mirrors the painted header inset for $name notification previews and history",
+    async ({ height, target, gap }) => {
+      let rowTop = 100;
+      vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
+        this: HTMLElement,
+      ) {
+        if (this.hasAttribute("data-notification-test-header"))
+          return new DOMRect(0, rowTop, 600, height);
+        if (this.hasAttribute("data-notification-bell"))
+          return new DOMRect(550, rowTop + (height - target - 1) / 2, target, target);
+        if (
+          this.hasAttribute("data-header-action-surface") &&
+          this.closest("[data-notification-bell]")
+        )
+          return new DOMRect(550 + (target - 24) / 2, rowTop + (height - 25) / 2, 24, 24);
+        return new DOMRect();
+      });
+      render(
+        <NotificationLayoutProvider width={320} bottom="16px">
+          <div className="workspace-control-header" data-notification-test-header>
+            <NotificationBell />
+          </div>
+          <Toaster />
+        </NotificationLayoutProvider>,
+      );
+      act(() => toast("Retained geometry notice"));
+      const preview = screen.getByRole("region", { name: "Notifications" });
+      const top = rowTop + height + gap;
+      expect(preview.style.top).toContain(`${top}px`);
+      expect(preview.style.maxHeight).toContain(`${top}px`);
+      expect(preview).toHaveStyle({ width: "320px" });
+      await act(async () => {
+        rowTop += 20;
+        document
+          .querySelector("[data-notification-test-header]")!
+          .setAttribute("data-list-density", "compact");
+      });
+      expect(preview.style.top).toContain(`${top + 20}px`);
+      fireEvent.click(screen.getByRole("button", { name: "Notifications" }));
+      const history = screen.getByRole("dialog", { name: "Notifications" });
+      expect(history).toHaveAttribute("data-align", "end");
+      expect(history).toHaveAttribute("data-popup-row-anchor", "true");
+      expect(history).toHaveStyle({ width: "320px" });
+      expect(within(history).getByText("Retained geometry notice")).toBeInTheDocument();
+      fireEvent.click(within(history).getByRole("button", { name: "Close notifications" }));
+      expect(
+        getNotificationSnapshot().entries.some(
+          (entry) => entry.title === "Retained geometry notice",
+        ),
+      ).toBe(true);
+    },
+  );
+
   it("filters previously read entries while retaining newly seen notices and recovery actions", async () => {
     mount();
     const retry = vi.fn();

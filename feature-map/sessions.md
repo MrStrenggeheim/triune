@@ -52,10 +52,9 @@ the header menu), and each place is a separate entry point.
   menu of an archived session.
 - `delete`: confirmed, then removed from the list and the server.
 - `export`: Export in the header menu saves the transcript as a local file.
-- `unread`: Mark as unread flags a session to revisit and survives a reload,
-  including for the session being viewed. Its dot appears once the turn is
-  idle; approval and error indicators can take precedence. A row showing the
-  unread dot offers Mark as read instead. Bulk selection also offers these actions.
+- `unread`: Mark as unread survives reload, including for the viewed session; running/starting takes precedence within its activity group, independently of blocking/input/draft attention.
+  A row showing the unread dot offers Mark as read; bulk selection retains both actions.
+- `status-rollup`: collapsed parents combine own facts with currently revealable descendants in the same filtered section; expanded parents show only their own facts, retaining the two original priority groups.
 - `project`: Add to project (Move session once filed) puts a session in a
   project folder from the row menu, the header menu, or the header's folder tag.
 - `project-rename`: the project menu opens a dialog with the name selected;
@@ -392,6 +391,10 @@ doctor`), the built web UI, and at least one session (the `seeded_session`
 fixture creates one). Run each test through the instance:
 
 - Project archive/restore, independent filtering, reload persistence and unchanged member sessions/settings on desktop and phone: `tests/e2e_ui/sessions/test_sidebar_project_context_menu.py::test_project_archive_filter_restore_preserves_members`.
+- Iteration6 candidate collapsed revealable membership, expanded own-only state and authoritative revocation: `tests/browser_ui/chat/test_iteration6.py::test_sidebar_rollup_uses_revealable_children_only_while_collapsed`.
+- After parent freeze/build, collapse a parent with its own error and a revealable running grandchild: expect error and running together; expand it to retain own error only.
+- Change intermediate disclosure and current My/Shared/project/archive filters: ancestor status follows the revealable branch tree, excluding delegation-only and differently filed metadata.
+- Missing membership, unfinished browser draft/read hydration and unknown latest errors retain partial coverage; no descendant transcript fetch or per-row polling is needed.
 - Local deployment/session recovery (plain pytest): `tests/deploy/test_local_release.py`, `tests/deploy/test_session_restart.py` and `tests/server/routes/test_side_chat_runner_recovery.py` cover active-session restart, rollback, owner-only continuation and preserved human gates.
 
 ```sh
@@ -817,6 +820,8 @@ plain `uv run pytest`, which starts a private server for the test.
 
 ## Gotchas
 
+- Sidebar status keeps two independent priorities: blocking problem > needs input > draft, and running/starting > unread; empty groups reserve no slot and lower facts remain in accessible descriptions.
+- Server descendant coverage alone cannot prove complete filtered membership, browser hydration or latest-error knowledge; revoked intermediate membership prunes that entire inherited path.
 - Existing side chats on separate runners must still be closed individually.
   Hostless CLI Stop keeps its existing per-conversation behavior.
 - Starting a side chat after its parent stopped relaunches the parent. The new

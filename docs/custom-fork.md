@@ -91,7 +91,9 @@ Views retain drafts, buffers, undo state and terminal lifecycles while inactive 
 Hidden chat memberships detach without discarding retained state and reconcile missed items when shown again.
 On servers advertising `transcript_stream:1`, one updates WebSocket per browser tab carries list watches, independently authorized transcript memberships and presence.
 Saved items reconcile by exact ID and committed conversation position; pending previews retain explicit anchors until their own committed identity replaces them.
-Reconnect resumes from position, revision and stream-epoch cursors: trusted same-epoch appends replay the tail, while old-item changes or untrusted cursors require an authoritative reset.
+Missing positioned activity updates insert once in canonical order; loaded cards enrich in place, while unpositioned legacy updates retain bounded recovery and truthful failure notices.
+Reconnect resumes from position, revision and stream-epoch cursors: trusted same-epoch recovery point-reads tracked old-card changes and replays the appended tail.
+The bounded mutation journal coalesces changed identities; expired/untracked mutations and untrusted cursors still require an authoritative reset.
 Reset replaces committed membership while preserving drafts, uploads and unmatched previews; unchanged heartbeats cause no history reads or replay.
 Revision tracking is process-local and workspace-scoped; writes bypassing its mutation hooks require explicit invalidation or reset.
 Older servers use SSE after bounded capability negotiation of 750ms; host-routed sessions retain their existing SSE routing.
@@ -168,7 +170,7 @@ Reusable native children create task cards from committed assignments rather tha
 Selected queued sends retain lifecycle ownership so old idle events cannot release other drafts.
 Queued previews keep text and bounded attachment summaries on one line and retain complete text/files through Edit.
 Shelf outer radii match the composer; inner control radii derive from the shared radius and equal edge insets.
-Active plan entries use the shared open-arc activity indicator; completion remains read-only.
+Active plan entries use the same unchecked box as pending, with the shared active border and accessible In progress text; completed entries stay checked and read-only.
 Sidebar/rail/palette scrollbars are hidden without removing scrolling.
 
 Offline shell history stays passive and readable, with typed authorization/routing failures preserved and safe notifications.
@@ -178,16 +180,29 @@ Usage prioritizes observed context, compact session totals and reported quota wi
 Interactive popup surfaces use opaque theme colors so their text and controls remain readable in dark mobile views.
 Information retains agent/session details, MCP controls, policies and version diagnostics.
 
-## Iteration5 source status and deferred work
+## Iteration6 source status
 
-The iteration5 behavior above describes the source candidate; build, release validation and activation are recorded separately.
-The following iteration6 requests remain unimplemented in this pass.
+The previous installed release remains `0.20.0-3c12d054fd99` (`3c12d054fd996c524ab976f0dd5a648b53430657`).
+These ten refinements describe iteration6 source, without claiming an iteration6 build, successful integrated tests or activation.
+The parent owns the stable build and compiled-browser verification; component handoffs live under `artifacts/iteration6-20261116/`.
 
-| Request | Deferred scope |
+| Request | Source behavior |
 | --- | --- |
-| `MOBILE-IMAGE-GESTURES-6` | Further mobile image gestures |
-| `PLAN-ACTIVE-BOX-6` | Active-plan box |
-| `MOBILE-SAFE-TOP-6` | Mobile top safe-area refinement |
-| `MOBILE-COMPACT-SHELF-6` | Mobile compact shelf refinement |
-| `STARTUP-DESTINATION-6` | Startup destination |
-| `POPUP-VERTICAL-ANCHOR-6` | Popup spacing from header/shelf edges |
+| `MOBILE-SAFE-TOP-6` | Match native top paint, browser theme-color and standalone status paint to the resolved application bar; reserve safe insets once. |
+| `MOBILE-COMPACT-SHELF-6` | Use 4px/2px Comfortable/Compact shelf spacing and 8px/4px mobile composer gutters, retaining 44px shelf controls and continuous moving paint. |
+| `STARTUP-DESTINATION-6` | Appearance → On startup defaults to Continue last session: restore the saved layout owner on cold home launch; explicit links and New chat win. |
+| `PLAN-ACTIVE-BOX-6` | Pending and active share an unchecked box; active changes only its border, preserves status text and remains read-only. |
+| `POPUP-VERTICAL-ANCHOR-6` | Match the popup's row-edge gap to the visible control inset on the actual opening side, retaining collision handling. |
+| `MOBILE-IMAGE-GESTURES-6` | Pinch from 1× to 8× and pan within bounds; only fresh gestures starting at Fit navigate or dismiss. |
+| `SIDEBAR-STATUS-ROLLUP-6` | Collapsed parents include currently revealable descendants; expanded parents remain own-only, under the original two status-group priorities. |
+| `MOBILE-PLUS-SIZE-6` | Restore the top-bar Open button's 28px mobile face with transparent hit expansion; desktop spacing and tab-strip plus retain their existing roles. |
+| `ACTIVITY-RECOVERY-6` | Insert missing positioned activity once; recover tracked old-card changes by authorized point reads, retaining full reset when mutation coverage is unavailable. |
+| `RESOURCE-ROW-RESPONSIVE-6` | Ellipsize resource text, collapse narrow status labels to accessible icons and move message-card controls below text when needed. |
+
+The status groups remain blocking problem > needs input > draft, and running/starting > unread; each empty group collapses independently.
+Rollup excludes children outside the current revealable section, including filtered, archived and delegation-only metadata; incomplete membership or personal/error evidence stays unknown.
+Startup falls back to New chat when the saved owner is unavailable, preserving its layout and draft.
+
+Candidate acceptance is mapped in [Unified workspace](../feature-map/unified-workspace.md), [Composer](../feature-map/composer.md), [Sessions](../feature-map/sessions.md), [Chat activity](../feature-map/chat-activity.md) and [Chat attachments](../feature-map/chat-attachments.md).
+`tests/browser_ui/chat/test_iteration6.py` contains the current startup, sidebar, shelf/plan/popup, responsive-row and gallery journeys; references describe test intent, not execution results.
+Native-inset emulation and Chromium touch injection do not establish physical iOS/Android, keyboard or installed-PWA behavior.

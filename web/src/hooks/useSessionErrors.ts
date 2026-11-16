@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { useCallback, useSyncExternalStore } from "react";
 import { useQueries, useQueryClient } from "@tanstack/react-query";
 import type { Conversation } from "./useConversations";
@@ -85,13 +86,16 @@ async function fetchLatestError(
   }
 }
 
-function liveError(conversation: ErrorConversation): LatestSessionError | null | undefined {
+function liveError(
+  conversation: ErrorConversation,
+  requireLoaded = false,
+): LatestSessionError | null | undefined {
   const entry = conversationRegistry.peek(conversation.id);
   const state = entry?.getState();
   if (entry?.disposed || !state || state.conversationLoadError !== null) return undefined;
   // The initial history request will supply the latest message. Wait for it
   // even before the stream controller is installed, without a second read.
-  if (state.loadingConversation) return null;
+  if (state.loadingConversation) return requireLoaded ? undefined : null;
   if (state.abortController === null || state.abortController.signal.aborted) {
     return undefined;
   }
@@ -102,7 +106,15 @@ function liveError(conversation: ErrorConversation): LatestSessionError | null |
 /** Reuse live transcripts; unopened rows share a cached, bounded tail read. */
 export function useSessionErrorStates(
   conversations: readonly ErrorConversation[],
-): (LatestSessionError | null)[] {
+): (LatestSessionError | null)[];
+export function useSessionErrorStates(
+  conversations: readonly ErrorConversation[],
+  options: { fetchMissing: false },
+): (LatestSessionError | null | undefined)[];
+export function useSessionErrorStates(
+  conversations: readonly ErrorConversation[],
+  { fetchMissing = true }: { fetchMissing?: boolean } = {},
+): (LatestSessionError | null | undefined)[] {
   const queryClient = useQueryClient();
   const subscribe = useCallback(
     (notify: () => void) => {
@@ -122,12 +134,19 @@ export function useSessionErrorStates(
       };
       const unsubscribe = conversationRegistry.subscribe(changed);
       const unsubscribeDisposed = conversationRegistry.subscribeDisposed(changed);
+      const unsubscribeCache = !fetchMissing
+        ? queryClient.getQueryCache().subscribe((event) => {
+            const [key, id] = event.query.queryKey;
+            if (key === "session-latest-error" && typeof id === "string" && ids.has(id)) notify();
+          })
+        : () => {};
       return () => {
         unsubscribe();
         unsubscribeDisposed();
+        unsubscribeCache();
       };
     },
-    [conversations, queryClient],
+    [conversations, queryClient, fetchMissing],
   );
   // A primitive snapshot only notifies React when an error actually changes,
   // not on every streamed token or unrelated chat-store update.
@@ -135,7 +154,22 @@ export function useSessionErrorStates(
     () =>
       conversations
         .map((c) => {
-          const error = liveError(c);
+          const live = liveError(c, !fetchMissing);
+          const cached = !fetchMissing
+            ? queryClient.getQueryState<LatestSessionError | null>([
+                "session-latest-error",
+                c.id,
+                c.updated_at,
+                c.status,
+                c.host_online,
+              ])
+            : undefined;
+          const error =
+            live === undefined && !fetchMissing
+              ? cached?.isInvalidated
+                ? undefined
+                : cached?.data
+              : live;
           if (error === undefined) return "?";
           if (error === "error") return "e";
           if (error === "disconnected") return "d";
@@ -143,11 +177,11 @@ export function useSessionErrorStates(
           return "0";
         })
         .join(""),
-    [conversations],
+    [conversations, queryClient, fetchMissing],
   );
   const live = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
   const queries = useQueries({
-    queries: conversations.map((c, i) => ({
+    queries: (fetchMissing ? conversations : []).map((c, i) => ({
       // updated_at is the same freshness signal used by the unread dot and
       // refreshed by the shared session-updates socket/list reconciliation.
       queryKey: ["session-latest-error", c.id, c.updated_at, c.status, c.host_online],
@@ -164,8 +198,9 @@ export function useSessionErrorStates(
       retry: false,
     })),
   });
-  return queries.map((query, i) => {
-    if (live[i] === "?") return query.data ?? null;
+  return conversations.map((_, i) => {
+    if (live[i] === "?")
+      return queries[i]?.data !== undefined ? queries[i].data : fetchMissing ? null : undefined;
     if (live[i] === "e") return "error";
     if (live[i] === "d") return "disconnected";
     if (live[i] === "r") return "recovered_disconnect";

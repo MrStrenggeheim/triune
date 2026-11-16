@@ -1,8 +1,27 @@
 /* Triune additions: PolyForm Noncommercial 1.0.0; see LICENSING.md.
  * Required Notice: Copyright 2026 MrStrenggeheim. Triune (https://github.com/MrStrenggeheim/triune).
  */
-.activity-row--message {
+.activity-row--message,
+.activity-row--resource {
   container-type: inline-size;
+}
+
+/* Short resource titles stay on one line even when their renderer uses blocks. */
+.resource-title-detail :is(div, p),
+.resource-description :is(div, p) {
+  display: inline;
+}
+.resource-title-detail *,
+.activity-row--resource .resource-description * {
+  white-space: inherit;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+@container (max-width: 440px) {
+  .activity-row--resource .resource-status-text {
+    display: none;
+  }
 }
 
 .activity-message-text {

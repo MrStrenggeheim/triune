@@ -8093,7 +8093,7 @@
         ]
       },
       "SessionActivity": {
-        "description": "Own runtime status and authorized nested work, without descendant identity.",
+        "description": "Independent own status and authorized descendant facts, with traversal coverage.",
         "properties": {
           "descendant_running": {
             "anyOf": [
@@ -8105,6 +8105,18 @@
               }
             ],
             "title": "Descendant Running"
+          },
+          "descendants": {
+            "items": {
+              "$ref": "#/components/schemas/SessionActivityDescendant"
+            },
+            "title": "Descendants",
+            "type": "array"
+          },
+          "descendants_complete": {
+            "default": false,
+            "title": "Descendants Complete",
+            "type": "boolean"
           },
           "own_status": {
             "enum": [
@@ -8120,6 +8132,138 @@
           "own_status"
         ],
         "title": "SessionActivity",
+        "type": "object"
+      },
+      "SessionActivityDescendant": {
+        "description": "Authorized lightweight own facts for the requesting browser's personal overlays.",
+        "properties": {
+          "archived": {
+            "default": false,
+            "title": "Archived",
+            "type": "boolean"
+          },
+          "branch_source_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch Source Id"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "labels": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Labels",
+            "type": "object"
+          },
+          "latest_error": {
+            "default": "unknown",
+            "enum": [
+              "error",
+              "disconnected",
+              "recovered_disconnect",
+              "unknown"
+            ],
+            "title": "Latest Error",
+            "type": "string"
+          },
+          "owner": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner"
+          },
+          "parent_session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Session Id"
+          },
+          "pending_elicitations_count": {
+            "format": "int64",
+            "title": "Pending Elicitations Count",
+            "type": "integer"
+          },
+          "permission_level": {
+            "anyOf": [
+              {
+                "format": "int64",
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Permission Level"
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
+          },
+          "status": {
+            "enum": [
+              "idle",
+              "running",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "int64",
+            "title": "Updated At",
+            "type": "integer"
+          },
+          "viewer_last_seen": {
+            "anyOf": [
+              {
+                "format": "int64",
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Viewer Last Seen"
+          },
+          "viewer_unread": {
+            "default": false,
+            "title": "Viewer Unread",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "updated_at",
+          "pending_elicitations_count"
+        ],
+        "title": "SessionActivityDescendant",
         "type": "object"
       },
       "SessionAgentChangedEvent": {

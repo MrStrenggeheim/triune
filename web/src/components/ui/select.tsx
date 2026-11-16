@@ -115,11 +115,19 @@ function SelectContent({
   children,
   position = "item-aligned",
   align = "center",
+  side = "bottom",
+  sideOffset = 0,
   collisionPadding,
   style,
   ...props
 }: React.ComponentProps<typeof SelectPrimitive.Content>) {
-  const bounds = useAnchoredPopupBounds(collisionPadding, style, position === "popper");
+  const bounds = useAnchoredPopupBounds(
+    collisionPadding,
+    style,
+    position === "popper",
+    side,
+    sideOffset,
+  );
   return (
     <SelectPrimitive.Portal container={getEmbedRoot() ?? undefined}>
       <SelectPrimitive.Content
@@ -128,10 +136,13 @@ function SelectContent({
         className={cn(
           "relative z-50 max-h-(--radix-select-content-available-height) min-w-36 origin-(--radix-select-content-transform-origin) overflow-x-hidden overflow-y-auto rounded-[12px] border border-border bg-popover text-popover-foreground shadow-menu duration-150 ease-[cubic-bezier(0.16,1,0.3,1)] data-[align-trigger=true]:animate-none data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
           position === "popper" &&
+            !bounds["data-popup-row-anchor"] &&
             "data-[side=bottom]:translate-y-1 data-[side=left]:-translate-x-1 data-[side=right]:translate-x-1 data-[side=top]:-translate-y-1",
           className,
         )}
         position={position}
+        side={side}
+        sideOffset={sideOffset}
         align={position === "popper" ? "center" : align}
         {...props}
         {...(position === "popper" ? bounds : { collisionPadding, style })}

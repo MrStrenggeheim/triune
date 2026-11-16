@@ -1,8 +1,10 @@
+// Modified for Triune.
 import { readThemePalette } from "./themePalette";
 import { DEFAULT_CUSTOM_THEME, readCustomTheme } from "./customTheme";
 import { beforeEach, describe, expect, it } from "vitest";
 import { COMPOSER_SEND_SHORTCUT_STORAGE_KEY } from "./composerSendShortcutPreferences";
 import { FOLD_ASSISTANT_NARRATION_STORAGE_KEY } from "./foldNarrationPreferences";
+import { readStartupDestination, writeStartupDestination } from "./startupPreferences";
 import { applyImportedSettings, collectSettings } from "./settingsPortability";
 import {
   type SessionWorkspaceState,
@@ -18,6 +20,17 @@ import {
 } from "./workspaceTabPreferences";
 
 beforeEach(() => localStorage.clear());
+
+it("round-trips the startup preference without exporting a last-session identity", () => {
+  writeStartupDestination("new");
+  localStorage.setItem('omnigent:dock:v1:["owner","server","browser"]', "private layout");
+  const exported = collectSettings()!;
+  expect(Object.values(exported.settings)).not.toContain("private layout");
+  applyImportedSettings({ version: 1, settings: {} });
+  expect(readStartupDestination()).toBe("continue");
+  applyImportedSettings(exported);
+  expect(readStartupDestination()).toBe("new");
+});
 
 it("round-trips workspace pins and default without restoring stale selections", () => {
   writePinnedWorkspaceTabs(["changes", "subagents"]);

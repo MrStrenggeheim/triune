@@ -2,6 +2,7 @@
 
 A compact developer workspace built from Triune's existing components.
 The approved workspace specification governs behavior; later owner corrections govern appearance.
+Iteration6 refinements describe source; [the fork guide](../../docs/custom-fork.md#iteration6-source-status) distinguishes them from the installed release.
 
 ## Basis
 
@@ -70,7 +71,9 @@ Each tab contains its label and its own close control.
 Desktop tab/container headers and view headers remain separate rows, including single-tab panes.
 Mobile reuses horizontally scrolling tabs, including views from other panes; only the selected view is shown.
 Narrow composer workspace controls collapse to an icon and chevron while retaining their accessible full location.
-The shell owns the device bottom safe area once; the mobile composer adds only an 8px content gutter.
+The shell owns device safe-area insets once; native top clearance uses the application-bar paint and bottom clearance uses the content surface.
+Browser `theme-color` follows the resolved opaque application-bar color, and the standalone status shim paints that surface across the reserved top inset.
+Main and side-chat mobile composers add an 8px Comfortable or 4px Compact content gutter.
 Remove pane docking menus and the app-bar Layout control; mouse hover or keyboard focus replaces the tab type icon with its pin control, without reserving another slot.
 Touch tabs switch on the first tap; pinning remains available through the shared context menu.
 Keep the chat content action menu as three dots; place the existing Chat/Terminal switch immediately before it.
@@ -80,7 +83,10 @@ Center empty guidance within the entire available content area.
 Navigation keeps rows, expansion, selection and scroll during background refresh.
 Load authorized hierarchy metadata ahead of expansion; leaves have neither chevrons nor empty-child rows.
 Actions appear on row hover, keyboard focus or an open action menu, with a reachable touch alternative.
-Running, approval, draft and unread indicators coexist in the trailing row group.
+The trailing status area retains two independent groups: blocking problem > needs input > draft, and running/starting > unread; empty groups reserve no space.
+Collapsed parents combine their own facts with all descendants revealable in the current filtered sidebar section; expanded parents show only their own facts.
+Intermediate disclosure does not change ancestor membership; filtered, archived, differently filed and delegation-only children contribute nothing unless that row can reveal them.
+Missing authorized membership, draft/read hydration or latest-error evidence remains unknown, with partial coverage exposed accessibly.
 Parents alone have a trailing child-count/chevron; children use shallow indentation.
 Hover actions truncate titles before controls instead of covering labels or status.
 
@@ -110,8 +116,11 @@ Keep the primary selected strip visible through hover and press.
 
 Use `CloseButton` for close appearance while keeping dismissal, propagation and async guards in the owning feature.
 Its default 24px surface centers the 14px glyph inside a separate target of at least 44px on coarse pointers.
-Coarse headers retain 48px height in both densities so expanded targets do not overlap; dialogs balance their top/right close insets.
+Shared coarse header primitives retain 48px height; docked application headers follow the 48px/36px density setting with targets contained in their row.
+Dialogs balance their top/right close insets.
 Popup composites use the shared inset, item-gap, text-gap and footer-gap roles independently of generic list density.
+Header and shelf popups measure their outer gap from the owning row edge, matching the visible control's inset on the actual opening side.
+Use the shelf's outer paint owner and exclude its negative overlap; retain Radix collision handling, horizontal alignment and standalone popup spacing.
 
 The isolated artifact kit consumes generated aliases and explicit host-provided theme values, with no external CDN or full SPA stylesheet.
 Its manifest declares native form semantics and optional tabs, disclosure and tooltip helpers; it does not imply complete React/Radix behavior parity.
@@ -124,6 +133,8 @@ Choice cards and ordinary focus borders use `--workspace-control-active-border`;
 The composer retains its named shadow-only focus exception.
 
 Completed plans and settled resources do not reserve an automatic shelf.
+Pending and active plan entries share the unchecked `CheckboxVisual`; active changes only the border to `--workspace-control-active-border` and retains accessible In progress text.
+Completed entries stay checked; plan markers remain decorative and read-only.
 The existing chat menu can show/hide activity, open the recorded plan, or open Orchestration resources; a new pending question or approval reveals attention again.
 Manual hiding preserves pending answer drafts, and remounted chat views return to automatic visibility.
 
@@ -144,6 +155,8 @@ Background color changes mark full surface edges without an additional border; e
 The native bottom gesture area shares the chat surface and has no exterior pane divider.
 
 Each chat owns a remembered layout by default; explicit Open to side or sidebar drag adds it to the current layout.
+Appearance → On startup defaults to Continue last session, restoring the saved layout owner on a cold, unqualified home launch.
+Explicit links, New chat and navigation during restoration take precedence; an unavailable owner falls back to the landing composer without deleting its saved layout or draft.
 Every durable subchat opens adjacent without confirmation and starts with inherited history collapsed behind Show history.
 Quote-created drafts keep only the quote and source annotation; explicit Fork retains full-history presentation.
 Preserve typed text around inserted quotes and keep internal context serialization outside editable content.
@@ -172,7 +185,8 @@ Sidebar navigation, TurnRail and the command-palette list also hide native and o
 - Rendered in-chat previews keep their large modal/lightbox behavior and supported zoom/pan/close controls.
 - Shared buttons do not move vertically when pressed; modal close glyphs do not get redundant Close tooltips.
 - Search trigger and popup center on the full application width independently of adjacent controls.
-- On desktop, the primary + Open button sits immediately right of centered Search; preserve the existing mobile arrangement and shared menu.
+- On desktop, the primary + Open button sits immediately right of centered Search; mobile Open restores its 28px square face and the same menu.
+- Mobile Open expands its transparent hit area into free row space without overlapping neighbors; its width is 32px and height is header height minus 4px.
 - Comfortable/Compact use a compact shared segmented selector; file destinations use pane schematics with solid outlines and contained selection marks.
 - File Editor headers show one copyable Host/path, Comments, Diff and the shared three-dot menu; the comments conversation selector belongs inside the comments sidebar.
 - Notifications and workspace-picker headers and entries follow the same density tokens; read-notification visibility is an explicit saved filter.
@@ -195,6 +209,8 @@ Keep one title line, one compact excerpt line and vertically centered semantic s
 Controls are Open chat, Workflow/Orchestration, then disclosure; use the same ghost hover and Sidebar right/down chevron states without animation.
 Omit timestamp, Copy and Copy link footers and their reserved space from these card types for now; ordinary human and assistant footers stay intact.
 Keep one activity card per child agent and update it in place; preserve assignment provenance without separate steering cards.
+An absent activity item with canonical identity and position inserts once at that position; later enrichment retains the loaded card's identity instead of reporting a false recovery failure.
+Same-epoch recovery point-reads tracked old-card changes before replaying the appended tail; expired or untracked mutations still require an authoritative reset.
 Use a short capitalized task summary rather than the raw handoff as the title; steering preserves a valid original summary.
 Returned answers use one attributed Markdown reply per dispatch at its chronological arrival, with the same compact card and expansion.
 Preserve authoritative adapter finality and exact source references; progress cannot replace a shorter final report.
@@ -205,6 +221,8 @@ Its default list contains separate Agents and Shells sections, including settled
 Use the shared All/Agents/Shells control in the header and two-line resource entries with state and supported controls on the right.
 Resource entries reuse semantic status pills with an icon and label in a stable trailing column; the whole row opens without a redundant Open action.
 Colored status pills fit their icon and text; any width reserved for alignment belongs to the uncolored outer column.
+Narrow resource rows keep title details and previews on one ellipsized line and collapse status text to its accessible icon at 440px or less.
+Compact message-card headers move status and actions below the text at 480px or less, preserving separate reachable controls.
 Open resources in tabs; retain graph in the existing menu, without inspector modals or status-group hierarchies.
 Routine capture diagnostics, History coverage and Messages do not appear in Orchestration.
 Workspace selection starts from the captured source chat's Host and path; confirmation alone changes its source.
@@ -219,7 +237,7 @@ Quoting framework text in a genuine human submission does not change its origin.
 Queue and attention shelves share one gapless stack above the composer.
 Both entrance and exit take 200ms, moving behind the composer while the hidden slot collapses; reduced motion is immediate.
 Background count changes do not replay entrance or reset forms, drafts or transcript position.
-Queue spacing retains the previous Comfortable geometry in both density modes, with usable coarse-pointer targets.
+Queue gaps and shelf insets use `--list-gap`: 4px Comfortable and 2px Compact, while narrow/coarse shelf controls retain 44px targets.
 Queue, attention shelf and composer share constrained width; queued text and attachment summaries stay on one ellipsized line.
 Every shelf shares the composer's outer radius and equal horizontal/vertical edge insets.
 Derive the inner control radius from that outer radius minus inset and border spacing, clamped at zero.
@@ -248,6 +266,9 @@ Moving after a held menu begins dragging with the same contact; cancellation and
 Native safe-area clearance belongs to one owner, and nested sidebar fills start to the right of their hierarchy guide.
 
 In-chat image cards and images share their aspect ratio and a 256px media-height cap; footers add only their required height.
+The lightbox supports midpoint-anchored two-finger pinch zoom from 1× to 8× and bounded pan; lifting either contact continues pan without a jump.
+Only a fresh single-contact gesture starting at Fit navigates horizontally or dismisses vertically; zoomed drags and pinch continuations retain pan ownership.
+Cancellation, lost capture, resizing and image changes clear stale gestures; selection resets to Fit while desktop wheel zoom and original downloads remain available.
 Keep footer controls usable on tiny or very tall images; center the fitted image within the footer's minimum card width.
 Allocate footer width naturally to filename and full captured path, wrapping under pressure without fixed half-width limits or a size separator.
 Display equations retain horizontal scrolling and enough vertical clearance for complete glyphs without a vertical scrollbar.

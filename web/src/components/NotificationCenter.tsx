@@ -20,10 +20,10 @@ import type { ToasterProps } from "sonner";
 import { CloseButton } from "@/components/CloseButton";
 import { HeaderActionButton } from "./HeaderActionButton";
 import { Popover, PopoverTrigger } from "@/components/ui/popover";
-import { useAnchoredPopupBounds } from "@/components/ui/anchored-popup";
+import { getPopupRowOffsets, useAnchoredPopupBounds } from "@/components/ui/anchored-popup";
 import { getEmbedRoot } from "@/lib/host";
 import { cn } from "@/lib/utils";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { NotificationCard } from "./NotificationCard";
 import {
   clearCompletedNotifications,
@@ -98,8 +98,12 @@ export function NotificationLayoutProvider({
         const b = right.getBoundingClientRect();
         return a.top - b.top || b.right - a.right;
       });
-      const rect = visible[0]?.getBoundingClientRect();
-      const next = rect ? { top: rect.bottom + 12, right: window.innerWidth - rect.right } : null;
+      const bell = visible[0];
+      const rect = bell?.getBoundingClientRect();
+      const offset = bell ? (getPopupRowOffsets(bell)?.bottom ?? 12) : 12;
+      const next = rect
+        ? { top: rect.bottom + offset, right: window.innerWidth - rect.right }
+        : null;
       setAnchorBounds((previous) =>
         previous?.top === next?.top && previous?.right === next?.right ? previous : next,
       );
@@ -121,7 +125,7 @@ export function NotificationLayoutProvider({
       resize.observe(node);
       mutation.observe(node, {
         attributes: true,
-        attributeFilter: ["hidden", "style", "class", "inert"],
+        attributeFilter: ["hidden", "style", "class", "inert", "data-list-density"],
       });
     }
     window.addEventListener("resize", selectAnchor);
@@ -187,7 +191,7 @@ function NotificationPopupContent({
   ...props
 }: ComponentProps<typeof PopoverPrimitive.Content>) {
   const { boundary } = useContext(NotificationLayout);
-  const bounds = useAnchoredPopupBounds(boundary ? 0 : 16, style);
+  const bounds = useAnchoredPopupBounds(boundary ? 0 : 16, style, true, "bottom", 12);
   return (
     <PopoverPrimitive.Portal container={getEmbedRoot() ?? undefined}>
       <PopoverPrimitive.Content
@@ -195,7 +199,7 @@ function NotificationPopupContent({
         collisionBoundary={boundary}
         side="bottom"
         align="end"
-        sideOffset={12}
+        sideOffset={bounds.sideOffset}
         className={cn("text-ui outline-hidden", className)}
         {...props}
       />
@@ -247,47 +251,43 @@ export function NotificationBell() {
         open={centerOpen && (ownerId === undefined || ownerId === id)}
         onOpenChange={onOpenChange}
       >
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <span className="inline-flex">
-              <PopoverTrigger asChild>
-                <HeaderActionButton
-                  ref={bellRef}
-                  data-notification-bell
-                  type="button"
-                  variant="ghost"
-                  size="icon-xs"
-                  aria-label="Notifications"
-                  aria-description={`${unread} unread, ${running.length} activities in progress`}
-                  className="relative text-muted-foreground"
+        <TooltipProvider side="bottom">
+          <PopoverTrigger asChild>
+            <HeaderActionButton
+              ref={bellRef}
+              data-notification-bell
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              aria-label="Notifications"
+              tooltip={
+                running.length ? `Notifications · ${running.length} in progress` : "Notifications"
+              }
+              aria-description={`${unread} unread, ${running.length} activities in progress`}
+              className="relative text-muted-foreground"
+            >
+              <BellIcon className="size-4" />
+              {running.length > 0 && (
+                <Loader2Icon
+                  aria-hidden
+                  data-icon-size="status"
+                  className="absolute -bottom-0.5 -right-0.5 size-2.5 animate-spin rounded-full bg-background text-primary motion-reduce:animate-none"
+                />
+              )}
+              {unread > 0 && (
+                <span
+                  aria-hidden
+                  className="absolute -top-1 -right-1 min-w-3.5 rounded-full bg-primary px-0.5 text-center text-[9px] leading-3.5 text-primary-foreground"
                 >
-                  <BellIcon className="size-4" />
-                  {running.length > 0 && (
-                    <Loader2Icon
-                      aria-hidden
-                      data-icon-size="status"
-                      className="absolute -bottom-0.5 -right-0.5 size-2.5 animate-spin rounded-full bg-background text-primary motion-reduce:animate-none"
-                    />
-                  )}
-                  {unread > 0 && (
-                    <span
-                      aria-hidden
-                      className="absolute -top-1 -right-1 min-w-3.5 rounded-full bg-primary px-0.5 text-center text-[9px] leading-3.5 text-primary-foreground"
-                    >
-                      {unread > 99 ? "99+" : unread}
-                    </span>
-                  )}
-                  <span className="sr-only">
-                    {unread} unread, {running.length} activities in progress
-                  </span>
-                </HeaderActionButton>
-              </PopoverTrigger>
-            </span>
-          </TooltipTrigger>
-          <TooltipContent side="bottom">
-            Notifications{running.length ? ` · ${running.length} in progress` : ""}
-          </TooltipContent>
-        </Tooltip>
+                  {unread > 99 ? "99+" : unread}
+                </span>
+              )}
+              <span className="sr-only">
+                {unread} unread, {running.length} activities in progress
+              </span>
+            </HeaderActionButton>
+          </PopoverTrigger>
+        </TooltipProvider>
         <NotificationPopupContent
           style={{ ...style, maxHeight: "var(--radix-popper-available-height)" }}
           className="z-[80] flex flex-col gap-0 overflow-hidden rounded-lg bg-popover text-popover-foreground shadow-menu ring-1 ring-foreground/10"

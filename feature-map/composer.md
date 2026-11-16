@@ -31,9 +31,9 @@ and steers messages while the agent is busy.
 - `empty-enter-steer`: the configured send key with an empty composer sends the next queued item immediately, preserving FIFO data and existing newline/permission behavior.
 - `selection-menu`: chat Reply and Ask in side chat share the file-preview selection-menu surface; file menus offer Add comment and Ask in chat.
 - `selected-queue-send`: sending one selected draft reserves its per-chat admission; an old idle edge cannot send remaining drafts.
-- `queue-geometry`: queued text and bounded asset summaries remain on one line; shared shelf/composer radii, equal insets and concentric control curves apply in both densities while the stack retains its presence motion.
+- `queue-geometry`: queued text and asset summaries stay on one line; shelf insets and queue gaps use 4px Comfortable/2px Compact spacing with shared radii, presence motion and 44px narrow/coarse controls.
 - `runtime-notices`: observed native warnings use the shared popover, exact Agent CLI navigation and UI-only Dismiss; unsupported native choosers remain in the CLI.
-- `plan-status`: read-only plan entries reuse accent checkbox visuals with checked, indeterminate and pending states.
+- `plan-status`: read-only pending and active entries share the unchecked box; active changes only its border and accessible status, while completed entries remain checked.
 - `durable-queue`: queued follow-ups survive reload/client restart on this browser profile, preserving FIFO order, text, attachments, reply context, agent and retry/host-wait flags; storage is scoped to the authenticated user and server.
 
 - `quiet-focus`: typing leaves the composer frame neutral, without an accent border or outline; individual keyboard controls retain their focus indicators.
@@ -348,6 +348,8 @@ doctor`), the built web UI, and mock replies configured for any journey that
 sends a message. Run e2e tests through the instance:
 
 - Attention shelf and real question/plan forms: `tests/browser_ui/chat/test_triune_next_iteration.py::test_original_composer_shelf_requests_and_counts` covers desktop/mobile and retained drafts.
+- Iteration6 candidate queue spacing, unchecked active plan box, recoverable completed plan, row-edge popup gaps and narrow resource controls: `tests/browser_ui/chat/test_iteration6.py::test_queue_plan_popup_and_synthetic_safe_top_follow_density`.
+- Plan marker semantics and active-border precedence: `web/src/shell/TodoPanel.test.tsx` and `web/src/components/ui/checkbox.test.tsx`; markers add no input, tab stop or spinner.
 - Safe unified folder/file/chat mentions and caret reveal in both ordinary and quoted drafts: `tests/browser_ui/chat/test_current_refinement_iteration.py::test_iteration5_composer_mention_safety_and_local_caret`.
 - Settled shelf auto-hide, recoverable manual visibility and one outer answer focus treatment: `tests/browser_ui/chat/test_current_refinement_iteration.py::test_iteration5_settled_shelf_manual_reveal_and_answer_focus`.
 - Shared header hover/held/open geometry and bounded centered popups: `tests/browser_ui/chat/test_current_refinement_iteration.py::test_iteration5_header_usage_held_paint_and_popup_bounds`.
@@ -360,7 +362,9 @@ sends a message. Run e2e tests through the instance:
 - Batch forwarding, explicit empty answers and reload drafts: `web/src/components/blocks/AskUserQuestionForm.test.tsx`; pending-to-answered header/pager and secret display: `web/src/components/blocks/QuestionBatchCard.test.tsx`.
 - Durable canonical batch identity, stable-key answer mapping and trusted echo correlation: `web/src/lib/questionBatches.test.ts` and `tests/server/routes/test_question_receipts.py`.
 - Shelf resolution and conversation changes: `web/src/components/composer/ComposerAttentionShelf.test.tsx`.
-- Density-aware gapless queue/shelf composition, 200ms motion and retained popup drafts: `web/src/components/composer/ComposerShelf.test.tsx`, `web/src/pages/QueuedMessagesStrip.test.tsx` and `tests/browser_ui/chat/test_current_refinement_iteration.py`.
+- Gapless shelf composition, 200ms motion and retained popup drafts: `web/src/components/composer/ComposerShelf.test.tsx`, `web/src/pages/QueuedMessagesStrip.test.tsx` and `tests/browser_ui/chat/test_current_refinement_iteration.py`.
+- After parent freeze/build, switch density with two queued messages and a draft: gaps shrink from 4px to 2px, narrow/coarse controls stay 44px and the draft remains.
+- Open Plan, compare active/pending box geometry, complete the plan and reopen it through Conversation actions; active has only a distinct border and completion stays read-only.
 - Accent question controls, Skip/Next and always-enabled partial/empty Submit versus Decline: `web/src/components/blocks/AskUserQuestionForm.test.tsx`, `tests/server/routes/test_codex_elicitation.py` and `tests/e2e_ui/agents/test_native_capability_shelf.py`.
 - Initial-input identity and capability gating: `web/src/pages/ChatPage.test.ts`, `web/src/shell/NewChatDialog.flow.test.tsx`, and `web/src/store/chatStore.test.ts`.
 - Child ancestry, turn-targeted steering and unsupported runtime states: `tests/runner/test_native_child_controls.py` and `tests/server/routes/test_native_child_controls.py`.
@@ -712,6 +716,9 @@ Other connection providers alone do not enable the managed MCP picker.
 
 ## Gotchas
 
+- Iteration6 browser references describe candidate acceptance, not a recorded successful run; [source and installed release status](../docs/custom-fork.md#iteration6-source-status) remain separate.
+- Mobile main and side-chat composers use an 8px Comfortable/4px Compact bottom gutter; the shell owns safe-area clearance once.
+- Header/shelf popups match the outer row-edge gap to the visible control inset on their actual opening side, including after collision flips.
 - Questions submit and decline whole elicitation batches; navigation and choice selection never submit independently.
 - Secret answers reach the provider unchanged, but canonical receipt history records only answered/redacted state and never saves secret drafts locally.
 - Receipt and echo correlation require trusted submission identity; matching answer text or a repeated `question_0` key is insufficient.

@@ -8,7 +8,7 @@
   .composer-workspace-surface
 ) {
   --composer-outer-radius: var(--radius-xl, calc(var(--radius) * 1.4));
-  --composer-shelf-inset: 4px;
+  --composer-shelf-inset: var(--list-gap, 4px);
   --composer-shelf-border-width: 1px;
   --composer-shelf-control-radius: max(
     0px,
@@ -129,7 +129,7 @@
 }
 
 .composer-queue-list {
-  row-gap: var(--queue-list-gap);
+  row-gap: var(--list-gap, var(--queue-list-gap));
 }
 
 .composer-queue-row {

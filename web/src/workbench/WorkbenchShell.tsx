@@ -9,6 +9,7 @@ import {
   useConversationOwnerNavigation,
 } from "./useAcceptedConversationRoute";
 import { useSessionComposerFocus } from "./useSessionComposerFocus";
+import { useStartupConversation } from "./useStartupConversation";
 import { focusedResourceTarget } from "./resourceTarget";
 import { OpenViewMenu } from "./OpenViewMenu";
 import { Button } from "@/components/ui/button";
@@ -561,6 +562,14 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
       toast.error(error instanceof Error ? error.message : "Could not restore layout"),
     [],
   );
+  const startupPending = useStartupConversation({
+    active,
+    href,
+    entryKey: location.key,
+    ownerId: dock.activeConversationId,
+    navigate,
+    onError: onRouteError,
+  });
   const acceptedHref = useAcceptedConversationRoute({
     active,
     conversationId,
@@ -1651,7 +1660,7 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
       openView,
       focusedConversationId,
       composerFocus: composerFocus.value,
-      layoutOwnerConversationId: dock.activeConversationId,
+      layoutOwnerConversationId: showDock ? dock.activeConversationId : null,
       openConversationIds,
     }),
     [
@@ -1660,6 +1669,7 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
       focusedConversationId,
       composerFocus.value,
       dock.activeConversationId,
+      showDock,
       openConversationIds,
     ],
   );
@@ -1788,7 +1798,13 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
                     </div>
                     {active && !showDock && (
                       <div className="workbench-routed-page flex min-h-0 flex-1 flex-col overflow-auto">
-                        <Outlet />
+                        {startupPending ? (
+                          <div role="status" className="p-4 text-sm">
+                            Restoring session…
+                          </div>
+                        ) : (
+                          <Outlet />
+                        )}
                       </div>
                     )}
                   </main>

@@ -118,7 +118,7 @@ export function ActivityRow({
       aria-description={
         descriptionText ?? (typeof description === "string" ? description : undefined)
       }
-      className={`h-auto ${titleDetail ? "w-auto shrink-0" : "w-full"} min-w-0 justify-start rounded-none p-0 text-left font-medium hover:bg-transparent`}
+      className={`h-auto ${titleDetail ? "w-auto max-w-[55%] shrink" : "w-full"} min-w-0 justify-start rounded-none p-0 text-left font-medium hover:bg-transparent`}
       onClick={href ? undefined : onOpen}
       asChild={!!href}
     >
@@ -175,7 +175,7 @@ export function ActivityRow({
         {titleDetail ? (
           <div className="flex min-w-0 items-center gap-1">
             {heading}
-            <span className="min-w-0 truncate">{titleDetail}</span>
+            <span className="resource-title-detail min-w-0 flex-1 truncate">{titleDetail}</span>
           </div>
         ) : (
           heading
@@ -280,7 +280,7 @@ export function ActivityRow({
   return (
     <div
       onClickCapture={preserveDisclosure}
-      className={`activity-row min-w-0 text-sm ${message ? "activity-row--message border-l-2 border-primary/60 py-1 pl-2.5 sm:pl-3" : ""}`}
+      className={`activity-row min-w-0 text-sm ${message ? "activity-row--message border-l-2 border-primary/60 py-1 pl-2.5 sm:pl-3" : "activity-row--resource"}`}
     >
       {openingRow}
       {children && (

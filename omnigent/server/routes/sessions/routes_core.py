@@ -85,7 +85,7 @@ from omnigent.server.background_session_titles import (
 )
 from omnigent.server.bundles import agent_needs_own_copy, copy_agent_bundle, validate_agent_bundle
 from omnigent.server.creation_logging import creation_metadata, creation_stage, session_created
-from omnigent.server.descendant_activity import descendant_activity
+from omnigent.server.descendant_activity import activity_descendants
 from omnigent.server.host_registry import HostRegistry, RunnerExitReports
 from omnigent.server.permissions import check_session_access
 from omnigent.server.routes._auth_helpers import (
@@ -151,6 +151,7 @@ from omnigent.server.routes._sessions.helpers import (
     _native_coding_agent_for_agent,
     _note_settings_write,
     _notify_runner_of_bundled_child,
+    _owner_from_grants,
     _parse_session_create_metadata,
     _permission_level_from_grants,
     _pin_claude_permission_launch_args,
@@ -161,6 +162,7 @@ from omnigent.server.routes._sessions.helpers import (
     _publish_permission_mode,
     _publish_sandbox_status,
     _publish_terminal_pending,
+    _read_state_entry,
     _reject_reserved_cost_control_label_seed,
     _reject_server_reserved_label_seed,
     _require_codex_approval_mode_forward,
@@ -197,6 +199,7 @@ from omnigent.server.routes._sessions.orchestration import (
     _persist_model_change_note,
     _publish_runner_recovered_status,
     _run_managed_launch,
+    _session_pending_count,
     _spawn_archive_stop,
     _validate_session_model_selection,
     ensure_runner_connected,
@@ -210,6 +213,8 @@ from omnigent.server.schemas import (
     ReadStatePutRequest,
     ResetSessionModelOverrideRequest,
     ResetSessionModelOverrideResponse,
+    SessionActivity,
+    SessionActivityDescendant,
     SessionCreateRequest,
     SessionEventInput,
     SessionForkRequest,
@@ -2091,7 +2096,7 @@ def register_core_routes(
                 permissions_enabled=permission_store is not None,
                 pending_count=pending_counts.get(conv.id, 0),
                 child_session_ids=child_ids_by_parent[conv.id],
-                descendant_running=activity.get(conv.id),
+                activity=activity[conv.id],
                 comments_fingerprint=comments_fingerprints.get(conv.id),
             )
             for conv in page.data
@@ -2148,7 +2153,7 @@ def register_core_routes(
 
     async def _activity_for(
         convs: list[Conversation], user_id: str | None, user_is_admin: bool
-    ) -> dict[str, bool | None]:
+    ) -> dict[str, SessionActivity]:
         def authorize(candidates: list[Conversation], authorized: set[str]) -> set[str]:
             if permission_store is None or user_is_admin:
                 return {row.id for row in candidates}
@@ -2166,9 +2171,59 @@ def register_core_routes(
                 )
             }
 
-        return await descendant_activity(
-            convs, conversation_store, _session_status_from_cache, authorize
+        descendants = await activity_descendants(convs, conversation_store, authorize)
+        rows = {row.id: row for result in descendants.values() for row in result.rows}
+        pending_counts = pending_elicitations.counts_for(list(rows))
+        grants_by_id = (
+            await asyncio.to_thread(permission_store.list_for_sessions, list(rows))
+            if permission_store is not None and rows
+            else {}
         )
+        authorized_ids = set(rows) | {conv.id for conv in convs}
+        # Overlapping roots share the same status and viewer snapshot in this batch.
+        facts: dict[str, SessionActivityDescendant] = {}
+        for row in rows.values():
+            viewer_last_seen, viewer_unread = _read_state_entry(user_id, row.id)
+            branch = row.branch
+            source_id = branch.source_conversation_id if branch else None
+            grants = grants_by_id.get(row.id, [])
+            facts[row.id] = SessionActivityDescendant(
+                id=row.id,
+                status=_session_status_from_cache(row.id, row.live_status),
+                updated_at=row.updated_at,
+                pending_elicitations_count=_session_pending_count(
+                    row, pending_counts.get(row.id, 0)
+                ),
+                viewer_last_seen=viewer_last_seen,
+                viewer_unread=viewer_unread,
+                branch_source_id=source_id if source_id in authorized_ids else None,
+                parent_session_id=(
+                    row.parent_conversation_id
+                    if row.parent_conversation_id in authorized_ids
+                    else None
+                ),
+                archived=row.archived,
+                project_id=row.project_id,
+                labels={
+                    key: value
+                    for key, value in _labels_for_viewer(row.labels, user_id).items()
+                    if key in (PINNED_LABEL_KEY, PROJECT_LABEL_KEY)
+                },
+                permission_level=_permission_level_from_grants(user_id, grants, user_is_admin),
+                owner=_owner_from_grants(grants) if permission_store is not None else None,
+            )
+        result = {}
+        for conv in convs:
+            nested = descendants[conv.id]
+            members = [facts[row.id] for row in nested.rows]
+            running = any(row.status == "running" for row in members)
+            result[conv.id] = SessionActivity(
+                own_status=_session_status_from_cache(conv.id, conv.live_status),
+                descendant_running=True if running else False if nested.complete else None,
+                descendants=members,
+                descendants_complete=nested.complete,
+            )
+        return result
 
     async def _fetch_watched_items(
         watched: list[str],
@@ -2259,7 +2314,7 @@ def register_core_routes(
                 permissions_enabled=permission_store is not None,
                 pending_count=pending_counts.get(conv.id, 0),
                 child_session_ids=child_ids_by_parent[conv.id],
-                descendant_running=activity.get(conv.id),
+                activity=activity[conv.id],
                 comments_fingerprint=comments_fingerprints.get(conv.id),
             )
             for conv in convs
@@ -2583,7 +2638,7 @@ def register_core_routes(
                     "session-updates stream disconnected",
                     extra=debug_event("session_updates", phase="disconnected"),
                 )
-                with contextlib.suppress(RuntimeError):
+                with contextlib.suppress(RuntimeError, WebSocketDisconnect):
                     await websocket.close()
 
     # ── Codex-native goal controls ───────────────────────────────

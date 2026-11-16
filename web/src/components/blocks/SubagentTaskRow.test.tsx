@@ -19,7 +19,7 @@ it.each([
   "renders %s with a shared semantic Badge and icon",
   (activity, label, expected, tone) => {
     render(<SubagentTaskStatus status={{ activity: activity as AgentActivity, label }} />);
-    const pill = screen.getByText(expected);
+    const pill = screen.getByRole("status", { name: expected });
     expect(pill).toHaveAttribute("data-slot", "badge");
     expect(pill).toHaveClass(tone);
     expect(pill.querySelector("svg, [data-testid=running-dot]")).not.toBeNull();
@@ -38,8 +38,11 @@ it.each(["Running", "Exited", "Unknown"])(
         label={label}
       />,
     );
-    expect(screen.getByText(label)).toHaveAttribute("aria-description", "Exit code 0");
-    expect(screen.getByText(label)).toHaveClass("bg-success/10");
+    expect(screen.getByRole("status", { name: label })).toHaveAttribute(
+      "aria-description",
+      "Exit code 0",
+    );
+    expect(screen.getByRole("status", { name: label })).toHaveClass("bg-success/10");
     expect(screen.queryByText("Completed")).not.toBeInTheDocument();
   },
 );

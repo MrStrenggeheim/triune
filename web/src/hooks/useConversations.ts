@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { useContext, useEffect, useRef } from "react";
 import { useViewerId } from "./useViewerId";
 import { SidebarConfigContext, sidebarConfig } from "@/lib/sidebarConfig";
@@ -152,11 +153,31 @@ export class BulkConversationMutationError extends Error {
   }
 }
 
+/** Authorized own facts for browser-owned read/draft overlays; never a transcript. */
+export interface SessionActivityDescendant {
+  id: string;
+  status: "idle" | "running" | "failed";
+  updated_at: number;
+  pending_elicitations_count: number;
+  viewer_last_seen?: number | null;
+  viewer_unread?: boolean;
+  latest_error?: "error" | "disconnected" | "recovered_disconnect" | "unknown" | null;
+  branch_source_id?: string | null;
+  parent_session_id?: string | null;
+  archived?: boolean;
+  project_id?: string | null;
+  labels?: Record<string, string>;
+  permission_level?: number | null;
+  owner?: string | null;
+}
+
 /** Mirrors the server's `SessionListItem` / `ConversationObject` shape. */
 export interface Conversation {
   activity?: {
     own_status: "idle" | "running" | "failed";
     descendant_running: boolean | null;
+    descendants?: SessionActivityDescendant[];
+    descendants_complete?: boolean;
   };
   id: string;
   object: "conversation";

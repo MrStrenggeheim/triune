@@ -172,17 +172,15 @@
   --text-xs--line-height: var(--text-sm--line-height);
 }
 
-/* Give iOS Home Screen apps a top colour surface without painting over content. */
+/* Home Screen chrome follows the app bar across the shell-reserved top inset. */
 .ios-status-surface {
   display: none;
   position: fixed;
   inset: 0 0 auto;
-  height: 11px;
+  height: var(--omnigent-safe-top, env(safe-area-inset-top, 0px));
   z-index: 2147483647;
   pointer-events: none;
-  background-color: var(--background);
-  -webkit-background-clip: text;
-  background-clip: text;
+  background-color: var(--workspace-appbar);
 }
 
 :root[data-ios-standalone] .ios-status-surface {

@@ -2990,11 +2990,32 @@ class ReadStatePutRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class SessionActivityDescendant(BaseModel):
+    """Authorized lightweight own facts for the requesting browser's personal overlays."""
+
+    id: str
+    status: Literal["idle", "running", "failed"]
+    updated_at: int
+    pending_elicitations_count: int
+    viewer_last_seen: int | None = None
+    viewer_unread: bool = False
+    latest_error: Literal["error", "disconnected", "recovered_disconnect", "unknown"] = "unknown"
+    branch_source_id: str | None = None
+    parent_session_id: str | None = None
+    archived: bool = False
+    project_id: str | None = None
+    labels: dict[str, str] = Field(default_factory=dict)
+    permission_level: int | None = None
+    owner: str | None = None
+
+
 class SessionActivity(BaseModel):
-    """Own runtime status and authorized nested work, without descendant identity."""
+    """Independent own status and authorized descendant facts, with traversal coverage."""
 
     own_status: Literal["idle", "running", "failed"]
     descendant_running: bool | None = None
+    descendants: list[SessionActivityDescendant] = Field(default_factory=list)
+    descendants_complete: bool = False
 
 
 class SessionListItem(BaseModel):

@@ -2781,7 +2781,7 @@ class SqlAlchemyConversationStore(ConversationStore):
 
         item = run_write_transaction(self._conv_session_immediate, "enrich_resource_event", write)
         if item is not None:
-            self._invalidate_items(conversation_id, reset=True)
+            self._invalidate_items(conversation_id, reset=True, item_id=item_id)
         return item
 
     def list_items(
@@ -2904,10 +2904,12 @@ class SqlAlchemyConversationStore(ConversationStore):
             )
 
     @staticmethod
-    def _invalidate_items(conversation_id: str, *, reset: bool) -> None:
+    def _invalidate_items(
+        conversation_id: str, *, reset: bool, item_id: str | None = None
+    ) -> None:
         from omnigent.runtime.session_stream import mark_items_changed
 
-        mark_items_changed(conversation_id, reset=reset)
+        mark_items_changed(conversation_id, reset=reset, item_id=item_id)
 
     def item_checkpoint(
         self, conversation_id: str, *, through_position: int | None = None

@@ -23321,3 +23321,56 @@ it("projects an accepted pending peer before grouping and keeps its original ID,
     communication: { delivery_state: "confirmed" },
   });
 });
+
+describe("SYNC-ACCEPTANCE canonical resource update", () => {
+  it.each([false, true])(
+    "inserts an absent positioned worker card once without legacy recovery (empty=%s)",
+    async (empty) => {
+      const activity = {
+        id: "positioned-card",
+        position: 5,
+        response_id: "child-turn",
+        type: "resource_event",
+        resource_type: "session",
+        resource_id: "child",
+        event_type: "session.subagent.returned",
+        resource: { dispatch_id: "dispatch", result_text: "Durable final" },
+      } as unknown as ConversationItem;
+      const anchor = { ...userMessage("visible-anchor", "Current history"), position: 10 };
+      seedSession("canonical-resource-update", [activity, anchor]);
+      const bound = bindConversationForTest("canonical-resource-update", {
+        blocks: empty ? [] : itemsToBlocks([anchor]),
+        oldestItemId: empty ? null : anchor.id,
+      });
+      const info = vi.spyOn(toast, "info").mockReturnValue("unexpected-notice");
+      onTestFinished(() => info.mockRestore());
+      for (let count = 0; count < 2; count++)
+        handleSessionEvent(
+          { type: "session_item_updated", item: activity as unknown as Record<string, unknown> },
+          "canonical-resource-update",
+        );
+      await tick();
+      expect(bound.get().blocks.map((b) => [b.ctx.itemId, b.ctx.position])).toEqual(
+        empty
+          ? [[activity.id, 5]]
+          : [
+              [activity.id, 5],
+              [anchor.id, 10],
+            ],
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(info).not.toHaveBeenCalled();
+      const context = bound.get().blocks[0]!.ctx;
+      const updated = {
+        ...activity,
+        resource: { dispatch_id: "dispatch", result_text: "Enriched final" },
+      };
+      handleSessionEvent(
+        { type: "session_item_updated", item: updated as unknown as Record<string, unknown> },
+        "canonical-resource-update",
+      );
+      expect(bound.get().blocks[0]!.ctx).toBe(context);
+      expect(bound.get().blocks[0]).toMatchObject({ data: updated });
+    },
+  );
+});

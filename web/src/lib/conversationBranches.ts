@@ -81,6 +81,40 @@ export function branchChildren(
   return rows.filter((row) => sectionBranchSource(row, sections) === parentId);
 }
 
+/** The same revealable tree as disclosure, independent of intermediate expansion. */
+export function branchDescendants(
+  rows: readonly Conversation[],
+  parentId: string,
+  sections?: ReadonlyMap<string, string>,
+  maxDepth = 64,
+): Conversation[] {
+  const children = new Map<string, Conversation[]>();
+  for (const row of rows) {
+    const parent = sectionBranchSource(row, sections);
+    if (parent) {
+      const siblings = children.get(parent) ?? [];
+      siblings.push(row);
+      children.set(parent, siblings);
+    }
+  }
+  const seen = new Set([parentId]);
+  const result: Conversation[] = [];
+  let frontier = [parentId];
+  for (let depth = 1; depth < maxDepth && frontier.length; depth++) {
+    const next: string[] = [];
+    for (const parent of frontier) {
+      for (const child of children.get(parent) ?? []) {
+        if (seen.has(child.id)) continue;
+        seen.add(child.id);
+        result.push(child);
+        next.push(child.id);
+      }
+    }
+    frontier = next;
+  }
+  return result;
+}
+
 /** Count unique descendants in an authorized, filtered graph, excluding each parent. */
 export function branchDescendantCounts(
   rows: readonly Conversation[],

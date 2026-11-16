@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { serializeReplyDraft, type StoredReplyDraft } from "./replyDraft";
@@ -260,12 +261,16 @@ describe("durable composer snapshots", () => {
 
   it("rejects another account's late restoration and reports denied storage without claiming success", async () => {
     const drafts = await import("./sessionDrafts");
-    drafts.initializeSessionDraftPersistence("alice");
-    await drafts.hydrateSessionDraft("chat");
+    const coverage = renderHook(() => drafts.useSessionDraftsHydrated());
+    expect(coverage.result.current).toBe(true);
+    act(() => drafts.initializeSessionDraftPersistence("alice"));
+    expect(coverage.result.current).toBe(false);
+    await act(() => drafts.hydrateSessionDraft("chat"));
+    expect(coverage.result.current).toBe(true);
     drafts.setSessionDraft("chat", { text: "alice private", files: [] });
     await drafts.waitForSessionDraftSave();
-    drafts.initializeSessionDraftPersistence("bob");
-    expect(await drafts.hydrateSessionDraft("chat")).toBeUndefined();
+    act(() => drafts.initializeSessionDraftPersistence("bob"));
+    await act(async () => expect(await drafts.hydrateSessionDraft("chat")).toBeUndefined());
     expect(drafts.getSessionDraft("chat")).toBeUndefined();
     const report = vi.fn();
     vi.stubGlobal("indexedDB", {
@@ -273,8 +278,9 @@ describe("durable composer snapshots", () => {
         throw new Error("Storage denied");
       },
     });
-    drafts.initializeSessionDraftPersistence("denied", report);
-    await drafts.hydrateSessionDraft("chat");
+    act(() => drafts.initializeSessionDraftPersistence("denied", report));
+    await act(() => drafts.hydrateSessionDraft("chat"));
+    expect(coverage.result.current).toBe(false);
     drafts.setSessionDraft("chat", { text: "kept locally", files: [new File(["data"], "a.txt")] });
     await expect(drafts.waitForSessionDraftSave()).rejects.toThrow("Storage denied");
     expect(report).toHaveBeenCalled();

@@ -1,3 +1,5 @@
+# Triune additions: PolyForm Noncommercial 1.0.0; see LICENSING.md.
+# Required Notice: Copyright 2026 MrStrenggeheim. Triune (https://github.com/MrStrenggeheim/triune).
 """Authoritative item replay over the existing bounded session event bus."""
 
 from __future__ import annotations
@@ -53,13 +55,18 @@ class SessionRecovery:
         """Read only after registration, failing closed if a replay read fails."""
         await self.authorize()
         revision, reset_revision = session_stream.item_revision(self.session_id)
+        mutations = (
+            session_stream.item_mutations_since(self.session_id, self.after_revision)
+            if self.after_revision is not None
+            else None
+        )
         checkpoint = await self.checkpoint(revision)
         reset = (
             self.after_position < 0
             or self.after_epoch != inflight_text.stream_epoch()
             or self.after_revision is None
             or self.after_revision > revision
-            or self.after_revision < reset_revision
+            or (self.after_revision < reset_revision and mutations is None)
             or self.after_position > checkpoint["last_position"]
         )
         boundary = {
@@ -71,6 +78,17 @@ class SessionRecovery:
             "stream_epoch": inflight_text.stream_epoch(),
         }
         yield {**boundary, "phase": "start"}
+        if not reset:
+            for item_id in mutations or ():
+                await self.authorize()
+                saved = await asyncio.to_thread(self.store.get_item, self.session_id, item_id)
+                if saved is None or saved.position is None or saved.position > self.after_position:
+                    continue
+                items = await self.project([saved]) if self.project is not None else [saved]
+                for saved in items:
+                    item = saved.to_api_dict()
+                    self._replayed[saved.id] = self._fingerprint(item)
+                    yield {"type": "response.output_item.done", "item": item}
         after_position = -1 if reset else self.after_position
         while after_position < checkpoint["last_position"]:
             await self.authorize()

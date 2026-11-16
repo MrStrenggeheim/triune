@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
@@ -14,15 +15,20 @@ if TYPE_CHECKING:
 Status = Literal["idle", "running", "failed"]
 
 
-async def descendant_activity(
+@dataclass
+class ActivityDescendants:
+    rows: list[Conversation]
+    complete: bool
+
+
+async def activity_descendants(
     roots: list[Conversation],
     store: ConversationStore,
-    status: Callable[[str, str | None], Status],
     authorize: Callable[[list[Conversation], set[str]], set[str]],
     *,
     max_nodes: int = 2048,
     max_depth: int = 64,
-) -> dict[str, bool | None]:
+) -> dict[str, ActivityDescendants]:
     """Prune unreadable paths and report unknown when the shared work budget expires."""
     rows = {row.id: row for row in roots}
     authorized = set(rows)
@@ -48,6 +54,7 @@ async def descendant_activity(
         )
         examined.update(candidates)
         loaded = await asyncio.to_thread(store.get_conversations, candidates) if candidates else {}
+        complete &= len(loaded) == len(candidates)
         allowed = (
             await asyncio.to_thread(authorize, list(loaded.values()), authorized)
             if loaded
@@ -60,20 +67,40 @@ async def descendant_activity(
         frontier = [key for key in candidates if key in allowed]
     else:
         complete = not frontier and complete
-    result: dict[str, bool | None] = {}
+    result: dict[str, ActivityDescendants] = {}
     for root in roots:
         seen = {root.id}
         pending = list(graph.get(root.id, []))
-        running = False
+        descendants: list[Conversation] = []
         while pending:
             child = pending.pop()
             if child in seen:
                 continue
             seen.add(child)
-            row = rows[child]
-            if status(child, row.live_status) == "running":
-                running = True
-                break
+            descendants.append(rows[child])
             pending.extend(graph.get(child, []))
-        result[root.id] = True if running else False if complete else None
+        descendants.sort(key=lambda row: row.id)
+        result[root.id] = ActivityDescendants(descendants, complete)
     return result
+
+
+async def descendant_activity(
+    roots: list[Conversation],
+    store: ConversationStore,
+    status: Callable[[str, str | None], Status],
+    authorize: Callable[[list[Conversation], set[str]], set[str]],
+    *,
+    max_nodes: int = 2048,
+    max_depth: int = 64,
+) -> dict[str, bool | None]:
+    descendants = await activity_descendants(
+        roots, store, authorize, max_nodes=max_nodes, max_depth=max_depth
+    )
+    return {
+        root: True
+        if any(status(row.id, row.live_status) == "running" for row in result.rows)
+        else False
+        if result.complete
+        else None
+        for root, result in descendants.items()
+    }

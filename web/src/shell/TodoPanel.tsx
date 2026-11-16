@@ -1,7 +1,6 @@
 // Modified for Triune.
 
 import { CheckboxVisual } from "@/components/ui/checkbox";
-import { RunningDot } from "@/components/RunningDot";
 import { useConversationChatStore } from "@/workbench/ScopedChatStore";
 import { cn } from "@/lib/utils";
 
@@ -18,17 +17,7 @@ interface TodoPanelProps {
 function TodoIcon({ status }: { status: TodoItem["status"] }) {
   return (
     <>
-      {status === "in_progress" ? (
-        <span
-          aria-hidden="true"
-          data-slot="plan-active-marker"
-          className="flex size-4 shrink-0 items-center justify-center"
-        >
-          <RunningDot className="text-primary" />
-        </span>
-      ) : (
-        <CheckboxVisual checked={status === "completed"} />
-      )}
+      <CheckboxVisual checked={status === "completed"} active={status === "in_progress"} />
       <span className="sr-only">
         {status === "in_progress"
           ? "In progress"

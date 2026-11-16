@@ -11,6 +11,7 @@ local; automatic client sync and shared/machine scope controls remain deferred.
 - `default-models`: General → Sessions sets independent model defaults for Claude Code, Codex, Pi and Devin; explicit choices override project defaults, then harness-specific global defaults, then remembered choices or the harness default.
 - `unavailable-model`: a configured model missing from the current catalog uses the harness default; project settings can explicitly select Harness default without a catalog or inherit the global choice.
 - `default-agent`: General → Sessions selects a default agent for new chats in this browser/app; explicit choices and project defaults take precedence, and an unavailable configured agent is reported instead of silently substituted.
+- `startup-destination`: Appearance → On startup defaults to Continue last session, using the saved layout owner on cold home launch; explicit links/New chat win and inaccessible owners fall back without state loss.
 
 - `accent-surfaces`: Share, navigation, message surfaces, links, focus and composer chrome follow the selected accent in light/dark mode while semantic status colors remain distinct.
 - `flat-transcript`: assistant prose stays unboxed, tool groups use compact disclosures and code has one technical frame.
@@ -65,6 +66,10 @@ tab shows inventory; both are covered in [Native harnesses](./native-harnesses.m
 Verify its processed identity, launch URL, scope and icon responses from home and deep chat routes with `tests/server/integration/test_base_path.py`.
 Existing browser-profile identity and an installed enclosing portal may require separate manual checks; correcting Triune does not change another app's scope.
 
+**Startup destination:** Settings → Appearance → On startup offers Continue last session and New chat.
+Continuation checks the saved layout owner's access before restoring it; direct routes, qualified home links and deliberate New chat navigation take precedence.
+This browser preference participates in settings export/import; Reset appearance restores Continue last session without erasing saved layouts or drafts.
+
 **Chat header:** open Usage in a docked or legacy conversation header to inspect its latest observed context, recorded session/descendant accounting and reported provider quota windows.
 The compact summary shows context used/capacity, recorded session cost and token totals, with thin bars consistently encoding percentage used.
 Expand Token breakdown for per-model input/output/cache accounting or Observation details for provider metadata; these details start collapsed.
@@ -106,6 +111,11 @@ config to verify this recipe. The CLI subprocess tests below own their
 environment and use a local mock model where needed. They need no browser or
 shared repro instance. For the linked browser/native recipes, follow their
 `verify-env` and harness prerequisites.
+
+- Iteration6 candidate startup choice, explicit destinations, retained layout/draft, export and appearance reset: `tests/browser_ui/chat/test_iteration6.py::test_startup_restores_owner_and_respects_explicit_destinations`.
+- Missing-owner fallback: `tests/browser_ui/chat/test_iteration6.py::test_startup_missing_owner_falls_back_without_erasing_layout`; hook and settings import semantics: `web/src/workbench/useStartupConversation.test.tsx` and `web/src/lib/settingsPortability.test.ts`.
+- After parent freeze/build, save an owner layout, reopen plain home and expect that owner; choose New chat or an explicit link and expect that destination instead.
+- Browser theme-color follows resolved application-bar paint: `web/src/components/theme/ThemeProvider.test.tsx`; browser/native chrome appearance requires separate device acceptance.
 
 **Local defaults and launch (own environment):**
 

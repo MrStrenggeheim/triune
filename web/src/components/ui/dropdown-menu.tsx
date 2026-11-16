@@ -59,13 +59,11 @@ const DropdownMenuContent = React.forwardRef<
   },
   ref,
 ) {
-  const bounds = useAnchoredPopupBounds(collisionPadding, style);
+  const bounds = useAnchoredPopupBounds(collisionPadding, style, true, side, sideOffset, ref);
   return (
     <DropdownMenuPrimitive.Portal container={getEmbedRoot() ?? undefined}>
       <DropdownMenuPrimitive.Content
-        ref={ref}
         data-slot="dropdown-menu-content"
-        sideOffset={sideOffset}
         {...bounds}
         side={side}
         align={side === "left" || side === "right" ? align : "center"}

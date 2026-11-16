@@ -49,3 +49,22 @@ export function getSessionState(
 ): SessionState | null {
   return getSessionStates(conversation, latestError)[0] ?? null;
 }
+
+/** Union independent facts; each source session must occur only once. */
+export function mergeSessionStates(
+  ...groups: readonly (readonly SessionState[])[]
+): SessionState[] {
+  const states = new Map<SessionState["kind"], SessionState>();
+  for (const group of groups) {
+    for (const state of group) {
+      const previous = states.get(state.kind);
+      states.set(
+        state.kind,
+        state.kind === "awaiting" && previous?.kind === "awaiting"
+          ? { kind: "awaiting", count: previous.count + state.count }
+          : state,
+      );
+    }
+  }
+  return [...states.values()];
+}

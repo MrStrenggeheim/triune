@@ -288,7 +288,7 @@ export function ZoomableImage({
  * The zoomable image inside the lightbox card. Holds its own zoom/pan state and
  * is keyed by `src` in the provider so that state resets per image.
  *
- * Zoom: scroll wheel, the +/- toolbar buttons, or
+ * Zoom: pinch, scroll wheel, the +/- toolbar buttons, or
  * double-click to toggle between fit and 2x. Pan: drag while zoomed in. The
  * image is `object-contain` within a fixed-size viewport that clips overflow,
  * so the zoomed image never escapes the card. Content clicks toggle overlays.
@@ -311,86 +311,191 @@ function ZoomViewer({
   onToggleControls: () => void;
 }) {
   const viewportRef = useRef<HTMLDivElement>(null);
-  const [zoom, setZoom] = useState(1);
-  const [offset, setOffset] = useState({ x: 0, y: 0 });
-  // Active pointer drag (panning); null when not dragging.
+  const imageRef = useRef<HTMLImageElement>(null);
+  const [view, setView] = useState({ zoom: MIN_ZOOM, x: 0, y: 0 });
+  const viewRef = useRef(view);
+  const { zoom, ...offset } = view;
+  const pointers = useRef(new Map<number, { x: number; y: number }>());
   const dragRef = useRef<{
     pointerId: number;
-    startX: number;
-    startY: number;
     originX: number;
     originY: number;
+    swipe: boolean;
   } | null>(null);
-  // Whether the current gesture panned, so its closing click isn't a dismiss.
+  const pinchRef = useRef<{
+    distance: number;
+    x: number;
+    y: number;
+    view: typeof view;
+  } | null>(null);
   const pannedRef = suppressClick;
   const display = useGalleryImageSource(image.source ?? image.src, image.src);
 
-  const resetView = useCallback(() => {
-    setZoom(1);
-    setOffset({ x: 0, y: 0 });
+  const applyView = useCallback((nextZoom: number, x: number, y: number) => {
+    const fittedZoom = clampZoom(nextZoom);
+    const viewport = viewportRef.current;
+    const preview = imageRef.current;
+    const limitX = Math.max(
+      0,
+      ((preview?.offsetWidth ?? 0) * fittedZoom - (viewport?.clientWidth ?? 0)) / 2,
+    );
+    const limitY = Math.max(
+      0,
+      ((preview?.offsetHeight ?? 0) * fittedZoom - (viewport?.clientHeight ?? 0)) / 2,
+    );
+    const next = {
+      zoom: fittedZoom,
+      x: fittedZoom === MIN_ZOOM ? 0 : Math.max(-limitX, Math.min(limitX, x)),
+      y: fittedZoom === MIN_ZOOM ? 0 : Math.max(-limitY, Math.min(limitY, y)),
+    };
+    viewRef.current = next;
+    setView(next);
   }, []);
 
-  const applyZoom = useCallback((next: number) => setZoom(clampZoom(next)), []);
+  const clearGesture = useCallback(
+    (viewport = viewportRef.current) => {
+      const active = [...pointers.current.keys()];
+      pointers.current.clear();
+      dragRef.current = null;
+      pinchRef.current = null;
+      if (active.length) pannedRef.current = true;
+      for (const pointerId of active) {
+        if (viewport?.hasPointerCapture?.(pointerId)) viewport.releasePointerCapture(pointerId);
+      }
+    },
+    [pannedRef],
+  );
 
-  // Wheel-to-zoom. Attached as a non-passive native listener so preventDefault
-  // works (React's onWheel is passive and would warn), keeping the page behind
-  // the modal from scrolling while zooming.
+  const resetView = useCallback(() => {
+    clearGesture();
+    applyView(MIN_ZOOM, 0, 0);
+  }, [applyView, clearGesture]);
+
+  const applyZoom = useCallback(
+    (next: number) => {
+      clearGesture();
+      applyView(next, viewRef.current.x, viewRef.current.y);
+    },
+    [applyView, clearGesture],
+  );
+
+  // Non-passive wheel handling keeps desktop zoom from scrolling the page.
   useEffect(() => {
     const el = viewportRef.current;
     if (!el) return;
-    const onWheel = (e: WheelEvent) => {
-      e.preventDefault();
-      setZoom((z) => clampZoom(z - Math.sign(e.deltaY) * ZOOM_STEP * 2));
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      applyZoom(viewRef.current.zoom - Math.sign(event.deltaY) * ZOOM_STEP * 2);
     };
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
-  }, []);
+  }, [applyZoom]);
 
-  // Drop pan offset whenever zoom returns to fit.
+  const resizeView = useCallback(() => {
+    clearGesture();
+    const current = viewRef.current;
+    applyView(current.zoom, current.x, current.y);
+  }, [applyView, clearGesture]);
+
   useEffect(() => {
-    if (zoom === MIN_ZOOM) setOffset({ x: 0, y: 0 });
-  }, [zoom]);
-
-  const onPointerDown = (e: React.PointerEvent) => {
-    pannedRef.current = false;
-    if (e.button > 0 || e.isPrimary === false) {
-      pannedRef.current = true;
-      dragRef.current = null;
-      return;
-    }
-    dragRef.current = {
-      pointerId: e.pointerId,
-      startX: e.clientX - offset.x,
-      startY: e.clientY - offset.y,
-      originX: e.clientX,
-      originY: e.clientY,
+    const viewport = viewportRef.current;
+    const observer = new ResizeObserver(resizeView);
+    if (viewport) observer.observe(viewport);
+    if (imageRef.current) observer.observe(imageRef.current);
+    window.addEventListener("resize", resizeView);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", resizeView);
+      clearGesture(viewport);
     };
-  };
-  const onPointerMove = (e: React.PointerEvent) => {
-    const drag = dragRef.current;
-    if (!drag || drag.pointerId !== e.pointerId) return;
-    if (Math.hypot(e.clientX - drag.originX, e.clientY - drag.originY) > DRAG_SLOP_PX) {
-      pannedRef.current = true;
-      e.currentTarget.setPointerCapture(e.pointerId);
-    }
-    if (zoom > MIN_ZOOM) setOffset({ x: e.clientX - drag.startX, y: e.clientY - drag.startY });
-  };
-  const endDrag = (e: React.PointerEvent) => {
-    const drag = dragRef.current;
-    if (!drag || drag.pointerId !== e.pointerId) return;
+  }, [resizeView, clearGesture]);
+
+  // Rebase at each contact-count change so lifting a finger never jumps the image.
+  const rebaseGesture = () => {
+    const contacts = [...pointers.current.entries()];
     dragRef.current = null;
-    if (Math.hypot(e.clientX - drag.originX, e.clientY - drag.originY) > DRAG_SLOP_PX)
+    pinchRef.current = null;
+    if (contacts.length === 2) {
+      const [, first] = contacts[0];
+      const [, second] = contacts[1];
       pannedRef.current = true;
-    if (e.currentTarget.hasPointerCapture?.(e.pointerId))
-      e.currentTarget.releasePointerCapture(e.pointerId);
-    if (e.type === "pointercancel") {
-      pannedRef.current = true;
+      pinchRef.current = {
+        distance: Math.max(1, Math.hypot(second.x - first.x, second.y - first.y)),
+        x: (first.x + second.x) / 2,
+        y: (first.y + second.y) / 2,
+        view: viewRef.current,
+      };
+    } else if (contacts.length === 1) {
+      const [pointerId, point] = contacts[0];
+      dragRef.current = {
+        pointerId,
+        originX: point.x,
+        originY: point.y,
+        swipe: viewRef.current.zoom === MIN_ZOOM && !pannedRef.current,
+      };
+    }
+  };
+
+  const onPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.button > 0 || (event.isPrimary === false && event.pointerType !== "touch")) return;
+    if (pointers.current.size >= 2) return;
+    if (!pointers.current.size) pannedRef.current = false;
+    pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    rebaseGesture();
+  };
+  const onPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    const previous = pointers.current.get(event.pointerId);
+    if (!previous) return;
+    pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    const pinch = pinchRef.current;
+    if (pinch) {
+      const [first, second] = [...pointers.current.values()];
+      const nextZoom = clampZoom(
+        (pinch.view.zoom * Math.hypot(second.x - first.x, second.y - first.y)) / pinch.distance,
+      );
+      const ratio = nextZoom / pinch.view.zoom;
+      const bounds = event.currentTarget.getBoundingClientRect();
+      const centerX = bounds.left + bounds.width / 2;
+      const centerY = bounds.top + bounds.height / 2;
+      applyView(
+        nextZoom,
+        (first.x + second.x) / 2 - centerX - (pinch.x - centerX - pinch.view.x) * ratio,
+        (first.y + second.y) / 2 - centerY - (pinch.y - centerY - pinch.view.y) * ratio,
+      );
       return;
     }
-    const action = gallerySwipe(e.clientX - drag.originX, e.clientY - drag.originY, zoom);
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    if (Math.hypot(event.clientX - drag.originX, event.clientY - drag.originY) > DRAG_SLOP_PX)
+      pannedRef.current = true;
+    const current = viewRef.current;
+    if (current.zoom > MIN_ZOOM)
+      applyView(
+        current.zoom,
+        current.x + event.clientX - previous.x,
+        current.y + event.clientY - previous.y,
+      );
+  };
+  const endDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!pointers.current.has(event.pointerId)) return;
+    if (event.type !== "pointerup") {
+      clearGesture();
+      return;
+    }
+    const drag = dragRef.current;
+    pointers.current.delete(event.pointerId);
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId))
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    rebaseGesture();
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const dx = event.clientX - drag.originX;
+    const dy = event.clientY - drag.originY;
+    if (Math.hypot(dx, dy) > DRAG_SLOP_PX) pannedRef.current = true;
+    const action = drag.swipe ? gallerySwipe(dx, dy, viewRef.current.zoom) : null;
     if (action && (gallery || action === "dismiss")) {
       pannedRef.current = true;
-      e.preventDefault();
+      event.preventDefault();
       if (action === "dismiss") onClose();
       else onNavigate(action === "next" ? 1 : -1);
     }
@@ -416,13 +521,16 @@ function ZoomViewer({
         onPointerMove={onPointerMove}
         onPointerUp={endDrag}
         onPointerCancel={endDrag}
+        onLostPointerCapture={endDrag}
         style={{
           touchAction: "none",
           cursor: zoomed ? (dragRef.current ? "grabbing" : "grab") : "default",
         }}
       >
         <img
+          ref={imageRef}
           src={display.src}
+          onLoad={resizeView}
           referrerPolicy="no-referrer"
           hidden={!display.src}
           alt={image.alt}

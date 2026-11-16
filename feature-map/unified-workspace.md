@@ -6,6 +6,7 @@ Conversation and tool views share resizable, dockable panes while keeping their 
 
 - `panes`: split, resize, move and reorder views without remounting their editors or terminal attachments.
 - `layouts`: each chat automatically owns its arrangement; explicit side-open/drop adds a chat to the current arrangement, with global view pins preserved.
+- `startup`: Continue last session restores the saved layout owner on cold home launch; explicit links and New chat win, and unavailable owners retain their saved state.
 - `resources`: each Explorer, Search, Changes and Preview owns its machine, folder and presentation state.
 - `hierarchy`: durable branches preserve their captured fork boundary independently from delegated-agent parentage.
 - `communication`: structured attribution distinguishes agent messages from human input and separates acceptance from consumption.
@@ -32,11 +33,18 @@ Conversation and tool views share resizable, dockable panes while keeping their 
 - Use Up before the Explorer workspace path to make its parent folder the root.
 - Opening Settings temporarily reveals desktop navigation; its mobile section chooser stays reachable when navigation is closed.
 - Open Settings → Appearance to change the accent or list density.
+- In Appearance → On startup, choose Continue last session (default) or New chat; continuation restores the layout owner rather than whichever embedded chat last had focus.
 
 ## Driving it with the repro environment
 
 Preconditions: follow the [verification skill](skills/verify-omnigent/SKILL.md), build the checkout and use an isolated environment or the sealed browser-contract lane.
 
+Iteration6 entries below describe source acceptance, with compiled execution owned by the parent after candidate freeze/build.
+The [fork guide](../docs/custom-fork.md#iteration6-source-status) records the separate installed-release boundary.
+
+- Startup ownership, explicit destinations, saved drafts and missing-owner fallback: `tests/browser_ui/chat/test_iteration6.py::test_startup_restores_owner_and_respects_explicit_destinations` and `tests/browser_ui/chat/test_iteration6.py::test_startup_missing_owner_falls_back_without_erasing_layout`.
+- Current-filter collapsed status membership, expanded own-only state and revoked projection: `tests/browser_ui/chat/test_iteration6.py::test_sidebar_rollup_uses_revealable_children_only_while_collapsed`.
+- Compact shelves, active plan boxes, row-edge popup gaps, mobile Open and synthetic top paint: `tests/browser_ui/chat/test_iteration6.py::test_queue_plan_popup_and_synthetic_safe_top_follow_density`.
 - Compact composer, mobile tabs, density-aware headers/sidebar padding and single safe-area inset: `tests/browser_ui/chat/test_workspace_selection_design.py::test_mobile_composer_keeps_tabs_and_follows_appearance_density`.
 - Approved palette, root confirmation, Settings and Orchestration sources: `tests/browser_ui/chat/test_workspace_selection_design.py`.
 - Combined picker and controlled chat switching: `web/src/shell/WorkspaceSelectionDialog.test.tsx` and `web/src/components/composer/WorkspaceSwitchControl.test.tsx`.
@@ -79,7 +87,9 @@ Expect visible focused controls and logical menu focus return without losing sel
 - Workspace headers are 48px Comfortable or 36px Compact; sidebar padding follows the same density setting.
 - Desktop tab/container headers and view headers remain separate even with one tab; mobile reuses scrolling tabs across all panes.
 - Type icons live in desktop tabs, and close controls have accessible names without tooltips.
-- Narrow composer workspace labels collapse while the full location stays accessible; the mobile bottom safe area is reserved once.
+- Narrow composer workspace labels collapse while the full location stays accessible; the shell reserves each mobile safe-area inset once.
+- Native top clearance matches application-bar paint; bottom clearance stays content-colored, plus an 8px Comfortable or 4px Compact composer gutter.
+- Browser theme-color and the standalone status shim follow the resolved application-bar surface; emulated insets do not prove actual browser chrome rendering.
 - Neutral hairlines separate equal-colored viewports; distinct surface colors provide their own boundary.
 - App bar is medium-light accent, sidebar pale accent, tabs/view headers/content neutral; active tabs have a primary bottom strip and primary controls use white foregrounds.
 - Tab/disclosure hover feedback changes instantly, and selected entries retain their selected appearance.
@@ -124,7 +134,8 @@ Layout miniatures and Inbox consolidation remain deferred.
 - Shared overflow surfaces use transcript-style overlay thumbs; fitting content, composers and tab bars have no visible scrollbar.
 - Appearance density choices include shared preview cards; buttons do not shift vertically when pressed.
 - Search control and popup center on the whole application, independently of adjacent actions.
-- On desktop, + Open follows centered Search with an 8px gap; phones retain their existing plus, bell and Settings arrangement.
+- On desktop, + Open follows centered Search with an 8px gap; mobile restores the 28px Open face beside the bell and Settings.
+- Mobile Open has a transparent 32px-wide target using header height minus 4px, without overlapping Search or Notifications; tab-strip plus sizing is separate.
 
 Acceptance and evidence: `tests/browser_ui/chat/test_workspace_cycle.py`, `test_workspace_iteration.py` and `test_workspace_selection_design.py` in the same folder.
 Use desktop/mobile and both color modes; verify drafts, original file bytes and per-chat arrangements survive reload.

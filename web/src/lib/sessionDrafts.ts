@@ -123,12 +123,9 @@ export function initializeSessionDraftPersistence(
   } catch (error) {
     reportPersistenceError?.(error);
   }
+  loading = !!scope;
   notifyListeners();
-  if (!scope) {
-    loading = false;
-    return;
-  }
-  loading = true;
+  if (!scope) return;
   hydration = writes
     .then(() => readComposerDrafts(scope))
     .then((saved) => {
@@ -153,6 +150,7 @@ export function initializeSessionDraftPersistence(
       loading = false;
       persistenceError = error;
       reportPersistenceError?.(error);
+      notifyListeners();
     });
 }
 
@@ -261,6 +259,15 @@ export function useHasSessionDraft(conversationId: string): boolean {
   return useSyncExternalStore(
     subscribe,
     () => hasSessionDraft(conversationId),
+    () => false,
+  );
+}
+
+/** Failed or unfinished hydration cannot establish an empty browser draft set. */
+export function useSessionDraftsHydrated(): boolean {
+  return useSyncExternalStore(
+    subscribe,
+    () => !loading && persistenceError === undefined,
     () => false,
   );
 }

@@ -22,9 +22,10 @@ from datetime import UTC, datetime
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from starlette.websockets import WebSocketDisconnect
+from starlette.websockets import WebSocket, WebSocketDisconnect
 
 import omnigent.server.routes.sessions as sessions_routes
+from omnigent.runtime import pending_elicitations
 from omnigent.server.auth import LEVEL_OWNER, UnifiedAuthProvider
 from omnigent.server.routes.sessions import SessionLiveness, create_sessions_router
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
@@ -921,18 +922,44 @@ def test_deep_branch_activity_uses_authorized_persisted_status_in_lists_and_upda
     branch = store.fork_conversation(child.id)
     permissions.grant(ALICE, branch.id, LEVEL_OWNER)
     nested = branch
+    descendants = [child, branch]
     for _ in range(4):
         nested = store.create_conversation(
             kind="sub_agent",
             parent_conversation_id=nested.id,
             agent_id="087b7cb7ac30abf4debfaa578d052ec6",
         )
+        descendants.append(nested)
     store.set_session_live_status(nested.id, "waiting")
+    expected = [
+        {
+            "id": row.id,
+            "status": "running" if row.id == nested.id else "idle",
+            "updated_at": store.get_conversation(row.id).updated_at,
+            "pending_elicitations_count": 0,
+            "viewer_last_seen": None,
+            "viewer_unread": False,
+            "latest_error": "unknown",
+            "branch_source_id": child.id if row.id == branch.id else None,
+            "parent_session_id": row.parent_conversation_id,
+            "archived": False,
+            "project_id": None,
+            "labels": {},
+            "permission_level": LEVEL_OWNER if row.id == branch.id else None,
+            "owner": ALICE if row.id == branch.id else None,
+        }
+        for row in sorted(descendants, key=lambda row: row.id)
+    ]
     with TestClient(app) as client:
         response = client.get("/v1/sessions", headers={"X-Forwarded-Email": ALICE})
         assert response.status_code == 200
         root = next(row for row in response.json()["data"] if row["id"] == parent)
-        assert root["activity"] == {"own_status": "idle", "descendant_running": True}
+        assert root["activity"] == {
+            "own_status": "idle",
+            "descendant_running": True,
+            "descendants": expected,
+            "descendants_complete": True,
+        }
         assert root["status"] == "running"
         with client.websocket_connect(
             "/v1/sessions/updates", headers={"X-Forwarded-Email": ALICE}
@@ -942,7 +969,13 @@ def test_deep_branch_activity_uses_authorized_persisted_status_in_lists_and_upda
             assert snapshot["activity"] == root["activity"]
             store.set_session_live_status(nested.id, "idle")
             changed = _recv_until(ws, {"changed"})["items"][0]
-            assert changed["activity"] == {"own_status": "idle", "descendant_running": False}
+            assert changed["activity"]["own_status"] == "idle"
+            assert changed["activity"]["descendant_running"] is False
+            assert changed["activity"]["descendants_complete"] is True
+            assert {row["id"] for row in changed["activity"]["descendants"]} == {
+                row.id for row in descendants
+            }
+            assert all(row["status"] == "idle" for row in changed["activity"]["descendants"])
             assert changed["status"] == "idle"
             # A revoked branch prunes the entire path, including running descendants.
             permissions.revoke(ALICE, branch.id)
@@ -950,7 +983,13 @@ def test_deep_branch_activity_uses_authorized_persisted_status_in_lists_and_upda
             ws.send_text(json.dumps({"type": "watch", "session_ids": [parent]}))
             pruned = _recv_until(ws, {"snapshot"})["items"][0]
             assert pruned["activity"]["descendant_running"] is False
-            assert "descendant_ids" not in pruned["activity"]
+            assert pruned["activity"]["descendants_complete"] is True
+            assert [row["id"] for row in pruned["activity"]["descendants"]] == [child.id]
+        refreshed = client.get("/v1/sessions", headers={"X-Forwarded-Email": ALICE})
+        assert (
+            next(row for row in refreshed.json()["data"] if row["id"] == parent)["activity"]
+            == pruned["activity"]
+        )
 
 
 def test_unknown_descendant_coverage_stays_null_in_list_and_ws(
@@ -965,12 +1004,128 @@ def test_unknown_descendant_coverage_stays_null_in_list_and_ws(
     monkeypatch.setattr(stores[0], "list_activity_child_ids", incomplete)
     with TestClient(app) as client:
         row = client.get("/v1/sessions", headers={"X-Forwarded-Email": ALICE}).json()["data"][0]
-        assert row["activity"] == {"own_status": "idle", "descendant_running": None}
+        assert row["activity"] == {
+            "own_status": "idle",
+            "descendant_running": None,
+            "descendants": [],
+            "descendants_complete": False,
+        }
         with client.websocket_connect(
             "/v1/sessions/updates", headers={"X-Forwarded-Email": ALICE}
         ) as ws:
             ws.send_text(json.dumps({"type": "watch", "session_ids": [session_id]}))
             assert _recv_until(ws, {"snapshot"})["items"][0]["activity"] == row["activity"]
+
+
+def test_descendant_own_facts_counts_and_viewer_seeds_match_rows_and_ws(
+    app: FastAPI, stores, fast_rescan: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, _, permissions = stores
+    parent = _seed_session(stores, owner=ALICE, title="parent")
+    permissions.ensure_user(BOB)
+    permissions.grant(BOB, parent, LEVEL_OWNER)
+    store.set_session_live_status(parent, "failed")
+    expected_counts = {}
+    for runner, persisted, cached, expected in [
+        (False, 9, 0, 0),
+        (False, 9, 2, 2),
+        (True, 9, 0, 9),
+        (True, 1, 2, 2),
+        (True, 0, 0, 0),
+    ]:
+        child = store.create_conversation(
+            kind="sub_agent",
+            parent_conversation_id=parent,
+            agent_id="087b7cb7ac30abf4debfaa578d052ec6",
+        )
+        permissions.grant(ALICE, child.id, LEVEL_OWNER)
+        permissions.grant(BOB, child.id, LEVEL_OWNER)
+        if runner:
+            store.set_runner_id(child.id, "runner-test")
+        store.set_pending_elicitation_count(child.id, persisted)
+        for index in range(cached):
+            pending_elicitations.record_publish(
+                child.id,
+                {
+                    "type": "response.elicitation_request",
+                    "elicitation_id": f"request-{index}",
+                },
+            )
+        expected_counts[child.id] = expected
+    store.set_session_live_status(child.id, "failed")
+    failed_id = child.id
+    store.set_labels(
+        failed_id,
+        {
+            "omnigent.pinned.alice@example.com": "100",
+            "omnigent.pinned.bob@example.com": "200",
+            "omni_project": "Example",
+            "unrelated": "not a sidebar filter fact",
+        },
+    )
+    # A cache hit overrides persisted status without importing a scalar parent rollup.
+    running_id = next(iter(expected_counts))
+    store.set_session_live_status(running_id, "idle")
+    monkeypatch.setitem(sessions_routes._session_status_cache, running_id, "waiting")
+    sessions_routes._set_read_state(ALICE, failed_id, 111, True)
+    sessions_routes._set_read_state(BOB, failed_id, 222, False)
+
+    def no_transcript(*args, **kwargs):
+        pytest.fail("Descendant metadata must not hydrate transcripts")
+
+    monkeypatch.setattr(store, "list_items", no_transcript)
+    with TestClient(app) as client:
+        by_viewer = {}
+        for viewer, last_seen, unread in [(ALICE, 111, True), (BOB, 222, False)]:
+            response = client.get("/v1/sessions", headers={"X-Forwarded-Email": viewer})
+            assert response.status_code == 200
+            parent_row = next(row for row in response.json()["data"] if row["id"] == parent)
+            activity = parent_row["activity"]
+            by_viewer[viewer] = activity
+            assert activity["own_status"] == "failed"
+            assert activity["descendant_running"] is True
+            assert activity["descendants_complete"] is True
+            facts = {row["id"]: row for row in activity["descendants"]}
+            assert len(facts) == len(activity["descendants"]) == len(expected_counts)
+            assert {
+                key: row["pending_elicitations_count"] for key, row in facts.items()
+            } == expected_counts
+            assert facts[failed_id]["status"] == "failed"
+            assert facts[failed_id]["latest_error"] == "unknown"
+            assert facts[failed_id]["viewer_last_seen"] == last_seen
+            assert facts[failed_id]["viewer_unread"] is unread
+            assert facts[running_id]["status"] == "running"
+            assert all(row["branch_source_id"] is None for row in facts.values())
+            assert all(row["parent_session_id"] == parent for row in facts.values())
+            assert facts[failed_id]["labels"] == {
+                "omnigent.pinned": "100" if viewer == ALICE else "200",
+                "omni_project": "Example",
+            }
+            # Directly listed descendants use the identical pending/read semantics.
+            listed = client.get(
+                "/v1/sessions?kind=any", headers={"X-Forwarded-Email": viewer}
+            ).json()["data"]
+            assert expected_counts.keys() <= {row["id"] for row in listed}
+            for row in listed:
+                if row["id"] in facts:
+                    for field in [
+                        "pending_elicitations_count",
+                        "viewer_last_seen",
+                        "viewer_unread",
+                        "parent_session_id",
+                        "archived",
+                        "project_id",
+                        "permission_level",
+                        "owner",
+                    ]:
+                        assert row.get(field) == facts[row["id"]][field]
+            with client.websocket_connect(
+                "/v1/sessions/updates", headers={"X-Forwarded-Email": viewer}
+            ) as ws:
+                ws.send_json({"type": "watch", "session_ids": [parent]})
+                snapshot = _recv_until(ws, {"snapshot"})["items"][0]
+                assert snapshot["activity"] == activity
+        assert by_viewer[ALICE]["descendants"] != by_viewer[BOB]["descendants"]
 
 
 def _recv_transcript(ws, session_id, event_type, *, phase=None):
@@ -988,6 +1143,26 @@ def _recv_transcript(ws, session_id, event_type, *, phase=None):
 def _subscribe(ws, sid, **cursor):
     ws.send_json({"type": "subscribe", "session_id": sid, **cursor})
     return _recv_transcript(ws, sid, "session.sync", phase="complete")
+
+
+def test_disconnect_cleanup_tolerates_already_closed_transport(app, stores, monkeypatch):
+    from omnigent.runtime import session_stream
+
+    closed = []
+
+    async def disconnected_close(self, *args, **kwargs):
+        closed.append(self)
+        raise WebSocketDisconnect(code=1006)
+
+    monkeypatch.setattr(WebSocket, "close", disconnected_close)
+    sid = _seed_session(stores, owner=ALICE, title="disconnect cleanup")
+    with TestClient(app).websocket_connect(
+        "/v1/sessions/updates", headers={"X-Forwarded-Email": ALICE}
+    ) as ws:
+        _subscribe(ws, sid)
+        assert session_stream.has_subscribers(sid)
+    assert len(closed) == 1
+    assert not session_stream.has_subscribers(sid)
 
 
 @pytest.mark.timeout(20)

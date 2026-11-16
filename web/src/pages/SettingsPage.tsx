@@ -7,6 +7,7 @@ import {
   useFileOpening,
   writeFileOpening,
 } from "@/lib/fileOpeningPreferences";
+import { useStartupDestination, writeStartupDestination } from "@/lib/startupPreferences";
 import {
   DEFAULT_LIST_DENSITY,
   LIST_DENSITY_STORAGE_KEY,
@@ -852,6 +853,30 @@ function FileOpeningSchematic({ mode }: { mode: FileOpeningMode }) {
   );
 }
 
+function StartupDestinationControl() {
+  const value = useStartupDestination();
+  const id = useId();
+  return (
+    <ThemeSubsection
+      title="On startup"
+      labelId={id}
+      helper="Choose what opens when you launch Triune."
+    >
+      <CardRadioGroup
+        labelledBy={id}
+        value={value}
+        onSelect={writeStartupDestination}
+        items={[
+          { value: "continue" as const, testId: "startup-continue", body: "Continue last session" },
+          { value: "new" as const, testId: "startup-new", body: "New chat" },
+        ]}
+        className="grid grid-cols-2 gap-2"
+        cardClassName="min-w-0 p-2.5 text-left"
+      />
+    </ThemeSubsection>
+  );
+}
+
 function FileOpeningControl() {
   const value = useFileOpening();
   const id = useId();
@@ -962,6 +987,7 @@ function AppearanceSection() {
 
     writeTerminalThemeMode(TERMINAL_THEME_DEFAULT);
     writeListDensity(DEFAULT_LIST_DENSITY);
+    writeStartupDestination("continue");
     writeFileOpening("beside");
 
     writeThemePalette(DEFAULT_PALETTE);
@@ -1120,7 +1146,10 @@ function AppearanceSection() {
           </SettingsGroup>
 
           <SettingsGroup title="Layout" testId="settings-group-density">
-            <ListDensityControl />
+            <StartupDestinationControl />
+            <div className="mt-4 border-t border-border pt-4">
+              <ListDensityControl />
+            </div>
             <div className="mt-4 border-t border-border pt-4">
               <FileOpeningControl />
             </div>

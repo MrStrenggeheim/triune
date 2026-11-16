@@ -4,12 +4,14 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
 from playwright.sync_api import Page, WebSocketRoute, expect
 
 from tests.browser_ui.chat.session_contract import message_item
+from tests.browser_ui.chat.test_recovery_activity_contract import _activity_item
 from tests.browser_ui.chat.test_unified_workspace import (
     WorkspaceJourney,
     _view,
@@ -35,16 +37,16 @@ def test_shared_transcript_orders_and_recovers_without_reloading(
     """Two visible chats share a socket; late input and lost mutations converge."""
     first, second = workspace_journey.chats
     first.harness = "codex-native"
-    q1 = {**message_item("q1", "user", "First request", response_id="turn1"), "position": 0}
+    q1 = {**message_item("q1", "user", "First request", response_id="turn1"), "position": 10}
     a1 = {
         **message_item("a1", "assistant", "First answer", response_id="turn1"),
-        "position": 1,
+        "position": 11,
         "phase": "final_answer",
     }
-    q2 = {**message_item("q2", "user", "Second request", response_id="turn2"), "position": 2}
+    q2 = {**message_item("q2", "user", "Second request", response_id="turn2"), "position": 12}
     a2 = {
         **message_item("a2", "assistant", "Second answer", response_id="turn2"),
-        "position": 3,
+        "position": 13,
         "phase": "final_answer",
         "stream_message_id": "native-a2",
     }
@@ -142,7 +144,7 @@ def test_shared_transcript_orders_and_recovers_without_reloading(
             "data": {
                 "item_id": "q2",
                 "type": "message",
-                "position": 2,
+                "position": 12,
                 "data": {"role": "user", "user_authored": True, "content": q2["content"]},
             },
         },
@@ -178,6 +180,29 @@ def test_shared_transcript_orders_and_recovers_without_reloading(
     expect(transcript.locator('[data-search-item-id="a1"]')).to_have_count(0)
     expected = order()
     assert expected == ["q1", "q2", "a2"]
+    # An older positioned activity update must not enter legacy window recovery.
+    activity = {
+        **_activity_item("old-child", "older-worker-card", "worker-dispatch", "returned"),
+        "position": 5,
+    }
+    first.set_items([a2, q2, q1, activity])
+    revisions[first.session_id] = reset_revisions[first.session_id] = 6
+    for _ in range(2):
+        event(first.session_id, {"type": "response.output_item.updated", "item": activity})
+    activity_group = transcript.get_by_role(
+        "button", name=re.compile(r"Started or steered .*subagent")
+    )
+    expect(activity_group).to_be_visible()
+    activity_group.click()
+    expect(transcript.get_by_test_id("subagent-activity")).to_have_count(1)
+    expect(transcript.get_by_text("Curie", exact=True)).to_be_visible()
+    expect(
+        page.get_by_text("Activity update is unavailable in the loaded history.")
+    ).to_have_count(0)
+    expected = order()
+    assert transcript.get_by_test_id("subagent-activity").evaluate("""element =>
+      !!(element.compareDocumentPosition(document.querySelector('[data-search-item-id="q1"]'))
+        & Node.DOCUMENT_POSITION_FOLLOWING)""")
     assert len(sockets) == 1
     expect(_view(page, "Chat B").get_by_text("Other chat answer", exact=True)).to_be_visible()
     page.get_by_role("button", name="Close Chat B", exact=True).click()

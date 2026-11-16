@@ -1,6 +1,6 @@
 // Modified for Triune.
 import { describe, expect, it } from "vitest";
-import { getSessionState, getSessionStates } from "./useSessionState";
+import { getSessionState, getSessionStates, mergeSessionStates } from "./useSessionState";
 import type { Conversation } from "@/hooks/useConversations";
 
 function conv(
@@ -95,4 +95,14 @@ it("retains simultaneous problem, approval count and work facts in canonical ord
   expect(
     getSessionStates({ status: "running", pending_elicitations_count: 3 }, "disconnected"),
   ).toEqual([{ kind: "disconnected" }, { kind: "awaiting", count: 3 }, { kind: "running" }]);
+});
+
+it("unions independent error and running facts and sums distinct sessions' input counts", () => {
+  expect(
+    mergeSessionStates(
+      [{ kind: "error" }, { kind: "awaiting", count: 2 }],
+      [{ kind: "running" }, { kind: "awaiting", count: 3 }, { kind: "error" }],
+    ),
+  ).toEqual([{ kind: "error" }, { kind: "awaiting", count: 5 }, { kind: "running" }]);
+  expect(mergeSessionStates([], [])).toEqual([]);
 });

@@ -6,6 +6,8 @@ import { TouchContextSensor } from "@/lib/touchContextGesture";
 import {
   branchRoots,
   branchChildren,
+  branchDescendants,
+  branchSource,
   branchDescendantCounts,
   branchSectionAssignments,
   visibleBranchRows,
@@ -168,6 +170,7 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   type Conversation,
+  type SessionActivityDescendant,
   type PinnedConversationsResult,
   useArchiveConversation,
   useArchiveProject,
@@ -218,8 +221,14 @@ import { SidebarEditRow } from "./SidebarEditRow";
 import { hasSessionDraft, useHasSessionDraft, useSessionDraftIds } from "@/lib/sessionDrafts";
 import { useNow } from "@/hooks/useNow";
 import { useOptimisticTitle } from "@/lib/optimisticTitles";
-import { getSessionState, getSessionStates, type SessionState } from "@/hooks/useSessionState";
+import {
+  getSessionState,
+  getSessionStates,
+  mergeSessionStates,
+  type SessionState,
+} from "@/hooks/useSessionState";
 import { useSessionErrorStates } from "@/hooks/useSessionErrors";
+import { useSidebarStatusRollup } from "@/hooks/useSidebarStatusRollup";
 import type { LatestSessionError } from "@/lib/sessionError";
 import { useChatStore } from "@/store/chatStore";
 import {
@@ -5008,29 +5017,62 @@ function ConversationRowImpl({
   const isProvisionalLabel =
     pendingTitle === null && conversation.title == null && optimisticTitle !== undefined;
   const hasDraft = useHasSessionDraft(conversation.id);
+  const ownStatus = conversation.activity?.own_status ?? conversation.status;
   // A write for another conversation leaves this primitive snapshot unchanged,
   // so useSyncExternalStore skips the heavy row render.
-  const readState = useConversationReadState(
-    conversation.id,
-    conversation.updated_at,
-    conversation.status,
-  );
+  const readState = useConversationReadState(conversation.id, conversation.updated_at, ownStatus);
   // Explicit unread flags remain visible alongside live work and on the active row.
   const hasUnseenMessages = readState.explicitlyUnread || (readState.unseen && !isActive);
   // "Mark as unread" is offered on any row not already showing the dot.
   const canMarkUnread = !hasUnseenMessages;
   // Live state and unread flags retain separate indicators.
-  const errorConversations = useMemo(() => [conversation], [conversation]);
+  const errorConversations = useMemo(
+    () => [{ ...conversation, status: ownStatus }],
+    [conversation, ownStatus],
+  );
   const [latestError] = useSessionErrorStates(errorConversations);
-  const rowStatus = conversation.activity
-    ? conversation.activity.own_status === "running" ||
-      conversation.activity.own_status === "failed"
-      ? conversation.activity.own_status
-      : !childrenExpanded && conversation.activity.descendant_running === true
-        ? "running"
-        : conversation.activity.own_status
-    : conversation.status;
-  const sessionStates = getSessionStates({ ...conversation, status: rowStatus }, latestError);
+  const ownStates = getSessionStates({ ...conversation, status: ownStatus }, latestError);
+  const branchState = useContext(SidebarBranchContext);
+  const branchSections = useContext(SidebarBranchSectionsContext);
+  const revealable = useMemo(
+    () =>
+      childrenExpanded || !branchState
+        ? []
+        : branchDescendants(branchState.rows, conversation.id, branchSections, 64 - treeDepth),
+    [childrenExpanded, branchState, conversation.id, branchSections, treeDepth],
+  );
+  const statusDescendants = useMemo(() => {
+    const projected = conversation.activity?.descendants;
+    const members = projected ? new Map(projected.map((row) => [row.id, row])) : null;
+    const reachable = new Set([conversation.id]);
+    return revealable.flatMap((row): SessionActivityDescendant[] => {
+      if (!reachable.has(branchSource(row) ?? "")) return [];
+      if (members) {
+        const member = members.get(row.id);
+        if (member) reachable.add(row.id);
+        return member ? [member] : [];
+      }
+      reachable.add(row.id);
+      // Legacy broad rollups cannot prove a revealable child's own runtime fact.
+      const status = row.activity?.own_status;
+      return status
+        ? [
+            {
+              id: row.id,
+              status,
+              updated_at: row.updated_at,
+              pending_elicitations_count: row.pending_elicitations_count ?? 0,
+              viewer_last_seen: row.viewer_last_seen,
+              viewer_unread: row.viewer_unread,
+            },
+          ]
+        : [];
+    });
+  }, [conversation.activity?.descendants, conversation.id, revealable]);
+  const inherited = useSidebarStatusRollup(
+    statusDescendants,
+    branchState?.activeId ?? (isActive ? conversation.id : undefined),
+  );
   // The bound session's launch/relaunch window: a send is in flight (local
   // status "streaming") or the runner is auto-creating the PTY
   // (`terminalPending`), but the server hasn't confirmed `running` yet — a
@@ -5041,11 +5083,21 @@ function ConversationRowImpl({
   const isStartingUp = useChatStore(
     (s) => s.conversationId === conversation.id && (s.status === "streaming" || s.terminalPending),
   );
-  if (isStartingUp && !sessionStates.some((state) => state.kind === "running"))
-    sessionStates.push({ kind: "starting" });
-  if (hasUnseenMessages) sessionStates.push({ kind: "unseen" });
+  if (isStartingUp && !ownStates.some((state) => state.kind === "running"))
+    ownStates.push({ kind: "starting" });
+  if (hasUnseenMessages) ownStates.push({ kind: "unseen" });
+  const sessionStates = mergeSessionStates(ownStates, inherited.states);
   // The open composer shows its own draft; other rows retain it in the status description.
-  const showDraftIndicator = hasDraft && !isActive;
+  const showDraftIndicator = (hasDraft && !isActive) || inherited.hasDraft;
+  const incompleteStatus =
+    !childrenExpanded &&
+    !!branchState &&
+    (inherited.incomplete ||
+      statusDescendants.length !== revealable.length ||
+      branchState.loading ||
+      branchState.hasMore ||
+      !!branchState.error ||
+      conversation.activity?.descendants_complete === false);
   const showSharedIndicator = !isOwner;
   const statusGroups = getSessionStatusGroups(sessionStates, showDraftIndicator);
   const statusIcons = [statusGroups.attention, statusGroups.activity].filter(
@@ -5056,6 +5108,7 @@ function ConversationRowImpl({
   const statusDescription = [
     ...sessionStates.map((state) => describeSessionState(state).ariaLabel),
     showDraftIndicator && "Draft",
+    incompleteStatus && "Some subchat statuses are unknown",
     showSharedIndicator && "Shared session",
   ]
     .filter(Boolean)
@@ -5414,6 +5467,7 @@ function ConversationRowImpl({
       {...pointerInputProps}
       data-menu-open={menuOpen || contextMenuOpen || undefined}
       data-sidebar-session-id={conversation.id}
+      data-status-coverage={incompleteStatus ? "partial" : undefined}
       data-sidebar-drop={isPinned && pinOrder ? "pin-order" : undefined}
       data-open-elsewhere={openElsewhere || undefined}
       style={hierarchyStyle}

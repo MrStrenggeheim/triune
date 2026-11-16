@@ -1177,6 +1177,15 @@ def _labels_for_viewer(labels: dict[str, str], user_id: str | None) -> dict[str,
     return cleaned
 
 
+def _session_pending_count(conv: Conversation, cached_count: int) -> int:
+    """Use the persisted cross-replica mirror only for runner-bound sessions."""
+    return (
+        max(cached_count, conv.pending_elicitation_count or 0)
+        if conv.runner_id is not None
+        else cached_count
+    )
+
+
 def _build_session_list_item(
     conv: Conversation,
     *,
@@ -1190,6 +1199,7 @@ def _build_session_list_item(
     comments_fingerprint: CommentsFingerprint | None,
     harness: str | None = None,
     descendant_running: bool | None = None,
+    activity: SessionActivity | None = None,
 ) -> SessionListItem:
     """
     Assemble one :class:`SessionListItem` from a conversation row and
@@ -1243,12 +1253,15 @@ def _build_session_list_item(
     # dots straight from the list (no separate fetch). Built per-user here —
     # `user_id` is the requesting caller, never broadcast to other viewers.
     viewer_last_seen, viewer_unread = _read_state_entry(user_id, conv.id)
+    if activity is not None:
+        descendant_running = activity.descendant_running
     return SessionListItem(
         id=conv.id,
         agent_id=conv.agent_id,
         agent_name=agent_names_by_id.get(conv.agent_id),
         harness=harness,
-        activity=SessionActivity(
+        activity=activity
+        or SessionActivity(
             own_status=_session_status_from_cache(conv.id, conv.live_status),
             descendant_running=descendant_running,
         ),
@@ -1280,11 +1293,7 @@ def _build_session_list_item(
         # decrement) must not override it. Gating on runner_id keeps the
         # cross-replica fallback where it's needed while making the unbound
         # path index-only and free of the persist-lag race.
-        pending_elicitations_count=(
-            max(pending_count, conv.pending_elicitation_count or 0)
-            if conv.runner_id is not None
-            else pending_count
-        ),
+        pending_elicitations_count=_session_pending_count(conv, pending_count),
         workspace=conv.workspace,
         workspace_switching=bool(
             conv.workspace_transition and conv.workspace_transition.get("blocked")

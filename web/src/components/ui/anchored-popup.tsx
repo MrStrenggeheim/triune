@@ -36,47 +36,141 @@ export function usePopupTriggerRef<T extends HTMLElement>(ref: Ref<T> | undefine
   );
 }
 
-/** Supply horizontal bounds; Radix still owns placement, shifting and flipping. */
+function getPopupAnchorRow(trigger: HTMLElement) {
+  const nearest = trigger.closest<HTMLElement>(
+    ".workbench-app-bar, .chat-header, .workspace-control-header, .composer-shelf-content, .composer-shelf-surface",
+  );
+  return nearest?.closest<HTMLElement>(".composer-shelf-content") ?? nearest;
+}
+
+/** Trigger-relative offsets that mirror visible control insets outside its row. */
+export function getPopupRowOffsets(trigger: HTMLElement) {
+  const row = getPopupAnchorRow(trigger);
+  if (!row) return null;
+  const surface = trigger.querySelector<HTMLElement>("[data-header-action-surface]") ?? trigger;
+  const outer = row.getBoundingClientRect();
+  const target = trigger.getBoundingClientRect();
+  const paint = surface.getBoundingClientRect();
+  if (!outer.height || !target.height || !paint.height) return null;
+  // Shelves overlap the next card by their radius; that overlap is not a row inset.
+  const bottom =
+    outer.bottom +
+    Math.min(
+      0,
+      parseFloat(trigger.ownerDocument.defaultView!.getComputedStyle(row).marginBottom) || 0,
+    );
+  return {
+    top: target.top - outer.top + Math.max(0, paint.top - outer.top),
+    bottom: bottom - target.bottom + Math.max(0, bottom - paint.bottom),
+  };
+}
+
+/** Supply row spacing and bounds; Radix owns placement, shifting and flipping. */
 export function useAnchoredPopupBounds(
   padding: number | Partial<Record<"top" | "bottom" | "left" | "right", number>> = 8,
   style?: CSSProperties,
   enabled = true,
+  side: "top" | "bottom" | "left" | "right" = "bottom",
+  sideOffset = 4,
+  forwardedRef?: Ref<HTMLDivElement>,
 ) {
   const { trigger, open } = useContext(PopupContext);
-  const [bounds, setBounds] = useState({ left: 0, right: 0 });
+  const [content, setContent] = useState<HTMLDivElement | null>(null);
+  const contentRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      setContent(node);
+      if (typeof forwardedRef === "function") forwardedRef(node);
+      else if (forwardedRef) forwardedRef.current = node;
+    },
+    [forwardedRef],
+  );
+  const [bounds, setBounds] = useState({
+    left: 0,
+    right: 0,
+    offset: sideOffset,
+    reserve: 0,
+    row: false,
+  });
   useLayoutEffect(() => {
     if (!trigger || !enabled || !open) return;
     const column = trigger.closest<HTMLElement>(".composer-shelf-stack, [data-composer-card]");
-    if (!column) return;
+    const row = getPopupAnchorRow(trigger);
+    const vertical = side === "top" || side === "bottom";
+    const surface = trigger.querySelector<HTMLElement>("[data-header-action-surface]") ?? trigger;
     const win = trigger.ownerDocument.defaultView!;
     const measure = () => {
-      const rect = column.getBoundingClientRect();
-      if (!rect.width) return;
-      const css = win.getComputedStyle(column);
-      const left = rect.left + (parseFloat(css.paddingLeft) || 0);
-      const right = win.innerWidth - rect.right + (parseFloat(css.paddingRight) || 0);
+      let left = 0,
+        right = 0,
+        offset = sideOffset,
+        reserve = 0,
+        anchored = false;
+      if (column) {
+        const rect = column.getBoundingClientRect();
+        const css = win.getComputedStyle(column);
+        if (rect.width) {
+          left = rect.left + (parseFloat(css.paddingLeft) || 0);
+          right = win.innerWidth - rect.right + (parseFloat(css.paddingRight) || 0);
+        }
+      }
+      if (row && vertical) {
+        const offsets = getPopupRowOffsets(trigger);
+        if (offsets) {
+          const actualSide = content?.getAttribute("data-side") ?? side;
+          offset = actualSide === "top" ? offsets.top : offsets.bottom;
+          // Keep Radix's fit budget constant across asymmetric side changes.
+          reserve = Math.max(offsets.top, offsets.bottom) - offset;
+          anchored = true;
+        }
+      }
       setBounds((previous) =>
-        previous.left === left && previous.right === right ? previous : { left, right },
+        previous.left === left &&
+        previous.right === right &&
+        previous.offset === offset &&
+        previous.reserve === reserve &&
+        previous.row === anchored
+          ? previous
+          : { left, right, offset, reserve, row: anchored },
       );
     };
     measure();
+    if (!column && !(row && vertical)) return;
     const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
-    observer?.observe(column);
+    for (const node of new Set([column, row, trigger, surface])) if (node) observer?.observe(node);
+    const mutation = new MutationObserver(measure);
+    if (content && row && vertical)
+      mutation.observe(content, { attributes: true, attributeFilter: ["data-side"] });
+    for (const node of new Set([
+      row,
+      column,
+      trigger.closest("[data-list-density]"),
+      trigger.ownerDocument.documentElement,
+    ]))
+      if (node)
+        mutation.observe(node, {
+          attributes: true,
+          attributeFilter: ["class", "style", "data-list-density"],
+        });
     win.addEventListener("resize", measure);
     win.addEventListener("scroll", measure, true);
     return () => {
       observer?.disconnect();
+      mutation.disconnect();
       win.removeEventListener("resize", measure);
       win.removeEventListener("scroll", measure, true);
     };
-  }, [trigger, enabled, open]);
+  }, [trigger, content, enabled, open, side, sideOffset]);
   const insets =
     typeof padding === "number"
       ? { top: padding, bottom: padding, left: padding, right: padding }
       : padding;
   return {
+    ref: contentRef,
+    sideOffset: enabled && open ? bounds.offset : sideOffset,
+    "data-popup-row-anchor": (enabled && open && bounds.row) || undefined,
     collisionPadding: {
       ...insets,
+      top: (insets.top ?? 0) + (enabled && open ? bounds.reserve : 0),
+      bottom: (insets.bottom ?? 0) + (enabled && open ? bounds.reserve : 0),
       left: Math.max(insets.left ?? 8, bounds.left),
       right: Math.max(insets.right ?? 8, bounds.right),
     },

@@ -57,11 +57,22 @@ html[data-electron-mac] .unified-workbench .sidebar-header-row {
   height: var(--workbench-header-height);
   padding: 0 12px;
 }
-.unified-workbench:is([data-ios-native], [data-android-native]) {
+.unified-workbench:is([data-ios-native], [data-android-native]),
+:root[data-ios-standalone] .unified-workbench {
   padding-top: var(--omnigent-safe-top, 0px);
   padding-bottom: var(--omnigent-safe-bottom, 0px);
 }
-.unified-workbench:is([data-ios-native], [data-android-native]) .conversations-sidebar {
+/* Extend the actual app-bar paint into the shell-owned top inset. */
+.unified-workbench:is([data-ios-native], [data-android-native]) .workbench-app-bar::before {
+  content: "";
+  position: absolute;
+  inset: auto 0 100%;
+  height: var(--omnigent-safe-top, 0px);
+  background: var(--workspace-appbar);
+  pointer-events: none;
+}
+.unified-workbench:is([data-ios-native], [data-android-native]) .conversations-sidebar,
+:root[data-ios-standalone] .unified-workbench .conversations-sidebar {
   top: calc(var(--workbench-header-height) + var(--omnigent-safe-top, 0px));
 }
 
@@ -117,6 +128,16 @@ html[data-electron-mac] .unified-workbench .sidebar-header-row {
 }
 
 @media (max-width: 767.98px) {
+  .unified-workbench .workbench-app-bar [aria-label="Open view"] {
+    width: 28px;
+    padding: 0;
+  }
+  /* Compensate the 1px Button border; use only free header height and half the gap. */
+  .unified-workbench .workbench-app-bar [aria-label="Open view"]::after {
+    content: "";
+    position: absolute;
+    inset: calc((28px - var(--workbench-header-height) + 4px) / 2 - 1px) -3px;
+  }
   .unified-workbench.app-shell
     aside.conversations-sidebar:not(aside[aria-label="Workspace"] *):not([data-collapsed]):not(
       .is-peek
@@ -126,9 +147,10 @@ html[data-electron-mac] .unified-workbench .sidebar-header-row {
   .unified-workbench [data-testid="sidebar-primary-nav"] {
     padding-top: 0;
   }
-  /* The shell owns the safe area; the composer only needs its content gutter. */
-  .unified-workbench.app-shell .chat-composer-form {
-    padding-bottom: 8px;
+  /* The shell owns the safe area; both composers use the same density gutter. */
+  .unified-workbench.app-shell .chat-composer-form,
+  .unified-workbench .side-chat-backdrop > .composer-shelf-stack {
+    padding-bottom: calc(var(--list-gap, 4px) * 2);
   }
 }
 .unified-workbench .conversations-sidebar {

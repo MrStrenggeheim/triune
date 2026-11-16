@@ -26,14 +26,23 @@ function CheckboxGlyph() {
 }
 
 /** Decorative agent-managed status; callers supply the accessible status text. */
-function CheckboxVisual({ checked = false }: { checked?: CheckboxPrimitive.CheckedState }) {
+function CheckboxVisual({
+  checked = false,
+  active = false,
+}: {
+  checked?: CheckboxPrimitive.CheckedState;
+  active?: boolean;
+}) {
   return (
     <span
       aria-hidden="true"
       data-slot="checkbox-visual"
       data-state={checked === "indeterminate" ? "indeterminate" : checked ? "checked" : "unchecked"}
       data-checked={checked === true ? "" : undefined}
-      className={CHECKBOX_VISUAL_CLASS}
+      className={cn(
+        CHECKBOX_VISUAL_CLASS,
+        active && checked === false && "border-[var(--workspace-control-active-border)]",
+      )}
     >
       {checked !== false && <CheckboxGlyph />}
     </span>
