@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { describe, expect, it } from "vitest";
 import {
   addDockView,
@@ -16,6 +17,7 @@ import {
   pinDockView,
   unpinDockView,
   applyDockLayout,
+  updateDockConversationTitles,
 } from "./dockPersistence";
 
 const conversation = (id: string): DockView => ({
@@ -23,6 +25,44 @@ const conversation = (id: string): DockView => ({
   kind: "conversation",
   title: id,
   resource: { conversationId: id },
+});
+
+describe("conversation title batches", () => {
+  it("updates shared, saved and pinned occurrences without changing geometry or unrelated resources", () => {
+    const original = addDockView(createDockLayout([conversation("A")]), conversation("B"), {
+      edge: "right",
+    });
+    const pinned = pinDockView(createDockPersistence(original), "conversation:B");
+    const unchanged = { conversationId: "C", layout: createDockLayout([conversation("C")]) };
+    const state = { ...pinned, chats: [...pinned.chats, unchanged] };
+    const titles = new Map([
+      ["A", "Latest A"],
+      ["B", "Latest B"],
+      ["missing", "Ignore"],
+    ]);
+    const next = updateDockConversationTitles(state, titles);
+    for (const layout of [
+      next.shared,
+      next.pins,
+      next.pinFrame!,
+      ...next.chats.map((chat) => chat.layout),
+    ]) {
+      for (const item of layout.views) {
+        const id = item.resource.conversationId as string;
+        expect(item.title).toBe(titles.get(id) ?? id);
+      }
+    }
+    expect(composeDockLayout(next).tree).toBe(composeDockLayout(state).tree);
+    expect(next.shared.panes).toBe(state.shared.panes);
+    expect(next.pins.panes).toBe(state.pins.panes);
+    expect(next.pinFrame!.tree).toBe(state.pinFrame!.tree);
+    expect(next.chats.at(-1)).toBe(unchanged);
+    expect(next.shared.views[0].resource).toBe(state.shared.views[0].resource);
+    expect(next.activeConversationId).toBe(state.activeConversationId);
+    expect(parseDockPersistence(JSON.stringify(next))).toEqual(next);
+    expect(updateDockConversationTitles(next, titles)).toBe(next);
+    expect(updateDockConversationTitles(next, new Map())).toBe(next);
+  });
 });
 
 function rectangle(layout: ReturnType<typeof createDockLayout>, id: string) {

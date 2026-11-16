@@ -135,6 +135,7 @@ class ManagedStartupInputs:
             tuple[int, str], tuple[HostConnection, asyncio.Task[None], asyncio.Event]
         ] = {}
         self._deliveries: dict[tuple[int, str], asyncio.Task[Any]] = {}
+        self._closing = False
 
     async def enqueue(
         self,
@@ -290,6 +291,8 @@ class ManagedStartupInputs:
         ]
 
     def host_changed(self, app: Any, host_id: str) -> None:
+        if self._closing:
+            return
         key = (current_workspace_id(), host_id)
         connection = self.hosts.get(host_id)
         existing = self._workers.get(key)
@@ -306,7 +309,7 @@ class ManagedStartupInputs:
         async def serve() -> None:
             after = None
             delay = 0.25
-            while self.hosts.get(host_id) is connection:
+            while not self._closing and self.hosts.get(host_id) is connection:
                 busy = False
                 try:
                     ids = await asyncio.to_thread(
@@ -338,6 +341,8 @@ class ManagedStartupInputs:
         self, app: Any, session_id: str, connection: HostConnection
     ) -> bool:
         """Advance one session's startup here; return whether work is in flight."""
+        if self._closing:
+            return False
         conv = await asyncio.to_thread(self.conversations.get_conversation, session_id)
         if conv is None or conv.host_id != connection.host_id:
             return False
@@ -358,12 +363,9 @@ class ManagedStartupInputs:
             # was being cleared still belongs to this session's startup.
             key = (current_workspace_id(), session_id)
             if head.status == "in_progress" and key not in self._deliveries:
-                task = asyncio.create_task(
-                    self._deliver(app, session_id, head), name=f"startup-input-{session_id}"
-                )
-                self._deliveries[key] = task
+                self.schedule_delivery(app, session_id, head)
             return head.status == "in_progress"
-        if state == "pending" and conv.runner_id is None:
+        if not self._closing and state == "pending" and conv.runner_id is None:
             # The launch bound this host on a replica without its tunnel, so it
             # could not start the runner; start it here.
             from omnigent.server.routes.sessions import _launch_runner_on_host
@@ -396,7 +398,7 @@ class ManagedStartupInputs:
     def schedule_delivery(self, app: Any, session_id: str, item: ConversationItem) -> None:
         """Keep durable acceptance independent of the HTTP sender and policy wait."""
         key = (current_workspace_id(), session_id)
-        if self.dispatch is not None and key not in self._deliveries:
+        if not self._closing and self.dispatch is not None and key not in self._deliveries:
             task = asyncio.create_task(
                 self._deliver(app, session_id, item), name=f"startup-input-{session_id}"
             )
@@ -405,7 +407,7 @@ class ManagedStartupInputs:
     async def _deliver(
         self, app: Any, session_id: str, item: ConversationItem
     ) -> dict[str, Any] | None:
-        if self.dispatch is None:
+        if self._closing or self.dispatch is None:
             return None
         key = (current_workspace_id(), session_id)
         task = asyncio.current_task()
@@ -516,9 +518,11 @@ class ManagedStartupInputs:
             )
             return {"error": str(exc), "delivery_state": "unknown" if uncertain else "failed"}
         finally:
-            self._deliveries.pop(key, None)
+            if self._deliveries.get(key) is task:
+                self._deliveries.pop(key, None)
             if (
-                isinstance(item.data, MessageData)
+                not self._closing
+                and isinstance(item.data, MessageData)
                 and item.data.communication is not None
                 and item.data.communication.kind == "system"
             ):
@@ -594,8 +598,10 @@ class ManagedStartupInputs:
         _publish_status(session_id, "failed", failure_origin="startup_input_failed")
 
     async def shutdown(self) -> None:
+        self._closing = True
         tasks = [task for _, task, _ in self._workers.values()] + list(self._deliveries.values())
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         self._workers.clear()
+        self._deliveries.clear()

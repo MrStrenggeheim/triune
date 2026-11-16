@@ -252,6 +252,8 @@ def create_message_queue_router(
         await asyncio.to_thread(queue.store.mutate, session_id, action, change)
         if action == "send":
             await queue.recover(request.app, session_id)
+        elif action == "delete":
+            await queue.retire_if_empty(request.app, session_id)
         return await response(session_id, user)
 
     @router.delete("/{queue_id}")

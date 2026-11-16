@@ -7,15 +7,18 @@ import contextlib
 import json
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
-from sqlalchemy import event, text
+from sqlalchemy import event, text, update
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
+from omnigent.db.compression import CompressedText
+from omnigent.db.db_models import SqlConversationMetadata
 from omnigent.db.utils import get_or_create_engine
 from omnigent.entities import (
     CompactionData,
@@ -318,6 +321,106 @@ def test_get_conversations_empty_input_skips_query(
 ) -> None:
     """Empty id list returns an empty map without a database round-trip."""
     assert conversation_store.get_conversations([]) == {}
+
+
+@pytest.mark.parametrize("store_fixture", ["conversation_store", "split_db_conversation_store"])
+@pytest.mark.parametrize("read_method", ["get_conversations", "list_conversations"])
+def test_summary_reads_skip_execution_columns_without_losing_metadata(
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+    store_fixture: str,
+    read_method: str,
+) -> None:
+    store = request.getfixturevalue(store_fixture)
+    conv = store.create_conversation(title="summary", agent_id="a" * 32)
+    state = {
+        "policy": "x" * 32768,
+        "_omnigent_native_plan_snapshot_v1": [
+            {"content": "audit", "status": "in_progress", "activeForm": "auditing"}
+        ],
+        "_triune_runtime_notices_v1": {"notice": "retained"},
+    }
+    with store._engine.begin() as conn:
+        conn.execute(
+            update(SqlConversationMetadata)
+            .where(SqlConversationMetadata.id == conv.id)
+            .values(
+                session_state=json.dumps(state),
+                session_usage='{"total_cost_usd":1}',
+                inference_snapshot='{"catalog":["synthetic"]}',
+                terminal_launch_args='["--synthetic"]',
+                runner_id="synthetic-runner",
+                workspace="/synthetic",
+                workspace_transition='{"id":"transition","blocked":true}',
+                external_session_id="native-session",
+            )
+        )
+    store.set_session_live_status(conv.id, "running")
+    store.set_pending_elicitation_count(conv.id, 3)
+    store.set_labels(conv.id, {"omni_project": "audit", "omnigent.pinned.local": "1"})
+    decoded = []
+    original_decode = CompressedText.process_result_value
+
+    def decode(self, value, dialect):
+        decoded.append(value)
+        return original_decode(self, value, dialect)
+
+    monkeypatch.setattr(CompressedText, "process_result_value", decode)
+    statements: list[str] = []
+
+    def record(_conn, _cursor, statement, _params, _context, _many):
+        statements.append(statement)
+
+    def read(**kwargs):
+        if read_method == "get_conversations":
+            return store.get_conversations([conv.id], **kwargs)[conv.id]
+        return store.list_conversations(**kwargs).data[0]
+
+    engines = {store._engine, store._conv_engine}
+    for engine in engines:
+        event.listen(engine, "before_cursor_execute", record)
+    try:
+        full = read()
+        assert len(decoded) == 4
+        assert full.session_state == {"policy": state["policy"]}
+        assert full.session_todos == state["_omnigent_native_plan_snapshot_v1"]
+        assert full.runtime_notice_state == {"notice": "retained"}
+        assert full.session_usage == {"total_cost_usd": 1}
+        assert full.inference_snapshot == {"catalog": ["synthetic"]}
+        assert full.terminal_launch_args == ["--synthetic"]
+        full_query_count = len(statements)
+        decoded.clear()
+        statements.clear()
+        light = read(include_execution_state=False)
+        assert decoded == []
+        assert len(statements) == full_query_count
+        metadata_sql = next(
+            sql for sql in statements if "FROM omnigent_conversation_metadata" in sql
+        )
+        for column in (
+            "session_state",
+            "session_usage",
+            "inference_snapshot",
+            "terminal_launch_args",
+        ):
+            assert f"omnigent_conversation_metadata.{column}" not in metadata_sql
+        assert light == replace(
+            full,
+            session_state={},
+            session_todos=[],
+            runtime_notice_state={},
+            session_usage={},
+            inference_snapshot=None,
+            terminal_launch_args=None,
+        )
+        store.set_session_live_status(conv.id, "failed")
+        store.set_pending_elicitation_count(conv.id, 1)
+        refreshed = read(include_execution_state=False)
+        assert refreshed.live_status == "failed"
+        assert refreshed.pending_elicitation_count == 1
+    finally:
+        for engine in engines:
+            event.remove(engine, "before_cursor_execute", record)
 
 
 def test_list_latest_message_items_for_conversations(

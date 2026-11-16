@@ -1148,3 +1148,62 @@ async def test_waking_a_host_worker_sets_its_event(startup_env: _Env) -> None:
     finally:
         worker.cancel()
         await asyncio.gather(worker, return_exceptions=True)
+
+
+@pytest.mark.parametrize("start_dispatch", [False, True])
+async def test_shutdown_keeps_next_system_input_durable_without_spawning_replacement(
+    startup_env: _Env,
+    monkeypatch: pytest.MonkeyPatch,
+    start_dispatch: bool,
+) -> None:
+    from omnigent.entities.communication import MessageCommunication
+
+    env = startup_env
+    session_id = await _create(env)
+    first = _bind(env, session_id)
+    service = ManagedStartupInputs(env.conv_store, env.app.state.host_registry)
+    first = first.model_copy(
+        update={
+            "data": first.data.model_copy(
+                update={
+                    "communication": MessageCommunication(
+                        kind="system",
+                        message_id=first.id,
+                        destination_conversation_id=session_id,
+                    ),
+                }
+            )
+        }
+    )
+    second = await service.enqueue(
+        session_id,
+        SessionEventInput.model_validate(_INPUT),
+        user_id=None,
+        headers=Headers(),
+        first=False,
+    )
+    monkeypatch.setattr(env.conv_store, "list_pending_inputs", lambda _session_id: [second])
+    entered, calls = asyncio.Event(), []
+
+    async def dispatch(context, _session_id, _event):
+        calls.append(context.input_id)
+        entered.set()
+        await asyncio.Future()
+
+    service.dispatch = dispatch
+    try:
+        service.schedule_delivery(env.app, session_id, first)
+        if start_dispatch:
+            await asyncio.wait_for(entered.wait(), 5)
+        await asyncio.wait_for(service.shutdown(), 5)
+        assert not service._deliveries
+        assert calls == ([first.id] if start_dispatch else [])
+        assert env.conv_store.get_item(session_id, second.id).status == "in_progress"
+        service.schedule_delivery(env.app, session_id, second)
+        service.host_changed(env.app, "closed-host")
+        await service._deliver(env.app, session_id, second)
+        assert not service._deliveries and not service._workers
+        assert calls == ([first.id] if start_dispatch else [])
+    finally:
+        service.dispatch = None
+        await service.shutdown()

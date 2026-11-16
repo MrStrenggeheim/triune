@@ -4,6 +4,7 @@ import {
   type HTMLAttributes,
   type ReactNode,
   type RefObject,
+  useCallback,
   useLayoutEffect,
   useEffect,
   useRef,
@@ -31,7 +32,7 @@ export function WorkspaceTabsScroller({
   viewportRef?: RefObject<HTMLDivElement | null>;
   contentClassName?: string;
   activeAlignment?: "nearest" | "center";
-  /** Selection identity; center only on selection/resize, preserving manual scrolling. */
+  /** Align on selection/resize, preserving manual scrolling between changes. */
   activeKey?: string | number;
   containWheel?: boolean;
 } & HTMLAttributes<HTMLDivElement>) {
@@ -39,26 +40,32 @@ export function WorkspaceTabsScroller({
   const viewportRef = suppliedViewportRef ?? localViewportRef;
   const contentRef = useRef<HTMLDivElement>(null);
 
-  useLayoutEffect(() => {
+  const measureOverflow = useCallback(() => {
+    if (!onOverflowChange) return;
     const viewport = viewportRef.current;
     const content = contentRef.current;
     if (!viewport || !content) return;
-    const measure = () => {
-      // Compare against the space available with the picker removed, even while
-      // it is mounted. Reserving it before this comparison would make it sticky.
-      const available = viewport.clientWidth + (overflowControlRef?.current?.offsetWidth ?? 0);
-      onOverflowChange?.(content.scrollWidth > available);
-    };
-    measure();
-    const observer = new ResizeObserver(measure);
+    // Compare against the space available with the picker removed, even while
+    // it is mounted. Reserving it before this comparison would make it sticky.
+    const available = viewport.clientWidth + (overflowControlRef?.current?.offsetWidth ?? 0);
+    onOverflowChange(content.scrollWidth > available);
+  }, [onOverflowChange, overflowControlRef, viewportRef]);
+
+  useLayoutEffect(measureOverflow, [children, measureOverflow]);
+
+  useLayoutEffect(() => {
+    const viewport = viewportRef.current;
+    const content = contentRef.current;
+    if (!onOverflowChange || !viewport || !content) return;
+    const observer = new ResizeObserver(measureOverflow);
     observer.observe(viewport);
     observer.observe(content);
-    window.addEventListener("resize", measure);
+    window.addEventListener("resize", measureOverflow);
     return () => {
       observer.disconnect();
-      window.removeEventListener("resize", measure);
+      window.removeEventListener("resize", measureOverflow);
     };
-  }, [children, onOverflowChange, overflowControlRef, viewportRef]);
+  }, [measureOverflow, onOverflowChange, viewportRef]);
 
   useEffect(() => {
     const viewport = viewportRef.current;
@@ -84,32 +91,37 @@ export function WorkspaceTabsScroller({
     return () => viewport.removeEventListener("wheel", wheel);
   }, [containWheel, viewportRef]);
 
+  const align = useCallback(() => {
+    const viewport = viewportRef.current;
+    const content = contentRef.current;
+    if (!viewport || !content) return;
+    const active = content.querySelector<HTMLElement>(
+      '[aria-current="true"], [aria-selected="true"]',
+    );
+    // A grouped tab includes its close control in the visible scroll target.
+    const target = active?.closest<HTMLElement>("[data-workspace-tab]") ?? active;
+    if (!target) return;
+    if (activeAlignment === "center") {
+      // Equal endpoint space lets even the first/last fixed slot reach center.
+      content.style.paddingInline = `${Math.max(0, (viewport.clientWidth - target.offsetWidth) / 2)}px`;
+      const slot = target.getBoundingClientRect();
+      const frame = viewport.getBoundingClientRect();
+      viewport.scrollLeft +=
+        slot.left + slot.width / 2 - (frame.left + viewport.clientLeft + viewport.clientWidth / 2);
+    } else {
+      content.style.paddingInline = "";
+      target.scrollIntoView({ block: "nearest", inline: "nearest" });
+    }
+  }, [activeAlignment, viewportRef]);
+
+  useLayoutEffect(() => {
+    if (activeAlignment === "center" || activeKey !== undefined) align();
+  }, [activeAlignment, activeKey, align]);
+
   useLayoutEffect(() => {
     const viewport = viewportRef.current;
     const content = contentRef.current;
     if (!viewport || !content) return;
-    const align = () => {
-      const active = content.querySelector<HTMLElement>(
-        '[aria-current="true"], [aria-selected="true"]',
-      );
-      // A grouped tab includes its close control in the visible scroll target.
-      const target = active?.closest<HTMLElement>("[data-workspace-tab]") ?? active;
-      if (!target) return;
-      if (activeAlignment === "center") {
-        // Equal endpoint space lets even the first/last fixed slot reach center.
-        content.style.paddingInline = `${Math.max(0, (viewport.clientWidth - target.offsetWidth) / 2)}px`;
-        const slot = target.getBoundingClientRect();
-        const frame = viewport.getBoundingClientRect();
-        viewport.scrollLeft +=
-          slot.left +
-          slot.width / 2 -
-          (frame.left + viewport.clientLeft + viewport.clientWidth / 2);
-      } else {
-        content.style.paddingInline = "";
-        target.scrollIntoView({ block: "nearest", inline: "nearest" });
-      }
-    };
-    if (activeAlignment === "center") align();
     const observer = new ResizeObserver(align);
     observer.observe(viewport);
     observer.observe(content);
@@ -118,7 +130,7 @@ export function WorkspaceTabsScroller({
       observer.disconnect();
       window.removeEventListener("resize", align);
     };
-  }, [activeAlignment, activeKey, viewportRef]);
+  }, [align, viewportRef]);
 
   return (
     <div

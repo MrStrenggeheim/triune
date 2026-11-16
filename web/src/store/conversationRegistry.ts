@@ -132,7 +132,7 @@ export class ConversationRegistry {
     this.retainedIds.set(id, (this.retainedIds.get(id) ?? 0) + 1);
     if (visible) this.visibleIds.set(id, (this.visibleIds.get(id) ?? 0) + 1);
     else if (!this.visibleIds.has(id)) this.detach(id);
-    if (visible && focused) this.focusedIds.set(id, (this.focusedIds.get(id) ?? 0) + 1);
+    const releaseFocus = visible && focused ? this.retainFocus(id) : undefined;
     let released = false;
     return () => {
       if (released) return;
@@ -145,12 +145,21 @@ export class ConversationRegistry {
         if (owners <= 1) this.visibleIds.delete(id);
         else this.visibleIds.set(id, owners - 1);
       }
-      if (visible && focused) {
-        const owners = this.focusedIds.get(id) ?? 0;
-        if (owners <= 1) this.focusedIds.delete(id);
-        else this.focusedIds.set(id, owners - 1);
-      }
+      releaseFocus?.();
       if (!this.visibleIds.has(id)) this.detach(id);
+    };
+  }
+
+  /** Focus changes priority without releasing a visible observation. */
+  retainFocus(id: string): () => void {
+    this.focusedIds.set(id, (this.focusedIds.get(id) ?? 0) + 1);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const owners = this.focusedIds.get(id) ?? 0;
+      if (owners <= 1) this.focusedIds.delete(id);
+      else this.focusedIds.set(id, owners - 1);
     };
   }
 

@@ -1,3 +1,4 @@
+// Modified for Triune.
 import {
   clampSplitRatio,
   replaceTerminalLayoutKey,
@@ -151,6 +152,37 @@ export function retainedDockViews(state: DockPersistence): DockView[] {
     }
   }
   return [...views.values()];
+}
+
+/** Titles change presentation only; preserve resource identity and layout geometry. */
+export function updateDockConversationTitles(
+  state: DockPersistence,
+  titles: ReadonlyMap<string, string>,
+): DockPersistence {
+  if (!titles.size) return state;
+  let changed = false;
+  const rename = (layout: DockLayout): DockLayout => {
+    let layoutChanged = false;
+    const views = layout.views.map((view) => {
+      const title =
+        view.kind === "conversation" && typeof view.resource.conversationId === "string"
+          ? titles.get(view.resource.conversationId)
+          : undefined;
+      if (!title || title === view.title) return view;
+      layoutChanged = true;
+      changed = true;
+      return { ...view, title };
+    });
+    return layoutChanged ? { ...layout, views } : layout;
+  };
+  const shared = rename(state.shared);
+  const pins = rename(state.pins);
+  const pinFrame = state.pinFrame ? rename(state.pinFrame) : undefined;
+  const chats = state.chats.map((chat) => {
+    const layout = rename(chat.layout);
+    return layout === chat.layout ? chat : { ...chat, layout };
+  });
+  return changed ? { ...state, shared, pins, pinFrame, chats } : state;
 }
 
 /** Pins win duplicate view IDs; pane-name collisions are deterministically renamed. */

@@ -2699,6 +2699,23 @@ def register_events_routes(
                 )
             elif status == "running":
                 await _persist_session_status_error_labels(session_id, None, conversation_store)
+            message_queue = getattr(
+                getattr(request.app.state, "startup_inputs", None), "message_queue", None
+            )
+            queue_generation = None
+            outcome = None
+            if message_queue is not None:
+                harness = await asyncio.to_thread(
+                    _native_pane_harness, conv, agent_store=agent_store, agent_cache=agent_cache
+                )
+                outcome = native_subagent_terminal_status(
+                    status,
+                    harness=harness,
+                    turn_outcome=data.get("turn_outcome"),
+                    turn_completed=data.get("turn_completed"),
+                )
+                if status == "running" or outcome is not None:
+                    queue_generation = message_queue.begin_status(session_id)
             _publish_status(
                 session_id,
                 status,
@@ -2797,24 +2814,17 @@ def register_events_routes(
                     status,
                     runner_result,
                 )
-            message_queue = getattr(
-                getattr(request.app.state, "startup_inputs", None), "message_queue", None
-            )
-            if message_queue is not None:
-                harness = await asyncio.to_thread(
-                    _native_pane_harness, conv, agent_store=agent_store, agent_cache=agent_cache
+            if message_queue is not None and queue_generation is not None:
+                queue_status = "idle" if outcome == "completed" else status
+                if outcome in {"failed", "cancelled"}:
+                    queue_status = "failed"
+                await message_queue.status(
+                    request.app,
+                    session_id,
+                    queue_status,
+                    response_id,
+                    generation=queue_generation,
                 )
-                outcome = native_subagent_terminal_status(
-                    status,
-                    harness=harness,
-                    turn_outcome=data.get("turn_outcome"),
-                    turn_completed=data.get("turn_completed"),
-                )
-                if status == "running" or outcome is not None:
-                    queue_status = "idle" if outcome == "completed" else status
-                    if outcome in {"failed", "cancelled"}:
-                        queue_status = "failed"
-                    await message_queue.status(request.app, session_id, queue_status, response_id)
             return {"queued": False}
         if body.type == _EXTERNAL_COMPACTION_STATUS_TYPE:
             # Terminal-observed compaction edge (claude-native forwarder):

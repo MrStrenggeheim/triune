@@ -31,7 +31,7 @@ from sqlalchemy import (
     union_all,
     update,
 )
-from sqlalchemy.orm import QueryableAttribute, Session, load_only
+from sqlalchemy.orm import QueryableAttribute, Session, defer, load_only
 from sqlalchemy.sql.selectable import Subquery
 
 from omnigent._wrapper_labels import UI_MODE_LABEL_KEY, WRAPPER_LABEL_KEY
@@ -156,6 +156,12 @@ _logger = logging.getLogger(__name__)
 
 _SESSION_TODOS_STATE_KEY = "_omnigent_native_plan_snapshot_v1"
 _RUNTIME_NOTICES_STATE_KEY = "_triune_runtime_notices_v1"
+_EXECUTION_METADATA_COLUMNS = (
+    SqlConversationMetadata.session_state,
+    SqlConversationMetadata.session_usage,
+    SqlConversationMetadata.inference_snapshot,
+    SqlConversationMetadata.terminal_launch_args,
+)
 
 
 def _runtime_notices_state(value: str | None) -> dict[str, Any]:
@@ -257,6 +263,8 @@ def _to_conversation(
     row: SqlConversation,
     meta: SqlConversationMetadata | None = None,
     labels: dict[str, str] | None = None,
+    *,
+    include_execution_state: bool = True,
 ) -> Conversation:
     """
     Convert a :class:`SqlConversation` ORM row (plus optional metadata) to a
@@ -279,9 +287,13 @@ def _to_conversation(
         callers pass the JOINed ``{key: value}`` map.
     :returns: A :class:`Conversation` dataclass instance.
     """
-    session_state, session_todos = _decode_session_state(meta.session_state if meta else None)
+    session_state, session_todos = (
+        _decode_session_state(meta.session_state if meta else None)
+        if include_execution_state
+        else ({}, [])
+    )
     session_usage: dict[str, Any] = {}
-    if meta and meta.session_usage:
+    if include_execution_state and meta and meta.session_usage:
         session_usage = json.loads(meta.session_usage)
     overrides = _decode_session_overrides(row.session_overrides)
     return Conversation(
@@ -303,12 +315,16 @@ def _to_conversation(
         session_state=session_state,
         session_usage=session_usage,
         session_todos=session_todos,
-        runtime_notice_state=_runtime_notices_state(meta.session_state if meta else None),
+        runtime_notice_state=(
+            _runtime_notices_state(meta.session_state if meta else None)
+            if include_execution_state
+            else {}
+        ),
         reasoning_effort=overrides["reasoning_effort"],
         model_override=overrides["model_override"],
         inference_snapshot=(
             json.loads(meta.inference_snapshot)
-            if meta and meta.inference_snapshot is not None
+            if include_execution_state and meta and meta.inference_snapshot is not None
             else None
         ),
         reported_model=overrides["reported_model"],
@@ -326,7 +342,7 @@ def _to_conversation(
         # round-trips as ``[]`` and stays distinct from NULL/None.
         terminal_launch_args=(
             json.loads(meta.terminal_launch_args)
-            if meta and meta.terminal_launch_args is not None
+            if include_execution_state and meta and meta.terminal_launch_args is not None
             else None
         ),
         workspace=meta.workspace if meta else None,
@@ -1457,7 +1473,9 @@ class SqlAlchemyConversationStore(ConversationStore):
             for row in meta_rows
         }
 
-    def get_conversations(self, conversation_ids: list[str]) -> dict[str, Conversation]:
+    def get_conversations(
+        self, conversation_ids: list[str], *, include_execution_state: bool = True
+    ) -> dict[str, Conversation]:
         """
         Bulk variant of :meth:`get_conversation` — one ``SELECT ... WHERE
         id IN (...)`` for the rows plus one batched label query, so the
@@ -1467,6 +1485,8 @@ class SqlAlchemyConversationStore(ConversationStore):
         :param conversation_ids: Conversation ids to fetch,
             e.g. ``["conv_abc123", "conv_def456"]``. Duplicates are
             tolerated; empty input returns ``{}`` without a query.
+        :param include_execution_state: False skips compressed execution-only
+            columns and their JSON decoding; lifecycle and list metadata stay fresh.
         :returns: Mapping ``{conversation_id: Conversation}`` for the
             ids that resolved to a row.
         """
@@ -1496,7 +1516,15 @@ class SqlAlchemyConversationStore(ConversationStore):
             with self._session("get_conversations") as meta_sess:
                 meta_rows = list(
                     meta_sess.execute(
-                        select(SqlConversationMetadata).where(
+                        select(SqlConversationMetadata)
+                        .options(
+                            *(
+                                defer(column, raiseload=True)
+                                for column in _EXECUTION_METADATA_COLUMNS
+                                if not include_execution_state
+                            )
+                        )
+                        .where(
                             SqlConversationMetadata.workspace_id == current_workspace_id(),
                             SqlConversationMetadata.id.in_(row_ids),
                         )
@@ -1510,6 +1538,7 @@ class SqlAlchemyConversationStore(ConversationStore):
                 row,
                 meta_by_id.get(row.id),
                 labels_by_conv.get(row.id, {}),
+                include_execution_state=include_execution_state,
             )
             for row in rows
         }
@@ -3657,9 +3686,14 @@ class SqlAlchemyConversationStore(ConversationStore):
         pinned: bool = False,
         pinned_owner: str | None = None,
         title: str | None = None,
+        *,
+        include_execution_state: bool = True,
     ) -> PagedList[Conversation]:
         """
         List conversations with cursor-based pagination.
+
+        ``include_execution_state=False`` omits compressed execution-only
+        metadata, matching :meth:`get_conversations` without changing filters.
 
         :param limit: Maximum number of conversations to return.
         :param after: Cursor conversation ID; return
@@ -3995,7 +4029,15 @@ class SqlAlchemyConversationStore(ConversationStore):
             with self._session("list_conversations") as meta_sess:
                 meta_rows = (
                     meta_sess.execute(
-                        select(SqlConversationMetadata).where(
+                        select(SqlConversationMetadata)
+                        .options(
+                            *(
+                                defer(column, raiseload=True)
+                                for column in _EXECUTION_METADATA_COLUMNS
+                                if not include_execution_state
+                            )
+                        )
+                        .where(
                             SqlConversationMetadata.workspace_id == current_workspace_id(),
                             SqlConversationMetadata.id.in_(row_ids),
                         )
@@ -4006,7 +4048,13 @@ class SqlAlchemyConversationStore(ConversationStore):
                 # Access .id inside the session to avoid DetachedInstanceError.
                 meta_by_id = {m.id: m for m in meta_rows}
                 convs = [
-                    _to_conversation(r, meta_by_id.get(r.id), labels) for r, labels in ap_entities
+                    _to_conversation(
+                        r,
+                        meta_by_id.get(r.id),
+                        labels,
+                        include_execution_state=include_execution_state,
+                    )
+                    for r, labels in ap_entities
                 ]
         else:
             convs = []

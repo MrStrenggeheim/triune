@@ -10,6 +10,7 @@ the header menu), and each place is a separate entry point.
 ## Sub-features
 
 - `project-archive`: archive/restore a project without changing its sessions or settings; Projects has an independent Show archived projects filter that persists across reloads.
+- `list-performance-candidate`: integration7 narrows child-sort refetches and omits execution-only decoding from lightweight list reads while retaining server ordering, membership and access rules.
 - `session-grid`: behind `grid_sessions_display_ui`, drag sidebar sessions into a
   conversation to split left/right or top/bottom with a hover preview. Up to four
   independent chats fit in two rows and two columns. Grids live at `/grid/<id>`
@@ -391,8 +392,8 @@ doctor`), the built web UI, and at least one session (the `seeded_session`
 fixture creates one). Run each test through the instance:
 
 - Project archive/restore, independent filtering, reload persistence and unchanged member sessions/settings on desktop and phone: `tests/e2e_ui/sessions/test_sidebar_project_context_menu.py::test_project_archive_filter_restore_preserves_members`.
-- Iteration6 candidate collapsed revealable membership, expanded own-only state and authoritative revocation: `tests/browser_ui/chat/test_iteration6.py::test_sidebar_rollup_uses_revealable_children_only_while_collapsed`.
-- After parent freeze/build, collapse a parent with its own error and a revealable running grandchild: expect error and running together; expand it to retain own error only.
+- Iteration6 collapsed revealable membership, expanded own-only state and authoritative revocation: `tests/browser_ui/chat/test_iteration6.py::test_sidebar_rollup_uses_revealable_children_only_while_collapsed`.
+- Collapse a parent with its own error and a revealable running grandchild: expect error and running together; expand it to retain own error only.
 - Change intermediate disclosure and current My/Shared/project/archive filters: ancestor status follows the revealable branch tree, excluding delegation-only and differently filed metadata.
 - Missing membership, unfinished browser draft/read hydration and unknown latest errors retain partial coverage; no descendant transcript fetch or per-row polling is needed.
 - Local deployment/session recovery (plain pytest): `tests/deploy/test_local_release.py`, `tests/deploy/test_session_restart.py` and `tests/server/routes/test_side_chat_runner_recovery.py` cover active-session restart, rollback, owner-only continuation and preserved human gates.
@@ -817,6 +818,20 @@ plain `uv run pytest`, which starts a private server for the test.
   (enable the flag by patching `GET /v1/info`). Unit tests in
   `web/src/shell/Sidebar.test.tsx` ("sidebar_grouping_ui release flag") check
   that the flag-off sidebar ignores stored view options.
+
+### Integration7 list candidate
+
+The [candidate boundary](../docs/custom-fork.md#integration7-candidate) records applied source, the verified live baseline and remaining release checks.
+Cache reconciliation: `web/src/hooks/SessionUpdatesProvider.test.tsx` and `web/src/lib/sessionListCache.test.ts`.
+Lightweight authorized reads: `tests/stores/test_conversation_store.py`, `tests/server/test_descendant_activity.py` and `tests/server/routes/test_session_updates_ws.py`.
+
+- On desktop/phone, open ordinary/project lists and a branch inventory; child-only activity updates its row without refetching unrelated ordinary lists.
+- Move or rename a session into a project/title/content-search result: membership, server order, pinned rows, unread state and pagination converge.
+- Revoke access during a delayed list read: the row disappears and the older response cannot restore it.
+- Reopen a normal session snapshot: plan, runtime notices and execution settings remain available despite lightweight list reads.
+
+Root sort and structural changes retain broad reconciliation; affected slow reads may still cancel and restart.
+Bounded synthetic query/decode counts do not establish a production p95 or endpoint speedup.
 
 ## Gotchas
 

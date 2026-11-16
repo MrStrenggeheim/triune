@@ -25,6 +25,7 @@ import {
   retainedDockViews,
   saveDockChatLayout,
   unpinDockView,
+  updateDockConversationTitles,
   type DockPersistence,
   type DockScope,
 } from "./dockPersistence";
@@ -252,7 +253,10 @@ export function useDockLayout({
       // Only an actual replacement of the captured resource invalidates it.
       if (!latestView || !sameDockResource(view, latestView)) return false;
       const accepted = { ...latestView, ...patch, id };
+      if (accepted.title === latestView.title && sameDockResource(latestView, accepted))
+        return true;
       const replace = (layout: DockLayout): DockLayout => {
+        if (!layout.views.some((item) => item.id === id)) return layout;
         const next = {
           ...layout,
           views: layout.views.map((item) => (item.id === id ? accepted : item)),
@@ -327,6 +331,11 @@ export function useDockLayout({
   );
 
   const useSharedLayout = useCallback(() => navigateConversation(null), [navigateConversation]);
+  const updateConversationTitles = useCallback(
+    (titles: ReadonlyMap<string, string>) =>
+      commit((state) => updateDockConversationTitles(state, titles)),
+    [commit],
+  );
   const saveChatLayout = useCallback(
     (id: string) => commit((state) => saveDockChatLayout(state, id)),
     [commit],
@@ -356,6 +365,7 @@ export function useDockLayout({
     restoreConversationViews,
     closeView,
     updateView,
+    updateConversationTitles,
     navigateConversation,
     promoteConversationDraft,
     useSharedLayout,

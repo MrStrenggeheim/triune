@@ -85,6 +85,20 @@ The adapters keep native keyboard, form and input/change behavior and support fo
 
 Source checks: `web/src/artifacts/kit/formControls.test.ts` and `test_kit_native_checkbox_range_and_progress` in the source browser boundary.
 
+### Integration7 Mermaid loading candidate
+
+Adjacent Mermaid previews defer their engine until first diagram rendering in the [integration7 source candidate](../docs/custom-fork.md#integration7-candidate).
+HTML artifact isolation, kit injection and document restoration retain their existing owners.
+Checks: `web/src/components/ai-elements/mermaidTheme.test.tsx`, `web/src/components/ai-elements/mermaidPresentation.test.ts`, `web/src/components/ai-elements/MermaidError.test.tsx` and `web/src/shell/MermaidPreview.theme.test.tsx`.
+Built-SPA entry points and failed-chunk recovery: `tests/browser_ui/files/test_mermaid_lazy_loading.py`.
+
+- Cold-load an empty page, then open the first diagram: engine loading moves to first use; measure the combined SPA before claiming initial-load savings.
+- Open diagrams from chat, reasoning, File Preview and TipTap on desktop/phone in light/dark: fonts, appearance, SVG export, source and expansion retain their behavior.
+- Block the engine chunk: expect the existing error card and preserved source; restore the asset and reload to verify recovery.
+
+The standalone source probe postpones engine requests while increasing first-use cost; it does not establish full-SPA or production-network savings.
+Same-document retry after a failed module import remains unproven; a stale removed chunk can require a new document/build.
+
 ## Gotchas
 
 - Ordinary `html` fences remain code; only an explicit artifact fence requests execution.

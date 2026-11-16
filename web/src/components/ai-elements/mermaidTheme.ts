@@ -1,7 +1,7 @@
 // PolyForm Noncommercial 1.0.0; see LICENSING.md.
 // Required Notice: Copyright 2026 MrStrenggeheim. Triune (https://github.com/MrStrenggeheim/triune).
 import { useMemo, useSyncExternalStore } from "react";
-import { mermaid, type DiagramPlugin, type MermaidConfig } from "@streamdown/mermaid";
+import type { DiagramPlugin, MermaidConfig } from "@streamdown/mermaid";
 import { getEmbedRoot, getStyleRoot, getThemeRoots } from "@/lib/host";
 import { DEFAULT_PALETTE, PALETTES } from "@/lib/themePalette";
 import {
@@ -431,6 +431,7 @@ export const triuneMermaid: DiagramPlugin = {
             await document.fonts.load(`${config.fontSize}px ${config.fontFamily}`);
             await document.fonts.ready;
           }
+          const { mermaid } = await import("@streamdown/mermaid");
           const result = await mermaid.getMermaid(config).render(id, source);
           // Strict mode sanitizes first; presentation adds only measured SVG primitives and resolved colors.
           const svg = new DOMParser().parseFromString(result.svg, "text/html").querySelector("svg");

@@ -664,7 +664,9 @@ class ConversationStore(ABC):
         ...
 
     @abstractmethod
-    def get_conversations(self, conversation_ids: list[str]) -> dict[str, Conversation]:
+    def get_conversations(
+        self, conversation_ids: list[str], *, include_execution_state: bool = True
+    ) -> dict[str, Conversation]:
         """
         Fetch a batch of conversations by id in a single round-trip.
 
@@ -679,6 +681,9 @@ class ConversationStore(ABC):
             e.g. ``["conv_abc123", "conv_def456"]``. Duplicates are
             tolerated. Empty input returns an empty map without
             touching the database.
+        :param include_execution_state: When false, omit policy state, plan,
+            runtime notices, usage, inference snapshot and terminal arguments.
+            Summary callers still receive current lifecycle and routing fields.
         :returns: Mapping ``{conversation_id: Conversation}``. Ids that
             don't resolve to a row are omitted (the caller decides
             whether a missing id is an error), so the result may be
@@ -907,9 +912,14 @@ class ConversationStore(ABC):
         pinned: bool = False,
         pinned_owner: str | None = None,
         title: str | None = None,
+        *,
+        include_execution_state: bool = True,
     ) -> PagedList[Conversation]:
         """
         List conversations with cursor-based pagination.
+
+        ``include_execution_state=False`` omits execution metadata as in
+        :meth:`get_conversations`; the default retains the full entity.
 
         ``order`` controls the sort direction on the column
         selected by ``sort_by`` (``"desc"`` = newest-first,

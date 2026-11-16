@@ -1,3 +1,4 @@
+// Modified for Triune.
 // Pure helpers for applying session-list push deltas (from the
 // `WS /v1/sessions/updates` stream) into the TanStack Query cache that
 // backs the sidebar's `["conversations", ...]` infinite queries.
@@ -122,7 +123,7 @@ function changedWireFields(conv: Conversation, wire: SessionListWireItem): Set<s
   const row = conv as unknown as Record<string, unknown>;
   for (const [key, value] of Object.entries(wire)) {
     const current = row[key];
-    if (key === "labels") {
+    if (key === "labels" || key === "branch") {
       if (JSON.stringify(current) !== JSON.stringify(value)) changed.add(key);
     } else if (current !== value) {
       changed.add(key);
@@ -215,6 +216,20 @@ function violatesKnownMembership(conv: Conversation, filters: ConversationListFi
   return false;
 }
 
+/** Fields that can change membership in another cached list, including search. */
+function changedFieldsAffectMembership(changed: Set<string>): boolean {
+  return [
+    "archived",
+    "title",
+    "labels",
+    "project_id",
+    "owner",
+    "permission_level",
+    "parent_session_id",
+    "branch",
+  ].some((field) => changed.has(field));
+}
+
 /**
  * Decide whether a field change needs server-side list reconciliation.
  *
@@ -232,16 +247,7 @@ function violatesKnownMembership(conv: Conversation, filters: ConversationListFi
  * @returns `true` when the query should be invalidated after patching.
  */
 function changedFieldsNeedRefetch(changed: Set<string>, isActiveRow: boolean): boolean {
-  if (changed.has("archived")) return true;
-  if (changed.has("title")) return true;
-  // A labels change can move a row between project-filtered variants and the
-  // project folders (["project-sessions", …]). A session relabeled INTO the
-  // selected project isn't in that filtered cache yet, so no local patch can
-  // place it; only a server reconcile can. The unfiltered variant where the
-  // row lives detects the label change here and flags the refetch, and the
-  // caller's invalidation is prefix-wide (["conversations"]), so it reconciles
-  // the filtered variants too.
-  if (changed.has("labels")) return true;
+  if (changedFieldsAffectMembership(changed)) return true;
   // updated_at only affects the server's sort order. The active chat row is
   // pinned at its position by ActiveChatOverride regardless of that order, so
   // an updated_at bump on it — the common case while the user sends messages —
@@ -272,18 +278,25 @@ function changedFieldsNeedRefetch(changed: Set<string>, isActiveRow: boolean): b
  *   `undefined` when not on a chat route. Its `updated_at` bumps don't force
  *   a refetch because `ActiveChatOverride` pins its visible position.
  * @returns The possibly updated data, ids found in it, and whether this
- *   query needs a server refetch after the local patch.
+ *   query needs a server refetch after the local patch. Membership changes also
+ *   reconcile other cached lists where the row may be absent.
  */
 export function mergeItemsIntoPages(
   data: ConversationsInfiniteData | undefined,
   itemsById: Map<string, SessionListWireItem>,
   filters: ConversationListFilters,
   activeId: string | undefined,
-): { data: ConversationsInfiniteData | undefined; found: Set<string>; needsRefetch: boolean } {
+): {
+  data: ConversationsInfiniteData | undefined;
+  found: Set<string>;
+  needsRefetch: boolean;
+  needsMembershipRefetch: boolean;
+} {
   const found = new Set<string>();
-  if (!data) return { data, found, needsRefetch: false };
+  if (!data) return { data, found, needsRefetch: false, needsMembershipRefetch: false };
   let anyPageChanged = false;
   let needsRefetch = false;
+  let needsMembershipRefetch = false;
   const pages = data.pages.map((page) => {
     let rowChanged = false;
     const nextData: Conversation[] = [];
@@ -295,11 +308,16 @@ export function mergeItemsIntoPages(
       }
       found.add(conv.id);
       const changed = changedWireFields(conv, wire);
+      needsMembershipRefetch ||= changedFieldsAffectMembership(changed);
       if (changed.size === 0) {
         nextData.push(conv);
         continue;
       }
       const nextConv = { ...conv, ...wire };
+      // A root can enter another paginated list or content search after a bump.
+      // A known child is excluded from ordinary root/project list endpoints.
+      if (changed.has("updated_at") && conv.id !== activeId && !nextConv.parent_session_id)
+        needsMembershipRefetch = true;
       if (violatesKnownMembership(nextConv, filters)) {
         rowChanged = true;
         needsRefetch = true;
@@ -315,8 +333,8 @@ export function mergeItemsIntoPages(
     anyPageChanged = true;
     return { ...page, data: nextData };
   });
-  if (!anyPageChanged) return { data, found, needsRefetch };
-  return { data: { ...data, pages }, found, needsRefetch };
+  if (!anyPageChanged) return { data, found, needsRefetch, needsMembershipRefetch };
+  return { data: { ...data, pages }, found, needsRefetch, needsMembershipRefetch };
 }
 
 // ── Recently-created keep-alive ───────────────────────────────────────

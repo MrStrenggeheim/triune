@@ -44,6 +44,14 @@ class DurableMessageQueue:
         self.store = MessageQueueStore(startup.conversations.storage_location)
         self.authorize: Any = None
         self._observers: dict[tuple[int, str], asyncio.Task[None]] = {}
+        self._status_generations: dict[tuple[int, str], object] = {}
+        self._closing = False
+
+    def begin_status(self, session_id: str) -> object:
+        """Capture publication order before lifecycle forwarding can await another request."""
+        generation = object()
+        self._status_generations[(current_workspace_id(), session_id)] = generation
+        return generation
 
     async def enqueue(self, app: Any, session_id: str, entry: dict[str, Any]) -> None:
         from omnigent.server.routes._sessions.common import (
@@ -77,12 +85,23 @@ class DurableMessageQueue:
         await self.recover(app, session_id)
 
     async def status(
-        self, app: Any, session_id: str, status: str, response_id: str | None
+        self,
+        app: Any,
+        session_id: str,
+        status: str,
+        response_id: str | None,
+        *,
+        generation: object | None = None,
     ) -> None:
-        def observe(state: dict[str, Any], _: Any) -> None:
+        key = (current_workspace_id(), session_id)
+        generation = generation if generation is not None else self.begin_status(session_id)
+
+        def observe(state: dict[str, Any], _: Any) -> bool:
+            if self._closing or self._status_generations.get(key) is not generation:
+                return False
             if status == "running":
                 if response_id and response_id == state.get("turn") and state.get("ended"):
-                    return
+                    return False
                 turn = (
                     response_id
                     or (uuid4().hex if state.get("ended") else state.get("turn"))
@@ -96,46 +115,58 @@ class DurableMessageQueue:
                         state.pop("selected_turn", None)
             elif status == "idle":
                 if state.get("selected_turn") and response_id == state["selected_turn"]:
-                    return
+                    return False
                 # Duplicate/stale completion and transcript inactivity cannot mint admission.
                 control = response_id is not None and response_id == state.get("control_turn")
                 if (state.get("ended") and not control) or (
                     response_id and state.get("turn") not in (None, response_id) and not control
                 ):
-                    return
+                    return False
                 state["turn"] = response_id or state.get("turn")
                 state["ended"] = True
                 state["ready"] = True
                 if control:
                     state.pop("control_turn", None)
             elif status == "failed":
+                if (state.get("selected_turn") and response_id == state["selected_turn"]) or (
+                    response_id
+                    and state.get("turn") not in (None, response_id)
+                    and response_id != state.get("control_turn")
+                ):
+                    return False
                 state["ready"] = False
                 state["ended"] = True
+                if response_id == state.get("control_turn"):
+                    state.pop("control_turn", None)
                 for message in state["messages"]:
                     if message["stableId"] != state["inflight"]:
                         message["error"] = "Previous turn failed. Review and retry this message."
 
-        await asyncio.to_thread(
-            self.store.mutate, session_id, "turn_status", observe, create=False
-        )
-        if status == "idle":
+            return True
+
+        try:
+            applied = await asyncio.to_thread(
+                self.store.mutate, session_id, "turn_status", observe, create=False
+            )
+        finally:
+            if self._status_generations.get(key) is generation:
+                self._status_generations.pop(key, None)
+        if applied and status == "idle":
             await self.recover(app, session_id)
 
     def watch(self, app: Any, session_id: str) -> None:
         key = (current_workspace_id(), session_id)
-        if key in self._observers:
+        if self._closing or key in self._observers:
             return
 
         async def observe() -> None:
             try:
                 async for event in session_stream.subscribe(session_id, internal=True):
                     kind = event.get("type")
-                    if isinstance(kind, str) and kind.startswith("response.compaction."):
-                        await self.compaction_status(app, session_id, kind.rsplit(".", 1)[-1])
+                    if not isinstance(kind, str):
                         continue
-                    # Native terminal completion is admitted by routes_events, not PTY idle.
-                    conv = None
-                    if kind in {
+                    compaction = kind.startswith("response.compaction.")
+                    if not compaction and kind not in {
                         "response.created",
                         "response.in_progress",
                         "response.cancelled",
@@ -144,9 +175,20 @@ class DurableMessageQueue:
                         "response.failed",
                         "session.status",
                     }:
-                        conv = await asyncio.to_thread(
-                            self.startup.conversations.get_conversation, session_id
-                        )
+                        continue
+                    state = await asyncio.to_thread(self.store.read, session_id)
+                    if not state["messages"] and not state.get("control_turn"):
+                        return
+                    if compaction:
+                        await self.compaction_status(app, session_id, kind.rsplit(".", 1)[-1])
+                        state = await asyncio.to_thread(self.store.read, session_id)
+                        if not state["messages"] and not state.get("control_turn"):
+                            return
+                        continue
+                    # Native terminal completion is admitted by routes_events, not PTY idle.
+                    conv = await asyncio.to_thread(
+                        self.startup.conversations.get_conversation, session_id
+                    )
                     if conv is None:
                         continue
                     from omnigent.server.routes._sessions.orchestration import (
@@ -168,16 +210,34 @@ class DurableMessageQueue:
                     } or (kind == "session.status" and event.get("status") == "failed"):
                         await self.status(app, session_id, "failed", response_id)
                     state = await asyncio.to_thread(self.store.read, session_id)
-                    if not state["messages"]:
+                    if not state["messages"] and not state.get("control_turn"):
                         return
             except asyncio.CancelledError:
                 raise
             except Exception:
                 _logger.exception("Unable to observe queued turns for %s", session_id)
             finally:
-                self._observers.pop(key, None)
+                if self._observers.get(key) is asyncio.current_task():
+                    self._observers.pop(key, None)
 
         self._observers[key] = asyncio.create_task(observe(), name=f"queued-turn-{session_id}")
+
+    async def retire_if_empty(self, app: Any, session_id: str) -> None:
+        """Detach an empty queue, retaining observation if enqueue races cancellation."""
+        state = await asyncio.to_thread(self.store.read, session_id)
+        if state["messages"] or state.get("control_turn"):
+            return
+        key = (current_workspace_id(), session_id)
+        task = self._observers.get(key)
+        if task is None or task is asyncio.current_task():
+            return
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        if self._observers.get(key) is task:
+            self._observers.pop(key, None)
+        state = await asyncio.to_thread(self.store.read, session_id)
+        if state["messages"] or state.get("control_turn"):
+            self.watch(app, session_id)
 
     async def preflight(self, session_id: str, message: dict[str, Any]) -> str | None:
         conv = await asyncio.to_thread(self.startup.conversations.get_conversation, session_id)
@@ -204,8 +264,11 @@ class DurableMessageQueue:
         await asyncio.to_thread(self.store.mutate, session_id, "hold", change)
 
     async def recover(self, app: Any, session_id: str) -> None:
+        if self._closing:
+            return
         state = await asyncio.to_thread(self.store.read, session_id)
         if not state["messages"]:
+            await self.retire_if_empty(app, session_id)
             return
         self.watch(app, session_id)
         inflight = state.get("inflight")
@@ -231,6 +294,7 @@ class DurableMessageQueue:
                     )
                 return
         if not state["messages"]:
+            await self.retire_if_empty(app, session_id)
             return
         message = next(
             (m for m in state["messages"] if m["stableId"] == state.get("inflight")),
@@ -320,10 +384,13 @@ class DurableMessageQueue:
                 await self.recover(app, session_id)
 
     async def shutdown(self) -> None:
+        self._closing = True
         tasks = list(self._observers.values())
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+        self._observers.clear()
+        self._status_generations.clear()
 
 
 class QueuedStartupInputs(ManagedStartupInputs):
@@ -338,6 +405,8 @@ class QueuedStartupInputs(ManagedStartupInputs):
         return await super()._recover_session(app, session_id, connection)
 
     async def _deliver(self, app: Any, session_id: str, item: Any) -> Any:
+        if self._closing:
+            return None
         state = await asyncio.to_thread(self.message_queue.store.read, session_id)
         queued = next((m for m in state["messages"] if m["stableId"] == item.id), None)
         if queued:
@@ -414,5 +483,6 @@ class QueuedStartupInputs(ManagedStartupInputs):
         return result
 
     async def shutdown(self) -> None:
+        self._closing = True
         await self.message_queue.shutdown()
         await super().shutdown()

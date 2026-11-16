@@ -23217,6 +23217,22 @@ it("binds independent conversation stores through one negotiated tab socket with
       socket.sent.filter((frame) => frame.type === "subscribe").map((frame) => frame.session_id),
     ).toEqual(["mux-one", "mux-two"]);
     expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/stream"))).toEqual([]);
+    const releaseOne = conversationRegistry.retain("mux-one", true, false);
+    const releaseTwo = conversationRegistry.retain("mux-two", true, false);
+    onTestFinished(() => {
+      releaseOne();
+      releaseTwo();
+    });
+    fetchMock.mockClear();
+    // Each focus transition must settle before the next switch.
+    /* oxlint-disable no-await-in-loop */
+    for (const id of ["mux-two", "mux-one", "mux-two", "mux-one"]) {
+      await useChatStore.getState().switchTo(id);
+      await vi.advanceTimersByTimeAsync(50);
+    }
+    /* oxlint-enable no-await-in-loop */
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(socket.sent.filter((frame) => frame.type === "subscribe")).toHaveLength(2);
     const first = { ...assistantMessage("one", "First private answer"), position: 0 };
     const second = { ...assistantMessage("two", "Second private answer"), position: 0 };
     socket.emit({

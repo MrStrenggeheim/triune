@@ -20,7 +20,7 @@ import {
   type DockPlacement,
   type DockView,
 } from "./dockLayout";
-import { dockStorageKey } from "./dockPersistence";
+import { createDockPersistence, dockStorageKey } from "./dockPersistence";
 import { useDockLayout, type DockStorage } from "./useDockLayout";
 import { terminalLayoutGeometry } from "@/lib/terminalSplitLayout";
 
@@ -63,6 +63,69 @@ function deferred<T>() {
 }
 
 describe("DockWorkspace resource mounts", () => {
+  it("keeps tab observers across focus, resize, content and compact layout changes", () => {
+    const observers: {
+      nodes: Element[];
+      callback: ResizeObserverCallback;
+      disconnected: boolean;
+    }[] = [];
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        record: (typeof observers)[number];
+        constructor(callback: ResizeObserverCallback) {
+          this.record = { nodes: [], callback, disconnected: false };
+          observers.push(this.record);
+        }
+        observe(element: Element) {
+          this.record.nodes.push(element);
+        }
+        unobserve() {}
+        disconnect() {
+          this.record.disconnected = true;
+        }
+      },
+    );
+    let layout = addDockView(createDockLayout([view("a")]), view("b"), { edge: "right" });
+    const props = { onLayoutChange: vi.fn(), renderView: () => null };
+    const rendered = render(<DockWorkspace {...props} layout={layout} />);
+    try {
+      const strip = screen.getAllByRole("tablist")[0];
+      const content = strip.querySelector("[data-workspace-tabs-content]")!;
+      const header = strip.parentElement!;
+      let contentWidth = 400;
+      Object.defineProperties(strip, {
+        clientWidth: { configurable: true, value: 200 },
+        scrollWidth: { configurable: true, get: () => contentWidth },
+        scrollLeft: { configurable: true, value: 0, writable: true },
+      });
+      const tabObservers = () =>
+        observers.filter((observer) => observer.nodes.some((node) => node.matches(".dock-tabs")));
+      const installed = tabObservers().length;
+      rendered.rerender(<DockWorkspace {...props} layout={layout} />);
+      expect(tabObservers()).toHaveLength(installed);
+      layout = selectDockView(layout, "a");
+      rendered.rerender(<DockWorkspace {...props} layout={layout} />);
+      expect(header).toHaveAttribute("data-overflow-right", "true");
+      layout = resizeDockSplit(layout, [], 0.6);
+      rendered.rerender(<DockWorkspace {...props} layout={layout} />);
+      layout = addDockView(layout, view("added"), { paneId: "main" });
+      rendered.rerender(<DockWorkspace {...props} layout={layout} compact />);
+      contentWidth = 150;
+      act(() => {
+        for (const observer of tabObservers().filter((record) => record.nodes.includes(content)))
+          observer.callback([], {} as ResizeObserver);
+      });
+      expect(header).toHaveAttribute("data-overflow-right", "false");
+      expect(tabObservers()).toHaveLength(installed);
+      rendered.unmount();
+      expect(observers.every((observer) => observer.disconnected)).toBe(true);
+    } finally {
+      rendered.unmount();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("does not render unchanged retained resources for resizing, pin chrome or a new file", () => {
     const renders = vi.fn();
     const renderView: DockWorkspaceProps["renderView"] = (item, state) => {
@@ -918,6 +981,53 @@ describe("dock tab controls", () => {
 });
 
 describe("useDockLayout", () => {
+  it("persists a title batch once, skips identical updates and rejects a stale scoped callback", async () => {
+    const state = createDockPersistence();
+    state.chats = Array.from({ length: 100 }, (_, index) => ({
+      conversationId: String(index),
+      layout: createDockLayout([conversationView(String(index))]),
+    }));
+    state.activeConversationId = "0";
+    const storage = memoryStorage();
+    storage.setItem(dockStorageKey(scope), JSON.stringify(state));
+    const writes = vi.spyOn(storage, "setItem");
+    const guard = vi.fn(async () => false);
+    const { result, rerender } = renderHook(
+      ({ accountId }) =>
+        useDockLayout({
+          scope: { ...scope, accountId },
+          storage,
+          onBeforeClose: guard,
+        }),
+      { initialProps: { accountId: scope.accountId } },
+    );
+    const firstResource = result.current.retainedViews[0].resource;
+    const titles = new Map(
+      state.chats.map((chat) => [chat.conversationId, `Loaded ${chat.conversationId}`]),
+    );
+    act(() => result.current.updateConversationTitles(titles));
+    expect(writes).toHaveBeenCalledOnce();
+    const saved = JSON.parse(storage.getItem(dockStorageKey(scope))!);
+    expect(saved.chats.map((chat: { layout: DockLayout }) => chat.layout.views[0].title)).toEqual([
+      ...titles.values(),
+    ]);
+    expect(result.current.retainedViews[0].resource).toBe(firstResource);
+    act(() => {
+      result.current.updateConversationTitles(titles);
+      result.current.focusView("conversation:0");
+    });
+    await act(async () => {
+      await result.current.updateView("conversation:0", { title: "Loaded 0" });
+    });
+    expect(writes).toHaveBeenCalledOnce();
+    expect(guard).not.toHaveBeenCalled();
+    const updateOldScope = result.current.updateConversationTitles;
+    rerender({ accountId: "other" });
+    act(() => updateOldScope(new Map([["0", "stale title"]])));
+    expect(writes).toHaveBeenCalledOnce();
+    expect(result.current.retainedViews).toEqual([]);
+  });
+
   it("automatically restores A plus Explorer, keeps explicitly opened B in A, and reloads each owner", async () => {
     const storage = memoryStorage();
     const initialLayout = createDockLayout([conversationView("A")]);
@@ -1371,8 +1481,12 @@ describe("useDockLayout", () => {
     expect(guard).toHaveBeenCalledOnce();
     await act(async () => {
       await result.current.navigateConversation("B");
-      await result.current.updateView("conversation:A", { title: "Latest A" });
-      await result.current.updateView("conversation:B", { title: "Latest B" });
+      result.current.updateConversationTitles(
+        new Map([
+          ["A", "Latest A"],
+          ["B", "Latest B"],
+        ]),
+      );
     });
     await act(async () => {
       decision.resolve(true);

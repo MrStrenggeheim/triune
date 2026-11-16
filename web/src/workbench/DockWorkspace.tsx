@@ -666,8 +666,8 @@ function DockPaneChrome({
       setOverflowRight(strip.scrollWidth - strip.clientWidth - strip.scrollLeft > 1);
     }
   }, []);
+  useEffect(measureOverflow, [layout, compact, measureOverflow]);
   useEffect(() => {
-    measureOverflow();
     const observer = new ResizeObserver(measureOverflow);
     const strip = stripRef.current;
     if (strip) {
@@ -675,7 +675,7 @@ function DockPaneChrome({
       for (const child of strip.children) observer.observe(child);
     }
     return () => observer.disconnect();
-  }, [layout, compact, measureOverflow]);
+  }, [measureOverflow]);
   return (
     <section
       className="dock-pane"

@@ -34,6 +34,19 @@ const view = (id: string, kind = "editor"): DockView => ({
 });
 
 describe("dock layout operations", () => {
+  it("keeps selecting the same focused view idempotent while preserving explicit pane focus", () => {
+    const layout = addDockView(createDockLayout([view("a"), view("b")]), view("c"), {
+      edge: "right",
+    });
+    expect(selectDockView(layout, "c")).toBe(layout);
+    expect(selectDockView(layout, "c", false)).toBe(layout);
+    expect(selectDockView(layout, "a", false)).toBe(layout);
+    const focused = selectDockView(layout, "a");
+    expect(focused.focusedPaneId).toBe("main");
+    expect(selectDockView(focused, "a")).toBe(focused);
+    expect(selectDockView(focused, "b").panes[0].selectedViewId).toBe("b");
+  });
+
   it("moves the same view through recursive splits, reorders tabs and collapses empty panes", () => {
     let layout = createDockLayout([view("a"), view("b"), view("c")]);
     layout = moveDockView(layout, "c", { paneId: "main", index: 0 });

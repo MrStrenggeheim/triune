@@ -154,6 +154,50 @@ describe("durable composer snapshots", () => {
     sessionStorage.clear();
   });
 
+  it("restores a complete file draft over its text-only reload fallback", async () => {
+    const drafts = await import("./sessionDrafts");
+    drafts.initializeSessionDraftPersistence("owner");
+    await drafts.waitForSessionDraftSave();
+    drafts.setSessionDraft("chat", {
+      text: "Keep text and files together",
+      files: [new File(["exact bytes"], "alpha.txt", { type: "text/plain" })],
+      mentionedItems: [{ path: "notes", isDir: false }],
+    });
+    await drafts.waitForSessionDraftSave();
+    expect(sessionStorage.getItem(key)).toContain("Keep text and files together");
+    vi.resetModules();
+    const reloaded = await import("./sessionDrafts");
+    expect(reloaded.getSessionDraft("chat")?.files).toHaveLength(0);
+    reloaded.initializeSessionDraftPersistence("owner");
+    const hydrated = await reloaded.hydrateSessionDraft("chat");
+    expect(hydrated?.text).toBe("Keep text and files together");
+    expect(hydrated?.files[0]).toMatchObject({ name: "alpha.txt", type: "text/plain" });
+    expect(hydrated?.mentionedItems).toEqual([{ path: "notes", isDir: false }]);
+  });
+
+  it("does not revive a deleted durable draft from stale legacy text", async () => {
+    const api = await import("./queuedMessagePersistence");
+    await api.writeComposerDrafts("owner", new Map());
+    sessionStorage.setItem(key, JSON.stringify({ removed: "Stale fallback" }));
+    sessionStorage.setItem(`${key}.scope`, "owner");
+    const drafts = await import("./sessionDrafts");
+    drafts.initializeSessionDraftPersistence("owner");
+    await drafts.waitForSessionDraftSave();
+    expect(drafts.getSessionDraft("removed")).toBeUndefined();
+    expect(await api.readComposerDrafts("owner")).toEqual(new Map());
+  });
+
+  it("migrates legacy text when there is no durable snapshot", async () => {
+    sessionStorage.setItem(key, JSON.stringify({ legacy: "Preserve old installations" }));
+    const drafts = await import("./sessionDrafts");
+    drafts.initializeSessionDraftPersistence("owner");
+    await drafts.waitForSessionDraftSave();
+    const api = await import("./queuedMessagePersistence");
+    expect((await api.readComposerDrafts("owner")).get("legacy")?.text).toBe(
+      "Preserve old installations",
+    );
+  });
+
   it("restores files-only snapshots with duplicate names, exact bytes and metadata", async () => {
     const drafts = await import("./sessionDrafts");
     drafts.initializeSessionDraftPersistence("server/alice");
@@ -285,5 +329,222 @@ describe("durable composer snapshots", () => {
     await expect(drafts.waitForSessionDraftSave()).rejects.toThrow("Storage denied");
     expect(report).toHaveBeenCalled();
     expect(drafts.getSessionDraft("chat")?.files).toHaveLength(1);
+  });
+
+  it("keeps unread files and rejects saving after failed hydration becomes writable", async () => {
+    const api = await import("./queuedMessagePersistence");
+    await api.writeComposerDrafts(
+      "owner",
+      new Map([["old", { text: "saved", files: [new File(["old bytes"], "old.txt")] }]]),
+    );
+    const database = indexedDB;
+    vi.stubGlobal("indexedDB", {
+      open: () => {
+        throw new Error("Read denied");
+      },
+    });
+    const drafts = await import("./sessionDrafts");
+    const error = vi.fn();
+    drafts.initializeSessionDraftPersistence("owner", error);
+    await drafts.hydrateSessionDraft("new");
+    vi.stubGlobal("indexedDB", database);
+    const local = { text: "typing", files: [new File(["local bytes"], "new.txt")] };
+    drafts.setSessionDraft("new", local);
+    await expect(drafts.waitForSessionDraftSave()).rejects.toThrow("Read denied");
+    const saved = await api.readComposerDrafts("owner");
+    expect([...saved.keys()]).toEqual(["old"]);
+    const buffer = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(reader.error);
+      reader.readAsText(saved.get("old")!.files[0]);
+    });
+    expect(buffer).toBe("old bytes");
+    expect(drafts.getSessionDraft("new")).toEqual(local);
+    expect(error).toHaveBeenCalledOnce();
+  });
+
+  it("atomically preserves independent drafts and files without resurrecting deletions", async () => {
+    const api = await import("./queuedMessagePersistence");
+    await api.writeComposerDrafts(
+      "owner",
+      new Map([["removed", { text: "old", files: [new File(["old bytes"], "old.txt")] }]]),
+    );
+    const first = await import("./sessionDrafts");
+    first.initializeSessionDraftPersistence("owner");
+    await first.waitForSessionDraftSave();
+    sessionStorage.clear();
+    vi.resetModules();
+    const second = await import("./sessionDrafts");
+    second.initializeSessionDraftPersistence("owner");
+    await second.waitForSessionDraftSave();
+    first.setSessionDraft("first", {
+      text: "first draft",
+      files: [new File(["first bytes"], "same.txt")],
+    });
+    second.setSessionDraft("second", {
+      text: "second draft",
+      files: [new File(["second bytes"], "same.txt")],
+    });
+    await Promise.all([first.waitForSessionDraftSave(), second.waitForSessionDraftSave()]);
+    let saved = await api.readComposerDrafts("owner");
+    expect([...saved.keys()].sort()).toEqual(["first", "removed", "second"]);
+    const contents = (file: File) =>
+      new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = () => reject(reader.error);
+        reader.readAsText(file);
+      });
+    expect(await contents(saved.get("first")!.files[0])).toBe("first bytes");
+    expect(await contents(saved.get("second")!.files[0])).toBe("second bytes");
+    first.setSessionDraft("removed", { text: "", files: [] });
+    await first.waitForSessionDraftSave();
+    second.setSessionDraft("second", {
+      text: "new second text",
+      files: second.getSessionDraft("second")!.files,
+    });
+    await second.waitForSessionDraftSave();
+    saved = await api.readComposerDrafts("owner");
+    expect(saved.has("removed")).toBe(false);
+    expect(saved.get("second")?.text).toBe("new second text");
+    second.setSessionDraft("removed", {
+      text: "stale edit",
+      files: [new File(["local bytes"], "local.txt")],
+    });
+    await expect(second.waitForSessionDraftSave()).rejects.toThrow("removed by another client");
+    expect((await api.readComposerDrafts("owner")).has("removed")).toBe(false);
+    expect(second.getSessionDraft("removed")?.text).toBe("stale edit");
+    second.initializeSessionDraftPersistence("other");
+    await second.waitForSessionDraftSave();
+    second.initializeSessionDraftPersistence("owner");
+    await expect(second.waitForSessionDraftSave()).rejects.toThrow("removed by another client");
+    expect((await api.readComposerDrafts("owner")).has("removed")).toBe(false);
+    expect(second.getSessionDraft("removed")?.text).toBe("stale edit");
+  });
+
+  it.each(["server-a/bob", "server-b/alice"])(
+    "preserves outgoing hydration edits and files privately when switching to %s",
+    async (other) => {
+      const api = await import("./queuedMessagePersistence");
+      const owner = "server-a/alice";
+      await api.writeComposerDrafts(
+        owner,
+        new Map([["chat", { text: "old", files: [new File(["old bytes"], "old.txt")] }]]),
+      );
+      const drafts = await import("./sessionDrafts");
+      drafts.initializeSessionDraftPersistence(owner);
+      const local = { text: "new typing", files: [new File(["new bytes"], "new.txt")] };
+      drafts.setSessionDraft("chat", local);
+      drafts.initializeSessionDraftPersistence(other);
+      expect(drafts.getSessionDraft("chat")).toBeUndefined();
+      await drafts.waitForSessionDraftSave();
+      expect(drafts.getSessionDraft("chat")).toBeUndefined();
+      expect(await api.readComposerDrafts(other)).toEqual(new Map());
+      drafts.initializeSessionDraftPersistence(owner);
+      expect(drafts.getSessionDraft("chat")?.text).toBe(local.text);
+      const restored = await drafts.hydrateSessionDraft("chat");
+      expect(restored?.text).toBe(local.text);
+      expect(restored?.files[0].name).toBe("new.txt");
+      const reader = new FileReader();
+      const bytes = new Promise((resolve) => {
+        reader.onload = () => resolve(reader.result);
+      });
+      reader.readAsText(restored!.files[0]);
+      expect(await bytes).toBe("new bytes");
+    },
+  );
+
+  it.each(["remove", "clear", "promote"])(
+    "retains %s during hydration through an immediate scope return",
+    async (action) => {
+      const api = await import("./queuedMessagePersistence");
+      await api.writeComposerDrafts(
+        "alice",
+        new Map([
+          ["temp:source", { text: "saved", files: [new File(["saved bytes"], "saved.txt")] }],
+        ]),
+      );
+      const drafts = await import("./sessionDrafts");
+      drafts.initializeSessionDraftPersistence("alice");
+      if (action === "remove") drafts.setSessionDraft("temp:source", { text: "", files: [] });
+      if (action === "clear") drafts.clearSessionDrafts();
+      if (action === "promote") drafts.promoteSessionDraft("temp:source", "real");
+      drafts.initializeSessionDraftPersistence("bob");
+      drafts.initializeSessionDraftPersistence("alice");
+      await drafts.waitForSessionDraftSave();
+      expect(drafts.getSessionDraft("temp:source")).toBeUndefined();
+      const saved = await api.readComposerDrafts("alice");
+      expect([...saved.keys()]).toEqual(action === "promote" ? ["real"] : []);
+      if (action === "promote") expect(saved.get("real")?.files[0].name).toBe("saved.txt");
+      expect(await api.readComposerDrafts("bob")).toEqual(new Map());
+    },
+  );
+
+  it("retains failed-hydration edits and files privately until explicit return and recovery", async () => {
+    const api = await import("./queuedMessagePersistence");
+    await api.writeComposerDrafts("alice", new Map([["old", { text: "saved", files: [] }]]));
+    const database = indexedDB;
+    vi.stubGlobal("indexedDB", {
+      open: () => {
+        throw new Error("Offline");
+      },
+    });
+    const drafts = await import("./sessionDrafts");
+    drafts.initializeSessionDraftPersistence("alice");
+    await drafts.hydrateSessionDraft("chat");
+    const local = { text: "typing", files: [new File(["local bytes"], "local.txt")] };
+    drafts.setSessionDraft("chat", local);
+    drafts.initializeSessionDraftPersistence("bob");
+    await drafts.hydrateSessionDraft("chat");
+    expect(drafts.getSessionDraft("chat")).toBeUndefined();
+    vi.stubGlobal("indexedDB", database);
+    drafts.initializeSessionDraftPersistence("alice");
+    expect(drafts.getSessionDraft("chat")).toBe(local);
+    await drafts.waitForSessionDraftSave();
+    const saved = await api.readComposerDrafts("alice");
+    expect([...saved.keys()].sort()).toEqual(["chat", "old"]);
+    expect(saved.get("chat")?.files[0].name).toBe("local.txt");
+    expect(await api.readComposerDrafts("bob")).toEqual(new Map());
+  });
+
+  it("keeps a late outgoing file failure with its owner and saves the new identity successfully", async () => {
+    const drafts = await import("./sessionDrafts");
+    const report = vi.fn();
+    drafts.initializeSessionDraftPersistence("alice", report);
+    await drafts.waitForSessionDraftSave();
+    let fail: (error: Error) => void = () => {
+      throw new Error("No pending file read");
+    };
+    let started: () => void = () => {};
+    const reading = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const file = new File(["bytes"], "local.txt");
+    Object.defineProperty(file, "arrayBuffer", {
+      value: () =>
+        new Promise((_resolve, reject) => {
+          fail = reject;
+          started();
+        }),
+    });
+    drafts.setSessionDraft("chat", { text: "unsaved", files: [file] });
+    await reading;
+    const oldSave = drafts.waitForSessionDraftSave();
+    drafts.initializeSessionDraftPersistence("bob", report);
+    fail(new Error("Attachment read failed"));
+    await expect(oldSave).rejects.toThrow("identity changed");
+    await drafts.waitForSessionDraftSave();
+    expect(report).not.toHaveBeenCalled();
+    expect(drafts.getSessionDraft("chat")).toBeUndefined();
+    drafts.initializeSessionDraftPersistence("alice", report);
+    expect(drafts.getSessionDraft("chat")?.files).toEqual([file]);
+    // A replacement is an explicit edit; no background retry reads the failed file.
+    drafts.setSessionDraft("chat", {
+      text: "unsaved",
+      files: [new File(["replacement bytes"], "fixed.txt")],
+    });
+    await drafts.waitForSessionDraftSave();
+    expect(drafts.getSessionDraft("chat")?.files[0].name).toBe("fixed.txt");
   });
 });

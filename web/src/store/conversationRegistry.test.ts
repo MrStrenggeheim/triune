@@ -166,6 +166,28 @@ describe("ConversationRegistry", () => {
     release();
   });
 
+  it("releases independent focus leases without releasing visible observation", () => {
+    const entry = registry.acquire("pane");
+    const controller = new AbortController();
+    entry.setState({ abortController: controller });
+    const releaseVisible = registry.retain("pane", true, false);
+    const releaseFirstFocus = registry.retainFocus("pane");
+    const releaseSecondFocus = registry.retainFocus("pane");
+    releaseFirstFocus();
+    releaseFirstFocus();
+    expect(registry.isFocused("pane")).toBe(true);
+    releaseSecondFocus();
+    expect(registry.isFocused("pane")).toBe(false);
+    expect(registry.isVisible("pane")).toBe(true);
+    expect(controller.signal.aborted).toBe(false);
+    const releaseSecondVisible = registry.retain("pane", true, false);
+    releaseVisible();
+    expect(controller.signal.aborted).toBe(false);
+    releaseSecondVisible();
+    releaseSecondVisible();
+    expect(controller.signal.aborted).toBe(true);
+  });
+
   it("reclaims observation from unsent work while preserving its only copy", () => {
     const entry = registry.acquire("unsent");
     const controller = new AbortController();

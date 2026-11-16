@@ -1,3 +1,4 @@
+// Modified for Triune.
 // Focused coverage for SessionUpdatesProvider's watch-set computation:
 // the open session must always be unioned into the set pushed to the
 // socket, even when it's an off-sidebar child absent from the
@@ -451,18 +452,304 @@ describe("SessionUpdatesProvider list invalidation", () => {
     try {
       const client = new QueryClient();
       seedConversations(client, ["conv_a"]);
+      client.setQueryData(["archived-project-names"], ["MA"]);
       renderProvider(client, ["/"]);
-      const invalidate = vi.spyOn(client, "invalidateQueries");
       const handler = frameHandler();
 
       act(() => handler({ type: "removed", ids: ["conv_a"] }));
       act(() => vi.advanceTimersByTime(300)); // past the debounce
 
-      expect(invalidate).toHaveBeenCalledWith({ queryKey: ["archived-project-names"] });
+      expect(client.getQueryState(["archived-project-names"])?.isInvalidated).toBe(true);
     } finally {
       vi.useRealTimers();
     }
   });
+});
+
+describe("SessionUpdatesProvider scoped reconciliation", () => {
+  const keys = {
+    mine: ["conversations", "", false, null, "mine"],
+    shared: ["conversations", "", false, null, "shared"],
+    ma: ["project-sessions", "MA"],
+    omnigent: ["project-sessions", "Omnigent"],
+    branches: ["conversation-branches", "viewer", "mine", ""],
+  } as const;
+
+  function observeLists(delayMs = 0) {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const ma = { ...conv("ma"), title: "MA", labels: { omni_project: "MA" }, updated_at: 2 };
+    const omni = {
+      ...conv("omni"),
+      title: "Omnigent",
+      labels: { omni_project: "Omnigent" },
+      updated_at: 1,
+    };
+    const child = { ...conv("child"), title: "Child", parent_session_id: "ma" };
+    const serverRows = new Map<string, Conversation>([ma, omni, child].map((row) => [row.id, row]));
+    const rowsFor = (name: keyof typeof keys) => {
+      const rows = [...serverRows.values()].filter((row) => {
+        if (row.archived) return false;
+        if (name === "branches") return true;
+        if (row.parent_session_id || name === "shared") return false;
+        return name === "mine" || row.labels.omni_project === (name === "ma" ? "MA" : "Omnigent");
+      });
+      return {
+        pages: [
+          {
+            data: rows.sort((a, b) => b.updated_at - a.updated_at),
+            first_id: null,
+            last_id: null,
+            has_more: false,
+          },
+        ],
+        pageParams: [undefined],
+      } satisfies ConversationsInfiniteData;
+    };
+    const counts = { mine: 0, shared: 0, ma: 0, omnigent: 0, branches: 0 };
+    const aborted = { ...counts };
+    const unsubscribers: (() => void)[] = [];
+    for (const name of Object.keys(keys) as (keyof typeof keys)[]) {
+      const queryKey = keys[name];
+      client.setQueryData(queryKey, rowsFor(name));
+      const observer = new QueryObserver(client, {
+        queryKey,
+        staleTime: Infinity,
+        queryFn: async ({ signal }) => {
+          counts[name]++;
+          // Consume the signal so cancelled queries exercise TanStack's normal abort path.
+          signal.throwIfAborted();
+          signal.addEventListener("abort", () => aborted[name]++);
+          const response = rowsFor(name);
+          if (delayMs)
+            await new Promise((resolve) => {
+              setTimeout(resolve, delayMs);
+            });
+          return response;
+        },
+      });
+      unsubscribers.push(observer.subscribe(() => {}));
+    }
+    const view = renderProvider(client, ["/canvas"]);
+    return {
+      client,
+      counts,
+      aborted,
+      change: (item: Partial<Conversation> & { id: string }) => {
+        const row = { ...serverRows.get(item.id)!, ...item };
+        serverRows.set(item.id, row);
+        act(() => frameHandler()({ type: "changed", items: [row] }));
+      },
+      remove: (ids: string[]) => {
+        for (const id of ids) serverRows.delete(id);
+        act(() => frameHandler()({ type: "removed", ids }));
+      },
+      close: () => {
+        view.unmount();
+        for (const unsubscribe of unsubscribers) unsubscribe();
+        client.clear();
+      },
+    };
+  }
+
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it("coalesces rapid child sort updates without refetching unrelated workbench lists", async () => {
+    const { client, counts, change, close } = observeLists();
+    try {
+      for (let wave = 0; wave < 3; wave++) {
+        for (let tick = 1; tick <= 10; tick++) {
+          change({ id: "child", updated_at: wave * 10 + tick });
+        }
+        // Each wave starts after the prior reconciliation settles.
+        // oxlint-disable-next-line no-await-in-loop
+        await act(() => vi.advanceTimersByTimeAsync(300));
+      }
+      console.info("LIST-REFETCH child-only 30-event script", JSON.stringify(counts));
+      expect(counts).toEqual({ mine: 0, shared: 0, ma: 0, omnigent: 0, branches: 3 });
+      expect(
+        client.getQueryData<ConversationsInfiniteData>(keys.branches)!.pages[0].data[0],
+      ).toMatchObject({ id: "child", updated_at: 30 });
+    } finally {
+      close();
+    }
+  });
+
+  it("preserves cross-list pagination reconciliation for a background root sort change", async () => {
+    const { client, counts, change, close } = observeLists();
+    try {
+      change({ id: "omni", updated_at: 10 });
+      await act(() => vi.advanceTimersByTimeAsync(300));
+      console.info("LIST-REFETCH root sort script", JSON.stringify(counts));
+      expect(counts).toEqual({ mine: 1, shared: 1, ma: 1, omnigent: 1, branches: 1 });
+      expect(
+        client
+          .getQueryData<ConversationsInfiniteData>(keys.mine)!
+          .pages[0].data.map((row) => row.id),
+      ).toEqual(["omni", "ma"]);
+    } finally {
+      close();
+    }
+  });
+
+  it("keeps membership reconciliation across lists when a project changes", async () => {
+    const { client, counts, change, close } = observeLists();
+    try {
+      change({ id: "ma", labels: { omni_project: "Omnigent" } });
+      await act(() => vi.advanceTimersByTimeAsync(300));
+      expect(counts).toEqual({ mine: 1, shared: 1, ma: 1, omnigent: 1, branches: 1 });
+      expect(
+        client.getQueryData<ConversationsInfiniteData>(keys.mine)!.pages[0].data[0].labels,
+      ).toEqual({ omni_project: "Omnigent" });
+      expect(client.getQueryData<ConversationsInfiniteData>(keys.ma)!.pages[0].data).toEqual([]);
+      expect(
+        client
+          .getQueryData<ConversationsInfiniteData>(keys.omnigent)!
+          .pages[0].data.map((row) => row.id),
+      ).toEqual(["ma", "omni"]);
+    } finally {
+      close();
+    }
+  });
+
+  it("evicts revoked rows immediately and reconciles the remaining membership", async () => {
+    const { client, counts, remove, close } = observeLists();
+    try {
+      remove(["ma"]);
+      for (const key of Object.values(keys)) {
+        expect(
+          client
+            .getQueryData<ConversationsInfiniteData>(key)!
+            .pages[0].data.some((row) => row.id === "ma"),
+        ).toBe(false);
+      }
+      await act(() => vi.advanceTimersByTimeAsync(300));
+      expect(counts).toEqual({ mine: 1, shared: 1, ma: 1, omnigent: 1, branches: 1 });
+    } finally {
+      close();
+    }
+  });
+
+  it("bounds slow-query restarts to the affected list while preserving the latest stream state", async () => {
+    const { client, counts, change, aborted, close } = observeLists(1000);
+    try {
+      for (let tick = 1; tick <= 20; tick++) {
+        change({ id: "child", updated_at: tick });
+        // Preserve the event script's arrival times while reads are in flight.
+        // oxlint-disable-next-line no-await-in-loop
+        await act(() => vi.advanceTimersByTimeAsync(100));
+      }
+      await act(() => vi.advanceTimersByTimeAsync(3000));
+      console.info("LIST-REFETCH slow-query 20-event script", JSON.stringify(counts));
+      expect(counts).toEqual({ mine: 0, shared: 0, ma: 0, omnigent: 0, branches: 7 });
+      expect(aborted.branches).toBe(6);
+      expect(
+        client.getQueryData<ConversationsInfiniteData>(keys.branches)!.pages[0].data[0],
+      ).toMatchObject({ id: "child", updated_at: 20 });
+    } finally {
+      close();
+    }
+  });
+
+  it("cancels an older sort read when access is revoked during reconciliation", async () => {
+    const { client, aborted, change, remove, close } = observeLists(1000);
+    try {
+      change({ id: "child", updated_at: 10 });
+      await act(() => vi.advanceTimersByTimeAsync(300));
+      remove(["child"]);
+      expect(
+        client
+          .getQueryData<ConversationsInfiniteData>(keys.branches)!
+          .pages[0].data.some((row) => row.id === "child"),
+      ).toBe(false);
+      await act(() => vi.advanceTimersByTimeAsync(1500));
+      expect(aborted.branches).toBe(1);
+      expect(
+        client
+          .getQueryData<ConversationsInfiniteData>(keys.branches)!
+          .pages[0].data.map((row) => row.id),
+      ).toEqual(["ma", "omni"]);
+    } finally {
+      close();
+    }
+  });
+
+  it("reconciles a sort change that arrives during an existing external read", async () => {
+    const { client, counts, change, close } = observeLists(1000);
+    try {
+      void client.refetchQueries({ queryKey: keys.branches, exact: true });
+      change({ id: "child", updated_at: 10 });
+      await act(() => vi.advanceTimersByTimeAsync(2500));
+      expect(counts).toEqual({ mine: 0, shared: 0, ma: 0, omnigent: 0, branches: 2 });
+      expect(
+        client.getQueryData<ConversationsInfiniteData>(keys.branches)!.pages[0].data[0],
+      ).toMatchObject({ id: "child", updated_at: 10 });
+    } finally {
+      close();
+    }
+  });
+
+  it("does not overwrite a newer streamed row when an older sort read completes", async () => {
+    const { client, change, close } = observeLists(1000);
+    try {
+      change({ id: "child", updated_at: 10 });
+      await act(() => vi.advanceTimersByTimeAsync(300));
+      change({ id: "child", updated_at: 20 });
+      await act(() => vi.advanceTimersByTimeAsync(975));
+      expect(
+        client
+          .getQueryData<ConversationsInfiniteData>(keys.branches)!
+          .pages[0].data.find((row) => row.id === "child"),
+      ).toMatchObject({ updated_at: 20 });
+    } finally {
+      close();
+    }
+  });
+
+  it.each(["rename", "child content update"])(
+    "reconciles an absent search match after %s without invalidating snapshots",
+    async (event) => {
+      const { client, counts, change, close } = observeLists();
+      const matched =
+        event === "rename"
+          ? { ...conv("omni"), title: "needle" }
+          : { ...conv("child"), title: "Child" };
+      const searchKey = ["conversations", "needle", false];
+      const snapshotKey = ["conversations", "", false, "static"];
+      const empty = {
+        pages: [{ data: [], first_id: null, last_id: null, has_more: false }],
+        pageParams: [undefined],
+      };
+      client.setQueryData(searchKey, empty);
+      const search = vi.fn(async () => ({
+        ...empty,
+        pages: [{ ...empty.pages[0], data: [matched] }],
+      }));
+      const stopSearch = new QueryObserver(client, {
+        queryKey: searchKey,
+        staleTime: Infinity,
+        queryFn: search,
+      }).subscribe(() => {});
+      client.setQueryDefaults(snapshotKey, { meta: { snapshot: true } });
+      client.setQueryData(snapshotKey, empty);
+      try {
+        change(
+          event === "rename" ? { id: "omni", title: "needle" } : { id: "child", updated_at: 10 },
+        );
+        await act(() => vi.advanceTimersByTimeAsync(300));
+        expect(search).toHaveBeenCalledTimes(1);
+        expect(
+          client.getQueryData<ConversationsInfiniteData>(searchKey)!.pages[0].data[0],
+        ).toMatchObject(matched);
+        expect(client.getQueryState(snapshotKey)?.isInvalidated).toBe(false);
+        if (event !== "rename")
+          expect(counts).toEqual({ mine: 0, shared: 0, ma: 0, omnigent: 0, branches: 1 });
+      } finally {
+        stopSearch();
+        close();
+      }
+    },
+  );
 });
 
 describe("SessionUpdatesProvider projects_changed frames", () => {

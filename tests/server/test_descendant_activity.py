@@ -80,9 +80,10 @@ async def test_descendant_batches_reuse_overlapping_roots_and_keep_all_facts(
     get_rows = store.get_conversations
     get_edges = store.list_activity_child_ids
 
-    def load(ids: list[str]):
+    def load(ids: list[str], *, include_execution_state: bool = True):
         loaded.extend(ids)
-        rows = get_rows(ids)
+        assert include_execution_state is False
+        rows = get_rows(ids, include_execution_state=include_execution_state)
         if missing:
             rows.pop(leaf.id, None)
         return rows

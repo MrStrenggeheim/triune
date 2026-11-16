@@ -147,14 +147,23 @@ export function ScopedChatStoreProvider({
   const store = useMemo(() => createScopedChatStore(conversationId), [conversationId]);
   const root = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
-    const release = conversationRegistry.retain(conversationId, visible, focused);
+    if (!visible || !focused) return;
+    const release = conversationRegistry.retainFocus(conversationId);
+    refreshConversationObservationPriority();
+    return () => {
+      release();
+      refreshConversationObservationPriority();
+    };
+  }, [conversationId, visible, focused]);
+  useEffect(() => {
+    const release = conversationRegistry.retain(conversationId, visible, false);
     refreshConversationObservationPriority();
     if (visible) void ensureConversationStreamed(conversationId);
     return () => {
       release();
       refreshConversationObservationPriority();
     };
-  }, [conversationId, visible, focused]);
+  }, [conversationId, visible]);
   return (
     <ScopedChatStoreContext.Provider value={store}>
       <ScopedChatVisibleContext.Provider value={visible}>

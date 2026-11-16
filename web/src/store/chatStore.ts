@@ -3757,6 +3757,7 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
     // whose stream died (terminal status, failed bind) is deliberately NOT
     // treated as live: it must cold-bind again or it stays stale forever.
     const wasLive = conversationId !== null && isConversationStreamCurrent(conversationId);
+    const wasVisible = conversationId !== null && conversationRegistry.isVisible(conversationId);
 
     // No abort, no state wipe: the outgoing conversation's entry keeps its
     // stream open and keeps applying events in the background. That is the
@@ -3817,13 +3818,22 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
     // current transcript; for a fresh one it is the initial state.
     mirrorActiveEntry();
     if (wasLive) {
-      // An open stream is not proof the entry is current: a session stream
-      // routed to the wrong replica stays open and heartbeats while delivering
-      // no events, and a reconnect loop that never re-opens holds the
-      // controller too. Verify the instantly-painted transcript against the
-      // committed snapshot in the background; item-id dedupe makes this a
-      // no-op when the entry really is current.
+      // Legacy streams can stay open on the wrong replica without delivering
+      // events. Revalidate them and newly revealed views against saved history;
+      // negotiated visible streams already reconcile their revision checkpoints.
       const controller = entry.getState().abortController;
+      const checkpoint = controller ? transcriptCursors.get(controller) : undefined;
+      // A continuously visible negotiated stream already owns gap recovery.
+      // Moving focus only changes the root projection, not its observation.
+      if (
+        wasVisible &&
+        !entry.getState().loadingConversation &&
+        sessionUpdatesSocket.isConnected() &&
+        sessionUpdatesSocket.supportsTranscripts() &&
+        checkpoint?.stream_epoch !== undefined &&
+        checkpoint.after_revision !== undefined
+      )
+        return;
       void reconcileOnReconnect(
         conversationId,
         entrySetter(entry),

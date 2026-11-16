@@ -1955,6 +1955,7 @@ def register_core_routes(
         )
         page = await asyncio.to_thread(
             conversation_store.list_conversations,
+            include_execution_state=False,
             limit=limit,
             after=after,
             before=before,
@@ -2281,7 +2282,7 @@ def register_core_routes(
             """Bulk-load the accessible conversations that are sessions
             (non-null ``agent_id``) in one batched store call, preserving
             the caller's id order for deterministic output."""
-            by_id = conversation_store.get_conversations(ids)
+            by_id = conversation_store.get_conversations(ids, include_execution_state=False)
             return [
                 conv
                 for cid in ids

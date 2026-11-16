@@ -1,7 +1,8 @@
 // Modified for Triune.
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useChatStore } from "@/store/chatStore";
+import * as chatStore from "@/store/chatStore";
 import { conversationRegistry } from "@/store/conversationRegistry";
 import * as sessionsApi from "@/lib/sessionsApi";
 import type { Session } from "@/lib/types";
@@ -9,6 +10,7 @@ import {
   createScopedChatStore,
   ScopedChatStoreProvider,
   useConversationChatStore,
+  useConversationChatFocused,
 } from "./ScopedChatStore";
 
 const originalActions = useChatStore.getState();
@@ -25,6 +27,112 @@ afterEach(() => {
 });
 
 describe("scoped chat store", () => {
+  it("changes focused send ownership without rebinding continuously visible panes", () => {
+    const aborted = vi.fn();
+    const ensure = vi
+      .spyOn(chatStore, "ensureConversationStreamed")
+      .mockImplementation(async (id) => {
+        const entry = conversationRegistry.acquire(id);
+        if (!entry.getState().abortController) {
+          const controller = new AbortController();
+          controller.signal.addEventListener("abort", aborted, { once: true });
+          entry.setState({ abortController: controller });
+        }
+      });
+    const send = vi.fn().mockResolvedValue(undefined);
+    useChatStore.setState({ send });
+    function Sender({ id }: { id: string }) {
+      const store = useConversationChatStore();
+      const focused = useConversationChatFocused();
+      return (
+        <button
+          type="button"
+          disabled={!focused}
+          onClick={() => void store.getState().send("hello", "agent")}
+        >
+          Send {id}
+        </button>
+      );
+    }
+    function Panes({ firstFocused }: { firstFocused: boolean }) {
+      return (
+        <>
+          <ScopedChatStoreProvider conversationId="first" visible focused={firstFocused}>
+            <Sender id="first" />
+          </ScopedChatStoreProvider>
+          <ScopedChatStoreProvider conversationId="second" visible focused={!firstFocused}>
+            <Sender id="second" />
+          </ScopedChatStoreProvider>
+        </>
+      );
+    }
+    const view = render(<Panes firstFocused />);
+    const controllers = ["first", "second"].map(
+      (id) => conversationRegistry.peek(id)!.getState().abortController,
+    );
+    for (let index = 0; index < 10; index++) {
+      const firstFocused = index % 2 !== 0;
+      view.rerender(<Panes firstFocused={firstFocused} />);
+      const target = firstFocused ? "first" : "second";
+      fireEvent.click(screen.getByRole("button", { name: `Send ${target}` }));
+      expect(send).toHaveBeenLastCalledWith("hello", "agent", undefined, {
+        pinnedConversationId: target,
+      });
+      expect(conversationRegistry.isFocused("first")).toBe(firstFocused);
+      expect(conversationRegistry.isFocused("second")).toBe(!firstFocused);
+    }
+    expect(aborted).not.toHaveBeenCalled();
+    expect(ensure).toHaveBeenCalledTimes(2);
+    expect(
+      ["first", "second"].map((id) => conversationRegistry.peek(id)!.getState().abortController),
+    ).toEqual(controllers);
+    view.unmount();
+    expect(aborted).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps another visible owner's stream and recovers the retained reader on reveal", () => {
+    const entry = conversationRegistry.acquire("shared");
+    const draft = { conversationId: "shared", text: "unsent", files: [] };
+    entry.setState({ failedSendDraft: draft, oldestItemId: "reader-anchor" });
+    const ensure = vi
+      .spyOn(chatStore, "ensureConversationStreamed")
+      .mockImplementation(async () => {
+        if (!entry.getState().abortController)
+          entry.setState({ abortController: new AbortController() });
+      });
+    function Owners({ visible, second }: { visible: boolean; second: boolean }) {
+      return (
+        <>
+          <ScopedChatStoreProvider conversationId="shared" visible={visible} focused={visible}>
+            <span>Reader</span>
+          </ScopedChatStoreProvider>
+          {second && (
+            <ScopedChatStoreProvider conversationId="shared" visible focused={false}>
+              <span>Second owner</span>
+            </ScopedChatStoreProvider>
+          )}
+        </>
+      );
+    }
+    const view = render(<Owners visible second />);
+    const original = entry.getState().abortController!;
+    view.rerender(<Owners visible={false} second />);
+    expect(original.signal.aborted).toBe(false);
+    view.rerender(<Owners visible={false} second={false} />);
+    expect(original.signal.aborted).toBe(true);
+    view.rerender(<Owners visible second={false} />);
+    const resumed = entry.getState().abortController!;
+    expect(resumed).not.toBe(original);
+    expect(resumed.signal.aborted).toBe(false);
+    expect(ensure).toHaveBeenCalledTimes(3);
+    expect(entry.getState()).toMatchObject({
+      failedSendDraft: draft,
+      oldestItemId: "reader-anchor",
+    });
+    view.unmount();
+    expect(resumed.signal.aborted).toBe(true);
+  });
+
   it("detaches when a remembered layout hides while preserving its scoped state", () => {
     const entry = conversationRegistry.acquire("remembered");
     const controller = new AbortController();

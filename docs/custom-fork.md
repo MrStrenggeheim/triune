@@ -7,7 +7,7 @@ The owner's new work uses PolyForm Noncommercial 1.0.0; see [LICENSE](../LICENSE
 
 ## Run it
 
-Follow the [root quickstart](../README.md#quick-start) for a local browser installation or the existing Docker server stack.
+Follow the [root installation guide](../README.md#install) for a local browser installation or the existing Docker server stack.
 The current distribution is source from this repository's `main`, including its backend, SDKs and frontend.
 Use the quickstart's Triune installer or manual checkout recipe, which uses `uv.lock` and `pnpm-lock.yaml`.
 Use `triune` as the primary CLI, for example `triune server`, `triune host` or `triune run`.
@@ -182,9 +182,9 @@ Information retains agent/session details, MCP controls, policies and version di
 
 ## Iteration6 source status
 
-The previous installed release remains `0.20.0-3c12d054fd99` (`3c12d054fd996c524ab976f0dd5a648b53430657`).
-These ten refinements describe iteration6 source, without claiming an iteration6 build, successful integrated tests or activation.
-The parent owns the stable build and compiled-browser verification; component handoffs live under `artifacts/iteration6-20261116/`.
+Iteration6 activated as `0.20.0-9dc3656856a6` from `9dc3656856a63f341c77311c267285f5ba370236` on 2026-11-16 at 23:10:34 UTC.
+The activation receipt verifies healthy service interpreters, 634 exact candidate3/wheel assets and three restored runtimes.
+Evidence lives under `artifacts/iteration6-20261116/`: `activation.json`, `verification-summary.json` and `browser-preparation/followup/aggregate-results.json`.
 
 | Request | Source behavior |
 | --- | --- |
@@ -203,6 +203,36 @@ The status groups remain blocking problem > needs input > draft, and running/sta
 Rollup excludes children outside the current revealable section, including filtered, archived and delegation-only metadata; incomplete membership or personal/error evidence stays unknown.
 Startup falls back to New chat when the saved owner is unavailable, preserving its layout and draft.
 
-Candidate acceptance is mapped in [Unified workspace](../feature-map/unified-workspace.md), [Composer](../feature-map/composer.md), [Sessions](../feature-map/sessions.md), [Chat activity](../feature-map/chat-activity.md) and [Chat attachments](../feature-map/chat-attachments.md).
-`tests/browser_ui/chat/test_iteration6.py` contains the current startup, sidebar, shelf/plan/popup, responsive-row and gallery journeys; references describe test intent, not execution results.
+Acceptance is mapped in [Unified workspace](../feature-map/unified-workspace.md), [Composer](../feature-map/composer.md), [Sessions](../feature-map/sessions.md), [Chat activity](../feature-map/chat-activity.md) and [Chat attachments](../feature-map/chat-attachments.md).
+Nine unique iteration6 browser cases and two separate transcript-sync cases passed across retained candidates; overlapping source checks are not additional unique coverage.
 Native-inset emulation and Chromium touch injection do not establish physical iOS/Android, keyboard or installed-PWA behavior.
+
+## Integration7 candidate
+
+The following eleven items are applied to main source above the verified iteration6 baseline.
+They remain a candidate pending combined release verification and activation; worker handoffs alone do not establish delivery.
+
+| Request | Candidate behavior |
+| --- | --- |
+| `LIST-REFETCH-7` | Batch affected list query keys for child sort updates; retain broad reconciliation for root sorts and structural membership changes. |
+| `LIST-COST-7` | Omit compressed execution-only fields from list, watched-row and descendant reads; normal session reads retain full state and authorization. |
+| `FOCUS-LEASE-7` | Change focused send ownership without rebinding observation for continuously visible panes; detach after the last visible owner leaves. |
+| `LAYOUT-WRITES-7` | Save a title batch once across shared, saved and pinned layouts; skip unchanged titles and repeated focused-tab selection. |
+| `TAB-OBSERVERS-7` | Keep overflow/alignment observers attached across selection and ordinary renders while preserving immediate geometry updates and cleanup. |
+| `MERMAID-LAZY-7` | Load the engine inside the first asynchronous diagram render; preserve existing serialization, fonts, appearance, source and export. |
+| `DRAFT-HYDRATION-7` | Require successful hydration before scoped saves; failed reads preserve unread durable work and retain new edits/files locally. |
+| `DRAFT-MERGE-7` | Merge per-entry changes in one IndexedDB transaction; preserve unrelated drafts and reject stale edits to observed deleted IDs. |
+| `DRAFT-SCOPE-7` | Retain hydration edits, files, removals and promotions under their captured account/server owner; publish only the active owner's state. |
+| `QUEUE-LIFECYCLE-7` | Reject superseded lifecycle publications before queued-input admission; selected sends retain their own turn ownership. |
+| `QUEUE-OBSERVERS-7` | Retire empty observers, retain pending compaction observation and recover enqueue races; shutdown stops replacement delivery tasks. |
+
+Implementation evidence: `artifacts/overnight-20261116/{list-refetch/handoff.json,backend-audit/implementation-handoff.txt,frontend-audit/implementation-handoff.json,frontend-audit/geometry-handoff.json,loading-audit/IMPLEMENTATION.md,persistence-fixes/REPORT.txt,race-audit/implementation/HANDOFF.txt}`.
+The parent owns the combined build, browser acceptance and release checks.
+
+- Same-ID draft edits use the last serialized writer; no live cross-tab refresh or cross-device synchronization is added.
+- Unavailable storage retains unsaved bytes in this process only; closing it cannot promise durability.
+- Scoped refetches retain cancellation, root-wide reconciliation and access revocation; component work counts do not prove production latency or heap savings.
+- Deferred Mermaid loading shifts cost to first use; engine-load failure retains the existing error/source UI, with recovery verified after asset restoration and reload only.
+- Ownerless transcript-model retirement remains an open decision; saved layouts, reader state, drafts, send state and editor/terminal ownership retain their existing protection.
+- `APPROVAL-RECEIPT-7` is excluded: exact-request consumption and durable acknowledgment across restart remain under review.
+- Future branch-query/index changes remain isolated and outside this candidate.

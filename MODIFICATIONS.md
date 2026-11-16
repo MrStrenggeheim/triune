@@ -74,8 +74,8 @@ These entries describe source changes, without asserting release activation.
 
 ## Iteration6 source changes — 2026-11-16
 
-These entries describe source only; the previous installed release remains `0.20.0-3c12d054fd99`.
-Integrated build verification and activation belong to the parent release workflow and are not asserted here.
+These ten changes activated as `0.20.0-9dc3656856a6` on 2026-11-16 at 23:10:34 UTC.
+The [fork guide](docs/custom-fork.md#iteration6-source-status) records matching activation evidence and physical-device limits.
 
 - Match native top clearance, browser theme-color and standalone status paint to the resolved application bar, retaining one shell owner for safe-area insets.
 - Apply Comfortable/Compact spacing to queue and attention shelves and mobile composer gutters, preserving coarse controls and moving shelf surfaces.
@@ -87,6 +87,20 @@ Integrated build verification and activation belong to the parent release workfl
 - Restore the top-bar Open button's mobile appearance with separate transparent hit expansion and existing desktop spacing.
 - Insert positioned activity canonically, enrich loaded cards in place and recover tracked old-card mutations by authorized point reads; retain full reset for expired/untracked changes.
 - Adapt shared resource text, status labels and message-card controls to narrow containers while retaining accessible state and navigation.
+
+## Integration7 candidate changes — 2026-11-16
+
+These eleven items are applied to main source above verified iteration6; combined release verification and activation remain pending.
+The [candidate boundary](docs/custom-fork.md#integration7-candidate) records scope, evidence and known limits.
+
+- Scope child-sort list reconciliation to affected queries, retain conservative membership refresh, and avoid execution-state decoding in lightweight list reads (`LIST-REFETCH-7`, `LIST-COST-7`).
+- Separate focused send ownership from visible observation, batch layout title writes and skip unchanged focus saves (`FOCUS-LEASE-7`, `LAYOUT-WRITES-7`).
+- Retain tab overflow/alignment observers through selection and ordinary renders without changing reveal, centering or cleanup (`TAB-OBSERVERS-7`).
+- Defer the Mermaid engine to first rendering while preserving appearance, fonts, queue behavior, source and export (`MERMAID-LAZY-7`).
+- Gate scoped persistence on hydration, merge independent entry changes atomically and retain owner-specific hydration buffers (`DRAFT-HYDRATION-7`, `DRAFT-MERGE-7`, `DRAFT-SCOPE-7`).
+- Reject superseded queued-input lifecycle state and retire empty observers safely through enqueue, compaction and shutdown races (`QUEUE-LIFECYCLE-7`, `QUEUE-OBSERVERS-7`).
+
+Approval receipt protocol work, ownerless-model retirement and isolated future branch-query/index work are outside this candidate; no approval delivery is claimed.
 
 [LICENSING.md](LICENSING.md) defines scope and the required notice.
 Git diffs against the imported baseline identify exact modified paths and lines.

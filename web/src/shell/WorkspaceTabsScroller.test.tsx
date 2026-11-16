@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { WorkspaceTabsScroller } from "./WorkspaceTabsScroller";
 
 const resizeCallbacks = new Set<ResizeObserverCallback>();
+const resizeObservers: { nodes: Element[]; disconnected: boolean }[] = [];
 let availableWidth = 300;
 let tabsWidth = 300;
 
@@ -36,11 +37,20 @@ function setupGeometry() {
   vi.stubGlobal(
     "ResizeObserver",
     class {
+      callback: ResizeObserverCallback;
+      record = { nodes: [] as Element[], disconnected: false };
       constructor(callback: ResizeObserverCallback) {
+        this.callback = callback;
         resizeCallbacks.add(callback);
+        resizeObservers.push(this.record);
       }
-      observe() {}
-      disconnect() {}
+      observe(element: Element) {
+        this.record.nodes.push(element);
+      }
+      disconnect() {
+        this.record.disconnected = true;
+        resizeCallbacks.delete(this.callback);
+      }
     },
   );
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(function (
@@ -68,18 +78,104 @@ function setupGeometry() {
 function resize(width: number) {
   availableWidth = width;
   act(() => {
-    for (const callback of resizeCallbacks) callback([], {} as ResizeObserver);
+    for (const callback of [...resizeCallbacks]) callback([], {} as ResizeObserver);
   });
 }
 
 afterEach(() => {
   cleanup();
   resizeCallbacks.clear();
+  resizeObservers.length = 0;
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
 describe("WorkspaceTabsScroller", () => {
+  it("omits unused reporting observation and releases it when its consumer disappears", () => {
+    setupGeometry();
+    const added = vi.spyOn(window, "addEventListener");
+    const removed = vi.spyOn(window, "removeEventListener");
+    const report = vi.fn();
+    const tabs = (reporting: boolean) => (
+      <WorkspaceTabsScroller onOverflowChange={reporting ? report : undefined}>
+        <button type="button">Tab</button>
+      </WorkspaceTabsScroller>
+    );
+    const view = render(tabs(false));
+    expect(resizeObservers).toHaveLength(1);
+    view.rerender(tabs(true));
+    expect(resizeCallbacks.size).toBe(2);
+    expect(report).toHaveBeenLastCalledWith(false);
+    view.rerender(tabs(false));
+    expect(resizeCallbacks.size).toBe(1);
+    report.mockClear();
+    resize(200);
+    expect(report).not.toHaveBeenCalled();
+    view.unmount();
+    expect(resizeCallbacks.size).toBe(0);
+    expect(resizeObservers.every((observer) => observer.disconnected)).toBe(true);
+    const resizeHandlers = added.mock.calls
+      .filter(([type]) => type === "resize")
+      .map(([, handler]) => handler);
+    const removedHandlers = removed.mock.calls
+      .filter(([type]) => type === "resize")
+      .map(([, handler]) => handler);
+    expect(removedHandlers).toHaveLength(resizeHandlers.length);
+    expect(removedHandlers).toEqual(expect.arrayContaining(resizeHandlers));
+  });
+
+  it("reveals a changed nearest-tab selection without replacing observation or fighting manual scroll", () => {
+    setupGeometry();
+    const reveal = vi.spyOn(Element.prototype, "scrollIntoView");
+    const tabs = (selected: string) => (
+      <WorkspaceTabsScroller activeKey={selected}>
+        {["First", "Second"].map((label) => (
+          <button type="button" key={label} aria-selected={selected === label}>
+            {label}
+          </button>
+        ))}
+      </WorkspaceTabsScroller>
+    );
+    const view = render(tabs("First"));
+    const installed = resizeObservers.length;
+    view.rerender(tabs("Second"));
+    expect(reveal.mock.contexts.at(-1)).toBe(screen.getByRole("button", { name: "Second" }));
+    reveal.mockClear();
+    const viewport = view.container.querySelector<HTMLElement>("[data-workspace-tabs-viewport]")!;
+    viewport.scrollLeft = 45;
+    view.rerender(tabs("Second"));
+    expect(reveal).not.toHaveBeenCalled();
+    expect(viewport.scrollLeft).toBe(45);
+    expect(resizeObservers).toHaveLength(installed);
+  });
+
+  it("keeps reporting observers through tab changes and font/content resize delivery", () => {
+    setupGeometry();
+    const report = vi.fn();
+    const tabs = (label: string) => (
+      <WorkspaceTabsScroller onOverflowChange={report}>
+        <button type="button">{label}</button>
+      </WorkspaceTabsScroller>
+    );
+    const view = render(tabs("First"));
+    const installed = resizeObservers.length;
+    tabsWidth = 450;
+    view.rerender(tabs("Longer tab"));
+    expect(report).toHaveBeenLastCalledWith(true);
+    expect(resizeObservers).toHaveLength(installed);
+    tabsWidth = 200;
+    const content = view.container.querySelector("[data-workspace-tabs-content]")!;
+    expect(resizeObservers.every((observer) => observer.nodes.includes(content))).toBe(true);
+    resize(300);
+    expect(report).toHaveBeenLastCalledWith(false);
+    tabsWidth = 500;
+    resize(300);
+    expect(report).toHaveBeenLastCalledWith(true);
+    expect(resizeObservers).toHaveLength(installed);
+    view.unmount();
+    expect(resizeCallbacks.size).toBe(0);
+  });
+
   it("shows overflow only when tabs cannot fit and releases the picker reservation on resize", () => {
     setupGeometry();
     render(<Harness />);
@@ -216,11 +312,13 @@ describe("WorkspaceTabsScroller", () => {
       );
     }
     const { rerender, container } = render(<Slots selected={0} />);
+    const installed = resizeObservers.length;
     const viewport = container.querySelector<HTMLElement>("[data-workspace-tabs-viewport]")!;
     for (const width of [300, 160, 44, 700]) {
       resize(width);
       for (let selected = 0; selected < count; selected++) {
         rerender(<Slots selected={selected} />);
+        expect(resizeObservers).toHaveLength(installed);
         const slot = screen.getByRole("button", { name: String(selected) }).getBoundingClientRect();
         expect(slot.left + slot.width / 2).toBeCloseTo(10 + width / 2);
         expect(viewport.scrollLeft).toBeGreaterThanOrEqual(0);
@@ -231,6 +329,8 @@ describe("WorkspaceTabsScroller", () => {
     }
     viewport.scrollLeft = 0;
     fireEvent.scroll(viewport);
+    expect(viewport.scrollLeft).toBe(0);
+    rerender(<Slots selected={count - 1} />);
     expect(viewport.scrollLeft).toBe(0);
   });
 

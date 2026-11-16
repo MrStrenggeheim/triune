@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { SidebarDataContext } from "./useSidebarData";
 import {
   PINNED_CONVERSATIONS_KEY,
@@ -22,7 +23,7 @@ import {
 // discovered while the socket handles watched-row freshness.
 
 import { type ReactNode, useCallback, useContext, useEffect, useRef } from "react";
-import { type QueryClient, useQueryClient } from "@tanstack/react-query";
+import { type QueryClient, type QueryKey, useQueryClient } from "@tanstack/react-query";
 import { getCurrentUserId } from "@/lib/identity";
 import { useActiveConversationId } from "@/hooks/useActiveConversationId";
 import { childSessionsQueryKey, type ChildSessionInfo } from "@/hooks/useChildSessions";
@@ -62,16 +63,14 @@ const PROJECT_FOLDER_FILTERS = { searchQuery: "", includeArchived: false } as co
  *
  * @param queryClient - The app QueryClient.
  * @param items - Wire items from a snapshot/changed frame.
- * @returns Ids not found in any cached page and whether any patched row
- *   needs a server refetch to preserve filtered-query membership or sort
- *   order.
+ * @returns Missing ids, list keys needing a resort, and cross-list membership changes.
  */
 function applyItemsToCache(
   queryClient: QueryClient,
   items: SessionListWireItem[],
   activeId: string | undefined,
   viewerId?: string | null,
-): { missingIds: string[]; needsRefetch: boolean } {
+): { missingIds: string[]; refetchKeys: QueryKey[]; needsMembershipRefetch: boolean } {
   // Frames are full rows with explicit nulls; convert null → undefined so a
   // cleared field overlays the cache in the same shape GET /v1/sessions
   // produces (absent), without tripping the permission_level === null sentinel.
@@ -84,7 +83,8 @@ function applyItemsToCache(
     );
   }
   const foundAnywhere = new Set<string>();
-  let needsRefetch = false;
+  const refetchKeys: QueryKey[] = [];
+  let needsMembershipRefetch = false;
   const entries = queryClient.getQueriesData<ConversationsInfiniteData>({
     queryKey: ["conversations"],
   });
@@ -95,9 +95,11 @@ function applyItemsToCache(
       data: merged,
       found,
       needsRefetch: queryNeedsRefetch,
+      needsMembershipRefetch: queryMembershipChanged,
     } = mergeItemsIntoPages(data, itemsById, filters, activeId);
     for (const id of found) foundAnywhere.add(id);
-    if (queryNeedsRefetch) needsRefetch = true;
+    if (queryNeedsRefetch) refetchKeys.push(key);
+    needsMembershipRefetch ||= queryMembershipChanged;
     // Surface a brand-new watched session (a create here or elsewhere, a share)
     // at the top now, instead of after the debounced refetch (which lags the
     // search index). An unfiled row is fully placed → mark it found so it skips
@@ -135,9 +137,11 @@ function applyItemsToCache(
       data: next,
       found,
       needsRefetch: queryNeedsRefetch,
+      needsMembershipRefetch: queryMembershipChanged,
     } = mergeItemsIntoPages(data, itemsById, PROJECT_FOLDER_FILTERS, activeId);
     for (const id of found) foundAnywhere.add(id);
-    if (queryNeedsRefetch) needsRefetch = true;
+    if (queryNeedsRefetch) refetchKeys.push(key);
+    needsMembershipRefetch ||= queryMembershipChanged;
     if (next !== data) queryClient.setQueryData(key, next);
   }
   for (const [key, row] of queryClient.getQueriesData<Conversation>({
@@ -172,9 +176,19 @@ function applyItemsToCache(
       .filter((row) => !row.archived);
     return changed ? { ...previous, conversations } : previous;
   });
+  // Branch inventories and content searches may gain an off-page child.
+  if (refetchKeys.length > 0 && !needsMembershipRefetch) {
+    for (const query of queryClient.getQueryCache().findAll({
+      predicate: (candidate) =>
+        candidate.queryKey[0] === "conversation-branches" ||
+        (candidate.queryKey[0] === "conversations" && !!candidate.queryKey[1]),
+    }))
+      refetchKeys.push(query.queryKey);
+  }
   return {
     missingIds: [...itemsById.keys()].filter((id) => !foundAnywhere.has(id)),
-    needsRefetch,
+    refetchKeys,
+    needsMembershipRefetch,
   };
 }
 
@@ -334,22 +348,37 @@ export function SessionUpdatesProvider({ children }: { children: ReactNode }) {
     }
 
     let invalidateTimer: ReturnType<typeof setTimeout> | null = null;
-    const scheduleInvalidate = () => {
+    let reconcileMembership = false;
+    const pendingKeys = new Map<string, QueryKey>();
+    const scheduleInvalidate = (keys?: QueryKey[]) => {
+      if (keys === undefined) reconcileMembership = true;
+      for (const key of keys ?? []) {
+        const query = queryClient.getQueryCache().find({ queryKey: key, exact: true });
+        if (query) pendingKeys.set(query.queryHash, key);
+      }
       if (invalidateTimer !== null) return;
       invalidateTimer = setTimeout(() => {
         invalidateTimer = null;
-        void queryClient.invalidateQueries({
-          queryKey: ["conversations"],
-          predicate: (query) => query.meta?.snapshot !== true,
-        });
-        // Converge each project folder's own list too (new/archived/relabeled
-        // members the local field-patch can't place).
-        void queryClient.invalidateQueries({ queryKey: ["project-sessions"] });
-        void queryClient.invalidateQueries({ queryKey: ["conversation-branches"] });
-        // Another client archiving/relabeling/deleting can add or remove a
-        // project from the Archived view's picker; only local mutations
-        // invalidate this scan otherwise.
-        void queryClient.invalidateQueries({ queryKey: ["archived-project-names"] });
+        if (reconcileMembership) {
+          // Membership can change in a list where the row was absent.
+          void queryClient.invalidateQueries({
+            queryKey: ["conversations"],
+            predicate: (query) => query.meta?.snapshot !== true,
+          });
+          void queryClient.invalidateQueries({ queryKey: ["project-sessions"] });
+          void queryClient.invalidateQueries({ queryKey: ["conversation-branches"] });
+          void queryClient.invalidateQueries({ queryKey: ["archived-project-names"] });
+        } else {
+          for (const key of pendingKeys.values()) {
+            void queryClient.invalidateQueries({
+              queryKey: key,
+              exact: true,
+              predicate: (query) => query.meta?.snapshot !== true,
+            });
+          }
+        }
+        pendingKeys.clear();
+        reconcileMembership = false;
       }, DEBOUNCE_MS);
     };
 
@@ -434,7 +463,7 @@ export function SessionUpdatesProvider({ children }: { children: ReactNode }) {
           for (const parentId of parentIds) {
             void queryClient.invalidateQueries({ queryKey: childSessionsQueryKey(parentId) });
           }
-          const { missingIds, needsRefetch } = applyItemsToCache(
+          const { missingIds, refetchKeys, needsMembershipRefetch } = applyItemsToCache(
             queryClient,
             frame.items,
             activeIdRef.current,
@@ -452,7 +481,8 @@ export function SessionUpdatesProvider({ children }: { children: ReactNode }) {
           const sidebarMissingIds = activeIdRef.current
             ? missingIds.filter((id) => id !== activeIdRef.current)
             : missingIds;
-          if (sidebarMissingIds.length > 0 || needsRefetch) scheduleInvalidate();
+          if (sidebarMissingIds.length > 0 || needsMembershipRefetch) scheduleInvalidate();
+          else if (refetchKeys.length > 0) scheduleInvalidate(refetchKeys);
           return;
         }
       }

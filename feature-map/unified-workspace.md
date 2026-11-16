@@ -15,6 +15,7 @@ Conversation and tool views share resizable, dockable panes while keeping their 
 - `navigation`: global commands, contextual find, explicit conversation sources and mobile view switching retain existing workflows.
 - `appearance`: shared content surfaces, primary bottom tab strips, consistent switches and list density follow `design-system/triune/MASTER.md`.
 - `migration`: existing conversation, file and shell references remain accessible without starting or stopping resources.
+- `retained-performance`: the [integration7 candidate](../docs/custom-fork.md#integration7-candidate) keeps visible observation stable through focus changes, batches title saves and retains tab geometry observers.
 
 ## How to get to it (user POV)
 
@@ -39,8 +40,8 @@ Conversation and tool views share resizable, dockable panes while keeping their 
 
 Preconditions: follow the [verification skill](skills/verify-omnigent/SKILL.md), build the checkout and use an isolated environment or the sealed browser-contract lane.
 
-Iteration6 entries below describe source acceptance, with compiled execution owned by the parent after candidate freeze/build.
-The [fork guide](../docs/custom-fork.md#iteration6-source-status) records the separate installed-release boundary.
+The [fork guide](../docs/custom-fork.md#iteration6-source-status) records verified iteration6 activation and retained browser evidence.
+Integration7 checks below describe a source candidate awaiting combined release verification and activation.
 
 - Startup ownership, explicit destinations, saved drafts and missing-owner fallback: `tests/browser_ui/chat/test_iteration6.py::test_startup_restores_owner_and_respects_explicit_destinations` and `tests/browser_ui/chat/test_iteration6.py::test_startup_missing_owner_falls_back_without_erasing_layout`.
 - Current-filter collapsed status membership, expanded own-only state and revoked projection: `tests/browser_ui/chat/test_iteration6.py::test_sidebar_rollup_uses_revealable_children_only_while_collapsed`.
@@ -63,6 +64,19 @@ The [fork guide](../docs/custom-fork.md#iteration6-source-status) records the se
 - Delivery authorization and deduplication: `tests/server/integration/test_session_orchestration.py`.
 - Appearance and migration: `web/src/lib/listDensityPreferences.test.tsx`, `web/src/lib/themePalette.test.ts` and `web/src/workbench/legacyLayout.test.ts`.
 - Manually open two chats, an Explorer and a Markdown Preview; type distinct drafts, move the tabs, reload and verify every resource and draft remains attached to its original owner.
+
+### Integration7 candidate checks
+
+- Observation ownership and hide/reveal: `web/src/store/conversationRegistry.test.ts` and `web/src/workbench/ScopedChatStore.test.tsx`.
+- Title batching, unchanged focus and retained guards: `web/src/workbench/dockLayout.test.ts`, `web/src/workbench/dockPersistence.test.ts` and `web/src/workbench/DockWorkspace.test.tsx`.
+- Overflow reporting, nearest-tab reveal and gallery centering: `web/src/shell/WorkspaceTabsScroller.test.tsx` and `web/src/components/ImageLightbox.test.tsx`.
+- In a desktop split, alternate focus ten times: sends follow the focused pane while both visible panes keep observation attached.
+- Hide the final visible owner, then reveal it: observation detaches and resumes while the retained reader and draft survive.
+- Refresh several chat titles, including saved and pinned occurrences: labels converge in one dock save; repeated selection of the focused tab adds no write.
+- Add/remove/rename tabs, resize panes and select gallery endpoints on desktop/phone: overflow, reveal, centering and manual scroll retain their existing behavior.
+
+These source/component checks do not establish production latency, frame rate, browser heap savings or physical-device behavior.
+Ownerless transcript-model retirement remains undecided; no new model eviction policy is included.
 
 ## Gotchas
 
@@ -200,3 +214,5 @@ Attribution and file boundaries: `tests/server/integration/test_session_orchestr
 - `tests/browser_ui/chat/test_search_navigation.py::test_search_virtual_reveal_original_source_and_cancel` covers virtualized source reveal, delayed geometry and manual-scroll cancellation; search-result theme variants remain in `test_search_results.py`.
 
 These browser contracts use isolated transport fixtures; they do not establish physical mobile keyboard behavior or live provider ordering.
+
+Integration7 focus/list/draft acceptance: `tests/browser_ui/chat/test_overnight_performance.py` keeps two visible streams bound through focus changes, checks scoped child-list refreshes and structural reconciliation, and reloads exact draft-file bytes across independent pages.

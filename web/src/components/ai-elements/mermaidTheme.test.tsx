@@ -11,15 +11,19 @@ import {
 } from "./mermaidPresentation";
 import { resolveMermaidAppearance, triuneMermaid, useMermaidAppearance } from "./mermaidTheme";
 
-const engine = vi.hoisted(() => ({ initialize: vi.fn(), render: vi.fn() }));
-vi.mock("@streamdown/mermaid", () => ({
-  mermaid: {
-    getMermaid: (config: unknown) => {
-      engine.initialize(config);
-      return { render: engine.render };
+const engine = vi.hoisted(() => ({ load: vi.fn(), initialize: vi.fn(), render: vi.fn() }));
+vi.mock("@streamdown/mermaid", () => {
+  engine.load();
+  return {
+    mermaid: {
+      getMermaid: (config: unknown) => {
+        engine.initialize(config);
+        return { render: engine.render };
+      },
     },
-  },
-}));
+  };
+});
+const engineLoadsAfterImport = engine.load.mock.calls.length;
 
 beforeEach(() => {
   engine.initialize.mockReset();
@@ -176,9 +180,11 @@ describe("shared Mermaid engine queue", () => {
     try {
       const result = triuneMermaid.getMermaid().render("font-ready", "flowchart LR\nA-->B");
       await waitFor(() => expect(load).toHaveBeenCalledTimes(1));
+      expect(engineLoadsAfterImport).toBe(0);
       expect(engine.initialize).not.toHaveBeenCalled();
       loaded();
       await result;
+      expect(engine.load).toHaveBeenCalledTimes(1);
       expect(engine.render).toHaveBeenCalledTimes(1);
     } finally {
       if (previous) Object.defineProperty(document, "fonts", previous);

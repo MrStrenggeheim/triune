@@ -1,6 +1,6 @@
 // Modified for Triune.
 import type { MentionItem } from "./composerMentions";
-import { readComposerDrafts, writeComposerDrafts } from "./queuedMessagePersistence";
+import { readComposerDraftSnapshot, writeComposerDrafts } from "./queuedMessagePersistence";
 import { clearReferenceDrafts } from "./contextReferenceDrafts";
 import { useSyncExternalStore } from "react";
 import { readComposerDraft, type ComposerDraft } from "./replyDraft";
@@ -13,7 +13,6 @@ export interface SessionDraft extends ComposerDraft {
 
 const SESSION_DRAFTS_KEY = "omnigent.sessionDrafts";
 const listeners = new Set<() => void>();
-const retiredDraftIds = new Set<string>();
 
 function loadDraftsFromStorage(): Map<string, SessionDraft> {
   if (typeof window === "undefined") return new Map();
@@ -38,7 +37,7 @@ function saveDraftsToStorage(): void {
   if (typeof window === "undefined") return;
   try {
     const entries: Record<string, string | ComposerDraft> = {};
-    for (const [id, draft] of sessionDrafts) {
+    for (const [id, draft] of active.drafts) {
       if (draft.text)
         entries[id] = draft.replyDraft
           ? { text: draft.text, replyDraft: draft.replyDraft }
@@ -50,38 +49,78 @@ function saveDraftsToStorage(): void {
       window.sessionStorage.setItem(SESSION_DRAFTS_KEY, JSON.stringify(entries));
     }
   } catch (error) {
-    persistenceError = error;
+    active.error = error;
     reportPersistenceError?.(error);
   }
 }
 
-const sessionDrafts = loadDraftsFromStorage();
-let activeScope: string | null = null;
+interface DraftOwner {
+  scope: string | null;
+  drafts: Map<string, SessionDraft>;
+  persisted: Map<string, SessionDraft>;
+  retired: Set<string>;
+  edited: Set<string>;
+  promotions: Map<string, string>;
+  loading: boolean;
+  hydrated: boolean;
+  cleared: boolean;
+  version: number;
+  error?: unknown;
+}
+
+function draftOwner(scope: string | null, drafts = new Map<string, SessionDraft>()): DraftOwner {
+  return {
+    scope,
+    drafts,
+    persisted: new Map(),
+    retired: new Set(),
+    edited: new Set(),
+    promotions: new Map(),
+    loading: false,
+    hydrated: false,
+    cleared: false,
+    version: 0,
+  };
+}
+
+const owners = new Map<string, DraftOwner>();
+let active = draftOwner(null, loadDraftsFromStorage());
 let generation = 0;
+let claimedLegacy = false;
 let writes = Promise.resolve();
 let hydration = Promise.resolve();
-let persistenceError: unknown;
 let reportPersistenceError: ((error: unknown) => void) | undefined;
-const editedDuringHydration = new Set<string>();
-const pendingPromotions = new Map<string, string>();
-let loading = false;
-let clearedDuringHydration = false;
+
+function failure(owner: DraftOwner, error: unknown): void {
+  owner.error = error;
+  if (owner === active) {
+    reportPersistenceError?.(error);
+    notifyListeners();
+  }
+}
+
+async function save(
+  owner: DraftOwner,
+  snapshot: Map<string, SessionDraft>,
+  version: number,
+): Promise<void> {
+  await writeComposerDrafts(owner.scope!, snapshot, owner.persisted);
+  owner.persisted = snapshot;
+  owner.error = undefined;
+  if (version === owner.version) {
+    owner.edited.clear();
+    owner.cleared = false;
+  }
+}
 
 function persistSnapshot(): void {
-  if (!activeScope || loading) return;
-  const owner = activeScope;
-  const snapshot = new Map(sessionDrafts);
-  const revision = generation;
+  const owner = active;
+  if (!owner.scope || !owner.hydrated) return;
+  const snapshot = new Map(owner.drafts);
+  const version = owner.version;
   writes = writes
-    .then(() => writeComposerDrafts(owner, snapshot))
-    .then(() => {
-      if (revision === generation) persistenceError = undefined;
-    })
-    .catch((error) => {
-      if (revision !== generation) return;
-      persistenceError = error;
-      reportPersistenceError?.(error);
-    });
+    .then(() => save(owner, snapshot, version))
+    .catch((error) => failure(owner, error));
 }
 
 /** Install at app boot and refresh on server/account changes. */
@@ -90,15 +129,9 @@ export function initializeSessionDraftPersistence(
   reportError?: (error: unknown) => void,
 ): void {
   reportPersistenceError = reportError;
-  if (scope === activeScope) return;
-  const previous = activeScope;
-  activeScope = scope;
-  const revision = ++generation;
-  persistenceError = undefined;
-  editedDuringHydration.clear();
-  pendingPromotions.clear();
-  clearedDuringHydration = false;
-  retiredDraftIds.clear();
+  if (scope === active.scope) return;
+  const previous = active;
+  ++generation;
   // Legacy sessionStorage belongs to this tab's first identity only.
   let legacyOwner: string | null = null;
   try {
@@ -109,8 +142,19 @@ export function initializeSessionDraftPersistence(
   } catch (error) {
     reportPersistenceError?.(error);
   }
-  const changedIdentity = previous !== null || !!(legacyOwner && legacyOwner !== scope);
-  if (changedIdentity) sessionDrafts.clear();
+  const changedIdentity = claimedLegacy || !!(legacyOwner && legacyOwner !== scope);
+  const legacyFallback = changedIdentity
+    ? new Map<string, SessionDraft>()
+    : new Map(previous.drafts);
+  if (scope) claimedLegacy = true;
+  active = scope
+    ? (owners.get(scope) ?? draftOwner(scope, changedIdentity ? undefined : previous.drafts))
+    : draftOwner(null);
+  if (!changedIdentity) {
+    active.edited = new Set(previous.edited);
+    active.version = previous.version;
+  }
+  if (scope) owners.set(scope, active);
   try {
     if (changedIdentity) {
       clearReferenceDrafts();
@@ -118,40 +162,73 @@ export function initializeSessionDraftPersistence(
     }
     if (typeof sessionStorage !== "undefined") {
       if (scope) sessionStorage.setItem(`${SESSION_DRAFTS_KEY}.scope`, scope);
-      else sessionStorage.removeItem(SESSION_DRAFTS_KEY);
+      else sessionStorage.removeItem(`${SESSION_DRAFTS_KEY}.scope`);
     }
   } catch (error) {
     reportPersistenceError?.(error);
   }
-  loading = !!scope;
+  const owner = active;
+  if (owner.loading) {
+    notifyListeners();
+    return;
+  }
+  if (!scope) {
+    hydration = writes;
+    notifyListeners();
+    return;
+  }
+  if (owner.hydrated) owner.edited.clear();
+  for (const id of new Set([...owner.persisted.keys(), ...owner.drafts.keys()])) {
+    if (
+      owner.persisted.get(id) !== owner.drafts.get(id) &&
+      owner.drafts.get(id) !== legacyFallback.get(id)
+    )
+      owner.edited.add(id);
+  }
+  owner.loading = true;
+  owner.hydrated = false;
   notifyListeners();
-  if (!scope) return;
-  hydration = writes
-    .then(() => readComposerDrafts(scope))
-    .then((saved) => {
-      if (revision !== generation) return;
-      for (const [id, draft] of saved) {
-        if (clearedDuringHydration) continue;
-        const promotedId = pendingPromotions.get(id);
-        if (promotedId) {
-          if (!editedDuringHydration.has(promotedId) && !retiredDraftIds.has(promotedId))
-            sessionDrafts.set(promotedId, draft);
-        } else if (!editedDuringHydration.has(id) && !retiredDraftIds.has(id)) {
-          sessionDrafts.set(id, draft);
+  // Retain raw files and deletions until the outgoing owner's transaction completes.
+  writes = writes
+    .then(async () => {
+      const snapshot = await readComposerDraftSnapshot(scope);
+      const saved = snapshot ?? new Map<string, SessionDraft>();
+      // Legacy text is only a first-paint fallback, never a complete File snapshot.
+      if (snapshot) {
+        for (const [id, draft] of legacyFallback) {
+          if (!owner.edited.has(id) && owner.drafts.get(id) === draft) owner.drafts.delete(id);
         }
       }
-      pendingPromotions.clear();
-      loading = false;
-      persistSnapshot();
-      notifyListeners();
+      for (const id of owner.persisted.keys()) {
+        if (owner.edited.has(id) && owner.drafts.has(id) && !saved.has(id))
+          throw new Error("Saved input was removed by another client; keep local edits open");
+      }
+      for (const id of owner.persisted.keys()) {
+        if (!owner.edited.has(id)) owner.drafts.delete(id);
+      }
+      for (const [id, draft] of saved) {
+        if (owner.cleared) continue;
+        const promotedId = owner.promotions.get(id);
+        if (promotedId) {
+          if (!owner.edited.has(promotedId) && !owner.retired.has(promotedId))
+            owner.drafts.set(promotedId, draft);
+        } else if (!owner.edited.has(id) && !owner.retired.has(id)) {
+          owner.drafts.set(id, draft);
+        }
+      }
+      owner.persisted = saved;
+      owner.promotions.clear();
+      owner.hydrated = true;
+      if (owner === active) notifyListeners();
+      await save(owner, new Map(owner.drafts), owner.version);
+      owner.loading = false;
+      if (owner === active) notifyListeners();
     })
     .catch((error) => {
-      if (revision !== generation) return;
-      loading = false;
-      persistenceError = error;
-      reportPersistenceError?.(error);
-      notifyListeners();
+      owner.loading = false;
+      failure(owner, error);
     });
+  hydration = writes;
 }
 
 /** Await full attachment hydration; callers must also check their local edit generation. */
@@ -165,12 +242,12 @@ export async function hydrateSessionDraft(
 
 /** Resolve only after the whole snapshot is durable, or reject with the visible storage error. */
 export async function waitForSessionDraftSave(): Promise<void> {
+  const revision = generation;
   await hydration;
   await writes;
-  if (persistenceError)
-    throw persistenceError instanceof Error
-      ? persistenceError
-      : new Error(String(persistenceError));
+  if (revision !== generation) throw new Error("Composer storage identity changed while saving");
+  if (active.error !== undefined)
+    throw active.error instanceof Error ? active.error : new Error(String(active.error));
 }
 
 function subscribe(listener: () => void): () => void {
@@ -183,28 +260,30 @@ function notifyListeners(): void {
 }
 
 export function getSessionDraft(conversationId: string): SessionDraft | undefined {
-  return sessionDrafts.get(conversationId);
+  return active.drafts.get(conversationId);
 }
 
 export function setSessionDraft(conversationId: string, draft: SessionDraft): void {
-  if (retiredDraftIds.has(conversationId)) return;
-  editedDuringHydration.add(conversationId);
+  if (active.retired.has(conversationId)) return;
+  active.edited.add(conversationId);
   if (draft.text === "" && draft.files.length === 0 && !draft.mentionedItems?.length) {
-    sessionDrafts.delete(conversationId);
+    active.drafts.delete(conversationId);
   } else {
-    sessionDrafts.set(conversationId, draft);
+    active.drafts.set(conversationId, draft);
   }
+  ++active.version;
   saveDraftsToStorage();
   notifyListeners();
 }
 
 /** Remove a draft and ignore any late cleanup write for the retired id. */
 export function retireSessionDraft(conversationId: string): SessionDraft | undefined {
-  const draft = sessionDrafts.get(conversationId);
-  retiredDraftIds.add(conversationId);
-  editedDuringHydration.add(conversationId);
+  const draft = active.drafts.get(conversationId);
+  active.retired.add(conversationId);
+  active.edited.add(conversationId);
   if (draft === undefined) return undefined;
-  sessionDrafts.delete(conversationId);
+  active.drafts.delete(conversationId);
+  ++active.version;
   saveDraftsToStorage();
   notifyListeners();
   return draft;
@@ -233,22 +312,23 @@ export function promoteSessionDraft(
   temporaryConversationId: string,
   conversationId: string,
 ): SessionDraft | undefined {
-  const draft = sessionDrafts.get(temporaryConversationId);
-  const awaitingSource = loading && !editedDuringHydration.has(temporaryConversationId);
-  if (awaitingSource) pendingPromotions.set(temporaryConversationId, conversationId);
+  const draft = active.drafts.get(temporaryConversationId);
+  const awaitingSource = active.loading && !active.edited.has(temporaryConversationId);
+  if (awaitingSource) active.promotions.set(temporaryConversationId, conversationId);
   if (draft === undefined && !awaitingSource) return undefined;
-  retiredDraftIds.add(temporaryConversationId);
-  editedDuringHydration.add(temporaryConversationId);
-  sessionDrafts.delete(temporaryConversationId);
-  if (draft !== undefined) sessionDrafts.set(conversationId, draft);
-  if (!awaitingSource) editedDuringHydration.add(conversationId);
+  active.retired.add(temporaryConversationId);
+  active.edited.add(temporaryConversationId);
+  active.drafts.delete(temporaryConversationId);
+  if (draft !== undefined) active.drafts.set(conversationId, draft);
+  if (!awaitingSource) active.edited.add(conversationId);
+  ++active.version;
   saveDraftsToStorage();
   notifyListeners();
   return draft;
 }
 
 export function hasSessionDraft(conversationId: string): boolean {
-  const draft = sessionDrafts.get(conversationId);
+  const draft = active.drafts.get(conversationId);
   return (
     draft !== undefined &&
     (draft.text.trim() !== "" || draft.files.length > 0 || !!draft.mentionedItems?.length)
@@ -267,7 +347,7 @@ export function useHasSessionDraft(conversationId: string): boolean {
 export function useSessionDraftsHydrated(): boolean {
   return useSyncExternalStore(
     subscribe,
-    () => !loading && persistenceError === undefined,
+    () => !active.loading && active.error === undefined,
     () => false,
   );
 }
@@ -275,7 +355,7 @@ export function useSessionDraftsHydrated(): boolean {
 const ignoreDrafts = () => () => {};
 
 function draftIdsKey(): string {
-  return [...sessionDrafts.keys()].filter(hasSessionDraft).sort().join("\n");
+  return [...active.drafts.keys()].filter(hasSessionDraft).sort().join("\n");
 }
 
 /**
@@ -293,11 +373,12 @@ export function useSessionDraftIds(enabled = true): string {
 
 /** Clear all drafts, primarily for logout/reset flows and isolated tests. */
 export function clearSessionDrafts(): void {
-  if (loading) clearedDuringHydration = true;
+  if (active.loading || !active.hydrated) active.cleared = true;
   clearReferenceDrafts();
-  for (const id of sessionDrafts.keys()) editedDuringHydration.add(id);
-  sessionDrafts.clear();
-  retiredDraftIds.clear();
+  for (const id of active.drafts.keys()) active.edited.add(id);
+  active.drafts.clear();
+  active.retired.clear();
+  ++active.version;
   saveDraftsToStorage();
   notifyListeners();
 }

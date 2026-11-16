@@ -25,6 +25,7 @@ from fastapi.testclient import TestClient
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 import omnigent.server.routes.sessions as sessions_routes
+import omnigent.stores.conversation_store.sqlalchemy_store as conversation_module
 from omnigent.runtime import pending_elicitations
 from omnigent.server.auth import LEVEL_OWNER, UnifiedAuthProvider
 from omnigent.server.routes.sessions import SessionLiveness, create_sessions_router
@@ -200,6 +201,84 @@ def test_watch_returns_snapshot_of_accessible_sessions(app: FastAPI, stores) -> 
         # would drop the key (stream dumps full rows, so it must be present).
         assert items[s1]["runner_online"] is True
         assert items[s1]["host_online"] is None
+
+
+def test_light_summary_payloads_equal_full_reads_and_keep_authority_and_freshness(
+    app: FastAPI, stores, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, _, permissions = stores
+    parent = _seed_session(stores, owner=ALICE, title="summary")
+    child = store.create_conversation(
+        kind="sub_agent",
+        parent_conversation_id=parent,
+        agent_id="087b7cb7ac30abf4debfaa578d052ec6",
+    )
+    private = store.fork_conversation(child.id)
+    permissions.ensure_user(BOB)
+    permissions.grant(BOB, private.id, LEVEL_OWNER)
+    store.set_labels(parent, {"omni_project": "audit", "omnigent.pinned.alice@example.com": "1"})
+    store.set_runner_id(child.id, "summary-runner")
+    store.set_session_live_status(child.id, "waiting")
+    store.set_pending_elicitation_count(child.id, 3)
+    for session_id in (parent, child.id, private.id):
+        store.set_session_state(session_id, {"policy": "x" * 32768})
+    force_full = True
+    decoded: list[str | None] = []
+    full_get, full_list = store.get_conversations, store.list_conversations
+    decode_state = conversation_module._decode_session_state
+
+    def get(ids, *, include_execution_state=True):
+        return full_get(ids, include_execution_state=force_full or include_execution_state)
+
+    def list_rows(*args, **kwargs):
+        if force_full:
+            kwargs["include_execution_state"] = True
+        return full_list(*args, **kwargs)
+
+    def decode(value):
+        decoded.append(value)
+        return decode_state(value)
+
+    monkeypatch.setattr(store, "get_conversations", get)
+    monkeypatch.setattr(store, "list_conversations", list_rows)
+    monkeypatch.setattr(conversation_module, "_decode_session_state", decode)
+    queries = (
+        "?limit=30&visibility=mine&sort_by=updated_at&order=desc",
+        "?limit=100&visibility=mine&kind=any&include_side_chats=true&sort_by=updated_at&order=desc",
+        "?limit=30&visibility=shared&sort_by=updated_at&order=desc",
+        "?limit=20&visibility=mine&project=audit&sort_by=updated_at&order=desc",
+        "?limit=20&visibility=mine&project=other&sort_by=updated_at&order=desc",
+        "?limit=1&visibility=mine&pinned=true",
+    )
+    headers = {"X-Forwarded-Email": ALICE}
+    with TestClient(app) as client:
+        full_pages = [
+            client.get("/v1/sessions" + query, headers=headers).json() for query in queries
+        ]
+        with client.websocket_connect("/v1/sessions/updates", headers=headers) as ws:
+            ws.send_json({"type": "watch", "session_ids": [parent, private.id]})
+            full_snapshot = _recv_until(ws, {"snapshot"})
+        assert decoded
+        force_full = False
+        decoded.clear()
+        light_pages = [
+            client.get("/v1/sessions" + query, headers=headers).json() for query in queries
+        ]
+        with client.websocket_connect("/v1/sessions/updates", headers=headers) as ws:
+            ws.send_json({"type": "watch", "session_ids": [parent, private.id]})
+            assert _recv_until(ws, {"snapshot"}) == full_snapshot
+        assert light_pages == full_pages
+        assert decoded == []
+        assert [row["id"] for row in full_snapshot["items"]] == [parent]
+        facts = full_snapshot["items"][0]["activity"]["descendants"]
+        assert [fact["id"] for fact in facts] == [child.id]
+        assert facts[0]["status"] == "running"
+        assert facts[0]["pending_elicitations_count"] == 3
+        store.set_session_live_status(child.id, "failed")
+        store.set_pending_elicitation_count(child.id, 1)
+        updated = client.get("/v1/sessions", headers=headers).json()["data"][0]
+        assert updated["activity"]["descendants"][0]["status"] == "failed"
+        assert updated["activity"]["descendants"][0]["pending_elicitations_count"] == 1
 
 
 def test_child_busy_rollup_flows_through_updates_stream(
@@ -504,7 +583,7 @@ def test_transient_store_error_does_not_kill_stream(
     real_get = conversation_store.get_conversations
     calls = {"n": 0}
 
-    def flaky_get(ids: list[str]) -> dict[str, object]:
+    def flaky_get(ids: list[str], *, include_execution_state: bool = True) -> dict[str, object]:
         """Succeed on the connect snapshot, fail the first rescan tick,
         then recover — a transient blip, not a permanent outage."""
         calls["n"] += 1
@@ -512,7 +591,7 @@ def test_transient_store_error_does_not_kill_stream(
         # baseline). Call 2 is the first ticker rescan — fail it.
         if calls["n"] == 2:
             raise RuntimeError("transient store blip")
-        return real_get(ids)
+        return real_get(ids, include_execution_state=include_execution_state)
 
     monkeypatch.setattr(conversation_store, "get_conversations", flaky_get)
     with TestClient(app).websocket_connect(

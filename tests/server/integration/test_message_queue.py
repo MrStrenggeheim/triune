@@ -539,3 +539,165 @@ async def test_private_queue_files_do_not_truncate_visible_file_pages(
     assert backward.json()["has_more"] is False
     for response in (first, second, backward):
         assert "secret-" not in response.text
+
+
+@pytest.mark.parametrize("late_status", ["idle", "failed"])
+async def test_stale_terminal_status_cannot_change_current_queue(queue_env, late_status):
+    env = queue_env
+    session_id = await session(env)
+    body = message("follow-up for the current turn")
+    path = f"/v1/sessions/{session_id}/queued-messages"
+    assert (await env.client.post(path, json=body)).status_code == 201
+    queue = env.app.state.startup_inputs.message_queue
+    await queue.status(env.app, session_id, "running", "current-turn")
+    await queue.status(env.app, session_id, late_status, "older-turn")
+    state = queue.store.read(session_id)
+    assert state["turn"] == "current-turn"
+    assert not state.get("ended")
+    assert not state["ready"]
+    assert not state["messages"][0].get("error")
+    assert not env.conv_store.list_pending_inputs(session_id)
+
+
+async def test_native_status_forward_completion_cannot_rewind_newer_turn(queue_env, monkeypatch):
+    from omnigent._wrapper_labels import CODEX_NATIVE_WRAPPER_VALUE, WRAPPER_LABEL_KEY
+    from omnigent.server.routes._sessions.common import _session_active_response_cache
+    from omnigent.server.routes.sessions import routes_events
+
+    env = queue_env
+    session_id = await session(env)
+    env.conv_store.set_labels(session_id, {WRAPPER_LABEL_KEY: CODEX_NATIVE_WRAPPER_VALUE})
+    body = message("wait for the current native turn")
+    path = f"/v1/sessions/{session_id}/queued-messages"
+    assert (await env.client.post(path, json=body)).status_code == 201
+    queue = env.app.state.startup_inputs.message_queue
+    older_entered, release_older = asyncio.Event(), asyncio.Event()
+
+    async def forward(_session, _router, event):
+        if event["data"]["response_id"] == "codex_older-turn":
+            older_entered.set()
+            await release_older.wait()
+        return {}
+
+    monkeypatch.setattr(routes_events, "_forward_session_change_to_runner", forward)
+
+    async def status(response_id):
+        return await env.client.post(
+            f"/v1/sessions/{session_id}/events",
+            json={
+                "type": "external_session_status",
+                "data": {"status": "running", "response_id": response_id},
+            },
+        )
+
+    older = asyncio.create_task(status("codex_older-turn"))
+    try:
+        await asyncio.wait_for(older_entered.wait(), 5)
+        current = await status("codex_current-turn")
+        assert current.status_code == 202, current.text
+        release_older.set()
+        result = await asyncio.wait_for(older, 5)
+        assert result.status_code == 202, result.text
+        assert _session_active_response_cache[session_id] == "codex_current-turn"
+        assert queue.store.read(session_id)["turn"] == "codex_current-turn"
+    finally:
+        release_older.set()
+        await asyncio.gather(older, return_exceptions=True)
+
+
+async def test_empty_native_queue_retires_observer_and_reenqueue_restores_it(queue_env):
+    from omnigent._wrapper_labels import CODEX_NATIVE_WRAPPER_VALUE, WRAPPER_LABEL_KEY
+    from omnigent.db.db_models import current_workspace_id
+
+    env = queue_env
+    session_id = await session(env)
+    env.conv_store.set_labels(session_id, {WRAPPER_LABEL_KEY: CODEX_NATIVE_WRAPPER_VALUE})
+    queue = env.app.state.startup_inputs.message_queue
+    key = (current_workspace_id(), session_id)
+    path = f"/v1/sessions/{session_id}/queued-messages"
+    for index in range(2):
+        body = message(f"native queued draft {index}")
+        assert (await env.client.post(path, json=body)).status_code == 201
+        assert key in queue._observers
+        observer = queue._observers[key]
+        assert (await env.client.delete(f"{path}/{body['queueId']}")).status_code == 200
+        assert not queue.store.read(session_id)["messages"]
+        assert key not in queue._observers
+        assert observer.done()
+        assert not session_stream._subscribers.get(session_id)
+    await queue.shutdown()
+    queue.watch(env.app, session_id)
+    assert not queue._observers
+
+
+async def test_selected_send_keeps_other_drafts_behind_the_selected_turn(queue_env, monkeypatch):
+    env = queue_env
+    session_id = await session(env)
+    path = f"/v1/sessions/{session_id}/queued-messages"
+    first, selected = message("first stays queued"), message("selected goes first")
+    for body in (first, selected):
+        assert (await env.client.post(path, json=body)).status_code == 201
+    queue = env.app.state.startup_inputs.message_queue
+    forwarded = []
+    runner = _stub_runner(monkeypatch, forwarded)
+    try:
+        await queue.status(env.app, session_id, "running", "prior-turn")
+        assert (await env.client.post(f"{path}/{selected['queueId']}/send")).status_code == 200
+        await poll_until_async(lambda: len(forwarded) == 1, timeout_s=5)
+        assert "selected goes first" in json.dumps(forwarded)
+        await queue.status(env.app, session_id, "idle", "prior-turn")
+        await queue.status(env.app, session_id, "failed", "prior-turn")
+        assert len(forwarded) == 1
+        assert not queue.store.read(session_id)["messages"][0].get("error")
+        await queue.status(env.app, session_id, "running", "selected-turn")
+        await queue.status(env.app, session_id, "idle", "selected-turn")
+        await poll_until_async(lambda: len(forwarded) == 2, timeout_s=5)
+        assert "first stays queued" in json.dumps(forwarded)
+    finally:
+        await runner.aclose()
+
+
+@pytest.mark.parametrize("terminal", ["completed", "failed"])
+async def test_last_compact_retains_observation_until_control_terminal_event(queue_env, terminal):
+    from omnigent.db.db_models import current_workspace_id
+
+    env = queue_env
+    session_id = await session(env)
+    startup = env.app.state.startup_inputs
+    queue = startup.message_queue
+    body = message("/compact")
+    body["command"] = "compact"
+    assert (
+        await env.client.post(f"/v1/sessions/{session_id}/queued-messages", json=body)
+    ).status_code == 201
+    controls = []
+
+    async def dispatch(context, target, event):
+        controls.append(event.type)
+        return {"queued": False}
+
+    startup.dispatch = dispatch
+    await queue.status(env.app, session_id, "idle", "before-compact")
+    await poll_until_async(
+        lambda: not startup._deliveries and controls == ["compact"], timeout_s=5
+    )
+    key = (current_workspace_id(), session_id)
+    assert not queue.store.read(session_id)["messages"]
+    assert queue.store.read(session_id).get("control_turn")
+    assert key in queue._observers
+    session_stream.publish(session_id, {"type": f"response.compaction.{terminal}"})
+    await poll_until_async(lambda: key not in queue._observers, timeout_s=5)
+    assert not queue.store.read(session_id).get("control_turn")
+
+
+async def test_shutdown_retires_observer_cancelled_before_first_execution(queue_env):
+    from omnigent.db.db_models import current_workspace_id
+
+    env = queue_env
+    session_id = await session(env)
+    queue = env.app.state.startup_inputs.message_queue
+    queue.watch(env.app, session_id)
+    task = queue._observers[(current_workspace_id(), session_id)]
+    await queue.shutdown()
+    assert task.done()
+    assert not queue._observers

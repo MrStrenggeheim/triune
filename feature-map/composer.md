@@ -162,6 +162,8 @@ and steers messages while the agent is busy.
   Send now interrupts the turn and compacts. During compaction, queued messages
   wait in the web queue; immediate sends are retained by the Pi integration.
 - `draft-persistence`: unsent text survives arriving messages and prompts.
+  The [integration7 candidate](../docs/custom-fork.md#integration7-candidate) preserves unread storage after failed hydration, merges unrelated entry changes and retains edits/files under their captured account/server owner.
+- `queue-lifecycle-candidate`: integration7 rejects superseded turn-status updates and retires empty queue observers while retaining active compaction and durable shutdown recovery.
 - `delivered-send-recovery`: a sent message stays out of the composer when its
   HTTP acknowledgement is lost. Delivery during draft restoration clears the
   untouched draft; user edits remain. The "Something went wrong" card from the
@@ -348,7 +350,7 @@ doctor`), the built web UI, and mock replies configured for any journey that
 sends a message. Run e2e tests through the instance:
 
 - Attention shelf and real question/plan forms: `tests/browser_ui/chat/test_triune_next_iteration.py::test_original_composer_shelf_requests_and_counts` covers desktop/mobile and retained drafts.
-- Iteration6 candidate queue spacing, unchecked active plan box, recoverable completed plan, row-edge popup gaps and narrow resource controls: `tests/browser_ui/chat/test_iteration6.py::test_queue_plan_popup_and_synthetic_safe_top_follow_density`.
+- Iteration6 queue spacing, unchecked active plan box, recoverable completed plan, row-edge popup gaps and narrow resource controls: `tests/browser_ui/chat/test_iteration6.py::test_queue_plan_popup_and_synthetic_safe_top_follow_density`.
 - Plan marker semantics and active-border precedence: `web/src/shell/TodoPanel.test.tsx` and `web/src/components/ui/checkbox.test.tsx`; markers add no input, tab stop or spinner.
 - Safe unified folder/file/chat mentions and caret reveal in both ordinary and quoted drafts: `tests/browser_ui/chat/test_current_refinement_iteration.py::test_iteration5_composer_mention_safety_and_local_caret`.
 - Settled shelf auto-hide, recoverable manual visibility and one outer answer focus treatment: `tests/browser_ui/chat/test_current_refinement_iteration.py::test_iteration5_settled_shelf_manual_reveal_and_answer_focus`.
@@ -714,9 +716,26 @@ Other connection providers alone do not enable the managed MCP picker.
 - Empty-composer queue submission after reload with original attachment bytes: `tests/browser_ui/chat/test_queued_attachment_chips.py::test_queue_send_controls_preserve_restored_fifo_and_attachment`.
 - Queue recovery, attachment restoration, deletion and ordered dispatch through a real reload: `tests/e2e_ui/chat/test_queued_message_reload.py::test_queued_messages_survive_reload_with_attachment_and_delete`; identity races, write ordering and unavailable storage: `web/src/lib/queuedMessagePersistence.test.ts`.
 
+### Integration7 persistence and queued-input candidate
+
+The [candidate boundary](../docs/custom-fork.md#integration7-candidate) records applied source separately from release activation.
+Storage checks: `web/src/lib/queuedMessagePersistence.test.ts`, `web/src/lib/sessionDrafts.test.ts`, `web/src/store/chatStore.test.ts` and `web/src/shell/NewChatDialog.flow.test.tsx`.
+Lifecycle and observer checks: `tests/server/integration/test_message_queue.py` and `tests/server/integration/test_managed_startup_inputs.py`.
+
+- In a disposable profile, fail hydration, type and attach a file, then restore storage: unread saved bytes survive and a failed save never reports success.
+- Save different conversations from two clients, then reload: both drafts and exact attachment bytes survive.
+- Delete an observed draft in one client, then save unrelated work from the stale client: deletion persists; editing the deleted draft reports a conflict and retains the local copy.
+- Change account/server during hydration, including remove, clear or promote actions, then return: text/files reappear only for their original owner.
+- Send a selected queued message during a running turn: old idle/failure events cannot release other drafts; the selected turn's completion releases them in order.
+- Delete the last queued row or finish compaction: empty observation retires; an enqueue racing cleanup remains observed and shutdown preserves pending durable inputs.
+
+Same-ID edits still use the last serialized writer; storage failure preserves unsaved bytes only in the current process.
+There is no new cross-tab live refresh or cross-device synchronization.
+`APPROVAL-RECEIPT-7` remains outside this candidate pending exact-request consumption and durable acknowledgment review; approval delivery is not established.
+
 ## Gotchas
 
-- Iteration6 browser references describe candidate acceptance, not a recorded successful run; [source and installed release status](../docs/custom-fork.md#iteration6-source-status) remain separate.
+- [Iteration6 activation and browser evidence](../docs/custom-fork.md#iteration6-source-status) are recorded separately from the unactivated integration7 candidate.
 - Mobile main and side-chat composers use an 8px Comfortable/4px Compact bottom gutter; the shell owns safe-area clearance once.
 - Header/shelf popups match the outer row-edge gap to the visible control inset on their actual opening side, including after collision flips.
 - Questions submit and decline whole elicitation batches; navigation and choice selection never submit independently.

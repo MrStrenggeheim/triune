@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { describe, it, expect } from "vitest";
 import { QueryClient } from "@tanstack/react-query";
 import type { Conversation, ConversationsPage } from "@/hooks/useConversations";
@@ -245,6 +246,60 @@ describe("mergeItemsIntoPages", () => {
     // The active-row carve-out must not suppress resorts for other rows, or a
     // bumped sibling would sit in the wrong sidebar position until the next poll.
     expect(needsRefetch).toBe(true);
+  });
+
+  it.each([
+    { title: "renamed" },
+    { labels: { omni_project: "Other" } },
+    { archived: true },
+    { owner: "another-owner" },
+    { permission_level: 1 },
+    { project_id: "another-project" },
+  ])("reconciles absent filtered lists when membership fields change: %j", (change) => {
+    const result = mergeItemsIntoPages(
+      data([conv("a")]),
+      new Map([["a", { id: "a", ...change }]]),
+      DEFAULT_FILTERS,
+      NO_ACTIVE,
+    );
+    expect(result.needsMembershipRefetch).toBe(true);
+    expect(result.needsRefetch).toBe(true);
+  });
+
+  it("limits a known child's sort update to lists that can contain children", () => {
+    const result = mergeItemsIntoPages(
+      data([conv("a", { parent_session_id: "parent" })]),
+      new Map([["a", { id: "a", updated_at: 2 }]]),
+      DEFAULT_FILTERS,
+      NO_ACTIVE,
+    );
+    expect(result.needsRefetch).toBe(true);
+    expect(result.needsMembershipRefetch).toBe(false);
+  });
+
+  it("reconciles other pagination windows when a root's sort key changes", () => {
+    const result = mergeItemsIntoPages(
+      data([conv("a")]),
+      new Map([["a", { id: "a", updated_at: 2 }]]),
+      DEFAULT_FILTERS,
+      NO_ACTIVE,
+    );
+    expect(result.needsMembershipRefetch).toBe(true);
+  });
+
+  it("does not treat restated branch metadata as a membership change", () => {
+    const branch = { source_conversation_id: "parent", kind: "fork" };
+    const row = { ...conv("a"), branch };
+    const before = data([row]);
+    const result = mergeItemsIntoPages(
+      before,
+      new Map([["a", { id: "a", branch: { ...branch } }]]),
+      DEFAULT_FILTERS,
+      NO_ACTIVE,
+    );
+    expect(result.data).toBe(before);
+    expect(result.needsRefetch).toBe(false);
+    expect(result.needsMembershipRefetch).toBe(false);
   });
 });
 

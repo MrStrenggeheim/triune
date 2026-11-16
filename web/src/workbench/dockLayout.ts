@@ -1,3 +1,4 @@
+// Modified for Triune.
 import type { SplitEdge } from "@/grid/gridLayout";
 import {
   clampSplitRatio,
@@ -66,7 +67,8 @@ export function focusDockPane(layout: DockLayout, paneId: string): DockLayout {
 
 export function selectDockView(layout: DockLayout, viewId: string, focus = true): DockLayout {
   const pane = dockPaneForView(layout, viewId);
-  if (!pane) return layout;
+  if (!pane || (pane.selectedViewId === viewId && (!focus || layout.focusedPaneId === pane.id)))
+    return layout;
   return {
     ...layout,
     focusedPaneId: focus ? pane.id : layout.focusedPaneId,

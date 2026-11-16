@@ -53,7 +53,13 @@ async def activity_descendants(
             )
         )
         examined.update(candidates)
-        loaded = await asyncio.to_thread(store.get_conversations, candidates) if candidates else {}
+        loaded = (
+            await asyncio.to_thread(
+                store.get_conversations, candidates, include_execution_state=False
+            )
+            if candidates
+            else {}
+        )
         complete &= len(loaded) == len(candidates)
         allowed = (
             await asyncio.to_thread(authorize, list(loaded.values()), authorized)

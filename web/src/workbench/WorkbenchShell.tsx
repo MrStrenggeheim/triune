@@ -355,16 +355,10 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
   const titlesRef = useRef(titles);
   titlesRef.current = titles;
   useEffect(() => {
-    for (const view of dock.retainedViews) {
-      if (view.kind !== "conversation" || typeof view.resource.conversationId !== "string")
-        continue;
-      const title = titles.get(view.resource.conversationId);
-      if (title && title !== view.title)
-        void dockRef.current
-          .updateView(view.id, { title })
-          .catch((error) =>
-            toast.error(error instanceof Error ? error.message : "Could not update chat title"),
-          );
+    try {
+      dockRef.current.updateConversationTitles(titles);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not update chat title");
     }
   }, [dock.retainedViews, titles]);
   const lastConversationRef = useRef(lastConversation);
