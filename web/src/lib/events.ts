@@ -329,6 +329,7 @@ export interface NativeToolCall {
 
 /** The final assistant message from `output_item.done` (type `message`). */
 export interface MessageDone {
+  phase?: "commentary" | "final_answer";
   communication?: MessageCommunication;
   type: "message_done";
   content: Record<string, unknown>[];

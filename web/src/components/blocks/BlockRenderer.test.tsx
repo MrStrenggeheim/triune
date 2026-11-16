@@ -11,7 +11,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { RenderItem } from "@/lib/renderItems";
+import { buildBubbles, type RenderItem } from "@/lib/renderItems";
+import { itemsToBlocks } from "@/lib/itemsToBlocks";
 import { ConversationScrollLockContext } from "@/components/ai-elements/conversation";
 import { FileViewerContext } from "@/shell/FileViewerContext";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -983,7 +984,7 @@ describe("BlockRenderer dispatch", () => {
       });
     });
 
-    describe("expand scroll-into-view", () => {
+    describe("expand reader ownership", () => {
       // jsdom has no scrollIntoView — install a spy so the scroll path is
       // observable (and its absence provable).
       const scrollSpy = vi.fn();
@@ -1000,7 +1001,7 @@ describe("BlockRenderer dispatch", () => {
         { kind: "text", itemId: "m1", text: "Done.", final: true },
       ];
 
-      it("snaps the row into view on a user expand", () => {
+      it("grows below the row on a user expand", () => {
         // Growing the trace never keeps the row put on its own: the
         // stick-to-bottom scroller re-pins the bottom on the last turn,
         // and native scroll anchoring pins the answer elsewhere. Every
@@ -1013,11 +1014,10 @@ describe("BlockRenderer dispatch", () => {
         );
         fireEvent.click(screen.getByText("Worked"));
         expect(screen.getByText("Called 1 tool")).toBeDefined();
-        expect(scrollSpy).toHaveBeenCalledTimes(1);
-        expect(scrollSpy).toHaveBeenCalledWith({ block: "start" });
+        expect(scrollSpy).not.toHaveBeenCalled();
       });
 
-      it("releases the stick-to-bottom lock before snapping", () => {
+      it("releases the stick-to-bottom lock before disclosure", () => {
         // Viewing the last turn the view is pinned; without the release
         // the library's resize-driven scrollToBottom overrides the snap
         // (isAtBottom is still true from the pre-click view) and the
@@ -1036,7 +1036,7 @@ describe("BlockRenderer dispatch", () => {
         expect(lockStopScroll).toHaveBeenCalledTimes(1);
         expect(lockState.isAtBottom).toBe(false);
         expect(lockState.escapedFromLock).toBe(true);
-        expect(scrollSpy).toHaveBeenCalledWith({ block: "start" });
+        expect(scrollSpy).not.toHaveBeenCalled();
       });
 
       it("parks the scroller's scroll anchoring for the expand animation", () => {
@@ -2491,5 +2491,98 @@ describe("BlockRenderer inline file-path linkification", () => {
     expect(screen.queryByRole("button")).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
     expect(openFile).not.toHaveBeenCalled();
+  });
+});
+
+describe("authoritative message phase folding", () => {
+  it("folds completed commentary previews and preserves every final answer with narration enabled", () => {
+    const items: RenderItem[] = [
+      {
+        kind: "text",
+        itemId: "progress",
+        text: "Progress preview",
+        final: true,
+        phase: "commentary",
+      },
+      {
+        kind: "text",
+        itemId: "final-one",
+        text: "Final preview one",
+        final: true,
+        phase: "final_answer",
+      },
+      {
+        kind: "text",
+        itemId: "final-two",
+        text: "Final preview two",
+        final: true,
+        phase: "final_answer",
+      },
+    ];
+    render(
+      <BlockRenderer items={items} sessionStatus="idle" turnLifecycle="completed" foldNarration />,
+    );
+    expect(screen.queryByText("Progress preview")).toBeNull();
+    expect(screen.getByText("Final preview one")).toBeVisible();
+    expect(screen.getByText("Final preview two")).toBeVisible();
+    fireEvent.click(screen.getByText("Worked"));
+    expect(screen.getByText("Progress preview")).toBeVisible();
+  });
+
+  it("folds a commentary-only fragment separated from its final by an interjection after completion", async () => {
+    const blocks = itemsToBlocks([
+      {
+        type: "message",
+        id: "progress",
+        role: "assistant",
+        response_id: "turn",
+        status: "completed",
+        phase: "commentary",
+        content: [{ type: "output_text", text: "Progress preview" }],
+      },
+      {
+        type: "message",
+        id: "interjection",
+        role: "user",
+        user_authored: true,
+        response_id: "turn",
+        status: "completed",
+        content: [{ type: "input_text", text: "Keep going" }],
+      },
+      {
+        type: "message",
+        id: "final",
+        role: "assistant",
+        response_id: "turn",
+        status: "completed",
+        phase: "final_answer",
+        content: [{ type: "output_text", text: "Final preview" }],
+      },
+    ]);
+    const renderTurn = (streaming: boolean) =>
+      buildBubbles(
+        blocks,
+        streaming ? { responseId: "turn", state: "streaming", error: null } : null,
+      ).map((bubble) =>
+        bubble.kind === "assistant" ? (
+          <BlockRenderer
+            key={bubble.stableId}
+            items={bubble.items}
+            turnLifecycle={bubble.lifecycle}
+            sessionStatus={streaming ? "running" : "idle"}
+            continued={bubble.continued}
+          />
+        ) : null,
+      );
+    const view = render(<>{renderTurn(true)}</>);
+    expect(screen.getByText("Progress preview")).toBeVisible();
+    expect(screen.queryByText("Worked")).toBeNull();
+    view.rerender(<>{renderTurn(false)}</>);
+    await waitFor(() => expect(screen.queryByText("Progress preview")).toBeNull());
+    expect(screen.getByText("Final preview")).toBeVisible();
+    fireEvent.click(screen.getByText("Worked"));
+    expect(screen.getByText("Progress preview")).toBeVisible();
+    view.rerender(<>{renderTurn(false)}</>);
+    expect(screen.getByText("Progress preview")).toBeVisible();
   });
 });

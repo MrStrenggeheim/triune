@@ -107,9 +107,13 @@ _GROUPS: dict[str, dict[str, Any]] = {
             "spawn_agent",
         ),
         "transport": "registered managed-session or native delegation tools",
-        "input": "Target session/dispatch identity, task, allowed model and source references.",
+        "input": (
+            "Target session/dispatch identity, task, allowed model and source references. "
+            "Use a short capitalized task heading separately from the full instructions."
+        ),
         "output": (
-            "One task per dispatch and one attributed reply; peer incoming/outgoing "
+            "One updating activity card per child with assignment provenance; attributed "
+            "replies and peer incoming/outgoing "
             "messages retain linked source chats."
         ),
         "ui": "Stable message cards, child tabs and originating Orchestration.",
@@ -166,7 +170,9 @@ _GROUPS: dict[str, dict[str, Any]] = {
         "tools": ("upload_file", "list_files", "download_file"),
         "transport": "authorized upload_file tool or explicit triune attach-file invocation",
         "input": (
-            "A real local/workspace file uploaded into the owning chat; use the returned file_id."
+            "A real local/workspace file uploaded into the owning chat; use the returned file_id. "
+            "For Markdown image previews, use the returned URL unchanged, without adding "
+            "an origin or deployment prefix."
         ),
         "output": (
             "Durable authorized attachment/source reference and original download; "
@@ -205,7 +211,8 @@ _GROUPS: dict[str, dict[str, Any]] = {
             "sizes. Keep labels above their controls."
         ),
         "ui": (
-            "Isolated interactive frame with source, original download and full-window controls."
+            "Isolated interactive frame with highlighted source, portable download, "
+            "and supported view-tab/new-window actions in More."
         ),
         "lifecycle": (
             "Host updates theme/density/visibility; use the injected "

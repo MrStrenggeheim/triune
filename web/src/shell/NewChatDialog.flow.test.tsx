@@ -57,7 +57,12 @@ import type { Host } from "@/hooks/useHosts";
 import { useHostModelOptions, useHosts } from "@/hooks/useHosts";
 import type { AvailableAgent } from "@/hooks/useAvailableAgents";
 import { useAvailableAgents } from "@/hooks/useAvailableAgents";
-import { NewChatLandingScreen, resetLandingDraft, sanitizeInitialPrompt } from "./NewChatDialog";
+import {
+  NewChatLandingScreen,
+  resetLandingDraft,
+  sanitizeInitialPrompt,
+  type EmbeddedNewChat,
+} from "./NewChatDialog";
 import { writeDefaultBaseBranch } from "@/lib/baseBranchPreferences";
 import { writeLastHostChoice } from "@/lib/hostPreferences";
 import { CapabilitiesProvider } from "@/lib/CapabilitiesContext";
@@ -132,6 +137,7 @@ vi.mock("@/lib/sessionUpdatesSocket", () => ({
 }));
 
 vi.mock("@/lib/identity", () => ({
+  subscribeIdentity: () => () => {},
   authenticatedFetch: vi.fn(),
   getCurrentUserId: vi.fn(() => null),
   resolveIdentity: vi.fn(async () => null),
@@ -270,7 +276,8 @@ function setAgents(agents: AvailableAgent[]): void {
 function renderLanding(
   cachedSessionIds: string[] = [],
   infoOverrides: Partial<ServerInfo> = {},
-): void {
+  embedded?: EmbeddedNewChat,
+) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -319,7 +326,7 @@ function renderLanding(
       </QueryClientProvider>
     );
   }
-  render(<NewChatLandingScreen />, { wrapper: Wrapper });
+  return render(<NewChatLandingScreen embedded={embedded} />, { wrapper: Wrapper });
 }
 
 /**
@@ -330,6 +337,11 @@ function typeMessage(text: string): void {
   fireEvent.change(screen.getByTestId("new-chat-landing-input"), {
     target: { value: text },
   });
+}
+
+function openHostOptions(): void {
+  fireEvent.click(screen.getByTestId("new-chat-landing-workspace-chip"));
+  fireEvent.pointerDown(screen.getByTestId("new-chat-landing-host-chip"), { button: 0 });
 }
 
 /** Wait for the working directory to seed from the recent before submitting. */
@@ -449,38 +461,178 @@ afterEach(() => {
 });
 
 describe("NewChatLandingScreen create flow", () => {
-  it("restores a failed startup's text, attachment bytes and create token after reload", async () => {
-    vi.stubGlobal("indexedDB", new IDBFactory());
-    vi.mocked(getCurrentUserId).mockReturnValue("owner@example.test");
-    vi.mocked(authenticatedFetch).mockResolvedValue(new Response("offline", { status: 503 }));
-    renderLanding([], { durable_host_initial_input: true } as Partial<ServerInfo>);
+  it("keeps embedded and global drafts independent across remounts", async () => {
+    const embedded = (draftId: string): EmbeddedNewChat => ({
+      draftId,
+      active: true,
+      isCurrent: () => true,
+      onCreated: vi.fn(),
+    });
+    const first = renderLanding([], {}, embedded("first"));
     await waitForWorkspaceSeed();
-    typeMessage("recover without retyping");
-    const file = new File(["startup context"], "context.txt", { type: "text/plain" });
+    typeMessage("first pane draft");
+    first.unmount();
+    const second = renderLanding([], {}, embedded("second"));
+    expect(screen.getByTestId("new-chat-landing-input")).toHaveValue("");
+    typeMessage("second pane draft");
+    second.unmount();
+    const global = renderLanding();
+    expect(screen.getByTestId("new-chat-landing-input")).toHaveValue("");
+    global.unmount();
+    renderLanding([], {}, embedded("first"));
+    expect(screen.getByTestId("new-chat-landing-input")).toHaveValue("first pane draft");
+  });
+
+  it("promotes an embedded chat only after admission, carrying files without navigating", async () => {
+    let admit!: (response: Response) => void;
+    vi.mocked(authenticatedFetch).mockReturnValue(
+      new Promise((resolve) => {
+        admit = resolve;
+      }),
+    );
+    const onCreated = vi.fn();
+    renderLanding(
+      [],
+      { durable_host_initial_input: true },
+      { draftId: "admission", active: true, isCurrent: () => true, onCreated },
+    );
+    await waitForWorkspaceSeed();
+    typeMessage("fresh pane chat");
+    const file = new File(["context"], "context.txt", { type: "text/plain" });
     fireEvent.change(screen.getByTestId("new-chat-landing-file-input"), {
       target: { files: [file] },
     });
     fireEvent.click(screen.getByTestId("new-chat-landing-submit"));
+    fireEvent.click(screen.getByTestId("new-chat-landing-submit"));
     await waitFor(() => expect(authenticatedFetch).toHaveBeenCalledOnce());
+    expect(onCreated).not.toHaveBeenCalled();
+    expect(navigateMock).not.toHaveBeenCalled();
+    expect(beginLocalConversationMock).not.toHaveBeenCalled();
     const form = vi.mocked(authenticatedFetch).mock.calls[0]![1]!.body as FormData;
-    const metadata = JSON.parse(form.get("metadata") as string);
-    const scope = [...Array(sessionStorage.length)]
-      .map((_, i) => sessionStorage.key(i)!)
-      .find((key) => key.startsWith("initial-input:"))!;
-    const saved = await readQueuedMessages(scope);
-    expect(saved[0]?.files?.[0]?.name).toBe("context.txt");
-    expect(saved[0]?.files?.[0]?.size).toBe(file.size);
-    await waitFor(() => expect(screen.getByTestId("new-chat-landing-error")).toBeInTheDocument());
-    cleanup();
-    resetLandingDraft(true);
-    renderLanding([], { durable_host_initial_input: true } as Partial<ServerInfo>);
-    expect(screen.getByTestId("new-chat-landing-input")).toHaveValue("recover without retyping");
-    expect(screen.getByTestId("new-chat-landing-error")).toBeInTheDocument();
-    await screen.findByText("context.txt");
-    expect(JSON.parse(sessionStorage.getItem(scope)!).createToken).toBe(
-      metadata.labels["omnigent.client_create_token"],
-    );
+    expect(JSON.parse(form.get("metadata") as string).initial_input).toMatchObject({
+      type: "message",
+    });
+    expect(
+      [...form.values()].some((entry) => entry instanceof File && entry.name === "context.txt"),
+    ).toBe(true);
+    await act(async () => admit(new Response(JSON.stringify({ id: "fresh" }))));
+    await waitFor(() => expect(onCreated).toHaveBeenCalledExactlyOnceWith("fresh"));
+    expect(navigateMock).not.toHaveBeenCalled();
   });
+
+  it("retains an embedded failed input and create identity for a retry", async () => {
+    vi.mocked(authenticatedFetch)
+      .mockResolvedValueOnce(new Response("offline", { status: 503 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: "fresh" })));
+    const onCreated = vi.fn();
+    renderLanding(
+      [],
+      { durable_host_initial_input: true },
+      { draftId: "retry", active: true, isCurrent: () => true, onCreated },
+    );
+    await waitForWorkspaceSeed();
+    typeMessage("retry this draft");
+    fireEvent.click(screen.getByTestId("new-chat-landing-submit"));
+    await screen.findByTestId("new-chat-landing-error");
+    expect(screen.getByTestId("new-chat-landing-input")).toHaveValue("retry this draft");
+    expect(onCreated).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId("new-chat-landing-submit"));
+    await waitFor(() => expect(onCreated).toHaveBeenCalledExactlyOnceWith("fresh"));
+    const tokens = vi
+      .mocked(authenticatedFetch)
+      .mock.calls.map(
+        (call) => JSON.parse(call[1]!.body as string).labels["omnigent.client_create_token"],
+      );
+    expect(tokens[0]).toBe(tokens[1]);
+    expect(navigateMock).not.toHaveBeenCalled();
+  });
+
+  it("hands a late embedded create to its captured tab without navigating", async () => {
+    let admit!: (response: Response) => void;
+    vi.mocked(authenticatedFetch).mockReturnValue(
+      new Promise((resolve) => {
+        admit = resolve;
+      }),
+    );
+    const onCreated = vi.fn();
+    const embedded = { draftId: "late", active: true, isCurrent: () => true, onCreated };
+    const view = renderLanding([], { durable_host_initial_input: true }, embedded);
+    await waitForWorkspaceSeed();
+    typeMessage("finish after navigation");
+    fireEvent.click(screen.getByTestId("new-chat-landing-submit"));
+    await waitFor(() => expect(authenticatedFetch).toHaveBeenCalledOnce());
+    view.rerender(
+      <NewChatLandingScreen embedded={{ ...embedded, active: false, isCurrent: () => false }} />,
+    );
+    await act(async () => admit(new Response(JSON.stringify({ id: "fresh" }))));
+    await waitFor(() => expect(onCreated).toHaveBeenCalledExactlyOnceWith("fresh"));
+    expect(navigateMock).not.toHaveBeenCalled();
+  });
+
+  it("ignores a send from an embedded draft that no longer owns focus", async () => {
+    renderLanding(
+      [],
+      {},
+      { draftId: "hidden", active: false, isCurrent: () => false, onCreated: vi.fn() },
+    );
+    await waitForWorkspaceSeed();
+    typeMessage("keep this draft");
+    fireEvent.click(screen.getByTestId("new-chat-landing-submit"));
+    expect(authenticatedFetch).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])(
+    "restores a failed startup's text, attachment bytes and create token after reload (embedded=%s)",
+    async (isEmbedded) => {
+      vi.stubGlobal("indexedDB", new IDBFactory());
+      vi.mocked(getCurrentUserId).mockReturnValue("owner@example.test");
+      vi.mocked(authenticatedFetch).mockImplementation(
+        async () => new Response("offline", { status: 503 }),
+      );
+      const embedded = isEmbedded
+        ? { draftId: "reload", active: true, isCurrent: () => true, onCreated: vi.fn() }
+        : undefined;
+      renderLanding([], { durable_host_initial_input: true } as Partial<ServerInfo>, embedded);
+      await waitForWorkspaceSeed();
+      typeMessage("recover without retyping");
+      const file = new File(["startup context"], "context.txt", { type: "text/plain" });
+      fireEvent.change(screen.getByTestId("new-chat-landing-file-input"), {
+        target: { files: [file] },
+      });
+      fireEvent.click(screen.getByTestId("new-chat-landing-submit"));
+      await waitFor(() => expect(authenticatedFetch).toHaveBeenCalledOnce());
+      const form = vi.mocked(authenticatedFetch).mock.calls[0]![1]!.body as FormData;
+      const metadata = JSON.parse(form.get("metadata") as string);
+      const scope = [...Array(sessionStorage.length)]
+        .map((_, i) => sessionStorage.key(i)!)
+        .find((key) => key.startsWith("initial-input:"))!;
+      const saved = await readQueuedMessages(scope);
+      expect(saved[0]?.files?.[0]?.name).toBe("context.txt");
+      expect(saved[0]?.files?.[0]?.size).toBe(file.size);
+      await waitFor(() => expect(screen.getByTestId("new-chat-landing-error")).toBeInTheDocument());
+      cleanup();
+      resetLandingDraft(true);
+      renderLanding([], { durable_host_initial_input: true } as Partial<ServerInfo>, embedded);
+      expect(screen.getByTestId("new-chat-landing-input")).toHaveValue("recover without retyping");
+      expect(screen.getByTestId("new-chat-landing-error")).toBeInTheDocument();
+      await screen.findByText("context.txt");
+      expect(JSON.parse(sessionStorage.getItem(scope)!).createToken).toBe(
+        metadata.labels["omnigent.client_create_token"],
+      );
+      fireEvent.click(screen.getByTestId("new-chat-landing-submit"));
+      await waitFor(() => expect(authenticatedFetch).toHaveBeenCalledTimes(2));
+      const retry = vi.mocked(authenticatedFetch).mock.calls[1]![1]!.body as FormData;
+      expect(JSON.parse(retry.get("metadata") as string)).toEqual(metadata);
+      await waitFor(() => expect(screen.getByTestId("new-chat-landing-submit")).toBeEnabled());
+      typeMessage("changed startup input");
+      fireEvent.click(screen.getByTestId("new-chat-landing-submit"));
+      await waitFor(() => expect(authenticatedFetch).toHaveBeenCalledTimes(3));
+      const changed = vi.mocked(authenticatedFetch).mock.calls[2]![1]!.body as FormData;
+      expect(
+        JSON.parse(changed.get("metadata") as string).labels["omnigent.client_create_token"],
+      ).not.toBe(metadata.labels["omnigent.client_create_token"]);
+    },
+  );
 
   it("waits for durable host acceptance before dropping the landing recovery copy", async () => {
     vi.mocked(getCurrentUserId).mockReturnValue("owner@example.test");
@@ -648,7 +800,7 @@ describe("NewChatLandingScreen create flow", () => {
     await waitFor(() => expect(screen.getByRole("switch", { name: "Tracker" })).toBeChecked());
     fireEvent.keyDown(document, { key: "Escape" });
     expect(screen.getByRole("button", { name: "MCP services: 1 selected" })).toBeVisible();
-    fireEvent.pointerDown(screen.getByTestId("new-chat-landing-host-chip"), { button: 0 });
+    openHostOptions();
     fireEvent.click(screen.getByTestId("new-chat-landing-sandbox-option"));
     typeMessage("use the tracker");
     fireEvent.click(screen.getByTestId("new-chat-landing-submit"));
@@ -678,7 +830,7 @@ describe("NewChatLandingScreen create flow", () => {
     fireEvent.click(await screen.findByRole("switch", { name: "Tracker" }));
     expect(screen.getByTestId("new-chat-landing-submit")).toBeDisabled();
     const signInSignal = vi.mocked(authorizeRegistryService).mock.calls[0][1];
-    fireEvent.pointerDown(screen.getByTestId("new-chat-landing-host-chip"), { button: 0 });
+    openHostOptions();
     fireEvent.click(screen.getByTestId("new-chat-landing-sandbox-option"));
     expect(signInSignal.aborted).toBe(false);
     expect(screen.getByTestId("new-chat-landing-submit")).toBeDisabled();
@@ -967,7 +1119,7 @@ describe("NewChatLandingScreen create flow", () => {
     });
 
     renderLanding([], { managed_sandboxes_enabled: true });
-    fireEvent.pointerDown(screen.getByTestId("new-chat-landing-host-chip"), { button: 0 });
+    openHostOptions();
     fireEvent.click(screen.getByTestId("new-chat-landing-sandbox-option"));
     typeMessage("start a sandbox");
     fireEvent.click(screen.getByTestId("new-chat-landing-submit"));
@@ -1014,7 +1166,7 @@ describe("NewChatLandingScreen create flow", () => {
     });
 
     renderLanding([], { managed_sandboxes_enabled: true });
-    fireEvent.pointerDown(screen.getByTestId("new-chat-landing-host-chip"), { button: 0 });
+    openHostOptions();
     fireEvent.click(screen.getByTestId("new-chat-landing-sandbox-option"));
     typeMessage("start a sandbox");
     fireEvent.click(screen.getByTestId("new-chat-landing-submit"));
@@ -1367,7 +1519,7 @@ describe("NewChatLandingScreen create flow", () => {
     // unconditionally, and on a same-host pick none of the seeding effect's
     // inputs (host id, recents, derived home) change, so nothing ever
     // re-filled the field — the chip dropped back to its empty placeholder.
-    fireEvent.pointerDown(screen.getByTestId("new-chat-landing-host-chip"), { button: 0 });
+    openHostOptions();
     fireEvent.click(screen.getByTestId("new-chat-landing-host-host_1"));
 
     expect(screen.getByTestId("new-chat-landing-workspace-chip").textContent).toContain("foo");

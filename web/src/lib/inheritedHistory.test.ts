@@ -4,6 +4,7 @@ import type { AnyBlock } from "./blocks";
 import type { ConversationBranch } from "./conversationBranches";
 import { buildBubbles } from "./renderItems";
 import {
+  SUBCHAT_HISTORY_LABEL,
   hasInheritedHistory,
   inheritedHistoryEnd,
   QUOTE_SUBCHAT_HISTORY_LABEL,
@@ -75,13 +76,22 @@ describe("inherited history boundary", () => {
     expect(inheritedHistoryEnd([text("source-last"), text("child")], legacy)).toBe(-1);
   });
 
-  it("does not fold empty or reference-only branches", () => {
+  it("folds persisted reference-only boundaries but excludes empty branches", () => {
     expect(hasInheritedHistory({ ...branch, inherited_item_count: 0 })).toBe(false);
-    expect(hasInheritedHistory({ ...branch, reference_only: true })).toBe(false);
-    expect(inheritedHistoryEnd([text("copied-last")], { ...branch, reference_only: true })).toBe(
-      -1,
-    );
+    expect(hasInheritedHistory({ ...branch, reference_only: true })).toBe(true);
+    expect(inheritedHistoryEnd([text("copied-last")], { ...branch, reference_only: true })).toBe(0);
     expect(hasInheritedHistory()).toBe(false);
     expect(hasInheritedHistory(branch)).toBe(true);
   });
+});
+
+it("binds durable history policy to the new copied boundary", () => {
+  const labels = { [SUBCHAT_HISTORY_LABEL]: "copied-last" };
+  expect(shouldHideQuoteSubchatHistory(labels, { ...branch, reference_only: true })).toBe(true);
+  expect(
+    shouldHideQuoteSubchatHistory(labels, {
+      ...branch,
+      inherited_last_item_id: "explicit-fork-last",
+    }),
+  ).toBe(false);
 });

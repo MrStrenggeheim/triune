@@ -3,7 +3,7 @@
 import type { ConversationItem } from "@/lib/conversationItems";
 import { normalizeAttachmentContent, type ChatAttachmentContent } from "@/lib/chatAttachments";
 import { fetchSessionItemsPage } from "@/lib/sessionsApi";
-import { isAllowedRemoteImageSource } from "@/lib/remoteImagePolicy";
+import { isAllowedRemoteImageSource, parseSessionFileSource } from "@/lib/remoteImagePolicy";
 
 export interface GalleryImage {
   id: string;
@@ -43,8 +43,8 @@ export function galleryAttachmentSource(
       return undefined;
     }
   }
-  const stored = path.match(/^\/v1\/sessions\/([^/]+)\/resources\/files\/([^/]+)\/content$/);
-  if (stored) return stored[1] === encodeURIComponent(sessionId) ? path : undefined;
+  const stored = parseSessionFileSource(path);
+  if (stored) return stored.sessionId === sessionId ? stored.path : undefined;
   if (/^(?:[a-z][\w+.-]*:|\/\/)/i.test(path) || !itemId) return undefined;
   return `${base}/attachments/references/${encodeURIComponent(itemId)}?${new URLSearchParams({ path })}`;
 }

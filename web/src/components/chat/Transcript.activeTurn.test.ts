@@ -9,11 +9,21 @@ import type { Bubble } from "@/lib/renderItems";
 import { activeTurnIdAtBubbleIndex } from "./Transcript";
 
 function user(itemId: string): Extract<Bubble, { kind: "user" }> {
-  return { kind: "user", itemId, content: [{ type: "input_text", text: `msg ${itemId}` }] };
+  return {
+    kind: "user",
+    userAuthored: true,
+    itemId,
+    content: [{ type: "input_text", text: `msg ${itemId}` }],
+  };
 }
 
 function systemUser(itemId: string): Extract<Bubble, { kind: "user" }> {
-  return { kind: "user", itemId, content: [{ type: "input_text", text: "[System: interrupted]" }] };
+  return {
+    kind: "user",
+    isMeta: true,
+    itemId,
+    content: [{ type: "input_text", text: "[System: interrupted]" }],
+  };
 }
 
 function assistant(stableId: string): Extract<Bubble, { kind: "assistant" }> {

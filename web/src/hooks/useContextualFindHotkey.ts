@@ -1,5 +1,7 @@
+import { registerShortcutHandlers } from "@/lib/shortcutDispatcher";
+import { shortcutEnvironment } from "@/lib/keybindingPreferences";
 import { useEffect, useRef } from "react";
-import { hasCommandModifier, isMacPlatform } from "@/lib/hotkeys";
+import { isMacPlatform } from "@/lib/hotkeys";
 import {
   getFindContext,
   recordFindInteraction,
@@ -28,19 +30,8 @@ export function useContextualFindHotkey({
     const unregister = registerFindContext();
     const interaction = (event: Event) => recordFindInteraction(event.target);
     const keydown = (event: KeyboardEvent) => {
-      if (
-        event.defaultPrevented ||
-        event.repeat ||
-        event.isComposing ||
-        !hasCommandModifier(event, isMac) ||
-        event.shiftKey ||
-        event.altKey ||
-        event.getModifierState("AltGraph") ||
-        event.key.toLowerCase() !== "f"
-      )
-        return;
       const context = getFindContext();
-      if (!context || context.region === "native") return;
+      if (!context || context.region === "native") return false;
       if (context.region === "file") {
         const request = new CustomEvent(REQUEST_FILE_FIND_EVENT, {
           detail: { target: context.target },
@@ -48,20 +39,24 @@ export function useContextualFindHotkey({
         });
         window.dispatchEvent(request);
         // Keep browser/specialized find when this preview has no app find surface.
-        if (!request.defaultPrevented) return;
+        if (!request.defaultPrevented) return false;
       } else if (context.region === "explorer") callbacks.current.onExplorerFind();
       else callbacks.current.onChatFind(context.region === "sidebar" ? "all" : "current");
       event.preventDefault();
       event.stopPropagation();
+      return true;
     };
     for (const name of ["pointerdown", "mousedown", "focusin"])
       window.addEventListener(name, interaction, true);
-    window.addEventListener("keydown", keydown, true);
+    const removeShortcut = registerShortcutHandlers(
+      { find: keydown },
+      { ...shortcutEnvironment(), isMac },
+    );
     return () => {
       unregister();
       for (const name of ["pointerdown", "mousedown", "focusin"])
         window.removeEventListener(name, interaction, true);
-      window.removeEventListener("keydown", keydown, true);
+      removeShortcut();
     };
   }, [enabled, isMac]);
 }

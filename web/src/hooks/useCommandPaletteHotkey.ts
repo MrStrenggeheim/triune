@@ -1,3 +1,5 @@
+import { matchesShortcutCommand, shortcutEnvironment } from "@/lib/keybindingPreferences";
+import { useShortcutHandlers } from "@/lib/shortcutDispatcher";
 // ⌘K (Ctrl+K on Win/Linux) toggles the global command palette. Sibling to the
 // session-switch (⌘[ / ⌘]) and sidebar-toggle (⌘⌥[ / ⌘⌥]) hotkeys; like them
 // it's bound ONCE at the app shell, where the palette's open-state lives.
@@ -11,9 +13,7 @@
 // Focused surfaces can still own the chord, but only the variant they actually
 // consume — see `focusOwnsHotkey`.
 
-import { useEffect, useRef } from "react";
-
-import { hasCommandModifier, isMacPlatform } from "@/lib/hotkeys";
+import { isMacPlatform } from "@/lib/hotkeys";
 
 /** Monaco: ⌘K and Ctrl+K are both chord prefixes, on every platform. */
 const CHORD_PREFIX_SURFACE = ".monaco-editor";
@@ -25,14 +25,9 @@ const PTY_SURFACE = ".xterm";
  *  modifier + K, no Alt/Shift. */
 export function isCommandPaletteHotkey(
   e: globalThis.KeyboardEvent,
-  isMac: boolean = isMacPlatform(),
+  isMac = isMacPlatform(),
 ): boolean {
-  if (!hasCommandModifier(e, isMac) || e.altKey || e.shiftKey) return false;
-  // AltGr reports as Ctrl+Alt on some layouts; the altKey check above already
-  // rejects it, but guard explicitly so intl typing never triggers the palette.
-  if (e.getModifierState("AltGraph")) return false;
-  // Match the letter, not a physical code — ⌘ doesn't remap "k" across layouts.
-  return e.key === "k" || e.key === "K";
+  return matchesShortcutCommand(e, "command-palette", { ...shortcutEnvironment(), isMac });
 }
 
 /**
@@ -43,12 +38,6 @@ export function isCommandPaletteHotkey(
  * so yielding ⌘K to a focused terminal leaves it dead — nothing opens and the
  * PTY never sees it. The palette claims that variant instead.
  */
-function focusOwnsHotkey(e: globalThis.KeyboardEvent): boolean {
-  const el = document.activeElement;
-  if (!(el instanceof Element)) return false;
-  if (el.closest(CHORD_PREFIX_SURFACE) !== null) return true;
-  return e.ctrlKey && !e.metaKey && el.closest(PTY_SURFACE) !== null;
-}
 
 /**
  * Bind ⌘/Ctrl+K to toggle the command palette. Bind ONCE.
@@ -63,40 +52,31 @@ export function useCommandPaletteHotkey(
   isMac = isMacPlatform(),
   onSessionSearch?: () => void,
 ): void {
-  // Held in a ref so the bound handler always calls the latest closure without
-  // re-registering on every render.
-  const latest = useRef({ onToggle, onSessionSearch });
-  latest.current = { onToggle, onSessionSearch };
-
-  useEffect(() => {
-    if (!enabled) return;
-    const handler = (e: globalThis.KeyboardEvent): void => {
-      // Ignore auto-repeat: holding the chord would flap the palette.
-      if (e.repeat || e.defaultPrevented) return;
-      const sessionSearch =
-        latest.current.onSessionSearch &&
-        hasCommandModifier(e, isMac) &&
-        e.altKey &&
-        !e.shiftKey &&
-        !e.getModifierState("AltGraph") &&
-        e.code === "KeyS";
-      if (!sessionSearch && !isCommandPaletteHotkey(e, isMac)) return;
-      // Leave the chord to a surface that actually consumes it.
-      if (focusOwnsHotkey(e)) return;
-      // Claim the chord: preventDefault drops the browser default (Ctrl+K
-      // focuses the address bar). stopPropagation mirrors the sibling hotkey
-      // hooks; no other listener binds ⌘K, so it's belt-and-suspenders.
-      e.preventDefault();
-      e.stopPropagation();
-      if (sessionSearch) latest.current.onSessionSearch?.();
-      else latest.current.onToggle();
-    };
-    // Capture phase: the desktop shell renders the embed build over a
-    // CSS-hidden host page whose own ⌘K listener would otherwise also fire.
-    // Binding at the propagation root lets stopPropagation keep the chord
-    // from reaching those listeners; focusOwnsHotkey bails BEFORE stopping
-    // propagation, so Monaco/terminal chords still flow to their surfaces.
-    window.addEventListener("keydown", handler, true);
-    return () => window.removeEventListener("keydown", handler, true);
-  }, [enabled, isMac]);
+  const available = () => {
+    const element = document.activeElement;
+    return !(
+      element instanceof Element &&
+      (element.closest(CHORD_PREFIX_SURFACE) || (!isMac && element.closest(PTY_SURFACE)))
+    );
+  };
+  useShortcutHandlers(
+    {
+      "command-palette": () => {
+        if (!available()) return false;
+        onToggle();
+        return true;
+      },
+      ...(onSessionSearch
+        ? {
+            "session-search": () => {
+              if (!available()) return false;
+              onSessionSearch();
+              return true;
+            },
+          }
+        : {}),
+    },
+    enabled,
+    isMac,
+  );
 }

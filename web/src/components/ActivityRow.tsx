@@ -1,5 +1,7 @@
 // Modified for Triune.
-import { useId, useRef, useState, type ReactNode } from "react";
+import { ChatSearchRevealContext } from "@/lib/chatSearchHighlights";
+import { useTranscriptDisclosureAnchor } from "@/hooks/useTranscriptDisclosureAnchor";
+import { useContext, useLayoutEffect, useId, useRef, useState, type ReactNode } from "react";
 import { ChevronRightIcon, SquareIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -39,6 +41,7 @@ export function ActivityRow({
   expanded: controlledExpanded,
   onExpandedChange,
   keepMounted = false,
+  searchItemIds,
 }: {
   icon: ReactNode;
   title: ReactNode;
@@ -59,9 +62,25 @@ export function ActivityRow({
   onExpandedChange?: (expanded: boolean) => void;
   /** Forms retain their local drafts while the disclosure is folded. */
   keepMounted?: boolean;
+  searchItemIds?: readonly string[];
 }) {
+  const preserveDisclosure = useTranscriptDisclosureAnchor();
   const [localExpanded, setLocalExpanded] = useState(false);
   const expanded = controlledExpanded ?? localExpanded;
+  const searchReveal = useContext(ChatSearchRevealContext);
+  const revealRequest = searchReveal?.revealRequest;
+  const searchRequest =
+    revealRequest && searchItemIds?.includes(revealRequest.itemId)
+      ? `${revealRequest.itemId}:${revealRequest.revision}`
+      : null;
+  const expandedChange = useRef(onExpandedChange);
+  expandedChange.current = onExpandedChange;
+  useLayoutEffect(() => {
+    if (searchRequest) {
+      setLocalExpanded(true);
+      expandedChange.current?.(true);
+    }
+  }, [searchRequest]);
   const contentId = useId();
   const message = presentation === "message";
   const [stopping, setStopping] = useState(false);
@@ -245,6 +264,7 @@ export function ActivityRow({
   );
   return (
     <div
+      onClickCapture={preserveDisclosure}
       className={`activity-row min-w-0 text-sm ${message ? "activity-row--message border-l-2 border-primary/60 py-1 pl-2.5 sm:pl-3" : ""}`}
     >
       {openingRow}

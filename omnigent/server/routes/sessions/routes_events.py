@@ -2938,6 +2938,11 @@ def register_events_routes(
                 conv,
                 body,
                 conversation_store,
+                background_title_coordinator=(
+                    background_title_coordinator
+                    if background_session_titles_enabled(request.headers)
+                    else None
+                ),
             )
             return {"queued": False, "child_session_id": child_id}
         if body.type == _EXTERNAL_DEVIN_SUBAGENT_START_TYPE:

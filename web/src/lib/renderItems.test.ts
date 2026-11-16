@@ -4551,3 +4551,15 @@ describe("buildBubbles — lastActivityAtS", () => {
     expect(asst.lastActivityAtS).toBeUndefined();
   });
 });
+
+it("refreshes memoized timing labels and activity when text has not changed", () => {
+  const bubble = buildBubbles(
+    [{ type: "text_done", ctx: ctx(), fullText: "Done", hasCodeBlocks: false }],
+    null,
+  )[0]!;
+  expect(bubble.kind).toBe("assistant");
+  if (bubble.kind !== "assistant") throw new Error("Expected assistant");
+  expect(bubblesEqual(bubble, { ...bubble, workedForS: 12 })).toBe(false);
+  expect(bubblesEqual(bubble, { ...bubble, lastActivityAtS: 100 })).toBe(false);
+  expect(bubblesEqual(bubble, { ...bubble })).toBe(true);
+});

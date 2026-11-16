@@ -42,6 +42,13 @@ from omnigent.entities import (
     synthesize_conversation_title,
 )
 from omnigent.entities.permission import SessionPermission
+from omnigent.entities.subchat import (
+    SUBCHAT_HISTORY_LABEL,
+    SUBCHAT_LABEL_KEYS,
+    SUBCHAT_POLICY_LABEL,
+    is_durable_subchat,
+    subchat_question_content,
+)
 from omnigent.errors import ErrorCategory, ErrorCode, ErrorImpact, ErrorPhase, OmnigentError
 from omnigent.models.model_override import validate_model_override
 from omnigent.runner.identity import (
@@ -77,6 +84,7 @@ from omnigent.server.background_session_titles import (
 )
 from omnigent.server.bundles import agent_needs_own_copy, copy_agent_bundle, validate_agent_bundle
 from omnigent.server.creation_logging import creation_metadata, creation_stage, session_created
+from omnigent.server.descendant_activity import descendant_activity
 from omnigent.server.host_registry import HostRegistry, RunnerExitReports
 from omnigent.server.permissions import check_session_access
 from omnigent.server.routes._auth_helpers import (
@@ -162,6 +170,7 @@ from omnigent.server.routes._sessions.helpers import (
     _RunnerForwardResult,
     _same_provider_family,
     _session_status_cache,
+    _session_status_from_cache,
     _set_read_state,
     _start_managed_launch_task,
     _surface_model_change_forward_failure,
@@ -2069,6 +2078,7 @@ def register_core_routes(
                         )
         # Build items after reconciliation so each settled row reads its new
         # status straight from the (now-updated) cache.
+        activity = await _activity_for(page.data, user_id, user_is_admin)
         items: list[SessionListItem] = [
             _build_session_list_item(
                 conv,
@@ -2080,6 +2090,7 @@ def register_core_routes(
                 permissions_enabled=permission_store is not None,
                 pending_count=pending_counts.get(conv.id, 0),
                 child_session_ids=child_ids_by_parent[conv.id],
+                descendant_running=activity.get(conv.id),
                 comments_fingerprint=comments_fingerprints.get(conv.id),
             )
             for conv in page.data
@@ -2094,7 +2105,17 @@ def register_core_routes(
         # from list rows. Skipping it here removes the session-connectivity
         # and hosts-table queries from every GET /v1/sessions.
         return PaginatedList(
-            data=[item.model_dump(exclude_none=True) for item in items],
+            data=[
+                {
+                    **item.model_dump(exclude_none=True),
+                    **(
+                        {"activity": item.activity.model_dump()}
+                        if item.activity is not None
+                        else {}
+                    ),
+                }
+                for item in items
+            ],
             first_id=page.first_id,
             last_id=page.last_id,
             has_more=page.has_more,
@@ -2123,6 +2144,30 @@ def register_core_routes(
         return await asyncio.to_thread(comment_store.get_comments_fingerprints, conv_ids)
 
     # ── WS /sessions/updates ────────────────────────────────────
+
+    async def _activity_for(
+        convs: list[Conversation], user_id: str | None, user_is_admin: bool
+    ) -> dict[str, bool | None]:
+        def authorize(candidates: list[Conversation], authorized: set[str]) -> set[str]:
+            if permission_store is None or user_is_admin:
+                return {row.id for row in candidates}
+            grants = permission_store.list_for_sessions(
+                [row.id for row in candidates if row.parent_conversation_id is None]
+            )
+            return {
+                row.id
+                for row in candidates
+                if (
+                    row.parent_conversation_id in authorized
+                    if row.parent_conversation_id
+                    else _permission_level_from_grants(user_id, grants.get(row.id, []), False)
+                    is not None
+                )
+            }
+
+        return await descendant_activity(
+            convs, conversation_store, _session_status_from_cache, authorize
+        )
 
     async def _fetch_watched_items(
         watched: list[str],
@@ -2201,6 +2246,7 @@ def register_core_routes(
         )
         agent_names_by_id, harnesses_by_id = agent_metadata
         pending_counts = pending_elicitations.counts_for(conv_ids)
+        activity = await _activity_for(convs, user_id, user_is_admin)
         items = [
             _build_session_list_item(
                 conv,
@@ -2212,6 +2258,7 @@ def register_core_routes(
                 permissions_enabled=permission_store is not None,
                 pending_count=pending_counts.get(conv.id, 0),
                 child_session_ids=child_ids_by_parent[conv.id],
+                descendant_running=activity.get(conv.id),
                 comments_fingerprint=comments_fingerprints.get(conv.id),
             )
             for conv in convs
@@ -2626,14 +2673,21 @@ def register_core_routes(
             conversation_store.list_items,
             session_id,
             100,
-            None,
+            conv.labels.get(SUBCHAT_HISTORY_LABEL)
+            if is_durable_subchat(conv.id, conv.labels)
+            else None,
             None,
             "asc",
             None,
         )
         seed_title: str | None = None
         for item in page.data:
-            seed_title = synthesize_conversation_title(_title_content_from_item(item))
+            content = _title_content_from_item(item)
+            if is_durable_subchat(conv.id, conv.labels):
+                if not getattr(item.data, "user_authored", False):
+                    continue
+                content = subchat_question_content(content)
+            seed_title = synthesize_conversation_title(content)
             if seed_title is not None:
                 break
         if seed_title is None:
@@ -3931,7 +3985,7 @@ def register_core_routes(
         # labels from the fork; otherwise the copied label would shadow the
         # freshly chosen mode. Only on an explicit pick: an untouched picker
         # sends no launch args and the label carries over as before.
-        dropped_label_keys_set: set[str] = set()
+        dropped_label_keys_set: set[str] = set(SUBCHAT_LABEL_KEYS)
         if launch_args_set:
             dropped_label_keys_set |= {
                 _CLAUDE_NATIVE_PERMISSION_MODE_LABEL_KEY,
@@ -3958,6 +4012,8 @@ def register_core_routes(
         # so refuse to stamp it on a non-Codex fork). Stamped via extra_labels,
         # which the store applies AFTER the drop so the opt-in wins.
         extra_labels: dict[str, str] = {}
+        if body.durable_subchat:
+            extra_labels[SUBCHAT_POLICY_LABEL] = "1"
         if body.codex_bypass_sandbox:
             target_native = await asyncio.to_thread(_native_coding_agent_for_agent, base_agent)
             if target_native is None or target_native.harness != "codex-native":
@@ -4145,7 +4201,7 @@ def register_core_routes(
             new_conv = await asyncio.to_thread(
                 conversation_store.fork_conversation,
                 source_id,
-                title=body.title,
+                title="" if body.durable_subchat else body.title,
                 agent_id=fork_agent_id,
                 cloned_agent_name=base_agent.name if clone_location else None,
                 cloned_agent_bundle_location=clone_location,

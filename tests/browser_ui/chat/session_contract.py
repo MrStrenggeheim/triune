@@ -532,6 +532,7 @@ def install_chat_session_routes(handle: ChatSessionContract) -> None:
         lambda _request: list_payload(handle._items),
     )
     contract.json(f"{session_api}/agent", lambda _request: handle._agent())
+    contract.json(f"{session_api}/runtime-notices", empty)
     contract.json(f"{session_api}/child_sessions", empty)
     contract.json(f"{session_api}/activity", {"data": [], "coverage": "complete"})
     contract.json(f"{session_api}/resources/terminals", empty)

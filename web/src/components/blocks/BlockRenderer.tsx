@@ -1,4 +1,6 @@
 // Modified for Triune.
+import { subagentCardItemIds } from "@/lib/subagentActivity";
+import { useTranscriptDisclosureAnchor } from "@/hooks/useTranscriptDisclosureAnchor";
 import { ChatAttachment, type AttachmentContent } from "@/components/ChatAttachment";
 import { useScopedConversationId } from "@/components/chat/conversationScope";
 // Dispatch from a `RenderItem` to the right component. Pure switch on
@@ -25,12 +27,12 @@ import { useContext, useEffect, useLayoutEffect, useRef, useState } from "react"
 import { ChevronRightIcon } from "lucide-react";
 import { LIVE_ITEM_PREFIX } from "@/lib/blocks";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { ConversationScrollLockContext } from "@/components/ai-elements/conversation";
 import type { RenderItem } from "@/lib/renderItems";
 import type { SessionStatus } from "@/lib/types";
 import type { ActiveResponse } from "@/store/types";
 import { cn } from "@/lib/utils";
 import { ChatSearchRevealContext } from "@/lib/chatSearchHighlights";
+import { MediaBatchItems } from "@/components/MediaBatch";
 import { FilePathAwareMessageResponse } from "./ChatMarkdown";
 import { ElicitationCard } from "./ApprovalCard";
 import { ReasoningView } from "./ReasoningView";
@@ -62,12 +64,6 @@ const FOLD_SETTLE_DEBOUNCE_MS = 500;
 // old history still mounts folded with no delay.
 const RECENT_ACTIVITY_WINDOW_S = 15;
 const FOLD_RECENT_MOUNT_DEBOUNCE_MS = 3_000;
-
-// How long a user-initiated fold expand parks the scroller's scroll
-// anchoring. Covers the 200ms `turn-fold-expand` height animation (see
-// index.css) with slack — anchoring would otherwise pin the answer
-// below the fold and glide the growing trace off the top.
-const FOLD_EXPAND_ANCHOR_HOLD_MS = 400;
 
 interface BlockRendererProps {
   items: RenderItem[];
@@ -189,7 +185,8 @@ function hasFoldableShape(
   return (
     !isProvisionalTrace(items) &&
     segments.some((segment) => segment.kind === "work") &&
-    (segments.some((segment) => segment.kind === "text") ||
+    (items.some((item) => item.kind === "text" && item.phase === "commentary") ||
+      segments.some((segment) => segment.kind === "text") ||
       (continued &&
         segments.some((segment) => segment.kind === "work" && segment.items.some(isToolItem))))
   );
@@ -339,10 +336,20 @@ export function BlockRenderer({
           animateCollapse={animateCollapse}
           defaultOpen={defaultExpanded}
           searchOpen={segment.items.some(
-            (item) => !!item.itemId && searchReveal?.revealedItems.has(item.itemId),
+            (item) =>
+              (!!item.itemId && searchReveal?.revealedItems.has(item.itemId)) ||
+              (item.kind === "subagent_activity" &&
+                subagentCardItemIds(item.data).some((id) => searchReveal?.revealedItems.has(id))),
           )}
           searchRequest={
-            segment.items.some((item) => item.itemId === searchReveal?.revealRequest?.itemId)
+            segment.items.some(
+              (item) =>
+                item.itemId === searchReveal?.revealRequest?.itemId ||
+                (item.kind === "subagent_activity" &&
+                  subagentCardItemIds(item.data).includes(
+                    searchReveal?.revealRequest?.itemId ?? "",
+                  )),
+            )
               ? searchReveal?.revealRequest?.revision
               : undefined
           }
@@ -522,7 +529,11 @@ function partitionTurn(
       continue;
     }
     // Blank text after the answer stays with it rather than opening a second fold.
-    const kind = item.kind === "text" && (answerIndex < 0 || i >= answerIndex) ? "text" : "work";
+    const visibleText =
+      item.kind === "text" &&
+      (item.phase === "final_answer" ||
+        (item.phase !== "commentary" && (answerIndex < 0 || i >= answerIndex)));
+    const kind = visibleText ? "text" : "work";
     if (kind === "work") {
       if (work) work.items.push(item);
       else {
@@ -648,67 +659,27 @@ function TurnWorkedFold({
     return () => cancelAnimationFrame(frame);
   }, [animateCollapse, defaultOpen, searchOpen]);
 
-  // A USER-initiated expand (never the animateCollapse mount-close)
-  // opens INSTANTLY — no height animation — and snaps the fold row to
-  // the top of the scroller so the trace reads from its beginning. The
-  // animation is what defeated the snap: it opens at height 0, so at
-  // snap time the scroller has no room yet (the snap clamps at the old
-  // max-scroll), and the 200ms of growth then plays out against the
-  // stick-to-bottom pin (which rides the bottom on the last turn) or
-  // native scroll anchoring (which pins the answer below) — either way
-  // the row glides off the top and the click appears to do nothing.
-  // Instant height means the first layout already has the full trace:
-  // the snap lands, and there is no growth window left to fight over.
-  const rowRef = useRef<HTMLDivElement | null>(null);
+  const preserveDisclosure = useTranscriptDisclosureAnchor();
   const [userOpened, setUserOpened] = useState(false);
-  const scrollOnOpenRef = useRef(false);
-  const scrollLock = useContext(ConversationScrollLockContext);
   const handleOpenChange = (next: boolean) => {
     userChangedOpenRef.current = true;
-    scrollOnOpenRef.current = next;
     setUserOpened(next);
     setOpen(next);
   };
-  useLayoutEffect(() => {
-    if (!open || !scrollOnOpenRef.current) return;
-    scrollOnOpenRef.current = false;
-    const row = rowRef.current;
-    if (!row) return;
-    // Release StickToBottom's bottom-lock first (same recipe as
-    // JumpToTopButton): viewing the last turn the view is pinned, and
-    // the expand's resize otherwise fires the library's scrollToBottom
-    // (isAtBottom is still true from the pre-click view), overriding
-    // the snap and riding the bottom — the click appears to do nothing.
-    if (scrollLock) {
-      scrollLock.stopScroll();
-      scrollLock.state.isAtBottom = false;
-      scrollLock.state.escapedFromLock = true;
-    }
-    const scroller = nearestScrollContainer(row);
-    // Park native scroll anchoring across the expand commit. The
-    // restore deliberately outlives the effect (no cleanup): the timer
-    // must fire even if the fold re-renders or unmounts mid-hold.
-    if (scroller) {
-      scroller.style.overflowAnchor = "none";
-      window.setTimeout(() => {
-        scroller.style.overflowAnchor = "";
-      }, FOLD_EXPAND_ANCHOR_HOLD_MS);
-    }
-    row.scrollIntoView?.({ block: "start" });
-  }, [open, scrollLock]);
 
   return (
     // Named `group/turn-fold` so only this collapsible's own chevron
     // rotates (inner tool cards carry unnamed `.group` rotations that a
     // bare `group` class here would incorrectly trigger).
     <Collapsible
+      onClickCapture={preserveDisclosure}
       key="turn-worked-fold"
       open={open}
       onOpenChange={handleOpenChange}
       className="group/turn-fold not-prose w-full"
       data-testid="turn-worked-fold"
     >
-      <div ref={rowRef} className={cn("turn-fold-row", animateCollapse && "turn-fold-row-enter")}>
+      <div className={cn("turn-fold-row", animateCollapse && "turn-fold-row-enter")}>
         <CollapsibleTrigger className="flex cursor-pointer items-center gap-2 rounded-sm py-1 text-left text-muted-foreground text-chat outline-none transition-colors hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50">
           <span className="shrink-0">{label}</span>
           <ChevronRightIcon className="size-2.5 shrink-0 transition-transform group-data-[state=open]/turn-fold:rotate-90" />
@@ -737,15 +708,6 @@ function TurnWorkedFold({
       </CollapsibleContent>
     </Collapsible>
   );
-}
-
-/** Nearest ancestor that actually scrolls vertically (overflow-y auto/scroll). */
-function nearestScrollContainer(el: HTMLElement): HTMLElement | null {
-  for (let p = el.parentElement; p; p = p.parentElement) {
-    const overflowY = getComputedStyle(p).overflowY;
-    if (overflowY === "auto" || overflowY === "scroll") return p;
-  }
-  return null;
 }
 
 /** "8s", "1m 46s", "1h 2m" — matches the native CLIs' worked-for stamps. */
@@ -867,12 +829,17 @@ function renderItem(
           streaming={isTextStreaming}
           followsText={followsText}
         >
-          {item.attachments?.map((attachment, attachmentIndex) => (
-            <AssistantAttachment
-              key={attachment.file_id ?? attachmentIndex}
-              attachment={attachment}
+          {item.attachments && (
+            <MediaBatchItems
+              items={item.attachments}
+              renderItem={(attachment, attachmentIndex) => (
+                <AssistantAttachment
+                  key={attachment.file_id ?? attachmentIndex}
+                  attachment={attachment}
+                />
+              )}
             />
-          ))}
+          )}
           {item.previewInterrupted && item.itemId?.startsWith("live:") && (
             <div
               role="status"

@@ -394,6 +394,8 @@ export interface TextChunk {
 
 /** Complete text from a text-streaming section. */
 export interface TextDone {
+  /** Authoritative provider message phase, independent of stream completion. */
+  phase?: "commentary" | "final_answer";
   attachments?: ChatAttachmentContent[];
   type: "text_done";
   ctx: BlockContext;

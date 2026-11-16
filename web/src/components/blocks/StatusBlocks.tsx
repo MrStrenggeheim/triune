@@ -1,3 +1,4 @@
+import { useTranscriptDisclosureAnchor } from "@/hooks/useTranscriptDisclosureAnchor";
 import { TooltipButton } from "@/components/ui/tooltip";
 // Inline status indicators for non-tool, non-text, non-reasoning blocks.
 // Each is small enough to live in one file.
@@ -351,6 +352,7 @@ export function ErrorBanner({
   // The hint already shows this card's error and cause, so its Message section would repeat them.
   const inlineMessage = code === COMPACTION_MODEL_FAILED_CODE && Boolean(cause);
   const expandable = !inlineMessage || relatedDetails.length > 0 || diagnostics.length > 0;
+  const preserveDisclosure = useTranscriptDisclosureAnchor();
   const [expanded, setExpanded] = useState(false);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [activeDiagnostics, setActiveDiagnostics] = useState(diagnostics[0]?.id ?? "terminal");
@@ -489,6 +491,8 @@ export function ErrorBanner({
         }}
       />
       <div
+        onClickCapture={preserveDisclosure}
+        data-transcript-disclosure-trigger={expandable ? "" : undefined}
         data-testid="error-pill"
         data-level={notice ? "info" : "error"}
         onClick={() => expandable && setExpanded((value) => !value)}

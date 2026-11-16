@@ -31,7 +31,7 @@ and steers messages while the agent is busy.
 - `empty-enter-steer`: the configured send key with an empty composer sends the next queued item immediately, preserving FIFO data and existing newline/permission behavior.
 - `selection-menu`: chat Reply and Ask in side chat share the file-preview selection-menu surface; file menus offer Add comment and Ask in chat.
 - `selected-queue-send`: sending one selected draft reserves its per-chat admission; an old idle edge cannot send remaining drafts.
-- `queue-geometry`: queued drafts wrap within the composer width and retain Comfortable spacing in both density modes; the shared stack still animates.
+- `queue-geometry`: queued text and bounded asset summaries remain on one line; shared shelf/composer radii, equal insets and concentric control curves apply in both densities while the stack retains its presence motion.
 - `runtime-notices`: observed native warnings use the shared popover, exact Agent CLI navigation and UI-only Dismiss; unsupported native choosers remain in the CLI.
 - `plan-status`: read-only plan entries reuse accent checkbox visuals with checked, indeterminate and pending states.
 - `durable-queue`: queued follow-ups survive reload/client restart on this browser profile, preserving FIFO order, text, attachments, reply context, agent and retry/host-wait flags; storage is scoped to the authenticated user and server.

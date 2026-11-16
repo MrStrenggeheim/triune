@@ -30,7 +30,6 @@ import { cn } from "@/lib/utils";
 import { permissionModeConcept } from "@/lib/nativeHarnessModes";
 import {
   COMPOSER_COLLAPSED_LABEL_CLASS,
-  COMPOSER_CONTENT_INSET_CLASS,
   COMPOSER_TRAY_INSET_CLASS,
   COMPOSER_WORKSPACE_COLLAPSED_LABEL_CLASS,
   useCollapsedWorkspaceLabels,
@@ -40,8 +39,7 @@ export const COMPOSER_CONTROL_TEXT_CLASS = "text-ui font-normal text-foreground"
 
 /**
  * The workspace tray docked above the composer card. A tray nests inside the
- * card's outer edges for attention shelves. Workspace controls retain the
- * card's content inset; attention shelves use the tighter shared padding.
+ * card's outer edges for attention shelves, with shared shelf geometry.
  */
 export function ComposerWorkspaceBar({
   className,
@@ -56,8 +54,8 @@ export function ComposerWorkspaceBar({
     <div
       ref={barRef}
       className={cn(
-        "composer-workspace-surface group/composer-workspace relative z-0 -mb-px flex h-auto min-h-7 min-w-0 items-center gap-1 rounded-t-2xl border border-b-0 border-border py-0.5 md:min-h-[37px] md:gap-2 md:py-1.5",
-        shelfInset ? "composer-attention-surface" : COMPOSER_CONTENT_INSET_CLASS,
+        "composer-shelf-surface composer-workspace-surface group/composer-workspace relative z-0 -mb-px flex h-auto min-w-0 items-center gap-1 md:gap-2",
+        shelfInset && "composer-attention-surface",
         !shelfInset && COMPOSER_TRAY_INSET_CLASS,
         className,
       )}

@@ -77,17 +77,23 @@ describe("QueuedMessagesStrip", () => {
 
     const chip = screen.getByTestId("queued-message-attachments");
     expect(chip).toHaveAttribute("title", expectedNames.join("\n"));
-    expect(screen.getByText(expectedNames[0]!)).toHaveClass("min-w-6", "truncate");
+    expect(screen.getByText(expectedNames[0]!)).toHaveClass("min-w-0", "truncate");
     expect(screen.getByText("+2")).toBeInTheDocument();
     if (text) {
       const preview = screen.getByText(text);
-      expect(preview).toHaveClass("truncate");
-      expect(preview).toHaveAttribute("title", text);
+      expect(preview).toHaveClass("min-w-0", "flex-1", "truncate");
       expect(preview).toHaveAttribute("title", text);
       expect(preview.parentElement).toBe(chip.parentElement);
+      expect(chip).toHaveClass(
+        "max-w-[min(14rem,calc(100%-1.5rem))]",
+        "max-sm:max-w-[min(14rem,calc(100%-1.25rem))]",
+      );
     } else {
       expect(chip.parentElement?.children).toHaveLength(1);
     }
+    expect(chip.parentElement).toHaveClass("flex-nowrap");
+    expect(chip.parentElement).not.toHaveClass("flex-wrap", "max-md:flex-col");
+    expect(chip.querySelector("svg")).not.toHaveClass("max-sm:hidden");
   });
 
   it("renders nothing when the queue is empty", () => {

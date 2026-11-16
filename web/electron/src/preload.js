@@ -89,6 +89,29 @@ contextBridge.exposeInMainWorld("omnigentDesktop", {
    * @param {(path: string) => void} callback
    * @returns {() => void}
    */
+  shortcutProtocolVersion: 1,
+  setShortcutBindings: (snapshot) => ipcRenderer.send("omnigent:shortcut-bindings", snapshot),
+  onShortcutCommand: (callback) => {
+    const listener = (_event, request) => {
+      if (
+        request?.version === 1 &&
+        typeof request.generation === "string" &&
+        [
+          "new-chat",
+          "new-view",
+          "close-view",
+          "reopen-view",
+          "previous-view",
+          "next-view",
+          "go-settings",
+          "find",
+        ].includes(request.command)
+      )
+        callback(request);
+    };
+    ipcRenderer.on("omnigent:shortcut-command", listener);
+    return () => ipcRenderer.removeListener("omnigent:shortcut-command", listener);
+  },
   onOpenPath: (callback) => {
     const listener = (_event, path) => {
       // Defense-in-depth: only forward in-app, same-origin paths. A leading

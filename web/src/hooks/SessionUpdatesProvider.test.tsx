@@ -673,3 +673,27 @@ it("keeps a directly opened shared session watched and permission-aware with the
     vi.unstubAllGlobals();
   }
 });
+
+it("overlays nested activity onto branch pages and authorized branch rows without changing tree state", () => {
+  const client = new QueryClient();
+  const key = ["conversation-branches", "scope", "mine", ""];
+  client.setQueryData<ConversationsInfiniteData>(key, {
+    pages: [{ data: [conv("branch")], has_more: false, first_id: "branch", last_id: "branch" }],
+    pageParams: [undefined],
+  });
+  client.setQueryData(["conversation-branch-row", "scope", "branch"], conv("branch"));
+  renderProvider(client, ["/"]);
+  const activity = { own_status: "idle" as const, descendant_running: true };
+  act(() =>
+    frameHandler()({
+      type: "changed",
+      items: [{ ...conv("branch"), status: "running", activity }],
+    }),
+  );
+  expect(client.getQueryData<ConversationsInfiniteData>(key)!.pages[0].data[0].activity).toEqual(
+    activity,
+  );
+  expect(
+    client.getQueryData<Conversation>(["conversation-branch-row", "scope", "branch"])!.activity,
+  ).toEqual(activity);
+});

@@ -46,7 +46,10 @@ beforeEach(() => {
   root = document.createElement("div");
   root.innerHTML = markup();
   document.body.append(root);
-  scrollBy = vi.fn();
+  scrollBy = vi.fn((scrollOptions?: ScrollToOptions) => {
+    root.scrollTop += scrollOptions?.top ?? 0;
+  });
+  Object.defineProperty(root, "scrollHeight", { configurable: true, value: 8000 });
   Object.defineProperty(root, "scrollBy", { configurable: true, value: scrollBy });
   onResolved = vi.fn();
   releaseScrollLock.mockClear();
@@ -64,7 +67,7 @@ beforeEach(() => {
   Object.defineProperty(CSS, "highlights", { configurable: true, value: highlights });
   Object.defineProperty(Range.prototype, "getBoundingClientRect", {
     configurable: true,
-    value: () => ({ top: 100, height: 20 }) as DOMRect,
+    value: () => ({ top: 100 - root.scrollTop, height: 20 }) as DOMRect,
   });
   root.getBoundingClientRect = () => ({ top: 0, height: 200 }) as DOMRect;
   useChatStore.setState({
@@ -141,7 +144,7 @@ describe("chat search navigation", () => {
     expect(options.ensureMessageVisible).toHaveBeenCalledTimes(3);
     expect(vi.getTimerCount()).toBe(0);
     expect(onResolved).not.toHaveBeenCalled();
-    expect(toast.error).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledOnce();
     root.innerHTML = markup();
     rerender({ ...options, rangeNonce: 44 });
     await act(async () => {
@@ -159,7 +162,7 @@ describe("chat search navigation", () => {
     let top = 100;
     Object.defineProperty(Range.prototype, "getBoundingClientRect", {
       configurable: true,
-      value: () => ({ top, height: 20 }),
+      value: () => ({ top: top - root.scrollTop, height: 20 }),
     });
     renderHook(() => useChatSearchHighlights(options));
     expect(scrollBy).not.toHaveBeenCalled();
@@ -167,7 +170,7 @@ describe("chat search navigation", () => {
     top += 5;
     await waitFor(() => expect(onResolved).toHaveBeenCalledOnce());
     expect(scrollBy).toHaveBeenCalledTimes(2);
-    expect(scrollBy).toHaveBeenLastCalledWith({ top: 15, behavior: "auto" });
+    expect(scrollBy).toHaveBeenLastCalledWith({ top: 5, behavior: "auto" });
   });
 
   it.each(["wheel", "touchstart", "pointerdown", "keydown"])(
@@ -554,6 +557,17 @@ describe("chat search navigation", () => {
         { container: root },
       );
       expect(root.textContent).toContain("Show full prompt (");
+      const section = root.querySelector<HTMLElement>("[data-search-item-id]")!;
+      section.style.overflowY = "hidden";
+      section.getBoundingClientRect = () => ({ top: 0, height: 256 }) as DOMRect;
+      Object.defineProperty(Range.prototype, "getBoundingClientRect", {
+        configurable: true,
+        value: () =>
+          ({
+            top: (section.classList.contains("overflow-hidden") ? 500 : 100) - root.scrollTop,
+            height: 20,
+          }) as DOMRect,
+      });
       renderHook(() =>
         useChatSearchHighlights({
           ...options,
@@ -621,4 +635,98 @@ describe("chat search navigation", () => {
     unmount();
     expect(highlights.size).toBe(0);
   });
+});
+
+it("reports a retryable positioning budget when the scroll API does not achieve alignment", async () => {
+  vi.useFakeTimers();
+  scrollBy.mockImplementation(() => {});
+  renderHook(() => useChatSearchHighlights(options));
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1500);
+  });
+  expect(onResolved).not.toHaveBeenCalled();
+  expect(toast.error).toHaveBeenCalledWith(
+    expect.stringContaining("positioning"),
+    expect.objectContaining({ action: expect.objectContaining({ label: "Retry" }) }),
+  );
+});
+
+it("keeps an already visible long-prompt prefix collapsed and reveals its clipped occurrence", async () => {
+  const text = "needle✓ " + "padding ".repeat(1800);
+  const bubble = user("old", text);
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <BubbleView bubble={bubble} />
+    </QueryClientProvider>,
+    { container: root },
+  );
+  const section = root.querySelector<HTMLElement>("[data-search-item-id]")!;
+  section.style.overflowY = "hidden";
+  section.getBoundingClientRect = () => ({ top: 0, bottom: 256, height: 256 }) as DOMRect;
+  const { rerender } = renderHook((value) => useChatSearchHighlights(value), {
+    initialProps: {
+      ...options,
+      bubbles: [bubble],
+      query: "needle✓",
+      target: { ...options.target!, sourceText: text, range: { start: 0, end: 7 } },
+    },
+  });
+  await waitFor(() => expect(onResolved).toHaveBeenCalledOnce());
+  expect(root.textContent).toContain("Show full prompt (");
+  Object.defineProperty(Range.prototype, "getBoundingClientRect", {
+    configurable: true,
+    value: () =>
+      ({
+        top: (section.classList.contains("overflow-hidden") ? 500 : 100) - root.scrollTop,
+        bottom: (section.classList.contains("overflow-hidden") ? 520 : 120) - root.scrollTop,
+        height: 20,
+      }) as DOMRect,
+  });
+  rerender({
+    ...options,
+    bubbles: [bubble],
+    query: "needle✓",
+    target: { ...options.target!, sourceText: text, range: { start: 0, end: 7 }, requestId: 2 },
+  });
+  await waitFor(() => expect(onResolved).toHaveBeenCalledTimes(2));
+  expect(root.textContent).toContain("Collapse prompt");
+});
+
+it("aligns an older exact target while unrelated tail height grows continuously", async () => {
+  vi.useFakeTimers();
+  let height = 8000;
+  Object.defineProperty(root, "scrollHeight", { configurable: true, get: () => height });
+  Object.defineProperty(Range.prototype, "getBoundingClientRect", {
+    configurable: true,
+    value: () => ({ top: 3100 - root.scrollTop, height: 20 }) as DOMRect,
+  });
+  root.getBoundingClientRect = () => ({ top: 100, height: 600 }) as DOMRect;
+  renderHook(() => useChatSearchHighlights(options));
+  for (let tick = 0; tick < 16; tick++) {
+    height += 24;
+    // oxlint-disable-next-line no-await-in-loop -- Each clock advance commits the next layout frame.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(64);
+    });
+  }
+  expect(onResolved).toHaveBeenCalledExactlyOnceWith({
+    target: options.target,
+    status: "resolved",
+  });
+  expect(root.scrollTop).toBe(2710);
+  expect(toast.error).not.toHaveBeenCalled();
+});
+
+it("reports an exhausted correction budget instead of claiming an unaligned target resolved", async () => {
+  vi.useFakeTimers();
+  scrollBy.mockImplementation(() => {});
+  renderHook(() => useChatSearchHighlights(options));
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1600);
+  });
+  expect(onResolved).not.toHaveBeenCalled();
+  expect(toast.error).toHaveBeenCalledWith(
+    expect.stringContaining("positioning"),
+    expect.objectContaining({ action: expect.objectContaining({ label: "Retry" }) }),
+  );
 });

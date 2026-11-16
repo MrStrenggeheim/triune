@@ -630,8 +630,11 @@ export function openHtmlArtifactInNewTab(
   content: string,
   filename: string,
   opener: Pick<Window, "open"> = window,
+  options: { sandbox?: string; newWindow?: boolean; prepared?: boolean } = {},
 ): boolean {
-  const win = opener.open("about:blank", "_blank");
+  const win = options.newWindow
+    ? opener.open("about:blank", "_blank", "popup,width=1200,height=800")
+    : opener.open("about:blank", "_blank");
   if (!win) return false; // popup blocked by the browser
   // Sever the back-reference to us (defense in depth): the shell tab never
   // needs its `opener`, and nulling it removes any tab-nabbing vector if the
@@ -645,8 +648,9 @@ export function openHtmlArtifactInNewTab(
   const frame = doc.createElement("iframe");
   // No `allow-same-origin`: the artifact runs in an opaque origin, isolated from
   // this shell tab and the host app.
-  frame.setAttribute("sandbox", HTML_PREVIEW_SANDBOX);
-  frame.srcdoc = prepareHtmlPreviewDoc(content);
+  frame.setAttribute("sandbox", options.sandbox ?? HTML_PREVIEW_SANDBOX);
+  frame.setAttribute("referrerpolicy", "no-referrer");
+  frame.srcdoc = options.prepared ? content : prepareHtmlPreviewDoc(content);
   frame.style.cssText = "position:fixed;inset:0;height:100%;width:100%;border:0";
   doc.body.appendChild(frame);
   return true;

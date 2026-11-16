@@ -1,3 +1,4 @@
+import { useShortcutHandlers } from "@/lib/shortcutDispatcher";
 // ⌘⌥[ / ⌘⌥] (Ctrl+Alt+[ / Ctrl+Alt+] on Win/Linux) toggle the left
 // (Conversations) and right (Workspace) sidebars. Siblings to the session-switch
 // (⌘[ / ⌘]) and approve (⌘↵) hotkeys; like them they fire even inside a focused
@@ -11,9 +12,7 @@
 // it shares the ⌘⌥ chord with ChatPage's message-nav hotkey. Bind ONCE at the
 // app shell, where the sidebar open-state lives.
 
-import { useEffect, useRef } from "react";
-
-import { hasCommandModifier, isMacPlatform } from "@/lib/hotkeys";
+import { isMacPlatform } from "@/lib/hotkeys";
 
 export interface SidebarToggleHandlers {
   /** Flip the left (Conversations) sidebar. Bound to ⌘/Ctrl + ⌥/Alt + [. */
@@ -28,42 +27,13 @@ export function useSidebarToggleHotkeys(
   handlers: SidebarToggleHandlers,
   isMac = isMacPlatform(),
 ): void {
-  // Held in a ref so the bound handler always calls the latest closures without
-  // re-registering each render.
-  const latest = useRef(handlers);
-  latest.current = handlers;
-
-  useEffect(() => {
-    const handler = (e: globalThis.KeyboardEvent): void => {
-      // B/I are the direct panel shortcuts; retain Alt+[ / Alt+] as alternatives.
-      if (!hasCommandModifier(e, isMac) || e.shiftKey || e.isComposing || e.defaultPrevented)
-        return;
-      const left = e.altKey ? e.code === "BracketLeft" : e.code === "KeyB";
-      const right = e.altKey ? e.code === "BracketRight" : e.code === "KeyI";
-      // AltGr often reports as Ctrl+Alt; ignore it so intl-layout typing doesn't
-      // accidentally toggle sidebars while focused in an editor/composer. Guard
-      // the call: not every environment implements getModifierState, and an
-      // unguarded call there would throw and break the whole keydown handler.
-      if (typeof e.getModifierState === "function" && e.getModifierState("AltGraph")) return;
-      // Ignore auto-repeat: holding the chord would flap the panel open/closed.
-      if (e.repeat) return;
-      // Match the physical key, not the character: ⌥ turns "[" / "]" into "“" /
-      // "‘" on macOS, but e.code is stable across layouts and modifiers.
-      // Claim the chord: preventDefault drops any default action and
-      // stopPropagation keeps it from reaching other keydown listeners.
-      if (left) {
-        e.preventDefault();
-        e.stopPropagation();
-        latest.current.onToggleLeft();
-      } else if (right) {
-        e.preventDefault();
-        e.stopPropagation();
-        if (!e.altKey && latest.current.onToggleRightDirect) latest.current.onToggleRightDirect();
-        else latest.current.onToggleRight();
-      }
-    };
-
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [isMac]);
+  useShortcutHandlers(
+    {
+      "toggle-left-sidebar": handlers.onToggleLeft,
+      "toggle-right-sidebar": handlers.onToggleRight,
+      "toggle-right-sidebar-direct": handlers.onToggleRightDirect ?? handlers.onToggleRight,
+    },
+    true,
+    isMac,
+  );
 }

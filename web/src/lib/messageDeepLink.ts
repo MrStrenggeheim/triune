@@ -1,3 +1,4 @@
+// Modified for Triune.
 /** Query param for deep-linking to a transcript message. */
 export const MESSAGE_QUERY_PARAM = "message";
 
@@ -22,5 +23,12 @@ export function buildMessageDeepLink(messageId: string, href?: string): string {
  * @param messageId - The id encoded in ``?message=``.
  */
 export function findMessageElement(messageId: string, root: ParentNode = document): Element | null {
-  return root.querySelector(`[data-message-id="${CSS.escape(messageId)}"]`);
+  const exact = root.querySelector(`[data-message-id="${CSS.escape(messageId)}"]`);
+  if (exact) return exact;
+  return (
+    Array.from(root.querySelectorAll<HTMLElement>("[data-message-aliases]")).find((element) => {
+      const aliases: unknown = JSON.parse(element.dataset.messageAliases ?? "[]");
+      return Array.isArray(aliases) && aliases.includes(messageId);
+    }) ?? null
+  );
 }

@@ -197,7 +197,7 @@ describe("context search navigation and lifecycle", () => {
     expect(result.current.highlightTarget?.itemId).toBe("message-chat");
     expect(result.current.currentIndex).toBe(0);
     expect(result.current.query).toBe("needle");
-    expect(navigate).not.toHaveBeenCalled();
+    expect(navigate).toHaveBeenCalledWith("/c/other", expect.any(Function), expect.any(Function));
   });
 
   it("includes archived content only for the explicitly selected chat", async () => {
@@ -228,7 +228,7 @@ describe("context search navigation and lifecycle", () => {
       range: { start: 7, end: 13 },
       requestId: 2,
     });
-    expect(navigate).not.toHaveBeenCalled();
+    expect(navigate).toHaveBeenCalledWith("/c/chat", expect.any(Function), expect.any(Function));
   });
 
   it("All typing never navigates; explicit guarded activation preserves results/query after changing chats", async () => {
@@ -296,7 +296,7 @@ describe("context search navigation and lifecycle", () => {
     act(() => result.current.move(1));
     await waitFor(() => expect(result.current.highlightTarget?.itemId).toBe("m2"));
     expect(result.current.currentOccurrences).toHaveLength(4);
-    expect(navigate).not.toHaveBeenCalled();
+    expect(navigate).toHaveBeenCalledWith("/c/chat", expect.any(Function), expect.any(Function));
   });
 
   it.each(["query", "scope", "filter", "close"])(
@@ -348,7 +348,7 @@ describe("context search navigation and lifecycle", () => {
     expect(result.current.highlightTarget?.itemId).toBe("second");
     expect(result.current.hits.map((entry) => entry.item_id)).toEqual(["first"]);
     expect(result.current.messages.data?.pages[0].data).toHaveLength(1);
-    expect(navigate).not.toHaveBeenCalled();
+    expect(navigate).toHaveBeenCalledWith("/c/chat", expect.any(Function), expect.any(Function));
   });
 
   it("ignores late superseded results and clears search when account/server changes", async () => {
@@ -639,7 +639,7 @@ describe("unified search filters and direct results", () => {
       itemId: "older",
       range: { start: 0, end: 6 },
     });
-    expect(navigate).not.toHaveBeenCalled();
+    expect(navigate).toHaveBeenCalledWith("/c/other", expect.any(Function), expect.any(Function));
   });
 
   it("searches only bodies in Current with a separate cache while keeping All titles selectable", async () => {
@@ -703,7 +703,7 @@ describe("unified search filters and direct results", () => {
     act(() => result.current.move(1));
     await waitFor(() => expect(result.current.highlightTarget?.itemId).toBe("body"));
     expect(result.current.currentIndex).toBe(0);
-    expect(navigate).not.toHaveBeenCalled();
+    expect(navigate).toHaveBeenCalledWith("/c/chat", expect.any(Function), expect.any(Function));
   });
 
   it("retires failed-query notification actions after a filter change or close", async () => {
@@ -752,4 +752,91 @@ describe("message excerpts", () => {
       expect(container.querySelector("a,img,script")).toBeNull();
     },
   );
+});
+
+it("retains an immutable exact Current result through its own delayed destination acceptance", async () => {
+  fetchMock.mockImplementation((url: string) => {
+    const session = new URL(url, "http://test").searchParams.get("session_id") ?? "chat";
+    return Promise.resolve(response(page([hit(`first-${session}`, session)])));
+  });
+  const { result, rerender } = setup();
+  await typeQuery(result, "current");
+  await waitFor(() => expect(result.current.highlightTarget?.conversationId).toBe("chat"));
+  const selected = { hit: hit("selected", "destination"), range: { start: 7, end: 13 } };
+  let apply: (() => void) | undefined;
+  let relevant: (() => boolean) | undefined;
+  navigate.mockImplementationOnce((_path, done, stillRelevant) => {
+    apply = done;
+    relevant = stillRelevant;
+  });
+  act(() => result.current.activate(selected));
+  expect(relevant?.()).toBe(true);
+  selected.range.start = 0;
+  selected.hit.item_id = "changed-after-selection";
+  rerender({ activeSessionId: "destination" });
+  await waitFor(() => expect(result.current.activeMessages.isSuccess).toBe(true));
+  expect(relevant?.()).toBe(true);
+  act(() => apply?.());
+  expect(result.current.highlightTarget).toMatchObject({
+    conversationId: "destination",
+    itemId: "selected",
+    range: { start: 7, end: 13 },
+  });
+  expect(result.current.query).toBe("needle");
+  expect(result.current.scope).toBe("current");
+});
+
+it.each(["navigation", "identity", "newer-selection"])(
+  "cancels delayed selection on %s",
+  async (reason) => {
+    const { result, rerender } = setup();
+    await typeQuery(result, "all");
+    let apply: (() => void) | undefined;
+    let relevant: (() => boolean) | undefined;
+    navigate.mockImplementationOnce((_path, done, stillRelevant) => {
+      apply = done;
+      relevant = stillRelevant;
+    });
+    const selected = { hit: hit("selected", "destination"), range: { start: 7, end: 13 } };
+    act(() => result.current.activate(selected));
+    if (reason === "navigation") rerender({ activeSessionId: "unrelated" });
+    else if (reason === "identity") {
+      identity.viewer = "other-viewer";
+      rerender({ activeSessionId: "chat" });
+    } else
+      act(() =>
+        result.current.activate({ hit: hit("newer", "chat"), range: { start: 0, end: 6 } }),
+      );
+    expect(relevant?.()).toBe(false);
+    act(() => apply?.());
+    expect(result.current.highlightTarget?.itemId).not.toBe("selected");
+  },
+);
+
+it("preserves an immutable Current selection through its own delayed accepted destination", async () => {
+  fetchMock.mockImplementation((url: string) => {
+    const session = new URL(url, "http://test").searchParams.get("session_id") ?? "chat";
+    return Promise.resolve(response(page([hit(`message-${session}`, session)])));
+  });
+  const { result, rerender } = setup();
+  await typeQuery(result, "current");
+  let apply: (() => void) | undefined;
+  let relevant: (() => boolean) | undefined;
+  navigate.mockImplementationOnce((_path, done, isRelevant) => {
+    apply = done;
+    relevant = isRelevant;
+  });
+  const selected = hit("specific-source", "destination");
+  const occurrence = { hit: selected, range: { start: 7, end: 13 } };
+  act(() => result.current.activate(occurrence));
+  occurrence.range.start = 0;
+  rerender({ activeSessionId: "destination" });
+  await waitFor(() => expect(result.current.activeMessages.isSuccess).toBe(true));
+  expect(relevant?.()).toBe(true);
+  act(() => apply?.());
+  expect(result.current.highlightTarget).toMatchObject({
+    conversationId: "destination",
+    itemId: "specific-source",
+    range: { start: 7, end: 13 },
+  });
 });

@@ -48,11 +48,15 @@ export interface OpenWorkbenchView {
   legacySessionResource?: boolean;
 }
 
+export interface OpenConversationOptions {
+  mode?: "layout" | "tab" | "beside";
+  beside?: boolean;
+  messageId?: string;
+  title?: string;
+}
+
 export interface WorkbenchActions {
-  openConversation: (
-    id: string,
-    options?: { beside?: boolean; messageId?: string; title?: string },
-  ) => void;
+  openConversation: (id: string, options?: OpenConversationOptions) => void;
   openView: (request: OpenWorkbenchView, options?: { beside?: boolean }) => void;
   focusedConversationId?: string;
   layoutOwnerConversationId?: string | null;

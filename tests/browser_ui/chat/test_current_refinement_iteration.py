@@ -58,7 +58,11 @@ def appearance(page: Page, request: pytest.FixtureRequest) -> str:
     )
     page.emulate_media(color_scheme=theme, reduced_motion="reduce")
     density = "compact" if device == "mobile" else "comfortable"
-    page.add_init_script(f"localStorage.setItem('omnigent:list-density', '{density}')")
+    page.add_init_script(
+        f"""if (localStorage.getItem('omnigent:list-density') === null) {{
+            localStorage.setItem('omnigent:list-density', '{density}');
+        }}"""
+    )
     return f"{device}-{theme}"
 
 
@@ -438,6 +442,7 @@ def test_settings_controls_density_and_attachment_geometry(
     density.scroll_into_view_if_needed()
     comfortable = density.get_by_role("button", name="Comfortable", exact=True)
     compact = density.get_by_role("button", name="Compact", exact=True)
+    comfortable.click()
     expect(comfortable).to_have_attribute("aria-pressed", "true")
     compact.click()
     expect(compact).to_have_attribute("aria-pressed", "true")
@@ -459,15 +464,23 @@ def test_settings_controls_density_and_attachment_geometry(
     )
     title = card.get_by_role("button", name="wide-summary.png", exact=True)
     footer = title.locator("xpath=../..")
+    stage = preview.locator("xpath=../..")
     preview.scroll_into_view_if_needed()
     card_bounds, image_bounds, footer_bounds = box(card), box(preview), box(footer)
+    stage_bounds = box(stage)
     assert image_bounds["width"] / image_bounds["height"] == pytest.approx(960 / 180, rel=0.01)
     assert image_bounds["height"] <= 180 + TOLERANCE
     gap = footer_bounds["y"] - image_bounds["y"] - image_bounds["height"]
-    assert 0 <= gap <= 12 + TOLERANCE, (image_bounds, footer_bounds)
+    assert gap == pytest.approx(0, abs=TOLERANCE), (image_bounds, footer_bounds)
+    assert image_bounds["x"] - card_bounds["x"] == pytest.approx(1, abs=TOLERANCE)
+    assert image_bounds["y"] - card_bounds["y"] == pytest.approx(1, abs=TOLERANCE)
+    assert stage_bounds["width"] == pytest.approx(image_bounds["width"], abs=TOLERANCE)
     assert card_bounds["height"] == pytest.approx(
-        image_bounds["height"] + footer_bounds["height"] + 34, abs=2
+        image_bounds["height"] + footer_bounds["height"] + 2, abs=2
     )
+    expect(stage).to_have_css("padding", "0px")
+    expect(stage).to_have_css("background-color", "rgba(0, 0, 0, 0)")
+    expect(footer).to_have_css("padding", "12px")
     assert_within_viewport(card_bounds, page.viewport_size["width"])
     expect(
         card.get_by_role("button", name="Download wide-summary.png", exact=True)
@@ -508,7 +521,7 @@ def test_portrait_and_tiny_image_footer_containment(
     sizes = [("portrait", 100, 1000), ("tiny", 1, 1)]
     originals: dict[str, bytes] = {}
     for name, image_width, image_height in sizes:
-        image = Image.new("RGB", (image_width, image_height), "#68518b")
+        image = Image.new("RGBA", (image_width, image_height), (104, 81, 139, 128))
         buffer = io.BytesIO()
         image.save(buffer, format="PNG")
         png = buffer.getvalue()
@@ -530,6 +543,11 @@ def test_portrait_and_tiny_image_footer_containment(
     first.set_items([attachment])
     page.goto(first.url)
     chat = _view(page, "Chat A")
+    batch = chat.get_by_role("group", name="Media previews", exact=True)
+    expect(batch).to_have_count(1)
+    expect(batch.get_by_test_id("chat-attachment")).to_have_count(2)
+    expect(batch).to_have_css("flex-wrap", "nowrap")
+    expect(batch).to_have_css("overflow-x", "auto")
     for name, image_width, image_height in sizes:
         preview = chat.get_by_role("img", name=f"{name}.png", exact=True)
         expect(preview).to_be_visible(timeout=30_000)
@@ -552,10 +570,16 @@ def test_portrait_and_tiny_image_footer_containment(
               const titleBounds = title.getBoundingClientRect();
               const titleHit = document.elementFromPoint(
                 titleBounds.x + titleBounds.width / 2, titleBounds.y + titleBounds.height / 2);
+              const stage = image.parentElement.parentElement;
+              const footer = title.parentElement.parentElement;
               return {
                 name: image.alt, card: rect(card), image: rect(image), title: rect(title),
-                footer: rect(title.parentElement.parentElement),
-                footerParts: [...title.parentElement.parentElement.children].map(rect),
+                stage: rect(stage), stagePadding: getComputedStyle(stage).padding,
+                stageBackground: getComputedStyle(stage).backgroundColor,
+                topRadius: getComputedStyle(stage).borderTopLeftRadius,
+                footer: rect(footer), footerPadding: getComputedStyle(footer).padding,
+                bottomRadius: getComputedStyle(footer).borderBottomLeftRadius,
+                footerParts: [...footer.children].map(rect),
                 naturalWidth: image.naturalWidth, naturalHeight: image.naturalHeight,
                 titleHitTarget: titleBounds.width > 0 && !!titleHit && title.contains(titleHit),
                 clientWidth: card.clientWidth, scrollWidth: card.scrollWidth,
@@ -583,16 +607,49 @@ def test_portrait_and_tiny_image_footer_containment(
         json.dumps({"viewport_width": width, "images": measurements}, indent=2) + "\n"
     )
     assert len(measurements) == 2
+    assert measurements[0]["stage"]["y"] == pytest.approx(
+        measurements[1]["stage"]["y"], abs=TOLERANCE
+    )
+    assert (
+        measurements[0]["card"]["x"] + measurements[0]["card"]["width"]
+        <= (measurements[1]["card"]["x"])
+    )
     for row in measurements:
+        assert row["stage"]["height"] == pytest.approx(256, abs=TOLERANCE), row
+        # The original action pair needs 74px inside the card at extreme ratios.
+        assert row["stage"]["width"] == pytest.approx(
+            max(74, 256 * row["naturalWidth"] / row["naturalHeight"]), abs=TOLERANCE
+        ), row
+        assert row["stagePadding"] == "0px", row
+        assert row["stageBackground"] == "rgba(0, 0, 0, 0)", row
+        assert row["footerPadding"] == "12px", row
+        assert float(row["topRadius"].removesuffix("px")) > 0, row
+        assert float(row["bottomRadius"].removesuffix("px")) > 0, row
+        assert row["footer"]["y"] == pytest.approx(
+            row["stage"]["y"] + row["stage"]["height"], abs=TOLERANCE
+        ), row
+        assert row["card"]["height"] == pytest.approx(
+            row["stage"]["height"] + row["footer"]["height"] + 2, abs=2
+        ), row
         assert row["image"]["height"] <= min(256, row["naturalHeight"]) + TOLERANCE, row
         assert row["image"]["width"] <= row["naturalWidth"] + TOLERANCE, row
         assert row["image"]["width"] / row["image"]["height"] == pytest.approx(
             row["naturalWidth"] / row["naturalHeight"], rel=0.01
         ), row
+        if row["name"] == "tiny.png":
+            assert row["image"]["width"] == pytest.approx(1, abs=0.1), row
+            assert row["image"]["height"] == pytest.approx(1, abs=0.1), row
         assert row["scrollWidth"] <= row["clientWidth"] + TOLERANCE, row
         assert row["titleHitTarget"], row
         for part in row["footerParts"]:
-            assert_same_vertical_center(row["footer"], part)
+            assert part["x"] >= row["footer"]["x"], row
+            assert part["x"] + part["width"] <= (
+                row["footer"]["x"] + row["footer"]["width"] + TOLERANCE
+            ), row
+            assert part["y"] >= row["footer"]["y"], row
+            assert part["y"] + part["height"] <= (
+                row["footer"]["y"] + row["footer"]["height"] + TOLERANCE
+            ), row
         assert len(row["controls"]) == 2, row
         assert all(control["contained"] and control["hitTarget"] for control in row["controls"]), (
             row

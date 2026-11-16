@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+import pytest
 from playwright.sync_api import Locator, Page, Request, Route, expect
 
 from tests.browser_ui.chat.session_contract import list_payload, message_item
@@ -40,8 +41,8 @@ def _close_navigation(page: Page) -> None:
     expect(page.get_by_role("button", name="Open navigation", exact=True)).to_be_visible()
 
 
-def _large_inline_artifact_html() -> bytes:
-    """Complete uploaded fixture: visible kit controls and an interactive tail after 760KiB."""
+def _large_inline_artifact_html(padding: int = 760 * 1024) -> bytes:
+    """Uploaded kit controls with a tail beyond the large-source highlighting limit."""
     head = """<!doctype html><html><head><meta charset="utf-8"></head><body>
 <main class="ta-root ta-stack" data-ta-init style="padding:12px">
 <h1 class="ta-heading">Uploaded local tool</h1>
@@ -60,22 +61,30 @@ document.querySelector('#artifact-tail').addEventListener('click',()=>{
   output.textContent=String(++count);window.TriuneArtifactState.set({count});
 });
 </script></main></body></html>"""
-    return (head + "x" * (760 * 1024) + tail).encode()
+    return (head + "x" * padding + tail).encode()
 
 
+@pytest.mark.parametrize(
+    ("width", "padding"),
+    [(1440, 760 * 1024), (390, 1024)],
+    ids=["desktop-large-text", "mobile-highlighted-html"],
+)
 def test_uploaded_artifact_fence_retains_appearance_state_and_originals(
     page: Page,
     workspace_journey: WorkspaceJourney,
     output_path: str,
     tmp_path: Path,
     browser_errors: list[str],
+    width: int,
+    padding: int,
 ) -> None:
-    """Real upload and chat rendering; capture outside the repo and leave source UI untouched."""
+    """Sealed upload contract, portable exports and source-chat artifact controls."""
     chat, other = workspace_journey.chats
     chat.reject_uploads = False
     file_id, filename, title = "browser-upload-1", "large-local-tool.html", "Large local tool"
-    html = _large_inline_artifact_html()
-    assert len(html) > 740 * 1024
+    html = _large_inline_artifact_html(padding)
+    if padding > 512 * 1024:
+        assert len(html) > 740 * 1024
     evidence = Path(output_path).resolve()
     if evidence.is_relative_to(Path(__file__).resolve().parents[3]):
         evidence = tmp_path / "artifact-proof"
@@ -116,7 +125,8 @@ def test_uploaded_artifact_fence_retains_appearance_state_and_originals(
                 ),
                 file_resource,
             )
-    page.set_viewport_size({"width": 1440, "height": 1000})
+    page.context.grant_permissions(["clipboard-read", "clipboard-write"])
+    page.set_viewport_size({"width": width, "height": 1000})
     page.goto(chat.url)
     chat.wait_for_stream()
     composer = _view(page, "Chat A").get_by_label("Message the agent")
@@ -128,21 +138,20 @@ def test_uploaded_artifact_fence_retains_appearance_state_and_originals(
     with page.expect_response(
         lambda response: response.url.endswith(f"/{chat.session_id}/events")
     ):
-        composer.press("Enter")
+        _view(page, "Chat A").get_by_role("button", name="Send", exact=True).click()
     assert len(chat.upload_requests) == 1
     assert html in chat.upload_requests[0]["body_bytes"]
     assert dispatched_by_author(), chat.event_posts
     chat.emit_idle()
     fence = "```triune-artifact\n" + json.dumps({"file_id": file_id, "title": title}) + "\n```"
+    request = message_item(
+        "artifact-request", "user", "Use the uploaded local tool.", response_id="artifact-turn"
+    )
+    request["content"].append({"type": "input_file", "file_id": file_id, "filename": filename})
     chat.set_items(
         [
             message_item("artifact-answer", "assistant", fence, response_id="artifact-turn"),
-            message_item(
-                "artifact-request",
-                "user",
-                "Use the uploaded local tool.",
-                response_id="artifact-turn",
-            ),
+            request,
         ]
     )
     other.set_items(
@@ -163,10 +172,30 @@ def test_uploaded_artifact_fence_retains_appearance_state_and_originals(
     artifact = view.locator("[data-triune-artifact]").filter(has_text=title)
     outer = artifact.get_by_title(title, exact=True)
     expect(outer).to_be_visible(timeout=30_000)
+    toolbar = artifact.locator(":scope > header")
+    expect(toolbar.get_by_role("button")).to_have_count(3)
+    for label in ("Source", "Download artifact", "More"):
+        expect(toolbar.get_by_role("button", name=label, exact=True)).to_be_enabled()
+    for label, tooltip in (
+        ("Source", "Show artifact source"),
+        ("Download artifact", "Download artifact"),
+    ):
+        toolbar.get_by_role("button", name=label, exact=True).hover()
+        expect(page.get_by_role("tooltip")).to_contain_text(tooltip)
+        page.keyboard.press("Escape")
+        expect(page.get_by_role("tooltip")).to_have_count(0)
+    more = toolbar.get_by_role("button", name="More", exact=True)
+    more.hover()
+    assert more.get_attribute("title") is None
+    assert more.get_attribute("aria-describedby") is None
+    expect(page.get_by_role("tooltip")).to_have_count(0)
+    expect(outer).to_have_attribute("sandbox", "allow-scripts")
+    expect(outer).to_have_attribute("referrerpolicy", "no-referrer")
     inner = outer.content_frame.frame_locator("iframe")
     expect(inner.get_by_role("button", name="Run tail action")).to_be_visible()
     boot = inner.locator("body").evaluate("() => window.artifactInstance")
     outer_identity = outer.element_handle()
+    expect(inner.locator("main")).to_have_attribute("data-density", "comfortable")
     inner.get_by_role("button", name="Run tail action").click()
     expect(inner.get_by_label("Artifact count")).to_have_text("1")
     inner.get_by_label("Artifact draft").fill("Draft survives Appearance and reload")
@@ -178,7 +207,11 @@ def test_uploaded_artifact_fence_retains_appearance_state_and_originals(
     page.get_by_role("banner", name="Application").get_by_role(
         "button", name="Settings", exact=True
     ).click()
-    page.get_by_test_id("settings-nav-appearance").click()
+    if width < 768:
+        page.get_by_role("combobox", name="Settings section", exact=True).click()
+        page.get_by_role("option", name="Appearance", exact=True).click()
+    else:
+        page.get_by_test_id("settings-nav-appearance").click()
     expect(outer).to_be_hidden()
     page.get_by_test_id("ui-font-family-input").fill("Georgia")
     size = page.get_by_test_id("ui-font-size-input")
@@ -204,8 +237,12 @@ def test_uploaded_artifact_fence_retains_appearance_state_and_originals(
     assert outer.evaluate("(node, original) => node === original", outer_identity)
     assert inner.locator("body").evaluate("() => window.artifactInstance") == boot
     _capture(page, str(evidence), "artifact-selected-appearance")
+    if width < 768:
+        page.get_by_role("button", name="Open navigation", exact=True).click()
     page.get_by_role("link", name="Back", exact=True).click()
     expect(page).to_have_url(chat.url)
+    if width < 768:
+        _close_navigation(page)
     expect(outer).to_be_visible()
     assert inner.locator("body").evaluate("() => window.artifactInstance") == boot
     expect(inner.get_by_label("Artifact draft")).to_have_value(
@@ -213,25 +250,105 @@ def test_uploaded_artifact_fence_retains_appearance_state_and_originals(
     )
     _capture(page, str(evidence), "artifact-appearance-without-reset")
 
-    artifact.get_by_role("button", name="Show artifact source", exact=True).click()
-    expect(artifact.locator("pre")).to_be_visible()
-    assert artifact.locator("pre").text_content().encode() == html
-    artifact.get_by_role("button", name="Show artifact preview", exact=True).click()
+    source_toggle = toolbar.get_by_role("button", name="Source", exact=True)
+    source_toggle.click()
+    expect(source_toggle).to_have_attribute("aria-pressed", "true")
+    expect(outer).to_be_hidden()
+    language = "text" if len(html) > 512 * 1024 else "html"
+    source = artifact.locator(f'[data-language="{language}"]')
+    expect(source.locator("pre")).to_be_visible()
+    lines = source.locator("pre > code > span").all_text_contents()
+    assert "\n".join(lines).encode() == html
+    expect(source.locator("script, main, #artifact-tail")).to_have_count(0)
+    if language == "html":
+        expect(source.locator('[data-code-highlighted="true"]')).to_be_visible()
+        expect(source.locator('pre code span[style*="--shiki-dark"]').first).to_be_attached()
+    copy_source = source.get_by_role("button", name="Copy source", exact=True)
+    copy_source.click()
+    assert page.evaluate("navigator.clipboard.readText()").encode() == html
+    wrap = source.get_by_role("button", name="Toggle word wrap", exact=True)
+    expect(wrap).to_have_attribute("aria-pressed", "true")
+    expect(source.locator("pre")).to_have_css("white-space", "pre-wrap")
+    wrap.click()
+    expect(wrap).to_have_attribute("aria-pressed", "false")
+    expect(source.locator("pre")).to_have_css("white-space", "pre")
+    assert page.evaluate("localStorage.getItem('omnigent:wrap:chat')") == "false"
+    source_toggle.click()
+    expect(source_toggle).to_have_attribute("aria-pressed", "false")
+    assert outer.evaluate("(node, original) => node === original", outer_identity)
     assert inner.locator("body").evaluate("() => window.artifactInstance") == boot
+    source_toggle.click()
+    expect(wrap).to_have_attribute("aria-pressed", "false")
+    _capture(page, str(evidence), "artifact-source-copy-wrap")
+    source_toggle.click()
+    footer = view.get_by_test_id("chat-attachment").filter(
+        has=page.get_by_role("button", name=filename, exact=True)
+    )
     with page.expect_download() as original_download:
-        artifact.get_by_role("button", name=f"Download {title}", exact=True).click()
+        footer.get_by_role("button", name=f"Download {filename}", exact=True).click()
     original = original_download.value
     assert original.suggested_filename == filename
     assert Path(original.path()).read_bytes() == html
     original.save_as(evidence / "artifact-original.html")
     with page.expect_download() as export_download:
-        artifact.get_by_role("button", name="Download self-contained HTML", exact=True).click()
+        toolbar.get_by_role("button", name="Download artifact", exact=True).click()
     exported = export_download.value
+    assert exported.suggested_filename == f"{title}.html"
     complete = Path(exported.path()).read_text()
     assert "data-triune-kit-embedded" in complete
     assert "frame-src about:" in complete
     assert complete.count("data-triune-kit-embedded") == 1
-    exported.save_as(evidence / "artifact-self-contained.html")
+    portable = evidence / "artifact-self-contained.html"
+    exported.save_as(portable)
+    with page.context.browser.new_context(offline=True) as offline:
+        saved = offline.new_page()
+        saved.goto(portable.as_uri())
+        saved_inner = saved.frame_locator("iframe")
+        expect(saved_inner.get_by_label("Artifact count")).to_have_text("1")
+        expect(saved_inner.get_by_label("Artifact draft")).to_have_value(
+            "Draft survives Appearance and reload"
+        )
+        expect(saved_inner.get_by_text("Restored disclosure content")).to_be_visible()
+        expect(saved_inner.locator("main")).to_have_attribute("data-theme", "dark")
+        expect(saved_inner.locator("main")).to_have_attribute("data-density", "compact")
+        expect(saved_inner.locator("main")).to_have_css("font-size", "17px")
+        expect(saved_inner.locator("main")).to_have_css("font-family", re.compile("Georgia"))
+        saved_inner.get_by_role("button", name="Run tail action").click()
+        expect(saved_inner.get_by_label("Artifact count")).to_have_text("2")
+        _capture(saved, str(evidence), "artifact-portable-offline")
+    more.click()
+    expect(page.get_by_role("menuitem")).to_have_count(2)
+    with page.expect_popup() as opened:
+        page.get_by_role("menuitem", name="Open in new window", exact=True).click()
+    popup = opened.value
+    expect(popup).to_have_url("about:blank")
+    assert popup.evaluate("window.opener === null")
+    expect(popup.locator("iframe")).to_have_attribute("sandbox", "allow-scripts")
+    popup_inner = popup.frame_locator("iframe").frame_locator("iframe")
+    expect(popup_inner.get_by_label("Artifact count")).to_have_text("1")
+    expect(popup_inner.get_by_label("Artifact draft")).to_have_value(
+        "Draft survives Appearance and reload"
+    )
+    _capture(popup, str(evidence), "artifact-new-window")
+    popup.close()
+    more.click()
+    page.get_by_role("menuitem", name="Open in tab", exact=True).click()
+    expect(page.get_by_role("tab", name=title, exact=True)).to_have_count(1)
+    docked = _view(page, title).locator("[data-triune-artifact]")
+    expect(docked).to_have_attribute("data-triune-artifact", f"{chat.session_id}:{file_id}")
+    expect(docked.locator(":scope > header").get_by_role("button")).to_have_count(3)
+    docked_inner = docked.locator("iframe").content_frame.frame_locator("iframe")
+    expect(docked_inner.get_by_label("Artifact count")).to_have_text("1")
+    expect(docked_inner.get_by_label("Artifact draft")).to_have_value(
+        "Draft survives Appearance and reload"
+    )
+    docked.get_by_role("button", name="Source", exact=True).click()
+    expect(docked.get_by_role("button", name="Toggle word wrap", exact=True)).to_have_attribute(
+        "aria-pressed", "false"
+    )
+    _capture(page, str(evidence), "artifact-source-chat-preview-tab")
+    page.get_by_role("button", name=f"Close {title}", exact=True).click()
+    page.get_by_role("tab", name="Chat A", exact=True).click()
     page.reload()
     chat.wait_for_stream()
     expect(outer).to_be_visible(timeout=30_000)
@@ -258,6 +375,8 @@ def test_uploaded_artifact_fence_retains_appearance_state_and_originals(
                 "content_reads": content_reads,
                 "retained_instance": boot,
                 "appearance": appearance,
+                "source_language": language,
+                "viewport_width": width,
             },
             indent=2,
         )

@@ -1,4 +1,6 @@
+import { useTranscriptDisclosureAnchor } from "@/hooks/useTranscriptDisclosureAnchor";
 // Modified for Triune.
+import { useWorkbenchActions } from "@/workbench/WorkbenchContext";
 import { useConversationChatStore, useConversationChatVisible } from "@/workbench/ScopedChatStore";
 import { ChatAttachment } from "@/components/ChatAttachment";
 import { ChatSearchRevealContext } from "@/lib/chatSearchHighlights";
@@ -89,6 +91,7 @@ import { useWorkingLabelTick } from "@/hooks/useWorkingLabelTick";
 import { useForkDialog } from "@/shell/ForkDialogContext";
 import { useTerminalFirst } from "@/shell/TerminalFirstContext";
 import { DisabledActionTooltip } from "@/components/DisabledActionTooltip";
+import { MediaBatchItems, isVisualAttachment } from "@/components/MediaBatch";
 import { InlineImage } from "@/components/SessionImage";
 import { copyMarkdown } from "@/lib/copyMarkdown";
 import { useFoldAssistantNarration } from "@/lib/foldNarrationPreferences";
@@ -688,12 +691,26 @@ const USER_MESSAGE_REMARK_REHYPE_OPTIONS: MessageResponseProps["remarkRehypeOpti
 };
 
 function InputSource({ communication }: { communication?: MessageCommunication }) {
+  const workbench = useWorkbenchActions();
   const sourceId = communication?.source_conversation_id;
   const title = communication?.source_title?.trim();
   return sourceId ? (
     <Link
       className="text-sm text-muted-foreground underline"
       to={`/c/${encodeURIComponent(sourceId)}`}
+      onClick={(event) => {
+        if (
+          !workbench ||
+          event.button !== 0 ||
+          event.metaKey ||
+          event.ctrlKey ||
+          event.shiftKey ||
+          event.altKey
+        )
+          return;
+        event.preventDefault();
+        workbench.openConversation(sourceId, { mode: "tab" });
+      }}
     >
       {title || "Source conversation"}
     </Link>
@@ -728,6 +745,7 @@ function UserBubble({
   bubble: Extract<Bubble, { kind: "user" }>;
   origin: "human" | "system" | "external";
 }) {
+  const preserveDisclosure = useTranscriptDisclosureAnchor();
   const human = origin === "human";
   const useChatStore = useConversationChatStore();
   // Scoped so a side-chat bubble builds attachment URLs against the CHILD, not
@@ -778,6 +796,7 @@ function UserBubble({
 
   const inputContent = (
     <div
+      onClickCapture={preserveDisclosure}
       className={
         human
           ? "ml-auto flex w-fit max-w-full flex-col items-end"
@@ -849,6 +868,18 @@ function UserBubble({
               so the Markdown parser never processes hidden text. */}
           {text && (
             <>
+              {isLong && (
+                <TooltipButton
+                  type="button"
+                  aria-expanded={!isCollapsed}
+                  onClick={() => setIsCollapsed((c) => !c)}
+                  className="mt-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  {isCollapsed
+                    ? `Show full prompt (${text.length.toLocaleString()} chars)`
+                    : "Collapse prompt"}
+                </TooltipButton>
+              )}
               <div
                 data-search-item-id={bubble.itemId}
                 className={cn("relative", isCollapsed && "max-h-64 overflow-hidden")}
@@ -877,56 +908,42 @@ function UserBubble({
                   <div className="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-muted to-transparent" />
                 )}
               </div>
-              {isLong && (
-                <TooltipButton
-                  type="button"
-                  onClick={() => setIsCollapsed((c) => !c)}
-                  className="mt-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  {isCollapsed
-                    ? `Show full prompt (${text.length.toLocaleString()} chars)`
-                    : "Collapse prompt"}
-                </TooltipButton>
-              )}
             </>
           )}
-          {/* Inline image previews. Wrap rather than scroll horizontally:
-                a landscape image fills the bubble width, so a second one in a
-                non-wrapping strip would sit off-screen in the overflow and
-                look like it never rendered. */}
+          {/* Contiguous visual previews keep their source order in one scrollable row. */}
           {images.length > 0 && (
-            <div className="mt-2 flex flex-wrap items-start gap-2">
-              {keyedAttachments(images, (img) => img.file_id ?? img.image_url ?? img.filename).map(
-                ({ key, item: img }) => {
-                  const preview = imagePreview(img);
-                  if (preview.kind === "uploaded") {
-                    return <ChatAttachment key={key} sessionId={sessionId} attachment={img} />;
-                  }
-                  if (preview.kind === "inline") {
-                    return (
-                      <InlineImage
-                        key={key}
-                        src={preview.src}
-                        alt={preview.alt}
-                        className="rounded-md object-contain"
-                      />
-                    );
-                  }
-                  // In-flight upload, or a block with nothing renderable on it.
-                  return <AttachmentChip key={key} icon={ImageIcon} label={preview.label} />;
-                },
+            <MediaBatchItems
+              items={keyedAttachments(
+                images,
+                (img) => img.file_id ?? img.image_url ?? img.filename,
               )}
-            </div>
+              isVisual={({ item }) => isVisualAttachment(item)}
+              renderItem={({ key, item: img }) => {
+                const preview = imagePreview(img);
+                if (preview.kind === "uploaded")
+                  return <ChatAttachment key={key} sessionId={sessionId} attachment={img} />;
+                if (preview.kind === "inline")
+                  return (
+                    <InlineImage
+                      key={key}
+                      src={preview.src}
+                      alt={preview.alt}
+                      className="rounded-md object-contain"
+                    />
+                  );
+                return <AttachmentChip key={key} icon={ImageIcon} label={preview.label} />;
+              }}
+            />
           )}
           {/* Non-image file chips */}
           {fileChips.length > 0 && (
-            <div className="mt-2 flex flex-wrap gap-1.5">
-              {keyedAttachments(fileChips, (att) => att.file_id ?? att.filename).map(
-                ({ key, item: att }) => (
-                  <ChatAttachment key={key} sessionId={sessionId} attachment={att} />
-                ),
+            <MediaBatchItems
+              items={keyedAttachments(fileChips, (att) => att.file_id ?? att.filename)}
+              isVisual={({ item }) => isVisualAttachment(item)}
+              renderItem={({ key, item: att }) => (
+                <ChatAttachment key={key} sessionId={sessionId} attachment={att} />
               )}
-            </div>
+            />
           )}
         </MessageContent>
       </div>

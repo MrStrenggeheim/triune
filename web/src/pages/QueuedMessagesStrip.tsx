@@ -168,9 +168,9 @@ function QueuedRow({
           aria-hidden="true"
         />
       )}
-      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 max-md:flex-col max-md:items-start max-md:gap-0.5">
+      <div className="flex min-w-0 flex-1 flex-nowrap items-center gap-2 max-sm:gap-1">
         {hasText && (
-          <span className="min-w-0 max-w-full truncate" title={message.text}>
+          <span className="min-w-0 flex-1 truncate" title={message.text}>
             {message.text}
           </span>
         )}
@@ -180,15 +180,13 @@ function QueuedRow({
             data-testid="queued-message-attachments"
             title={attachmentNames.join("\n")}
             className={cn(
-              "min-w-0 max-w-[min(16rem,100%)] gap-1.5 rounded-md border-border/60 bg-background/50 px-1.5 font-normal text-muted-foreground transition-none max-sm:gap-1 max-sm:px-1",
-              hasText && "md:max-w-[min(14rem,55%)]",
+              "min-w-0 max-w-[min(16rem,100%)] gap-1.5 rounded-md border-border/60 bg-background/50 px-1.5 font-normal text-muted-foreground transition-none max-sm:gap-0.5 max-sm:px-1",
+              hasText &&
+                "max-w-[min(14rem,calc(100%-1.5rem))] max-sm:max-w-[min(14rem,calc(100%-1.25rem))]",
             )}
           >
-            <AttachmentIcon
-              className={cn("shrink-0", attachmentNames.length > 1 && "max-sm:hidden")}
-              aria-hidden="true"
-            />
-            <span className="min-w-6 truncate">{attachmentNames[0]}</span>
+            <AttachmentIcon className="shrink-0" aria-hidden="true" />
+            <span className="min-w-0 truncate">{attachmentNames[0]}</span>
             {attachmentNames.length > 1 && (
               <>
                 <span
@@ -327,7 +325,7 @@ export function QueuedMessagesStrip({
       <div
         data-testid="composer-queued-strip"
         className={cn(
-          "composer-queued-surface mx-auto flex min-w-0 w-full flex-col rounded-t-2xl px-2 md:px-3",
+          "composer-shelf-surface composer-queued-surface mx-auto flex min-w-0 w-full flex-col",
           widthClassName,
         )}
       >

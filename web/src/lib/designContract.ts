@@ -15,8 +15,8 @@ export const DESIGN_DARK_SEMANTIC_TOKENS = { destructive: "#e65b77" } as const;
 export const CONTROL_FOCUS_CLASS =
   "focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50";
 
-export const COMPOSER_FOCUS_CLASS =
-  "has-[textarea:focus]:border-ring has-[textarea:focus]:ring-3 has-[textarea:focus]:ring-ring/50";
+/** Named focus exception: retain the composer's original textarea-focus shadow. */
+export const COMPOSER_FOCUS_CLASS = "has-[textarea:focus]:shadow-[var(--composer-shadow-focus)]";
 
 export const DESIGN_ROLES = {
   "workspace-content": "#ffffff",

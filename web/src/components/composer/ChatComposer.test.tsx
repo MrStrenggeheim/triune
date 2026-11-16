@@ -9,6 +9,26 @@ import {
 } from "./ChatComposer";
 
 describe("ChatComposer", () => {
+  it("uses the shared outer radius and the named composer shadow focus exception", () => {
+    const { container } = render(
+      <ChatComposer
+        keyboard={{ submitWithModEnter: false, preventsKeyboardSubmit: false }}
+        input={{ "aria-label": "Draft" }}
+        actions={{ leading: null, trailing: null }}
+      />,
+    );
+    const card = container.querySelector("[data-composer-card]")!;
+    expect(card).toHaveClass(
+      "rounded-[var(--composer-outer-radius)]",
+      "has-[textarea:focus]:shadow-[var(--composer-shadow-focus)]",
+    );
+    expect(card).not.toHaveClass(
+      "has-[textarea:focus]:border-ring",
+      "has-[textarea:focus]:ring-3",
+      "has-[textarea:focus]:ring-ring/50",
+    );
+  });
+
   function renderEditor(initial: string, submitWithModEnter = false) {
     const onKeyDown = vi.fn();
     function Editor() {

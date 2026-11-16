@@ -93,13 +93,6 @@ export function useConversationBranches({
       return chain.reverse();
     },
   });
-  useEffect(() => {
-    if (!enabled || !lineage.data?.length) return;
-    const ancestors = lineage.data.filter((row) => row.id !== activeId).map((row) => row.id);
-    setExpanded((previous) =>
-      ancestors.every((id) => previous.has(id)) ? previous : new Set([...previous, ...ancestors]),
-    );
-  }, [enabled, lineage.data, activeId, setExpanded]);
   const query = useInfiniteQuery({
     queryKey: ["conversation-branches", scope, filter, searchQuery],
     initialPageParam: undefined as string | undefined,

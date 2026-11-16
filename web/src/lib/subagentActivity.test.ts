@@ -42,7 +42,7 @@ it.each([
   expect(subagentTaskDescription(child({ task_summary: input }))).toBe(expected);
 });
 
-it("uses a late native nickname only for the matching captured dispatch", () => {
+it("uses a late native nickname for the same child across steering", () => {
   const activity = readSubagentActivity(event("delegated", { agent_name: "Codex" }))!;
   const native = child({
     id: "child",
@@ -52,7 +52,7 @@ it("uses a late native nickname only for the matching captured dispatch", () => 
     },
   });
   expect(subagentActivityName(activity, native)).toBe("Hooke");
-  expect(subagentActivityName({ ...activity, dispatchId: "earlier" }, native)).toBe("Codex");
+  expect(subagentActivityName({ ...activity, dispatchId: "earlier" }, native)).toBe("Hooke");
   expect(
     subagentActivityName({ ...activity, agentName: "Curie", agentNameSource: "native" }, native),
   ).toBe("Curie");
@@ -91,13 +91,13 @@ it.each([
   expect(subagentName(child(fields))).toBe("Agent");
 });
 
-it("uses recorded Codex instructions rather than message previews as task text", () => {
+it("keeps raw instructions and message previews out of task titles", () => {
   expect(subagentTaskDescription(child({ last_message_preview: "It looks finished" }))).toBeNull();
   expect(
     subagentTaskDescription(
       child({ labels: { "omnigent.codex_native.prompt": "Check navigation" } }),
     ),
-  ).toBe("Check navigation");
+  ).toBeNull();
 });
 
 it("retains the original dispatch title ahead of steering-derived child summaries", () => {
@@ -245,20 +245,20 @@ it.each([
   "omnigent.subagent.dispatch_id",
   "omnigent.codex_native.collab_tool_call_id",
   "omnigent.claude_native.tool_use_id",
-])("matches only the recorded managed/native/Claude dispatch label %s", (key) => {
+])("matches the same child across changes to dispatch label %s", (key) => {
   const activity = readSubagentActivity(event("delegated"))!;
   expect(
     subagentMatchesChild(activity, child({ id: "child", labels: { [key]: "dispatch-1" } })),
   ).toBe(true);
   expect(subagentMatchesChild(activity, child({ id: "child", labels: { [key]: "later" } }))).toBe(
-    false,
+    true,
   );
   expect(
     subagentMatchesChild(activity, child({ id: "other", labels: { [key]: "dispatch-1" } })),
   ).toBe(false);
 });
 
-it("rejects stale generic dispatch labels when native dispatch identity has changed", () => {
+it("keeps child identity when dispatch identity has changed", () => {
   expect(
     subagentMatchesChild(
       readSubagentActivity(event("delegated"))!,
@@ -270,7 +270,7 @@ it("rejects stale generic dispatch labels when native dispatch identity has chan
         },
       }),
     ),
-  ).toBe(false);
+  ).toBe(true);
 });
 
 it("uses exact input references for legacy dispatches, never repeated summaries", () => {

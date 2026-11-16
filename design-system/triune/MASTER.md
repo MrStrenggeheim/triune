@@ -132,7 +132,8 @@ Background color changes mark full surface edges without an additional border; e
 The native bottom gesture area shares the chat surface and has no exterior pane divider.
 
 Each chat owns a remembered layout by default; explicit Open to side or sidebar drag adds it to the current layout.
-Ask Subchat opens a named adjacent tab without confirmation; keep only the quote and source annotation in its draft, with inherited history collapsed behind Show history.
+Every durable subchat opens adjacent without confirmation and starts with inherited history collapsed behind Show history.
+Quote-created drafts keep only the quote and source annotation; explicit Fork retains full-history presentation.
 Preserve typed text around inserted quotes and keep internal context serialization outside editable content.
 Do not replace another chat's saved arrangement during explicit embedded opening.
 Layout miniatures, Inbox consolidation and composer spacing redesign are deferred.
@@ -181,7 +182,8 @@ Bold the actual agent name and preserve the existing sent to/from annotation and
 Keep one title line, one compact excerpt line and vertically centered semantic status and controls.
 Controls are Open chat, Workflow/Orchestration, then disclosure; use the same ghost hover and Sidebar right/down chevron states without animation.
 Omit timestamp, Copy and Copy link footers and their reserved space from these card types for now; ordinary human and assistant footers stay intact.
-Keep one task card per dispatch and update its status in place; steering instructions do not rename the originating task.
+Keep one activity card per child agent and update it in place; preserve assignment provenance without separate steering cards.
+Use a short capitalized task summary rather than the raw handoff as the title; steering preserves a valid original summary.
 Returned answers use one attributed Markdown reply per dispatch at its chronological arrival, with the same compact card and expansion.
 Preserve authoritative adapter finality and exact source references; progress cannot replace a shorter final report.
 Do not repeat the task prompt as both title and preview or add an empty completion reply.
@@ -206,7 +208,10 @@ Queue and attention shelves share one gapless stack above the composer.
 Both entrance and exit take 200ms, moving behind the composer while the hidden slot collapses; reduced motion is immediate.
 Background count changes do not replay entrance or reset forms, drafts or transcript position.
 Queue spacing retains the previous Comfortable geometry in both density modes, with usable coarse-pointer targets.
-Queue, attention shelf and composer share constrained width; long queued messages wrap.
+Queue, attention shelf and composer share constrained width; queued text and attachment summaries stay on one ellipsized line.
+Every shelf shares the composer's outer radius and equal horizontal/vertical edge insets.
+Derive the inner control radius from that outer radius minus inset and border spacing, clamped at zero.
+The composer retains its shadow-only focus cue while adjacent controls use the shared focus treatment.
 Sending a selected queued item reserves its admission independently of old-turn idle and network-finally events.
 
 Agent and shell popups reuse the Orchestration two-line resource row, icon tile and natural-width status pill.
@@ -220,8 +225,9 @@ Captured shell history remains readable when the runtime is offline without laun
 Use one shell outcome mapper: Completed for known success, Failed, acknowledged Stopped, Declined, or Ended for confirmed termination with unknown outcome.
 Unknown and Disconnected do not imply termination; badges transition colors without delaying status/Stop visibility.
 
-Questions use the existing accent choice controls and show Question N of M beside the needs-input heading.
-Previous and Skip/Next navigate; Submit accepts partial or empty answers, while Decline rejects the whole request.
+Question popups show only the bold original question, existing answer controls and one action row.
+Previous may be an accessible chevron-only control; counted Skip/Next navigate and final Submit sends the batch, while Decline rejects it.
+Keep in-chat card attribution and header pagination separate; expanded answered bodies omit the repeated question.
 Closing a question popup preserves its answers and pending state.
 
 Stationary touch hold opens existing context menus at 500ms within 10px.

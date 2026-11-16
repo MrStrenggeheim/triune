@@ -154,6 +154,10 @@ export class BulkConversationMutationError extends Error {
 
 /** Mirrors the server's `SessionListItem` / `ConversationObject` shape. */
 export interface Conversation {
+  activity?: {
+    own_status: "idle" | "running" | "failed";
+    descendant_running: boolean | null;
+  };
   id: string;
   object: "conversation";
   title: string | null;
@@ -510,6 +514,7 @@ export async function fetchConversationById(id: string): Promise<Conversation | 
     harness: wire.harness ?? null,
     pending_elicitations_count: wire.pending_elicitations_count ?? 0,
     status: wire.status ?? "idle",
+    activity: wire.activity ?? undefined,
     runner_online: wire.runner_online ?? undefined,
     host_online: wire.host_online ?? undefined,
     git_branch: wire.git_branch ?? null,

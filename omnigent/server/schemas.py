@@ -2902,6 +2902,7 @@ class SessionForkRequest(BaseModel):
     # it is hidden from the left sidebar (it surfaces only as a Workspace-rail
     # side-chat tab). It may share its parent's runner.
     side_chat: bool = False
+    durable_subchat: bool = False
 
     model_config = ConfigDict(extra="forbid")
 
@@ -2987,6 +2988,13 @@ class ReadStatePutRequest(BaseModel):
     unread: bool
 
     model_config = ConfigDict(extra="forbid")
+
+
+class SessionActivity(BaseModel):
+    """Own runtime status and authorized nested work, without descendant identity."""
+
+    own_status: Literal["idle", "running", "failed"]
+    descendant_running: bool | None = None
 
 
 class SessionListItem(BaseModel):
@@ -3097,6 +3105,7 @@ class SessionListItem(BaseModel):
     agent_name: str | None = None
     harness: str | None = None
     status: Literal["idle", "running", "waiting", "failed"]
+    activity: SessionActivity | None = None
     created_at: int
     updated_at: int
     title: str | None = None

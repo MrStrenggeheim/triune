@@ -26,6 +26,7 @@ export interface BaseItem {
 }
 
 export interface MessageItem extends BaseItem {
+  phase?: "commentary" | "final_answer";
   communication?: MessageCommunication;
   type: "message";
   role: "user" | "assistant";

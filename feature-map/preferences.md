@@ -17,6 +17,7 @@ local; automatic client sync and shared/machine scope controls remain deferred.
 - `conversation-usage`: each captured chat header exposes Usage independently of Notices or the composer shelf, with a context summary, compact session totals and separate observed provider quota windows; token and observation details expand on demand.
 - `runtime-notices`: scoped provider warnings and messages use the chat header; healthy quota snapshots remain in Usage and never imply an answerable request.
 - `pwa-installation`: the browser build links a standalone Triune manifest with deployment-aware identity, launch URL, scope and 192/512px icons; root and deep-link entry points share the same manifest.
+- `editable-shortcuts`: the existing Keyboard shortcuts entry opens a searchable Command/Keybinding/When/Source editor with scoped overrides, conflict replacement, removal/reset and delivery limits for reserved browser keys or older native shells.
 
 - `user-defaults`: set, list, and remove defaults on this machine; cover empty
   config, invalid keys, legacy scalar harness settings, and custom config homes.

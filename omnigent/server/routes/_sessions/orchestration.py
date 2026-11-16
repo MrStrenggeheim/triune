@@ -381,6 +381,7 @@ from omnigent.server.schemas import (
     NativeModelOption,
     NativeUsageBaseline,
     OutputItemDoneEvent,
+    SessionActivity,
     SessionCreateInput,
     SessionCreateMetadata,
     SessionEventInput,
@@ -1188,6 +1189,7 @@ def _build_session_list_item(
     child_session_ids: list[str],
     comments_fingerprint: CommentsFingerprint | None,
     harness: str | None = None,
+    descendant_running: bool | None = None,
 ) -> SessionListItem:
     """
     Assemble one :class:`SessionListItem` from a conversation row and
@@ -1246,8 +1248,14 @@ def _build_session_list_item(
         agent_id=conv.agent_id,
         agent_name=agent_names_by_id.get(conv.agent_id),
         harness=harness,
+        activity=SessionActivity(
+            own_status=_session_status_from_cache(conv.id, conv.live_status),
+            descendant_running=descendant_running,
+        ),
         status=_list_status_with_starting(
-            _session_status_with_child_rollup(conv.id, child_session_ids, conv.live_status),
+            "running"
+            if descendant_running is True
+            else _session_status_with_child_rollup(conv.id, child_session_ids, conv.live_status),
             conv.id,
         ),
         created_at=conv.created_at,
@@ -2883,6 +2891,8 @@ async def _persist_external_codex_subagent_start(
     parent_conv: Conversation,
     body: SessionEventInput,
     conversation_store: ConversationStore,
+    *,
+    background_title_coordinator: BackgroundSessionTitleCoordinator | None = None,
 ) -> str:
     """
     Mint or update a child Conversation for a Codex AgentControl sub-agent.
@@ -2911,7 +2921,7 @@ async def _persist_external_codex_subagent_start(
             "create a codex-native sub-agent child",
             code=ErrorCode.INVALID_INPUT,
         )
-    from omnigent.native.child_metadata import short_task
+    from omnigent.native.child_metadata import meaningful_task_summary, short_task
 
     existing = await asyncio.to_thread(
         _find_codex_native_subagent_child, conversation_store, parent_id, thread_id
@@ -2920,12 +2930,27 @@ async def _persist_external_codex_subagent_start(
     task_name = body.data.get("task_name")
     if isinstance(task_name, str) and task_name.strip():
         labels["omnigent.codex_native.task_name"] = task_name
+        if existing is None:
+            labels["omnigent.subagent.card_summary"] = task_name
+        if existing is None or not existing.labels.get("omnigent.subagent.card_summary"):
+            labels["omnigent.subagent.card_summary"] = (
+                existing.task_summary
+                if existing is not None and existing.task_summary
+                else task_name
+            )
     prompt = body.data.get("prompt")
     task_input = prompt if isinstance(prompt, str) and prompt.strip() else None
     call_id = body.data.get("tool_call_id")
     if not isinstance(call_id, str) or not call_id:
         call_id = None
     if existing is not None:
+        original_summary = (
+            meaningful_task_summary(existing.labels.get("omnigent.subagent.card_summary"))
+            or meaningful_task_summary(existing.task_summary)
+            or meaningful_task_summary(existing.labels.get("omnigent.codex_native.task_name"))
+        )
+        if original_summary:
+            labels["omnigent.subagent.card_summary"] = original_summary
         current_call = existing.labels.get("omnigent.codex_native.collab_tool_call_id")
         if call_id and task_input and call_id != current_call:
             captured = delegation_message_item(
@@ -2961,6 +2986,16 @@ async def _persist_external_codex_subagent_start(
                     labels.pop(key, None)
             if call_id and current_call and call_id != current_call:
                 task_input = None
+        if background_title_coordinator is not None and not original_summary:
+            summary_input = existing.labels.get("omnigent.codex_native.prompt") or task_input
+            if summary_input and short_task(summary_input) is None:
+                background_title_coordinator.schedule_task_summary(
+                    session_id=existing.id,
+                    prompt=summary_input,
+                    agent_id=parent_conv.agent_id,
+                    harness_override="codex-native",
+                    sub_agent_name="Codex",
+                )
         await asyncio.to_thread(conversation_store.set_labels, existing.id, labels)
         await record_subagent_activity(
             existing.id,
@@ -2983,6 +3018,18 @@ async def _persist_external_codex_subagent_start(
             conversation_store.set_labels, child_id, {"omnigent.codex_native.prompt": prompt_label}
         )
     if task_input:
+        if (
+            background_title_coordinator is not None
+            and not task_name
+            and short_task(task_input) is None
+        ):
+            background_title_coordinator.schedule_task_summary(
+                session_id=child_id,
+                prompt=task_input,
+                agent_id=parent_conv.agent_id,
+                harness_override="codex-native",
+                sub_agent_name="Codex",
+            )
         await record_subagent_activity(
             child_id, "delegated", conversation_store, parent_id=parent_id, task_input=task_input
         )
@@ -12685,6 +12732,88 @@ def _create_session_from_bundle(
         inference_model=inference_model,
         created_by=created_by,
     )
+
+
+async def _schedule_missing_child_task_summaries(
+    children: list[Conversation],
+    store: ConversationStore,
+    coordinator: BackgroundSessionTitleCoordinator | None,
+    can_read: Callable[[str], Awaitable[bool]],
+) -> None:
+    """Fill cached display summaries from original assignments without waiting on a model."""
+    if coordinator is None:
+        return
+    from omnigent.native.child_metadata import meaningful_task_summary, short_task
+
+    missing = [
+        child
+        for child in children
+        if not child.labels.get("omnigent.subagent.card_summary_requested")
+        and not any(
+            meaningful_task_summary(value)
+            for value in (
+                child.task_summary,
+                child.labels.get("omnigent.subagent.card_summary"),
+                child.labels.get("omnigent.codex_native.task_name"),
+                child.labels.get("omnigent.claude_native.description"),
+                child.labels.get("omnigent.subagent.task_summary"),
+            )
+        )
+    ]
+    for child in missing[:8]:
+        if not await can_read(child.id):
+            continue
+        page = await asyncio.to_thread(
+            store.list_items, child.id, type="message", limit=100, order="asc"
+        )
+        prompt = next(
+            (
+                "\n".join(
+                    part.get("text", "")
+                    for part in item.data.content
+                    if part.get("type") == "input_text" and isinstance(part.get("text"), str)
+                )
+                for item in page.data
+                if isinstance(item.data, MessageData)
+                and item.data.role == "user"
+                and (
+                    not item.data.is_meta
+                    or (
+                        item.data.communication is not None
+                        and item.data.communication.kind in {"peer", "native_agent"}
+                        and item.data.communication.source_conversation_id
+                        == child.parent_conversation_id
+                    )
+                )
+            ),
+            "",
+        )
+        if not prompt:
+            prompt = (
+                child.labels.get("omnigent.subagent.task_input")
+                or child.labels.get("omnigent.codex_native.prompt")
+                or child.labels.get("omnigent.claude_native.prompt")
+                or child.task_summary
+                or child.labels.get("omnigent.subagent.card_summary")
+                or ""
+            )
+        if not prompt:
+            continue
+        summary = short_task(prompt)
+        if summary:
+            await asyncio.to_thread(store.set_task_summary, child.id, summary)
+        else:
+            labels = {"omnigent.subagent.card_summary_requested": "true"}
+            if child.task_summary:
+                labels["omnigent.subagent.legacy_task_summary"] = child.task_summary
+            await asyncio.to_thread(store.set_labels, child.id, labels)
+            await asyncio.to_thread(store.set_task_summary, child.id, "Delegated task")
+            coordinator.schedule_task_summary(
+                session_id=child.id,
+                prompt=prompt,
+                agent_id=child.agent_id,
+                sub_agent_name=child.sub_agent_name,
+            )
 
 
 async def _child_session_summaries_from_conversations(

@@ -14,13 +14,17 @@ export function OpenViewMenu({
   actions,
   children,
   onSelect,
+  open,
+  onOpenChange,
 }: {
   actions: WorkbenchOpenAction[];
   children: ReactElement;
   onSelect?: (action: WorkbenchOpenAction) => void;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }) {
   return (
-    <DropdownMenu>
+    <DropdownMenu open={open} onOpenChange={onOpenChange}>
       <DropdownMenuTrigger asChild>{children}</DropdownMenuTrigger>
       <DropdownMenuContent align="end">
         <DropdownMenuLabel>Open view</DropdownMenuLabel>

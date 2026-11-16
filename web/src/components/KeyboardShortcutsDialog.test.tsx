@@ -1,210 +1,100 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
 import {
   KeyboardShortcutsDialog,
   KeyboardShortcutsList,
   openKeyboardShortcuts,
 } from "./KeyboardShortcutsDialog";
-import { COMPOSER_SEND_SHORTCUT_STORAGE_KEY } from "@/lib/composerSendShortcutPreferences";
+import { readKeybindingOverrides, shortcutKeys } from "@/lib/keybindingPreferences";
+import { registerShortcutHandlers } from "@/lib/shortcutDispatcher";
 
-// The pinned-session row shows in both shells; only its chord differs (Alt in
-// the browser). Default the mock to browser (false); flip per-test for native.
-const isNativeShell = vi.fn(() => false);
-const isElectronShell = vi.fn(() => false);
-const supportsBrowser = vi.fn(() => false);
-const contentSearchEnabled = vi.fn(() => false);
-vi.mock("@/lib/CapabilitiesContext", () => ({
-  useServerInfo: () => ({ features: { workspace_content_search: contentSearchEnabled() } }),
-}));
-vi.mock("@/lib/nativeBridge", () => ({
-  isNativeShell: () => isNativeShell(),
-  isElectronShell: () => isElectronShell(),
-  supportsBrowser: () => supportsBrowser(),
-  // DialogContent (rendered here) reads isIOSShell to size modals for the iOS
-  // keyboard; this suite exercises the browser path, so it's always false.
-  isIOSShell: () => false,
-}));
-
-beforeEach(() => {
-  isNativeShell.mockReturnValue(false);
-  isElectronShell.mockReturnValue(false);
-  supportsBrowser.mockReturnValue(false);
-  contentSearchEnabled.mockReturnValue(false);
-  localStorage.clear();
-});
+beforeEach(() => localStorage.clear());
 afterEach(() => {
   cleanup();
-  localStorage.clear();
   vi.restoreAllMocks();
 });
-
-// jsdom's navigator is non-mac, so the modifier glyph renders as "Ctrl".
-function toggleViaHotkey() {
-  fireEvent.keyDown(window, { key: "/", ctrlKey: true });
+function changeNewView() {
+  fireEvent.click(
+    screen.getByRole("button", { name: "Change Add view to focused pane new-view:0" }),
+  );
 }
-
-function keysFor(label: string): string[] {
-  const row = screen.getByText(label).closest("li");
-  expect(row).toBeTruthy();
-  return Array.from(row!.querySelectorAll('[data-slot="kbd"]')).map((key) => key.textContent ?? "");
-}
-
-describe("KeyboardShortcutsList composer rows", () => {
-  it("shows Enter to send and Shift+Enter or Alt+Enter for a new line by default", () => {
-    render(<KeyboardShortcutsList />);
-
-    expect(keysFor("Send message")).toEqual(["↵"]);
-    expect(keysFor("New line in message")).toEqual(["⇧", "↵", "Alt", "↵"]);
-    expect(screen.getByText("New line in message").closest("li")).toHaveTextContent("⇧↵orAlt↵");
+describe("editable keyboard shortcuts", () => {
+  it("opens from the existing entry, searches the shared execution catalog and displays browser reservations", () => {
+    render(<KeyboardShortcutsDialog />);
+    expect(screen.queryByRole("table")).toBeNull();
+    act(() => openKeyboardShortcuts());
+    expect(screen.getByRole("columnheader", { name: "Command" })).toBeVisible();
+    expect(screen.getByRole("columnheader", { name: "Keybinding" })).toBeVisible();
+    expect(screen.getAllByText(/browser may reserve/i).length).toBeGreaterThan(0);
+    fireEvent.change(screen.getByPlaceholderText("Search commands, keys, conditions or source"), {
+      target: { value: "new-view" },
+    });
+    expect(screen.getByText("Add view to focused pane")).toBeVisible();
+    expect(screen.queryByText("Close focused view")).toBeNull();
   });
-
-  it("shows Ctrl+Enter to send and Enter for a new line in alternate mode", () => {
-    localStorage.setItem(COMPOSER_SEND_SHORTCUT_STORAGE_KEY, "true");
-    render(<KeyboardShortcutsList />);
-
-    expect(keysFor("Send message")).toEqual(["Ctrl", "↵"]);
-    expect(keysFor("New line in message")).toEqual(["↵"]);
+  it("keeps the existing toggle shortcut local to its own modal", () => {
+    render(<KeyboardShortcutsDialog />);
+    act(() => openKeyboardShortcuts());
+    const input = screen.getByRole("textbox", { name: "Search shortcuts" });
+    fireEvent.keyDown(input, { key: "/", ctrlKey: true });
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
-
-  it("does not advertise inactive composer chords on touch-primary devices", () => {
-    const matchMedia = window.matchMedia;
-    vi.spyOn(window, "matchMedia").mockImplementation((query) => ({
-      ...matchMedia(query),
-      matches: query.includes("pointer: coarse"),
-    }));
-    render(<KeyboardShortcutsList />);
-
-    expect(screen.queryByText("Send message")).toBeNull();
-    expect(screen.queryByText("New line in message")).toBeNull();
-  });
-});
-
-describe("KeyboardShortcutsList settings layout", () => {
-  it("groups shortcut rows into settings cards", () => {
+  it("supports manual alternatives, execution/display updates, remove and reset", () => {
+    const run = vi.fn();
+    const remove = registerShortcutHandlers({ "new-view": run });
     render(<KeyboardShortcutsList variant="settings" />);
-
-    const heading = screen.getByRole("heading", { name: "General" });
-    const list = heading.closest("section")?.querySelector("ul");
-    expect(heading).toHaveClass("text-ui", "text-foreground");
-    expect(list).toHaveClass("rounded-xl", "border-border", "bg-card");
+    changeNewView();
+    fireEvent.change(screen.getByLabelText("Manual key"), { target: { value: "q" } });
+    fireEvent.click(screen.getByLabelText("Alt"));
+    fireEvent.click(screen.getByRole("button", { name: /^Save$/ }));
+    // Unknown physical/logical overlap is never silently accepted.
+    if (screen.queryByRole("button", { name: "Replace conflicts" }))
+      fireEvent.click(screen.getByRole("button", { name: "Replace conflicts" }));
+    expect(shortcutKeys("new-view")).toEqual(["Ctrl", "Alt", "Q"]);
+    fireEvent.keyDown(document.body, { key: "q", ctrlKey: true, altKey: true });
+    expect(run).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "Remove new-view:0" }));
+    expect(shortcutKeys("new-view")).toEqual([]);
+    fireEvent.click(screen.getByRole("button", { name: "Reset new-view:0" }));
+    expect(shortcutKeys("new-view")).toEqual(["Ctrl", "T"]);
+    remove();
   });
-});
-
-describe("KeyboardShortcutsDialog", () => {
-  it("shows the workspace search shortcut only when the feature is enabled", () => {
-    const { rerender } = render(<KeyboardShortcutsList />);
-    expect(screen.queryByText("Search workspace contents")).toBeNull();
-    expect(keysFor("Select a workspace tab")).toContain("1…4");
-    contentSearchEnabled.mockReturnValue(true);
-    rerender(<KeyboardShortcutsList />);
-    expect(keysFor("Search workspace contents")).toEqual(["Ctrl", "⇧", "F"]);
-    expect(keysFor("Select a workspace tab")).toContain("1…5");
-  });
-
-  it("advertises the session-search chord without taking the Print shortcut", () => {
+  it("requires explicit conflict replacement and persists competing unbindings atomically", () => {
     render(<KeyboardShortcutsList />);
-    expect(keysFor("Find a session by name")).toEqual(["Ctrl", "Alt", "S"]);
+    changeNewView();
+    fireEvent.change(screen.getByLabelText("Manual key"), { target: { value: "w" } });
+    fireEvent.click(screen.getByRole("button", { name: /^Save$/ }));
+    expect(screen.getByRole("alert")).toHaveTextContent("Resolve");
+    expect(readKeybindingOverrides()).toEqual({});
+    fireEvent.click(screen.getByRole("button", { name: "Replace conflicts" }));
+    expect(readKeybindingOverrides()["close-view:0"]).toBeNull();
+    expect(shortcutKeys("new-view")).toEqual(["Ctrl", "W"]);
   });
-
-  it("keeps native new-session keys and updates the Settings reference", () => {
-    const { rerender } = render(<KeyboardShortcutsList variant="settings" />);
-    expect(keysFor("Start a new session")).toEqual(["Ctrl", "Shift", "O"]);
-    isNativeShell.mockReturnValue(true);
-    rerender(<KeyboardShortcutsList variant="settings" />);
-    expect(keysFor("Start a new session")).toEqual(["Ctrl", "Alt", "N"]);
+  it("records normalized logical keys and protects IME and zoom", () => {
+    render(<KeyboardShortcutsList />);
+    changeNewView();
+    fireEvent.click(screen.getByRole("button", { name: "Record shortcut" }));
+    fireEvent.keyDown(screen.getByLabelText("Record shortcut"), {
+      key: "Q",
+      code: "KeyA",
+      ctrlKey: true,
+      shiftKey: true,
+    });
+    expect(screen.getByLabelText("Manual key")).toHaveValue("q");
+    expect(screen.getByLabelText("Shift")).toBeChecked();
+    fireEvent.change(screen.getByLabelText("Manual key"), { target: { value: "+" } });
+    fireEvent.click(screen.getByRole("button", { name: /^Save$/ }));
+    expect(screen.getByRole("alert")).toHaveTextContent("Zoom keys");
   });
-
-  it("renders nothing until opened", () => {
-    render(<KeyboardShortcutsDialog />);
-    expect(screen.queryByText("Send message")).toBeNull();
-  });
-
-  it("opens on the modifier+/ hotkey and lists one shortcut from each group", () => {
-    render(<KeyboardShortcutsDialog />);
-    toggleViaHotkey();
-
-    expect(screen.getByText("Keyboard shortcuts")).toBeTruthy();
-    // General / In chats / Navigation / View / Slash commands — one each.
-    expect(screen.getByText("Start a new session")).toBeTruthy();
-    expect(keysFor("Start a new session")).toEqual(["Ctrl", "Shift", "O"]);
-    expect(screen.getByText("Open command palette")).toBeTruthy();
-    expect(keysFor("Open Settings")).toEqual(["Ctrl", "Alt", ","]);
-    expect(keysFor("Rename current session")).toEqual(["Ctrl", "Alt", "R"]);
-    expect(screen.getByText("Show keyboard shortcuts")).toBeTruthy();
-    expect(screen.getByText("Send message")).toBeTruthy();
-    expect(keysFor("Open model picker")).toEqual(["Ctrl", "⇧", "M"]);
-    expect(keysFor("Cycle permission mode (in session)")).toEqual(["⇧", "Tab"]);
-    expect(screen.getByText("Recall previous prompt")).toBeTruthy();
-    expect(screen.getByText("Previous session")).toBeTruthy();
-    expect(keysFor("Previous session")).toEqual(["Ctrl", "["]);
-    expect(keysFor("Next session")).toEqual(["Ctrl", "]"]);
-    expect(keysFor("Toggle Chat / Terminal view")).toEqual(["Ctrl", "Alt", "\\"]);
-    expect(screen.getByText("Toggle conversations sidebar")).toBeTruthy();
-    expect(screen.getByText("Focus or close workspace sidebar")).toBeTruthy();
-    expect(screen.queryByText("Open a new browser tab")).toBeNull();
-    expect(screen.getByText("Open a new shell")).toBeTruthy();
-    const workspaceTabRow = screen.getByText("Select a workspace tab").closest("li");
-    expect(keysFor("Select a workspace tab")).toEqual(["Ctrl", "Alt", "]", "1…4"]);
-    expect(workspaceTabRow?.textContent?.match(/\+/g)).toHaveLength(1);
-    expect(screen.getByText("Navigate suggestions")).toBeTruthy();
-  });
-
-  it("shows the Browser shortcut only when the desktop bridge supports it", () => {
-    const { rerender } = render(<KeyboardShortcutsList />);
-    expect(screen.queryByText("Open a new browser tab")).toBeNull();
-
-    supportsBrowser.mockReturnValue(true);
-    rerender(<KeyboardShortcutsList />);
-    expect(keysFor("Open a new browser tab")).toEqual(["Ctrl", "Alt", "B"]);
-  });
-
-  it("toggles closed on a second hotkey press", async () => {
-    render(<KeyboardShortcutsDialog />);
-    toggleViaHotkey();
-    expect(screen.getByText("Send message")).toBeTruthy();
-
-    toggleViaHotkey();
-    await waitFor(() => expect(screen.queryByText("Send message")).toBeNull());
-  });
-
-  it("opens when openKeyboardShortcuts() is dispatched (menu entry path)", async () => {
-    render(<KeyboardShortcutsDialog />);
-    openKeyboardShortcuts();
-    // The event dispatch isn't wrapped in act(), so wait for the re-render.
-    expect(await screen.findByText("Send message")).toBeTruthy();
-  });
-
-  it("shows the pinned-session shortcut with the Alt chord in a plain browser", () => {
-    render(<KeyboardShortcutsDialog />);
-    toggleViaHotkey();
-    const row = screen.getByText("Jump to pinned session (1–10)").closest("li");
-    expect(row).toBeTruthy();
-    // Browser chord adds Alt (jsdom navigator is non-mac → "Alt") + the 1…0 chip.
-    expect(within(row!).getByText("Alt")).toBeTruthy();
-    expect(within(row!).getByText("1…0")).toBeTruthy();
-  });
-
-  it("shows the pinned-session shortcut without Alt in the Electron shell", () => {
-    isNativeShell.mockReturnValue(true);
-    render(<KeyboardShortcutsDialog />);
-    toggleViaHotkey();
-    const row = screen.getByText("Jump to pinned session (1–10)").closest("li");
-    expect(row).toBeTruthy();
-    expect(within(row!).queryByText("Alt")).toBeNull();
-    expect(within(row!).getByText("1…0")).toBeTruthy();
-  });
-
-  it("shows the recent-session switcher only in Electron", () => {
-    const { rerender } = render(<KeyboardShortcutsList />);
-    expect(screen.queryByText("Switch recent sessions")).toBeNull();
-
-    isNativeShell.mockReturnValue(true);
-    isElectronShell.mockReturnValue(true);
-    rerender(<KeyboardShortcutsList />);
-    expect(keysFor("Switch recent sessions")).toEqual(["Ctrl", "Tab"]);
-    expect(
-      screen.getByRole("heading", { name: "Navigation" }).closest("section")?.querySelector("li"),
-    ).toHaveTextContent("Switch recent sessions");
+  it("keeps mapping active when storage fails", () => {
+    render(<KeyboardShortcutsList />);
+    changeNewView();
+    fireEvent.change(screen.getByLabelText("Manual key"), { target: { value: "n" } });
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("quota");
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Replace conflicts" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("previous mappings are still active");
+    expect(shortcutKeys("new-view")).toEqual(["Ctrl", "T"]);
   });
 });

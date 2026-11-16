@@ -40,22 +40,17 @@ import {
   useMessageSearchIdentity,
   useMessageSearchNotice,
 } from "@/hooks/useMessageSearch";
-import { useContextSearch } from "./ContextSearchContext";
-import {
-  SharedSearchResultRow,
-  MessageSearchFilterControl,
-  SearchExcerpt,
-} from "./SharedSearchResultRow";
-import { SegmentedControl, SegmentedControlItem } from "@/components/ui/segmented-control";
+import { SharedSearchResultRow, SearchExcerpt } from "./SharedSearchResultRow";
 import {
   occurrenceTarget,
   searchHitKey,
   searchResults,
   type MessageSearchFilter,
-  type ContextSearchScope,
   type ContextSearchTarget,
   type MessageSearchHit,
 } from "./contextSearch/types";
+
+import { useContextSearch } from "./ContextSearchContext";
 
 export type { CommandPaletteFileTarget } from "@/workbench/paletteCommands";
 
@@ -150,13 +145,9 @@ export function CommandPalette({
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const contextSearch = useContextSearch();
   const identity = useMessageSearchIdentity();
-  const [localMessageFilter, setLocalMessageFilter] = useState<MessageSearchFilter>("all");
-  const [localScope, setLocalScope] = useState<ContextSearchScope>("all");
-  const messageFilter = contextSearch?.messageFilter ?? localMessageFilter;
-  const setMessageFilter = contextSearch?.setMessageFilter ?? setLocalMessageFilter;
-  const scope = contextSearch?.scope ?? localScope;
-  const setScope = contextSearch?.setScope ?? setLocalScope;
-  const sessionId = scope === "current" ? contextSearch?.activeSessionId : undefined;
+  const messageFilter: MessageSearchFilter = "all";
+  const scope = "all";
+  const sessionId = undefined;
   const [pageLimit, setPageLimit] = useState(SESSION_SEARCH_PAGE_BATCH);
   const [anchor, setAnchor] = useState<{ top: number; left: number; width: number } | null>(null);
   useLayoutEffect(() => {
@@ -576,32 +567,6 @@ export function CommandPalette({
               placeholder={placeholder}
               data-testid="command-palette-input"
             />
-          )}
-          {!sessionsOnly && (
-            <div className="flex flex-wrap items-center justify-between gap-2 px-2 py-2">
-              <SegmentedControl
-                aria-label="Search scope"
-                className="h-auto min-h-6 max-w-full flex-wrap"
-              >
-                {(
-                  [
-                    ["current", "Current chat"],
-                    ["all", "All chats"],
-                  ] as const
-                ).map(([value, label]) => (
-                  <SegmentedControlItem
-                    key={value}
-                    label={label}
-                    active={scope === value}
-                    disabled={value === "current" && !contextSearch?.activeSessionId}
-                    onClick={() => setScope(value)}
-                  >
-                    {label}
-                  </SegmentedControlItem>
-                ))}
-              </SegmentedControl>
-              <MessageSearchFilterControl value={messageFilter} onChange={setMessageFilter} />
-            </div>
           )}
           <CommandList
             data-scrollbar="hidden"

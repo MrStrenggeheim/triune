@@ -56,6 +56,7 @@ export function SubagentTaskStatus({ status, label }: { status: AgentStatus; lab
 }
 
 export function SubagentTaskRow({
+  searchItemIds,
   agentName,
   description,
   status,
@@ -63,6 +64,7 @@ export function SubagentTaskRow({
   preview,
   children,
 }: {
+  searchItemIds?: readonly string[];
   agentName: string;
   description: string;
   status: AgentStatus;
@@ -73,6 +75,7 @@ export function SubagentTaskRow({
   const label = formatSubagentTask(description);
   return (
     <ActivityRow
+      searchItemIds={searchItemIds}
       presentation="message"
       icon={<BotIcon aria-hidden="true" className="size-3.5" />}
       title={

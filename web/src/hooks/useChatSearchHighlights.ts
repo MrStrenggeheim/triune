@@ -1,6 +1,7 @@
 // Modified for Triune.
 import { useConversationChatStore } from "@/workbench/ScopedChatStore";
 import { useContext, useEffect, useRef, useState } from "react";
+import { claimTranscriptScrollOwner } from "@/hooks/useTranscriptDisclosureAnchor";
 import { releaseConversationScrollLock } from "@/components/ai-elements/conversation";
 import type { Bubble } from "@/lib/renderItems";
 import { findMessageElement } from "@/lib/messageDeepLink";
@@ -79,6 +80,27 @@ function validSource(source: SearchSource, target: ContextSearchTarget): boolean
     target.range.end <= target.sourceText.length &&
     source.text.slice(from, from + target.sourceText.length) === target.sourceText
   );
+}
+
+/** Viewport scrolling is allowed; only an ancestor clipping the match needs disclosure. */
+function isRangeHidden(range: Range, scroller: Element): boolean {
+  const bounds = range.getBoundingClientRect();
+  for (
+    let element = range.startContainer.parentElement;
+    element && element !== scroller;
+    element = element.parentElement
+  ) {
+    if (element.hidden || getComputedStyle(element).display === "none") return true;
+    const style = getComputedStyle(element);
+    if (!["hidden", "clip"].includes(style.overflowY)) continue;
+    const clip = element.getBoundingClientRect();
+    if (
+      clip.height > 0 &&
+      (bounds.top < clip.top - 1 || bounds.top + bounds.height > clip.top + clip.height + 1)
+    )
+      return true;
+  }
+  return false;
 }
 
 /** A refresh paints only; each explicit activation owns one cancellable reveal. */
@@ -171,7 +193,9 @@ export function useChatSearchHighlights(options: ChatSearchHighlightOptions): vo
         wake = resolve;
         timer = window.setTimeout(resolve, 32);
       });
+    let releaseScrollOwner = () => {};
     const cancel = () => {
+      releaseScrollOwner();
       cancelled = true;
       completed.current = key;
       clearTimeout(timer);
@@ -196,11 +220,13 @@ export function useChatSearchHighlights(options: ChatSearchHighlightOptions): vo
       scroller.addEventListener(event, interrupt, { passive: true });
     }
     scroller.ownerDocument.addEventListener("keydown", interrupt);
+    releaseScrollOwner = claimTranscriptScrollOwner(scroller);
     releaseConversationScrollLock(scroller);
     // Stop a deep-link's already-started native smooth scroll as search takes ownership.
     scrollElement?.scrollTo?.({ top: scrollElement.scrollTop, behavior: "instant" });
     const notify = (message: string, retryHistory = false) => {
       if (cancelled) return;
+      releaseScrollOwner();
       completed.current = key;
       cancelled = true;
       toast.error(message, {
@@ -240,8 +266,6 @@ export function useChatSearchHighlights(options: ChatSearchHighlightOptions): vo
       let signature = "";
       let stableSince = performance.now();
       let correctionDeadline: number | undefined;
-      let alignedSignature = "";
-      let corrections = 0;
       for (let poll = 0; poll < 1000; poll++) {
         if (cancelled) return;
         const current = latest.current.options;
@@ -293,9 +317,17 @@ export function useChatSearchHighlights(options: ChatSearchHighlightOptions): vo
           return;
         }
         renderDeadline ??= performance.now() + RENDER_BUDGET_MS;
-        if (performance.now() >= (correctionDeadline ?? renderDeadline)) return;
+        if (performance.now() >= (correctionDeadline ?? renderDeadline)) {
+          notify("Couldn’t finish positioning this match. Retry when its layout settles.");
+          return;
+        }
         const revealState = latest.current.reveal;
-        if (revealState && !revealed) {
+        const existingRange = sourceRange(current);
+        if (
+          revealState &&
+          !revealed &&
+          (!existingRange || isRangeHidden(existingRange, scroller))
+        ) {
           revealed = true;
           revealState.reveal(source.itemId);
           await pause();
@@ -312,13 +344,15 @@ export function useChatSearchHighlights(options: ChatSearchHighlightOptions): vo
             lastMountAt = performance.now();
             current.ensureMessageVisible(source.rowId);
           }
-        } else {
+        } else if (!existingRange || isRangeHidden(existingRange, scroller)) {
           // Compatibility for bubble owners without the reveal context.
           const expand = Array.from(row.querySelectorAll("button")).find((button) =>
             button.textContent?.startsWith("Show full prompt ("),
           );
           if (expand) {
+            expand.dataset.searchRevealing = "";
             expand.click();
+            delete expand.dataset.searchRevealing;
             await pause();
             continue;
           }
@@ -337,54 +371,59 @@ export function useChatSearchHighlights(options: ChatSearchHighlightOptions): vo
         if (!range) {
           // Closed/unmounted content remains render-pending. A future activation
           // can retry; it never creates an unavailable verdict for a valid item.
-          if (performance.now() >= renderDeadline) return;
           await pause();
           continue;
         }
         const bounds = range.getBoundingClientRect();
         const viewport = scrollElement?.getBoundingClientRect();
         if (bounds.height <= 0 || (viewport && viewport.height <= 0)) {
-          if (performance.now() >= renderDeadline) return;
           await pause();
           continue;
         }
-        const measured = JSON.stringify([
-          bounds.top - (viewport?.top ?? 0) + (scrollElement?.scrollTop ?? 0),
-          bounds.height,
-          viewport?.height,
-          scrollElement?.scrollHeight,
-        ]);
+        const contentTop = bounds.top - (viewport?.top ?? 0) + (scrollElement?.scrollTop ?? 0);
+        const destination =
+          scrollElement && viewport
+            ? Math.max(
+                0,
+                Math.min(
+                  contentTop - (viewport.height - bounds.height) / 2,
+                  Math.max(0, scrollElement.scrollHeight - viewport.height),
+                ),
+              )
+            : 0;
+        const measured = JSON.stringify([contentTop, bounds.height, viewport?.height, destination]);
         const now = performance.now();
         if (measured !== signature) {
           signature = measured;
           stableSince = now;
         }
-        if (now - stableSince >= SETTLE_MS && alignedSignature !== signature) {
-          if (scrollElement && viewport) {
-            const delta = bounds.top - viewport.top - (viewport.height - bounds.height) / 2;
-            if (Math.abs(delta) > 1) scrollElement.scrollBy({ top: delta, behavior: "auto" });
+        if (now - stableSince >= SETTLE_MS) {
+          const residual = destination - (scrollElement?.scrollTop ?? 0);
+          const visible =
+            !viewport ||
+            (bounds.top >= viewport.top - 1 &&
+              bounds.top + Math.min(bounds.height, viewport.height) <=
+                viewport.top + viewport.height + 1);
+          if (Math.abs(residual) <= 1 && visible && !isRangeHidden(range, scroller)) {
+            releaseScrollOwner();
+            completed.current = key;
+            latest.current.options.onResolved?.({ target, status: "resolved" });
+            return;
           }
-          alignedSignature = signature;
-          corrections += 1;
+          if (scrollElement && Math.abs(residual) > 1)
+            scrollElement.scrollBy({ top: residual, behavior: "auto" });
           correctionDeadline ??= now + CORRECTION_BUDGET_MS;
           stableSince = now;
         }
-        if (
-          correctionDeadline &&
-          (now - stableSince >= SETTLE_MS || now >= correctionDeadline || corrections >= 3)
-        ) {
-          completed.current = key;
-          latest.current.options.onResolved?.({ target, status: "resolved" });
-          return;
-        }
-        if (!correctionDeadline && now >= renderDeadline) return;
         await pause();
       }
+      notify("Couldn’t finish positioning this match. Retry when its layout settles.");
     };
     /* oxlint-enable no-await-in-loop */
     void run();
     return () => {
       disposed = true;
+      releaseScrollOwner();
       cancelled = true;
       clearTimeout(timer);
       wake?.();

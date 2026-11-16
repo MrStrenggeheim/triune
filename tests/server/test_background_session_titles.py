@@ -6,6 +6,7 @@ import uuid
 
 import pytest
 
+from omnigent.db.db_models import current_workspace_id, workspace_scope
 from omnigent.runner.background_titles.service import FOLLOW_USER_LANGUAGE_TITLE_INSTRUCTION
 from omnigent.server.background_session_titles import (
     BACKGROUND_SESSION_TITLES_HEADER,
@@ -591,6 +592,128 @@ async def test_schedule_is_one_shot_per_session(db_uri: str) -> None:
 
     assert calls == 1
     assert store.get_conversation(session_id).title == "Debug authentication timeout"
+
+
+@pytest.mark.parametrize(
+    "outcome",
+    [RuntimeError("failed"), TimeoutError("timed out"), None, " ", "x", "x" * 200],
+    ids=["failure", "timeout", "none", "blank", "short", "oversized"],
+)
+async def test_task_summary_does_not_retry_failed_or_invalid_output(
+    db_uri: str, outcome: Exception | str | None
+) -> None:
+    store = SqlAlchemyConversationStore(db_uri)
+    session_id = _seed_session(store, "Child")
+    store.set_task_summary(session_id, "Delegated task")
+    calls = 0
+
+    async def generator(_request: BackgroundTitleRequest) -> str | None:
+        nonlocal calls
+        calls += 1
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    coordinator = BackgroundSessionTitleCoordinator(store, generator)
+    for _ in range(3):
+        for _ in range(2):
+            coordinator.schedule_task_summary(session_id=session_id, prompt="Original task")
+        await coordinator.wait_for_idle()
+
+    assert calls == 1
+    assert store.get_conversation(session_id).task_summary == "Delegated task"
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["prompt", "session_id", "agent_id", "harness_override", "model_override", "sub_agent_name"],
+)
+async def test_task_summary_retries_changed_input(db_uri: str, field: str) -> None:
+    store = SqlAlchemyConversationStore(db_uri)
+    calls: list[BackgroundTitleRequest] = []
+
+    async def generator(request: BackgroundTitleRequest) -> None:
+        calls.append(request)
+
+    coordinator = BackgroundSessionTitleCoordinator(store, generator)
+    original = {"session_id": "child", "prompt": "Original task"}
+    changed = {**original, field: "changed"}
+    for inputs in (original, changed, original, changed):
+        coordinator.schedule_task_summary(**inputs)
+        await coordinator.wait_for_idle()
+
+    assert calls == [BackgroundTitleRequest(**original), BackgroundTitleRequest(**changed)]
+
+
+async def test_task_summary_attempts_and_inflight_work_are_workspace_scoped(db_uri: str) -> None:
+    store = SqlAlchemyConversationStore(db_uri)
+    release = asyncio.Event()
+    calls: list[tuple[int, BackgroundTitleRequest]] = []
+
+    async def generator(request: BackgroundTitleRequest) -> None:
+        calls.append((current_workspace_id(), request))
+        await release.wait()
+
+    coordinator = BackgroundSessionTitleCoordinator(store, generator)
+    for workspace_id in (11, 22):
+        with workspace_scope(workspace_id):
+            coordinator.schedule_task_summary(session_id="same-child", prompt="Same original task")
+            coordinator.schedule_task_summary(session_id="same-child", prompt="Same original task")
+    assert len(coordinator._pending) == 2
+    assert calls == []
+
+    release.set()
+    await coordinator.wait_for_idle()
+    for workspace_id in (11, 22):
+        with workspace_scope(workspace_id):
+            coordinator.schedule_task_summary(session_id="same-child", prompt="Same original task")
+            await coordinator.wait_for_idle()
+
+    request = BackgroundTitleRequest(session_id="same-child", prompt="Same original task")
+    assert sorted(calls, key=lambda call: call[0]) == [(11, request), (22, request)]
+
+
+async def test_task_summary_attempt_cache_is_bounded(
+    db_uri: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "omnigent.server.background_session_titles._TASK_SUMMARY_ATTEMPT_CACHE_SIZE", 2
+    )
+    store = SqlAlchemyConversationStore(db_uri)
+    calls: list[str] = []
+
+    async def generator(request: BackgroundTitleRequest) -> None:
+        calls.append(request.prompt)
+
+    coordinator = BackgroundSessionTitleCoordinator(store, generator)
+    for prompt in ("first", "second", "first", "third", "first", "second"):
+        coordinator.schedule_task_summary(session_id="child", prompt=prompt)
+        await coordinator.wait_for_idle()
+        assert len(coordinator._task_summary_attempts) <= 2
+
+    assert calls == ["first", "second", "third", "second"]
+
+
+async def test_task_summary_success_remains_nonblocking(db_uri: str) -> None:
+    store = SqlAlchemyConversationStore(db_uri)
+    session_id = _seed_session(store, "Child")
+    store.set_task_summary(session_id, "Delegated task")
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def generator(_request: BackgroundTitleRequest) -> str:
+        started.set()
+        await release.wait()
+        return '  "Review authentication."  '
+
+    coordinator = BackgroundSessionTitleCoordinator(store, generator)
+    coordinator.schedule_task_summary(session_id=session_id, prompt="Original task")
+    await asyncio.wait_for(started.wait(), timeout=1)
+    assert store.get_conversation(session_id).task_summary == "Delegated task"
+
+    release.set()
+    await coordinator.wait_for_idle()
+    assert store.get_conversation(session_id).task_summary == "Review authentication"
 
 
 async def test_generation_concurrency_is_bounded(db_uri: str) -> None:

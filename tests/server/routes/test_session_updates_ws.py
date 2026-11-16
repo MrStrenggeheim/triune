@@ -905,3 +905,68 @@ def test_projects_changed_event_forwards_to_client(
         sessions_routes.user_session_stream.publish(ALICE, {"type": "projects_changed"})
         frame = _recv_until(ws, {"projects_changed"})
         assert frame["type"] == "projects_changed"
+
+
+def test_deep_branch_activity_uses_authorized_persisted_status_in_lists_and_updates(
+    app: FastAPI, stores, fast_rescan: None
+) -> None:
+    store, _, permissions = stores
+    parent = _seed_session(stores, owner=ALICE, title="parent")
+    child = store.create_conversation(
+        kind="sub_agent",
+        parent_conversation_id=parent,
+        agent_id="087b7cb7ac30abf4debfaa578d052ec6",
+    )
+    branch = store.fork_conversation(child.id)
+    permissions.grant(ALICE, branch.id, LEVEL_OWNER)
+    nested = branch
+    for _ in range(4):
+        nested = store.create_conversation(
+            kind="sub_agent",
+            parent_conversation_id=nested.id,
+            agent_id="087b7cb7ac30abf4debfaa578d052ec6",
+        )
+    store.set_session_live_status(nested.id, "waiting")
+    with TestClient(app) as client:
+        response = client.get("/v1/sessions", headers={"X-Forwarded-Email": ALICE})
+        assert response.status_code == 200
+        root = next(row for row in response.json()["data"] if row["id"] == parent)
+        assert root["activity"] == {"own_status": "idle", "descendant_running": True}
+        assert root["status"] == "running"
+        with client.websocket_connect(
+            "/v1/sessions/updates", headers={"X-Forwarded-Email": ALICE}
+        ) as ws:
+            ws.send_text(json.dumps({"type": "watch", "session_ids": [parent]}))
+            snapshot = _recv_until(ws, {"snapshot"})["items"][0]
+            assert snapshot["activity"] == root["activity"]
+            store.set_session_live_status(nested.id, "idle")
+            changed = _recv_until(ws, {"changed"})["items"][0]
+            assert changed["activity"] == {"own_status": "idle", "descendant_running": False}
+            assert changed["status"] == "idle"
+            # A revoked branch prunes the entire path, including running descendants.
+            permissions.revoke(ALICE, branch.id)
+            store.set_session_live_status(nested.id, "running")
+            ws.send_text(json.dumps({"type": "watch", "session_ids": [parent]}))
+            pruned = _recv_until(ws, {"snapshot"})["items"][0]
+            assert pruned["activity"]["descendant_running"] is False
+            assert "descendant_ids" not in pruned["activity"]
+
+
+def test_unknown_descendant_coverage_stays_null_in_list_and_ws(
+    app: FastAPI, stores, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session_id = _seed_session(stores, owner=ALICE, title="parent")
+
+    def incomplete(parents: list[str], *, limit: int):
+        assert limit > 0
+        return {parent: [] for parent in parents}, False
+
+    monkeypatch.setattr(stores[0], "list_activity_child_ids", incomplete)
+    with TestClient(app) as client:
+        row = client.get("/v1/sessions", headers={"X-Forwarded-Email": ALICE}).json()["data"][0]
+        assert row["activity"] == {"own_status": "idle", "descendant_running": None}
+        with client.websocket_connect(
+            "/v1/sessions/updates", headers={"X-Forwarded-Email": ALICE}
+        ) as ws:
+            ws.send_text(json.dumps({"type": "watch", "session_ids": [session_id]}))
+            assert _recv_until(ws, {"snapshot"})["items"][0]["activity"] == row["activity"]

@@ -24,7 +24,7 @@ it("creates a durable branch at the captured item without any send or wake", asy
     await createQuoteSubchat({ conversationId: "source", boundaryId: "captured", text: "quote" }),
   ).toBe("child");
   expect(forkSession).toHaveBeenCalledExactlyOnceWith("source", {
-    title: "Subchat",
+    durableSubchat: true,
     upToItemId: "captured",
   });
   await expect(
@@ -49,7 +49,7 @@ it("initializes an Ask subchat on the source host and retries the same durable c
   await expect(createQuoteSubchat(source)).rejects.toThrow("quote-child");
   await expect(createQuoteSubchat({ ...source })).resolves.toBe("quote-child");
   expect(forkSession).toHaveBeenCalledExactlyOnceWith("host-quote", {
-    title: "Subchat",
+    durableSubchat: true,
     upToItemId: "captured",
   });
   expect(launchRunner).toHaveBeenNthCalledWith(2, "host", "quote-child", "/repo");

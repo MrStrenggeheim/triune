@@ -1,4 +1,6 @@
 // Modified for Triune.
+import { useMediaBatch, mediaPreviewSize } from "./MediaBatch";
+import { parseSessionFileSource } from "@/lib/remoteImagePolicy";
 import { normalizeAttachmentContent, type ChatAttachmentContent } from "@/lib/chatAttachments";
 import {
   createContext,
@@ -218,11 +220,13 @@ export function InlineFileReference({
   filename = path.split(/[\\/]/).at(-1) || "Attachment",
   mimeType,
   className,
+  contextRelative = false,
   ...props
 }: ComponentPropsWithoutRef<"button"> & {
   path: string;
   filename?: string;
   mimeType?: string;
+  contextRelative?: boolean;
 }) {
   return (
     <Tooltip>
@@ -232,6 +236,7 @@ export function InlineFileReference({
           type="button"
           className={cn(
             "not-prose inline-flex max-w-full items-baseline gap-1.5 rounded-md border border-border/60 bg-muted/70 px-1.5 py-0.5 align-baseline text-sm leading-none text-link hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
+            contextRelative && "text-[1em]",
             className,
           )}
         >
@@ -241,6 +246,17 @@ export function InlineFileReference({
       </TooltipTrigger>
       <TooltipContent className="break-all">{path}</TooltipContent>
     </Tooltip>
+  );
+}
+
+/** The same context-relative sizing as ordinary Streamdown inline code. */
+export function InlinePathCode({ className, ...props }: ComponentPropsWithoutRef<"code">) {
+  return (
+    <code
+      {...props}
+      data-streamdown="inline-code"
+      className={cn("rounded bg-muted px-1.5 py-0.5 font-mono text-[0.875em]", className)}
+    />
   );
 }
 
@@ -268,20 +284,17 @@ function useAttachmentResource(
   const attachment = normalizeAttachmentContent(rawAttachment);
   const filenameHint =
     attachment?.filename ?? requestedFilename ?? reference?.split(/[\\/]/).at(-1) ?? "Attachment";
-  const storedReference = reference?.match(
-    /^\/v1\/sessions\/([^/]+)\/resources\/files\/([^/]+)\/content$/,
-  );
+  const storedReference = reference ? parseSessionFileSource(reference) : null;
+  const foreignReference = !!storedReference && storedReference.sessionId !== sessionId;
   const fileId =
     attachment?.file_id ??
-    (storedReference && decodeURIComponent(storedReference[1]) === sessionId
-      ? decodeURIComponent(storedReference[2])
-      : undefined);
+    (storedReference && !foreignReference ? storedReference.fileId : undefined);
   const base = `/v1/sessions/${encodeURIComponent(sessionId ?? "")}`;
   const url = fileId?.startsWith("pending:")
     ? undefined
     : fileId
       ? `${base}/resources/files/${encodeURIComponent(fileId)}/content`
-      : reference && itemId
+      : reference && itemId && !storedReference
         ? `${base}/attachments/references/${encodeURIComponent(itemId)}?${new URLSearchParams({ path: reference })}`
         : undefined;
   const inline = attachment?.image_url ?? attachment?.file_data;
@@ -304,11 +317,12 @@ function useAttachmentResource(
   const filename = (metadata.data?.name ?? filenameHint).split(/[\\/]/).at(-1) || "Attachment";
   const image =
     /\.(png|jpe?g|gif|webp|avif|svg|bmp|ico)$/i.test(filename) || inline?.startsWith("data:image/");
+  const video = /\.(mp4|webm|mov|m4v|ogv)$/i.test(filename) || inline?.startsWith("data:video/");
   const content = useQuery({
     queryKey: ["chat-attachment-bytes", sessionId, fileId ?? itemId, reference, inline],
     enabled:
       ((!!url && !!sessionId) || !!inline?.startsWith("data:")) &&
-      ((loadImages && image) || preview || eager),
+      ((loadImages && (image || video)) || preview || eager),
     retry: false,
     gcTime: 30_000,
     staleTime: Infinity,
@@ -367,6 +381,7 @@ function useAttachmentResource(
     storedReference,
     available,
     image,
+    video,
     metadata,
     content,
     blobUrl,
@@ -396,10 +411,12 @@ export function ChatAttachment({
   /** Implicit prose stays unchanged until its captured reference resolves to a file. */
   unresolvedFallback?: ReactNode;
 }) {
+  const batched = useMediaBatch();
+  const [videoSize, setVideoSize] = useState<{ src: string; width: number; height: number }>();
   const [open, setOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [failedImage, setFailedImage] = useState<string>();
-  const storedReference = reference?.startsWith("/v1/sessions/");
+  const storedReference = reference ? parseSessionFileSource(reference) : null;
   const liveReference =
     compact &&
     !!reference &&
@@ -426,6 +443,7 @@ export function ChatAttachment({
     fileId,
     available,
     image,
+    video,
     metadata,
     content,
     blobUrl,
@@ -435,6 +453,10 @@ export function ChatAttachment({
     size,
   } = resource;
   const preview = useImagePreviewSize(blobUrl);
+  const stage = mediaPreviewSize(
+    video && videoSize?.src === blobUrl ? videoSize : preview.size,
+    batched,
+  );
   const request: AttachmentPreviewRequest = {
     sessionId: sessionId ?? "",
     attachment,
@@ -478,11 +500,7 @@ export function ChatAttachment({
     }
   }, [compact, error, open, menuOpen, filename]);
   if (liveReference && location.data?.kind !== "file" && location.data?.kind !== "captured")
-    return (
-      unresolvedFallback ?? (
-        <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-ui">{reference}</code>
-      )
-    );
+    return unresolvedFallback ?? <InlinePathCode>{reference}</InlinePathCode>;
   if (unresolvedFallback !== undefined && !location.data && !content.data)
     return unresolvedFallback;
   return (
@@ -492,17 +510,24 @@ export function ChatAttachment({
           className={
             compact
               ? "not-prose inline"
-              : "not-prose @container/attachment my-2 flex w-[640px] min-w-[min(100%,12rem)] max-w-[min(100%,640px)] flex-col gap-2 rounded-lg border border-border bg-background p-3"
+              : cn(
+                  "not-prose @container/attachment my-2 flex w-[640px] min-w-[min(100%,12rem)] max-w-full flex-col rounded-lg border border-border bg-background",
+                  // Two 24px controls + 2px gap + 24px padding + 2px border need 76px.
+                  batched && "my-0 min-w-[76px] shrink-0 max-w-none",
+                )
           }
           style={
-            !compact && image && failedImage !== blobUrl && preview.size
-              ? { width: `calc(${preview.size.width}px + 1.5rem + 2px)` }
+            !compact && (image || video) && failedImage !== blobUrl && stage
+              ? { width: `calc(${stage.width}px + 2px)` }
               : undefined
           }
           data-testid="chat-attachment"
         >
           {!compact && image && blobUrl && failedImage !== blobUrl && (
-            <span className="flex min-w-0 max-w-full justify-center">
+            <span
+              className="flex min-w-0 max-w-full items-center justify-center overflow-hidden rounded-t-lg"
+              style={{ height: batched ? 256 : undefined }}
+            >
               <ZoomableImage
                 src={blobUrl}
                 alt={filename}
@@ -513,22 +538,54 @@ export function ChatAttachment({
                 }
                 galleryItemId={itemId}
                 gallerySessionId={sessionId}
-                className="block h-auto max-h-64 max-w-full rounded object-contain"
+                className="block h-auto max-h-64 max-w-full object-contain"
                 style={{ width: preview.size?.width }}
                 onLoad={preview.onLoad}
                 onError={() => setFailedImage(blobUrl)}
               />
             </span>
           )}
+          {!compact && video && blobUrl && (
+            <span
+              className="flex items-center justify-center overflow-hidden rounded-t-lg"
+              style={{ height: batched ? 256 : undefined }}
+            >
+              <video
+                src={blobUrl}
+                controls
+                preload="metadata"
+                aria-label={filename}
+                className="block h-auto max-h-64 max-w-full object-contain"
+                onLoadedMetadata={(event) => {
+                  const { videoWidth, videoHeight } = event.currentTarget;
+                  if (videoWidth > 0 && videoHeight > 0) {
+                    const scale = Math.min(1, 256 / videoHeight);
+                    setVideoSize({
+                      src: blobUrl,
+                      width: videoWidth * scale,
+                      height: videoHeight * scale,
+                    });
+                  }
+                }}
+                onError={() => toast.error("Video playback unavailable. Download the original.")}
+              />
+            </span>
+          )}
           {compact ? (
             <InlineFileReference
+              contextRelative
               path={reference ?? filenameHint}
               filename={filename}
               mimeType={metadata.data?.metadata.content_type}
               onClick={openPreview}
             />
           ) : (
-            <span className="flex min-w-0 items-center gap-2">
+            <span
+              className={cn(
+                "flex min-w-0 items-center gap-2 rounded-b-lg p-3",
+                batched && "flex-wrap",
+              )}
+            >
               <span className="flex h-9 w-8 shrink-0 items-center justify-center rounded-md bg-muted">
                 <WorkspaceFileIcon
                   path={filename}
@@ -536,7 +593,12 @@ export function ChatAttachment({
                   className="size-5"
                 />
               </span>
-              <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1 self-center">
+              <span
+                className={cn(
+                  "flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1 self-center",
+                  batched && "basis-32",
+                )}
+              >
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <TooltipButton
@@ -553,6 +615,7 @@ export function ChatAttachment({
                   className={cn(
                     "flex min-w-0 items-center gap-2 text-xs text-muted-foreground",
                     menuActions.path ? "flex-[1_1_8rem]" : "flex-[1_1_auto]",
+                    batched && "flex-wrap",
                   )}
                 >
                   <Tooltip>
@@ -643,7 +706,11 @@ export function ChatAttachment({
           </DialogHeader>
           <AttachmentPreviewActions request={request} resource={resource} />
           <div className="min-h-0 overflow-auto">
-            <AttachmentPreviewBody resource={resource} sessionId={sessionId ?? ""} />
+            <AttachmentPreviewBody
+              resource={resource}
+              request={request}
+              sessionId={sessionId ?? ""}
+            />
           </div>
         </DialogContent>
       </Dialog>
@@ -664,7 +731,11 @@ export function AttachmentPreviewView({ request }: { request: AttachmentPreviewR
         <AttachmentPreviewActions request={request} resource={resource} header />
       </header>
       <div className="min-h-0 flex-1 overflow-auto p-3">
-        <AttachmentPreviewBody resource={resource} sessionId={request.sessionId} />
+        <AttachmentPreviewBody
+          resource={resource}
+          request={request}
+          sessionId={request.sessionId}
+        />
       </div>
     </section>
   );
@@ -734,9 +805,11 @@ function AttachmentPreviewActions({
 
 function AttachmentPreviewBody({
   resource,
+  request,
   sessionId,
 }: {
   resource: AttachmentResource;
+  request: AttachmentPreviewRequest;
   sessionId: string;
 }) {
   const { content, error, blobUrl, filename } = resource;
@@ -766,7 +839,8 @@ function AttachmentPreviewBody({
       url={blobUrl}
       filename={filename}
       sessionId={sessionId}
-      artifactIdentity={resource.resourceKey}
+      artifactIdentity={resource.fileId ? `${sessionId}:${resource.fileId}` : resource.resourceKey}
+      request={request}
     />
   );
 }
@@ -777,13 +851,20 @@ export function AttachmentPreview({
   filename,
   sessionId,
   artifactIdentity,
+  request,
 }: {
   blob: Blob;
   url: string;
   filename: string;
   sessionId: string;
   artifactIdentity?: string;
+  request?: AttachmentPreviewRequest;
 }) {
+  const previewContext = useContext(AttachmentPreviewContext);
+  const canOpenTab =
+    !!request &&
+    !!previewContext.openAttachment &&
+    previewContext.canOpenAttachment?.(request, "tab") !== false;
   const lang = detectLang(filename);
   const html =
     /\.html?$/i.test(filename) || /^(text\/html|application\/xhtml\+xml)(;|$)/i.test(blob.type);
@@ -848,6 +929,11 @@ export function AttachmentPreview({
           html={text}
           identity={artifactIdentity ?? `${sessionId}:${filename}`}
           title={filename}
+          onOpenTab={
+            canOpenTab
+              ? () => previewContext.openAttachment?.(request!, { placement: "tab" })
+              : undefined
+          }
         />
       </Suspense>
     );

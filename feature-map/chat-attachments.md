@@ -16,7 +16,8 @@ Generated attachments keep their original bytes; workspace references use their 
   Opening the gallery scans bounded history pages; failures retain the clicked image and offer Retry rather than presenting an incomplete list as complete.
   Remote images share the renderer's exact GitHub-asset allowlist and use browser image loads with no referrer or session request headers.
 - `documents`: PDF uses the existing PDF viewer; Markdown uses the existing rendered preview; source code and structured text use bounded highlighted or plain text.
-- `html`: isolated HTML preview has an opaque sandbox and restrictive content policy, with source and original download.
+- `html`: isolated HTML preview has an opaque sandbox, highlighted source, portable download and a More menu for a Triune view tab or isolated new window; file footers retain original downloads.
+- `preview-batches`: adjacent visual previews share 256px media stages and proportional widths in a horizontal row; media touches the existing footer without an inner mat.
 - `media`: browser-supported audio/video plays with controls; unsupported codecs retain download access and a clear error.
 - `other-files`: Office documents, archives and other binaries retain a compact filename/type/size card and download.
 - `native`: `triune attach-file PATH --session CHAT --server URL` uploads locally authorized bytes; native agents can use their session environment variable.

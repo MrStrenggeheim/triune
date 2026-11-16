@@ -59,11 +59,14 @@ describe("TodoPanel", () => {
     }
     const active = rows[2]!.querySelector('[data-slot="plan-active-marker"]')!;
     expect(active).toHaveAttribute("aria-hidden", "true");
-    expect(active.querySelector("span")).toHaveClass(
-      "rounded-full",
-      "border-primary",
-      "bg-primary/10",
+    expect(active).toHaveClass("size-4", "shrink-0");
+    expect(screen.getByTestId("running-dot")).toHaveClass(
+      "size-3",
+      "text-primary",
+      "animate-spin",
+      "motion-reduce:animate-none",
     );
+    expect(active.querySelector(".lucide-loader-circle")).toBeInTheDocument();
     expect(rows[2]!.querySelector('[data-slot="checkbox-visual"]')).toBeNull();
     expect(screen.getByText("Pending")).toHaveClass("sr-only");
     expect(screen.getByText("In progress")).toHaveClass("sr-only");

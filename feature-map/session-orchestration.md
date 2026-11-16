@@ -9,7 +9,7 @@ without restarting the server. Ordinary native/child subagents are unchanged.
 
 ## Sub-features
 
-- `dispatch-cards`: every recorded assignment has its own task card and separate child report; reusing a child preserves earlier dispatch inputs and results.
+- `dispatch-cards`: each child has one updating activity card; steering and lifecycle events retain assignment inputs, reports and source references without duplicate task rows.
 - `native-identity`: a matching dispatch's late native nickname replaces generic attribution without changing captured task identity or an expanded card.
 - `task-labels`: identifier-like labels use readable words and sentence capitalization while preserving acronyms and full handoff text.
 - `child-handoff`: Codex registration saves the full parent handoff as an expandable, parent-attributed child transcript message without submitting another model input.

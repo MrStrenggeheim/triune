@@ -26,6 +26,10 @@ from omnigent.server.auth import (
     LEVEL_READ,
     AuthProvider,
 )
+from omnigent.server.background_session_titles import (
+    BackgroundSessionTitleCoordinator,
+    background_session_titles_enabled,
+)
 from omnigent.server.routes._auth_helpers import (
     get_user_id as _get_user_id,
 )
@@ -42,6 +46,7 @@ from omnigent.server.routes._sessions.common import (
 )
 from omnigent.server.routes._sessions.orchestration import (
     _child_session_summaries_from_conversations,
+    _schedule_missing_child_task_summaries,
 )
 from omnigent.server.schemas import (
     ChildSessionList,
@@ -59,6 +64,7 @@ def register_items_routes(
     agent_store: AgentStore,
     auth_provider: AuthProvider | None = None,
     permission_store: PermissionStore | None = None,
+    background_title_coordinator: BackgroundSessionTitleCoordinator | None = None,
 ) -> None:
     """Register the items routes on router."""
     from .context_references import register_context_reference_routes
@@ -220,6 +226,22 @@ def register_items_routes(
             sort_by="created_at",
             title=title_filter,
         )
+
+        async def can_read_child(child_id: str) -> bool:
+            try:
+                await _require_access_and_level(
+                    user_id, child_id, LEVEL_READ, permission_store, conversation_store
+                )
+                return True
+            except OmnigentError as exc:
+                if exc.code in {ErrorCode.FORBIDDEN, ErrorCode.NOT_FOUND}:
+                    return False
+                raise
+
+        if background_session_titles_enabled(request.headers):
+            await _schedule_missing_child_task_summaries(
+                page.data, conversation_store, background_title_coordinator, can_read_child
+            )
         data = await _child_session_summaries_from_conversations(
             page.data,
             session_id,

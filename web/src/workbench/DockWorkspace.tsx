@@ -35,6 +35,7 @@ import { Pin, PlusIcon } from "lucide-react";
 import { CloseButton } from "@/components/CloseButton";
 import { TooltipButton } from "@/components/ui/tooltip";
 import { OpenViewMenu } from "./OpenViewMenu";
+import { middleClickHandlers } from "@/lib/middleClick";
 import type { WorkbenchOpenAction } from "./WorkbenchAppBar";
 import { HeaderActionButton } from "@/components/HeaderActionButton";
 import { FileDropSurface } from "@/components/FileDropOverlay";
@@ -86,6 +87,8 @@ export interface DockWorkspaceProps {
   active?: boolean;
   openActions?: WorkbenchOpenAction[];
   onOpenAction?: (paneId: string, action: WorkbenchOpenAction) => void;
+  openMenuPaneId?: string | null;
+  onOpenMenuPaneChange?: (paneId: string | null) => void;
   layout: DockLayout;
   onLayoutChange: (update: DockLayoutUpdate) => void;
   renderView: (view: DockView, state: DockViewVisibility) => ReactNode;
@@ -458,6 +461,8 @@ function DockSurface(props: DockWorkspaceProps) {
                 onLayoutChange={onLayoutChange}
                 openActions={props.openActions}
                 onOpenAction={props.onOpenAction}
+                openMenuPaneId={props.openMenuPaneId}
+                onOpenMenuPaneChange={props.onOpenMenuPaneChange}
                 onPinView={props.onPinView}
                 onUnpinView={props.onUnpinView}
               />
@@ -621,9 +626,13 @@ function DockPaneChrome({
   onUnpinView,
   openActions,
   onOpenAction,
+  openMenuPaneId,
+  onOpenMenuPaneChange,
 }: {
   openActions?: WorkbenchOpenAction[];
   onOpenAction?: (paneId: string, action: WorkbenchOpenAction) => void;
+  openMenuPaneId?: string | null;
+  onOpenMenuPaneChange?: (paneId: string | null) => void;
   prefix: string;
   pane: DockPane;
   layout: DockLayout;
@@ -773,6 +782,12 @@ function DockPaneChrome({
             <div className="dock-tab-add">
               <OpenViewMenu
                 actions={openActions}
+                open={onOpenMenuPaneChange ? openMenuPaneId === pane.id : undefined}
+                onOpenChange={
+                  onOpenMenuPaneChange
+                    ? (open) => onOpenMenuPaneChange(open ? pane.id : null)
+                    : undefined
+                }
                 onSelect={(action) => (onOpenAction ? onOpenAction(pane.id, action) : action.run())}
               >
                 <HeaderActionButton aria-label="Add view to pane" className="text-muted-foreground">
@@ -841,6 +856,9 @@ function DockTab({
             groupRef.current = node;
             setNodeRef(node);
           }}
+          {...middleClickHandlers(() => {
+            if (!closing && !active) onClose();
+          })}
           className="dock-tab-group"
           data-workspace-tab
           data-pinned={pinned}
@@ -870,6 +888,7 @@ function DockTab({
             tabIndex={selected ? 0 : -1}
             className="dock-tab"
             data-dragging={isDragging}
+
             onClick={onSelect}
             onKeyDown={(event) => {
               if (!active && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
@@ -1153,4 +1172,13 @@ function DockDivider({
       }}
     />
   );
+}
+
+/** Focused-pane cycling is shared by menu/keyboard callers and never changes the layout owner. */
+export function stepFocusedPaneView(layout: DockLayout, step: -1 | 1): DockLayout {
+  const pane = layout.panes.find((item) => item.id === layout.focusedPaneId);
+  if (!pane?.viewIds.length) return layout;
+  const index = pane.viewIds.indexOf(pane.selectedViewId ?? "");
+  const next = pane.viewIds[(index + step + pane.viewIds.length) % pane.viewIds.length];
+  return selectDockView(layout, next);
 }

@@ -4,10 +4,13 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
   AttachmentPreviewContext,
+  InlineFileReference,
+  InlinePathCode,
   AttachmentPreviewView,
   ChatAttachment,
   type AttachmentPreviewRequest,
 } from "./ChatAttachment";
+import { MediaBatch } from "./MediaBatch";
 import { ImageLightboxProvider } from "./ImageLightbox";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import type { ComponentProps, ReactNode } from "react";
@@ -44,6 +47,7 @@ function mount(
   content: string,
   props: Partial<ComponentProps<typeof ChatAttachment>> = {},
   previewContext: ComponentProps<typeof AttachmentPreviewContext.Provider>["value"] = {},
+  batched = false,
 ) {
   mocks.fetch.mockImplementation(async (url: string) =>
     url.includes("/metadata?")
@@ -64,7 +68,7 @@ function mount(
       <TooltipProvider delayDuration={0}>
         <ImageLightboxProvider>
           <AttachmentPreviewContext.Provider value={previewContext}>
-            {children}
+            {batched ? <MediaBatch>{children}</MediaBatch> : children}
           </AttachmentPreviewContext.Provider>
         </ImageLightboxProvider>
       </TooltipProvider>
@@ -119,8 +123,8 @@ it.each([
     });
     fireEvent.load(img);
     const card = screen.getByTestId("chat-attachment");
-    expect(card).toHaveStyle({ width: `calc(${fittedWidth}px + 1.5rem + 2px)` });
-    expect(card).toHaveClass("min-w-[min(100%,12rem)]", "max-w-[min(100%,640px)]");
+    expect(card).toHaveStyle({ width: `calc(${fittedWidth}px + 2px)` });
+    expect(card).toHaveClass("min-w-[min(100%,12rem)]", "max-w-full");
     expect(img).toHaveStyle({ width: `${fittedWidth}px` });
     expect(img).toHaveClass("h-auto", "max-h-64", "max-w-full");
     expect(img).not.toHaveClass("w-full");
@@ -568,7 +572,7 @@ it("isolates HTML with a sandbox and restrictive content policy, while retaining
   const frame = await screen.findByTitle("page.html");
   expect(frame).toHaveAttribute("sandbox", "allow-scripts");
   expect(frame.getAttribute("srcdoc")).toContain("default-src 'none'");
-  fireEvent.click(screen.getByRole("button", { name: "Show artifact source" }));
+  fireEvent.click(screen.getByRole("button", { name: "Source" }));
   expect(frame).not.toBeVisible();
   expect(screen.getByText("parent.pwned", { exact: false })).toBeInTheDocument();
 });
@@ -583,7 +587,7 @@ it("keeps the complete HTML tail in source and the sandbox document beyond the t
   const frame = await screen.findByTitle("large.html");
   expect(frame.getAttribute("srcdoc")).toContain("complete-tail");
   expect(screen.queryByText(/Preview limited to 512 KiB/)).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "Show artifact source" }));
+  fireEvent.click(screen.getByRole("button", { name: "Source" }));
   expect(screen.getByText(/complete-tail/)).toHaveTextContent("Complete tail");
 });
 it.each([
@@ -654,4 +658,97 @@ it.each([
   expect(screen.getByRole("button", { name: "Attachment" })).toBeInTheDocument();
   expect(screen.getByText("Other message text stays readable.")).toBeInTheDocument();
   expect(mocks.fetch).not.toHaveBeenCalled();
+});
+
+it("shares context-relative path and chip sizing without changing standalone filenames", () => {
+  render(
+    <TooltipProvider>
+      <div style={{ fontSize: "11.7px" }}>
+        <InlinePathCode>/raw/path.ts</InlinePathCode>
+        <InlineFileReference contextRelative path="/resolved/path.ts" />
+        <InlineFileReference path="/standalone/file.ts" />
+      </div>
+    </TooltipProvider>,
+  );
+  expect(screen.getByText("/raw/path.ts")).toHaveAttribute("data-streamdown", "inline-code");
+  expect(screen.getByRole("button", { name: "path.ts" })).toHaveClass("text-[1em]");
+  expect(screen.getByRole("button", { name: "file.ts" })).toHaveClass("text-sm");
+});
+
+it("joins image edges to the unchanged footer and keeps original transparent bytes", async () => {
+  mount("transparent.png", "image/png", "transparent-original-bytes");
+  const img = await screen.findByRole("img", { name: "transparent.png" });
+  Object.defineProperties(img, { naturalWidth: { value: 1600 }, naturalHeight: { value: 800 } });
+  fireEvent.load(img);
+  const card = screen.getByTestId("chat-attachment");
+  expect(card).toHaveStyle({ width: "calc(512px + 2px)" });
+  expect(card).not.toHaveClass("p-3", "gap-2");
+  expect(img.parentElement?.parentElement).toHaveClass("rounded-t-lg");
+  expect(screen.getByRole("button", { name: "transparent.png" }).closest("span.p-3")).toHaveClass(
+    "rounded-b-lg",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Download transparent.png" }));
+  await waitFor(() => expect(mocks.download).toHaveBeenCalledOnce());
+  expect(await mocks.download.mock.calls[0][0].text()).toBe("transparent-original-bytes");
+});
+
+it.each([
+  [200, 1000],
+  [100, 1000],
+  [1, 1],
+  [600, 1200],
+  [800, 800],
+])(
+  "wraps the batch footer for %sx%s without changing its controls or original",
+  async (width, height) => {
+    mount("portrait.png", "image/png", "original-portrait-bytes", {}, {}, true);
+    const img = await screen.findByRole("img", { name: "portrait.png" });
+    Object.defineProperties(img, {
+      naturalWidth: { value: width },
+      naturalHeight: { value: height },
+    });
+    fireEvent.load(img);
+    const card = screen.getByTestId("chat-attachment");
+    expect(card).toHaveStyle({ width: `calc(${(width / height) * 256}px + 2px)` });
+    expect(card).toHaveClass("min-w-[76px]");
+    expect(card).not.toHaveClass("min-w-[min(100%,12rem)]");
+    const title = screen.getByRole("button", { name: "portrait.png" });
+    expect(title.parentElement).toHaveClass("basis-32");
+    const footer = title.parentElement!.parentElement!;
+    expect(footer).toHaveClass("flex-wrap", "items-center", "p-3");
+    expect(footer.querySelector("span.h-9.w-8")).toBeInTheDocument();
+    const download = within(footer).getByRole("button", { name: "Download portrait.png" });
+    expect(download).toHaveAttribute("data-size", "icon-xs");
+    expect(
+      within(footer).getByRole("button", { name: "More actions for portrait.png" }),
+    ).toHaveAttribute("data-size", "icon-xs");
+    fireEvent.click(download);
+    await waitFor(() => expect(mocks.download).toHaveBeenCalledOnce());
+    expect(await mocks.download.mock.calls[0][0].text()).toBe("original-portrait-bytes");
+  },
+);
+
+it("uses original video proportions in a batch without replacing footer actions", async () => {
+  const { client, rerender } = mount("movie.webm", "video/webm", "original-video");
+  rerender(
+    <QueryClientProvider client={client}>
+      <TooltipProvider>
+        <MediaBatch>
+          <ChatAttachment
+            sessionId="original-chat"
+            attachment={{ file_id: "file-id", filename: "movie.webm" }}
+          />
+        </MediaBatch>
+      </TooltipProvider>
+    </QueryClientProvider>,
+  );
+  const video = await screen.findByLabelText("movie.webm");
+  Object.defineProperties(video, { videoWidth: { value: 1920 }, videoHeight: { value: 1080 } });
+  fireEvent.loadedMetadata(video);
+  expect(video.parentElement).toHaveStyle({ height: "256px" });
+  expect(
+    parseFloat(screen.getByTestId("chat-attachment").style.width.replace("calc(", "")),
+  ).toBeCloseTo((1920 / 1080) * 256 + 2, 2);
+  expect(screen.getByRole("button", { name: "Download movie.webm" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "More actions for movie.webm" })).toBeInTheDocument();
 });

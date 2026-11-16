@@ -3408,8 +3408,73 @@ async function exportDiagnostics() {
   }
 }
 
+const {
+  validateSnapshot: validateShortcutSnapshot,
+  matchInput: matchShortcutInput,
+  menuAccelerator: shortcutMenuAccelerator,
+} = require("./shortcutProtocol");
+
+const shortcutSnapshots = new WeakMap();
+const shortcutInputOwners = new WeakSet();
+function sendShortcutCommand(win, command, input, guest = false) {
+  const snapshot = win && shortcutSnapshots.get(win.webContents);
+  if (!snapshot || win.isDestroyed()) return false;
+  win.webContents.send("omnigent:shortcut-command", {
+    version: 1,
+    generation: snapshot.generation,
+    command,
+    ...(guest ? { surface: "workbench" } : {}),
+    ...(input
+      ? {
+          stroke: {
+            key: input.key,
+            code: input.code || "",
+            ctrlKey: !!input.control,
+            metaKey: !!input.meta,
+            altKey: !!input.alt,
+            shiftKey: !!input.shift,
+          },
+        }
+      : {}),
+  });
+  return true;
+}
+function forwardShortcutInput(win, event, input, guest = false) {
+  if (
+    !win ||
+    win.isDestroyed() ||
+    !isPinnedOriginSender({ sender: win.webContents, senderFrame: win.webContents.mainFrame })
+  )
+    return false;
+  const row = matchShortcutInput(shortcutSnapshots.get(win.webContents), input);
+  if (!row) return false;
+  // DOM Find must reach editor/terminal ownership checks before it is claimed.
+  if (row.command === "find" && !guest) return false;
+  if (row.command === "find" && guest) {
+    if (!["workspace", "focused-view"].includes(row.when)) return false;
+    event.preventDefault();
+    openFindBar(win);
+    return true;
+  }
+  // Cancelling before-input-event also cancels menu accelerators: this is the sole stroke route.
+  event.preventDefault();
+  sendShortcutCommand(win, row.command, input, guest);
+  return true;
+}
 function buildMenu() {
   const isMac = process.platform === "darwin";
+  const shortcutTarget = activeWindow();
+  const shortcutSnapshot = shortcutTarget && shortcutSnapshots.get(shortcutTarget.webContents);
+  const shortcutItem = (id, label) => ({
+    id: `shortcut_${id}`,
+    label,
+    accelerator: shortcutMenuAccelerator(
+      shortcutSnapshot?.bindings.find((row) => row.command === id),
+    ),
+    registerAccelerator: false,
+    enabled: !!shortcutSnapshot,
+    click: () => sendShortcutCommand(activeWindow(), id),
+  });
   const aboutItem = aboutMenuItem("Triune", () => {
     aboutWindow.open(activeWindow());
   });
@@ -3417,6 +3482,13 @@ function buildMenu() {
     const target = focusedConnectedWindow(BrowserWindow.getFocusedWindow(), windows);
     sendOpenPath(target, SETTINGS_PATH);
   });
+  if (shortcutSnapshot) {
+    settingsItem.accelerator = shortcutMenuAccelerator(
+      shortcutSnapshot.bindings.find((row) => row.command === "go-settings"),
+    );
+    settingsItem.registerAccelerator = false;
+    settingsItem.click = () => sendShortcutCommand(activeWindow(), "go-settings");
+  }
 
   /** @type {Electron.MenuItemConstructorOptions[]} */
   const template = [];
@@ -3433,8 +3505,15 @@ function buildMenu() {
     {
       id: "new_session",
       label: "New Session",
-      accelerator: "CmdOrCtrl+N",
-      click: () => sendOpenPath(activeWindow(), "/"),
+      accelerator: shortcutSnapshot
+        ? shortcutMenuAccelerator(
+            shortcutSnapshot.bindings.find((row) => row.command === "new-chat"),
+          )
+        : "CmdOrCtrl+N",
+      registerAccelerator: !shortcutSnapshot,
+      click: () => {
+        if (!sendShortcutCommand(activeWindow(), "new-chat")) sendOpenPath(activeWindow(), "/");
+      },
     },
     {
       id: "new_window",
@@ -3502,9 +3581,13 @@ function buildMenu() {
       },
     },
     { type: "separator" },
-    // `role: "close"` carries the standard CmdOrCtrl+W shortcut and closes
-    // the focused window. There is no File menu, so Close lives under Server.
-    { role: "close", label: "Close Window" },
+    shortcutItem("new-view", "Add View…"),
+    shortcutItem("close-view", "Close View"),
+    shortcutItem("reopen-view", "Reopen Closed View"),
+    shortcutItem("previous-view", "Previous View"),
+    shortcutItem("next-view", "Next View"),
+    { type: "separator" },
+    { label: "Close Window", click: () => activeWindow()?.close() },
   ];
 
   // Our custom Server menu, inserted right after the leftmost menu — index 1
@@ -3533,10 +3616,14 @@ function buildMenu() {
       {
         id: "find",
         label: "Find…",
-        accelerator: "CmdOrCtrl+F",
+        accelerator: shortcutSnapshot
+          ? shortcutMenuAccelerator(shortcutSnapshot.bindings.find((row) => row.command === "find"))
+          : "CmdOrCtrl+F",
+        registerAccelerator: !shortcutSnapshot,
         click: () => {
           const target = findTargetForShortcut();
-          if (target) openFindBar(target);
+          if (!target) return;
+          if (!sendShortcutCommand(target, "find")) openFindBar(target);
         },
       },
     ],
@@ -3911,6 +3998,7 @@ function createBrowserRegistryForWindow(win) {
       }
     },
     isHostFocused: () => !win.isDestroyed() && win.isFocused(),
+    forwardWorkspaceShortcut: (event, input) => forwardShortcutInput(win, event, input, true),
     // Renderer measures in CSS px; convert to window DIPs using the host
     // webContents zoom factor (Cmd+/Cmd- changes this out from under us).
     getHostZoomFactor: () => {
@@ -4025,6 +4113,26 @@ function pickWorkspaceForBridge(parent, workspaces, { signal } = {}) {
 }
 
 function registerIpc() {
+  ipcMain.on("omnigent:shortcut-bindings", (event, value) => {
+    if (!isPinnedOriginSender(event) || event.senderFrame !== event.sender.mainFrame) return;
+    const snapshot = validateShortcutSnapshot(value);
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!snapshot || !win || win.isDestroyed()) return;
+    shortcutSnapshots.set(event.sender, snapshot);
+    if (!shortcutInputOwners.has(event.sender)) {
+      shortcutInputOwners.add(event.sender);
+      event.sender.on("before-input-event", (inputEvent, input) =>
+        forwardShortcutInput(win, inputEvent, input),
+      );
+      event.sender.on("did-start-navigation", (_event, _url, inPlace, mainFrame) => {
+        if (!inPlace && mainFrame) {
+          shortcutSnapshots.delete(win.webContents);
+          buildMenu();
+        }
+      });
+    }
+    if (BrowserWindow.getFocusedWindow() === win) buildMenu();
+  });
   registerWorkspacePickerIpc();
   ipcMain.handle("omnigent:cancel-server-connection", (event, requestId) => {
     if (!isSetupPageSender(event))
@@ -5478,7 +5586,10 @@ if (!gotLock) {
       createWindow();
     }
     updater.init();
-    app.on("browser-window-focus", () => updateSignOutMenuItem());
+    app.on("browser-window-focus", () => {
+      updateSignOutMenuItem();
+      buildMenu();
+    });
 
     app.on("activate", () => {
       // macOS: re-create the window when the dock icon is clicked and none

@@ -1,5 +1,9 @@
 import { SidebarDataContext } from "./useSidebarData";
-import { PINNED_CONVERSATIONS_KEY, type PinnedConversationsResult } from "./useConversations";
+import {
+  PINNED_CONVERSATIONS_KEY,
+  type Conversation,
+  type PinnedConversationsResult,
+} from "./useConversations";
 // App-level wiring for the `WS /v1/sessions/updates` push stream.
 //
 // Mounted once near the app root. It:
@@ -123,7 +127,8 @@ function applyItemsToCache(
   // unsearched lists; an archived/label-changed row converges via the
   // debounced ["project-sessions"] invalidation the caller schedules.
   const projectEntries = queryClient.getQueriesData<ConversationsInfiniteData>({
-    queryKey: ["project-sessions"],
+    predicate: (query) =>
+      ["project-sessions", "conversation-branches"].includes(String(query.queryKey[0])),
   });
   for (const [key, data] of projectEntries) {
     const {
@@ -134,6 +139,16 @@ function applyItemsToCache(
     for (const id of found) foundAnywhere.add(id);
     if (queryNeedsRefetch) needsRefetch = true;
     if (next !== data) queryClient.setQueryData(key, next);
+  }
+  for (const [key, row] of queryClient.getQueriesData<Conversation>({
+    queryKey: ["conversation-branch-row"],
+  })) {
+    if (!row) continue;
+    const item = itemsById.get(row.id);
+    if (item) {
+      foundAnywhere.add(row.id);
+      queryClient.setQueryData(key, { ...row, ...item });
+    }
   }
   queryClient.setQueryData<PinnedConversationsResult>(PINNED_CONVERSATIONS_KEY, (previous) => {
     if (!previous) return previous;
@@ -174,7 +189,7 @@ function removeIdsFromCache(queryClient: QueryClient, ids: string[]): boolean {
   const idSet = new Set(ids);
   let removedAny = false;
   // Both the global lists and each project folder's own list (same page shape).
-  for (const queryKey of [["conversations"], ["project-sessions"]]) {
+  for (const queryKey of [["conversations"], ["project-sessions"], ["conversation-branches"]]) {
     const entries = queryClient.getQueriesData<ConversationsInfiniteData>({ queryKey });
     for (const [key, data] of entries) {
       const { data: next, removed } = removeIdsFromPages(data, idSet);
@@ -234,7 +249,8 @@ export function SessionUpdatesProvider({ children }: { children: ReactNode }) {
     // ids so the server streams liveness (e.g. pending-elicitation "Needs
     // response") for filed sessions that aren't in the global loaded window.
     const projectEntries = queryClient.getQueriesData<ConversationsInfiniteData>({
-      queryKey: ["project-sessions"],
+      predicate: (query) =>
+        ["project-sessions", "conversation-branches"].includes(String(query.queryKey[0])),
     });
     const ids = sidebarIdsRef.current
       ? [...sidebarIdsRef.current]
@@ -329,6 +345,7 @@ export function SessionUpdatesProvider({ children }: { children: ReactNode }) {
         // Converge each project folder's own list too (new/archived/relabeled
         // members the local field-patch can't place).
         void queryClient.invalidateQueries({ queryKey: ["project-sessions"] });
+        void queryClient.invalidateQueries({ queryKey: ["conversation-branches"] });
         // Another client archiving/relabeling/deleting can add or remove a
         // project from the Archived view's picker; only local mutations
         // invalidate this scan otherwise.
@@ -459,7 +476,12 @@ export function SessionUpdatesProvider({ children }: { children: ReactNode }) {
       // Recompute the watch-set when either the global list or a project
       // folder's list changes (fetch, pagination, splice) so newly loaded
       // folder members join the stream's watch-set.
-      if (Array.isArray(key) && (key[0] === "conversations" || key[0] === "project-sessions")) {
+      if (
+        Array.isArray(key) &&
+        (key[0] === "conversations" ||
+          key[0] === "project-sessions" ||
+          key[0] === "conversation-branches")
+      ) {
         scheduleWatch();
       }
       // Also recompute when a child-sessions list loads so the tree nodes

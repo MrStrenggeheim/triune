@@ -1,8 +1,13 @@
 // Required Notice: Copyright 2026 MrStrenggeheim. Triune (https://github.com/MrStrenggeheim/triune).
+import { useContext } from "react";
+import {
+  AttachmentPreviewContext,
+  ChatAttachmentContext,
+  type AttachmentPreviewRequest,
+} from "@/components/ChatAttachment";
 import { useQuery } from "@tanstack/react-query";
 import { authenticatedFetch } from "@/lib/identity";
 import { apiErrorFromResponse } from "@/lib/sessionsApi";
-import { downloadBlob } from "@/lib/explorerOperations";
 import { useViewerId } from "@/hooks/useViewerId";
 import { Button } from "@/components/ui/button";
 import { ArtifactFrame } from "./ArtifactFrame";
@@ -17,6 +22,8 @@ export function UploadedArtifact({
   reference: ArtifactReference;
 }) {
   const viewerId = useViewerId();
+  const preview = useContext(AttachmentPreviewContext);
+  const scope = useContext(ChatAttachmentContext);
   const resource = useQuery({
     queryKey: ["inline-artifact", viewerId, sessionId, reference.file_id],
     enabled: !!viewerId && !!sessionId,
@@ -58,13 +65,23 @@ export function UploadedArtifact({
     );
   if (!resource.data) return <p role="status">Loading artifact…</p>;
   const data = resource.data;
+  const request: AttachmentPreviewRequest = {
+    sessionId,
+    itemId: scope.itemId,
+    attachment: { file_id: reference.file_id, filename: data.filename },
+    filename: reference.title || data.filename,
+  };
+  const canOpenTab =
+    !!preview.openAttachment && preview.canOpenAttachment?.(request, "tab") !== false;
   return (
     <ArtifactFrame
       key={`${sessionId}:${reference.file_id}`}
       identity={`${sessionId}:${reference.file_id}`}
       title={reference.title || data.filename}
       html={data.html}
-      onDownload={() => downloadBlob(data.blob, data.filename)}
+      onOpenTab={
+        canOpenTab ? () => preview.openAttachment?.(request, { placement: "tab" }) : undefined
+      }
     />
   );
 }

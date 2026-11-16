@@ -1,4 +1,5 @@
 // Modified for Triune; inherited notices remain applicable.
+import { canonicalSubagentCards } from "./subagentActivity";
 import { messageInputKind, type MessageCommunication } from "./messageCommunication";
 import type { ChatAttachmentContent } from "./chatAttachments";
 import type { NativePermissionDelivery } from "./nativePermissionDelivery";
@@ -77,6 +78,7 @@ export type RenderItem =
       itemId: string | null;
       text: string;
       searchText?: string;
+      phase?: "commentary" | "final_answer";
       final: boolean;
       previewInterrupted?: boolean;
     }
@@ -305,6 +307,8 @@ export interface BubbleCache {
   supersededChips: ReadonlySet<number>;
 }
 
+const cardBlocks = new WeakMap<AnyBlock, { data: Record<string, unknown>; block: AnyBlock }>();
+
 const EMPTY_INTERRUPTED_RESPONSE_IDS: readonly string[] = [];
 
 /** A fresh, empty `BubbleCache`. */
@@ -382,12 +386,13 @@ function newestAssistantTurnId(blocks: AnyBlock[]): string | null {
  *   cancelled, and failed are unaffected; it only reaches the tool-state gate.
  */
 export function buildBubbles(
-  blocks: AnyBlock[],
+  inputBlocks: AnyBlock[],
   activeResponse: ActiveResponse | null,
   cache?: BubbleCache,
   interruptedResponseIds: readonly string[] = EMPTY_INTERRUPTED_RESPONSE_IDS,
   sessionRunning = false,
 ): Bubble[] {
+  let blocks = inputBlocks;
   const interruptedResponses = new Set(interruptedResponseIds);
   // The newest turn spins its trailing tools only while the session runs; an
   // already-streaming `activeResponse` covers the in-process harnesses without
@@ -398,6 +403,19 @@ export function buildBubbles(
   // apart they landed, and whether the pair is still visible decides whether the
   // cached prefix may be reused at all.
   const superseded = supersededRoutingChips(blocks);
+  const cards = canonicalSubagentCards(blocks);
+  if (cards.size) {
+    blocks = blocks.flatMap((block) => {
+      const card = block.ctx.itemId ? cards.get(block.ctx.itemId) : undefined;
+      if (!card || block.type !== "native_tool") return [block];
+      if (card.id !== block.ctx.itemId) return [];
+      const cached = cardBlocks.get(block);
+      if (cached?.data === card) return [cached.block];
+      const projected = { ...block, data: card };
+      cardBlocks.set(block, { data: card, block: projected });
+      return [projected];
+    });
+  }
   if (cache === undefined) {
     return markContinuedTurns(
       walkBubbles(
@@ -1908,6 +1926,7 @@ function textItem(run: AnyBlock[]): RenderItem {
         kind: "text",
         itemId: b.ctx.itemId,
         text: b.fullText,
+        ...(b.phase ? { phase: b.phase } : {}),
         ...(b.searchText !== undefined ? { searchText: b.searchText } : {}),
         ...(b.attachments?.length ? { attachments: b.attachments } : {}),
         final: true,
@@ -2022,6 +2041,8 @@ export function bubblesEqual(a: Bubble, b: Bubble): boolean {
       // Render-affecting timestamp — must stay visible to the memo like
       // the user branch's `createdAtS` comparison below.
       a.createdAtS !== b.createdAtS ||
+      a.workedForS !== b.workedForS ||
+      a.lastActivityAtS !== b.lastActivityAtS ||
       // Flips when a later bubble continues this turn — the fold depends on it.
       Boolean(a.continued) !== Boolean(b.continued) ||
       // Opens an interjected response's process fold on first render.

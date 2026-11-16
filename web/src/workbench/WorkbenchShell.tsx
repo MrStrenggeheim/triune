@@ -4,7 +4,10 @@ import { useSettingsRoute } from "@/shell/settingsNav";
 import { parseWorkbenchFileLink, resolveWorkbenchFileLink } from "./fileLinks";
 import { WorkbenchBindings } from "./WorkbenchBindings";
 import { createWorkbenchResourceShortcuts } from "./resourceShortcuts";
-import { useAcceptedConversationRoute } from "./useAcceptedConversationRoute";
+import {
+  useAcceptedConversationRoute,
+  useConversationOwnerNavigation,
+} from "./useAcceptedConversationRoute";
 import { focusedResourceTarget } from "./resourceTarget";
 import { OpenViewMenu } from "./OpenViewMenu";
 import { Button } from "@/components/ui/button";
@@ -13,7 +16,7 @@ import { CapturedFileGate, capturedFileQuery } from "./CapturedFileGate";
 import { fetchChatFileLocation } from "@/lib/chatFileReferences";
 import { readFileOpening } from "@/lib/fileOpeningPreferences";
 import { downloadBlob } from "@/lib/explorerOperations";
-import { filePlacement } from "./filePlacement";
+import { filePlacement, previewPlacement } from "./filePlacement";
 import { OverlayScrollbars } from "@/components/OverlayScrollbars";
 import {
   AttachmentPreviewContext,
@@ -75,6 +78,7 @@ import type { WorkbenchWorkspace } from "@/lib/workbenchWorkspace";
 import { authenticatedFetch } from "@/lib/identity";
 import { ApiError, apiErrorFromResponse, interrupt } from "@/lib/sessionsApi";
 import { Sidebar, isMobileViewport } from "@/shell/Sidebar";
+import { NewChatLandingScreen } from "@/shell/NewChatDialog";
 import { ContextSearchProvider } from "@/shell/ContextSearchContext";
 import { CommandPalette } from "@/shell/CommandPalette";
 import { searchActions, type ActionCommand } from "@/shell/contextSearch/actions";
@@ -87,6 +91,7 @@ import { TasksPage } from "@/pages/TasksPage";
 import {
   WorkbenchProvider,
   type OpenWorkbenchView,
+  type OpenConversationOptions,
   type WorkbenchViewKind,
 } from "./WorkbenchContext";
 import { WorkbenchAppBar, type WorkbenchOpenAction } from "./WorkbenchAppBar";
@@ -95,7 +100,7 @@ import { ActivityView, type ActivitySource } from "./ActivityView";
 import { TerminalResourceView, RetainedActivityView } from "./TerminalResourceView";
 import { ShellResourceView } from "./ShellResourceView";
 import { ResourceView, inheritResourceViewState } from "./ResourceView";
-import { DockWorkspace, type DockViewVisibility } from "./DockWorkspace";
+import { DockWorkspace, stepFocusedPaneView, type DockViewVisibility } from "./DockWorkspace";
 import { canSuspendDockView } from "./viewLifetime";
 import { useDockLayout } from "./useDockLayout";
 import {
@@ -444,14 +449,20 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
   const routeConversationRef = useRef(conversationId);
   routeConversationRef.current = conversationId;
   const openConversation = useCallback(
-    (id: string, options?: { beside?: boolean; messageId?: string; title?: string }) => {
+    (id: string, options?: OpenConversationOptions) => {
       const current = dockRef.current;
-      if (options?.beside) {
+      const mode = options?.mode ?? (options?.beside ? "beside" : "layout");
+      if (mode !== "layout") {
         current.addView(conversationView(id, options?.title ?? titlesRef.current.get(id)), {
           paneId: current.layout.focusedPaneId ?? undefined,
-          edge: "right",
+          edge: mode === "beside" ? "right" : undefined,
         });
         setLastConversation(id);
+        if (options?.messageId) {
+          skipLayoutForRoute.current = id;
+          navigate(`/c/${encodeURIComponent(id)}?message=${encodeURIComponent(options.messageId)}`);
+        } else if (!showDockRef.current) navigate("/?view=workbench");
+        if (isMobileViewport()) setSidebarOpen(false);
         return;
       }
       if (id === routeConversationRef.current && !options?.messageId) {
@@ -545,6 +556,28 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
     if (isMobileViewport()) setSidebarOpen(false);
   }, [navigate]);
   const openPaneOverride = useRef<string | undefined>(undefined);
+  const [openMenuPaneId, setOpenMenuPaneId] = useState<string | null>(null);
+  const [emptyViewMenuOpen, setEmptyViewMenuOpen] = useState(false);
+  useEffect(() => {
+    setOpenMenuPaneId(null);
+    setEmptyViewMenuOpen(false);
+  }, [dock.scopeKey, dock.activeConversationId, active]);
+  const createPaneChat = useCallback(
+    (paneId?: string) => {
+      const id = randomUUID();
+      dockRef.current.addView(
+        { id: `draft:${id}`, kind: "conversation", title: "New chat", resource: { draftId: id } },
+        { paneId },
+      );
+      ensureVisible();
+    },
+    [ensureVisible],
+  );
+  const newChat = useCallback(() => {
+    const paneId = openPaneOverride.current;
+    if (paneId) createPaneChat(paneId);
+    else navigate("/");
+  }, [createPaneChat, navigate]);
   const openView = useCallback(
     (request: OpenWorkbenchView, options?: { beside?: boolean; paneId?: string }) => {
       if (request.kind === "conversation" && request.conversationId) {
@@ -579,6 +612,9 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
           : {}),
       };
       const overridePane = openPaneOverride.current;
+      const capturedScope = dockRef.current.scopeKey;
+      const capturedOwner = dockRef.current.activeConversationId;
+      const mode = options?.beside === true ? "beside" : readFileOpening();
       const targetPane =
         options?.paneId ?? overridePane ?? dockRef.current.layout.focusedPaneId ?? undefined;
       const needsFiles =
@@ -586,8 +622,20 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
         ["files", "preview", "changes", "search", "terminal", "shells", "pr"].includes(
           captured.kind,
         );
+      const stillCurrent = () => {
+        const current = dockRef.current;
+        return (
+          mounted.current &&
+          activeRef.current &&
+          current.scopeKey === capturedScope &&
+          current.activeConversationId === capturedOwner &&
+          (!captured.sourceViewId ||
+            current.layout.views.some((view) => view.id === captured.sourceViewId))
+        );
+      };
       const add = (resource: OpenWorkbenchView) => {
-        if (!mounted.current) return;
+        const current = dockRef.current;
+        if (!stillCurrent()) return;
         if (!["files", "changes", "search"].includes(resource.kind)) {
           const existing = dockRef.current.layout.views.find(
             (view) =>
@@ -601,6 +649,7 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
           );
           if (existing) {
             const focus = () => {
+              if (!stillCurrent()) return;
               dockRef.current.focusView(existing.id);
               ensureVisible();
             };
@@ -655,10 +704,15 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
             title,
             resource: JSON.parse(JSON.stringify(resource)) as Record<string, unknown>,
           },
-          {
-            paneId: targetPane,
-            edge: overridePane || options?.beside === false ? undefined : "right",
-          },
+          resource.kind === "preview" &&
+            !options?.paneId &&
+            !overridePane &&
+            options?.beside !== false
+            ? previewPlacement(current.layout, resource, mode, current.pinnedViewIds)
+            : {
+                paneId: targetPane,
+                edge: overridePane || options?.beside === false ? undefined : "right",
+              },
         );
         ensureVisible();
       };
@@ -683,7 +737,7 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
             throw error;
           }
         }
-        if (!mounted.current) return;
+        if (!stillCurrent()) return;
         if (needsFiles && !workspace) {
           setLocationRequest(captured);
           return;
@@ -808,31 +862,34 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
     },
     [resourceShortcuts],
   );
+  const navigateToOwner = useConversationOwnerNavigation({
+    active,
+    scopeKey: dock.scopeKey,
+    ownerId: dock.activeConversationId,
+    href,
+    acceptedHref,
+    selectOwner: acceptConversation,
+    navigate: (path) => {
+      const match = path.match(/^\/c\/([^/?#]+)/);
+      if (match) skipLayoutForRoute.current = decodeURIComponent(match[1]);
+      navigate(path);
+    },
+    onSelected: (id) => {
+      const current = dockRef.current;
+      current.addView(
+        conversationView(id, titlesRef.current.get(id)),
+        conversationPlacement(current.layout, current.pinnedViewIds),
+      );
+      setLastConversation(id);
+      ensureVisible();
+    },
+    onError: onRouteError,
+  });
   const search = useContextSearchController({
     activeSessionId: focusedConversationId,
     sidebarOpen,
     setSidebarOpen,
-    navigate: (path, done, relevant) => {
-      if (!activeRef.current || (relevant && !relevant())) return;
-      const match = path.match(/^\/c\/([^/?#]+)/);
-      if (match) {
-        const id = decodeURIComponent(match[1]);
-        dockRef.current.addView(
-          conversationView(id, titles.get(id)),
-          conversationPlacement(
-            dockRef.current.layout,
-            dockRef.current.pinnedViewIds,
-            lastConversation,
-          ),
-        );
-        setLastConversation(id);
-        ensureVisible();
-        done();
-      } else {
-        navigate(path);
-        done();
-      }
-    },
+    navigate: navigateToOwner,
     onToggleLeftSidebar: toggleSidebar,
     onToggleRightSidebar: () => openFocused("files"),
     isMobile: isMobileViewport,
@@ -857,7 +914,7 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
   const serverInfo = useServerInfo();
   const debug = useDebugMode();
   const openActions: WorkbenchOpenAction[] = [
-    { id: "new-chat", label: "New chat", icon: MessageSquareIcon, run: () => navigate("/") },
+    { id: "new-chat", label: "New chat", icon: MessageSquareIcon, run: newChat },
     ...VIEW_TYPES.filter(
       (entry) =>
         (entry.kind !== "browser" || supportsBrowser()) &&
@@ -883,6 +940,25 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
   }, []);
   const actions: ActionCommand[] = [
     ...focusedCommands,
+    {
+      id: "new-view",
+      label: "New view",
+      icon: PlusIcon,
+      keywords: ["tab", "pane", "open"],
+      run: () => {
+        const pane = dockRef.current.layout.focusedPaneId;
+        if (pane) setOpenMenuPaneId(pane);
+        else setEmptyViewMenuOpen(true);
+        ensureVisible();
+      },
+    },
+    ...([-1, 1] as const).map((step) => ({
+      id: step === 1 ? "next-view" : "previous-view",
+      label: step === 1 ? "Next view" : "Previous view",
+      icon: MessageSquareIcon,
+      keywords: ["tab", "pane", "cycle"],
+      run: () => dockRef.current.setLayout((layout) => stepFocusedPaneView(layout, step)),
+    })),
     ...(focusedView
       ? [
           {
@@ -966,6 +1042,25 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
           <p role="alert" className="p-4 text-sm">
             {resource.unavailableReason} The linked location has been retained.
           </p>
+        );
+      else if (view.kind === "conversation" && typeof resource.draftId === "string")
+        content = (
+          <NewChatLandingScreen
+            embedded={{
+              draftId: resource.draftId,
+              active: showDock && visibility.focused,
+              isCurrent: () => {
+                const latest = dockRef.current;
+                const pane = latest.layout.panes.find(
+                  (item) => item.id === latest.layout.focusedPaneId,
+                );
+                return activeRef.current && showDockRef.current && pane?.selectedViewId === view.id;
+              },
+              onCreated: (id) => {
+                dockRef.current.promoteConversationDraft(view.id, id, titlesRef.current.get(id));
+              },
+            }}
+          />
         );
       else if (
         view.kind === "attachment-preview" &&
@@ -1277,7 +1372,14 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
     [showDock, debug, openView, updateResource, registerGuard, closeView, queryClient],
   );
   const referenceNavigation = useMemo(
-    () => ({ openConversation, createSubchat: createQuoteSubchat }),
+    () => ({
+      openConversation: (id: string, options?: OpenConversationOptions) =>
+        openConversation(id, {
+          ...options,
+          mode: options?.mode ?? (options?.beside ? "beside" : "tab"),
+        }),
+      createSubchat: createQuoteSubchat,
+    }),
     [openConversation],
   );
   const attachmentNavigation = useMemo(
@@ -1483,7 +1585,10 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
   const openConversationIds = useMemo(
     () =>
       dock.layout.views
-        .filter((view) => view.kind === "conversation")
+        .filter(
+          (view) =>
+            view.kind === "conversation" && typeof view.resource.conversationId === "string",
+        )
         .map((view) => String(view.resource.conversationId)),
     [dock.layout.views],
   );
@@ -1510,6 +1615,7 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
           <ContextSearchProvider value={search}>
             {active && (
               <WorkbenchBindings
+                commands={actions}
                 conversationId={focusedConversationId}
                 approvalConversationId={
                   showDock && focusedView?.kind === "conversation"
@@ -1580,6 +1686,8 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
                       <DockWorkspace
                         active={showDock}
                         openActions={openActions}
+                        openMenuPaneId={openMenuPaneId}
+                        onOpenMenuPaneChange={setOpenMenuPaneId}
                         onOpenAction={(paneId, action) => {
                           openPaneOverride.current = paneId;
                           try {
@@ -1607,7 +1715,14 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
                           <p className="text-xl text-muted-foreground">
                             Open a chat or tool to get started.
                           </p>
-                          <OpenViewMenu actions={openActions}>
+                          <OpenViewMenu
+                            actions={openActions}
+                            open={emptyViewMenuOpen}
+                            onOpenChange={setEmptyViewMenuOpen}
+                            onSelect={(action) =>
+                              action.id === "new-chat" ? createPaneChat() : action.run()
+                            }
+                          >
                             <Button variant="default">
                               <PlusIcon className="size-4" />
                               Open view
@@ -1661,18 +1776,15 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
                   onToggleLeftSidebar={toggleSidebar}
                   onToggleRightSidebar={() => openFocused("files")}
                   onMessageSearch={(id, query, target, filter) => {
-                    dock.addView(
-                      conversationView(id, titles.get(id)),
-                      conversationPlacement(dock.layout, dock.pinnedViewIds, lastConversation),
-                    );
-                    setLastConversation(id);
-                    ensureVisible();
-                    if (target) search.openResult(target, query, filter);
-                    else {
-                      search.openSearch("current");
-                      search.setQuery(query);
-                      if (filter) search.setMessageFilter(filter);
-                    }
+                    const captured = target ? structuredClone(target) : null;
+                    navigateToOwner(`/c/${encodeURIComponent(id)}`, () => {
+                      if (captured) search.openResult(captured, query, filter);
+                      else {
+                        search.openSearch("current");
+                        search.setQuery(query);
+                        if (filter) search.setMessageFilter(filter);
+                      }
+                    });
                   }}
                 />
               )}

@@ -27,6 +27,7 @@ import { ForkSessionDialog } from "@/shell/ForkSessionDialog";
 import { ContextSearchBar } from "@/shell/ContextSearchBar";
 import { useContextSearch } from "@/shell/ContextSearchContext";
 import { useWorkbench, useWorkbenchActions } from "./WorkbenchContext";
+import { middleClickHandlers } from "@/lib/middleClick";
 import { ScopedChatStoreProvider, useConversationChatStore } from "./ScopedChatStore";
 import { useViewCommands } from "./viewCommands";
 import type { ActionCommand } from "@/shell/contextSearch/actions";
@@ -55,7 +56,8 @@ function Ancestor({ id, seen }: { id: string; seen: string[] }) {
       {parent && <Ancestor id={parent} seen={[...seen, id]} />}
       <TooltipButton
         className="min-w-0 max-w-32 truncate text-muted-foreground hover:text-foreground"
-        onClick={() => workbench?.openConversation(id)}
+        onClick={() => workbench?.openConversation(id, { mode: "tab" })}
+        {...middleClickHandlers(() => workbench?.openConversation(id, { mode: "tab" }))}
         tooltip={session.title || "Conversation"}
       >
         {session.title || "Conversation"}

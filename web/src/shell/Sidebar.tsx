@@ -1,3 +1,4 @@
+import { middleClickHandlers } from "@/lib/middleClick";
 // Modified for Triune.
 import { recordPointerInput, pointerInputProps } from "./sidebarPointerInteraction";
 import { TouchContextSensor } from "@/lib/touchContextGesture";
@@ -228,8 +229,7 @@ import { useOmnigentAnalytics } from "@/lib/analytics";
 import { useIsMobileViewport } from "@/hooks/useIsMobileViewport";
 import { useIOSNativeKeyboardInset } from "@/hooks/useIOSNativeKeyboardInset";
 import { useResizableSidebar } from "@/hooks/useResizableSidebar";
-import { useSessionSwitchHotkey } from "@/hooks/useSessionSwitchHotkey";
-import { usePinnedSessionHotkeys } from "@/hooks/usePinnedSessionHotkeys";
+import { useSidebarShortcutCommands } from "@/lib/sidebarShortcutAdapter";
 import { isCurrentServerLocal } from "@/lib/serverOrigin";
 import {
   type SessionFilter,
@@ -316,11 +316,7 @@ import {
   writeSidebarConversationDrag,
   type SidebarConversationDrag,
 } from "./sidebarConversationDrag";
-import {
-  CompactShortcutKeys,
-  newSessionAriaShortcut,
-  newSessionShortcutKeys,
-} from "@/components/KeyboardShortcut";
+import { CompactShortcutKeys, newSessionAriaShortcut } from "@/components/KeyboardShortcut";
 
 const DROP_TARGET_HIGHLIGHT = SIDEBAR_ACTIVE_HIGHLIGHT;
 
@@ -1253,7 +1249,7 @@ function SidebarImpl({
                     />
                     New session
                     <CompactShortcutKeys
-                      keys={newSessionShortcutKeys()}
+                      command="new-chat"
                       className="pointer-events-none absolute top-1/2 right-2 -translate-y-1/2 opacity-0 transition-opacity group-focus-visible/new-session:opacity-100 [&_kbd]:w-auto [&_kbd]:min-w-4 [&_kbd]:px-0.5 [&_kbd]:font-sans [&_kbd]:text-[10px] [@media((hover:hover)_and_(pointer:fine))]:group-hover/new-session:opacity-100"
                     />
                   </Link>
@@ -1328,6 +1324,24 @@ function SidebarImpl({
                     )}
                   </Link>
                 </Button>
+                {onOpenSearch && (
+                  <Button
+                    variant="ghost"
+                    className={cn(
+                      SIDEBAR_ROW,
+                      "density-row flex w-full justify-start font-normal",
+                      SIDEBAR_HOVER_HIGHLIGHT,
+                    )}
+                    onClick={() => {
+                      onOpenSearch();
+                      if (isMobileViewport()) onClose();
+                    }}
+                    componentId="sidebar.search"
+                  >
+                    <SearchIcon className="ui-icon text-muted-foreground" />
+                    Search
+                  </Button>
+                )}
                 {canvasEnabled && (
                   <PrimaryNavLink
                     to={canvasDestination.pathname + canvasDestination.search}
@@ -1798,6 +1812,7 @@ function ConversationList({
   onExitSelectionMode,
   getVisibleIdsRef,
 }: ConversationListProps) {
+  const navigate = useNavigate();
   const grids = useGridSessions();
   const workbench = useWorkbench();
   const { conversationId: branchRouteId } = useParams<{ conversationId: string }>();
@@ -2597,10 +2612,10 @@ function ConversationList({
   // Pinned section, so forcing their project open would undo a manual collapse
   // every time the user clicks the pinned row.
   useEffect(() => {
-    if (!activeId || !activeProjectName) return;
+    if (workbench || !activeId || !activeProjectName) return;
     if (pinnedSet.has(activeId)) return;
     expandProject(activeProjectName);
-  }, [activeId, activeProjectName, pinnedSet, expandProject]);
+  }, [workbench, activeId, activeProjectName, pinnedSet, expandProject]);
 
   // Visible rows in render order (collapsed sections excluded) for the Cmd+↑/↓
   // session hotkey. Titles must match the <ConversationSection> props below.
@@ -2675,7 +2690,6 @@ function ConversationList({
         : visibleIds("Chats", sections.sessions)),
     ];
   };
-  useSessionSwitchHotkey(orderedConversationIds, activeId);
 
   // Cmd/Ctrl+1..9/0 jumps to the first ten pinned sessions (desktop only;
   // see the hook). Empty when the Pinned section is collapsed.
@@ -2683,7 +2697,12 @@ function ConversationList({
     () => (collapsedSections.includes("Pinned") ? [] : sections.pinned.map((c) => c.id)),
     [sections.pinned, collapsedSections],
   );
-  usePinnedSessionHotkeys(pinnedSessionIds, activeId);
+  useSidebarShortcutCommands({
+    orderedIds: orderedConversationIds,
+    orderedPinnedIds: pinnedSessionIds,
+    activeId,
+    navigate,
+  });
   const pinOrder = useMemo(
     () =>
       pinReorderEnabled && !pinWriting
@@ -3470,7 +3489,7 @@ function SectionHeader({
           ? cn(
               SIDEBAR_ROW,
               "density-row",
-              "group flex w-full items-center border-0 text-left text-foreground transition-none",
+              "group flex w-full items-center border-0 text-left font-normal text-foreground transition-none",
               SIDEBAR_HOVER_HIGHLIGHT,
               contextMenu && SIDEBAR_OPEN_MENU_HIGHLIGHT,
               active && SIDEBAR_ACTIVE_HIGHLIGHT,
@@ -3503,7 +3522,7 @@ function SectionHeader({
           />
         </span>
       ) : null}
-      <span className={cn("min-w-0 truncate", icon && "font-semibold")}>{title}</span>
+      <span className={cn("min-w-0 truncate", icon && "font-normal")}>{title}</span>
       {/* Trailing chevron, rotating on expand. Headers without a leading icon
             reveal it on desktop hover/focus; icon headers show it only on mobile
             (no hover) since desktop swaps the folder for the chevron above. */}
@@ -5228,6 +5247,9 @@ function ConversationRowImpl({
       aria-current={isActive ? "page" : undefined}
       style={{ "--tree-depth": 0 } as CSSProperties}
       draggable={nativeDraggable ? true : gridsEnabled || workbench ? false : undefined}
+      {...(workbench && !selectionMode && !isProvisionalRow
+        ? middleClickHandlers(() => workbench.openConversation(conversation.id, { mode: "tab" }))
+        : {})}
       onDragStart={(event) => {
         if (!nativeDraggable) {
           event.preventDefault();
@@ -5306,7 +5328,7 @@ function ConversationRowImpl({
       <div className="flex w-full items-center gap-1">
         <span
           className={cn(
-            "relative min-w-0 truncate font-medium",
+            "relative min-w-0 truncate font-normal",
             // The optimistic first-prompt label is a placeholder until the
             // server's title lands — dim it so it doesn't read as final.
             isProvisionalLabel && "italic text-muted-foreground",

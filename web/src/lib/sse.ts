@@ -1288,7 +1288,12 @@ function parseOutputItem(data: Record<string, unknown>): StreamEvent | null {
   const itemType = String(rec.type ?? "");
   const itemId = String(rec.id ?? "");
   const responseId = String(rec.response_id ?? "");
-  const messageId = typeof data.message_id === "string" ? data.message_id : undefined;
+  const messageId =
+    typeof data.message_id === "string"
+      ? data.message_id
+      : typeof rec.stream_message_id === "string"
+        ? rec.stream_message_id
+        : undefined;
 
   if (questionBatchFromItem(rec)) return { type: "question_receipt", item: rec };
 
@@ -1335,6 +1340,7 @@ function parseOutputItem(data: Record<string, unknown>): StreamEvent | null {
     if (rec.is_meta === true) return null;
     const content = rec.content;
     return {
+      ...(rec.phase === "commentary" || rec.phase === "final_answer" ? { phase: rec.phase } : {}),
       type: "message_done",
       content: Array.isArray(content) ? (content as Record<string, unknown>[]) : [],
       itemId,

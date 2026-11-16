@@ -15,7 +15,12 @@ from playwright.sync_api import Locator, Page, Request, expect
 
 from tests.browser_ui.chat._geometry_helpers import assert_within_viewport, box
 from tests.browser_ui.chat.session_contract import list_payload, message_item
-from tests.browser_ui.chat.test_unified_workspace import WorkspaceJourney, _capture, _view
+from tests.browser_ui.chat.test_unified_workspace import (
+    WorkspaceJourney,
+    _capture,
+    _navigate_chat,
+    _view,
+)
 from tests.browser_ui.chat.test_unified_workspace import browser_errors as browser_errors
 from tests.browser_ui.chat.test_unified_workspace import workspace_journey as workspace_journey
 from tests.browser_ui.conftest import BrowserContract
@@ -72,6 +77,29 @@ def _assert_rows(
         assert actual["matches"] == [source[span["start"] : span["end"]] for span in ranges]
         assert actual["singleLine"] and actual["emphasized"]
     return snapshot
+
+
+def _assert_active_hit(page: Page, hit: dict[str, Any]) -> None:
+    page.wait_for_function(
+        """({itemId, start, end}) => {
+        const ranges = [...(CSS.highlights.get('chat-search-active') ?? [])];
+        if (ranges.length !== 1) return false;
+        const range = ranges[0];
+        const owner = range.startContainer.parentElement.closest('[data-search-item-id]');
+        if (owner?.dataset.searchItemId !== itemId || range.toString() !== 'needle')
+            return false;
+        const body = owner.querySelector('.message-markdown, [data-chat-plain-text]');
+        if (!body) return false;
+        const prefix = range.cloneRange();
+        prefix.selectNodeContents(body);
+        prefix.setEnd(range.startContainer, range.startOffset);
+        const rect = range.getBoundingClientRect();
+        return prefix.toString().length === start && range.toString().length === end - start
+            && rect.width > 0 && rect.height > 0;
+    }""",
+        arg={"itemId": hit["item_id"], **hit["ranges"][0]},
+        timeout=5_000,
+    )
 
 
 @pytest.mark.parametrize(
@@ -245,31 +273,36 @@ def test_unified_search_results_filters_and_commands(
             page.keyboard.press("ControlOrMeta+k")
             palette_query = palette.get_by_test_id("command-palette-input")
             palette_query.fill("needle")
-            expect(palette.get_by_role("button", name=label, exact=True)).to_have_attribute(
-                "aria-pressed", "true"
-            )
-            assert _assert_rows(palette, expected, current=current) == sidebar_rows
+            palette_rows = _assert_rows(palette, by_filter["all"], current=False)
+            if not current and message_filter == "all":
+                assert palette_rows == sidebar_rows
+            for group in ("Search categories", "Search scope", "Message types"):
+                expect(palette.get_by_role("group", name=group, exact=True)).to_have_count(0)
+            expect(
+                palette.get_by_role(
+                    "button",
+                    name=re.compile(
+                        r"^(All|Final|User|All chats|Current chat|Chats|Messages|Files|Actions)$"
+                    ),
+                )
+            ).to_have_count(0)
             expect(
                 palette.locator("[cmdk-group]:has([data-search-result]) [cmdk-group-heading]")
             ).to_have_count(0)
             expect(palette.get_by_role("listbox")).to_have_attribute("data-scrollbar", "hidden")
             assert_within_viewport(box(palette), 390 if viewport_kind == "mobile" else 1440)
-            if not current:
-                palette_query.hover()
-                palette.get_by_role("button", name=label, exact=True).hover()
-                expect(page.get_by_role("tooltip")).to_have_text(tooltip)
-                palette_query.click()
             if not current and message_filter == "all":
                 _capture(page, output_path, f"{viewport_kind}-{theme}-search-palette")
-            if current and message_filter == "user":
-                palette.get_by_role("button", name="Final", exact=True).click()
-                expected = [hits[0], hits[1]]
-                _assert_rows(palette, expected, current=True)
             palette_query.press("Escape")
             expect(palette).to_have_count(0)
             expect(query).to_have_value("needle")
-            _assert_rows(sidebar, expected, current=current)
-    expect(sidebar.get_by_role("button", name="Final", exact=True)).to_have_attribute(
+            expect(control).to_have_attribute("aria-pressed", "true")
+            expect(sidebar.get_by_role("button", name=scope, exact=True)).to_have_attribute(
+                "aria-pressed", "true"
+            )
+            assert _assert_rows(sidebar, expected, current=current) == sidebar_rows
+            expect(_view(page, "Chat A")).to_be_visible()
+    expect(sidebar.get_by_role("button", name="User", exact=True)).to_have_attribute(
         "aria-pressed", "true"
     )
     expect(page.get_by_role("tab", name="Needle archive", exact=True)).to_have_count(0)
@@ -277,6 +310,7 @@ def test_unified_search_results_filters_and_commands(
     sidebar.get_by_role("button", name="All", exact=True).click()
     _assert_rows(sidebar, by_filter["all"], current=False)
     sidebar.locator('[data-search-result="chat"]').click()
+    expect(page).to_have_url(second.url)
     expect(_view(page, "Needle archive")).to_be_visible()
     expect(
         _view(page, "Needle archive").get_by_test_id("context-search-bar").get_by_role("status")
@@ -288,28 +322,44 @@ def test_unified_search_results_filters_and_commands(
     _assert_rows(palette, by_filter["all"], current=False)
     palette.locator('[data-search-result="message"]').filter(has_text=hits[1]["snippet"]).click()
     expect(palette).to_have_count(0)
+    expect(page).to_have_url(first.url)
     expect(_view(page, "Chat A")).to_be_visible()
-    page.wait_for_function(
-        """() => {
-        const range = [...(CSS.highlights.get('chat-search-active') ?? [])][0];
-        return range?.toString() === 'needle'
-            && range.startContainer.parentElement.closest('[data-search-item-id]')
-                ?.dataset.searchItemId === 'final';
-    }""",
-        timeout=5_000,
-    )
+    _assert_active_hit(page, hits[1])
     expect(composer).to_have_value(draft)
     bar = _view(page, "Chat A").get_by_test_id("context-search-bar")
     expect(bar).not_to_contain_text(re.compile(r"In this chat|unavailable", re.IGNORECASE))
     bar.get_by_role("button", name="Close search", exact=True).click()
 
+    page.keyboard.press("ControlOrMeta+k")
+    palette_query = palette.get_by_test_id("command-palette-input")
+    palette_query.fill("needle")
+    _assert_rows(palette, by_filter["all"], current=False)
+    expect(palette.get_by_role("option").filter(has_text=preview)).to_have_attribute(
+        "aria-selected", "true"
+    )
+    for _ in hits:
+        palette_query.press("ArrowDown")
+    expect(palette.get_by_role("option").filter(has_text=hits[-1]["snippet"])).to_have_attribute(
+        "aria-selected", "true"
+    )
+    palette_query.press("Enter")
+    expect(palette).to_have_count(0)
+    expect(page).to_have_url(second.url)
+    archive = _view(page, "Needle archive")
+    expect(archive).to_be_visible()
+    _assert_active_hit(page, hits[-1])
+    archive_bar = archive.get_by_test_id("context-search-bar")
+    expect(archive_bar).not_to_contain_text("unavailable")
+    archive_bar.get_by_role("button", name="Close search", exact=True).click()
+
     page.get_by_role("button", name="Search or run a command", exact=True).click()
     palette.get_by_test_id("command-palette-input").fill("Orchestration")
     palette.get_by_role("option", name="Orchestration", exact=True).click()
     expect(_view(page, "Orchestration")).to_be_visible()
-    page.get_by_role("tab", name="Chat A", exact=True).click()
+    _navigate_chat(page, first)
     expect(composer).to_have_value(draft)
     assert first.event_posts == []
+    assert second.event_posts == []
     assert browser_errors == []
     needle_requests = [params for params in requests if params.get("query") == "needle"]
     assert all(

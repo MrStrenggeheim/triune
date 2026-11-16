@@ -65,6 +65,7 @@ from omnigent.entities.conversation import (
     parse_item_data,
 )
 from omnigent.entities.permission import SessionPermission
+from omnigent.entities.subchat import is_durable_subchat, subchat_question_content
 from omnigent.errors import (
     SESSION_AGENT_MISSING_MESSAGE,
     ErrorCategory,
@@ -8071,9 +8072,10 @@ async def _seed_missing_title(
     if title is None:
         return
     updated = await asyncio.to_thread(
-        conversation_store.update_conversation,
+        conversation_store.rename_conversation_if_title_matches,
         conv.id,
-        title=title,
+        "",
+        title,
     )
     if updated is not None:
         conv.title = updated.title
@@ -8098,7 +8100,12 @@ async def _seed_missing_title_from_user_message(
     :param conversation_store: Store used to persist the title.
     :returns: None.
     """
-    await _seed_missing_title(conv, _title_content_from_item(item), conversation_store)
+    content = _title_content_from_item(item)
+    if is_durable_subchat(conv.id, conv.labels):
+        if not isinstance(item.data, MessageData) or item.data.user_authored is not True:
+            return
+        content = subchat_question_content(content)
+    await _seed_missing_title(conv, content, conversation_store)
 
 
 def _extract_user_text_for_routing(body: SessionEventInput) -> str:
@@ -11312,7 +11319,7 @@ def _child_session_summary_from_conversation(
         id=conv.id,
         parent_session_id=parent_session_id,
         title=display_title,
-        task_summary=labels.get("omnigent.subagent.task_summary") or metadata.get("task_summary"),
+        task_summary=metadata.get("card_summary") or metadata.get("task_summary"),
         tool=tool,
         session_name=session_name,
         created_at=conv.created_at,

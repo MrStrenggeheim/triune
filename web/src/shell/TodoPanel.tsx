@@ -1,6 +1,7 @@
 // Modified for Triune.
 
 import { CheckboxVisual } from "@/components/ui/checkbox";
+import { RunningDot } from "@/components/RunningDot";
 import { useConversationChatStore } from "@/workbench/ScopedChatStore";
 import { cn } from "@/lib/utils";
 
@@ -23,7 +24,7 @@ function TodoIcon({ status }: { status: TodoItem["status"] }) {
           data-slot="plan-active-marker"
           className="flex size-4 shrink-0 items-center justify-center"
         >
-          <span className="size-2.5 rounded-full border border-primary bg-primary/10" />
+          <RunningDot className="text-primary" />
         </span>
       ) : (
         <CheckboxVisual checked={status === "completed"} />

@@ -1,11 +1,12 @@
 // Modified for Triune.
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BubbleView } from "@/pages/ChatPage";
 import { useChatStore } from "@/store/chatStore";
-import { buildBubbles } from "@/lib/renderItems";
+import { findMessageElement } from "@/lib/messageDeepLink";
+import { createBubbleCache, buildBubbles } from "@/lib/renderItems";
 import { BlockStream } from "@/lib/blockStream";
 import { itemsToBlocks } from "@/lib/itemsToBlocks";
 import { parseEvent } from "@/lib/sse";
@@ -122,8 +123,13 @@ describe("sub-agent task and reply", () => {
       </MemoryRouter>,
     );
     const card = screen.getByTestId("subagent-activity");
-    expect(card).toHaveTextContent("Curie · Inspect navigationInspect navigation.Running");
-    expect(screen.queryByText(/Keep/)).not.toBeInTheDocument();
+    expect(card).toHaveTextContent(
+      "Curie · Inspect navigationKeep **all instructions** behind deliberate expansion.Running",
+    );
+    expect(
+      screen.getByText("Keep **all instructions** behind deliberate expansion."),
+    ).toBeVisible();
+    expect(screen.queryByText("all instructions", { selector: "strong" })).not.toBeInTheDocument();
     await act(async () =>
       client.setQueryData(childSessionsQueryKey("parent"), [
         { ...summary, busy: false, current_task_status: "completed" },
@@ -140,7 +146,7 @@ describe("sub-agent task and reply", () => {
   });
 
   it.each([{ labels: { "omnigent.subagent.dispatch_id": "later" } }, { labels: {} }])(
-    "never borrows a later or unidentified dispatch despite an identical description: %j",
+    "keeps current child identity and lifecycle across dispatches: %j",
     (fields) => {
       const client = queryClient({ ...summary, ...fields, agent_name: "Later name" });
       render(
@@ -151,10 +157,10 @@ describe("sub-agent task and reply", () => {
         </MemoryRouter>,
       );
       expect(screen.getByTestId("subagent-activity")).toHaveTextContent(
-        "Agent · Inspect navigationDelegated taskStarted",
+        "Later name · Inspect navigationDelegated taskRunning",
       );
-      expect(screen.queryByText("Running")).not.toBeInTheDocument();
-      expect(screen.queryByText("Later name")).not.toBeInTheDocument();
+      expect(screen.getByText("Running")).toBeVisible();
+      expect(screen.getByText("Later name")).toBeVisible();
     },
   );
 
@@ -182,7 +188,9 @@ describe("sub-agent task and reply", () => {
     expect(screen.getAllByTestId("subagent-activity")).toHaveLength(1);
     const card = screen.getByTestId("subagent-activity");
     const reply = screen.getByTestId("subagent-reply");
-    expect(card).toHaveTextContent("Curie · Inspect navigationInspect navigation.Completed");
+    expect(card).toHaveTextContent(
+      "Curie · Inspect navigationKeep **all instructions** behind deliberate expansion.Completed",
+    );
     expect(card).not.toHaveTextContent("original result");
     expect(reply).toHaveTextContent("Curie replied");
     expect(reply).not.toHaveTextContent("Inspect navigation");
@@ -471,4 +479,113 @@ it("keeps an expanded reply open as late report text enriches the same event", a
     "true",
   );
   expect(await screen.findByText("Late final part")).toHaveAttribute("data-streamdown", "strong");
+});
+
+it("updates one plain-timeline card per child through spawn, repeated steering and late status", () => {
+  const events = [
+    activity(
+      "delegated",
+      { task_summary: "Navigation review", task_input: "Original handoff" },
+      "spawn",
+    ),
+    activity(
+      "delegated",
+      {
+        dispatch_id: "steer-1",
+        task_summary: "Working agreement update",
+        task_input: "First steering details",
+      },
+      "steer-1",
+    ),
+    {
+      ...activity(
+        "delegated",
+        { dispatch_id: "another", task_summary: "Independent research" },
+        "another",
+      ),
+      resource_id: "second-child",
+    },
+    activity(
+      "delegated",
+      {
+        dispatch_id: "steer-2",
+        task_summary: "Shared parse blocker",
+        task_input: "Second steering details",
+      },
+      "steer-2",
+    ),
+    activity("returned", { dispatch_id: "dispatch-1", status: "completed" }, "late-old-return"),
+    activity("returned", { dispatch_id: "steer-2", status: "completed" }, "last-return"),
+  ];
+  const cache = createBubbleCache();
+  const view = (count: number) => {
+    const blocks = itemsToBlocks(events.slice(0, count));
+    useChatStore.setState({ blocks });
+    const bubbles = buildBubbles(blocks, null, cache);
+    expect(bubbles).toEqual(buildBubbles(blocks, null));
+    return (
+      <MemoryRouter>
+        {bubbles.map((bubble) => (
+          <BubbleView
+            key={bubble.kind === "subagent_activity" ? bubble.itemId : JSON.stringify(bubble)}
+            bubble={bubble}
+          />
+        ))}
+      </MemoryRouter>
+    );
+  };
+  const rendered = render(view(1));
+  const original = screen.getByTestId("subagent-activity");
+  for (let count = 2; count <= events.length; count++) {
+    act(() => rendered.rerender(view(count)));
+    const cards = screen.getAllByTestId("subagent-activity");
+    expect(cards).toHaveLength(count >= 3 ? 2 : 1);
+    expect(cards[0]).toBe(original);
+    expect(cards[0]).toHaveTextContent("Navigation review");
+    expect(cards[0]).not.toHaveTextContent("Working agreement update");
+    expect(cards[0]).not.toHaveTextContent("Shared parse blocker");
+  }
+  expect(original).toHaveTextContent("Completed");
+  expect(findMessageElement("spawn")).toBe(original);
+  expect(findMessageElement("steer-1")).toBe(original);
+  expect(findMessageElement("steer-2")).toBe(original);
+  fireEvent.click(within(original).getByRole("button", { name: "Expand activity" }));
+  expect(original).toHaveTextContent("Original handoff");
+  expect(original).toHaveTextContent("First steering details");
+  expect(original).toHaveTextContent("Second steering details");
+});
+
+it.each([
+  "Delegated task",
+  "Please inspect the entire navigation and preserve all original instructions. ".repeat(4),
+])("lets the generated short summary replace legacy/pending metadata: %s", async (legacy) => {
+  const client = queryClient({
+    ...summary,
+    task_summary: legacy,
+    labels: { "omnigent.subagent.card_summary": legacy },
+  });
+  const data = activity("delegated", {
+    task_summary: legacy,
+    card_summary: legacy,
+    task_input: originalInput,
+  });
+  render(
+    <MemoryRouter>
+      <QueryClientProvider client={client}>
+        <SubagentActivityMessage data={data} />
+      </QueryClientProvider>
+    </MemoryRouter>,
+  );
+  await act(async () =>
+    client.setQueryData(childSessionsQueryKey("parent"), [
+      {
+        ...summary,
+        task_summary: "Navigation review",
+        labels: { "omnigent.subagent.card_summary": legacy },
+      },
+    ]),
+  );
+  expect(await screen.findByText("· Navigation review")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Expand activity" }));
+  expect(screen.getByTestId("subagent-activity")).toHaveTextContent("all instructions");
 });

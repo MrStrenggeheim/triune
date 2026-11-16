@@ -88,7 +88,7 @@ afterEach(() => {
   cleanup();
   vi.clearAllMocks();
 });
-function renderTree(initial = "root", owner?: string | null) {
+function renderTree(initial = "root", owner?: string | null, onOpenSearch?: () => void) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   function Harness() {
     const [focusedConversationId, setFocused] = useState(initial);
@@ -97,18 +97,21 @@ function renderTree(initial = "root", owner?: string | null) {
       focusedConversationId,
       layoutOwnerConversationId,
       openConversationIds: ["root", "two"],
-      openConversation: (id: string, options?: { beside?: boolean }) => {
+      openConversation: (
+        id: string,
+        options?: { beside?: boolean; mode?: "layout" | "tab" | "beside" },
+      ) => {
         actions.open(id, options);
         if (!options?.beside) {
           setFocused(id);
-          if (owner !== undefined) setOwner(id);
+          if (owner !== undefined && options?.mode !== "tab") setOwner(id);
         }
       },
       openView: vi.fn(),
     };
     return (
       <WorkbenchProvider value={navigation}>
-        <Sidebar workbench open onClose={vi.fn()} />
+        <Sidebar workbench open onClose={vi.fn()} onOpenSearch={onOpenSearch} />
       </WorkbenchProvider>
     );
   }
@@ -481,4 +484,38 @@ it("does not substitute the focused chat when the layout explicitly has no owner
   expect(
     screen.getAllByRole("link").filter((row) => row.hasAttribute("aria-current")),
   ).toHaveLength(0);
+});
+
+it("opens middle-clicked sessions as tabs while normal selection opens the chat layout", async () => {
+  renderTree("two", "root");
+  const root = await screen.findByRole("link", { name: "root" });
+  fireEvent.mouseDown(root, { button: 1 });
+  expect(actions.open).not.toHaveBeenCalled();
+  fireEvent(root, new MouseEvent("auxclick", { button: 1, bubbles: true, cancelable: true }));
+  expect(actions.open).toHaveBeenCalledExactlyOnceWith("root", { mode: "tab" });
+  actions.open.mockClear();
+  fireEvent.click(root);
+  expect(actions.open).toHaveBeenCalledExactlyOnceWith("root", undefined);
+});
+
+it("places Search immediately after Inbox and reuses the provided global search callback", async () => {
+  const openSearch = vi.fn();
+  renderTree("root", undefined, openSearch);
+  const search = await screen.findByRole("button", { name: "Search" });
+  const inbox = screen.getByRole("link", { name: "Inbox" });
+  expect(inbox.nextElementSibling).toBe(search);
+  fireEvent.click(search);
+  expect(openSearch).toHaveBeenCalledTimes(1);
+  expect(search).toHaveClass("font-normal");
+  expect(screen.getByRole("link", { name: "root" }).querySelector("span.relative")).toHaveClass(
+    "font-normal",
+  );
+});
+
+it("keeps ancestors collapsed when focusing a durable descendant", async () => {
+  renderTree("four");
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Expand subchats of root" })).toHaveTextContent("4"),
+  );
+  expect(screen.queryByRole("link", { name: "one" })).toBeNull();
 });

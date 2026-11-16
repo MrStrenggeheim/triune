@@ -9,12 +9,16 @@ import { useChildSessions } from "@/hooks/useChildSessions";
 import { Link, useLocation, useNavigate } from "@/lib/routing";
 import { sessionNavigationSearch } from "@/lib/sessionNavigation";
 import {
+  formatSubagentTask,
+  meaningfulTaskSummary,
+  subagentCardItemIds,
   readSubagentActivity,
   subagentEventStatus,
   subagentActivityName,
   recordedSubagentReturn,
   shouldRenderSubagentReply,
   subagentMatchesChild,
+  subagentTaskDescription,
   shortTaskText,
   type SubagentActivity,
 } from "@/lib/subagentActivity";
@@ -34,29 +38,41 @@ export function SubagentActivityMessage({ data }: { data: Record<string, unknown
   const activity = readSubagentActivity(data);
   if (!activity) return null;
   const ownerBlocks = ownerId === conversationId ? blocks : [];
-  const completion = recordedSubagentReturn(activity, ownerBlocks);
+  const resource = data.resource as Record<string, unknown> | undefined;
+  const canonical = Array.isArray(resource?.card_dispatches);
+  const completion = canonical ? undefined : recordedSubagentReturn(activity, ownerBlocks);
   if (
     activity.phase === "returned" &&
     !shouldRenderSubagentReply(activity, ownerBlocks, conversationId)
   )
     return null;
-  const status = completion
-    ? subagentEventStatus(completion)
-    : ["completed", "failed", "cancelled", "killed", "stopped"].includes(activity.status ?? "")
-      ? subagentEventStatus(activity)
-      : undefined;
+  const status = canonical
+    ? resource?.card_phase === "delegated" && !resource?.card_status
+      ? undefined
+      : subagentEventStatus({
+          ...activity,
+          status: typeof resource?.card_status === "string" ? resource.card_status : null,
+          phase: resource?.card_phase === "returned" ? "returned" : "delegated",
+        })
+    : completion
+      ? subagentEventStatus(completion)
+      : ["completed", "failed", "cancelled", "killed", "stopped"].includes(activity.status ?? "")
+        ? subagentEventStatus(activity)
+        : undefined;
   return queryClient && conversationId ? (
-    <RecordedTask activity={activity} conversationId={conversationId} status={status} />
+    <RecordedTask data={data} activity={activity} conversationId={conversationId} status={status} />
   ) : (
-    <Task activity={activity} conversationId={conversationId} status={status} />
+    <Task data={data} activity={activity} conversationId={conversationId} status={status} />
   );
 }
 
 function RecordedTask({
+  data,
   activity,
   conversationId,
   status,
 }: {
+  data: Record<string, unknown>;
   activity: SubagentActivity;
   conversationId: string;
   status?: AgentStatus;
@@ -65,6 +81,8 @@ function RecordedTask({
   const { children } = useChildSessions(conversationId, undefined, { enabled: visible });
   const child = children.find((candidate) => candidate.id === activity.sessionId);
   const matchesTask = !!child && subagentMatchesChild(activity, child);
+  const resource = data.resource as Record<string, unknown> | undefined;
+  const canonical = Array.isArray(resource?.card_dispatches);
   const hasCurrentState =
     child &&
     (child.busy ||
@@ -73,9 +91,19 @@ function RecordedTask({
       child.last_task_error);
   return (
     <Task
+      data={data}
       activity={activity}
       conversationId={conversationId}
       agentName={subagentActivityName(activity, child)}
+      taskSummary={
+        meaningfulTaskSummary(child?.labels?.["omnigent.subagent.card_summary"]) ??
+        meaningfulTaskSummary(activity.taskDescription) ??
+        (child
+          ? canonical
+            ? meaningfulTaskSummary(child.task_summary)
+            : subagentTaskDescription(child)
+          : null)
+      }
       status={
         status ??
         (activity.phase === "delegated" && child && hasCurrentState && matchesTask
@@ -87,14 +115,18 @@ function RecordedTask({
 }
 
 function Task({
+  data,
   activity,
   conversationId,
   agentName,
+  taskSummary,
   status,
 }: {
+  data: Record<string, unknown>;
   activity: SubagentActivity;
   conversationId: string | null;
   agentName?: string;
+  taskSummary?: string | null;
   status?: AgentStatus;
 }) {
   const workbench = useWorkbenchActions();
@@ -106,8 +138,30 @@ function Task({
   params.set("focusAgentId", activity.sessionId);
   const to = { pathname: `/c/${encodeURIComponent(origin)}`, search: `?${params.toString()}` };
   const name = agentName ?? activity.agentName ?? activity.agentRole ?? "Agent";
-  const task = activity.taskDescription;
+  const resource = data.resource as Record<string, unknown> | undefined;
+  const dispatches = Array.isArray(resource?.card_dispatches)
+    ? resource.card_dispatches.flatMap((value) => {
+        const dispatch = readSubagentActivity(value);
+        return dispatch?.phase === "delegated" && dispatch.itemId !== activity.itemId
+          ? [dispatch]
+          : [];
+      })
+    : [];
+  const task = taskSummary ?? activity.taskDescription;
   const input = activity.taskInput;
+  const firstLine = input?.split("\n", 1)[0].trim();
+  const heading = firstLine
+    ?.replace(/^#+\s*/, "")
+    .replace(/[.!?:]+$/, "")
+    .toLowerCase();
+  const repeatsTitle =
+    heading ===
+    (task
+      ? formatSubagentTask(task)
+          .replace(/[.!?:]+$/, "")
+          .toLowerCase()
+      : undefined);
+  const preview = repeatsTitle ? input?.split("\n").slice(1).join("\n").trim() : firstLine;
   const action = (
     <>
       <Button variant="ghost" size="icon-xs" aria-label={`Open ${name} chat beside`} asChild>
@@ -184,27 +238,47 @@ function Task({
       data-testid="subagent-activity"
       data-phase={activity.phase}
       data-child-session-id={activity.sessionId}
+      data-message-id={activity.itemId}
+      data-message-aliases={JSON.stringify(subagentCardItemIds(data))}
     >
       <SubagentTaskRow
+        searchItemIds={subagentCardItemIds(data)}
         agentName={name}
         description={task ? shortTaskText(task, 80) : "Delegated task"}
         status={status ?? subagentEventStatus(activity)}
         action={action}
-        preview={input ? shortTaskText(input.split("\n", 1)[0], 180) : "Delegated task"}
+        preview={preview ? shortTaskText(preview, 180) : "Delegated task"}
       >
         {input ? (
           <div className="group space-y-2 py-1 text-sm">
-            <ConversationScopeContext.Provider
-              value={activity.taskInputRef?.conversationId ?? conversationId}
-            >
-              <FilePathAwareMessageResponse
-                sourceItemId={activity.taskInputRef?.itemId ?? activity.itemId}
-                breaks
-                mode="static"
+            <div data-search-item-id={activity.itemId}>
+              <ConversationScopeContext.Provider
+                value={activity.taskInputRef?.conversationId ?? conversationId}
               >
-                {input}
-              </FilePathAwareMessageResponse>
-            </ConversationScopeContext.Provider>
+                <FilePathAwareMessageResponse
+                  sourceItemId={activity.taskInputRef?.itemId ?? activity.itemId}
+                  breaks
+                  mode="static"
+                >
+                  {input}
+                </FilePathAwareMessageResponse>
+              </ConversationScopeContext.Provider>
+            </div>
+            {dispatches.map((dispatch) => (
+              <div key={dispatch.itemId} data-search-item-id={dispatch.itemId}>
+                <ConversationScopeContext.Provider
+                  value={dispatch.taskInputRef?.conversationId ?? conversationId}
+                >
+                  <FilePathAwareMessageResponse
+                    sourceItemId={dispatch.taskInputRef?.itemId ?? dispatch.itemId}
+                    breaks
+                    mode="static"
+                  >
+                    {dispatch.taskInput ?? ""}
+                  </FilePathAwareMessageResponse>
+                </ConversationScopeContext.Provider>
+              </div>
+            ))}
           </div>
         ) : undefined}
       </SubagentTaskRow>

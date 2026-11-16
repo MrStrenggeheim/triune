@@ -158,6 +158,7 @@ describe("browserViewRegistry — first-navigate activation signal", () => {
 function makeRecentSessionInputRegistry({
   isHostFocused = () => true,
   supportsRecentSessionSwitch = true,
+  forwardWorkspaceShortcut = () => false,
 } = {}) {
   const listeners = new Map();
   const sent = [];
@@ -177,6 +178,7 @@ function makeRecentSessionInputRegistry({
     detachFromHost() {},
     sendToRenderer: (channel, payload) => sent.push({ channel, payload }),
     isHostFocused,
+    forwardWorkspaceShortcut,
   });
   registry.openOrNavigate("conv_1", "https://example.com");
   registry.setActive("conv_1");
@@ -185,6 +187,31 @@ function makeRecentSessionInputRegistry({
 }
 
 describe("browserViewRegistry — recent-session input forwarding", () => {
+  it("routes workspace strokes exactly once before the recent-session forwarder", () => {
+    const inputs = [];
+    const { listeners, sent } = makeRecentSessionInputRegistry({
+      forwardWorkspaceShortcut: (event, input) => {
+        if (input.key !== "w") return false;
+        event.preventDefault();
+        inputs.push(input);
+        return true;
+      },
+    });
+    let prevented = 0;
+    listeners.get("before-input-event")(
+      { preventDefault: () => prevented++ },
+      { type: "keyDown", key: "w", control: true },
+    );
+    assert.equal(inputs.length, 1);
+    assert.equal(prevented, 1);
+    assert.equal(sent.filter((item) => item.channel === "browser-recent-session-input").length, 0);
+    listeners.get("before-input-event")(
+      { preventDefault: () => prevented++ },
+      { type: "keyDown", key: "Tab", control: true },
+    );
+    assert.equal(sent.filter((item) => item.channel === "browser-recent-session-input").length, 1);
+  });
+
   it("leaves page shortcuts untouched until the renderer advertises support", () => {
     const { listeners, sent } = makeRecentSessionInputRegistry({
       supportsRecentSessionSwitch: false,

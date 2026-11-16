@@ -1,5 +1,5 @@
 import { CheckIcon, Loader2Icon, MessagesSquareIcon, TerminalIcon } from "lucide-react";
-import { ARIA_MOD_KEY, VIEW_MODE_TOGGLE_KEYS } from "@/components/KeyboardShortcut";
+import { commandAriaShortcut, useCommandShortcutKeys } from "@/components/KeyboardShortcut";
 import { SegmentedControl, SegmentedControlItem } from "@/components/ui/segmented-control";
 import { DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { useIsMobileViewport } from "@/hooks/useIsMobileViewport";
@@ -28,6 +28,7 @@ const ignoreViewChange = () => {};
  * view switch and the "…" menu.
  */
 export function ViewModeToggle({ hotkeyEnabled = true, alwaysVisible = false } = {}) {
+  const viewModeKeys = useCommandShortcutKeys("toggle-view-mode");
   const ctx = useTerminalFirst();
   const isMobile = useIsMobileViewport();
   useViewModeToggleHotkey({
@@ -56,8 +57,8 @@ export function ViewModeToggle({ hotkeyEnabled = true, alwaysVisible = false } =
         onClick={() => setView("chat")}
         data-testid="view-mode-chat"
         iconOnly
-        aria-keyshortcuts={`${ARIA_MOD_KEY}+Alt+\\`}
-        shortcut={VIEW_MODE_TOGGLE_KEYS}
+        aria-keyshortcuts={commandAriaShortcut("toggle-view-mode")}
+        shortcut={viewModeKeys}
         componentId="chat.header.view_chat"
       >
         <MessagesSquareIcon className="size-4" />
@@ -68,8 +69,8 @@ export function ViewModeToggle({ hotkeyEnabled = true, alwaysVisible = false } =
         onClick={() => setView("terminal")}
         data-testid="view-mode-terminal"
         iconOnly
-        aria-keyshortcuts={`${ARIA_MOD_KEY}+Alt+\\`}
-        shortcut={VIEW_MODE_TOGGLE_KEYS}
+        aria-keyshortcuts={commandAriaShortcut("toggle-view-mode")}
+        shortcut={viewModeKeys}
         componentId="chat.header.view_terminal"
       >
         {terminalStartingUp ? (

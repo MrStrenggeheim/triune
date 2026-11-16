@@ -1,6 +1,15 @@
 // Required Notice: Copyright 2026 MrStrenggeheim. Triune (https://github.com/MrStrenggeheim/triune).
 import { useEffect, useMemo, useRef, useState } from "react";
-import { CodeIcon, DownloadIcon, ExternalLinkIcon, FileCodeIcon } from "lucide-react";
+import {
+  CodeIcon,
+  DownloadIcon,
+  ExternalLinkIcon,
+  MoreHorizontalIcon,
+  PanelsTopLeftIcon,
+  WrapTextIcon,
+} from "lucide-react";
+import { useWrapPreference } from "@/hooks/useWrapPreference";
+import { Button } from "@/components/ui/button";
 import { HeaderActionButton } from "@/components/HeaderActionButton";
 import { useResolvedThemeMode } from "@/components/theme/useResolvedThemeMode";
 import { getArtifactThemeVariables } from "@/lib/designContract";
@@ -13,7 +22,20 @@ import { toast } from "@/lib/notifications";
 import { artifactKit } from "./kit";
 import { ARTIFACT_SANDBOX, buildArtifactDocument, type ArtifactTheme } from "./artifactDocument";
 import { serializeArtifactState } from "./artifactProtocol";
-import { usesArtifactKit } from "./kitEmbedding";
+import {
+  CodeBlock,
+  CodeBlockActions,
+  CodeBlockCopyButton,
+  CodeBlockHeader,
+  CodeBlockTitle,
+} from "@/components/ai-elements/code-block";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { downloadBlob } from "@/lib/explorerOperations";
 
 const memory = new Map<string, unknown>();
@@ -35,12 +57,12 @@ export function ArtifactFrame({
   html,
   identity,
   title,
-  onDownload,
+  onOpenTab,
 }: {
   html: string;
   identity: string;
   title: string;
-  onDownload?: () => void;
+  onOpenTab?: () => void;
 }) {
   const viewerId = useViewerId();
   const chatVisible = useConversationChatVisible();
@@ -57,6 +79,7 @@ export function ArtifactFrame({
   const channel = documentIdentity.channel;
   const [documentHtml, setDocumentHtml] = useState<string>();
   const [source, setSource] = useState(false);
+  const [wrap, setWrap] = useWrapPreference("chat");
   const [height, setHeight] = useState(360);
   const [intersecting, setIntersecting] = useState(true);
   const [documentVisible, setDocumentVisible] = useState(document.visibilityState !== "hidden");
@@ -171,6 +194,16 @@ export function ArtifactFrame({
     container.current?.dispatchEvent(new Event("triune-artifact:update"));
   }, [active, themeMode]);
 
+  function completeDocument() {
+    return buildArtifactDocument(html, {
+      channel: crypto.randomUUID(),
+      kit: artifactKit,
+      theme: currentTheme.current,
+      state: storageKey ? readState(storageKey) : undefined,
+      active: true,
+    });
+  }
+
   return (
     <div
       ref={container}
@@ -179,55 +212,62 @@ export function ArtifactFrame({
     >
       <header className="flex min-h-10 items-center gap-2 border-b border-border px-2">
         <span className="min-w-0 flex-1 truncate text-sm">{title}</span>
-        <HeaderActionButton
-          aria-label={source ? "Show artifact preview" : "Show artifact source"}
-          aria-pressed={source}
-          onClick={() => setSource(!source)}
-        >
-          <CodeIcon />
-        </HeaderActionButton>
-        {onDownload && (
-          <HeaderActionButton aria-label={`Download ${title}`} onClick={onDownload}>
-            <DownloadIcon />
-          </HeaderActionButton>
-        )}
-        {usesArtifactKit(html) && (
-          <HeaderActionButton
-            aria-label="Download self-contained HTML"
-            onClick={() => {
-              const complete = buildArtifactDocument(html, {
-                channel: crypto.randomUUID(),
-                kit: artifactKit,
-                theme: currentTheme.current,
-                state: storageKey ? readState(storageKey) : undefined,
-                active: true,
-              });
-              downloadBlob(
-                new Blob([complete], { type: "text/html;charset=utf-8" }),
-                title.endsWith(".html") ? title : `${title}.html`,
-              );
-            }}
-          >
-            <FileCodeIcon />
-          </HeaderActionButton>
-        )}
-        <HeaderActionButton
-          aria-label="Open artifact in full window"
-          disabled={!documentHtml}
-          onClick={() => {
-            const complete = buildArtifactDocument(html, {
-              channel: crypto.randomUUID(),
-              kit: artifactKit,
-              theme: currentTheme.current,
-              state: storageKey ? readState(storageKey) : undefined,
-              active: true,
-            });
-            if (!openHtmlArtifactInNewTab(complete, title))
-              toast.error("The full-window preview was blocked. Allow popups and retry.");
-          }}
-        >
-          <ExternalLinkIcon />
-        </HeaderActionButton>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <HeaderActionButton
+              aria-label="Source"
+              aria-pressed={source}
+              onClick={() => setSource(!source)}
+            >
+              <CodeIcon />
+            </HeaderActionButton>
+          </TooltipTrigger>
+          <TooltipContent>Show artifact source</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <HeaderActionButton
+              aria-label="Download artifact"
+              disabled={!documentHtml}
+              onClick={() => {
+                downloadBlob(
+                  new Blob([completeDocument()], { type: "text/html;charset=utf-8" }),
+                  /\.html?$/i.test(title) ? title : `${title}.html`,
+                );
+              }}
+            >
+              <DownloadIcon />
+            </HeaderActionButton>
+          </TooltipTrigger>
+          <TooltipContent>Download artifact</TooltipContent>
+        </Tooltip>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <HeaderActionButton aria-label="More" tooltip={false}>
+              <MoreHorizontalIcon />
+            </HeaderActionButton>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem disabled={!onOpenTab} onSelect={onOpenTab}>
+              <PanelsTopLeftIcon /> Open in tab
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={!documentHtml}
+              onSelect={() => {
+                if (
+                  !openHtmlArtifactInNewTab(completeDocument(), title, window, {
+                    sandbox: ARTIFACT_SANDBOX,
+                    newWindow: true,
+                    prepared: true,
+                  })
+                )
+                  toast.error("The artifact window was blocked. Allow popups and retry.");
+              }}
+            >
+              <ExternalLinkIcon /> Open in new window
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </header>
       {!documentHtml && (
         <p role="status" className="p-3 text-sm text-muted-foreground">
@@ -248,9 +288,25 @@ export function ArtifactFrame({
         />
       )}
       {source && (
-        <pre className="max-h-[60dvh] overflow-auto whitespace-pre-wrap break-words p-3 text-xs">
-          <code>{html}</code>
-        </pre>
+        <div className="max-h-[60dvh] overflow-auto">
+          <CodeBlock code={html} language={html.length > 512 * 1024 ? "text" : "html"} wrap={wrap}>
+            <CodeBlockHeader>
+              <CodeBlockTitle>HTML</CodeBlockTitle>
+              <CodeBlockActions>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label="Toggle word wrap"
+                  aria-pressed={wrap}
+                  onClick={() => setWrap(!wrap)}
+                >
+                  <WrapTextIcon />
+                </Button>
+                <CodeBlockCopyButton aria-label="Copy source" />
+              </CodeBlockActions>
+            </CodeBlockHeader>
+          </CodeBlock>
+        </div>
       )}
     </div>
   );

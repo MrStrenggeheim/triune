@@ -1,4 +1,5 @@
-"use client";
+import { useTranscriptDisclosureAnchor } from "@/hooks/useTranscriptDisclosureAnchor";
+("use client");
 
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
@@ -64,6 +65,7 @@ export const Reasoning = memo(
     children,
     ...props
   }: ReasoningProps) => {
+    const preserveDisclosure = useTranscriptDisclosureAnchor();
     // Open state follows isStreaming by default, but a manual user
     // toggle takes precedence until the next time streaming starts.
     // Resetting on the next stream means a new reasoning section
@@ -88,6 +90,7 @@ export const Reasoning = memo(
     return (
       <ReasoningContext.Provider value={contextValue}>
         <Collapsible
+          onClickCapture={preserveDisclosure}
           className={cn("not-prose", className)}
           // Radix locks interaction when disabled — keeps the header from
           // being clickable / focusable when there's nothing to reveal.

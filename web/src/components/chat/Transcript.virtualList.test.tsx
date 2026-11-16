@@ -1,4 +1,8 @@
 // Modified for Triune.
+import { createRef } from "react";
+import type * as ReactVirtualModule from "@tanstack/react-virtual";
+import type { StickToBottomContext } from "use-stick-to-bottom";
+import { claimTranscriptScrollOwner } from "@/hooks/useTranscriptDisclosureAnchor";
 import { measureElement, useVirtualizer } from "@tanstack/react-virtual";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
@@ -26,6 +30,7 @@ afterEach(() => {
 const bubble: Extract<Bubble, { kind: "user" }> = {
   kind: "user",
   itemId: "user-1",
+  userAuthored: true,
   content: [{ type: "input_text", text: "hello" }],
 };
 
@@ -43,7 +48,7 @@ it("folds only opted-in subchat history and preserves child messages across disc
     source_conversation_id: "parent",
     inherited_item_count: 1,
     inherited_last_item_id: "inherited",
-    reference_only: false,
+    reference_only: true,
     recovery: "replay",
   };
   const blocks: AnyBlock[] = ["inherited", "child"].map((id) => ({
@@ -432,3 +437,202 @@ it("keeps a renamed top bubble's row across a history prepend", () => {
     "user:user-1",
   );
 });
+
+it.each([false, true])(
+  "holds the reader for an interior recovery insertion, yielding to explicit search=%s",
+  (searchOwnsScroll) => {
+    const context = createRef<StickToBottomContext>();
+    const scrollEl = document.createElement("div");
+    Object.defineProperties(scrollEl, {
+      scrollTop: { configurable: true, writable: true, value: 450 },
+      clientHeight: { configurable: true, value: 500 },
+      scrollHeight: { configurable: true, value: 2000 },
+    });
+    scrollEl.getBoundingClientRect = () => ({ top: 0 }) as DOMRect;
+    const existing = Array.from({ length: 5 }, (_, index) => ({
+      ...bubble,
+      itemId: `reader-${index}`,
+    }));
+    const tree = (bubbles: Bubble[]) => (
+      <>
+        <textarea aria-label="Recovery draft" defaultValue="Unsent work" />
+        <Conversation contextRef={context}>
+          <ConversationContent>
+            <VirtualBubbleList
+              conversationId={undefined}
+              bubbles={bubbles}
+              scrollEl={scrollEl}
+              lastAssistantIndex={-1}
+              showsWorking={false}
+              sessionIdle
+              hasTasks={false}
+              disableVirtualization={false}
+              onGeometryChange={vi.fn()}
+            />
+          </ConversationContent>
+        </Conversation>
+      </>
+    );
+    const view = render(tree(existing));
+    Object.defineProperty(context.current!.state, "scrollTop", {
+      configurable: true,
+      get: () => scrollEl.scrollTop,
+      set: (value: number) => {
+        scrollEl.scrollTop = value;
+      },
+    });
+    context.current!.state.isAtBottom = false;
+    const release = searchOwnsScroll ? claimTranscriptScrollOwner(scrollEl) : () => {};
+    try {
+      view.rerender(tree([existing[0], { ...bubble, itemId: "recovered" }, ...existing.slice(1)]));
+      expect(scrollEl.scrollTop).toBe(searchOwnsScroll ? 450 : 650);
+      expect(screen.getByRole("textbox", { name: "Recovery draft" })).toHaveValue("Unsent work");
+    } finally {
+      release();
+    }
+  },
+);
+
+it.each(["reader", "wheel", "search", "library"] as const)(
+  "retains a visible content anchor through same-bubble recovery, with owner %s",
+  async (owner) => {
+    const { Virtualizer } =
+      await vi.importActual<typeof ReactVirtualModule>("@tanstack/react-virtual");
+    const context = createRef<StickToBottomContext>();
+    const scrollEl = document.createElement("div");
+    Object.defineProperties(scrollEl, {
+      scrollTop: { configurable: true, writable: true, value: 170 },
+      clientHeight: { configurable: true, value: 500 },
+      scrollHeight: { configurable: true, value: 2000 },
+    });
+    scrollEl.getBoundingClientRect = () => ({ top: 100, bottom: 600, height: 500 }) as DOMRect;
+    const progress: Extract<Bubble, { kind: "assistant" }> = {
+      ...assistantBubble,
+      responseId: "older-turn",
+      stableId: "older-progress",
+      lifecycle: "streaming",
+      items: [
+        {
+          kind: "text",
+          itemId: "older-progress",
+          text: "Checking navigation.",
+          phase: "commentary",
+          final: true,
+        },
+      ],
+    };
+    const user: Bubble = { ...bubble, itemId: "newer-user" };
+    const tree = (older: Bubble) => (
+      <Conversation contextRef={context}>
+        <ConversationContent>
+          <VirtualBubbleList
+            conversationId={undefined}
+            bubbles={[older, user, assistantBubble]}
+            scrollEl={scrollEl}
+            lastAssistantIndex={2}
+            showsWorking={false}
+            sessionIdle
+            hasTasks={false}
+            disableVirtualization={false}
+            onGeometryChange={vi.fn()}
+          />
+        </ConversationContent>
+      </Conversation>
+    );
+    const view = render(tree(progress));
+    context.current!.state.isAtBottom = false;
+    const anchor = view.container.querySelector<HTMLElement>(
+      '[data-user-message-id="newer-user"]',
+    )!;
+    let growth = 0;
+    anchor.getBoundingClientRect = () =>
+      ({
+        top: 148 + growth - (scrollEl.scrollTop - 170),
+        bottom: 180 + growth - (scrollEl.scrollTop - 170),
+        height: 32,
+      }) as DOMRect;
+    // The built-SPA trace leaves only 2.328125px of the older commentary visible.
+    // That clipped sliver must not replace the fully visible newer user as the reader anchor.
+    const clipped = view.container.querySelector<HTMLElement>(
+      '[data-search-item-id="older-progress"]',
+    )!;
+    clipped.getBoundingClientRect = () =>
+      ({ top: 81.53125, bottom: 102.328125, height: 20.796875 }) as DOMRect;
+    const row = view.container.querySelector<HTMLElement>('[data-index="0"]')!;
+    row.getBoundingClientRect = () => ({ top: -70, bottom: 130, height: 200 }) as DOMRect;
+    view.rerender(
+      tree({
+        ...progress,
+        lifecycle: "completed",
+        items: [
+          ...progress.items,
+          {
+            kind: "text",
+            itemId: "older-final",
+            text: "Navigation review is complete.",
+            phase: "final_answer",
+            final: true,
+          },
+        ],
+      }),
+    );
+    const rendered = vi.mocked(useVirtualizer).mock.results.at(-1)!.value;
+    const instance = new Virtualizer<HTMLElement, HTMLElement>({
+      count: 3,
+      getScrollElement: () => scrollEl,
+      estimateSize: () => 200,
+      getItemKey: (index) =>
+        ["assistant:older-progress", "user:newer-user", "assistant:response-1"][index],
+      initialRect: { width: 800, height: 500 },
+      initialOffset: 170,
+      observeElementRect: () => {},
+      observeElementOffset: () => {},
+      scrollToFn: (offset, options) => {
+        scrollEl.scrollTop = offset + (options.adjustments ?? 0);
+      },
+    });
+    instance.scrollElement = scrollEl;
+    instance.scrollOffset = 170;
+    instance.scrollDirection = "backward";
+    instance.isScrolling = false;
+    instance.itemSizeCache.set("assistant:older-progress", 200);
+    instance.getVirtualItems();
+    instance.shouldAdjustScrollPositionOnItemSizeChange =
+      owner === "library" ? undefined : rendered.shouldAdjustScrollPositionOnItemSizeChange;
+    const release = owner === "search" ? claimTranscriptScrollOwner(scrollEl) : () => {};
+    try {
+      if (owner === "wheel") fireEvent.wheel(scrollEl);
+      growth = 34.796875;
+      instance.resizeItem(0, 200 + growth);
+      expect(scrollEl.scrollTop).toBeCloseTo(owner === "reader" ? 170 + growth : 170);
+      if (owner === "reader") {
+        expect(Math.abs(anchor.getBoundingClientRect().top - 148)).toBeLessThanOrEqual(1);
+        // Compensation exposes the previous text; a subsequent render must keep the reader.
+        clipped.getBoundingClientRect = () => ({ top: 110, bottom: 130, height: 20 }) as DOMRect;
+        view.rerender(
+          tree({
+            ...progress,
+            lifecycle: "completed",
+            items: [
+              ...progress.items,
+              {
+                kind: "text",
+                itemId: "older-final",
+                text: "Navigation review is complete.",
+                phase: "final_answer",
+                final: true,
+              },
+            ],
+          }),
+        );
+        // Completion folding can resize the same row again after its canonical item lands.
+        growth = 0;
+        instance.resizeItem(0, 200);
+        expect(scrollEl.scrollTop).toBeCloseTo(170);
+        expect(Math.abs(anchor.getBoundingClientRect().top - 148)).toBeLessThanOrEqual(1);
+      }
+    } finally {
+      release();
+    }
+  },
+);

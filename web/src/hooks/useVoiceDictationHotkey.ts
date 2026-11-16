@@ -1,3 +1,5 @@
+import { matchesShortcutCommand, shortcutEnvironment } from "@/lib/keybindingPreferences";
+import { useShortcutHandlers } from "@/lib/shortcutDispatcher";
 // ⌘⌥V (Ctrl+Alt+V on Win/Linux) toggles voice dictation — the same action as
 // clicking the composer mic button, reachable from anywhere in the app so you
 // can start/stop talking without leaving the keyboard (WhisperFlow-style).
@@ -9,36 +11,20 @@
 // siblings it bails when focus sits in a surface that owns its own keys (xterm
 // terminals, the Monaco editor).
 
-import { useEffect, useRef } from "react";
-
-import { hasCommandModifier, isMacPlatform } from "@/lib/hotkeys";
+import { isMacPlatform } from "@/lib/hotkeys";
 
 /** Selector for surfaces that own their keystrokes (terminals, code editor). */
-const HOTKEY_OWNING_SURFACES = ".xterm, .monaco-editor";
 
 /** True when the event is the voice-dictation chord: the platform command
  *  modifier + Alt + V, no Shift. */
 export function isVoiceDictationHotkey(
   e: globalThis.KeyboardEvent,
-  isMac: boolean = isMacPlatform(),
+  isMac = isMacPlatform(),
 ): boolean {
-  // Require the platform command modifier AND Alt (the browser-safe ⌘⌥ chord)
-  // and reject Shift, so ⌘⌥⇧ combos stay free for future bindings.
-  if (!hasCommandModifier(e, isMac) || !e.altKey || e.shiftKey) return false;
-  // AltGr often reports as Ctrl+Alt; ignore it so intl-layout typing doesn't
-  // trigger dictation. Guard the call: not every environment implements
-  // getModifierState, and an unguarded call there would throw.
-  if (typeof e.getModifierState === "function" && e.getModifierState("AltGraph")) return false;
-  // Match the physical key, not the character: ⌥ rewrites "v" → "√" on macOS,
-  // but e.code is stable across layouts and modifiers.
-  return e.code === "KeyV";
+  return matchesShortcutCommand(e, "voice-dictation", { ...shortcutEnvironment(), isMac });
 }
 
 /** Does focus sit inside a surface that owns its keystrokes (xterm / Monaco)? */
-function focusOwnsHotkey(): boolean {
-  const el = document.activeElement;
-  return el instanceof Element && el.closest(HOTKEY_OWNING_SURFACES) !== null;
-}
 
 /**
  * Bind ⌘/Ctrl+⌥/Alt+V to toggle voice dictation.
@@ -52,23 +38,5 @@ export function useVoiceDictationHotkey(
   enabled = true,
   isMac = isMacPlatform(),
 ): void {
-  // Held in a ref so the bound handler always calls the latest closure without
-  // re-registering on every render (onToggle changes as listening state flips).
-  const latest = useRef(onToggle);
-  latest.current = onToggle;
-
-  useEffect(() => {
-    if (!enabled) return;
-    const handler = (e: globalThis.KeyboardEvent): void => {
-      // Ignore auto-repeat: holding the chord would flap dictation on/off.
-      if (e.repeat) return;
-      if (!isVoiceDictationHotkey(e, isMac)) return;
-      if (focusOwnsHotkey()) return;
-      e.preventDefault();
-      e.stopPropagation();
-      latest.current();
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [enabled, isMac]);
+  useShortcutHandlers({ "voice-dictation": onToggle }, enabled, isMac);
 }

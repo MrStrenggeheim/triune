@@ -1,11 +1,20 @@
 import type { ReactNode } from "react";
 
-export { CompactKbd, CompactShortcutKeys } from "@/components/ui/kbd";
+export { CompactKbd } from "@/components/ui/kbd";
+import { CompactShortcutKeys as ShortcutKeyChips } from "@/components/ui/kbd";
+import { bindingKeys, type CommandId } from "@/lib/keybindingRegistry";
+import {
+  readEffectiveBindings,
+  shortcutEnvironment,
+  shortcutKeys,
+  useEffectiveBindings,
+} from "@/lib/keybindingPreferences";
 import { TooltipContent } from "@/components/ui/tooltip";
 import { isMacPlatform } from "@/lib/hotkeys";
 import { isNativeShell } from "@/lib/nativeBridge";
 import { cn } from "@/lib/utils";
 
+const NO_SHORTCUT_KEYS: readonly string[] = [];
 const IS_MAC = isMacPlatform();
 
 export const MOD_KEY = IS_MAC ? "⌘" : "Ctrl";
@@ -18,12 +27,50 @@ export const SHIFT_KEY = "⇧";
 export const ARIA_MOD_KEY = IS_MAC ? "Meta" : "Control";
 export const VIEW_MODE_TOGGLE_KEYS = [MOD_KEY, ALT_KEY, "\\"] as const;
 
+/** Primary registry binding; the customized older shortcut remains an editable alias. */
 export function newSessionShortcutKeys(native = isNativeShell()): string[] {
-  return native ? [MOD_KEY, ALT_KEY, "N"] : [MOD_KEY, IS_MAC ? SHIFT_KEY : "Shift", "O"];
+  return shortcutKeys("new-chat", { ...shortcutEnvironment(), native });
 }
-
-export function newSessionAriaShortcut(native = isNativeShell()): string {
-  return `${ARIA_MOD_KEY}+${native ? "Alt+N" : "Shift+O"}`;
+export function commandAriaShortcut(command: CommandId): string {
+  const stroke = readEffectiveBindings().find(
+    (row) => row.command === command && row.stroke,
+  )?.stroke;
+  if (!stroke) return "";
+  const key =
+    "key" in stroke.match
+      ? stroke.match.key
+      : stroke.match.code
+          .replace(/^Key|^Digit/, "")
+          .replace("BracketLeft", "[")
+          .replace("BracketRight", "]")
+          .replace("Backslash", "\\")
+          .replace("Comma", ",");
+  return [
+    ...stroke.modifiers.map((modifier) => (modifier === "Ctrl" ? "Control" : modifier)),
+    key,
+  ].join("+");
+}
+export function newSessionAriaShortcut(_native = isNativeShell()): string {
+  return commandAriaShortcut("new-chat");
+}
+export function useCommandShortcutKeys(command: CommandId): string[] {
+  const rows = useEffectiveBindings();
+  return bindingKeys(rows.find((row) => row.command === command && row.stroke)?.stroke ?? null);
+}
+export function CompactShortcutKeys({
+  keys = NO_SHORTCUT_KEYS,
+  command,
+  className,
+}: {
+  keys?: readonly string[];
+  command?: CommandId;
+  className?: string;
+}) {
+  const rows = useEffectiveBindings();
+  const effective = command
+    ? bindingKeys(rows.find((row) => row.command === command && row.stroke)?.stroke ?? null)
+    : keys;
+  return <ShortcutKeyChips keys={effective} className={className} />;
 }
 
 export function composerSendShortcutKeys(submitWithModEnter: boolean): string[] {
@@ -58,9 +105,21 @@ export function Kbd({
   );
 }
 
-export function KeyboardShortcutTooltipContent({ label, keys }: { label: string; keys: string[] }) {
+export function KeyboardShortcutTooltipContent({
+  label,
+  keys = NO_SHORTCUT_KEYS,
+  command,
+}: {
+  label: string;
+  keys?: readonly string[];
+  command?: CommandId;
+}) {
+  const rows = useEffectiveBindings();
+  const effective = command
+    ? bindingKeys(rows.find((row) => row.command === command && row.stroke)?.stroke ?? null)
+    : keys;
   return (
-    <TooltipContent side="top" shortcut={keys}>
+    <TooltipContent side="top" shortcut={effective}>
       <span>{label}</span>
     </TooltipContent>
   );

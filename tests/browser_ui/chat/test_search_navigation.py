@@ -70,12 +70,9 @@ def test_search_visible_final_with_folded_narration(
     search = page.get_by_role("region", name="Chat search")
     search.get_by_label("Search chats", exact=True).fill(query)
     page.wait_for_function("CSS.highlights.get('chat-search-active')?.size === 1", timeout=5_000)
+    _assert_exact_centered(page, "answer", 6, require_centered=False)
+    expect(page.get_by_test_id("turn-worked-fold")).to_have_attribute("data-state", "closed")
     if width == 390:
-        page.wait_for_function("""() => {
-            const range = [...CSS.highlights.get('chat-search-active')][0];
-            return range.toString() === 'needle' && range.startContainer.parentElement
-                .closest('[data-search-item-id]')?.dataset.searchItemId === 'answer';
-        }""")
         search.get_by_role("button").filter(has_text=narration).click()
         sidebar = page.get_by_role("complementary", name="Conversations", include_hidden=True)
         expect(sidebar).to_have_attribute("aria-hidden", "true")

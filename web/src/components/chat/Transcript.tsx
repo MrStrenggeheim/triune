@@ -1,3 +1,8 @@
+import { subagentCardItemIds } from "@/lib/subagentActivity";
+import {
+  hasTranscriptScrollOwner,
+  useTranscriptDisclosureAnchor,
+} from "@/hooks/useTranscriptDisclosureAnchor";
 // Modified for Triune.
 import {
   useConversationChatStore,
@@ -6,7 +11,7 @@ import {
 } from "@/workbench/ScopedChatStore";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { useVirtualizer } from "@tanstack/react-virtual";
+import { useVirtualizer, type Virtualizer } from "@tanstack/react-virtual";
 import { useStickToBottomContext } from "use-stick-to-bottom";
 import {
   Conversation,
@@ -201,6 +206,7 @@ function TranscriptImpl({
     }),
     [conversationId, searchReveal],
   );
+  const preserveDisclosure = useTranscriptDisclosureAnchor();
   const [expandedHistoryId, setExpandedHistoryId] = useState<string | null>(null);
   const [searchParams] = useSearchParams();
   const messageId = searchParams.get(MESSAGE_QUERY_PARAM);
@@ -440,6 +446,7 @@ function TranscriptImpl({
       {/* Wrapper div gives us a ref to scope the SelectionPopup to the
       conversation area without requiring Conversation to forward refs. */}
       <div
+        onClickCapture={preserveDisclosure}
         ref={setConversationEl}
         className="@container/chat relative flex min-h-0 flex-1 overflow-hidden"
       >
@@ -764,6 +771,7 @@ export function VirtualBubbleList({
         // on and handles this; writing too would double it.
         if (
           !disableVirtualization &&
+          !hasTranscriptScrollOwner(scrollEl) &&
           !restoringRef.current &&
           previous?.el === scrollEl &&
           previous.scrollable &&
@@ -812,6 +820,20 @@ export function VirtualBubbleList({
   // exactly that window. Set during render: this subtree renders synchronously
   // (no transitions or suspense), so every flagged render commits.
   const prependCommitRef = useRef(false);
+  const recoveryInsertionRef = useRef(false);
+  const resizeReaderRef = useRef<{ key: string; deadline: number } | null>(null);
+  useEffect(() => {
+    if (!scrollEl) return;
+    const cancel = () => {
+      resizeReaderRef.current = null;
+    };
+    for (const type of RESTORE_CANCEL_EVENTS)
+      scrollEl.addEventListener(type, cancel, { passive: true });
+    return () => {
+      cancel();
+      for (const type of RESTORE_CANCEL_EVENTS) scrollEl.removeEventListener(type, cancel);
+    };
+  }, [scrollEl, conversationId]);
   // Row keys under which bubbles render; see the rename handling below the virtualizer.
   const rowKeyAliasRef = useRef(new Map<string, string>());
   // Row keys whose bubble was renamed by the prepend being committed.
@@ -836,9 +858,80 @@ export function VirtualBubbleList({
     renderedBubblesRef.current = [];
     renderedFirstKeyRef.current = undefined;
     rowSnapshotRef.current = [];
+    resizeReaderRef.current = null;
     prevFirstKeyRef.current = undefined;
   }
 
+  // Retain the same content anchor through every render of one bounded recovery.
+  const retainedReader = resizeReaderRef.current;
+  const keepsReader =
+    retainedReader &&
+    performance.now() < retainedReader.deadline &&
+    bubbles.some((bubble) => {
+      const key = bubbleKey(bubble);
+      return (rowKeyAliasRef.current.get(key) ?? key) === retainedReader.key;
+    });
+  if (scrollEl && hasTranscriptScrollOwner(scrollEl)) resizeReaderRef.current = null;
+  else if (
+    !keepsReader &&
+    bubbles !== renderedBubblesRef.current &&
+    scrollEl &&
+    !ctx.state.isAtBottom &&
+    visible
+  ) {
+    const viewport = scrollEl.getBoundingClientRect();
+    const content = wrapperRef.current?.querySelectorAll<HTMLElement>(
+      '[data-user-message-id], [data-search-item-id], [data-testid="turn-worked-fold"], [data-testid="error-pill"], [data-testid="subagent-activity"], [data-testid="subagent-reply"]',
+    );
+    let anchor: HTMLElement | undefined;
+    for (const element of content ?? []) {
+      const bounds = element.getBoundingClientRect();
+      if (bounds.height <= 0 || bounds.bottom <= viewport.top || bounds.top >= viewport.bottom)
+        continue;
+      anchor ??= element;
+      // A clipped sliver of the previous message must not displace the fully visible reader.
+      if (bounds.top >= viewport.top && bounds.bottom <= viewport.bottom) {
+        anchor = element;
+        break;
+      }
+    }
+    const key = anchor?.closest<HTMLElement>("[data-bubble-key]")?.dataset.bubbleKey;
+    if (key)
+      resizeReaderRef.current = { key, deadline: performance.now() + SCROLL_RESTORE_BUDGET_MS };
+  }
+  const adjustForResize = useCallback<
+    NonNullable<Virtualizer<HTMLElement, HTMLElement>["shouldAdjustScrollPositionOnItemSizeChange"]>
+  >(
+    (item, _delta, instance) => {
+      if (
+        !scrollEl ||
+        !visible ||
+        disableVirtualization ||
+        prependCommitRef.current ||
+        restoringRef.current
+      )
+        return false;
+      if (hasTranscriptScrollOwner(scrollEl)) {
+        resizeReaderRef.current = null;
+        return false;
+      }
+      const reader = resizeReaderRef.current;
+      if (reader && performance.now() < reader.deadline) {
+        const index = bubblesRef.current.findIndex((bubble) => {
+          const key = bubbleKey(bubble);
+          return (rowKeyAliasRef.current.get(key) ?? key) === reader.key;
+        });
+        if (index >= 0) return item.index < index;
+      }
+      // Keep the library's normal policy when no recovery/content anchor is held.
+      const offset = (instance.scrollOffset ?? scrollEl.scrollTop) + instance.scrollAdjustments;
+      const size = instance.itemSizeCache.get(item.key);
+      return size === undefined
+        ? item.start < offset
+        : item.start + size <= offset && instance.scrollDirection !== "backward";
+    },
+    [scrollEl, visible, disableVirtualization],
+  );
   const virtualizer = useVirtualizer({
     enabled: !disableVirtualization,
     count: bubbles.length,
@@ -859,6 +952,7 @@ export function VirtualBubbleList({
     observeElementRect: observeRetainedElementRect,
     useCachedMeasurements: !visible,
   });
+  virtualizer.shouldAdjustScrollPositionOnItemSizeChange = adjustForResize;
   useLayoutEffect(() => {
     if (visible && !disableVirtualization) remeasureRetainedElements(virtualizer);
   }, [visible, disableVirtualization, virtualizer]);
@@ -869,15 +963,28 @@ export function VirtualBubbleList({
   // fade on every page) and react-virtual keeps the measured height.
   // Only a prepend can rename a bubble, and a prepend always changes the first
   // bubble's key, so the alias map is only rebuilt then.
+  const previousKeys = new Set(renderedBubblesRef.current.map(bubbleKey));
+  const readerAnchor = rowSnapshotRef.current.find((row) => row.end > (scrollEl?.scrollTop ?? 0));
+  const readerIndex = readerAnchor
+    ? bubbles.findIndex((bubble) => {
+        const key = bubbleKey(bubble);
+        return (rowKeyAliasRef.current.get(key) ?? key) === readerAnchor.key;
+      })
+    : -1;
+  const recoveredBeforeReader =
+    !ctx.state.isAtBottom &&
+    readerIndex >= 0 &&
+    bubbles.slice(0, readerIndex).some((bubble) => !previousKeys.has(bubbleKey(bubble)));
   const firstBubbleKey = bubbles.length > 0 ? bubbleKey(bubbles[0]!) : undefined;
   if (
     renderedFirstKeyRef.current !== undefined &&
     firstBubbleKey !== undefined &&
-    firstBubbleKey !== renderedFirstKeyRef.current
+    (firstBubbleKey !== renderedFirstKeyRef.current || recoveredBeforeReader)
   ) {
     // Flagged in render so the mount-time measurements of this commit's rows
     // (which run before the layout effect below) already see it.
     prependCommitRef.current = true;
+    recoveryInsertionRef.current ||= recoveredBeforeReader;
     virtualizer.shouldAdjustScrollPositionOnItemSizeChange = () => false;
     const aliases = rowKeyAliasRef.current;
     const renamed = renamedRowKeysRef.current;
@@ -1045,7 +1152,14 @@ export function VirtualBubbleList({
     const index = bubblesRef.current.findIndex(
       (b) =>
         (b.kind === "user" && b.itemId === itemId) ||
-        (b.kind === "assistant" && b.responseId === itemId),
+        (b.kind === "subagent_activity" && subagentCardItemIds(b.data).includes(itemId)) ||
+        (b.kind === "assistant" &&
+          (b.responseId === itemId ||
+            b.items.some(
+              (item) =>
+                item.kind === "subagent_activity" &&
+                subagentCardItemIds(item.data).includes(itemId),
+            ))),
     );
     if (index < 0) return false;
     const c = ctxRef.current;
@@ -1115,8 +1229,10 @@ export function VirtualBubbleList({
           virtualizer.resizeItem(Number(node.dataset.index), node.getBoundingClientRect().height);
       }
     }
+    const recoveredInsertion = recoveryInsertionRef.current;
+    recoveryInsertionRef.current = false;
     prependCommitRef.current = false;
-    virtualizer.shouldAdjustScrollPositionOnItemSizeChange = undefined;
+    virtualizer.shouldAdjustScrollPositionOnItemSizeChange = adjustForResize;
     const firstKey = bubbles.length > 0 ? bubbleKey(bubbles[0]!) : undefined;
     const prevFirstKey = prevFirstKeyRef.current;
     const prevSnapshot = rowSnapshotRef.current;
@@ -1126,11 +1242,20 @@ export function VirtualBubbleList({
     // Only a prepend (grew or was renamed at the top, some earlier row still
     // present). A switch replaces the list (no row survives) — handled by the
     // mount scroll-to-bottom. Streaming appends leave the first key unchanged.
-    if (!visible || !scrollEl || prevFirstKey === undefined || firstKey === prevFirstKey) return;
+    if (
+      !visible ||
+      !scrollEl ||
+      hasTranscriptScrollOwner(scrollEl) ||
+      prevFirstKey === undefined ||
+      (firstKey === prevFirstKey && !recoveredInsertion)
+    )
+      return;
     const indexByKey = new Map(bubbles.map((bubble, index) => [rowKey(bubble), index]));
     const survivors = prevSnapshot.filter((row) => indexByKey.has(row.key));
     const unrenamed = survivors.find((row) => !renamedRowKeysRef.current.has(row.key));
-    const anchor = unrenamed ?? survivors[0];
+    const anchor = recoveredInsertion
+      ? (survivors.find((row) => row.end > scrollEl.scrollTop) ?? survivors[0])
+      : (unrenamed ?? survivors[0]);
     // No survivor means a conversation switch, not a prepend.
     if (!anchor) return;
     // Older history is the opposite of the bottom: release the lock so
@@ -1150,7 +1275,8 @@ export function VirtualBubbleList({
     virtualizer.getVirtualItems();
     const measured = virtualizer.measurementsCache[indexByKey.get(anchor.key)!];
     if (measured === undefined) return;
-    const delta = unrenamed ? measured.start - anchor.start : measured.end - anchor.end;
+    const delta =
+      recoveredInsertion || unrenamed ? measured.start - anchor.start : measured.end - anchor.end;
     if (delta <= 0) return;
     // A transcript shorter than its viewport has no offset to hold yet.
     if (scrollEl.scrollHeight - scrollEl.clientHeight <= 1) return;

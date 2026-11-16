@@ -37,7 +37,7 @@ export function createDurableSubchat(
         );
       }
       const session = await forkSession(sourceId, {
-        title: "Subchat",
+        durableSubchat: true,
         ...(boundaryId ? { upToItemId: boundaryId } : {}),
       });
       let attempted = false;

@@ -102,6 +102,7 @@ from omnigent.entities.branch import (
     branch_labels,
     conversation_branch,
 )
+from omnigent.entities.subchat import SUBCHAT_HISTORY_LABEL, SUBCHAT_POLICY_LABEL
 from omnigent.errors import ErrorCode, OmnigentError, StaleCursorError
 from omnigent.native.native_coding_agents import native_coding_agent_for_wrapper_label
 from omnigent.native.session_todos import validate_session_todos
@@ -1554,6 +1555,32 @@ class SqlAlchemyConversationStore(ConversationStore):
             if parent_id is not None:
                 result[parent_id].append(child_id)
         return result
+
+    def list_activity_child_ids(
+        self, parent_ids: list[str], *, limit: int = 2048
+    ) -> tuple[dict[str, list[str]], bool]:
+        """Batch the union of canonical branch provenance and delegation edges."""
+        parents = list(dict.fromkeys(parent_ids))
+        result: dict[str, list[str]] = {parent: [] for parent in parents}
+        if not parents:
+            return result, True
+        if limit <= 0:
+            return result, False
+        delegates = select(SqlConversation.parent_conversation_id, SqlConversation.id).where(
+            SqlConversation.workspace_id == current_workspace_id(),
+            SqlConversation.parent_conversation_id.in_(parents),
+        )
+        branches = select(SqlConversationLabel.value, SqlConversationLabel.conversation_id).where(
+            SqlConversationLabel.workspace_id == current_workspace_id(),
+            SqlConversationLabel.key == "omnigent.branch.source_conversation_id",
+            SqlConversationLabel.value.in_(parents),
+        )
+        with self._conv_session("list_activity_child_ids") as session:
+            edges = session.execute(delegates.union(branches).limit(limit + 1)).all()
+        for parent, child in edges[:limit]:
+            if parent in result:
+                result[parent].append(child)
+        return result, len(edges) <= limit
 
     def list_child_conversation_ids_page(
         self,
@@ -5871,6 +5898,11 @@ class SqlAlchemyConversationStore(ConversationStore):
                     )
                 )
             )
+
+            if extra_labels and SUBCHAT_POLICY_LABEL in extra_labels:
+                fork_labels[SUBCHAT_POLICY_LABEL] = new_conv_id
+                if last_item:
+                    fork_labels[SUBCHAT_HISTORY_LABEL] = copied_item_ids[last_item.id]
 
         def insert_ap(session: Session) -> SqlConversation:
             if (

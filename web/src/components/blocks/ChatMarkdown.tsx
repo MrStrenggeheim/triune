@@ -2,6 +2,7 @@ import {
   ChatAttachmentContext,
   ChatAttachment,
   InlineFileReference,
+  InlinePathCode,
   FilePreviewMenu,
 } from "@/components/ChatAttachment";
 import { useScopedConversationId } from "@/components/chat/conversationScope";
@@ -18,7 +19,7 @@ import { useScopedConversationId } from "@/components/chat/conversationScope";
 // without importing the block dispatcher that renders them.
 
 import type React from "react";
-import { useMemo, useContext, lazy, Suspense } from "react";
+import { isValidElement, useMemo, useContext, lazy, Suspense } from "react";
 import { GitPullRequestIcon } from "lucide-react";
 import { defaultRemarkPlugins } from "streamdown";
 import remarkBreaks from "remark-breaks";
@@ -49,6 +50,8 @@ import {
   useWorkspaceFileExists,
 } from "@/hooks/useWorkspaceChangedFiles";
 import { showToast } from "@/components/ui/toast";
+import { canonicalSessionImages, parseSessionFileSource } from "@/lib/remoteImagePolicy";
+import { MediaBatch, remarkMediaBatches } from "@/components/MediaBatch";
 import { splitArtifactMarkdown } from "@/artifacts/artifactProtocol";
 
 const UploadedArtifact = lazy(() =>
@@ -168,13 +171,9 @@ function WorkspacePathInlineCode({
   // markdown link (WorkspaceFileLink) earns dead-path feedback.
   const scope = useContext(ChatAttachmentContext);
   const fallback = (
-    <code
-      className={cn("rounded bg-muted px-1.5 py-0.5 font-mono text-ui", className)}
-      data-streamdown="inline-code"
-      {...codeProps}
-    >
+    <InlinePathCode className={className} {...codeProps}>
       {codeChildren}
-    </code>
+    </InlinePathCode>
   );
   const citedPath = splitWorkspaceFileCitation(text).path;
   if (
@@ -265,15 +264,15 @@ function WorkspaceFileLink({
   const conversationId = useFileViewerConversationId();
 
   if (path && attachmentScope.itemId) {
-    const stored = path.match(/^\/v1\/sessions\/([^/]+)\/resources\/files\/([^/]+)\/content$/);
-    if (stored && decodeURIComponent(stored[1]) === attachmentScope.sessionId)
+    const stored = parseSessionFileSource(path);
+    if (stored && stored.sessionId === attachmentScope.sessionId)
       return (
         <ChatAttachment
           compact
           sessionId={attachmentScope.sessionId}
           itemId={attachmentScope.itemId}
           attachment={{
-            file_id: decodeURIComponent(stored[2]),
+            file_id: stored.fileId,
             filename: typeof children === "string" ? children : undefined,
           }}
         />
@@ -401,6 +400,7 @@ function WorkspaceFileLink({
     <FileLinkContextMenu path={copyPath}>
       <span className="inline">
         <InlineFileReference
+          contextRelative
           path={copyPath}
           filename={splitWorkspaceFileCitation(path).path.split(/[\\/]/).at(-1)}
           aria-label={props["aria-label"] ?? (typeof children === "string" ? children : undefined)}
@@ -442,12 +442,29 @@ function ZoomableMarkdownImage({
   return <ZoomableImage {...props} src={resolvedSrc} alt={alt ?? ""} />;
 }
 
+/** Only an image-only paragraph forms a row; intervening text stays in place. */
+function MediaParagraph({
+  children,
+  node: _node,
+  ...props
+}: WithHastNode<React.ComponentProps<"p">>) {
+  const contents = Array.isArray(children) ? children : [children];
+  const images = contents.filter((child) => !(typeof child === "string" && child.trim() === ""));
+  if (
+    images.length > 1 &&
+    images.every((child) => isValidElement(child) && child.type === ZoomableMarkdownImage)
+  )
+    return <MediaBatch>{images}</MediaBatch>;
+  return <p {...props}>{children}</p>;
+}
+
 // Stable module-level override map so MessageResponse's shallow prop compare
 // never sees a new `components` identity and re-parses needlessly.
 const FILE_PATH_AWARE_COMPONENTS = {
   inlineCode: WorkspacePathInlineCode,
   img: ZoomableMarkdownImage,
   a: WorkspaceFileLink,
+  p: MediaParagraph,
 };
 
 // How often the live (growing) assistant bubble re-parses its markdown. The
@@ -554,11 +571,16 @@ export function FilePathAwareMessageResponse({
   const scope = useMemo(() => ({ sessionId, itemId: sourceItemId }), [sessionId, sourceItemId]);
 
   // Extend (don't replace) Streamdown's defaults so remark-gfm survives;
-  // append remark-breaks only when `breaks` is requested. When `breaks` is
-  // false we pass `undefined` so Streamdown uses its own defaults unchanged.
-  const remarkPlugins = useMemo(
-    () => (breaks ? [...Object.values(defaultRemarkPlugins), remarkBreaks] : undefined),
-    [breaks],
+  // append remark-breaks only when requested. Canonicalize authorized images
+  // before the existing sanitizer and remote-image hardening.
+  const remarkPlugins = useMemo<React.ComponentProps<typeof MessageResponse>["remarkPlugins"]>(
+    () => [
+      [canonicalSessionImages, { sessionId }],
+      remarkMediaBatches,
+      ...Object.values(defaultRemarkPlugins),
+      ...(breaks ? [remarkBreaks] : []),
+    ],
+    [breaks, sessionId],
   );
 
   // Throttle the markdown so the live (still-growing) bubble re-parses a few

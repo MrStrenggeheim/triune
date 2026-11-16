@@ -1,3 +1,5 @@
+import type { Stroke } from "./keybindingRegistry";
+
 // Bridge between the web app and the optional native shells.
 //
 // The SAME `web` bundle runs in two places:
@@ -27,6 +29,30 @@
  */
 export type SidebarDragPhase = "begin" | "move" | "open" | "close";
 
+export interface NativeShortcutSnapshot {
+  version: 1;
+  generation: string;
+  bindings: readonly {
+    id: string;
+    command: string;
+    stroke: Stroke;
+    when: string;
+  }[];
+}
+export interface NativeShortcutRequest {
+  surface?: "workbench";
+  version: 1;
+  generation: string;
+  command: string;
+  stroke?: {
+    key: string;
+    code: string;
+    ctrlKey: boolean;
+    metaKey: boolean;
+    altKey: boolean;
+    shiftKey: boolean;
+  };
+}
 export interface BrowserRecentSessionInput {
   type: "keydown" | "keyup";
   key: "Tab" | "Control" | "Escape";
@@ -61,6 +87,9 @@ export interface BadgeActivation {
  * serialization.
  */
 interface NativeShellApi {
+  shortcutProtocolVersion?: 1;
+  setShortcutBindings?: (snapshot: NativeShortcutSnapshot) => void;
+  onShortcutCommand?: (callback: (request: NativeShortcutRequest) => void) => () => void;
   /** Discriminator so feature detection is unambiguous. */
   kind: "electron" | "ios" | "android";
   /**
@@ -1221,6 +1250,31 @@ export async function revealFile(hostId: string, path: string): Promise<boolean>
   try {
     return (await electronApi()?.revealFile?.(hostId, path)) ?? false;
   } catch {
+    return false;
+  }
+}
+
+/** Optional v1 bridge; old shells must not claim guarded view-close support. */
+export function supportsNativeShortcuts(): boolean {
+  const api = nativeApi();
+  return api?.shortcutProtocolVersion === 1 && !!api.setShortcutBindings && !!api.onShortcutCommand;
+}
+export function onNativeShortcut(callback: (request: NativeShortcutRequest) => void): () => void {
+  try {
+    return nativeApi()?.onShortcutCommand?.(callback) ?? (() => {});
+  } catch (error) {
+    console.warn("[nativeBridge] shortcut subscription failed:", error);
+    return () => {};
+  }
+}
+
+export function publishNativeShortcuts(snapshot: NativeShortcutSnapshot): boolean {
+  if (!supportsNativeShortcuts()) return false;
+  try {
+    nativeApi()!.setShortcutBindings!(snapshot);
+    return true;
+  } catch (error) {
+    console.warn("[nativeBridge] shortcut update failed:", error);
     return false;
   }
 }

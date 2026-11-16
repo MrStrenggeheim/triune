@@ -8,12 +8,21 @@ import re
 from collections.abc import Iterator
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
+from email.parser import BytesParser
+from email.policy import default as email_policy
 from pathlib import Path
 from typing import Any
 
 import pytest
 from playwright.sync_api import Locator, Page, Route, WebSocketRoute, expect
 
+from tests._helpers.picker_routes import OWN_AGENTS
+from tests.browser_ui.chat._geometry_helpers import (
+    TOLERANCE,
+    assert_same_vertical_center,
+    assert_symmetric_insets,
+    box,
+)
 from tests.browser_ui.chat.session_contract import (
     ChatSessionContract,
     chat_session_handle,
@@ -77,6 +86,9 @@ def workspace_journey(page: Page, browser_contract: BrowserContract) -> Iterator
             "/v1/sessions", lambda _: list_payload([chat.session_snapshot() for chat in chats])
         )
         contract.json(
+            "/v1/sessions/search/messages", {"data": [], "has_more": False, "next_cursor": None}
+        )
+        contract.json(
             "/health",
             {
                 "sessions": {
@@ -107,6 +119,7 @@ def workspace_journey(page: Page, browser_contract: BrowserContract) -> Iterator
             {**list_payload([]), "repositories": [], "source": "git", "root_is_repository": False},
         )
         contract.json(f"{environment}/changes", list_payload([]))
+        contract.json(f"{environment}/search", list_payload([]))
         listing = list_payload(
             [
                 {"path": name, "name": name, "type": "file", "bytes": len(content)}
@@ -245,6 +258,37 @@ def _open(page: Page, title: str) -> None:
     page.get_by_role("menuitem", name=title, exact=True).click()
 
 
+def _command(page: Page, label: str) -> None:
+    palette = page.get_by_role("dialog", name="Command palette", exact=True)
+    expect(palette).to_have_count(0)
+    page.get_by_role("button", name="Search or run a command", exact=True).click()
+    page.get_by_test_id("command-palette-input").fill(label)
+    page.get_by_role("option", name=label, exact=True).click()
+    expect(palette).to_have_count(0)
+
+
+def _assert_open_padding(page: Page) -> None:
+    button = page.get_by_role("banner", name="Application").get_by_role(
+        "button", name="Open view", exact=True
+    )
+    glyph = button.locator("svg")
+    expect(glyph).to_have_css("padding", "0px")
+    assert box(glyph)["width"] == pytest.approx(16, abs=TOLERANCE)
+    assert_same_vertical_center(box(button), box(glyph))
+    content = box(glyph)
+    label = button.get_by_text("Open", exact=True)
+    if label.is_visible():
+        end = box(label)
+        content["width"] = end["x"] + end["width"] - content["x"]
+    assert_symmetric_insets(content, box(button))
+    padding = button.evaluate("""el => {
+      const s = getComputedStyle(el);
+      return [s.paddingTop, s.paddingRight, s.paddingBottom, s.paddingLeft].map(parseFloat);
+    }""")
+    assert min(padding) > 0
+    assert max(padding) - min(padding) <= TOLERANCE, padding
+
+
 def _action(page: Page, title: str, action: str) -> None:
     assert action == "Keep open across chats"
     page.get_by_role("tab", name=title, exact=True).hover()
@@ -276,27 +320,62 @@ def _saved_dock(page: Page) -> dict[str, Any]:
     }""")
 
 
+def _admission_payload(route: Route) -> dict[str, Any]:
+    request = route.request
+    content_type = request.headers["content-type"]
+    if content_type.startswith("application/json"):
+        return request.post_data_json
+    message = BytesParser(policy=email_policy).parsebytes(
+        f"Content-Type: {content_type}\r\nMIME-Version: 1.0\r\n\r\n".encode()
+        + (request.post_data_buffer or b"")
+    )
+    metadata = next(
+        part
+        for part in message.iter_parts()
+        if part.get_param("name", header="content-disposition") == "metadata"
+    )
+    return json.loads(metadata.get_content())
+
+
+@pytest.mark.parametrize("density", ["comfortable", "compact"])
+@pytest.mark.parametrize("theme", ["light", "dark"])
 def test_unified_chat_draft_layout_and_global_commands(
     page: Page,
-    chat_session_contract: ChatSessionContract,
+    workspace_journey: WorkspaceJourney,
     output_path: str,
     browser_errors: list[str],
+    density: str,
+    theme: str,
 ) -> None:
-    chat = chat_session_contract
-    chat.update_session(title="Workspace conversation")
-    chat.seed_transcript(2)
-    chat.contract.json(f"/v1/sessions/{chat.session_id}/peer-messages", list_payload([]))
-    chat.contract.json(f"/v1/sessions/{chat.session_id}/branches", list_payload([]))
-    chat.contract.json(
-        f"/v1/sessions/{chat.session_id}/resources/environments/default/search", list_payload([])
-    )
+    chat = workspace_journey.chats[0]
     page.set_viewport_size({"width": 1440, "height": 1000})
     page.goto(chat.url)
+    page.evaluate(
+        """({density, theme}) => {
+      document.documentElement.dataset.listDensity = density;
+      document.documentElement.classList.toggle('dark', theme === 'dark');
+    }""",
+        {"density": density, "theme": theme},
+    )
     expect(page.get_by_role("banner", name="Application")).to_be_visible()
     composer = page.get_by_label("Message the agent")
     expect(composer).to_be_visible()
     composer.fill("A draft retained through layout changes")
     expect(composer).to_have_value("A draft retained through layout changes")
+    # Palette actions prove command wiring without claiming delivery of reserved browser chords.
+    _command(page, "New view")
+    page.get_by_role("menuitem", name="Explorer", exact=True).click()
+    expect(page.locator(".dock-pane:not([hidden])")).to_have_count(1)
+    expect(_view(page, "Explorer")).to_be_visible()
+    _command(page, "Previous view")
+    expect(composer).to_be_visible()
+    _command(page, "Next view")
+    expect(_view(page, "Explorer")).to_be_visible()
+    _command(page, "Close focused view")
+    expect(page.get_by_role("tab", name="Explorer", exact=True)).to_have_count(0)
+    _command(page, "Reopen closed view")
+    expect(_view(page, "Explorer")).to_be_visible()
+    page.get_by_role("tab", name="Chat A", exact=True).click()
     page.get_by_role("button", name="Search or run a command").click()
     page.get_by_test_id("command-palette-input").fill("Orchestration")
     expect(page.get_by_role("option", name="Orchestration", exact=True)).to_be_visible()
@@ -305,9 +384,11 @@ def test_unified_chat_draft_layout_and_global_commands(
     expect(page.get_by_role("dialog", name="Command palette")).to_have_count(0)
     expect(composer).to_have_value("A draft retained through layout changes")
     page.get_by_role("button", name="Close navigation", exact=True).click()
+    _assert_open_padding(page)
     _capture(page, output_path, "workspace-desktop")
     page.set_viewport_size({"width": 390, "height": 844})
-    expect(page.get_by_role("tab", name="Workspace conversation", exact=True)).to_be_visible()
+    _assert_open_padding(page)
+    expect(page.get_by_role("tab", name="Chat A", exact=True)).to_be_visible()
     expect(composer).to_have_value("A draft retained through layout changes")
     _capture(page, output_path, "workspace-mobile")
     page.reload()
@@ -573,6 +654,298 @@ def test_file_deeplink_keeps_explicit_workspace_ownership(
     assert browser_errors == []
 
 
+def test_contained_child_breadcrumb_and_middle_click_keep_layout_owner(
+    page: Page,
+    workspace_journey: WorkspaceJourney,
+    chat_session_contract: ChatSessionContract,
+    output_path: str,
+    browser_errors: list[str],
+) -> None:
+    first, child = workspace_journey.chats
+    source = chat_session_contract
+    source.update_session(title="Chat X", workspace="/workspace")
+    child.update_session(
+        agent_name="Chat B",
+        parent_session_id=first.session_id,
+        branch={
+            "source_conversation_id": source.session_id,
+            "reference_only": True,
+            "recovery": "replay",
+        },
+    )
+    contract = first.contract
+    chats = [first, child, source]
+    contract.json("/v1/sessions", list_payload([chat.session_snapshot() for chat in chats]))
+    contract.json(
+        "/health",
+        {
+            "sessions": {
+                chat.session_id: {"runner_online": True, "host_online": True} for chat in chats
+            }
+        },
+    )
+    contract.json("/v1/workbench-workspaces/resolve", workspace_journey.workspace, method="POST")
+    for endpoint in ("peer-messages", "branches", "resources/shells"):
+        contract.json(f"/v1/sessions/{source.session_id}/{endpoint}", list_payload([]))
+    contract.json(f"/v1/sessions/{source.session_id}/runtime-notices", {"data": []})
+    contract.json(f"/v1/sessions/{source.session_id}/comments", [])
+    first.contract.json(
+        f"/v1/sessions/{first.session_id}/child_sessions",
+        list_payload([{**child.session_snapshot(), "session_name": "Chat B", "busy": False}]),
+    )
+    page.set_viewport_size({"width": 1600, "height": 1000})
+    page.goto(child.url)
+    _open(page, "Changes")
+    _navigate_chat(page, first)
+    _open(page, "Orchestration")
+    _view(page, "Orchestration").get_by_role("button", name="Chat B", exact=True).click()
+    expect(_view(page, "Chat B")).to_be_visible()
+    assert _saved_dock(page)["activeConversationId"] == first.session_id
+    expect(
+        page.locator(f'aside [data-sidebar-session-id="{first.session_id}"] [aria-current="page"]')
+    ).to_be_visible()
+    ancestry = _view(page, "Chat B").get_by_role("navigation", name="Conversation ancestry")
+    for button in ("left", "middle"):
+        page.get_by_role("tab", name="Chat B", exact=True).click()
+        ancestry.get_by_role("button", name="Chat X", exact=True).click(button=button)
+        expect(_view(page, "Chat X")).to_be_visible()
+        expect(page.get_by_role("tab", name="Chat X", exact=True)).to_have_count(1)
+        assert _saved_dock(page)["activeConversationId"] == first.session_id
+    root = page.locator(f'aside [data-sidebar-session-id="{source.session_id}"]')
+    expand = root.get_by_role("button", name="Expand subchats of Chat X", exact=True)
+    if expand.is_visible():
+        expand.click()
+    row = page.locator(f'aside [data-sidebar-session-id="{child.session_id}"]')
+    expect(row).to_be_visible()
+    row.click(button="middle")
+    expect(_view(page, "Chat B")).to_be_visible()
+    expect(page.get_by_role("tab", name="Chat B", exact=True)).to_have_count(1)
+    assert _saved_dock(page)["activeConversationId"] == first.session_id
+    assert len(page.context.pages) == 1
+    _capture(page, output_path, "contained-child-and-breadcrumb-owner-a")
+    _navigate_chat(page, child)
+    expect(_view(page, "Changes")).to_be_visible()
+    expect(page.get_by_role("tab", name="Chat A", exact=True)).to_have_count(0)
+    assert _saved_dock(page)["activeConversationId"] == child.session_id
+    expect(row.locator('[aria-current="page"]')).to_be_visible()
+    page.reload()
+    expect(_view(page, "Changes")).to_be_visible()
+    assert _saved_dock(page)["activeConversationId"] == child.session_id
+    _navigate_chat(page, first)
+    expect(page.get_by_role("tab", name="Chat B", exact=True)).to_be_visible()
+    expect(page.get_by_role("tab", name="Chat X", exact=True)).to_be_visible()
+    assert _saved_dock(page)["activeConversationId"] == first.session_id
+    assert browser_errors == []
+
+
+@pytest.mark.parametrize("completion", ["active", "switched", "closed"])
+def test_pane_draft_admission_retry_and_late_owner(
+    page: Page,
+    workspace_journey: WorkspaceJourney,
+    output_path: str,
+    browser_errors: list[str],
+    completion: str,
+) -> None:
+    journey = workspace_journey
+    first, second = journey.chats
+    contract = first.contract
+    with ExitStack() as stack:
+        fresh, global_chat = [
+            stack.enter_context(
+                contextmanager(chat_session_handle)(page, contract, session_id=sid)
+            )
+            for sid in ("pane-admitted", "global-admitted")
+        ]
+        for chat, title in ((fresh, "Pane accepted"), (global_chat, "Global accepted")):
+            chat.update_session(title=title, workspace="/workspace")
+            for endpoint in ("peer-messages", "branches", "resources/shells"):
+                contract.json(f"/v1/sessions/{chat.session_id}/{endpoint}", list_payload([]))
+            contract.json(f"/v1/sessions/{chat.session_id}/runtime-notices", {"data": []})
+            contract.json(f"/v1/sessions/{chat.session_id}/comments", [])
+        admitted = list(journey.chats)
+        contract.json(
+            "/v1/sessions", lambda _: list_payload([c.session_snapshot() for c in admitted])
+        )
+        contract.json(
+            "/health",
+            lambda _: {
+                "sessions": {
+                    c.session_id: {"runner_online": True, "host_online": True} for c in admitted
+                }
+            },
+        )
+        contract.json("/v1/workbench-workspaces/resolve", journey.workspace, method="POST")
+        contract.json(
+            "/v1/info",
+            {
+                "accounts_enabled": False,
+                "single_user": True,
+                "needs_setup": False,
+                "sharing_mode": "off",
+                "features": {},
+                "sandbox_providers": [],
+                "managed_sandboxes_enabled": False,
+                "sandbox_provider": None,
+                "sandbox_provider_capabilities": {},
+                "enabled_connections": [],
+                "smart_routing_enabled": False,
+                "harness_install_enabled": False,
+                "installable_harnesses": [],
+                "durable_host_initial_input": True,
+            },
+        )
+        contract.json(OWN_AGENTS, list_payload([]))
+        contract.json("/v1/skills", {"skills": []})
+        pending: list[Route] = []
+        handled: set[Route] = set()
+
+        def abort_pending() -> None:
+            for route in pending:
+                if route not in handled:
+                    route.abort()
+
+        stack.callback(abort_pending)
+
+        def create(route: Route) -> None:
+            if route.request.method == "POST":
+                pending.append(route)
+            else:
+                route.fallback()
+
+        contract.route(contract._matcher("/v1/sessions"), create)
+        page.add_init_script("""localStorage.setItem('omnigent:recent-workspaces',
+          JSON.stringify({'browser-chat-host': ['/workspace']}));""")
+        page.set_viewport_size({"width": 1600, "height": 1000})
+        page.goto(first.url)
+        original = _view(page, "Chat A").get_by_label("Message the agent")
+        original.fill("Existing A draft")
+        _open(page, "Explorer")
+        pane = page.locator('.dock-pane[data-focused="true"]')
+        pane_id = pane.get_attribute("data-pane-id")
+        pane.get_by_role("button", name="Add view to pane", exact=True).click()
+        page.get_by_role("menuitem", name="New chat", exact=True).click()
+        draft = _view(page, "New chat")
+        input_box = draft.get_by_test_id("new-chat-landing-input")
+        expect(input_box).to_have_value("")
+        input_box.fill("Pane startup input")
+        draft.get_by_test_id("new-chat-landing-file-input").set_input_files(
+            {
+                "name": "context.txt",
+                "mimeType": "text/plain",
+                "buffer": b"pane attachment bytes",
+            }
+        )
+        draft_id = next(
+            v["id"]
+            for v in _saved_dock(page)["chats"][0]["layout"]["views"]
+            if "draftId" in v["resource"]
+        )
+        page.get_by_test_id("new-chat-button").click()
+        global_input = page.locator('[data-testid="new-chat-landing-input"]:visible')
+        expect(global_input).to_have_value("")
+        global_input.fill("Global startup input")
+        _navigate_chat(page, first)
+        page.get_by_role("tab", name="New chat", exact=True).click()
+        expect(input_box).to_have_value("Pane startup input")
+        expect(original).to_have_value("Existing A draft")
+        with page.expect_request(lambda r: r.method == "POST" and r.url.endswith("/v1/sessions")):
+            draft.get_by_test_id("new-chat-landing-submit").click()
+        expect(draft.get_by_test_id("new-chat-landing-submit")).to_be_disabled()
+        assert len(pending) == 1
+        payload = _admission_payload(pending[0])
+        assert payload["initial_input"]["data"]["content"][0]["text"] == "Pane startup input"
+        assert payload["workspace"] == "/workspace"
+        assert payload["host_id"] == first.host_id
+        assert "parent_session_id" not in payload
+        handled.add(pending[0])
+        pending[0].fulfill(status=503, json={"detail": "Admission temporarily unavailable"})
+        expect(draft.get_by_test_id("new-chat-landing-error")).to_be_visible()
+        page.reload()
+        expect(input_box).to_have_value("Pane startup input")
+        expect(draft.get_by_role("button", name="Remove context.txt", exact=True)).to_be_visible()
+        assert draft_id in {
+            v["id"] for c in _saved_dock(page)["chats"] for v in c["layout"]["views"]
+        }
+        with page.expect_request(lambda r: r.method == "POST" and r.url.endswith("/v1/sessions")):
+            draft.get_by_test_id("new-chat-landing-submit").click()
+        expect(draft.get_by_test_id("new-chat-landing-submit")).to_be_disabled()
+        assert len(pending) == 2
+        retry = _admission_payload(pending[1])
+        assert (
+            retry["labels"]["omnigent.client_create_token"]
+            == payload["labels"]["omnigent.client_create_token"]
+        )
+        for request in pending:
+            assert b"pane attachment bytes" in (request.request.post_data_buffer or b"")
+        expect(page.get_by_role("tab", name="New chat", exact=True)).to_be_visible()
+        assert _saved_dock(page)["activeConversationId"] == first.session_id
+        if completion == "switched":
+            _navigate_chat(page, second)
+        elif completion == "closed":
+            page.get_by_role("button", name="Close New chat", exact=True).click()
+        admitted.append(fresh)
+        handled.add(pending[1])
+        pending[1].fulfill(json={"id": fresh.session_id})
+        expect(
+            page.locator(f'aside [data-sidebar-session-id="{fresh.session_id}"]')
+        ).to_be_visible()
+        expected_owner = second if completion == "switched" else first
+        expect(page).to_have_url(expected_owner.url)
+        assert _saved_dock(page)["activeConversationId"] == expected_owner.session_id
+        if completion == "switched":
+            expect(page.get_by_role("tab", name="Pane accepted", exact=True)).to_have_count(0)
+            _navigate_chat(page, first)
+        if completion != "closed":
+            expect(_view(page, "Pane accepted")).to_be_visible()
+        layout = next(
+            c["layout"]
+            for c in _saved_dock(page)["chats"]
+            if c["conversationId"] == first.session_id
+        )
+        assert all(v["id"] != draft_id for v in layout["views"])
+        assert len(layout["panes"]) == 2
+        target = next(p for p in layout["panes"] if p["id"] == pane_id)
+        assert (f"conversation:{fresh.session_id}" in target["viewIds"]) == (
+            completion != "closed"
+        )
+        assert not any(c["conversationId"] == fresh.session_id for c in _saved_dock(page)["chats"])
+        expect(page.get_by_role("tab", name="Explorer", exact=True)).to_have_count(1)
+        expect(original).to_have_value("Existing A draft")
+        _capture(page, output_path, f"pane-admission-{completion}")
+        page.reload()
+        if completion != "closed":
+            expect(_view(page, "Pane accepted")).to_be_visible()
+        else:
+            expect(page.get_by_role("tab", name="New chat", exact=True)).to_have_count(0)
+            expect(page.get_by_role("tab", name="Pane accepted", exact=True)).to_have_count(0)
+        if completion == "active":
+            page.get_by_test_id("new-chat-button").click()
+            expect(global_input).to_have_value("Global startup input")
+            with page.expect_request(
+                lambda r: r.method == "POST" and r.url.endswith("/v1/sessions")
+            ):
+                page.locator('[data-testid="new-chat-landing-submit"]:visible').click()
+            expect(page.get_by_role("banner", name="Application")).to_be_visible()
+            assert len(pending) == 3
+            assert (
+                _admission_payload(pending[2])["initial_input"]["data"]["content"][0]["text"]
+                == "Global startup input"
+            )
+            admitted.append(global_chat)
+            handled.add(pending[2])
+            pending[2].fulfill(json={"id": global_chat.session_id})
+            expect(global_input).to_have_count(0)
+            expect(page).to_have_url(global_chat.url)
+            expect(_view(page, "Global accepted")).to_be_visible()
+            assert _saved_dock(page)["activeConversationId"] == global_chat.session_id
+            expect(page.get_by_role("tab", name="Pane accepted", exact=True)).to_have_count(0)
+            _navigate_chat(page, first)
+            expect(_view(page, "Pane accepted")).to_be_visible()
+        assert first.event_posts == [] and second.event_posts == []
+        assert fresh.event_posts == [] and global_chat.event_posts == []
+        assert browser_errors == []
+
+
 def test_retained_dirty_navigation_preserves_editor_and_close_guard(
     page: Page,
     workspace_journey: WorkspaceJourney,
@@ -591,7 +964,6 @@ def test_retained_dirty_navigation_preserves_editor_and_close_guard(
     _view(page, "Explorer").get_by_text("notes.py", exact=True).click()
     preview = _view(page, "notes.py")
     expect(preview.locator(".view-lines")).to_contain_text("selection_target", timeout=30_000)
-    composer.click()
     journey.reject_writes = True
     original_content = journey.files["notes.py"]
     editor = preview.locator(".monaco-editor").first
@@ -613,12 +985,14 @@ def test_retained_dirty_navigation_preserves_editor_and_close_guard(
     expect(preview).not_to_be_visible()
     assert editor_handle.evaluate("element => element.isConnected")
     _navigate_chat(page, first)
-    expect(preview.locator(".view-lines")).to_contain_text("keep this unsaved change")
     expect(composer).to_have_value("A draft must not be redirected")
+    page.get_by_role("tab", name="notes.py", exact=True).click()
+    expect(preview.locator(".view-lines")).to_contain_text("keep this unsaved change")
     assert _saved_dock(page)["activeConversationId"] == first.session_id
     assert editor_handle.evaluate("element => element.isConnected")
     close = page.get_by_role("button", name="Close notes.py", exact=True)
-    close.click()
+    editor.click()
+    _command(page, "Close focused view")
     expect(dialog).to_be_visible()
     dialog.get_by_role("button", name="Keep editing", exact=True).click()
     expect(dialog).not_to_be_visible()

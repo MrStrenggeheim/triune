@@ -24,6 +24,7 @@ from omnigent.entities import (
     PagedList,
     StoredFile,
 )
+from omnigent.entities.subchat import SUBCHAT_LABEL_KEYS
 from omnigent.errors import SESSION_AGENT_BUNDLE_MISSING_MESSAGE, OmnigentError
 from omnigent.server.auth import AuthProvider, UnifiedAuthProvider
 from omnigent.server.managed_hosts import (
@@ -767,6 +768,34 @@ async def test_fork_session_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_durable_subchat_policy_is_explicit_and_old_markers_are_dropped() -> None:
+    from omnigent.entities.subchat import SUBCHAT_POLICY_LABEL
+
+    source_id = "e9f8f58523cec9a57d3bdf93be543e8c"
+    store = _ConversationStore(
+        conversations={source_id: _make_conversation(labels={SUBCHAT_POLICY_LABEL: source_id})}
+    )
+    client = TestClient(_build_app(store))
+    assert (
+        client.post(f"/v1/sessions/{source_id}/fork", json={"durable_subchat": True}).status_code
+        == 201
+    )
+    durable = store.fork_calls[-1]
+    assert durable["title"] == ""
+    assert durable["extra_labels"][SUBCHAT_POLICY_LABEL] == "1"
+    assert durable["dropped_label_keys"] >= SUBCHAT_LABEL_KEYS
+    assert durable["reference_history"] is True
+    assert (
+        client.post(f"/v1/sessions/{source_id}/fork", json={"title": "Explicit fork"}).status_code
+        == 201
+    )
+    explicit = store.fork_calls[-1]
+    assert explicit["title"] == "Explicit fork"
+    assert SUBCHAT_POLICY_LABEL not in explicit["extra_labels"]
+    assert explicit["dropped_label_keys"] >= SUBCHAT_LABEL_KEYS
+
+
+@pytest.mark.asyncio
 async def test_normal_fork_of_side_chat_drops_sidebar_hiding_label() -> None:
     """Promoting a side chat creates a normal session visible in the sidebar."""
     source_id = "e9f8f58523cec9a57d3bdf93be543e8c"
@@ -969,7 +998,7 @@ async def test_fork_session_run_config_omitted_inherits() -> None:
     assert fork_call["override_reasoning_effort_set"] is False
     assert fork_call["override_terminal_launch_args_set"] is False
     # No run-config pick, so the route asks for no conditional drop at all.
-    assert fork_call["dropped_label_keys"] == frozenset()
+    assert fork_call["dropped_label_keys"] == SUBCHAT_LABEL_KEYS
 
 
 @pytest.mark.asyncio
@@ -1442,7 +1471,7 @@ async def test_fork_same_agent_keeps_permission_mode_label() -> None:
 
     assert resp.status_code == 201, f"got {resp.status_code}: {resp.text}"
     # Nothing conditional to drop, so the permission-mode label carries over.
-    assert conv_store.fork_calls[0]["dropped_label_keys"] == frozenset()
+    assert conv_store.fork_calls[0]["dropped_label_keys"] == SUBCHAT_LABEL_KEYS
 
 
 @pytest.mark.asyncio

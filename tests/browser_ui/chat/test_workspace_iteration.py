@@ -191,7 +191,7 @@ def test_inline_attachment_opens_captured_tab_downloads_and_reveals_original_wor
     expect(preview.get_by_role("button", name="Location", exact=True)).to_have_count(0)
     preview.get_by_role("button", name="Show comments", exact=True).click()
     expect(
-        preview.get_by_role("button", name="Choose comments conversation", exact=True)
+        preview.get_by_role("button", name="Choose comments conversation", exact=False)
     ).to_be_visible()
     _capture(page, output_path, "live-file-editor-with-comment-owner")
     _navigate_chat(page, second)
@@ -200,6 +200,96 @@ def test_inline_attachment_opens_captured_tab_downloads_and_reveals_original_wor
     page.get_by_role("tab", name="guide.csv", exact=True).click()
     page.reload()
     expect(preview.locator(".view-lines")).to_contain_text("live", timeout=30000)
+    assert browser_errors == []
+
+
+@pytest.mark.parametrize("mode", ["reuse", "beside"])
+def test_queue_markdown_links_reuse_source_or_neighbor_without_repeated_split(
+    page: Page,
+    workspace_journey: WorkspaceJourney,
+    output_path: str,
+    browser_errors: list[str],
+    mode: str,
+) -> None:
+    first = workspace_journey.chats[0]
+    files = {
+        "queue.md": "# Queue\n\n[First file](notes.py) and [Second file](next.py).\n",
+        "next.py": "second_link_target = 2\n",
+    }
+    environment = "/v1/workbench-workspaces/workspace-files/resources/environments/default"
+    for path, content in files.items():
+        first.contract.json(
+            f"{environment}/filesystem/{path}",
+            {
+                "object": "session.environment.filesystem.file_content",
+                "path": path,
+                "content": content,
+                "encoding": "utf-8",
+                "bytes": len(content),
+                "content_type": "text/markdown" if path.endswith(".md") else "text/x-python",
+            },
+        )
+    page.add_init_script("""localStorage.setItem('omnigent:file-view-preferences',
+      JSON.stringify({diffActive: false, previewableViewMode: 'preview'}));
+      if (!localStorage.getItem('triune:file-opening'))
+        localStorage.setItem('triune:file-opening', 'beside');""")
+    page.set_viewport_size({"width": 1600, "height": 1000})
+    page.goto(f"{first.url}?file=queue.md&workspace=workspace-files")
+    queue = _view(page, "queue.md")
+    expect(queue.get_by_role("button", name="First file", exact=True)).to_be_visible()
+    expect(_view(page, "Chat A").get_by_label("Message the agent")).to_be_visible()
+    layout = next(
+        c["layout"] for c in _saved_dock(page)["chats"] if c["conversationId"] == first.session_id
+    )
+    assert len(layout["panes"]) == 2
+    queue_view = next(v for v in layout["views"] if v["resource"].get("path") == "queue.md")
+    source = next(p for p in layout["panes"] if queue_view["id"] in p["viewIds"])
+    destination = source if mode == "reuse" else next(p for p in layout["panes"] if p != source)
+    _view(page, "Chat A").get_by_label("Message the agent").fill("Keep the chat beside queue.md")
+    page.evaluate(
+        """mode => {
+      localStorage.setItem('triune:file-opening', mode);
+      window.dispatchEvent(new Event('triune:file-opening-change'));
+    }""",
+        mode,
+    )
+    opened = []
+    for label, path, text in (
+        ("First file", "notes.py", "selection_target"),
+        ("Second file", "next.py", "second_link_target"),
+        ("First file", "notes.py", "selection_target"),
+    ):
+        page.get_by_role("tab", name="queue.md", exact=True).click()
+        queue.get_by_role("button", name=label, exact=True).click()
+        expect(_view(page, path).locator(".view-lines")).to_contain_text(text, timeout=30_000)
+        expect(page.get_by_role("tab", name=path, exact=True)).to_have_count(1)
+        layout = next(
+            c["layout"]
+            for c in _saved_dock(page)["chats"]
+            if c["conversationId"] == first.session_id
+        )
+        assert len(layout["panes"]) == 2
+        view = next(v for v in layout["views"] if v["resource"].get("path") == path)
+        target = next(p for p in layout["panes"] if view["id"] in p["viewIds"])
+        assert target["id"] == destination["id"]
+        assert view["resource"]["workspace"]["id"] == "workspace-files"
+        assert view["resource"]["conversationId"] == first.session_id
+        opened.append(view["id"])
+    assert opened[0] == opened[2]
+    assert _saved_dock(page)["activeConversationId"] == first.session_id
+    page.get_by_role("tab", name="Chat A", exact=True).click()
+    expect(_view(page, "Chat A").get_by_label("Message the agent")).to_have_value(
+        "Keep the chat beside queue.md"
+    )
+    page.get_by_role("tab", name="notes.py", exact=True).click()
+    _capture(page, output_path, f"queue-links-{mode}-two-panes")
+    page.reload()
+    page.get_by_role("tab", name="notes.py", exact=True).click()
+    expect(_view(page, "notes.py").locator(".view-lines")).to_contain_text(
+        "selection_target", timeout=30_000
+    )
+    assert len(_saved_dock(page)["chats"][0]["layout"]["panes"]) == 2
+    assert workspace_journey.writes == []
     assert browser_errors == []
 
 

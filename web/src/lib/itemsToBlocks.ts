@@ -129,6 +129,10 @@ export function itemsToBlocks(items: ConversationItem[]): AnyBlock[] {
         ctx: ctxFor(item),
         fullText: "",
         hasCodeBlocks: false,
+        ...((item as unknown as { phase?: unknown }).phase === "commentary" ||
+        (item as unknown as { phase?: unknown }).phase === "final_answer"
+          ? { phase: (item as unknown as { phase: "commentary" | "final_answer" }).phase }
+          : {}),
         attachments,
       });
     if (isSlashCommandItem(item)) {
@@ -367,10 +371,12 @@ function assistantMessageToBlock(item: MessageItem): TextDone {
     .map((b) => b.text)
     .join("");
   const searchText = messageSearchSource(item.content);
+  const phase = (item as unknown as { phase?: unknown }).phase;
   return {
     type: "text_done",
     ctx: ctxFor(item),
     fullText: text,
+    ...(phase === "commentary" || phase === "final_answer" ? { phase } : {}),
     ...(searchText !== text ? { searchText } : {}),
     attachments: attachmentsFromContent(item.content),
     hasCodeBlocks: text.includes("```"),

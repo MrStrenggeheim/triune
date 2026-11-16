@@ -34,7 +34,7 @@ it("forks at the captured boundary immediately, seeds before opening, and reject
   const first = openDurableSubchat(request);
   await vi.waitFor(() =>
     expect(forkSession).toHaveBeenCalledExactlyOnceWith("source", {
-      title: "Subchat",
+      durableSubchat: true,
       upToItemId: "captured-item",
     }),
   );

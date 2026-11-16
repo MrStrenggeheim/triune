@@ -1,3 +1,4 @@
+import { useTranscriptDisclosureAnchor } from "@/hooks/useTranscriptDisclosureAnchor";
 import { useWrapPreference } from "@/hooks/useWrapPreference";
 // Tool-call renderer. Renders each call as a single muted-text trigger
 // line (status icon + truncated `name(argsSummary)`); clicking expands an
@@ -186,6 +187,7 @@ export function ToolCard({
   startedAt,
   duration,
 }: ToolCardProps) {
+  const preserveDisclosure = useTranscriptDisclosureAnchor();
   const title = useMemo(() => formatToolTitle(name, args, argsSummary), [name, args, argsSummary]);
   const shellCall = useMemo(() => shellToolCall(name, args), [name, args]);
   const inputJson = useMemo(() => JSON.stringify(args, null, 2), [args]);
@@ -206,7 +208,11 @@ export function ToolCard({
   const onBodyClick = openFile && linkPath ? () => openFile(linkPath) : undefined;
 
   return (
-    <Collapsible defaultOpen={false} className="group not-prose w-full">
+    <Collapsible
+      onClickCapture={preserveDisclosure}
+      defaultOpen={false}
+      className="group not-prose w-full"
+    >
       <ToolTriggerRow
         title={title}
         name={name}
@@ -257,6 +263,7 @@ export function ToolCard({
  * recent ones has been peeled off.
  */
 export function ToolGroupSummary({ tools }: { tools: RenderItem[] }) {
+  const preserveDisclosure = useTranscriptDisclosureAnchor();
   const label = formatToolRunLabel(tools.map(toolRunCall));
   return (
     // Named `group/tool-summary` so this collapsible only rotates its
@@ -264,7 +271,11 @@ export function ToolGroupSummary({ tools }: { tools: RenderItem[] }) {
     // `group-data-[state=open]:rotate-90` that would otherwise match
     // any ancestor `.group[data-state=open]` and incorrectly rotate
     // chevrons of inner tool cards when this outer group is open).
-    <Collapsible defaultOpen={false} className="group/tool-summary not-prose w-full">
+    <Collapsible
+      onClickCapture={preserveDisclosure}
+      defaultOpen={false}
+      className="group/tool-summary not-prose w-full"
+    >
       <CollapsibleTrigger className="flex min-h-7 w-full cursor-pointer items-center gap-1.5 rounded-sm py-0.5 text-left text-muted-foreground text-chat transition-colors hover:text-foreground">
         <span>{label}</span>
         <ChevronRightIcon className="size-3.5 shrink-0 transition-transform group-data-[state=open]/tool-summary:rotate-90" />
@@ -732,6 +743,7 @@ function OutputSection({
   /** Highlighting for the default Output panel; JSON unless set. */
   language?: CodeLanguage;
 }) {
+  const preserveDisclosure = useTranscriptDisclosureAnchor();
   const [isExpanded, setIsExpanded] = useState(false);
   useEffect(() => setIsExpanded(false), [output]);
 
@@ -740,7 +752,31 @@ function OutputSection({
   const canExpand = collapsedPreview.isTruncated;
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-2" onClickCapture={preserveDisclosure}>
+      {canExpand && (
+        <div className="flex flex-col gap-2 py-1 text-muted-foreground text-sm sm:flex-row sm:items-center sm:justify-between">
+          <Button
+            className="w-fit"
+            aria-expanded={isExpanded}
+            onClick={() => setIsExpanded((value) => !value)}
+            size="xs"
+            type="button"
+            variant="ghost"
+            componentId="diagnostics.tool.toggle_expanded"
+          >
+            {isExpanded ? (
+              <Minimize2Icon className="size-3" />
+            ) : (
+              <Maximize2Icon className="size-3" />
+            )}
+            {isExpanded ? "Collapse" : "Expand"}
+          </Button>
+          <span className="min-w-0">
+            {isExpanded ? "Showing full output" : "Previewing output"} (
+            {formatOutputStats(isExpanded ? preview : collapsedPreview)})
+          </span>
+        </div>
+      )}
       <div
         className={cn(
           "relative rounded-md",
@@ -764,29 +800,6 @@ function OutputSection({
           <div className="pointer-events-none absolute inset-x-px bottom-px h-16 rounded-b-md bg-gradient-to-t from-background to-transparent" />
         )}
       </div>
-      {canExpand && (
-        <div className="flex flex-col gap-2 py-1 text-muted-foreground text-sm sm:flex-row sm:items-center sm:justify-between">
-          <span className="min-w-0">
-            {isExpanded ? "Showing full output" : "Previewing output"} (
-            {formatOutputStats(isExpanded ? preview : collapsedPreview)})
-          </span>
-          <Button
-            className="w-fit"
-            onClick={() => setIsExpanded((value) => !value)}
-            size="xs"
-            type="button"
-            variant="ghost"
-            componentId="diagnostics.tool.toggle_expanded"
-          >
-            {isExpanded ? (
-              <Minimize2Icon className="size-3" />
-            ) : (
-              <Maximize2Icon className="size-3" />
-            )}
-            {isExpanded ? "Collapse" : "Expand"}
-          </Button>
-        </div>
-      )}
     </div>
   );
 }

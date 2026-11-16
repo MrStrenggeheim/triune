@@ -3,7 +3,7 @@ import { createMathPlugin } from "@streamdown/math";
 import { triuneMermaid as mermaid } from "./mermaidTheme";
 import { defaultRehypePlugins, type LinkSafetyConfig, type StreamdownProps } from "streamdown";
 import { lazyCodePlugin } from "./lazyCodePlugin";
-import { isAllowedRemoteImageSource } from "@/lib/remoteImagePolicy";
+import { isAllowedRemoteImageSource, parseSessionFileSource } from "@/lib/remoteImagePolicy";
 
 type StreamdownRehypePlugins = NonNullable<StreamdownProps["rehypePlugins"]>;
 type StreamdownRehypePlugin = StreamdownRehypePlugins[number];
@@ -262,7 +262,9 @@ export const WORKSPACE_IMAGE_ATTR = "data-omnigent-image";
 function parkWorkspaceImages() {
   return (tree: HastElement) =>
     visitElements(tree, (node) => {
-      const src = node.properties?.src;
+      const original = node.properties?.src;
+      const stored = typeof original === "string" ? parseSessionFileSource(original) : null;
+      const src = stored?.path ?? original;
       if (
         node.tagName !== "img" ||
         typeof src !== "string" ||

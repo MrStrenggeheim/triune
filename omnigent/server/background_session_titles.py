@@ -10,10 +10,15 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
+from cachetools import LRUCache
+
+from omnigent.db.db_models import current_workspace_id
+from omnigent.db.workspace_cache import WorkspaceScopedCache
 from omnigent.entities.conversation import (
     DEFAULT_GENERATED_TITLE_MAX_CHARS,
     USER_SESSION_TITLE_MAX_CHARS,
 )
+from omnigent.entities.subchat import is_durable_subchat, subchat_question_content
 from omnigent.harness_aliases import canonicalize_harness
 from omnigent.harness_plugins import background_title_generators
 from omnigent.runner.background_titles.service import FOLLOW_USER_LANGUAGE_TITLE_INSTRUCTION
@@ -61,6 +66,7 @@ _TITLE_WRAPPERS = "'\"`“”‘’"
 _TRAILING_PUNCTUATION = re.compile(r"[.!?;:,]+$")
 BACKGROUND_TITLE_MAX_CHARS = DEFAULT_GENERATED_TITLE_MAX_CHARS
 CUSTOM_BACKGROUND_TITLE_MAX_CHARS = USER_SESSION_TITLE_MAX_CHARS
+_TASK_SUMMARY_ATTEMPT_CACHE_SIZE = 1024
 
 
 def normalize_background_title(
@@ -144,7 +150,10 @@ class BackgroundSessionTitleCoordinator:
         self._generation_slots = asyncio.Semaphore(max_concurrency)
         self._pending: set[asyncio.Task[None]] = set()
         self._scheduled_session_ids: set[str] = set()
-        self._scheduled_task_summary_ids: set[str] = set()
+        self._scheduled_task_summary_ids: set[tuple[int, str]] = set()
+        self._task_summary_attempts: WorkspaceScopedCache[BackgroundTitleRequest, bool] = (
+            WorkspaceScopedCache(lambda: LRUCache(maxsize=_TASK_SUMMARY_ATTEMPT_CACHE_SIZE))
+        )
 
     async def format_agent_title(self, request: BackgroundTitleRequest) -> str | None:
         """Apply configured title requirements without changing the stored title.
@@ -233,28 +242,30 @@ class BackgroundSessionTitleCoordinator:
         model_override: str | None = None,
         sub_agent_name: str | None = None,
     ) -> None:
-        """Schedule a task-summary attempt for a child session."""
-        if session_id in self._scheduled_task_summary_ids:
+        """Schedule once per workspace and request while the attempt remains cached."""
+        request = BackgroundTitleRequest(
+            session_id=session_id,
+            prompt=prompt,
+            agent_id=agent_id,
+            harness_override=harness_override,
+            model_override=model_override,
+            sub_agent_name=sub_agent_name,
+        )
+        key = (current_workspace_id(), session_id)
+        if key in self._scheduled_task_summary_ids or self._task_summary_attempts.get(request):
             return
-        self._scheduled_task_summary_ids.add(session_id)
+        self._scheduled_task_summary_ids.add(key)
+        # Retain failed and invalid attempts so view polling cannot retry them.
+        self._task_summary_attempts[request] = True
         task = asyncio.create_task(
-            self._run_task_summary(
-                request=BackgroundTitleRequest(
-                    session_id=session_id,
-                    prompt=prompt,
-                    agent_id=agent_id,
-                    harness_override=harness_override,
-                    model_override=model_override,
-                    sub_agent_name=sub_agent_name,
-                ),
-            ),
+            self._run_task_summary(request=request),
             name=f"background-task-summary-{session_id}",
         )
         self._pending.add(task)
 
         def _discard(completed: asyncio.Task[None]) -> None:
             self._pending.discard(completed)
-            self._scheduled_task_summary_ids.discard(session_id)
+            self._scheduled_task_summary_ids.discard(key)
 
         task.add_done_callback(_discard)
 
@@ -445,6 +456,20 @@ def prepare_background_session_title(
     ):
         return None
 
+    if is_durable_subchat(conversation.id, conversation.labels):
+        if (
+            event.type != "message"
+            or event.data.get("role") != "user"
+            or event.data.get("is_meta")
+            or event.data.get("communication")
+        ):
+            return None
+        content = event.data.get("content")
+        if not isinstance(content, list):
+            return None
+        event = event.model_copy(
+            update={"data": {**event.data, "content": subchat_question_content(content)}}
+        )
     prompt = background_title_prompt(event)
     if not prompt:
         return None

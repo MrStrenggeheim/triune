@@ -1,8 +1,26 @@
 /* Triune additions: PolyForm Noncommercial 1.0.0; see LICENSING.md.
  * Required Notice: Copyright 2026 MrStrenggeheim. Triune (https://github.com/MrStrenggeheim/triune).
  */
-.composer-shelf-stack {
+:where(
+  .composer-reference-surface,
+  .composer-shelf-stack,
+  .composer-shelf-presence,
+  .composer-workspace-surface
+) {
+  --composer-outer-radius: var(--radius-xl, calc(var(--radius) * 1.4));
+  --composer-shelf-inset: 4px;
+  --composer-shelf-border-width: 1px;
+  --composer-shelf-control-radius: max(
+    0px,
+    calc(
+      var(--composer-outer-radius) - var(--composer-shelf-inset) -
+        var(--composer-shelf-border-width)
+    )
+  );
   --composer-shelf-background: color-mix(in srgb, var(--primary) 4%, var(--background));
+}
+
+.composer-shelf-stack {
   position: relative;
   display: flex;
   min-width: 0;
@@ -12,19 +30,21 @@
 }
 
 /* Stay behind the composer corners while the last shelf completes its exit. */
-.composer-shelf-stack:has(.composer-shelf-presence)::after {
+.composer-shelf-stack:has(.composer-shelf-presence)::after,
+.composer-shelf-stack > .composer-shelf-presence::after {
   content: "";
   position: absolute;
   inset-inline: 0;
   top: 100%;
-  height: var(--radius-xl);
-  border-inline: 1px solid var(--border);
+  height: var(--composer-outer-radius);
+  border-inline: var(--composer-shelf-border-width) solid var(--border);
   background: var(--composer-shelf-background);
   pointer-events: none;
   z-index: -1;
 }
 
 .composer-shelf-presence {
+  position: relative;
   display: grid;
   min-width: 0;
   grid-template-columns: minmax(0, 1fr);
@@ -71,12 +91,29 @@
   margin-inline: 0;
 }
 
-.composer-shelf-stack
-  .composer-shelf-presence
-  + .composer-shelf-presence
-  .composer-workspace-surface {
-  border-start-start-radius: 0;
-  border-start-end-radius: 0;
+/* Backing lives outside the motion clip, underneath the next rounded shelf. */
+.composer-shelf-stack > .composer-shelf-presence::after {
+  z-index: 0;
+}
+
+.composer-shelf-stack > .composer-shelf-presence > .composer-shelf-clip {
+  position: relative;
+  z-index: 1;
+}
+
+.composer-shelf-surface,
+.composer-shelf-stack .composer-subagent-surface {
+  border: var(--composer-shelf-border-width) solid var(--border);
+  border-bottom: 0;
+  border-start-start-radius: var(--composer-outer-radius);
+  border-start-end-radius: var(--composer-outer-radius);
+  padding: var(--composer-shelf-inset);
+  /* The absent bottom border still contributes to the button-box inset. */
+  padding-bottom: calc(var(--composer-shelf-inset) + var(--composer-shelf-border-width));
+}
+
+.composer-shelf-surface button {
+  border-radius: var(--composer-shelf-control-radius);
 }
 
 .resource-popup {
@@ -92,20 +129,12 @@
   gap: var(--popup-item-gap);
 }
 
-.composer-attention-surface {
-  padding-inline: 4px;
-}
-
-.composer-queued-surface {
-  padding-block: var(--queue-shelf-padding-block);
-}
-
 .composer-queue-list {
   row-gap: var(--queue-list-gap);
 }
 
 .composer-queue-row {
-  padding-block: var(--queue-row-padding-block);
+  padding-block: 0;
 }
 
 .composer-queue-action {
@@ -166,6 +195,11 @@
 }
 
 @media (max-width: 767.98px), (any-pointer: coarse) {
+  .composer-shelf-surface button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
   .resource-row {
     padding-inline: 4px;
     gap: 6px;

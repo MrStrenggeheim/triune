@@ -1,3 +1,5 @@
+import { registerShortcutHandlers } from "@/lib/shortcutDispatcher";
+import { shortcutEnvironment } from "@/lib/keybindingPreferences";
 // Cmd+Enter (Ctrl+Enter on Win/Linux) accepts the pending harness approval
 // prompt — the keyboard equivalent of clicking "Accept" on an ApprovalCard.
 // Bind ONCE at the app shell.
@@ -24,7 +26,7 @@
 import { useEffect } from "react";
 
 import { schemaFields } from "@/components/blocks/ElicitationSchemaForm";
-import { hasCommandModifier, isMacPlatform } from "@/lib/hotkeys";
+import { isMacPlatform } from "@/lib/hotkeys";
 import type { ElicitationBlock } from "@/lib/blocks";
 import { useChatStore } from "@/store/chatStore";
 import { conversationRegistry } from "@/store/conversationRegistry";
@@ -57,16 +59,11 @@ export function isDraftingTarget(target: EventTarget | null): boolean {
 export function useApproveHotkey(isMac = isMacPlatform(), conversationId?: string | null): void {
   useEffect(() => {
     if (conversationId === null) return;
-    const handler = (e: globalThis.KeyboardEvent): void => {
-      // Platform command modifier, not Alt/Shift (mirrors the session-switch guard):
-      // only ⌘↵ on macOS and only Ctrl+↵ on Win/Linux.
-      if (!hasCommandModifier(e, isMac) || e.altKey || e.shiftKey) return;
-      if (e.key !== "Enter") return;
-
+    const handler = (e: globalThis.KeyboardEvent) => {
       // Mid-composition chord — a send intent aimed at the draft, not a
       // verdict. Leave the event for the composer's own handler (whose
       // send path is separately gated while a prompt is pending).
-      if (isDraftingTarget(e.target)) return;
+      if (isDraftingTarget(e.target)) return false;
 
       const store = useChatStore.getState();
       const blocks = conversationId
@@ -78,11 +75,11 @@ export function useApproveHotkey(isMac = isMacPlatform(), conversationId?: strin
       const newest = [...blocks]
         .reverse()
         .find((b): b is ElicitationBlock => b.type === "elicitation" && b.status === "pending");
-      if (!newest) return;
-      if (newest.nativeDelivery && newest.nativeDelivery.state !== "ready") return;
+      if (!newest) return false;
+      if (newest.nativeDelivery && newest.nativeDelivery.state !== "ready") return false;
       const takesAPlainVerdict =
         !newest.askUserQuestion && schemaFields(newest.requestedSchema).length === 0;
-      if (!takesAPlainVerdict) return;
+      if (!takesAPlainVerdict) return false;
       const pending = newest;
 
       // Intercept before the composer's Enter-to-send handler runs.
@@ -91,9 +88,12 @@ export function useApproveHotkey(isMac = isMacPlatform(), conversationId?: strin
       if (conversationId)
         void submitApproval(pending.elicitationId, "accept", undefined, undefined, conversationId);
       else void submitApproval(pending.elicitationId, "accept");
+      return true;
     };
 
-    window.addEventListener("keydown", handler, true);
-    return () => window.removeEventListener("keydown", handler, true);
+    return registerShortcutHandlers(
+      { "accept-approval": handler },
+      { ...shortcutEnvironment(), isMac },
+    );
   }, [isMac, conversationId]);
 }

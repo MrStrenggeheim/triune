@@ -2,11 +2,19 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { ArtifactFrame } from "./ArtifactFrame";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import userEvent from "@testing-library/user-event";
+import { copyText } from "@/lib/clipboard";
 import { downloadBlob } from "@/lib/explorerOperations";
 
 const viewer = vi.hoisted(() => ({ id: "artifact-viewer-a" }));
 vi.mock("@/hooks/useViewerId", () => ({ useViewerId: () => viewer.id }));
 vi.mock("@/lib/explorerOperations", () => ({ downloadBlob: vi.fn() }));
+vi.mock("@/lib/clipboard", () => ({ copyText: vi.fn(async () => {}) }));
+const rawRender = render;
+function renderFrame(ui: React.ReactNode) {
+  return rawRender(<TooltipProvider delayDuration={0}>{ui}</TooltipProvider>);
+}
 
 afterEach(() => {
   cleanup();
@@ -14,33 +22,38 @@ afterEach(() => {
   viewer.id = "artifact-viewer-a";
 });
 
-it("exports a complete isolated HTML file while leaving original download ownership with its caller", async () => {
-  const original = vi.fn();
+it("offers one portable download with kit, appearance and saved state", async () => {
   const html = '<main data-triune-kit="1"><button>Local tool</button></main>';
-  render(
-    <ArtifactFrame
-      html={html}
-      identity="export-chat:file"
-      title="Exported tool"
-      onDownload={original}
-    />,
+  renderFrame(<ArtifactFrame html={html} identity="export-chat:file" title="Exported tool" />);
+  const frame = (await screen.findByTitle("Exported tool")) as HTMLIFrameElement;
+  const channel = JSON.parse(frame.srcdoc.match(/const channel = (".*?");/)![1]);
+  act(() =>
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        source: frame.contentWindow,
+        data: { type: "triune-artifact:state", channel, value: { portable: "saved-value" } },
+      }),
+    ),
   );
-  await screen.findByTitle("Exported tool");
-  fireEvent.click(screen.getByRole("button", { name: "Download self-contained HTML" }));
+  fireEvent.click(screen.getByRole("button", { name: "Download artifact" }));
   const [blob, filename] = vi.mocked(downloadBlob).mock.calls.at(-1)!;
   expect(filename).toBe("Exported tool.html");
   const complete = await blob.text();
   expect(complete).toContain("frame-src about:");
   expect(complete).toContain("Local tool");
   expect(complete).toContain("data-triune-kit-embedded");
-  expect(original).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole("button", { name: "Download Exported tool" }));
-  expect(original).toHaveBeenCalledOnce();
+  expect(complete).toContain("saved-value");
+  expect(complete).toContain("comfortable");
+  expect(screen.getAllByRole("button").map((button) => button.getAttribute("aria-label"))).toEqual([
+    "Source",
+    "Download artifact",
+    "More",
+  ]);
 });
 
 it("binds state and size messages to the actual frame/channel and restores state only for its viewer and identity", async () => {
   const html = '<main class="ta-root"><input aria-label="Draft"></main>';
-  const first = render(
+  const first = renderFrame(
     <ArtifactFrame html={html} identity="source-chat:file-one" title="Stateful" />,
   );
   const frame = (await screen.findByTitle("Stateful")) as HTMLIFrameElement;
@@ -71,19 +84,71 @@ it("binds state and size messages to the actual frame/channel and restores state
     ).toBe(true),
   );
   const documentBefore = frame.srcdoc;
-  fireEvent.click(screen.getByRole("button", { name: "Show artifact source" }));
-  fireEvent.click(screen.getByRole("button", { name: "Show artifact preview" }));
+  fireEvent.click(screen.getByRole("button", { name: "Source" }));
+  fireEvent.click(screen.getByRole("button", { name: "Source" }));
   expect(screen.getByTitle("Stateful")).toBe(frame);
   expect(frame.srcdoc).toBe(documentBefore);
   first.unmount();
-  const second = render(
+  const second = renderFrame(
     <ArtifactFrame html={html} identity="source-chat:file-one" title="Restored" />,
   );
   const restored = (await screen.findByTitle("Restored")) as HTMLIFrameElement;
   expect(restored.srcdoc).toContain("private-counter-seven");
   second.unmount();
   viewer.id = "artifact-viewer-b";
-  render(<ArtifactFrame html={html} identity="source-chat:file-one" title="Other viewer" />);
+  renderFrame(<ArtifactFrame html={html} identity="source-chat:file-one" title="Other viewer" />);
   const other = (await screen.findByTitle("Other viewer")) as HTMLIFrameElement;
   expect(other.srcdoc).not.toContain("private-counter-seven");
+});
+
+it("shows escaped HTML through the shared highlighter and copies complete source with remembered wrapping", async () => {
+  const html =
+    '<!doctype html>\n<script>window.sourceMustNotRun=true</script>\n<p title="&amp;">&lt;literal&gt;</p>';
+  renderFrame(<ArtifactFrame html={html} identity="source:test" title="Source test" />);
+  await screen.findByTitle("Source test");
+  fireEvent.click(screen.getByRole("button", { name: "Source" }));
+  expect(document.querySelector("script")).toBeNull();
+  await waitFor(() =>
+    expect(document.querySelector("[data-code-highlighted]")).toHaveAttribute(
+      "data-code-highlighted",
+      "true",
+    ),
+  );
+  expect(document.querySelector("pre code")?.textContent).toContain("window.sourceMustNotRun=true");
+  await userEvent.setup().click(screen.getByRole("button", { name: "Copy source" }));
+  expect(copyText).toHaveBeenCalledWith(html);
+  const wrap = screen.getByRole("button", { name: "Toggle word wrap" });
+  expect(wrap).toHaveAttribute("aria-pressed", "true");
+  fireEvent.click(wrap);
+  expect(wrap).toHaveAttribute("aria-pressed", "false");
+  expect(localStorage.getItem("omnigent:wrap:chat")).toBe("false");
+});
+
+it("routes Open in tab through its consumer and uses the same opaque sandbox in a separate window", async () => {
+  const onOpenTab = vi.fn();
+  const document = window.document.implementation.createHTMLDocument("");
+  const popup = { document, opener: window };
+  const open = vi.spyOn(window, "open").mockReturnValue(popup as unknown as Window);
+  renderFrame(
+    <ArtifactFrame
+      html='<main class="ta-root">Local</main>'
+      identity="open:test"
+      title="Open test"
+      onOpenTab={onOpenTab}
+    />,
+  );
+  await screen.findByTitle("Open test");
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "More" }));
+  await user.click(screen.getByRole("menuitem", { name: "Open in tab" }));
+  expect(onOpenTab).toHaveBeenCalledOnce();
+  await user.click(screen.getByRole("button", { name: "More" }));
+  await user.click(screen.getByRole("menuitem", { name: "Open in new window" }));
+  expect(open).toHaveBeenCalledWith("about:blank", "_blank", expect.stringContaining("popup"));
+  expect(popup.opener).toBeNull();
+  const frame = document.querySelector("iframe")!;
+  expect(frame.getAttribute("sandbox")).toBe("allow-scripts");
+  expect(frame.getAttribute("referrerpolicy")).toBe("no-referrer");
+  expect(frame.srcdoc).toContain("data-triune-kit-embedded");
+  open.mockRestore();
 });

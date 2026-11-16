@@ -1325,3 +1325,213 @@ async def test_progress_shorter_final_atomic_replacement_and_old_turn_guard(db_u
         )
         is None
     )
+
+
+@pytest.mark.asyncio
+async def test_native_missing_task_summary_uses_nonblocking_cached_title_coordinator(
+    db_uri: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from omnigent.server.routes._sessions.orchestration import (
+        _persist_external_codex_subagent_start,
+    )
+
+    store = SqlAlchemyConversationStore(db_uri)
+    agent_id = "1234567890abcdef1234567890abcdef"
+    parent = store.create_conversation(agent_id=agent_id)
+    coordinator = Mock()
+    monkeypatch.setattr("omnigent.server.subagent_activity.session_stream.publish", Mock())
+    body = SessionEventInput(
+        type="external_codex_subagent_start",
+        data={
+            "thread_id": "native-child",
+            "tool_call_id": "spawn",
+            "prompt": "Please inspect all navigation behavior and report exact risks.",
+        },
+    )
+    child_id = await _persist_external_codex_subagent_start(
+        parent.id, parent, body, store, background_title_coordinator=coordinator
+    )
+    coordinator.schedule_task_summary.assert_called_once_with(
+        session_id=child_id,
+        prompt=body.data["prompt"],
+        agent_id=agent_id,
+        harness_override="codex-native",
+        sub_agent_name="Codex",
+    )
+    assert "task_summary" not in child_metadata(store.get_conversation(child_id))
+    store.set_task_summary(child_id, "Navigation review")
+    assert child_metadata(store.get_conversation(child_id))["task_summary"] == "Navigation review"
+    await _persist_external_codex_subagent_start(
+        parent.id,
+        parent,
+        SessionEventInput(
+            type="external_codex_subagent_start",
+            data={
+                "thread_id": "native-child",
+                "tool_call_id": "steer",
+                "prompt": "Please also inspect mobile.",
+            },
+        ),
+        store,
+        background_title_coordinator=coordinator,
+    )
+    coordinator.schedule_task_summary.assert_called_once()
+    assert (
+        store.get_conversation(child_id).labels["omnigent.subagent.card_summary"]
+        == "Navigation review"
+    )
+
+
+@pytest.mark.parametrize("allowed", [False, True])
+@pytest.mark.asyncio
+async def test_loaded_child_summary_uses_original_authorized_input_and_cached_generator(
+    db_uri: str, allowed: bool
+) -> None:
+    from unittest.mock import AsyncMock
+
+    from omnigent.server.routes._sessions.orchestration import (
+        _schedule_missing_child_task_summaries,
+    )
+
+    store = SqlAlchemyConversationStore(db_uri)
+    parent = store.create_conversation()
+    child = store.create_conversation(parent_conversation_id=parent.id)
+    original = "Please review the original navigation and keep the task identity."
+    store.append(
+        child.id,
+        [
+            NewConversationItem(
+                type="message",
+                response_id="first",
+                data=MessageData(
+                    role="user",
+                    content=[{"type": "input_text", "text": original}],
+                ),
+            ),
+            NewConversationItem(
+                type="message",
+                response_id="steer",
+                data=MessageData(
+                    role="user",
+                    content=[{"type": "input_text", "text": "Working agreement update"}],
+                ),
+            ),
+        ],
+    )
+    coordinator = Mock()
+    can_read = AsyncMock(return_value=allowed)
+    await _schedule_missing_child_task_summaries([child], store, coordinator, can_read)
+    can_read.assert_awaited_once_with(child.id)
+    if allowed:
+        coordinator.schedule_task_summary.assert_called_once_with(
+            session_id=child.id,
+            prompt=original,
+            agent_id=None,
+            sub_agent_name=None,
+        )
+        store.set_task_summary(child.id, "Navigation review")
+        await _schedule_missing_child_task_summaries(
+            [store.get_conversation(child.id)], store, coordinator, can_read
+        )
+        coordinator.schedule_task_summary.assert_called_once()
+    else:
+        coordinator.schedule_task_summary.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_pending_summary_steering_cannot_mask_later_generated_card_name(db_uri) -> None:
+    from omnigent.server.routes._sessions.orchestration import (
+        _persist_external_codex_subagent_start,
+    )
+
+    store = SqlAlchemyConversationStore(db_uri)
+    parent = store.create_conversation(agent_id="1234567890abcdef1234567890abcdef")
+    coordinator = Mock()
+    body = SessionEventInput(
+        type="external_codex_subagent_start",
+        data={
+            "thread_id": "summary-race",
+            "tool_call_id": "spawn",
+            "prompt": "Please review navigation carefully and report the resulting behavior.",
+        },
+    )
+    child_id = await _persist_external_codex_subagent_start(
+        parent.id,
+        parent,
+        body,
+        store,
+        background_title_coordinator=coordinator,
+    )
+    store.set_task_summary(child_id, "Delegated task")
+    store.set_labels(child_id, {"omnigent.subagent.card_summary": "Delegated task"})
+    await _persist_external_codex_subagent_start(
+        parent.id,
+        parent,
+        SessionEventInput(
+            type="external_codex_subagent_start",
+            data={
+                "thread_id": "summary-race",
+                "tool_call_id": "steer",
+                "prompt": "Working agreement update",
+            },
+        ),
+        store,
+        background_title_coordinator=coordinator,
+    )
+    store.set_task_summary(child_id, "Navigation review")
+    assert child_metadata(store.get_conversation(child_id))["card_summary"] == "Navigation review"
+
+
+@pytest.mark.asyncio
+async def test_child_list_backfills_legacy_raw_summary_once_with_title_preference(
+    client, app, db_uri, monkeypatch
+) -> None:
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    store = SqlAlchemyConversationStore(db_uri)
+    parent = store.create_conversation()
+    original = (
+        "Please inspect navigation, preserve every draft and validate the original task. " * 5
+    )
+    child = store.create_conversation(
+        kind="sub_agent",
+        parent_conversation_id=parent.id,
+        labels={
+            "omnigent.subagent.card_summary": original,
+            "omnigent.subagent.task_summary": original,
+        },
+    )
+    store.set_task_summary(child.id, original)
+    [source] = store.append(
+        child.id,
+        [
+            NewConversationItem(
+                type="message",
+                response_id="initial",
+                data=MessageData(
+                    role="user",
+                    content=[{"type": "input_text", "text": original}],
+                ),
+            )
+        ],
+    )
+    coordinator = app.state.background_title_coordinator
+    generated = AsyncMock(return_value="Navigation review")
+    monkeypatch.setattr(coordinator, "_generator", generated)
+    path = f"/v1/sessions/{parent.id}/child_sessions"
+    disabled = await client.get(path, headers={"x-omnigent-background-session-titles": "off"})
+    assert disabled.status_code == 200
+    generated.assert_not_called()
+    assert store.get_conversation(child.id).task_summary == original
+    enabled = await client.get(path)
+    assert enabled.status_code == 200
+    await asyncio.gather(*tuple(coordinator._pending))
+    generated.assert_awaited_once()
+    assert generated.call_args.args[0].prompt == original
+    refreshed = await client.get(path)
+    assert refreshed.json()["data"][0]["task_summary"] == "Navigation review"
+    generated.assert_awaited_once()
+    assert store.get_item(child.id, source.id).data.content[0]["text"] == original
+    legacy = store.get_conversation(child.id).labels["omnigent.subagent.legacy_task_summary"]
+    assert legacy and original.startswith(legacy)

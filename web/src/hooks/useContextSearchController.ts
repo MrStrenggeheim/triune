@@ -55,13 +55,34 @@ export function useContextSearchController({
   const requestId = useRef(0);
   const activationId = useRef(0);
   const pendingResult = useRef<ContextSearchTarget | null>(null);
+  const pendingNavigation = useRef<{ destination: string; origin?: string } | null>(null);
+  const previousSession = useRef(activeSessionId);
+  if (previousSession.current !== activeSessionId) {
+    const pending = pendingNavigation.current;
+    if (
+      !pending ||
+      (activeSessionId !== pending.destination && activeSessionId !== pending.origin)
+    ) {
+      activationId.current += 1;
+      pendingNavigation.current = null;
+      pendingResult.current = null;
+    }
+    previousSession.current = activeSessionId;
+  }
   const targetLookup = useRef({ requestId: 0, pages: 0 });
   const autoJumped = useRef("");
   const open = searchOpen && owner === identity;
   const queryReady = query.trim() === settledQuery;
   const queryIdentity = `${identity}:${scope}:${scope === "current" ? activeSessionId : ""}:${messageFilter}:${settledQuery}`;
   const liveQueryIdentity = useRef("");
-  liveQueryIdentity.current = `${queryIdentity}:${query.trim()}:${open}`;
+  liveQueryIdentity.current = JSON.stringify([
+    identity,
+    scope,
+    messageFilter,
+    settledQuery,
+    query.trim(),
+    open,
+  ]);
 
   useEffect(() => {
     if (owner === identity) return;
@@ -229,20 +250,24 @@ export function useContextSearchController({
   const activate = useCallback(
     (occurrence: SearchOccurrence, explicit = true) => {
       if (occurrence.hit.kind === "chat" || !queryReady) return;
+      const selected = structuredClone(occurrenceTarget(occurrence, 0));
       const generation = liveQueryIdentity.current;
       const activation = ++activationId.current;
+      pendingNavigation.current = explicit
+        ? { destination: selected.conversationId, origin: activeSessionId }
+        : null;
+      if (explicit) pendingResult.current = selected;
       const relevant = () =>
         generation === liveQueryIdentity.current && activation === activationId.current;
       const apply = () => {
         if (!relevant()) return;
-        pendingResult.current = null;
-        setHighlightTarget(occurrenceTarget(occurrence, ++requestId.current));
+        pendingNavigation.current = null;
+        setHighlightTarget({ ...selected, requestId: ++requestId.current });
         setUnavailable(null);
         if (explicit && isMobile()) setSidebarOpen(false);
       };
-      if (occurrence.hit.session_id === activeSessionId) apply();
-      else if (explicit)
-        navigate(`/c/${encodeURIComponent(occurrence.hit.session_id)}`, apply, relevant);
+      if (explicit) navigate(`/c/${encodeURIComponent(selected.conversationId)}`, apply, relevant);
+      else if (occurrence.hit.session_id === activeSessionId) apply();
     },
     [activeSessionId, navigate, isMobile, setSidebarOpen, queryReady],
   );
@@ -327,18 +352,29 @@ export function useContextSearchController({
       autoJumped.current = `${identity}:${scope}:${scope === "current" ? id : ""}:${messageFilter}:${settledQuery}`;
       const activation = ++activationId.current;
       const generation = liveQueryIdentity.current;
+      pendingNavigation.current = { destination: id, origin: activeSessionId };
       const relevant = () =>
         generation === liveQueryIdentity.current && activation === activationId.current;
       navigate(
         `/c/${encodeURIComponent(id)}`,
         () => {
           if (!relevant()) return;
+          pendingNavigation.current = null;
           if (isMobile()) setSidebarOpen(false);
         },
         relevant,
       );
     },
-    [navigate, isMobile, setSidebarOpen, identity, scope, messageFilter, settledQuery],
+    [
+      navigate,
+      isMobile,
+      setSidebarOpen,
+      identity,
+      scope,
+      messageFilter,
+      settledQuery,
+      activeSessionId,
+    ],
   );
 
   return useShallowStable({

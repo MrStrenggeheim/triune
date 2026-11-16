@@ -20,6 +20,7 @@ import {
   isComposerSteerAllKey,
 } from "@/lib/composerSendShortcutPreferences";
 import { CHAT_COLUMN_WIDTH } from "@/pages/chatLayout";
+import "./composerShelves.css";
 
 export const COMPOSER_COLUMN_WIDTH = `w-full ${CHAT_COLUMN_WIDTH}`;
 
@@ -110,7 +111,7 @@ export const ChatComposer = forwardRef<HTMLDivElement, ChatComposerProps>(functi
       ref={ref}
       data-composer-card
       className={cn(
-        "composer-reference-surface relative flex w-full flex-col rounded-xl border transition-shadow duration-150 md:min-h-[105px]",
+        "composer-reference-surface relative flex w-full flex-col rounded-[var(--composer-outer-radius)] border transition-shadow duration-150 md:min-h-[105px]",
         COMPOSER_FOCUS_CLASS,
         className,
       )}

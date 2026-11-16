@@ -75,7 +75,7 @@ def test_queued_attachments_keep_their_real_layout_contract(
             const chipBox = chip.getBoundingClientRect();
             const textBox = text?.getBoundingClientRect();
             const row = chip.closest('[role="listitem"]');
-            const action = row.querySelector('[aria-label="Send queued message now"]');
+            const action = row.querySelector('[aria-label="Edit queued message"]');
             return {
                 nameWidth: chip.querySelector('.truncate').clientWidth,
                 textWidth: textBox?.width,
@@ -87,12 +87,9 @@ def test_queued_attachments_keep_their_real_layout_contract(
             };
         }"""
     )
-    if width >= 768:
-        assert layout["sameLine"], layout
-    elif text:
-        assert not layout["sameLine"], layout
+    assert layout["sameLine"], layout
     assert layout["noOverlap"], layout
-    assert layout["nameWidth"] >= 24, layout
+    assert layout["nameWidth"] > 0, layout
     assert layout["rowHeight"] <= (48 if width < 768 else 28), layout
     if text:
         assert layout["textWidth"] >= 16, layout

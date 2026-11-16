@@ -474,6 +474,17 @@ describe("createBundledSession", () => {
 });
 
 describe("forkSession", () => {
+  it("requests durable subchat policy explicitly while ordinary forks keep their default", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({ id: "child", agent_id: "agent", status: "idle", created_at: 1 }),
+    );
+    await forkSession("source", { durableSubchat: true, upToItemId: "captured" });
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({
+      durable_subchat: true,
+      up_to_item_id: "captured",
+    });
+  });
   it("passes a captured item boundary and rejects ambiguous boundaries", async () => {
     fetchMock.mockResolvedValueOnce(
       mockJsonResponse({ id: "child", agent_id: "agent", status: "idle", created_at: 1 }),

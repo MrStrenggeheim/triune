@@ -13,6 +13,7 @@
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FileViewerContext } from "@/shell/FileViewerContext";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -149,6 +150,7 @@ function renderMarkdown(
   viewer: typeof FILE_VIEWER = FILE_VIEWER,
   sourceItemId?: string,
   previewContext: ComponentProps<typeof AttachmentPreviewContext.Provider>["value"] = {},
+  mode: "static" | "streaming" = "static",
 ): QueryClient {
   changedPaths = changed;
   openFile.mockClear();
@@ -161,7 +163,7 @@ function renderMarkdown(
         <TooltipProvider delayDuration={0}>
           <ConversationScopeContext.Provider value="conv_1">
             <AttachmentPreviewContext.Provider value={previewContext}>
-              <FilePathAwareMessageResponse sourceItemId={sourceItemId}>
+              <FilePathAwareMessageResponse sourceItemId={sourceItemId} mode={mode}>
                 {markdown}
               </FilePathAwareMessageResponse>
             </AttachmentPreviewContext.Provider>
@@ -188,10 +190,27 @@ it("renders a complete canonical uploaded artifact inline using the source chat'
       return new Response(original, { headers: { "Content-Type": "text/html" } });
     throw new Error(`Unexpected artifact request: ${url}`);
   });
+  const openAttachment = vi.fn();
   renderMarkdown(
     'Before\n\n```triune-artifact\n{"file_id":"uploaded-file","title":"Local tool"}\n```\nAfter',
+    [],
+    FILE_VIEWER,
+    "artifact-source-item",
+    { openAttachment },
   );
   const frame = await screen.findByTitle("Local tool");
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "More" }));
+  await user.click(screen.getByRole("menuitem", { name: "Open in tab" }));
+  expect(openAttachment).toHaveBeenCalledWith(
+    {
+      sessionId: "conv_1",
+      itemId: "artifact-source-item",
+      attachment: { file_id: "uploaded-file", filename: "complete.html" },
+      filename: "Local tool",
+    },
+    { placement: "tab" },
+  );
   expect(frame).toHaveAttribute("sandbox", "allow-scripts");
   expect(frame.getAttribute("srcdoc")).toContain("end-of-file");
   expect(screen.getByText("Before")).toBeInTheDocument();
@@ -1123,4 +1142,86 @@ describe("copying a file link's path", () => {
     expect(fireEvent.contextMenu(screen.getByRole("link", { name: "docs" }))).toBe(true);
     expect(screen.queryByRole("menuitem")).toBeNull();
   });
+});
+
+it.each(["", "/omnigent"])(
+  "renders an exact current-origin upload through authenticated retrieval at base %s",
+  async (base) => {
+    window.__OMNIGENT_BASE_PATH__ = base;
+    const path = "/v1/sessions/conv_1/resources/files/image-one/content";
+    fetchMock.mockImplementation(async (url: string) =>
+      url.endsWith("/content")
+        ? new Response("original-png", { headers: { "Content-Type": "image/png" } })
+        : jsonResponse({ name: "preview.png", metadata: { bytes: 12, content_type: "image/png" } }),
+    );
+    const create = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:preview-one");
+    const revoke = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+    try {
+      renderMarkdown(
+        `![Uploaded](${location.origin}${base}${path})`,
+        [],
+        FILE_VIEWER,
+        "source-item",
+      );
+      expect(await screen.findByRole("img", { name: "preview.png" })).toHaveAttribute(
+        "src",
+        "blob:preview-one",
+      );
+      expect(fetchMock).toHaveBeenCalledWith(
+        `${base}${path}`,
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
+      expect(screen.queryByText(/not allowed/i)).toBeNull();
+    } finally {
+      delete window.__OMNIGENT_BASE_PATH__;
+      create.mockRestore();
+      revoke.mockRestore();
+    }
+  },
+);
+
+it("does not permit arbitrary current-origin images or retrieve another source session", async () => {
+  renderMarkdown(
+    `![Private](${location.origin}/private.png)\n\n![Foreign](/v1/sessions/foreign/resources/files/file/content)`,
+    [],
+    FILE_VIEWER,
+    "source-item",
+  );
+  await waitFor(() => expect(screen.getByText(/Image blocked: Private/i)).toBeInTheDocument());
+  expect(document.querySelector('img[src*="private.png"]')).toBeNull();
+  expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/sessions/foreign/"))).toBe(
+    false,
+  );
+});
+
+it("batches adjacent images while keeping text boundaries and source order", async () => {
+  fetchMock.mockImplementation(async (url: string) =>
+    url.endsWith("/content")
+      ? new Response("png", { headers: { "Content-Type": "image/png" } })
+      : jsonResponse({
+          name: url.includes("first") ? "first.png" : "second.png",
+          metadata: { bytes: 3 },
+        }),
+  );
+  const create = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:preview");
+  const revoke = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+  try {
+    renderMarkdown(
+      "Before\n\n![first](/v1/sessions/conv_1/resources/files/first/content)\n\n![second](/v1/sessions/conv_1/resources/files/second/content)\n\nBetween\n\n![last](/v1/sessions/conv_1/resources/files/third/content)",
+      [],
+      FILE_VIEWER,
+      "source-item",
+    );
+    await screen.findAllByRole("img");
+    expect(document.querySelectorAll("[data-media-batch]")).toHaveLength(1);
+    expect(
+      screen
+        .getByRole("group", { name: "Media previews" })
+        .querySelectorAll('[data-testid="chat-attachment"]'),
+    ).toHaveLength(2);
+    expect(screen.getByText("Between")).toBeInTheDocument();
+  } finally {
+    create.mockRestore();
+    revoke.mockRestore();
+  }
 });

@@ -709,6 +709,24 @@ class ConversationStore(ABC):
         """
         ...
 
+    def list_activity_child_ids(
+        self, parent_ids: list[str], *, limit: int = 2048
+    ) -> tuple[dict[str, list[str]], bool]:
+        """Return bounded delegation/branch adjacency and whether it is complete.
+
+        Backends without branch indexing expose known delegation edges with
+        incomplete coverage so callers cannot claim an inactive closure.
+        """
+        if limit <= 0:
+            return {parent: [] for parent in parent_ids}, False
+        known = self.list_child_conversation_ids_by_parent(parent_ids)
+        remaining = limit
+        bounded: dict[str, list[str]] = {}
+        for parent, children in known.items():
+            bounded[parent] = children[:remaining]
+            remaining -= len(bounded[parent])
+        return bounded, False
+
     @abstractmethod
     def list_child_conversation_ids_page(
         self,

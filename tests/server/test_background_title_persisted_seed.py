@@ -125,3 +125,100 @@ async def test_background_title_uses_persisted_seed_for_attachment_first_turn(
         f"background title was dropped: expected {_GENERATED_TITLE!r}, session "
         f"still titled {final_title!r}; persisted seed was {persisted_seed!r}"
     )
+
+
+@pytest.mark.parametrize("semantic", [True, False])
+async def test_durable_subchat_names_first_new_human_question(db_uri: str, semantic: bool) -> None:
+    from omnigent.entities.subchat import SUBCHAT_HISTORY_LABEL, SUBCHAT_POLICY_LABEL
+
+    store = SqlAlchemyConversationStore(db_uri)
+    source = store.create_conversation(kind="default", title="Parent", agent_id=uuid.uuid4().hex)
+    copied = store.append(
+        source.id,
+        [
+            NewConversationItem(
+                type="message",
+                response_id="old",
+                data=MessageData(
+                    role="user",
+                    content=[{"type": "input_text", "text": "Inherited parent question"}],
+                ),
+            )
+        ],
+    )[0]
+    child = store.fork_conversation(
+        source.id,
+        title="",
+        up_to_item_id=copied.id,
+        reference_history=True,
+        extra_labels={SUBCHAT_POLICY_LABEL: "1"},
+    )
+    child.harness_override = "codex-native"
+    assert child.labels[SUBCHAT_POLICY_LABEL] == child.id
+    assert child.labels[SUBCHAT_HISTORY_LABEL] != copied.id
+    prompts: list[str] = []
+
+    async def generator(request: BackgroundTitleRequest) -> str:
+        prompts.append(request.prompt)
+        return "Child Topic"
+
+    coordinator = BackgroundSessionTitleCoordinator(store, generator)
+    for content, human, meta in [
+        ("Native echo", False, False),
+        ("Framework wake", True, True),
+        ("> Only inherited quotation", True, False),
+        ('[Chat context snapshot]\n{"quote":"parent"}\n[/Chat context snapshot]', True, False),
+    ]:
+        item = NewConversationItem(
+            type="message",
+            response_id="ignored",
+            data=MessageData(
+                role="user",
+                content=[{"type": "input_text", "text": content}],
+                user_authored=human,
+                is_meta=meta,
+            ),
+        )
+        await _seed_missing_title_from_user_message(child, item, store)
+        assert child.title is None
+    content = [
+        {"type": "input_text", "text": "> inherited quotation\n\nWhy does the child retry?"}
+    ]
+    pending = prepare_background_session_title(
+        coordinator=coordinator,
+        conversation=child,
+        event=SessionEventInput(type="message", data={"role": "user", "content": content}),
+        enabled=semantic,
+    )
+    question = NewConversationItem(
+        type="message",
+        response_id="new",
+        data=MessageData(role="user", content=content, user_authored=True),
+    )
+    await _seed_missing_title_from_user_message(child, question, store)
+    assert child.title == "Why does the child retry?"
+    if pending:
+        pending.schedule(expected_seed_title=child.title)
+    await coordinator.wait_for_idle()
+    assert store.get_conversation(child.id).title == (
+        "Child Topic" if semantic else "Why does the child retry?"
+    )
+    assert prompts == (["Why does the child retry?"] if semantic else [])
+
+
+async def test_subchat_first_question_seed_preserves_manual_rename(db_uri: str) -> None:
+    from omnigent.entities.subchat import SUBCHAT_POLICY_LABEL
+
+    store = SqlAlchemyConversationStore(db_uri)
+    source = store.create_conversation(kind="default", agent_id=uuid.uuid4().hex)
+    child = store.fork_conversation(source.id, title="", extra_labels={SUBCHAT_POLICY_LABEL: "1"})
+    store.update_conversation(child.id, title="Manually chosen")
+    question = NewConversationItem(
+        type="message",
+        response_id="new",
+        data=MessageData(
+            role="user", content=[{"type": "input_text", "text": "Question"}], user_authored=True
+        ),
+    )
+    await _seed_missing_title_from_user_message(child, question, store)
+    assert store.get_conversation(child.id).title == "Manually chosen"

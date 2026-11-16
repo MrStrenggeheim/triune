@@ -3,7 +3,12 @@ import { useEffect, useState } from "react";
 import { act, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import { CONVERSATION_DRAG_MIME, DockWorkspace, type DockWorkspaceProps } from "./DockWorkspace";
+import {
+  CONVERSATION_DRAG_MIME,
+  DockWorkspace,
+  stepFocusedPaneView,
+  type DockWorkspaceProps,
+} from "./DockWorkspace";
 import {
   addDockView,
   createDockLayout,
@@ -1533,5 +1538,45 @@ describe("useDockLayout", () => {
     expect(result.current.error?.message).toBe("Quota exceeded");
     expect(setItem.mock.calls[0][0]).toBe(dockStorageKey(scope));
     await waitFor(() => expect(result.current.error).not.toBeNull());
+  });
+});
+
+describe("canonical tab shortcut adapters", () => {
+  it("middle-closes the pointed tab through the guarded owner without selecting it", async () => {
+    const owner = vi.fn().mockResolvedValue(false);
+    const change = vi.fn();
+    render(
+      <DockWorkspace
+        layout={createDockLayout([view("middle-a"), view("middle-b")])}
+        onLayoutChange={change}
+        onCloseView={owner}
+        renderView={(entry) => <div>{entry.id}</div>}
+      />,
+    );
+    const target = screen.getByRole("tab", { name: "middle-b" });
+    expect(fireEvent.mouseDown(target, { button: 1 })).toBe(false);
+    fireEvent(target, new MouseEvent("auxclick", { button: 1, bubbles: true, cancelable: true }));
+    await waitFor(() => expect(owner).toHaveBeenCalledExactlyOnceWith("middle-b"));
+    expect(change).not.toHaveBeenCalled();
+    expect(screen.getByRole("tab", { name: "middle-a" })).toHaveAttribute("aria-selected", "true");
+    expect(target).toBeInTheDocument();
+  });
+  it("cycles only the focused pane and wraps without mutating its source layout", () => {
+    const layout = addDockView(
+      createDockLayout([view("cycle-a"), view("cycle-b")]),
+      view("cycle-c"),
+      { edge: "right" },
+    );
+    const focused = selectDockView(layout, "cycle-b");
+    const cycled = stepFocusedPaneView(focused, 1);
+    expect(cycled.panes.find((pane) => pane.id === focused.focusedPaneId)?.selectedViewId).toBe(
+      "cycle-a",
+    );
+    expect(cycled.panes.find((pane) => pane.id !== focused.focusedPaneId)?.viewIds).toEqual([
+      "cycle-c",
+    ]);
+    expect(focused.panes.find((pane) => pane.id === focused.focusedPaneId)?.selectedViewId).toBe(
+      "cycle-b",
+    );
   });
 });

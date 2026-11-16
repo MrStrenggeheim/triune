@@ -847,6 +847,7 @@ export async function forkSession(
     sandbox?: { provider?: string | null; workspace?: string | null; hostId?: string };
     /** Mark the fork as a side chat (hidden from the left sidebar). */
     sideChat?: boolean;
+    durableSubchat?: boolean;
   } = {},
 ): Promise<Session> {
   const { title, agentId, upToResponseId, upToItemId, config, sandbox, sideChat } = options;
@@ -867,7 +868,9 @@ export async function forkSession(
     host_id?: string;
     workspace?: string | null;
     side_chat?: boolean;
+    durable_subchat?: boolean;
   } = {};
+  if (options.durableSubchat) body.durable_subchat = true;
   if (sideChat) {
     body.side_chat = true;
   }

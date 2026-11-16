@@ -2109,10 +2109,31 @@ interface LandingDraft {
   workspaceFromConfig: boolean;
 }
 
-let landingDraft: LandingDraft | null = null;
-let landingDraftOwner: string | null = null;
-let landingDraftRevision = 0;
-let landingDraftWrites = Promise.resolve();
+interface LandingDraftStore {
+  id?: string;
+  draft: LandingDraft | null;
+  owner: string | null;
+  revision: number;
+  writes: Promise<void>;
+}
+
+function createLandingDraftStore(id?: string): LandingDraftStore {
+  return { id, draft: null, owner: null, revision: 0, writes: Promise.resolve() };
+}
+
+const globalLandingDraft = createLandingDraftStore();
+const embeddedLandingDrafts = new Map<string, LandingDraftStore>();
+
+function getLandingDraftStore(id?: string): LandingDraftStore {
+  if (!id) return globalLandingDraft;
+  const key = JSON.stringify([location.origin, getCurrentUserId(), id]);
+  let store = embeddedLandingDrafts.get(key);
+  if (!store) {
+    store = createLandingDraftStore(id);
+    embeddedLandingDrafts.set(key, store);
+  }
+  return store;
+}
 
 function landingDraftKey(draft: LandingDraft): string {
   return JSON.stringify({
@@ -2123,7 +2144,7 @@ function landingDraftKey(draft: LandingDraft): string {
   });
 }
 
-function landingDraftScope(): string | null {
+function landingDraftScope(store = globalLandingDraft): string | null {
   const userId = getCurrentUserId();
   if (!userId) return null;
   let tabId = sessionStorage.getItem("omnigent.landingDraftTab");
@@ -2131,20 +2152,20 @@ function landingDraftScope(): string | null {
     tabId = newTempConversation().token;
     sessionStorage.setItem("omnigent.landingDraftTab", tabId);
   }
-  return `initial-input:${location.origin}:${userId}:${tabId}`;
+  return `initial-input:${location.origin}:${userId}:${tabId}${store.id ? `:draft:${store.id}` : ""}`;
 }
 
-function writeLandingDraft(draft: LandingDraft | null): Promise<void> {
-  landingDraft = draft;
-  landingDraftOwner = getCurrentUserId();
-  landingDraftRevision += 1;
+function writeLandingDraft(draft: LandingDraft | null, store = globalLandingDraft): Promise<void> {
+  store.draft = draft;
+  store.owner = getCurrentUserId();
+  store.revision += 1;
   try {
-    const scope = landingDraftScope();
+    const scope = landingDraftScope(store);
     if (scope === null) return Promise.resolve();
     if (draft) sessionStorage.setItem(scope, JSON.stringify({ ...draft, files: [] }));
     else sessionStorage.removeItem(scope);
     if (typeof indexedDB === "undefined") return Promise.resolve();
-    landingDraftWrites = landingDraftWrites
+    store.writes = store.writes
       .then(() =>
         writeQueuedMessages(
           scope,
@@ -2165,7 +2186,7 @@ function writeLandingDraft(draft: LandingDraft | null): Promise<void> {
           "Couldn't save the startup draft for reload. Keep this tab open until it is accepted.",
         );
       });
-    return landingDraftWrites;
+    return store.writes;
   } catch {
     showToast(
       "Couldn't save the startup draft for reload. Keep this tab open until it is accepted.",
@@ -2174,18 +2195,18 @@ function writeLandingDraft(draft: LandingDraft | null): Promise<void> {
   }
 }
 
-function restoreLandingDraft(): void {
-  if (landingDraftOwner !== getCurrentUserId()) {
-    landingDraft = null;
-    landingDraftOwner = getCurrentUserId();
+function restoreLandingDraft(store = globalLandingDraft): void {
+  if (store.owner !== getCurrentUserId()) {
+    store.draft = null;
+    store.owner = getCurrentUserId();
   }
-  if (landingDraft) return;
+  if (store.draft) return;
   try {
-    const scope = landingDraftScope();
+    const scope = landingDraftScope(store);
     const saved = scope && sessionStorage.getItem(scope);
     if (!saved) return;
     const draft = JSON.parse(saved) as LandingDraft;
-    if (typeof draft.message === "string" && Array.isArray(draft.files)) landingDraft = draft;
+    if (typeof draft.message === "string" && Array.isArray(draft.files)) store.draft = draft;
   } catch {
     showToast("Couldn't restore the saved startup draft.");
   }
@@ -2196,18 +2217,45 @@ function restoreLandingDraft(): void {
 // design, which would otherwise leak between tests).
 export function resetLandingDraft(preserveStorage = false): void {
   if (preserveStorage) {
-    landingDraft = null;
-    landingDraftRevision += 1;
+    globalLandingDraft.draft = null;
+    globalLandingDraft.revision += 1;
+    embeddedLandingDrafts.clear();
   } else {
     void writeLandingDraft(null);
+    for (const store of embeddedLandingDrafts.values()) void writeLandingDraft(null, store);
+    embeddedLandingDrafts.clear();
   }
 }
 
-export function NewChatLandingScreen() {
-  restoreLandingDraft();
+export interface EmbeddedNewChat {
+  draftId: string;
+  active: boolean;
+  isCurrent: () => boolean;
+  onCreated: (id: string) => void | Promise<void>;
+}
+
+export function NewChatLandingScreen({ embedded }: { embedded?: EmbeddedNewChat } = {}) {
+  const [draftStore] = useState(() => getLandingDraftStore(embedded?.draftId));
+  restoreLandingDraft(draftStore);
+  const landingDraft = draftStore.draft;
+  const embeddedRef = useRef(embedded);
+  embeddedRef.current = embedded;
+  const saveDraft = useCallback(
+    (draft: LandingDraft | null) => writeLandingDraft(draft, draftStore),
+    [draftStore],
+  );
   const navigate = useNavigate();
   const location = useLocation();
-  const [searchParams] = useSearchParams();
+  const [routeSearchParams] = useSearchParams();
+  const isEmbedded = !!embedded;
+  const [embeddedProject, setEmbeddedProject] = useState("");
+  const searchParams = useMemo(
+    () =>
+      isEmbedded
+        ? new URLSearchParams(embeddedProject ? { project: embeddedProject } : {})
+        : routeSearchParams,
+    [isEmbedded, embeddedProject, routeSearchParams],
+  );
   const linkedPrompt = searchParams.get("prompt");
   const queryClient = useQueryClient();
   const isMobileViewport = useIsMobileViewport();
@@ -2353,7 +2401,7 @@ export function NewChatLandingScreen() {
   // the in-session view shows too — the picker stays reachable while starting
   // a new session. The hook hides it whenever the sidebar covers the surface.
   const [landingSurface, setLandingSurface] = useState<HTMLElement | null>(null);
-  useNativeServerSwitcherForMainSurface(landingSurface, true);
+  useNativeServerSwitcherForMainSurface(landingSurface, embedded?.active ?? true);
 
   // Draft restore is project-scoped: the user's text and attachments always
   // come back, but agent/host/workspace slots parked under another project's
@@ -2759,7 +2807,7 @@ export function NewChatLandingScreen() {
   // existing-chat model-picker shortcut. The picker owns model selection on the
   // landing, so the hotkey bumps a nonce the picker opens on.
   const [modelPickerOpenNonce, setModelPickerOpenNonce] = useState(0);
-  useModelPickerHotkey(() => setModelPickerOpenNonce((n) => n + 1));
+  useModelPickerHotkey(() => setModelPickerOpenNonce((n) => n + 1), embedded?.active ?? true);
 
   // Mirror the current draft fields into a ref every render so the unmount
   // cleanup below can snapshot the latest values without re-subscribing.
@@ -2807,17 +2855,31 @@ export function NewChatLandingScreen() {
   ) {
     draftRef.current.createToken = submittedDraftRef.current.createToken;
   }
+  const draftIdentity = landingDraftKey(draftRef.current);
+  useEffect(() => {
+    if (!isEmbedded) return;
+    const save = () => {
+      if (!submittedRef.current && createAttemptRef.current === null)
+        void saveDraft(draftRef.current);
+    };
+    const timer = setTimeout(save, 200);
+    window.addEventListener("pagehide", save);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener("pagehide", save);
+    };
+  }, [isEmbedded, draftIdentity, saveDraft]);
   useEffect(() => {
     const restore = draftRef.current;
     let cancelled = false;
     let scope: string | null = null;
     try {
-      scope = landingDraftScope();
+      scope = landingDraftScope(draftStore);
     } catch {
       showToast("Couldn't restore the saved startup draft.");
     }
     if (scope && restore.files.length === 0 && typeof indexedDB !== "undefined") {
-      void landingDraftWrites
+      void draftStore.writes
         .then(() => readQueuedMessages(scope))
         .then((saved) => {
           if (
@@ -2827,14 +2889,23 @@ export function NewChatLandingScreen() {
           )
             return;
           const draft = saved[0];
-          if (draft?.text === restore.message && draft.files?.length) restoreFiles(draft.files);
+          if (draft?.text === restore.message && draft.files?.length) {
+            const submitted = submittedDraftRef.current;
+            if (
+              submitted?.createToken &&
+              submitted.message === draft.text &&
+              !submitted.files.length
+            )
+              submittedDraftRef.current = { ...submitted, files: draft.files };
+            restoreFiles(draft.files);
+          }
         })
         .catch(() => showToast("Couldn't restore the startup attachments."));
     }
     return () => {
       cancelled = true;
     };
-  }, [restoreFiles]);
+  }, [draftStore, restoreFiles]);
   useEffect(() => {
     // Re-set on setup so StrictMode's setup→cleanup→setup double-invoke
     // doesn't leave the screen marked gone.
@@ -2842,13 +2913,13 @@ export function NewChatLandingScreen() {
     return () => {
       onScreenRef.current = false;
       if (!submittedRef.current) {
-        writeLandingDraft({
+        saveDraft({
           ...draftRef.current,
           agentExplicitlySelected: agentExplicitlySelectedRef.current,
         });
       }
     };
-  }, []);
+  }, [saveDraft]);
 
   const { recent, addRecent } = useRecentWorkspaces(selectedHostId);
   const { addRecentHarness } = useRecentHarnesses();
@@ -4127,7 +4198,8 @@ export function NewChatLandingScreen() {
   const { preview, dismissPreview } = useComposerConfigCycleHotkeys(
     modelSection?.choices,
     effortSection?.choices ?? fusionSections?.[1]?.choices.filter(({ key }) => key !== "__fast__"),
-    !!selectedAgent &&
+    (embedded?.active ?? true) &&
+      !!selectedAgent &&
       isEntryConfigurable(selectedAgent) &&
       !noExecutionTargetSelected &&
       !creating &&
@@ -5609,7 +5681,7 @@ export function NewChatLandingScreen() {
     ) {
       delete returnedDraft.createToken;
     }
-    void writeLandingDraft(returnedDraft);
+    void saveDraft(returnedDraft);
     if (onScreenRef.current) {
       setMessage(returnedDraft.message);
       // The draft's files were validated when the user attached them, so
@@ -5622,6 +5694,7 @@ export function NewChatLandingScreen() {
     // Mirror the Send button's disabled condition (canSubmit) so the Enter-key
     // and form-submit paths that call this directly can't create a session with
     // a blank message, host, agent, or workspace.
+    if (embeddedRef.current && !embeddedRef.current.isCurrent()) return;
     if (!canSubmit) {
       if (submitDisabledReason !== null) setSubmitTooltipState("pinned");
       return;
@@ -5680,6 +5753,7 @@ export function NewChatLandingScreen() {
             skipDbcertCheckRef.current !== null &&
             onScreenRef.current &&
             window.location.href === createLocation &&
+            (!embeddedRef.current || embeddedRef.current.isCurrent()) &&
             features?.databricksInternalFeatures === true &&
             features.canRefreshDbcert === true
               ? checkDbcert()
@@ -5691,7 +5765,8 @@ export function NewChatLandingScreen() {
         if (
           createAttemptRef.current !== createAttempt ||
           !onScreenRef.current ||
-          window.location.href !== createLocation
+          window.location.href !== createLocation ||
+          (embeddedRef.current && !embeddedRef.current.isCurrent())
         )
           return;
         setCheckingDbcert(false);
@@ -5711,8 +5786,8 @@ export function NewChatLandingScreen() {
           : newTempConversation().token;
       const submittedDraft = { ...draftRef.current, createToken, startupError: undefined };
       submittedDraftRef.current = submittedDraft;
-      await writeLandingDraft(submittedDraft);
-      submittedDraftRevisionRef.current = landingDraftRevision;
+      await saveDraft(submittedDraft);
+      submittedDraftRevisionRef.current = draftStore.revision;
       submittedRef.current = true;
       trackClick("new_chat.start_session", "button");
       if (sandboxRepoSelections.length > 0) {
@@ -5947,28 +6022,30 @@ export function NewChatLandingScreen() {
         // Normal path: bind to an existing registered agent.
         const provisional = { ...newTempConversation(), token: createToken };
         try {
-          localConv = beginLocalConversation(initialPrompt, files, provisional, localProject, {
-            // Seed the temp session with the NORMALIZED create identity so the
-            // optimistic composer shows the model/effort/harness/routing being
-            // created, not state projected from the previously active session.
-            modelOverride: normalizedModelOverride,
-            llmModel: resolvedDefaultModel,
-            reasoningEffort: normalizedReasoningEffort,
-            // The RESOLVED native wrapper harness (e.g. "codex-native"), not the
-            // usually-null pickedHarness for a native agent — so the temp page
-            // adapter can re-derive the native model/effort/permission identity.
-            harness: smartRoutingHarnessSelected
-              ? null
-              : (selectedNativeHarness ?? pickedHarness ?? null),
-            costControlModeOverride: costControlOverride ?? null,
-            boundAgentId: effectiveAgentId,
-            // Name (not just id) so the in-session temp composer can evaluate
-            // routing eligibility (isCostRoutingSession needs a bound agent).
-            boundAgentName: agent?.display_name ?? agent?.name ?? null,
-            // Chosen host so temp routing's per-family gateway guard uses the
-            // real host (null for a sandbox create).
-            hostId: sandboxSelected ? null : selectedHostId,
-          });
+          localConv = embeddedRef.current
+            ? null
+            : beginLocalConversation(initialPrompt, files, provisional, localProject, {
+                // Seed the temp session with the NORMALIZED create identity so the
+                // optimistic composer shows the model/effort/harness/routing being
+                // created, not state projected from the previously active session.
+                modelOverride: normalizedModelOverride,
+                llmModel: resolvedDefaultModel,
+                reasoningEffort: normalizedReasoningEffort,
+                // The RESOLVED native wrapper harness (e.g. "codex-native"), not the
+                // usually-null pickedHarness for a native agent — so the temp page
+                // adapter can re-derive the native model/effort/permission identity.
+                harness: smartRoutingHarnessSelected
+                  ? null
+                  : (selectedNativeHarness ?? pickedHarness ?? null),
+                costControlModeOverride: costControlOverride ?? null,
+                boundAgentId: effectiveAgentId,
+                // Name (not just id) so the in-session temp composer can evaluate
+                // routing eligibility (isCostRoutingSession needs a bound agent).
+                boundAgentName: agent?.display_name ?? agent?.name ?? null,
+                // Chosen host so temp routing's per-family gateway guard uses the
+                // real host (null for a sandbox create).
+                hostId: sandboxSelected ? null : selectedHostId,
+              });
           if (localConv !== null) navigate(sessionLocation(localConv.tempConvId));
         } catch {
           /* non-fatal: the response still opens the server session */
@@ -6226,7 +6303,7 @@ export function NewChatLandingScreen() {
       // The session was created — drop any draft a detour back to this
       // screen stashed, so the next visit starts clean.
       const clearAcceptedDraft = () => {
-        if (submittedDraftRevisionRef.current === landingDraftRevision) writeLandingDraft(null);
+        if (submittedDraftRevisionRef.current === draftStore.revision) saveDraft(null);
       };
       if (serverOwnsInitialInput) clearAcceptedDraft();
 
@@ -6263,7 +6340,9 @@ export function NewChatLandingScreen() {
             stableId: createToken,
             onAccepted: clearAcceptedDraft,
           });
-        if (onScreenRef.current && window.location.href === createLocation) {
+        if (embeddedRef.current) {
+          await embeddedRef.current.onCreated(data.id);
+        } else if (onScreenRef.current && window.location.href === createLocation) {
           navigate(sessionLocation(data.id));
         }
       }
@@ -6783,6 +6862,10 @@ export function NewChatLandingScreen() {
                         }
                         projects={projectList ?? []}
                         onProjectSelect={(name) => {
+                          if (isEmbedded) {
+                            setEmbeddedProject(name);
+                            return;
+                          }
                           const params = new URLSearchParams(searchParams);
                           params.set("project", name);
                           navigate(`/?${params.toString()}`);
@@ -6792,7 +6875,7 @@ export function NewChatLandingScreen() {
                     </div>
                     <ComposerMicButton
                       className="size-8 md:size-7"
-                      enableHotkey
+                      enableHotkey={embedded?.active ?? true}
                       disabled={creating}
                       onVoiceStart={() => {
                         voiceSnapshotRef.current = message;

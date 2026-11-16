@@ -1,7 +1,29 @@
 // Triune additions: PolyForm Noncommercial 1.0.0; see LICENSING.md.
 import { terminalLayoutGeometry } from "@/lib/terminalSplitLayout";
 import type { FileOpeningMode } from "@/lib/fileOpeningPreferences";
-import type { DockLayout, DockPlacement } from "./dockLayout";
+import { dockPaneForView, type DockLayout, type DockPlacement } from "./dockLayout";
+
+/** Preview links retain their own origin even when a neighboring chat has focus. */
+export function previewPlacement(
+  layout: DockLayout,
+  source: { sourceViewId?: string; conversationId?: string },
+  mode: FileOpeningMode,
+  pinnedIds: readonly string[] = [],
+): DockPlacement {
+  const origin = source.sourceViewId ? dockPaneForView(layout, source.sourceViewId) : undefined;
+  const conversation = source.conversationId
+    ? layout.views.find(
+        (view) =>
+          view.kind === "conversation" && view.resource.conversationId === source.conversationId,
+      )
+    : undefined;
+  return filePlacement(
+    layout,
+    origin?.id ?? (conversation && dockPaneForView(layout, conversation.id)?.id),
+    mode,
+    pinnedIds,
+  );
+}
 
 /** Pick a destination without replacing resources or subdividing every file open. */
 export function filePlacement(
@@ -25,6 +47,12 @@ export function filePlacement(
         ["preview", "attachment-preview", "files", "changes", "search"].includes(view.kind) &&
         layout.panes.find((pane) => pane.id === id)?.viewIds.includes(view.id),
     );
+  if (
+    mode === "reuse" &&
+    hasFile(origin) &&
+    !layout.panes.find((pane) => pane.id === origin)?.viewIds.some((id) => pinned.has(id))
+  )
+    return { paneId: origin };
   const neighboring = eligible.filter((pane) => {
     const rect = rects.find((item) => item.key === pane.id);
     return (

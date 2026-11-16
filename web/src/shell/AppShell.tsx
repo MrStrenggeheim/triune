@@ -270,6 +270,7 @@ export function AppShell() {
     <GridSessionsProvider>
       <RetainedWorkbench active={!legacyLayout}>
         <WorkbenchShell active={!legacyLayout} />
+        {!legacyLayout && <KeyboardShortcutsDialog />}
       </RetainedWorkbench>
       {legacyLayout && <LegacyAppShell />}
     </GridSessionsProvider>

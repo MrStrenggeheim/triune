@@ -8568,3 +8568,51 @@ def test_legacy_branch_projection_preserves_unknown_parentage_and_history(
     child = store.create_conversation(parent_conversation_id=source.id, title="delegated")
     assert child.kind == "sub_agent"
     assert child.branch is None
+
+
+def test_activity_graph_unions_branch_and_delegation_edges(
+    conversation_store: SqlAlchemyConversationStore,
+) -> None:
+    root = conversation_store.create_conversation(kind="default", agent_id="a" * 32)
+    delegate = conversation_store.create_conversation(
+        kind="sub_agent", parent_conversation_id=root.id, agent_id="a" * 32
+    )
+    branch = conversation_store.fork_conversation(delegate.id)
+    edges, complete = conversation_store.list_activity_child_ids([root.id, delegate.id])
+    assert complete
+    assert edges[root.id] == [delegate.id]
+    assert edges[delegate.id] == [branch.id]
+    assert conversation_store.list_activity_child_ids([root.id], limit=0) == ({root.id: []}, False)
+
+
+def test_explicit_fork_drops_durable_subchat_policy(
+    conversation_store: SqlAlchemyConversationStore,
+) -> None:
+    from omnigent.entities.subchat import (
+        SUBCHAT_HISTORY_LABEL,
+        SUBCHAT_LABEL_KEYS,
+        SUBCHAT_POLICY_LABEL,
+    )
+
+    root = conversation_store.create_conversation(kind="default", agent_id="a" * 32)
+    source_item = conversation_store.append(
+        root.id,
+        [
+            NewConversationItem(
+                type="message",
+                response_id="r",
+                data=MessageData(role="user", content=[{"type": "input_text", "text": "parent"}]),
+            )
+        ],
+    )[0]
+    child = conversation_store.fork_conversation(
+        root.id, title="", reference_history=True, extra_labels={SUBCHAT_POLICY_LABEL: "1"}
+    )
+    assert child.labels[SUBCHAT_POLICY_LABEL] == child.id
+    assert child.labels[SUBCHAT_HISTORY_LABEL] != source_item.id
+    explicit = conversation_store.fork_conversation(
+        child.id, dropped_label_keys=SUBCHAT_LABEL_KEYS
+    )
+    assert SUBCHAT_POLICY_LABEL not in explicit.labels
+    assert SUBCHAT_HISTORY_LABEL not in explicit.labels
+    assert explicit.title is not None

@@ -681,3 +681,27 @@ describe("getServerPicker / switchServer over the iOS bridge", () => {
     await expect(getServerPicker()).resolves.toBeNull();
   });
 });
+
+describe("versioned keyboard bridge", () => {
+  it("reports old and partial shells truthfully and publishes only through the optional v1 bridge", async () => {
+    const { supportsNativeShortcuts, publishNativeShortcuts, onNativeShortcut } =
+      await import("./nativeBridge");
+    setElectron(true);
+    expect(supportsNativeShortcuts()).toBe(false);
+    const shell = (window as unknown as Record<string, unknown>).omnigentDesktop as Record<
+      string,
+      unknown
+    >;
+    shell.shortcutProtocolVersion = 1;
+    shell.setShortcutBindings = vi.fn();
+    expect(supportsNativeShortcuts()).toBe(false);
+    const unsubscribe = vi.fn();
+    shell.onShortcutCommand = vi.fn().mockReturnValue(unsubscribe);
+    expect(supportsNativeShortcuts()).toBe(true);
+    const snapshot = { version: 1 as const, generation: "test-generation", bindings: [] };
+    expect(publishNativeShortcuts(snapshot)).toBe(true);
+    expect(shell.setShortcutBindings).toHaveBeenCalledExactlyOnceWith(snapshot);
+    onNativeShortcut(vi.fn())();
+    expect(unsubscribe).toHaveBeenCalledOnce();
+  });
+});

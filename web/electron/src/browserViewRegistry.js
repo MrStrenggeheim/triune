@@ -75,6 +75,7 @@ function createBrowserViewRegistry({
   getHostZoomFactor = () => 1,
   getHostDisplayScaleFactor = () => null,
   isHostFocused = () => true,
+  forwardWorkspaceShortcut = () => false,
   // Desktop affordances for the pane's context menu; injected so the registry
   // stays Electron-free. No-op defaults keep tests and non-menu hosts simple.
   openUrlExternal = () => {}, // (url) => shell.openExternal(url)
@@ -349,6 +350,7 @@ function createBrowserViewRegistry({
     const wc = entry.view && entry.view.webContents;
     if (!wc || typeof wc.on !== "function") return;
     wc.on("before-input-event", (event, input) => {
+      if (forwardWorkspaceShortcut(event, input)) return;
       if (!recentSessionSwitchSupported) return;
       const type =
         input && input.type === "keyDown"

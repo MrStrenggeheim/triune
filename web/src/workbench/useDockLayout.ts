@@ -86,6 +86,7 @@ export function useDockLayout({
 }: UseDockLayoutOptions) {
   const scopeKey = dockStorageKey(scope);
   const [session, setSession] = useState(() => loadSession(scopeKey, initialLayout, storage));
+  // Renders can lag behind commits; only commits and scope resets advance this ref.
   const current = useRef(session);
   const layoutCache = useRef<{ state: DockPersistence; layout: DockLayout } | null>(null);
   const layoutFor = useCallback((state: DockPersistence) => {
@@ -106,8 +107,6 @@ export function useDockLayout({
     const next = loadSession(scopeKey, initialLayout, storage);
     current.current = next;
     setSession(next);
-  } else {
-    current.current = session;
   }
   const closing = useRef(new Map<string, Promise<boolean>>());
 
@@ -286,6 +285,47 @@ export function useDockLayout({
     [commit, scopeKey, storage],
   );
 
+  /** Accepted startup replaces its draft in place, including a now-hidden owner. */
+  const promoteConversationDraft = useCallback(
+    (viewId: string, id: string, title = "Conversation"): boolean => {
+      const captured = current.current;
+      if (!alive.current || captured.key !== scopeKey || !id) return false;
+      const draft = retainedDockViews(captured.state).find((view) => view.id === viewId);
+      if (draft?.kind !== "conversation" || typeof draft.resource.draftId !== "string")
+        return false;
+      const view: DockView = {
+        id: `conversation:${id}`,
+        kind: "conversation",
+        title,
+        resource: { conversationId: id },
+      };
+      const promote = (layout: DockLayout): DockLayout => {
+        if (!layout.views.some((item) => item.id === viewId)) return layout;
+        if (layout.views.some((item) => item.id === view.id))
+          return selectDockView(closeDockView(layout, viewId), view.id);
+        return {
+          ...layout,
+          views: layout.views.map((item) => (item.id === viewId ? view : item)),
+          panes: layout.panes.map((pane) => ({
+            ...pane,
+            viewIds: pane.viewIds.map((item) => (item === viewId ? view.id : item)),
+            selectedViewId: pane.selectedViewId === viewId ? view.id : pane.selectedViewId,
+          })),
+        };
+      };
+      commit((state) => ({
+        ...state,
+        focusedViewId: state.focusedViewId === viewId ? view.id : state.focusedViewId,
+        shared: promote(state.shared),
+        pins: promote(state.pins),
+        pinFrame: state.pinFrame ? promote(state.pinFrame) : undefined,
+        chats: state.chats.map((chat) => ({ ...chat, layout: promote(chat.layout) })),
+      }));
+      return true;
+    },
+    [commit, scopeKey],
+  );
+
   const useSharedLayout = useCallback(() => navigateConversation(null), [navigateConversation]);
   const saveChatLayout = useCallback(
     (id: string) => commit((state) => saveDockChatLayout(state, id)),
@@ -317,6 +357,7 @@ export function useDockLayout({
     closeView,
     updateView,
     navigateConversation,
+    promoteConversationDraft,
     useSharedLayout,
     saveChatLayout,
     pinView,

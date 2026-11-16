@@ -64,7 +64,8 @@ Accepted follow-ups use a durable server queue and dispatch in order after eligi
 Failed delivery, changed execution scope and revoked access require review; queued drafts and files stay private until their original author dispatches them.
 
 Uploaded HTML can render inline with an explicit `triune-artifact` code fence containing `{"file_id":"uploaded-id","title":"Optional title"}`.
-The shared isolated viewer retains complete bytes, local interactions and bounded state, with source, original download and self-contained export.
+The shared isolated viewer retains complete bytes, local interactions and bounded state, with highlighted source and a portable self-contained download.
+Its More menu opens a Triune view tab or an isolated new window; ordinary attachment downloads retain the original bytes.
 The first-party artifact kit supplies Appearance-aware native controls without external CDNs.
 Its versioned assets and manifest ship beneath `artifacts/kit/`; see the [artifact feature map](../feature-map/artifacts.md).
 
@@ -101,14 +102,16 @@ Peer cards show the trusted sender and source chat through the shared compact ex
 Orchestration defaults to the current chat and separates agents from shells, including completed work, with a shared category filter and supported Stop controls.
 Its alternative Host/workspace source uses the existing combined selector and limits inventory to the chosen root.
 Task rows retain dispatch-specific names, instructions and results; their buttons open the child or its originating Orchestration in tabs.
-One task card tracks each dispatch, while a captured child report appears separately as an attributed Markdown reply with shared expansion.
+One activity card tracks each child agent and updates in place across steering and lifecycle events.
+Captured reports retain their assignment identity and attributed Markdown presentation.
 Late report capture updates the existing stored item and loaded transcript; steering preserves the original task identity.
 Orchestration rows open on click, render scoped Markdown and align natural-width status badges outside the colored surface.
 Routine coverage diagnostics stay internal, and choosing Host/workspace starts from the selected chat's captured location.
 The original composer shelf reuses existing question, approval, shell, agent and plan components without dropdown chevrons.
 Queue and attention shelves share a gapless density-aware stack, with 200ms entrance/exit and immediate reduced-motion behavior.
 Each actual question batch has one needs-input entry and one card that becomes its answered receipt.
-Pending and answered cards retain drafts and share header pagination; the forward action shows Skip, Next or final Submit with an answered/asked counter.
+Pending and answered in-chat cards retain drafts and header pagination; expanded answered bodies show only the answer.
+Shelf question popups show the bold question, answers and one row of Previous, Decline and counted Skip/Next/Submit actions, bounded by composer width.
 Optional provider categories precede the original question; submissions and correlated native echoes do not create duplicate human-message cards.
 Submit and Decline apply to the batch, retaining supported partial or empty answers.
 Agent and shell popups reuse Orchestration's two-line rows, supported Stop status pills and exact-resource side-opening controls.
@@ -125,7 +128,9 @@ Claude native children and Codex runtimes without an external targeted-input API
 Codex inputs carry their canonical message identity through the native echo so agent messages retain provenance and human quotations remain ordinary messages.
 Peer file references require the captured sender scope and access to both chats and the source filesystem.
 Ask Subchat creates a durable fork at the selection and opens its named tab before runner initialization finishes.
-The draft contains a quote card and source annotation; inherited history appears only after Show history, while explicit forks keep their normal history view.
+Quote-created drafts contain a quote card and source annotation.
+Every durable subchat starts with inherited history behind Show history, while explicit forks retain their normal full-history view.
+The first new child question follows the existing automatic naming preference without using copied parent questions or overriding manual names.
 An inherited source is not serialized into the model input a second time, and quote captures retain navigation metadata without unrelated tool arguments or output.
 The working shimmer crossfades static highlights through opacity, preserving reduced-motion behavior without repainting a moving text background every frame.
 Administrators can set `OMNIGENT_FEATURES=-session_orchestration` to disable the capability for the deployment; that startup override requires a restart.
@@ -140,13 +145,14 @@ Task, peer, final-reply and System cards share the compact accent-edge compositi
 Their timestamp/copy/link footer slots are omitted for now; ordinary human and assistant message actions remain unchanged.
 Expanding a shared card retains its leading icon, status and controls in a stable header while the complete body opens below.
 Completed-turn work includes native task and reply cards; missing live activity items recover from authorized canonical history.
-One dispatch keeps one task card and an authoritative final report, with progress excluded from automatic replies.
+Each child keeps one stable activity card and assignment-specific final reports, with progress excluded from automatic replies.
 Framework wake dispatch preserves System authority, including Claude's correlated native prompt receipt; internal inbox instructions do not add a redundant visible message.
 Reusable native children create task cards from committed assignments rather than empty session creation, preserving each assignment and its final report.
 
 Selected queued sends retain lifecycle ownership so old idle events cannot release other drafts.
-Queued previews use one-line ellipsis within the composer width and retain complete text/files through Edit.
-Active plan entries use a distinct light/outlined marker; completion remains read-only.
+Queued previews keep text and bounded attachment summaries on one line and retain complete text/files through Edit.
+Shelf outer radii match the composer; inner control radii derive from the shared radius and equal edge insets.
+Active plan entries use the shared open-arc activity indicator; completion remains read-only.
 Sidebar/rail/palette scrollbars are hidden without removing scrolling.
 
 Offline shell history stays passive and readable, with typed authorization/routing failures preserved and safe notifications.

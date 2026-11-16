@@ -13348,6 +13348,391 @@ describe("chatStore — startStreamPump reconnect loop", () => {
     vi.useRealTimers();
   });
 
+  function reply4Ids(blocks: AnyBlock[]): string[] {
+    return blocks
+      .filter((b) => b.type === "text_done" || b.type === "user_message")
+      .map((b) => b.ctx.itemId ?? "(uncommitted)");
+  }
+
+  function reply4Done(item: ConversationItem, messageId?: string): string {
+    return sse("response.output_item.done", {
+      item,
+      ...(messageId ? { message_id: messageId } : {}),
+    });
+  }
+
+  async function reply4Start(
+    id: string,
+    saved: ConversationItem[],
+    loaded: ConversationItem[],
+    responseId: string,
+  ) {
+    seedSession(id, saved);
+    const sinks = routeStreamOpens();
+    const router = fetchMock.getMockImplementation()!;
+    const counts = { items: 0, snapshots: 0, writes: 0 };
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if ((init?.method ?? "GET") !== "GET") {
+        counts.writes++;
+        throw new Error("Fixture forbids mutating HTTP requests");
+      }
+      if (url.startsWith(`/v1/sessions/${id}/items`)) counts.items++;
+      if (url.startsWith(`/v1/sessions/${id}?`)) counts.snapshots++;
+      return router(input, init);
+    });
+    const controller = new AbortController();
+    const bound = bindConversationForTest(id, {
+      abortController: controller,
+      sessionStatus: "running",
+      status: "streaming",
+      isNativeTerminalSession: true,
+      blocks: itemsToBlocks(loaded),
+      activeResponse: { responseId, state: "streaming", error: null },
+    });
+    const loop = startStreamPump(id, controller, bound.set, bound.get);
+    await drainAsync();
+    return {
+      sinks,
+      bound,
+      counts,
+      emit: async (frame: string) => {
+        sinks.at(-1)!.push(frame);
+        await drainAsync();
+      },
+      complete: async (rid: string) => {
+        sinks.at(-1)!.push(sse("response.completed", { id: rid, status: "completed", output: [] }));
+        sinks
+          .at(-1)!
+          .push(sse("session.status", { conversation_id: id, status: "idle", response_id: rid }));
+        await drainAsync();
+      },
+      reconnect: async () => {
+        sinks.at(-1)!.close();
+        await vi.advanceTimersByTimeAsync(6000);
+        await drainAsync();
+      },
+      stop: async () => {
+        controller.abort();
+        const last = sinks.at(-1)!;
+        last.push("data: [DONE]\n\n");
+        last.close();
+        await drainAsync(2);
+        await loop;
+      },
+    };
+  }
+
+  async function reply4Completion(preview: boolean) {
+    const rid = "reply4_turn1";
+    const user = userMessage(rid, "Synthetic fixture request");
+    const progress = {
+      ...assistantMessage(rid, "Synthetic progress"),
+      id: "progress1",
+      phase: "commentary",
+    };
+    const final = {
+      ...assistantMessage(rid, "Synthetic canonical final", "native_final1"),
+      id: "final1",
+      phase: "final_answer",
+    };
+    const p = await reply4Start(
+      `reply4_completion_${preview}`,
+      [user, progress, final],
+      [user, progress],
+      rid,
+    );
+    try {
+      if (preview)
+        await p.emit(
+          sse("response.output_text.delta", {
+            message_id: "native_final1",
+            index: 0,
+            delta: "Synthetic canonical final",
+            final: true,
+          }),
+        );
+      const before = reply4Ids(p.bound.get().blocks);
+      expect(before.includes("live:native_final1")).toBe(preview);
+      await p.complete(rid); // Omit ONLY final1's committed output_item.done.
+      const after = reply4Ids(p.bound.get().blocks);
+      expect(after).toContain(user.id);
+      expect(p.bound.get().activeResponse?.state).toBe("completed");
+      expect(p.bound.get().sessionStatus).toBe("idle");
+      await advanceWithHeartbeats(p.sinks[0]!, 2 * ACTIVE_SESSION_STATUS_RECONCILE_INTERVAL_MS);
+      await drainAsync();
+      const withoutReconnect = reply4Ids(p.bound.get().blocks);
+      const healthy = { ...p.counts, streams: p.sinks.length };
+      expect(healthy.writes).toBe(0);
+      expect(healthy.streams).toBe(1);
+      expect(withoutReconnect).toEqual([user.id, "progress1", "final1"]);
+      // Same connection: recovery must work without another input or reload.
+      const recovered = reply4Ids(p.bound.get().blocks);
+      expect(p.sinks).toHaveLength(1);
+      expect(p.counts.items).toBeGreaterThan(0);
+      expect(recovered.filter((x) => x === "final1")).toHaveLength(1);
+      const result = {
+        preview,
+        before,
+        after,
+        simulatedWaitMs: 120000,
+        healthy,
+        withoutReconnect,
+        recovered,
+      };
+      console.log("REPLY4_RESULT " + JSON.stringify({ kind: "completion", ...result }));
+      return result;
+    } finally {
+      await p.stop();
+    }
+  }
+
+  it.each([true, false])(
+    "recovers missing final with healthy heartbeats preview=%s",
+    async (preview) => {
+      await reply4Completion(preview);
+    },
+  );
+  it("recovers a missing final when only the normal idle status arrives", async () => {
+    const user = userMessage("idle_only", "question");
+    const final = assistantMessage("idle_only", "saved final", "idle_only_native");
+    const p = await reply4Start("idle_only_recovery", [user, final], [user], "idle_only");
+    const draft = {
+      tempId: "retained_draft",
+      content: [{ type: "input_text" as const, text: "unsent draft" }],
+      initialDraft: { text: "unsent draft", files: [] },
+    };
+    p.bound.set({ pendingUserMessages: [draft], oldestItemId: user.id, hasMoreHistory: true });
+    const generation = p.bound.get().historyGeneration;
+    const existing = p.bound.get().blocks[0];
+    try {
+      await p.emit(
+        sse("session.status", {
+          conversation_id: "idle_only_recovery",
+          status: "idle",
+          response_id: "idle_only",
+        }),
+      );
+      await advanceWithHeartbeats(p.sinks[0]!, 15_000);
+      expect(reply4Ids(p.bound.get().blocks)).toEqual([user.id, final.id]);
+      expect(p.sinks).toHaveLength(1);
+      expect(p.bound.get().pendingUserMessages).toEqual([draft]);
+      expect(p.bound.get().oldestItemId).toBe(user.id);
+      expect(p.bound.get().historyGeneration).toBe(generation);
+      expect(p.bound.get().blocks[0]).toBe(existing);
+    } finally {
+      await p.stop();
+    }
+  });
+
+  it("retains unmatched final text through transient reads and delayed persistence with bounded retries", async () => {
+    const user = userMessage("delayed", "question");
+    const final = {
+      ...assistantMessage("delayed", "saved final", "delayed_native"),
+      id: "delayed_final",
+    };
+    const p = await reply4Start("delayed_recovery", [user], [user], "delayed");
+    const router = fetchMock.getMockImplementation()!;
+    let attempts = 0;
+    fetchMock.mockImplementation((input, init) => {
+      if (String(input).startsWith("/v1/sessions/delayed_recovery/items")) {
+        attempts += 1;
+        if (attempts === 1) return Promise.reject(new Error("temporary history failure"));
+      }
+      return router(input, init);
+    });
+    try {
+      await p.emit(
+        sse("response.output_text.delta", {
+          message_id: "delayed_native",
+          index: 0,
+          delta: "saved final",
+          final: true,
+        }),
+      );
+      await p.complete("delayed");
+      await vi.advanceTimersByTimeAsync(1200);
+      expect(reply4Ids(p.bound.get().blocks)).toContain("live:delayed_native");
+      seedSessionItems("delayed_recovery", [user, final]);
+      await advanceWithHeartbeats(p.sinks[0]!, 120_000);
+      expect(reply4Ids(p.bound.get().blocks)).toEqual([user.id, final.id]);
+      expect(attempts).toBe(5);
+      expect(p.sinks).toHaveLength(1);
+    } finally {
+      await p.stop();
+    }
+  });
+
+  it.each(["response", "binding", "window"] as const)(
+    "discards a completion snapshot after its %s generation changes",
+    async (mode) => {
+      const user = userMessage("old", "question");
+      const final = assistantMessage("old", "saved final", "old_native");
+      const p = await reply4Start("generation_recovery", [user, final], [user], "old");
+      const router = fetchMock.getMockImplementation()!;
+      let release!: (response: Response) => void;
+      fetchMock.mockImplementation((input, init) => {
+        if (String(input).startsWith("/v1/sessions/generation_recovery/items")) {
+          return new Promise<Response>((resolve) => {
+            release = resolve;
+          });
+        }
+        return router(input, init);
+      });
+      try {
+        await p.complete("old");
+        await vi.advanceTimersByTimeAsync(1);
+        const replacement = new AbortController();
+        if (mode === "response")
+          await p.emit(sse("response.created", { id: "new", status: "in_progress", output: [] }));
+        else if (mode === "binding") p.bound.set({ abortController: replacement });
+        else p.bound.set({ historyGeneration: p.bound.get().historyGeneration + 1 });
+        release(mockResponse({ data: [user, final], has_more: false }));
+        await drainAsync();
+        expect(p.bound.get().activeResponse?.responseId).toBe(mode === "response" ? "new" : "old");
+        expect(p.bound.get().activeResponse?.state).toBe(
+          mode === "response" ? "streaming" : "completed",
+        );
+        expect(reply4Ids(p.bound.get().blocks)).not.toContain(final.id);
+        replacement.abort();
+      } finally {
+        await p.stop();
+      }
+    },
+  );
+
+  async function reply4Order() {
+    const u1 = userMessage("reply4_old", "Synthetic first request");
+    const progress = {
+      ...assistantMessage("reply4_old", "Synthetic progress"),
+      id: "order_progress1",
+      phase: "commentary",
+    };
+    const f1 = {
+      ...assistantMessage("reply4_old", "Synthetic first final", "order_m1"),
+      id: "order_final1",
+      phase: "final_answer",
+    };
+    const u2 = userMessage("reply4_new", "Synthetic following request");
+    const f2 = {
+      ...assistantMessage("reply4_new", "Synthetic second final", "order_m2"),
+      id: "order_final2",
+      phase: "final_answer",
+    };
+    const canonical = [u1, progress, f1, u2, f2];
+    const p = await reply4Start("reply4_order", [u1, progress], [u1, progress], "reply4_old");
+    try {
+      await p.emit(
+        sse("response.output_text.delta", {
+          message_id: "order_m1",
+          index: 0,
+          delta: "Synthetic first final",
+          final: true,
+        }),
+      );
+      await p.complete("reply4_old"); // Lost first final item event, normal end.
+      seedSession("reply4_order", [u1, progress, u2, f2]); // Mock durable chronological history.
+      await p.emit(
+        sse("session.status", {
+          conversation_id: "reply4_order",
+          status: "running",
+          response_id: "reply4_new",
+        }),
+      );
+      await p.emit(reply4Done(u2));
+      await p.emit(reply4Done(f2, "order_m2"));
+      await p.complete("reply4_new");
+      const beforeReconnect = reply4Ids(p.bound.get().blocks);
+      expect(beforeReconnect.filter((id) => !id.startsWith("live:"))).toEqual([
+        u1.id,
+        progress.id,
+        u2.id,
+        f2.id,
+      ]);
+      seedSession("reply4_order", canonical);
+      expect(p.bound.get().activeResponse?.state).toBe("completed");
+      await vi.advanceTimersByTimeAsync(5000);
+      await drainAsync();
+      const actual = reply4Ids(p.bound.get().blocks);
+      const expected = reply4Ids(itemsToBlocks(canonical));
+      expect(actual).toEqual(expected);
+      // A second catchup dedupes, but does not repair the already-wrong order.
+      await vi.advanceTimersByTimeAsync(5000);
+      await drainAsync();
+      const repeated = reply4Ids(p.bound.get().blocks);
+      expect(repeated).toEqual(actual);
+      expect(actual.filter((x) => x === f1.id)).toHaveLength(1);
+      const result = {
+        beforeReconnect,
+        actual,
+        expected,
+        repeated,
+        counts: { ...p.counts },
+        streams: p.sinks.length,
+      };
+      console.log("REPLY4_RESULT " + JSON.stringify({ kind: "ordering", ...result }));
+      return result;
+    } finally {
+      await p.stop();
+    }
+  }
+
+  it("places older missed final before newer settled turn using snapshot neighbors", async () => {
+    await reply4Order();
+  });
+  async function reply4Identity() {
+    const rid = "reply4_identity_turn";
+    const u = userMessage(rid, "Synthetic multi-message request");
+    const first = {
+      ...assistantMessage(rid, "Synthetic first text", "identity_m1"),
+      id: "identity_committed1",
+    };
+    const second = {
+      ...assistantMessage(rid, "Synthetic second text", "identity_m2"),
+      id: "identity_committed2",
+    };
+    const p = await reply4Start("reply4_identity", [u, first, second], [u], rid);
+    try {
+      await p.emit(
+        sse("response.output_text.delta", {
+          message_id: "identity_m1",
+          index: 0,
+          delta: "Synthetic first text",
+          final: true,
+        }),
+      );
+      // Omit first's output_item.done, then stream the next message in order.
+      await p.emit(
+        sse("response.output_text.delta", {
+          message_id: "identity_m2",
+          index: 0,
+          delta: "Synthetic second text",
+          final: true,
+        }),
+      );
+      const before = reply4Ids(p.bound.get().blocks);
+      expect(before).toEqual([u.id, "live:identity_m1", "live:identity_m2"]);
+      // Carries both the top-level wire message_id and saved stream_message_id.
+      await p.emit(reply4Done(second, "identity_m2"));
+      const actual = reply4Ids(p.bound.get().blocks);
+      const expected = [u.id, "live:identity_m1", second.id];
+      expect(actual).toEqual(expected);
+      const texts = p.bound
+        .get()
+        .blocks.filter((b): b is TextDone => b.type === "text_done")
+        .map((b) => b.fullText);
+      expect(texts).toEqual(["Synthetic first text", "Synthetic second text"]);
+      const result = { before, actual, expected, texts, counts: { ...p.counts } };
+      console.log("REPLY4_RESULT " + JSON.stringify({ kind: "identity", ...result }));
+      return result;
+    } finally {
+      await p.stop();
+    }
+  }
+
+  it("retires only exact matching native preview", async () => {
+    await reply4Identity();
+  });
   it("reopens the stream after a transport drop, then stops on [DONE]", async () => {
     seedSession("conv_loop", []);
     const sinks = routeStreamOpens();
@@ -17370,7 +17755,7 @@ describe("chatStore — live delta streaming (claude-native)", () => {
     controller.abort();
   });
 
-  it("drops an unfinalized provisional on response_end (interrupt / drop)", async () => {
+  it("drops an unfinalized provisional after a genuine interrupt", async () => {
     useChatStore.setState({
       conversationId: "conv_live5",
       blocks: [],
@@ -17385,6 +17770,12 @@ describe("chatStore — live delta streaming (claude-native)", () => {
 
     // Turn ends with no committed item for m1 (interrupt before the
     // partial transcript record was forwarded).
+    sink.push(
+      sse("session.interrupted", {
+        type: "session.interrupted",
+        data: { requested_at: 0, response_id: "resp_l" },
+      }),
+    );
     sink.push(sse("response.completed", { id: "resp_l", status: "completed", output: [] }));
     await tick();
     expect(provisional()).toBeUndefined();

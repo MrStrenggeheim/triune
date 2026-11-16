@@ -57,3 +57,102 @@ export function useAcceptedConversationRoute({
   }, [active, conversationId, href, scopeKey, skip, accept, onAccepted, navigate, onError]);
   return acceptedHref;
 }
+
+/** Keep search completion attached to its accepted owner and immutable destination. */
+export function useConversationOwnerNavigation(options: {
+  active: boolean;
+  scopeKey: string;
+  ownerId: string | null;
+  href: string;
+  acceptedHref: string | null;
+  selectOwner: (id: string) => Promise<boolean>;
+  navigate: (path: string) => void;
+  onSelected: (id: string) => void;
+  onError: (error: unknown) => void;
+}) {
+  const live = useRef(options);
+  live.current = options;
+  const generation = useRef(0);
+  const [pending, setPending] = useState<{
+    id: string;
+    path: string;
+    source: string;
+    scope: string;
+    generation: number;
+    complete: () => void;
+    relevant: () => boolean;
+  } | null>(null);
+  useEffect(() => {
+    if (!pending) return;
+    const current = live.current;
+    if (
+      !current.active ||
+      current.scopeKey !== pending.scope ||
+      generation.current !== pending.generation ||
+      (current.href !== pending.source && current.href !== pending.path)
+    ) {
+      setPending(null);
+      return;
+    }
+    if (
+      current.ownerId !== pending.id ||
+      current.href !== pending.path ||
+      current.acceptedHref !== pending.path
+    )
+      return;
+    setPending(null);
+    if (!pending.relevant()) return;
+    current.onSelected(pending.id);
+    pending.complete();
+  }, [
+    options.active,
+    options.scopeKey,
+    options.ownerId,
+    options.href,
+    options.acceptedHref,
+    pending,
+  ]);
+  const select = useRef(
+    (path: string, complete: () => void = () => {}, relevant: () => boolean = () => true) => {
+      const current = live.current;
+      const match = path.match(/^\/c\/([^/?#]+)/);
+      if (!current.active || !relevant()) return;
+      if (!match) {
+        current.navigate(path);
+        complete();
+        return;
+      }
+      const id = decodeURIComponent(match[1]);
+      const request = ++generation.current;
+      void current
+        .selectOwner(id)
+        .then((allowed) => {
+          const latest = live.current;
+          if (
+            !allowed ||
+            !latest.active ||
+            latest.scopeKey !== current.scopeKey ||
+            latest.href !== current.href ||
+            generation.current !== request ||
+            !relevant()
+          )
+            return;
+          setPending({
+            id,
+            path,
+            source: current.href,
+            scope: current.scopeKey,
+            generation: request,
+            complete,
+            relevant,
+          });
+          latest.navigate(path);
+        })
+        .catch((error) => {
+          if (generation.current === request && live.current.scopeKey === current.scopeKey)
+            live.current.onError(error);
+        });
+    },
+  );
+  return select.current;
+}

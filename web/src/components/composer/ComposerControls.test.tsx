@@ -70,11 +70,8 @@ describe("shared composer controls", () => {
     expect(screen.getByRole("button", { name: "repo" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "main" })).toBeInTheDocument();
     expect(screen.getByTestId("workspace-bar")).toHaveClass(
+      "composer-shelf-surface",
       "items-center",
-      "py-0.5",
-      "min-h-7",
-      "md:min-h-[37px]",
-      "md:py-1.5",
       "gap-1",
       "md:gap-2",
     );

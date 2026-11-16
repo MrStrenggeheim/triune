@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { ImageIcon } from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
+import { useMediaBatch, mediaPreviewSize } from "./MediaBatch";
 import { cn } from "@/lib/utils";
 import { withBasePath } from "@/lib/basePath";
 import { getOmnigentHostConfig } from "@/lib/host";
@@ -33,13 +34,19 @@ function SessionImagePreview({
   ...props
 }: React.ComponentProps<typeof ZoomableImage>) {
   const { size, onLoad } = useImagePreviewSize(src);
+  const batched = useMediaBatch();
+  const stage = mediaPreviewSize(size, batched);
   return (
-    <div className={PREVIEW_BOX} style={{ width: size?.width }}>
+    <div
+      className={cn(PREVIEW_BOX, batched && "max-w-none items-center")}
+      style={{ width: stage?.width, height: batched ? 256 : undefined }}
+    >
       <ZoomableImage
         {...props}
         src={src}
         alt={alt}
         className={cn(PREVIEW_IMAGE, className)}
+        style={batched ? { width: size?.width, maxWidth: "100%" } : undefined}
         onLoad={onLoad}
       />
     </div>

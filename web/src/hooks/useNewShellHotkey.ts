@@ -1,3 +1,6 @@
+import { isMacPlatform } from "@/lib/hotkeys";
+import { matchesShortcutCommand, shortcutEnvironment } from "@/lib/keybindingPreferences";
+import { useShortcutHandlers } from "@/lib/shortcutDispatcher";
 // ⌘⌥T (Ctrl+Alt+T on Win/Linux) opens a new shell in the workspace rail,
 // launching the remembered default type — the keyboard path for the tab-strip
 // "+" menu, whose row launches on click (mouse-only otherwise). Sibling to the
@@ -8,30 +11,11 @@
 // browser/OS clash — unlike ⌘` (macOS window cycling) or ⌘⇧T (browser reopen-
 // tab). "T" for terminal.
 
-import { useEffect, useRef } from "react";
-
 /** Editor/terminal surfaces that own their own keystrokes; the chord defers. */
-const TEXT_ENTRY_SURFACE = ".monaco-editor, .xterm";
-
-function isMacPlatform(): boolean {
-  if (typeof navigator === "undefined") return false;
-  const uaData = (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData;
-  const platform = uaData?.platform ?? navigator.platform ?? navigator.userAgent ?? "";
-  return /Mac|iPhone|iPad|iPod/i.test(platform);
-}
 
 /** True for Cmd+Alt+T on Apple platforms or Ctrl+Alt+T elsewhere. */
 export function isNewShellHotkey(e: globalThis.KeyboardEvent, isMac = isMacPlatform()): boolean {
-  const platformModifier = isMac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey;
-  if (!platformModifier || !e.altKey || e.shiftKey) return false;
-  // AltGr reports as Ctrl+Alt on Windows/Linux, so an ordinary AltGr+T
-  // keystroke on an international layout would otherwise match this chord (and
-  // get swallowed). Bail so intl typing never launches a shell — same guard the
-  // sibling hotkeys carry.
-  if (typeof e.getModifierState === "function" && e.getModifierState("AltGraph")) return false;
-  // Match the physical key: Alt remaps the character on many layouts (e.g.
-  // ⌥T is "†" on macOS), so keying off e.key would miss the chord.
-  return e.code === "KeyT";
+  return matchesShortcutCommand(e, "new-terminal", { ...shortcutEnvironment(), isMac });
 }
 
 /**
@@ -51,53 +35,12 @@ export function useNewShellHotkey(
   enabled = true,
   isMac = isMacPlatform(),
 ): void {
-  useTerminalHotkey(onLaunch, enabled, isMac, false);
+  useShortcutHandlers({ "new-terminal": onLaunch }, enabled, isMac);
 }
-
-/** Open the workspace's most recent manual shell, creating one only when necessary. */
 export function useManualTerminalHotkey(
   onOpen: () => void,
   enabled = true,
   isMac = isMacPlatform(),
 ): void {
-  useTerminalHotkey(onOpen, enabled, isMac, true);
-}
-
-function useTerminalHotkey(
-  onLaunch: () => void,
-  enabled: boolean,
-  isMac: boolean,
-  manual: boolean,
-): void {
-  // Held in a ref so the bound handler always calls the latest closure without
-  // re-registering on every render.
-  const latest = useRef(onLaunch);
-  latest.current = onLaunch;
-
-  useEffect(() => {
-    if (!enabled) return;
-    const handler = (e: globalThis.KeyboardEvent): void => {
-      // Ignore auto-repeat: holding the chord would spawn a shell per tick.
-      const openChord =
-        (isMac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey) &&
-        !e.altKey &&
-        !e.shiftKey &&
-        e.code === "KeyJ";
-      if (
-        e.repeat ||
-        e.isComposing ||
-        e.defaultPrevented ||
-        !(manual ? openChord : isNewShellHotkey(e, isMac))
-      )
-        return;
-      // Leave the chord to a focused editor/terminal that consumes keystrokes.
-      const el = document.activeElement;
-      if (!manual && el instanceof Element && el.closest(TEXT_ENTRY_SURFACE) !== null) return;
-      e.preventDefault();
-      e.stopPropagation();
-      latest.current();
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [enabled, isMac, manual]);
+  useShortcutHandlers({ "open-terminal": onOpen }, enabled, isMac);
 }

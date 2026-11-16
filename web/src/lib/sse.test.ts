@@ -660,3 +660,35 @@ it("parses workspace transition admission events without interpreting them as ag
     }),
   ).toEqual({ type: "session_workspace", conversationId: "chat", switching: true });
 });
+
+it("retains saved preview identity and phase for only the second of two same-turn previews", () => {
+  const previewIds = ["native-first", "native-second"];
+  const previews = previewIds.map((message_id) =>
+    parseEvent("response.output_text.delta", {
+      delta: "progress",
+      message_id,
+      response_id: "turn",
+      index: 0,
+    }),
+  );
+  expect(previews.map((event) => (event?.type === "text_delta" ? event.messageId : null))).toEqual(
+    previewIds,
+  );
+  const saved = parseEvent("response.output_item.done", {
+    item: {
+      id: "saved-second",
+      type: "message",
+      role: "assistant",
+      response_id: "turn",
+      phase: "commentary",
+      stream_message_id: "native-second",
+      content: [{ type: "output_text", text: "Second progress" }],
+    },
+  });
+  expect(saved).toMatchObject({
+    type: "message_done",
+    itemId: "saved-second",
+    messageId: "native-second",
+    phase: "commentary",
+  });
+});

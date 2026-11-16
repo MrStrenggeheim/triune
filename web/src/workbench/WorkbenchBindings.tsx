@@ -11,27 +11,16 @@ import { useManualTerminalHotkey, useNewShellHotkey } from "@/hooks/useNewShellH
 import { useNewSessionHotkey } from "@/hooks/useNewSessionHotkey";
 import { useSettingsHotkey } from "@/hooks/useSettingsHotkey";
 import { useApproveHotkey } from "@/hooks/useApproveHotkey";
-import { hasCommandModifier } from "@/lib/hotkeys";
+import { useShortcutHandlers } from "@/lib/shortcutDispatcher";
+import { COMMANDS, type CommandId } from "@/lib/keybindingRegistry";
+import type { ActionCommand } from "@/shell/contextSearch/actions";
 import { supportsBrowser, onNativeSidebarDrag } from "@/lib/nativeBridge";
 import { onInAppLinkOpen } from "@/lib/openLinkInApp";
 import { onBrowserActionRequest } from "@/lib/browserActionBus";
 
-/** Mounted only by the active shell; retained editors do not own global bindings. */
-export function WorkbenchBindings({
-  conversationId,
-  approvalConversationId,
-  conversations,
-  onChatFind,
-  onExplorerFind,
-  onTogglePalette,
-  onSessionSearch,
-  onToggleSidebar,
-  onOpenFiles,
-  onOpenTerminal,
-  onNewTerminal,
-  onSidebarDrag,
-  onOpenBrowser,
-}: {
+export interface WorkbenchBindingsProps {
+  commands?: readonly ActionCommand[];
+
   conversationId?: string;
   approvalConversationId: string | null;
   conversations: Conversation[];
@@ -45,7 +34,25 @@ export function WorkbenchBindings({
   onNewTerminal: () => void;
   onSidebarDrag: Parameters<typeof onNativeSidebarDrag>[0];
   onOpenBrowser: (id: string) => void;
-}) {
+}
+
+/** Mounted only by the active shell; retained editors do not own global bindings. */
+export function WorkbenchBindings({
+  commands,
+  conversationId,
+  approvalConversationId,
+  conversations,
+  onChatFind,
+  onExplorerFind,
+  onTogglePalette,
+  onSessionSearch,
+  onToggleSidebar,
+  onOpenFiles,
+  onOpenTerminal,
+  onNewTerminal,
+  onSidebarDrag,
+  onOpenBrowser,
+}: WorkbenchBindingsProps) {
   useIOSViewportLock();
   useListDensity();
   useIdleNotifications(conversationId);
@@ -70,24 +77,20 @@ export function WorkbenchBindings({
       removeAction();
     };
   }, [onOpenBrowser]);
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (
-        event.defaultPrevented ||
-        event.repeat ||
-        event.isComposing ||
-        event.altKey ||
-        !event.shiftKey ||
-        !hasCommandModifier(event) ||
-        !["KeyF", "KeyH"].includes(event.code)
-      )
-        return;
-      event.preventDefault();
-      event.stopPropagation();
-      onExplorerFind(event.code === "KeyH");
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, [onExplorerFind]);
+  useShortcutHandlers({
+    "open-files": onOpenFiles,
+    "workspace-find": () => onExplorerFind(false),
+    "workspace-replace": () => onExplorerFind(true),
+  });
+  useShortcutHandlers(
+    Object.fromEntries(
+      (commands ?? [])
+        .filter((command) => Object.hasOwn(COMMANDS, command.id))
+        .map((command) => [command.id as CommandId, command.run]),
+    ),
+    true,
+    undefined,
+    10,
+  );
   return null;
 }

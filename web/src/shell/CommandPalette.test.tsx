@@ -618,13 +618,12 @@ describe("CommandPalette — unified results", () => {
     const onMessageSearch = vi.fn();
     renderPalette({ onMessageSearch });
     search("needle");
-    fireEvent.click(screen.getByRole("button", { name: "Final" }));
     expect(useMessageSearch).toHaveBeenLastCalledWith(
       "needle",
       undefined,
       true,
       "server:viewer",
-      "final",
+      "all",
     );
     expect(onMessageSearch).not.toHaveBeenCalled();
     fireEvent.keyDown(screen.getByTestId("command-palette-input"), { key: "Enter" });
@@ -640,12 +639,12 @@ describe("CommandPalette — unified results", () => {
         textStart: 100,
         requestId: 0,
       },
-      "final",
+      "all",
     );
     expect(navigate).not.toHaveBeenCalled();
   });
 
-  it("shares scope/filter with the controller and omits the current chat prefix", () => {
+  it("searches globally without changing contextual scope or filter", () => {
     const setMessageFilter = vi.fn(),
       setScope = vi.fn();
     contextSearch.mockReturnValue({
@@ -660,17 +659,17 @@ describe("CommandPalette — unified results", () => {
     search("needle");
     expect(useMessageSearch).toHaveBeenLastCalledWith(
       "needle",
-      "chat",
+      undefined,
       true,
       "server:viewer",
-      "user",
+      "all",
     );
-    expect(screen.queryByText("Chat title")).toBeNull();
+    expect(screen.getByText("Chat title")).toBeDefined();
     expect(document.querySelector("[data-search-result]")).toHaveTextContent("Codex");
-    fireEvent.click(screen.getByRole("button", { name: "All" }));
-    expect(setMessageFilter).toHaveBeenCalledWith("all");
-    fireEvent.click(screen.getByRole("button", { name: "All chats" }));
-    expect(setScope).toHaveBeenCalledWith("all");
+    expect(screen.queryByRole("button", { name: "All" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "All chats" })).toBeNull();
+    expect(setMessageFilter).not.toHaveBeenCalled();
+    expect(setScope).not.toHaveBeenCalled();
     expect(navigate).not.toHaveBeenCalled();
   });
 

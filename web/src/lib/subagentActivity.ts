@@ -37,6 +37,16 @@ function text(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
+export function meaningfulTaskSummary(value: unknown): string | null {
+  const summary = text(value);
+  return summary &&
+    summary.length <= 80 &&
+    !summary.includes("\n") &&
+    !["delegated task", "sub-agent", "subagent", "agent"].includes(summary.toLowerCase())
+    ? summary
+    : null;
+}
+
 function fullText(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value : null;
 }
@@ -83,12 +93,11 @@ export function subagentName(child: ChildSessionInfo): string {
 
 function rawSubagentTaskDescription(child: ChildSessionInfo): string | null {
   return (
-    text(child.labels?.["omnigent.subagent.task_summary"]) ??
-    text(child.labels?.["omnigent.codex_native.task_name"]) ??
-    text(child.task_summary) ??
-    text(child.labels?.["omnigent.claude_native.description"]) ??
-    text(child.labels?.["omnigent.codex_native.prompt"]) ??
-    text(child.labels?.["omnigent.claude_native.prompt"])
+    meaningfulTaskSummary(child.labels?.["omnigent.subagent.card_summary"]) ??
+    meaningfulTaskSummary(child.labels?.["omnigent.subagent.task_summary"]) ??
+    meaningfulTaskSummary(child.labels?.["omnigent.codex_native.task_name"]) ??
+    meaningfulTaskSummary(child.task_summary) ??
+    meaningfulTaskSummary(child.labels?.["omnigent.claude_native.description"])
   );
 }
 
@@ -160,7 +169,10 @@ export function readSubagentActivity(item: Record<string, unknown>): SubagentAct
     title: typeof title === "string" && title.trim() ? title : "Sub-agent",
     status: typeof status === "string" ? status : null,
     agentName: text(fields.agent_name),
-    taskDescription: text(fields.task_summary) ?? text(fields.description),
+    taskDescription:
+      meaningfulTaskSummary(fields.card_summary) ??
+      meaningfulTaskSummary(fields.task_summary) ??
+      meaningfulTaskSummary(fields.description),
     dispatchId: text(fields.dispatch_id),
     taskInput: fullText(fields.task_input),
     resultText:
@@ -203,18 +215,9 @@ export function sameSubagentDispatch(first: SubagentActivity, second: SubagentAc
   );
 }
 
+/** Native name and current lifecycle belong to the child across steering dispatches. */
 export function subagentMatchesChild(activity: SubagentActivity, child: ChildSessionInfo): boolean {
-  const dispatches = [
-    child.labels?.["omnigent.subagent.dispatch_id"],
-    child.labels?.["omnigent.codex_native.collab_tool_call_id"],
-    child.labels?.["omnigent.claude_native.tool_use_id"],
-  ].filter(Boolean);
-  return (
-    activity.sessionId === child.id &&
-    !!activity.dispatchId &&
-    dispatches.length > 0 &&
-    dispatches.every((dispatch) => dispatch === activity.dispatchId)
-  );
+  return activity.sessionId === child.id;
 }
 
 export function recordedSubagentReturn(
@@ -273,4 +276,84 @@ export function shouldRenderSubagentReply(
 export function shortTaskText(value: string, limit = 120): string {
   const collapsed = value.replace(/\s+/g, " ").trim();
   return collapsed.length <= limit ? collapsed : `${collapsed.slice(0, limit - 1).trimEnd()}…`;
+}
+
+const cardCache = new WeakMap<
+  Record<string, unknown>,
+  {
+    sources: Record<string, unknown>[];
+    card: Record<string, unknown>;
+  }
+>();
+
+/** Presentation identity is parent + child; dispatches remain immutable source records. */
+export function canonicalSubagentCards(
+  blocks: readonly AnyBlock[],
+): Map<string, Record<string, unknown>> {
+  const groups = new Map<string, { data: Record<string, unknown>; activity: SubagentActivity }[]>();
+  for (const block of blocks) {
+    if (block.type !== "native_tool" || block.toolType !== "subagent_activity") continue;
+    const activity = readSubagentActivity(block.data);
+    if (!activity) continue;
+    const key = JSON.stringify([block.data.conversation_id ?? null, activity.sessionId]);
+    const group = groups.get(key) ?? [];
+    group.push({ data: block.data, activity });
+    groups.set(key, group);
+  }
+  const cards = new Map<string, Record<string, unknown>>();
+  for (const group of groups.values()) {
+    const delegated = group.filter((entry) => entry.activity.phase === "delegated");
+    const first = delegated[0];
+    if (!first?.activity.itemId) continue;
+    const dispatches = new Map<string, SubagentActivity>();
+    let latestDispatch = "";
+    for (const { activity } of group) {
+      const key =
+        activity.dispatchId ?? activity.taskInputRef?.itemId ?? activity.itemId ?? "unknown";
+      const previous = dispatches.get(key);
+      if (!previous) latestDispatch = key;
+      if (previous?.phase !== "returned" || activity.phase === "returned")
+        dispatches.set(key, activity);
+    }
+    const latest = dispatches.get(latestDispatch)!;
+    const resource = first.data.resource as Record<string, unknown>;
+    const summary = first.activity.taskDescription;
+    const sources = group.map((entry) => entry.data);
+    const cached = cardCache.get(first.data);
+    const card =
+      cached &&
+      cached.sources.length === sources.length &&
+      cached.sources.every((source, index) => source === sources[index])
+        ? cached.card
+        : {
+            ...first.data,
+            resource: {
+              ...resource,
+              task_summary: summary ?? null,
+              card_status: latest.status,
+              card_phase: latest.phase,
+              card_aliases: group
+                .filter(
+                  (entry) => entry.activity.phase === "delegated" || !entry.activity.resultText,
+                )
+                .flatMap((entry) => (entry.activity.itemId ? [entry.activity.itemId] : [])),
+              card_dispatches: sources,
+            },
+          };
+    cardCache.set(first.data, { sources, card });
+    cards.set(first.activity.itemId, card);
+    for (const entry of delegated.slice(1))
+      if (entry.activity.itemId) cards.set(entry.activity.itemId, card);
+  }
+  return cards;
+}
+
+/** Every captured dispatch resolves to the one displayed child card. */
+export function subagentCardItemIds(data: Record<string, unknown>): string[] {
+  const resource = data.resource as Record<string, unknown> | undefined;
+  return Array.isArray(resource?.card_aliases)
+    ? resource.card_aliases.filter((value): value is string => typeof value === "string")
+    : typeof data.id === "string"
+      ? [data.id]
+      : [];
 }

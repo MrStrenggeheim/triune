@@ -20,6 +20,7 @@ import type {
   UserMessageBlock,
 } from "./blocks";
 import { BlockStream } from "./blockStream";
+import { buildBubbles } from "./renderItems";
 import type { StreamEvent } from "./events";
 import { parseEvent } from "./sse";
 import type { Response } from "./types";
@@ -2045,5 +2046,52 @@ it("retains attachments when a streamed text message finalizes without duplicati
   expect(final).toHaveLength(1);
   expect(final[0]?.attachments).toEqual([
     { type: "output_file", file_id: "stored", filename: "chart.png" },
+  ]);
+});
+
+it.each(["commentary", "final_answer"] as const)(
+  "retains %s phase and exact item identity when response.created is missed",
+  (phase) => {
+    const blocks = reduce([
+      { type: "text_delta", delta: "Preview" },
+      {
+        type: "message_done",
+        responseId: "actual-turn",
+        itemId: "source",
+        phase,
+        content: [{ type: "output_text", text: "Preview" }],
+      },
+    ]);
+    expect(buildBubbles(blocks, null)).toMatchObject([
+      {
+        kind: "assistant",
+        responseId: "actual-turn",
+        items: [{ kind: "text", itemId: "source", text: "Preview", phase }],
+      },
+    ]);
+    expect(buildBubbles(blocks, null)).toHaveLength(1);
+    expect(blocks.filter((block) => block.type === "text_done")).toMatchObject([
+      { ctx: { responseId: "actual-turn", itemId: "source" }, fullText: "Preview", phase },
+    ]);
+  },
+);
+
+it("retains a shorter authoritative final instead of an earlier streamed body", () => {
+  const blocks = reduce([
+    { type: "response_created", response: makeResponse({ responseId: "turn" }) },
+    { type: "text_delta", delta: "A longer provisional body before confirmation" },
+    {
+      type: "message_done",
+      responseId: "turn",
+      itemId: "final-source",
+      phase: "final_answer",
+      content: [{ type: "output_text", text: "Final." }],
+    },
+  ]);
+  expect(buildBubbles(blocks, null)).toMatchObject([
+    {
+      kind: "assistant",
+      items: [{ kind: "text", itemId: "final-source", text: "Final.", phase: "final_answer" }],
+    },
   ]);
 });

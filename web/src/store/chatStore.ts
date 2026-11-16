@@ -1,4 +1,5 @@
 // Modified for Triune.
+import { insertRecoveredBlocks } from "./recoveryPlacement";
 import { reconcileQuestionBatches } from "@/lib/questionBatches";
 import { getCachedServerInfo } from "@/lib/capabilities";
 import { persistMessageQueue } from "@/lib/queuedMessagePersistence";
@@ -6079,6 +6080,9 @@ async function reconcileActiveSessionStatus(
   });
   if (session.usageIncluded === false) void hydrateSessionUsage(id);
   const ignored = nativePreviewTombstonesByController.get(controller);
+  const settled = get().activeResponse;
+  if (ignored && current.activeResponse?.state === "streaming" && settled?.state === "completed")
+    scheduleCompletionRecovery(id, settled.responseId, set, get, ignored);
   if (
     ignored &&
     get().blocks.some(
@@ -6524,6 +6528,41 @@ function reconcilePendingMessages(
   return [...remaining, ...replayed];
 }
 
+const completionRecoveries = new WeakMap<AbortController, { responseId: string }>();
+
+/** A completion may precede persistence or lose its item event while heartbeats stay healthy. */
+function scheduleCompletionRecovery(
+  id: string,
+  responseId: string,
+  set: Setter,
+  get: Getter,
+  ignored: Set<string>,
+): void {
+  const controller = get().abortController;
+  if (!controller || completionRecoveries.get(controller)?.responseId === responseId) return;
+  const job = { responseId };
+  completionRecoveries.set(controller, job);
+  const generation = get().historyGeneration;
+  const current = () =>
+    !controller.signal.aborted &&
+    get().abortController === controller &&
+    get().historyGeneration === generation &&
+    get().activeResponse?.responseId === responseId &&
+    get().activeResponse?.state === "completed" &&
+    completionRecoveries.get(controller) === job;
+  void (async () => {
+    // Fixed finite attempts also cover completion without any preview to match.
+    // Retries for one turn are sequential so their snapshots cannot race.
+    /* oxlint-disable no-await-in-loop */
+    for (const delay of [0, 1000, 3000, 10000, 30000]) {
+      await abortableDelay(delay, controller.signal);
+      if (!current()) return;
+      await reconcileOnReconnect(id, set, get, ignored, true, true);
+    }
+    /* oxlint-enable no-await-in-loop */
+  })();
+}
+
 const reconnectReconciliations = new WeakMap<AbortController, Promise<void>>();
 const snapshotBackfills = new WeakMap<
   AbortController,
@@ -6539,6 +6578,7 @@ function reconcileOnReconnect(
   get: Getter,
   ignoredNativeMessageIds: Set<string> = new Set<string>(),
   bounded = false,
+  itemsOnly = false,
 ): Promise<void> {
   const controller = get().abortController;
   const existing = controller && reconnectReconciliations.get(controller);
@@ -6549,6 +6589,7 @@ function reconcileOnReconnect(
     get,
     ignoredNativeMessageIds,
     bounded,
+    itemsOnly,
   ).finally(() => {
     if (controller) reconnectReconciliations.delete(controller);
   });
@@ -6562,11 +6603,13 @@ async function backfillOnReconnect(
   get: Getter,
   ignoredNativeMessageIds: Set<string> = new Set<string>(),
   bounded = false,
+  itemsOnly = false,
 ): Promise<void> {
   if (queryClient === null) return;
   const bindingController = get().abortController;
   const launchBeforeFetch = mcpStartupBeforeSnapshot(id, get());
   const blocksBeforeFetch = get().blocks;
+  const responseBeforeFetch = get().activeResponse;
   if (!bounded && bindingController) snapshotBackfills.delete(bindingController);
   // Captured before any await: the ids rendered BEFORE the gap. The overlap
   // check below must not be satisfied by items the reconnected pump appends
@@ -6587,7 +6630,8 @@ async function backfillOnReconnect(
     isConversationDisposed(id) ||
     bindingController?.signal.aborted === true ||
     get().abortController !== bindingController ||
-    get().historyGeneration !== generation;
+    get().historyGeneration !== generation ||
+    (itemsOnly && get().activeResponse !== responseBeforeFetch);
   let session: Session;
   let page: SessionItemsPage;
   try {
@@ -6630,7 +6674,7 @@ async function backfillOnReconnect(
       );
       if (stale()) return;
       if (!progress.complete) {
-        set((state) => reconnectStatusPatch(session, state, launchBeforeFetch));
+        if (!itemsOnly) set((state) => reconnectStatusPatch(session, state, launchBeforeFetch));
         return;
       }
       items = progress.items;
@@ -6717,15 +6761,16 @@ async function backfillOnReconnect(
         ? withoutInterruptedNativePreviews(currentBlocks, ignoredNativeMessageIds)
         : currentBlocks;
     const patch: Partial<ChatState> = {
-      ...reconnectStatusPatch(session, s, launchBeforeFetch),
+      ...(!itemsOnly ? reconnectStatusPatch(session, s, launchBeforeFetch) : {}),
       // A gap-committed item can be a send whose POST died in the gap: it
       // retracts the draft, or marks it refused when the snapshot says the
       // runner rejected the forward (see `reconcileSendDraftWithSnapshot`).
-      ...reconcileSendDraftWithSnapshot(s, snapshotItemIds, session),
+      ...(!itemsOnly ? reconcileSendDraftWithSnapshot(s, snapshotItemIds, session) : {}),
     };
     // `session.input.consumed` is not replayed, so recovered user blocks are
     // the durable equivalent of its FIFO acknowledgement.
-    patch.pendingUserMessages = reconcilePendingMessages(s.pendingUserMessages, unseen, session);
+    if (!itemsOnly)
+      patch.pendingUserMessages = reconcilePendingMessages(s.pendingUserMessages, unseen, session);
     let nextBlocks = reconciledBlocks;
     if (unseen.length > 0) {
       // Splice the gap's committed items ahead of the active turn's
@@ -6746,27 +6791,42 @@ async function backfillOnReconnect(
           if (lastRid !== -1) at = lastRid + 1;
         }
       }
-      nextBlocks =
-        at >= 0 ? [...kept.slice(0, at), ...unseen, ...kept.slice(at)] : [...kept, ...unseen];
+      nextBlocks = insertRecoveredBlocks(kept, snapshotBlocks, at >= 0 ? at : kept.length);
+      const anchored = nextBlocks.filter(
+        (candidate) =>
+          candidate.ctx.itemId === null &&
+          (candidate.type === "elicitation" || candidate.type === "error") &&
+          blockWallClockS(candidate) !== undefined,
+      );
+      if (anchored.length) {
+        const anchors = new Set(anchored);
+        nextBlocks = mergeReconnectWindow(
+          nextBlocks.filter((candidate) => !anchors.has(candidate)),
+          anchored,
+        );
+      }
     }
-    nextBlocks = withoutDeliveredSendFailureCards(
-      nextBlocks,
-      snapshotItemIds,
-      committedUserTextsOf(unseen),
-      session,
-    );
+    if (!itemsOnly)
+      nextBlocks = withoutDeliveredSendFailureCards(
+        nextBlocks,
+        snapshotItemIds,
+        committedUserTextsOf(unseen),
+        session,
+      );
     // Recover elicitation state the dead socket swallowed: gap-fired
     // prompts, gap-resolved cards, and re-parked prompts whose card
     // was auto-cleared. Items can't resupply these (elicitations are
     // never items), so this is the only path that fixes them short of
     // a full page refresh.
-    const reconciled = reconcileElicitationBlocks(
-      nextBlocks,
-      snapshotPending,
-      preGapElicitations.pending,
-      preGapElicitations.autoResolved,
-      preGapElicitations.cards,
-    );
+    const reconciled = itemsOnly
+      ? null
+      : reconcileElicitationBlocks(
+          nextBlocks,
+          snapshotPending,
+          preGapElicitations.pending,
+          preGapElicitations.autoResolved,
+          preGapElicitations.cards,
+        );
     if (reconciled !== null) nextBlocks = reconciled;
     nextBlocks =
       snapshotCompactionSpinners(nextBlocks, s.activeResponse, patch.activeResponse) ?? nextBlocks;
@@ -7295,18 +7355,14 @@ function withoutInterruptedNativePreviews(
   blocks: AnyBlock[],
   ignoredMessages: Set<string>,
 ): AnyBlock[] {
-  if (
-    !blocks.some(
-      (block) =>
-        isLiveProvisionalBlock(block) && block.type === "text_done" && block.previewInterrupted,
-    )
-  ) {
-    return blocks;
-  }
-  for (const block of blocks) {
-    if (isLiveProvisionalBlock(block)) ignoreLivePreview(block, ignoredMessages);
-  }
-  return blocks.filter((block) => !isLiveProvisionalBlock(block));
+  const interrupted = blocks.filter(
+    (block) =>
+      isLiveProvisionalBlock(block) && block.type === "text_done" && block.previewInterrupted,
+  );
+  if (interrupted.length === 0) return blocks;
+  interrupted.forEach((block) => ignoreLivePreview(block, ignoredMessages));
+  const removed = new Set(interrupted);
+  return blocks.filter((block) => !removed.has(block));
 }
 
 /**
@@ -7481,6 +7537,12 @@ async function* tapLiveDeltas(
   queueText: (delta: NativeTextDelta) => void,
 ): AsyncIterable<StreamEvent> {
   for await (const ev of events) {
+    if (ev.type === "session_status" && (ev.status === "idle" || ev.status === "waiting")) {
+      const active = get().activeResponse;
+      if (active?.state === "completed")
+        scheduleCompletionRecovery(id, active.responseId, set, get, ignored);
+    }
+
     if (ev.type === "message_done" && ev.messageId !== undefined) {
       ignored.add(ev.messageId);
     }
@@ -7673,6 +7735,31 @@ export async function pumpStreamEvents(
   const buffer: AnyBlock[] = [];
   const liveTextBuffer: NativeTextDelta[] = [];
   const seenItemIds = new Set<string>();
+  const completedPreviewIds = new Map<string, string>();
+  const previewToRetire = (block: AnyBlock, blocks: AnyBlock[]): AnyBlock | undefined => {
+    const messageId = completedPreviewIds.get(block.ctx.itemId ?? "");
+    if (messageId !== undefined)
+      return blocks.find((candidate) => candidate.ctx.itemId === LIVE_ITEM_PREFIX + messageId);
+    // Older relays omit native message identity; only an unambiguous same-turn preview is safe.
+    const candidates = blocks.filter(
+      (candidate) =>
+        isLiveProvisionalBlock(candidate) &&
+        (candidate.ctx.responseId === block.ctx.responseId ||
+          candidate.ctx.responseId.startsWith(LIVE_ITEM_PREFIX)),
+    );
+    return candidates.length === 1 ? candidates[0] : undefined;
+  };
+  const matchingPreview = (block: AnyBlock): boolean =>
+    previewToRetire(block, get().blocks) !== undefined;
+  const retirePreview = (block: AnyBlock): void => {
+    flush();
+    set((state) => {
+      const preview = previewToRetire(block, state.blocks);
+      if (!preview) return {};
+      ignoreLivePreview(preview, ignoredMessages);
+      return { blocks: state.blocks.filter((candidate) => candidate !== preview) };
+    });
+  };
   const flushLiveText = () => {
     if (liveTextBuffer.length === 0) return;
     // Snapshot reconciliation can finalize a message while its frame waits.
@@ -7714,6 +7801,8 @@ export async function pumpStreamEvents(
         };
       },
       (event) => {
+        if (event.type === "message_done" && event.messageId)
+          completedPreviewIds.set(event.itemId, event.messageId);
         // Native previews must land before the next event can replace them
         // or change their turn attribution, approval state or terminal state.
         if (event.type !== "text_delta" || event.messageId === undefined) flushLiveText();
@@ -7875,18 +7964,7 @@ export async function pumpStreamEvents(
         (seenItemIds.has(block.ctx.itemId) ||
           get().blocks.some((b) => b.ctx.itemId === block.ctx.itemId))
       ) {
-        const provIdx = get().blocks.findIndex(isLiveProvisionalBlock);
-        if (provIdx !== -1) {
-          ignoreLivePreview(get().blocks[provIdx], ignoredMessages);
-          flush();
-          set((s) => {
-            const at = s.blocks.findIndex(isLiveProvisionalBlock);
-            if (at === -1) return {};
-            const next = s.blocks.slice();
-            next.splice(at, 1);
-            return { blocks: next };
-          });
-        }
+        if (matchingPreview(block)) retirePreview(block);
       }
 
       // Stream → snapshot dedup: skip if this itemId is already committed
@@ -7965,20 +8043,8 @@ export async function pumpStreamEvents(
       }
 
       if (block.type === "text_done" && get().isNativeTerminalSession) {
-        const provIdx = get().blocks.findIndex(isLiveProvisionalBlock);
-        if (provIdx !== -1) {
-          ignoreLivePreview(get().blocks[provIdx], ignoredMessages);
-          // The done item has no message id. Native messages are sequential,
-          // so remove the oldest preview and let the committed item follow
-          // the normal reducer path.
-          flush();
-          set((s) => {
-            const at = s.blocks.findIndex(isLiveProvisionalBlock);
-            if (at === -1) return {};
-            const next = s.blocks.slice();
-            next.splice(at, 1);
-            return { blocks: next };
-          });
+        if (matchingPreview(block)) {
+          retirePreview(block);
           paintedFirstContent = false;
         }
       }
@@ -8014,22 +8080,20 @@ export async function pumpStreamEvents(
         // agent_run complete + create_session settle. Read the finalized state so
         // a `session.interrupted` cancelled (kept above) wins over block.status.
         onResponseEnd(id, endedId, get().activeResponse?.state ?? block.status);
-        // Turn over: drop any provisional preview never finalized by a
-        // committed item (e.g. an interrupt where the partial item lands
-        // after this event, or a stream drop). Normal messages already
-        // had their preview replaced when their `text_done` committed, so
-        // this is usually a no-op.
-        get().blocks.forEach((candidate) => ignoreLivePreview(candidate, ignoredMessages));
+        // Successful completion retains unmatched previews until saved replacements arrive.
+        const completed = get().activeResponse?.state === "completed";
+        if (!completed) {
+          get().blocks.forEach((candidate) => ignoreLivePreview(candidate, ignoredMessages));
+        }
         set((s) => {
-          const blocks = s.blocks.some(isLiveProvisionalBlock)
-            ? s.blocks.filter((b) => !isLiveProvisionalBlock(b))
-            : s.blocks;
+          const blocks = completed ? s.blocks : s.blocks.filter((b) => !isLiveProvisionalBlock(b));
           return {
             status: "idle",
             blocks:
               (settlesTurn ? withoutSettledCompactionSpinners(blocks, endedId) : null) ?? blocks,
           };
         });
+        if (completed) scheduleCompletionRecovery(id, endedId, set, get, ignoredMessages);
         const convId = get().conversationId;
         if (convId) {
           queryClient?.invalidateQueries({ queryKey: sessionItemsQueryKey(convId) });
