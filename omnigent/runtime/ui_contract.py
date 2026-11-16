@@ -200,7 +200,9 @@ _GROUPS: dict[str, dict[str, Any]] = {
         "output": (
             'Use <main class="ta-root" data-triune-kit="1"> for injected first-party '
             "kit CSS/icons/runtime. Full documents and fragments may use local "
-            "HTML/CSS/JavaScript, SVG and canvas."
+            "HTML/CSS/JavaScript, SVG and canvas. Align labeled controls with "
+            "ta-control-row and ta-field; match button/input/select --sm or --xs "
+            "sizes. Keep labels above their controls."
         ),
         "ui": (
             "Isolated interactive frame with source, original download and full-window controls."

@@ -5,8 +5,8 @@
   "namespace": "ta-* / --ta-*",
   "assets": {
     "triune-artifact.css": {
-      "bytes": 15328,
-      "sha256": "73348884c6d53bffc7ff62e9671ffc30b240714590083f24f040d868a90940e8"
+      "bytes": 15514,
+      "sha256": "080c6a82cb254800e0be769f3013a6c7fd9769a3a03b01280349b7e073529e4f"
     },
     "triune-artifact.js": {
       "bytes": 4267,

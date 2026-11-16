@@ -38,11 +38,32 @@ Preconditions: follow the [verification skill](skills/verify-omnigent/SKILL.md),
 - Canonical fences, code examples and invalid path/URL references: `web/src/artifacts/artifactProtocol.test.ts`.
 - Source/channel validation, bounded resize/state, retained identity and viewer-scoped restoration: `web/src/artifacts/ArtifactFrame.test.tsx`.
 - Document preparation, kit injection and self-contained export: `web/src/artifacts/artifactDocument.test.ts`.
+- Mixed controls: `test_kit_control_row_keeps_labeled_controls_aligned` in the browser boundary test measures default/sm/xs geometry, wrapping and large fonts directly from generated kit CSS.
 - Large HTML and source-chat routes: `web/src/components/ChatAttachment.test.tsx` and `web/src/components/blocks/ChatMarkdown.fileLinks.test.tsx`.
 - Original bytes, source deletion, session association and permission denial: `tests/server/routes/test_chat_attachments.py`.
 - Upload a 740KiB+ HTML tool and render its fence; interact near its tail, then change Appearance and density.
 - Hide/reveal, reload and inspect restored state; inspect source/downloads, then try its file ID from another chat and expect access denial.
 - Open the self-contained export as a linked HTML file; verify controls and kit styles work without external assets.
+
+### Kit control rows
+
+- Use `.ta-control-row` for buttons beside labeled fields; labels stay in normal flow and controls align at the bottom of each wrapped line.
+- Match `.ta-btn--sm` with `.ta-input--sm`/`.ta-select--sm`, or the corresponding `--xs` classes: default/sm/xs minima are 32/28/24px, growing for larger text and 44px coarse targets.
+- Keep `.ta-row` for centered content; button variants share geometry, and field size classes preserve the field radius.
+
+```html
+<div class="ta-control-row">
+  <button class="ta-btn ta-btn--sm">Apply</button>
+  <button class="ta-btn ta-btn--secondary ta-btn--sm">Reset</button>
+  <label class="ta-field">
+    <span class="ta-label">Appearance</span>
+    <select class="ta-select ta-select--sm">
+      <option>Light</option>
+      <option>Dark</option>
+    </select>
+  </label>
+</div>
+```
 
 ## Gotchas
 

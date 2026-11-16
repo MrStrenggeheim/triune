@@ -105,3 +105,59 @@ TriuneArtifactState.set({count:9})">Tail action</button>
     page.evaluate("html=>frame.srcdoc=html", _document(html, state))
     expect(inner.locator("#draft")).to_have_value("Restored draft")
     assert page.frames[-1].evaluate("initial") == {"count": 9}
+
+
+def test_kit_control_row_keeps_labeled_controls_aligned(page: Page) -> None:
+    css = (_WEB / "src/artifacts/kit/triune-artifact.css").read_text()
+    for size, minimum in (("", 32), ("sm", 28), ("xs", 24)):
+        modifier = f"--{size}" if size else ""
+        page.set_content(f"""<style>{css}</style><main class="ta-root">
+<div class="ta-control-row">
+  <button class="ta-btn ta-btn{modifier}">Apply</button>
+  <button class="ta-btn ta-btn--secondary ta-btn{modifier}">Apply</button>
+  <label class="ta-field"><span class="ta-label">Preferred appearance</span>
+    <select class="ta-select ta-select{modifier}"><option>Light</option></select>
+  </label>
+  <label class="ta-field"><span class="ta-label">Name</span>
+    <input class="ta-input ta-input{modifier}" value="Example">
+  </label>
+</div></main>""")
+        for width, font_size in ((1024, 13), (320, 14), (1024, 26), (320, 26)):
+            page.set_viewport_size({"width": width, "height": 800})
+            page.locator("main").evaluate(
+                "(root, size) => root.style.setProperty('--ta-ui', `${size}px`)", font_size
+            )
+            geometry = page.locator(".ta-control-row").evaluate("""row => {
+              const rect = node => {
+                const {top, bottom, height} = node.getBoundingClientRect();
+                return {top, bottom, height};
+              };
+              return {
+                controls: [...row.querySelectorAll('button, input, select')].map(rect),
+                fields: [...row.querySelectorAll('.ta-field')].map(field => ({
+                  label: rect(field.querySelector('.ta-label')),
+                  control: rect(field.querySelector('input, select')),
+                  position: getComputedStyle(field.querySelector('.ta-label')).position
+                })),
+                lineHeight: parseFloat(getComputedStyle(row.querySelector('button')).lineHeight),
+                overflow: document.documentElement.scrollWidth > innerWidth
+              };
+            }""")
+            controls = geometry["controls"]
+            height = controls[0]["height"]
+            assert height >= minimum and height >= geometry["lineHeight"] + 1.9, geometry
+            assert all(abs(control["height"] - height) < 0.1 for control in controls), geometry
+            assert controls[0] == controls[1], geometry
+            if width == 1024:
+                assert all(
+                    abs(control["top"] - controls[0]["top"]) < 0.1 for control in controls
+                ), geometry
+                assert all(
+                    abs(control["bottom"] - controls[0]["bottom"]) < 0.1 for control in controls
+                ), geometry
+                if font_size == 13:
+                    assert height == minimum, geometry
+            assert not geometry["overflow"], geometry
+            for field in geometry["fields"]:
+                assert field["position"] == "static", geometry
+                assert field["label"]["bottom"] < field["control"]["top"], geometry
