@@ -242,6 +242,7 @@ interface ApprovalCardProps {
   requester?: SubagentRequester | null;
   /** Extra classes for the card container, e.g. to drop its border when embedded. */
   className?: string;
+  questionPresentation?: "message" | "popup";
 }
 
 const EMPTY_CODEX_PERSIST_MODES: CodexPersistMode[] = [];
@@ -269,6 +270,7 @@ export function ApprovalCard({
   onSubmit,
   requester,
   className,
+  questionPresentation = "message",
 }: ApprovalCardProps) {
   const ownerConversationId = useScopedConversationId();
   const askPayload: AskUserQuestionPayload | null =
@@ -653,6 +655,19 @@ export function ApprovalCard({
 
   if (askPayload?.questions.length) {
     const index = Math.max(0, Math.min(questionIndex, askPayload.questions.length - 1));
+    const form = (
+      <AskUserQuestionForm
+        questions={askPayload.questions}
+        currentIndex={index}
+        onCurrentIndexChange={setQuestionIndex}
+        showProgress={false}
+        showHeader={false}
+        presentation={questionPresentation}
+        draftKey={questionDraftKey}
+        onSubmit={submitAnswers}
+        onReject={() => submitBinary("decline")}
+      />
+    );
     return (
       <div
         data-testid="approval-card"
@@ -660,24 +675,57 @@ export function ApprovalCard({
         data-elicitation-id={elicitationId}
         className={cn("min-w-0", className)}
       >
-        <QuestionBatchCard
-          questions={askPayload.questions}
-          index={index}
-          onIndexChange={setQuestionIndex}
-          status={status}
-          response={response}
-        >
-          <AskUserQuestionForm
+        {questionPresentation === "popup" && status === "pending" ? (
+          form
+        ) : (
+          <QuestionBatchCard
             questions={askPayload.questions}
-            currentIndex={index}
-            onCurrentIndexChange={setQuestionIndex}
-            showProgress={false}
-            showHeader={false}
-            draftKey={questionDraftKey}
-            onSubmit={submitAnswers}
+            index={index}
+            onIndexChange={setQuestionIndex}
+            status={status}
+            response={response}
+          >
+            {form}
+          </QuestionBatchCard>
+        )}
+      </div>
+    );
+  }
+
+  if (
+    questionPresentation === "popup" &&
+    status === "pending" &&
+    !isExternalUrl &&
+    (isSchemaForm || isMultiChoice)
+  ) {
+    return (
+      <div
+        data-testid="approval-card"
+        data-state={status}
+        data-elicitation-id={elicitationId}
+        className="flex min-w-0 flex-col gap-2"
+      >
+        <strong className="font-semibold">{message}</strong>
+        {isSchemaForm ? (
+          <ElicitationSchemaForm
+            fields={schemaFormFields}
+            onSubmit={submitSchemaAnswers}
             onReject={() => submitBinary("decline")}
           />
-        </QuestionBatchCard>
+        ) : (
+          <div className="flex flex-wrap gap-2" data-testid="approval-card-options">
+            {optionLabels.map((optLabel) => (
+              <Button
+                key={optLabel}
+                size="sm"
+                variant="outline"
+                onClick={() => submitOption(optLabel)}
+              >
+                {optLabel}
+              </Button>
+            ))}
+          </div>
+        )}
       </div>
     );
   }
@@ -1010,10 +1058,12 @@ export function ElicitationCard({
   item,
   onSubmit,
   className,
+  questionPresentation,
 }: {
   item: Extract<RenderItem, { kind: "elicitation" }>;
   onSubmit?: SubmitApprovalFn;
   className?: string;
+  questionPresentation?: ApprovalCardProps["questionPresentation"];
 }) {
   // A sub-agent's prompt is mirrored into its ancestors' streams with
   // ``targetSessionId`` naming the sub-agent that asked.
@@ -1025,6 +1075,7 @@ export function ElicitationCard({
   return (
     <ApprovalCard
       className={className}
+      questionPresentation={questionPresentation}
       elicitationId={item.elicitationId}
       nativeDelivery={item.nativeDelivery}
       message={item.message}

@@ -32,7 +32,7 @@ it("retains the same card/disclosure/header pager when a pending batch becomes a
       index={0}
       onIndexChange={change}
       status="responded"
-      response={{ action: "accept", content: { q0: "Exact answer" } }}
+      response={{ action: "accept", content: { q0: "Exact answer", q1: "Other answer" } }}
     />,
   );
   expect(container.querySelector(".activity-row")).toBe(card);
@@ -41,11 +41,25 @@ it("retains the same card/disclosure/header pager when a pending batch becomes a
   expect(screen.getByText("Answered")).toHaveClass("font-semibold");
   expect(screen.getByText("Scope").nextElementSibling).toHaveTextContent("Original question?");
   expect(screen.getByText("Exact answer")).toHaveClass("text-foreground");
+  expect(screen.getAllByText("Original question?")).toHaveLength(1);
+  expect(container.querySelector(".activity-message-body")).toHaveTextContent(/^Exact answer$/);
   fireEvent.click(screen.getByRole("button", { name: "Next question" }));
   expect(change).toHaveBeenCalledWith(1);
+  rerender(
+    <QuestionBatchCard
+      questions={questions}
+      index={1}
+      onIndexChange={change}
+      status="responded"
+      response={{ action: "accept", content: { q0: "Exact answer", q1: "Other answer" } }}
+    />,
+  );
+  expect(screen.getAllByText("Another original?")).toHaveLength(1);
+  expect(container.querySelector(".activity-message-body")).toHaveTextContent(/^Other answer$/);
+  expect(screen.queryByText("Original question?")).toBeNull();
   fireEvent.click(toggle);
   expect(container.querySelector(".activity-message-header")).toContainElement(
-    screen.getByText("Question 1 of 2"),
+    screen.getByText("Question 2 of 2"),
   );
 });
 it("omits single-question pagination and missing categories, and distinguishes empty from unanswered", () => {

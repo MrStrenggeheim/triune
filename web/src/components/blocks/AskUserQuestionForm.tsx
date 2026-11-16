@@ -23,6 +23,7 @@ interface AskUserQuestionFormProps {
   showProgress?: boolean;
   showHeader?: boolean;
   draftKey?: string;
+  presentation?: "message" | "popup";
 }
 
 /**
@@ -71,6 +72,7 @@ export function AskUserQuestionForm({
   showProgress = true,
   showHeader = true,
   draftKey,
+  presentation = "message",
 }: AskUserQuestionFormProps) {
   const storageKey = questions.some((question) => question.isSecret) ? undefined : draftKey;
   const [saved] = useState(() =>
@@ -239,7 +241,7 @@ export function AskUserQuestionForm({
 
   return (
     <div className="flex flex-col gap-2 text-foreground" data-testid="ask-user-question-form">
-      {(showProgress || (showHeader && current.header)) && (
+      {presentation !== "popup" && (showProgress || (showHeader && current.header)) && (
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           {showProgress && (
             <span data-testid="ask-user-question-progress">
@@ -256,10 +258,15 @@ export function AskUserQuestionForm({
 
       <fieldset
         key={currentKey}
-        className="flex flex-col gap-2 mb-2"
+        className={cn("flex flex-col gap-2", presentation === "popup" ? "min-w-0" : "mb-2")}
         data-testid="ask-user-question-section"
       >
-        <legend className="text-foreground text-ui font-medium flex items-center gap-2 mb-2">
+        <legend
+          className={cn(
+            "text-foreground text-ui flex items-center gap-2 mb-2",
+            presentation === "popup" ? "font-semibold" : "font-medium",
+          )}
+        >
           {current.question}
         </legend>
         <div className="flex flex-col gap-2">

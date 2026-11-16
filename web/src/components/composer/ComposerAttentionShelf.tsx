@@ -1,5 +1,5 @@
 // Modified for Triune.
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ListTodoIcon, MessageCircleQuestionMarkIcon, ShieldCheckIcon } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { useConversationChatStore } from "@/workbench/ScopedChatStore";
@@ -71,6 +71,26 @@ export function ComposerAttentionShelf() {
     approvals: false,
   });
   const requestTriggers = useRef<Partial<Record<"questions" | "approvals", HTMLButtonElement>>>({});
+  const [questionWidth, setQuestionWidth] = useState<number>();
+  useLayoutEffect(() => {
+    if (open !== "questions") return;
+    const trigger = requestTriggers.current.questions;
+    const column =
+      trigger?.closest<HTMLElement>(".composer-shelf-stack") ??
+      trigger?.closest<HTMLElement>('[data-testid="composer-attention-shelf"]');
+    if (!column) return;
+    const measure = () => {
+      const style = getComputedStyle(column);
+      const width =
+        column.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+      if (width > 0) setQuestionWidth(width);
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(column);
+    return () => observer.disconnect();
+  }, [open, conversationId]);
   useEffect(() => setOpen(null), [conversationId]);
   useEffect(() => {
     if (open === "plan" ? !todos.length : open && !requests[open].length) setOpen(null);
@@ -134,11 +154,14 @@ export function ComposerAttentionShelf() {
                   forceMount
                   hidden={open !== kind}
                   aria-hidden={open !== kind || undefined}
-                  style={open !== kind ? { display: "none" } : undefined}
+                  style={{
+                    ...(open !== kind ? { display: "none" } : {}),
+                    ...(kind === "questions" ? { maxWidth: questionWidth } : {}),
+                  }}
                   side="top"
                   align="start"
                   collisionPadding={8}
-                  className="max-h-[min(24rem,var(--radix-popover-content-available-height))] w-[min(25rem,calc(100vw-2rem))] overflow-y-auto p-2"
+                  className={`max-h-[min(24rem,var(--radix-popover-content-available-height))] ${kind === "questions" ? "w-[min(30rem,calc(100vw-2rem))]" : "w-[min(25rem,calc(100vw-2rem))]"} overflow-y-auto p-2`}
                   aria-label={label}
                   onOpenAutoFocus={(event) => event.preventDefault()}
                   onEscapeKeyDown={() => {
@@ -215,30 +238,23 @@ function QuestionRequests({ items }: { items: ElicitationBlock[] }) {
   return (
     <div className="flex min-w-0 flex-col gap-2">
       {items.length > 1 && (
-        <nav aria-label="Question batches" className="flex min-w-0 flex-col gap-1">
-          {items.map((block) => {
-            const payload =
-              castAskUserQuestionPayload(block.askUserQuestion) ??
-              parseAskUserQuestionPreview(block.contentPreview);
-            return (
-              <Button
-                key={block.elicitationId}
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="min-w-0 justify-start"
-                aria-pressed={block.elicitationId === active}
-                onClick={() => {
-                  setSelected(block.elicitationId);
-                  setVisited((current) => new Set(current).add(block.elicitationId));
-                }}
-              >
-                <span className="min-w-0 truncate">
-                  {payload?.questions[0]?.question ?? block.message}
-                </span>
-              </Button>
-            );
-          })}
+        <nav aria-label="Question batches" className="flex flex-wrap gap-1">
+          {items.map((block, index) => (
+            <Button
+              key={block.elicitationId}
+              type="button"
+              variant="ghost"
+              size="xs"
+              aria-label={`Question batch ${index + 1} of ${items.length}`}
+              aria-pressed={block.elicitationId === active}
+              onClick={() => {
+                setSelected(block.elicitationId);
+                setVisited((current) => new Set(current).add(block.elicitationId));
+              }}
+            >
+              {index + 1}
+            </Button>
+          ))}
         </nav>
       )}
       {items
@@ -247,7 +263,7 @@ function QuestionRequests({ items }: { items: ElicitationBlock[] }) {
           <div key={block.elicitationId} hidden={block.elicitationId !== active}>
             <ElicitationCard
               item={{ ...block, kind: "elicitation", itemId: block.ctx.itemId }}
-              className="rounded-none border-0 p-1 shadow-none"
+              questionPresentation="popup"
             />
           </div>
         ))}

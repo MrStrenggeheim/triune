@@ -99,7 +99,6 @@ export function QuestionBatchCard({
         children
       ) : (
         <div className="min-w-0 whitespace-pre-wrap break-words">
-          <p className="text-muted-foreground">{current.question}</p>
           <p className="text-foreground">{answer}</p>
         </div>
       )}

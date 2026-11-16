@@ -1,5 +1,5 @@
 // Modified for Triune; inherited notices remain applicable.
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { ElicitationBlock } from "@/lib/blocks";
@@ -76,6 +76,16 @@ it("separates questions and permissions and reuses the existing answer form", as
   fireEvent.click(screen.getByRole("button", { name: "Questions: 1" }));
   expect(await screen.findByTestId("ask-user-question-form")).toHaveTextContent("Which checks?");
   expect(screen.getByRole("radio", { name: /Focused/ })).toBeInTheDocument();
+  const popup = screen.getByRole("dialog", { name: "Questions" });
+  expect(within(popup).getAllByText("Which checks?")).toHaveLength(1);
+  expect(popup.querySelector("legend")).toHaveClass("font-semibold");
+  expect(
+    popup.querySelector(
+      ".activity-row, .activity-message-header, svg.lucide-message-circle-question-mark",
+    ),
+  ).toBeNull();
+  expect(within(popup).queryByText("Needs input")).toBeNull();
+  expect(within(popup).queryByTestId("ask-user-question-progress")).toBeNull();
   act(() =>
     useChatStore.setState({
       blocks: [
@@ -194,10 +204,128 @@ it("counts actual batches once and switches their forms without discarding draft
   openShelf();
   fireEvent.click(screen.getByRole("button", { name: "Questions: 2" }));
   fireEvent.click(screen.getByRole("radio", { name: /Focused/ }));
-  fireEvent.click(screen.getByRole("button", { name: "Which other checks?" }));
+  expect(screen.getAllByText("Which checks?")).toHaveLength(1);
+  fireEvent.click(screen.getByRole("button", { name: "Question batch 2 of 2" }));
   expect(screen.queryByRole("radio", { name: /Focused/ })).toBeNull();
   fireEvent.click(screen.getByRole("radio", { name: "Broader" }));
-  fireEvent.click(screen.getByRole("button", { name: "Which checks?" }));
+  fireEvent.click(screen.getByRole("button", { name: "Question batch 1 of 2" }));
   expect(screen.getByRole("radio", { name: /Focused/ })).toBeChecked();
   expect(screen.queryByRole("radio", { name: "Broader" })).toBeNull();
+});
+
+it("uses only the footer to navigate a popup batch and submits its original ids once", () => {
+  const submitApproval = vi.fn();
+  const block = request("popup-batch", true);
+  block.askUserQuestion = {
+    questions: [
+      {
+        id: "coverage",
+        header: "Coverage",
+        question: "Which checks?",
+        options: [{ label: "Focused" }],
+        multiSelect: false,
+      },
+      {
+        id: "timing",
+        question: "When should checks run?",
+        options: [{ label: "Later" }],
+        multiSelect: false,
+      },
+    ],
+  };
+  useChatStore.setState({ blocks: [block], submitApproval });
+  openShelf();
+  fireEvent.click(screen.getByRole("button", { name: "Questions: 1" }));
+  expect(screen.queryByText("Coverage")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Next question" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Skip (0/2)" }));
+  expect(screen.queryByText("Coverage")).toBeNull();
+  fireEvent.click(screen.getByRole("radio", { name: "Later" }));
+  fireEvent.click(screen.getByRole("button", { name: "Previous" }));
+  fireEvent.click(screen.getByRole("radio", { name: /Focused/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Next (2/2)" }));
+  expect(screen.getByRole("radio", { name: "Later" })).toBeChecked();
+  expect(submitApproval).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Submit (2/2)" }));
+  expect(submitApproval).toHaveBeenCalledExactlyOnceWith("popup-batch", "accept", {
+    coverage: "Focused",
+    timing: "Later",
+  });
+});
+
+it("keeps required schema fields and decline semantics in the plain popup", () => {
+  const submitApproval = vi.fn();
+  const block = request("schema-question");
+  block.message = "Which branch?";
+  block.requestedSchema = {
+    type: "object",
+    properties: { branch: { type: "string", title: "Branch" } },
+    required: ["branch"],
+  };
+  useChatStore.setState({ blocks: [block], submitApproval });
+  openShelf();
+  fireEvent.click(screen.getByRole("button", { name: "Questions: 1" }));
+  const popup = screen.getByRole("dialog", { name: "Questions" });
+  expect(within(popup).getByText("Which branch?")).toHaveClass("font-semibold");
+  expect(popup.querySelector('[role="alert"]')).toBeNull();
+  expect(within(popup).getByRole("button", { name: "Submit" })).toBeDisabled();
+  fireEvent.change(within(popup).getByLabelText(/Branch/), { target: { value: "main" } });
+  expect(within(popup).getByRole("button", { name: "Submit" })).toBeEnabled();
+  fireEvent.click(within(popup).getByRole("button", { name: "Reject" }));
+  expect(submitApproval).toHaveBeenCalledExactlyOnceWith("schema-question", "decline", undefined);
+});
+
+it("tracks the composer content width with one observer only while questions are open", () => {
+  const observers: {
+    callback: ResizeObserverCallback;
+    observe: ReturnType<typeof vi.fn>;
+    disconnect: ReturnType<typeof vi.fn>;
+  }[] = [];
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe = vi.fn();
+      disconnect = vi.fn();
+      unobserve = vi.fn();
+      constructor(callback: ResizeObserverCallback) {
+        observers.push({ callback, observe: this.observe, disconnect: this.disconnect });
+      }
+    },
+  );
+  try {
+    useChatStore.setState({ blocks: [request("width", true), request("permission")] });
+    const { container } = render(
+      <MemoryRouter>
+        <div className="composer-shelf-stack" style={{ paddingLeft: 12, paddingRight: 12 }}>
+          <ComposerAttentionShelf />
+        </div>
+      </MemoryRouter>,
+    );
+    const column = container.querySelector(".composer-shelf-stack")!;
+    let columnWidth = 422;
+    Object.defineProperty(column, "clientWidth", { get: () => columnWidth });
+    expect(
+      observers.filter((observer) => observer.observe.mock.calls.some(([node]) => node === column)),
+    ).toHaveLength(0);
+    fireEvent.click(screen.getByRole("button", { name: "Questions: 1" }));
+    const popup = screen.getByRole("dialog", { name: "Questions" });
+    expect(popup).toHaveStyle({ maxWidth: "398px" });
+    expect(popup.className).toContain("30rem");
+    const widths = observers.filter((observer) =>
+      observer.observe.mock.calls.some(([node]) => node === column),
+    );
+    expect(widths).toHaveLength(1);
+    act(() => {
+      columnWidth = 300;
+      widths[0].callback([], {} as ResizeObserver);
+    });
+    expect(popup).toHaveStyle({ maxWidth: "276px" });
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    expect(widths[0].disconnect).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByRole("button", { name: "Approvals: 1" }));
+    expect(screen.getByRole("dialog", { name: "Approvals" }).className).toContain("25rem");
+    expect(screen.getByRole("dialog", { name: "Approvals" }).style.maxWidth).toBe("");
+  } finally {
+    vi.unstubAllGlobals();
+  }
 });
