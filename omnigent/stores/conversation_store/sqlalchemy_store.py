@@ -151,6 +151,7 @@ from omnigent.stores.conversation_store.overrides import (
 from omnigent.stores.conversation_store.overrides import (
     encode_session_overrides as _encode_session_overrides,
 )
+from omnigent.stores.conversation_store.schema import ensure_activity_label_index
 
 _logger = logging.getLogger(__name__)
 
@@ -996,6 +997,8 @@ class SqlAlchemyConversationStore(ConversationStore):
             if conv_uri == storage_location
             else get_or_create_conversation_engine(conv_uri)
         )
+        if self._conv_engine is not self._engine:
+            ensure_activity_label_index(self._conv_engine)
         self._conv_session = make_named_managed_session_maker(
             self._conv_engine,
             query_name_prefix="omnigent.conversation_store",
@@ -1589,24 +1592,42 @@ class SqlAlchemyConversationStore(ConversationStore):
     def list_activity_child_ids(
         self, parent_ids: list[str], *, limit: int = 2048
     ) -> tuple[dict[str, list[str]], bool]:
-        """Batch the union of canonical branch provenance and delegation edges."""
+        """Bound each edge source, deduplicate, and retain truthful coverage.
+
+        Delegates precede branches; each source follows its covering index order.
+        One extra row per source proves overflow even when both name the same edge.
+        """
         parents = list(dict.fromkeys(parent_ids))
         result: dict[str, list[str]] = {parent: [] for parent in parents}
         if not parents:
             return result, True
         if limit <= 0:
             return result, False
-        delegates = select(SqlConversation.parent_conversation_id, SqlConversation.id).where(
-            SqlConversation.workspace_id == current_workspace_id(),
-            SqlConversation.parent_conversation_id.in_(parents),
+        delegates = (
+            select(SqlConversation.parent_conversation_id, SqlConversation.id)
+            .where(
+                SqlConversation.workspace_id == current_workspace_id(),
+                SqlConversation.parent_conversation_id.in_(parents),
+            )
+            .order_by(
+                SqlConversation.parent_conversation_id,
+                SqlConversation.created_at.desc(),
+                SqlConversation.id.desc(),
+            )
+            .limit(limit + 1)
         )
-        branches = select(SqlConversationLabel.value, SqlConversationLabel.conversation_id).where(
-            SqlConversationLabel.workspace_id == current_workspace_id(),
-            SqlConversationLabel.key == "omnigent.branch.source_conversation_id",
-            SqlConversationLabel.value.in_(parents),
+        branches = (
+            select(SqlConversationLabel.value, SqlConversationLabel.conversation_id)
+            .where(
+                SqlConversationLabel.workspace_id == current_workspace_id(),
+                SqlConversationLabel.key == "omnigent.branch.source_conversation_id",
+                SqlConversationLabel.value.in_(parents),
+            )
+            .order_by(SqlConversationLabel.value, SqlConversationLabel.conversation_id)
+            .limit(limit + 1)
         )
         with self._conv_session("list_activity_child_ids") as session:
-            edges = session.execute(delegates.union(branches).limit(limit + 1)).all()
+            edges = list(dict.fromkeys([*session.execute(delegates), *session.execute(branches)]))
         for parent, child in edges[:limit]:
             if parent in result:
                 result[parent].append(child)

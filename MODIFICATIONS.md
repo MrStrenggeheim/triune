@@ -90,7 +90,7 @@ The [fork guide](docs/custom-fork.md#iteration6-source-status) records matching 
 
 ## Integration7 candidate changes — 2026-11-16
 
-These eleven items are applied to main source above verified iteration6; combined release verification and activation remain pending.
+These eleven items activated as `0.20.0-5638ac603960` on 2026-11-16 at 23:46 UTC.
 The [candidate boundary](docs/custom-fork.md#integration7-candidate) records scope, evidence and known limits.
 
 - Scope child-sort list reconciliation to affected queries, retain conservative membership refresh, and avoid execution-state decoding in lightweight list reads (`LIST-REFETCH-7`, `LIST-COST-7`).
@@ -101,6 +101,13 @@ The [candidate boundary](docs/custom-fork.md#integration7-candidate) records sco
 - Reject superseded queued-input lifecycle state and retire empty observers safely through enqueue, compaction and shutdown races (`QUEUE-LIFECYCLE-7`, `QUEUE-OBSERVERS-7`).
 
 Approval receipt protocol work, ownerless-model retirement and isolated future branch-query/index work are outside this candidate; no approval delivery is claimed.
+
+## Branch query candidate — 2026-11-16
+
+- Add an inverse workspace/key/value label index for canonical branch ancestry and maintain it in existing split databases.
+- Read bounded delegation and branch operands independently, deduplicating canonical edges while preserving explicit incomplete coverage.
+- Preserve session authorization, named read scopes and full-edge semantics; clipped traversal uses deterministic index order.
+
 
 [LICENSING.md](LICENSING.md) defines scope and the required notice.
 Git diffs against the imported baseline identify exact modified paths and lines.

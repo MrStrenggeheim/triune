@@ -209,8 +209,9 @@ Native-inset emulation and Chromium touch injection do not establish physical iO
 
 ## Integration7 candidate
 
-The following eleven items are applied to main source above the verified iteration6 baseline.
-They remain a candidate pending combined release verification and activation; worker handoffs alone do not establish delivery.
+The following eleven items activated as `0.20.0-5638ac603960` from source `5638ac603960f19ce0012dccae8b29352b4bf539`.
+Activation at 23:46 UTC verified both service interpreters, all 635 tested/package assets and restoration of three active runtimes.
+Evidence: `artifacts/overnight-20261116/activation.json`, `verification-summary.json` and `loading-audit/candidate2-cold-comparison.json`.
 
 | Request | Candidate behavior |
 | --- | --- |

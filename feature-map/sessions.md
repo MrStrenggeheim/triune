@@ -830,6 +830,10 @@ Lightweight authorized reads: `tests/stores/test_conversation_store.py`, `tests/
 - Revoke access during a delayed list read: the row disappears and the older response cannot restore it.
 - Reopen a normal session snapshot: plan, runtime notices and execution settings remain available despite lightweight list reads.
 
+Branch ancestry query checks: `tests/stores/test_conversation_activity_edges.py` exercises bounded delegation/branch reads, canonical edge deduplication, workspace isolation and truthful incomplete coverage.
+`tests/db/test_migration_conversation_label_lookup.py` verifies additive index creation, retry, data-preserving downgrade and startup of existing single/split databases.
+The PostgreSQL cases check SQL generation and retry behavior with mocks; they do not establish a live PostgreSQL result.
+
 Root sort and structural changes retain broad reconciliation; affected slow reads may still cancel and restart.
 Bounded synthetic query/decode counts do not establish a production p95 or endpoint speedup.
 
