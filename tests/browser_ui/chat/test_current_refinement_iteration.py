@@ -10,6 +10,7 @@ from __future__ import annotations
 import io
 import json
 import re
+import time
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -141,6 +142,38 @@ def _assert_stable_disclosure(card: Locator) -> dict:
     disclosure.click()
     expect(disclosure).to_have_attribute("aria-expanded", str(expanded).lower())
     return {"before": before, "after": after}
+
+
+def _assert_opaque_popup(popup: Locator, output_path: str, name: str) -> None:
+    expect(popup).to_be_visible()
+    styles = popup.evaluate(
+        """element => {
+          const canvas = document.createElement('canvas');
+          canvas.width = canvas.height = 1;
+          const context = canvas.getContext('2d');
+          context.fillStyle = getComputedStyle(element).backgroundColor;
+          context.fillRect(0, 0, 1, 1);
+          const ancestors = [];
+          for (let node = element; node; node = node.parentElement) {
+            const style = getComputedStyle(node);
+            ancestors.push({tag: node.tagName, className: node.className,
+              backgroundColor: style.backgroundColor, opacity: style.opacity,
+              backdropFilter: style.backdropFilter || style.webkitBackdropFilter || 'none',
+              filter: style.filter});
+          }
+          return {backgroundAlpha: context.getImageData(0, 0, 1, 1).data[3] / 255,
+            ancestors};
+        }"""
+    )
+    Path(output_path).mkdir(parents=True, exist_ok=True)
+    (Path(output_path) / f"{name}-popup-style.json").write_text(
+        json.dumps(styles, indent=2) + "\n"
+    )
+    assert styles["backgroundAlpha"] == 1, styles
+    for ancestor in styles["ancestors"]:
+        assert float(ancestor["opacity"]) == 1, ancestor
+        assert ancestor["backdropFilter"] == "none", ancestor
+        assert ancestor["filter"] == "none", ancestor
 
 
 def test_provenance_peer_directions_and_reload(
@@ -729,6 +762,7 @@ def test_shelf_resource_rows_and_question_drafts(
     expect(panel).not_to_contain_text("Submit sends")
     expect(form.get_by_role("button", name="Skip (0/3)", exact=True)).to_be_enabled()
     expect(form.get_by_role("button", name=re.compile(r"^Submit"))).to_have_count(0)
+    _assert_opaque_popup(panel, output_path, f"{appearance}-questions")
     pending_geometry = box(panel)
     custom = form.get_by_role("textbox", name="Custom answer text", exact=True)
     custom.fill("Run focused checks and preserve this answer")
@@ -832,6 +866,7 @@ def test_shelf_resource_rows_and_question_drafts(
     page.keyboard.press("Escape")
     shelf.get_by_test_id("background-task-pill").click()
     shell_popup = page.get_by_role("dialog", name="1 background task", exact=True)
+    _assert_opaque_popup(shell_popup, output_path, f"{appearance}-shells")
     shell_row = shell_popup.locator("[data-resource-row]").filter(
         has=page.get_by_role("button", name="pnpm test", exact=True)
     )
@@ -998,8 +1033,12 @@ def test_shelf_resource_rows_and_question_drafts(
             ("mobile", "light"),
             marks=pytest.mark.browser_context_args(has_touch=True, is_mobile=True),
         ),
+        pytest.param(
+            ("mobile", "dark"),
+            marks=pytest.mark.browser_context_args(has_touch=True, is_mobile=True),
+        ),
     ],
-    ids=["desktop-dark", "mobile-light-touch"],
+    ids=["desktop-dark", "mobile-light-touch", "mobile-dark-touch"],
     indirect=True,
 )
 def test_notice_popup_transport_fixture(
@@ -1012,6 +1051,39 @@ def test_notice_popup_transport_fixture(
     """Scripted API notices prove browser transport and dismissal, not native capture."""
     first, second = workspace_journey.chats
     second.update_session(owner="local", archived=False)
+    first.update_session(
+        last_total_tokens=81_920,
+        context_window=256_000,
+        total_cost_usd=0.84,
+        usage_by_model={
+            "gpt-5.1-codex": {
+                "input_tokens": 136_000,
+                "output_tokens": 12_000,
+                "total_tokens": 148_000,
+                "cache_read_input_tokens": 96_000,
+                "cache_creation_input_tokens": None,
+                "total_cost_usd": 0.84,
+            }
+        },
+    )
+    observed_at = int(time.time())
+    quotas = [
+        {
+            "id": f"fixture-{window}",
+            "provider": "OpenAI",
+            "window": window,
+            "used_percent": percent,
+            "reset_at": observed_at + reset_offset,
+            "window_minutes": minutes,
+            "status": None,
+            "observed_at": observed_at - 180,
+            "source_kind": "native",
+        }
+        for window, percent, reset_offset, minutes in (
+            ("5 hours", 28, 7200, 300),
+            ("Weekly", 61, -3600, 10_080),
+        )
+    ]
     notice = {
         "id": "fixture-usage-window",
         "revision": "one",
@@ -1023,7 +1095,7 @@ def test_notice_popup_transport_fixture(
         "requires_action": False,
     }
     path = f"/v1/sessions/{first.session_id}/runtime-notices"
-    browser_contract.json(path, lambda _request: list_payload([notice]))
+    browser_contract.json(path, lambda _request: {**list_payload([notice]), "quotas": quotas})
     page.goto(first.url)
     editor = _view(page, "Chat A").get_by_label("Message the agent")
     editor.fill("Keep this draft while reading notices")
@@ -1039,8 +1111,54 @@ def test_notice_popup_transport_fixture(
     usage_popup = page.get_by_role("dialog", name="Conversation usage", exact=True)
     for label in ("Context usage", "Session accounting", "Provider quotas"):
         expect(usage_popup.get_by_role("region", name=label, exact=True)).to_be_visible()
-    expect(usage_popup).to_contain_text("No provider quota observation available.")
+    expect(usage_popup.get_by_role("heading", name="Usage", exact=True)).to_be_visible()
+    context = usage_popup.get_by_role("region", name="Context usage", exact=True)
+    expect(context).to_contain_text(re.compile(r"81\.9k / 256k tokens", re.IGNORECASE))
+    context_bar = context.get_by_role("progressbar", name="Context used", exact=True)
+    expect(context_bar).to_have_attribute("aria-valuenow", "32")
+    expect(context_bar).to_have_attribute("aria-valuetext", "32% used")
+    assert box(context_bar)["height"] == pytest.approx(3, abs=TOLERANCE)
+    accounting = usage_popup.get_by_role("region", name="Session accounting", exact=True)
+    cost = accounting.locator("dl > div").filter(has=page.get_by_text("Session cost", exact=True))
+    tokens = accounting.locator("dl > div").filter(
+        has=page.get_by_text("Session tokens", exact=True)
+    )
+    expect(cost.locator("dd")).to_have_text("$0.84 USD")
+    expect(tokens.locator("dd")).to_have_text(re.compile(r"148k", re.IGNORECASE))
+    assert_same_vertical_center(box(cost), box(tokens))
+    assert_no_overlap(box(cost), box(tokens))
+    expect(accounting).to_contain_text("This session, including descendants")
+    token_details = accounting.get_by_role("button", name="Token breakdown", exact=True)
+    expect(token_details).to_have_attribute("aria-expanded", "false")
+    expect(accounting.get_by_role("heading", name="gpt-5.1-codex", exact=True)).to_be_hidden()
+    provider = usage_popup.get_by_role("region", name="Provider quotas", exact=True)
+    for window, percent in (("5 hours", 28), ("Weekly", 61)):
+        expect(provider.get_by_text(f"OpenAI · {window}", exact=True)).to_be_visible()
+        quota_bar = provider.get_by_role(
+            "progressbar", name=f"OpenAI {window} allowance used", exact=True
+        )
+        expect(quota_bar).to_have_attribute("aria-valuenow", str(percent))
+        assert box(quota_bar)["height"] == pytest.approx(3, abs=TOLERANCE)
+    expect(provider.get_by_text("Current availability unconfirmed", exact=True)).to_have_count(1)
+    observation_details = provider.get_by_role("button", name="Observation details", exact=True)
+    expect(observation_details).to_have_attribute("aria-expanded", "false")
+    expect(provider.get_by_text("Reported window: 300 minutes", exact=True)).to_be_hidden()
+    _assert_opaque_popup(usage_popup, output_path, f"{appearance}-usage")
     assert_within_viewport(box(usage_popup), page.viewport_size["width"])
+    _capture(page, output_path, f"{appearance}-compact-usage")
+    token_details.click()
+    expect(token_details).to_have_attribute("aria-expanded", "true")
+    expect(accounting.get_by_role("heading", name="gpt-5.1-codex", exact=True)).to_be_visible()
+    for label, value in (("Input", "136,000"), ("Output", "12,000"), ("Cache read", "96,000")):
+        row = accounting.locator("dl > div").filter(has=page.get_by_text(label, exact=True))
+        expect(row.locator("dd")).to_have_text(value)
+    expect(accounting.get_by_text("Cache write", exact=True)).to_have_count(0)
+    token_details.click()
+    observation_details.click()
+    expect(observation_details).to_have_attribute("aria-expanded", "true")
+    expect(provider.get_by_text("Reported window: 300 minutes", exact=True)).to_be_visible()
+    expect(provider.get_by_text("Source: native", exact=True)).to_have_count(2)
+    _capture(page, output_path, f"{appearance}-usage-observation-details")
     page.keyboard.press("Escape")
     trigger.click()
     popup = page.get_by_role("dialog", name="Agent notices", exact=True)
@@ -1050,6 +1168,7 @@ def test_notice_popup_transport_fixture(
     expect(
         popup.get_by_role("button", name=re.compile("Submit|Approve|Switch model"))
     ).to_have_count(0)
+    _assert_opaque_popup(popup, output_path, f"{appearance}-notices")
     assert_within_viewport(box(popup), page.viewport_size["width"])
     _capture(page, output_path, f"{appearance}-notice-popup-transport-fixture")
     popup.get_by_role("button", name="Dismiss", exact=True).click()
@@ -1104,6 +1223,7 @@ def test_notice_popup_transport_fixture(
         "button", name="Notifications", exact=True
     ).click()
     center = page.get_by_role("dialog", name="Notifications", exact=True)
+    _assert_opaque_popup(center, output_path, f"{appearance}-notifications")
     history_card = center.get_by_test_id("archive-undo-toast-item")
     notification_measurements["history"] = notification_geometry(history_card, history=True)
     header = center.locator(".notification-center-header")

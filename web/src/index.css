@@ -393,7 +393,6 @@
 
 .composer-add-menu,
 .composer-host-menu {
-  background-color: #fff;
   background-image: none;
 }
 
@@ -409,9 +408,7 @@
 .dark :is(.composer-add-menu, .composer-host-menu) {
   --muted: rgb(248 248 248 / 12.7333%);
   --muted-foreground: rgb(245 245 244 / 56%);
-  background-color: rgb(31 31 33 / 60%);
   border-color: rgb(255 255 255 / 8%);
-  backdrop-filter: blur(24px) saturate(120%);
 }
 
 .dark .composer-add-menu {
@@ -757,13 +754,21 @@ html:not(.dark) .conversations-sidebar:not(.is-peek) {
  * panels while a menu/dialog is up, and dropping this rule's 1px border
  * then reflowed every sidebar row 2px wider. Not [inert] either: this
  * React version drops the boolean inert attribute from the DOM.)
- * Both rails (Workspace, Conversations) are excluded — they paint their own
- * canvas layers above, not a glass card. */
+ * Rails, docked content and interactive overlays paint their own surfaces. */
 .dark
   :is(.bg-card, [class*="md:bg-card"]):not(
     :is(.bg-card, [class*="md:bg-card"]) :is(.bg-card, [class*="md:bg-card"])
   ):not([data-collapsed]):not([aria-label="Workspace"]):not([aria-label="Conversations"]):not(
-    .dock-view-slot *
+    .dock-view-slot *,
+    .bg-popover,
+    .bg-popover *,
+    [role="dialog"],
+    [role="dialog"] *,
+    [role="alertdialog"],
+    [role="alertdialog"] *,
+    [role="menu"],
+    [role="menu"] *,
+    [data-radix-popper-content-wrapper] *
   ) {
   /* -webkit- must come BEFORE the unprefixed property: LightningCSS (vite
    * build) collapses the pair and keeps only the last declaration. */
@@ -815,15 +820,19 @@ aside[aria-label="Workspace"][data-maximized] {
   pointer-events: none !important;
 }
 
-/* Popovers/menus — same glass treatment */
-.dark [data-slot="popover-content"],
-.dark [data-slot="select-content"],
-.dark [role="menu"],
-.dark [data-radix-popper-content-wrapper] > * {
-  /* -webkit- before unprefixed — see comment on the bg-card rule above. */
-  -webkit-backdrop-filter: blur(24px) saturate(150%) !important;
-  backdrop-filter: blur(24px) saturate(150%) !important;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+/* Overlay content stays opaque even for legacy translucent palette tokens.
+ * Backdrop dimming/blur belongs to the separate modal overlay. */
+.bg-popover,
+[data-slot="popover-content"],
+[data-slot="select-content"],
+[role="menu"],
+[role="dialog"],
+[role="alertdialog"] {
+  background-color: var(--card-solid);
+  background-color: rgb(from var(--popover) r g b / 1);
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  filter: none;
 }
 
 /* Native clearance uses window pixels, independent of rem and page zoom.

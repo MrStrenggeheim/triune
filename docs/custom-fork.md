@@ -148,5 +148,6 @@ Sidebar/rail/palette scrollbars are hidden without removing scrolling.
 Offline shell history stays passive and readable, with typed authorization/routing failures preserved and safe notifications.
 Shared shell labels retain acknowledged Stop and distinguish unknown outcomes from known success.
 Exceptional provider Notices and a compact Usage control live in the conversation header.
-Usage separates observed context, session accounting and provider quota; ordinary healthy quota updates do not keep the composer shelf open.
+Usage prioritizes observed context, compact session totals and reported quota windows; token/cache accounting and observation details expand on demand.
+Interactive popup surfaces use opaque theme colors so their text and controls remain readable in dark mobile views.
 Information retains agent/session details, MCP controls, policies and version diagnostics.
