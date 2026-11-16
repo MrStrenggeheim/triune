@@ -151,7 +151,7 @@ describe("project folder header icon/chevron", () => {
     const empty = action.closest(".sidebar-row")!;
     const sectionBody = empty.parentElement!.parentElement!;
     expect(sectionBody.style.paddingInlineStart).toBe(
-      "calc(var(--list-row-padding-inline) + 12px)",
+      "calc(var(--list-row-padding-inline) + 8px + var(--list-row-gap) + 0 * var(--sidebar-tree-indent, 10px))",
     );
     expect(sectionBody.querySelector("[data-sidebar-tree-guide]")).toHaveClass(
       "w-px",

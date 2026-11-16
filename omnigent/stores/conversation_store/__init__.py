@@ -792,6 +792,9 @@ class ConversationStore(ABC):
         before: str | None = None,
         order: str = "asc",
         type: str | None = None,
+        *,
+        after_position: int | None = None,
+        through_position: int | None = None,
     ) -> PagedList[ConversationItem]:
         """
         Return items in a conversation with cursor-based pagination.
@@ -823,6 +826,12 @@ class ConversationStore(ABC):
             enumeration.
         """
         ...
+
+    def item_checkpoint(
+        self, conversation_id: str, *, through_position: int | None = None
+    ) -> dict[str, Any]:
+        """Summarize committed item membership without reading message bodies."""
+        raise NotImplementedError
 
     @abstractmethod
     def list_latest_message_items_for_conversations(

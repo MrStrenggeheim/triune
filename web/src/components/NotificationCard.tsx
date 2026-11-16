@@ -1,5 +1,5 @@
 // Modified for Triune.
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import { CheckIcon, CircleAlertIcon, InfoIcon, Loader2Icon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { CloseButton } from "@/components/CloseButton";
@@ -26,6 +26,14 @@ export function NotificationCard({
   entry: NotificationEntry;
   history?: boolean;
 }) {
+  useEffect(
+    () => () => {
+      // A preview can move into history while hovered or focused.
+      setNotificationPaused(entry.id, false, "pointer");
+      setNotificationPaused(entry.id, false, "focus");
+    },
+    [entry.id],
+  );
   const active = entry.type === "loading" || entry.progress?.active === true;
   if (entry.jsx && entry.dismissible === false) {
     return (

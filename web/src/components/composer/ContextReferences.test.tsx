@@ -74,6 +74,30 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+it("keeps reference selection and capture actions from submitting the composed draft", async () => {
+  const submit = vi.fn((event) => event.preventDefault());
+  render(
+    <form onSubmit={submit}>
+      <textarea aria-label="Composed draft" defaultValue="Keep this draft" />
+      <ComposerMentionMenu
+        query=""
+        destinationId="target"
+        onReference={vi.fn()}
+        currentDir=""
+        activeIndex={-1}
+        entries={[]}
+        onAttach={vi.fn()}
+        onOpenDir={vi.fn()}
+      />
+    </form>,
+  );
+  fireEvent.click(await screen.findByRole("button", { name: "Destination" }));
+  fireEvent.click(screen.getByRole("button", { name: "Whole chat" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Add reference" }));
+  expect(submit).not.toHaveBeenCalled();
+  expect(screen.getByLabelText("Composed draft")).toHaveValue("Keep this draft");
+});
+
 it.each([
   ["Whole chat", "whole"],
   ["Last completed answer", "last_answer"],
@@ -91,7 +115,6 @@ it.each([
       onOpenDir={vi.fn()}
     />,
   );
-  fireEvent.click(screen.getByRole("tab", { name: "Chats" }));
   fireEvent.click(await screen.findByRole("button", { name: "Destination" }));
   fireEvent.click(screen.getByRole("button", { name: label }));
   expect(await screen.findByText(reference.audience)).toBeVisible();
@@ -206,7 +229,6 @@ it("chooses explicit messages and never substitutes a summary for an oversized w
       onOpenDir={vi.fn()}
     />,
   );
-  fireEvent.click(screen.getByRole("tab", { name: "Chats" }));
   fireEvent.click(await screen.findByRole("button", { name: "Destination" }));
   fireEvent.click(screen.getByRole("button", { name: "Whole chat" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("nothing was summarized");
@@ -246,4 +268,158 @@ it("hydrates inserted snapshot chips into an open composer and restores them aft
   expect(restored.result.current.mentionedItems[0].reference).toEqual(reference);
   act(() => clearSessionDrafts());
   expect(restored.result.current.mentionedItems).toEqual([]);
+});
+
+it("merges ranked files, folders and chats without selectors or form submission", async () => {
+  const onSubmit = vi.fn((event) => event.preventDefault());
+  const onAttach = vi.fn();
+  const onOpenDir = vi.fn();
+  const view = render(
+    <form onSubmit={onSubmit}>
+      <textarea aria-label="Draft" defaultValue="Keep @Destination and text" />
+      <input type="file" aria-label="Draft files" />
+      <ComposerMentionMenu
+        query="Destination"
+        destinationId="target"
+        onReference={vi.fn()}
+        currentDir=""
+        activeIndex={0}
+        entries={[
+          {
+            name: "Destination-files",
+            path: "Destination-files",
+            type: "directory",
+            bytes: null,
+            modified_at: null,
+          },
+          {
+            name: "Destination.txt",
+            path: "Destination.txt",
+            type: "file",
+            bytes: 1,
+            modified_at: null,
+          },
+        ]}
+        onAttach={onAttach}
+        onOpenDir={onOpenDir}
+      />
+    </form>,
+  );
+  await screen.findByRole("button", { name: "Destination" });
+  expect(screen.queryByRole("tablist")).toBeNull();
+  const rows = screen.getAllByRole("option");
+  expect(rows.map((row) => row.textContent)).toEqual([
+    "Destination",
+    "Destination-files/folder",
+    "Destination.txt",
+  ]);
+  expect(rows[0].querySelector(".lucide-message-circle")).not.toBeNull();
+  expect(rows[1].querySelector(".lucide-folder")).not.toBeNull();
+  expect(rows[2].querySelector(".lucide-file-text")).not.toBeNull();
+  expect(
+    Array.from(view.container.querySelectorAll("button")).every(
+      (button) => button.type === "button",
+    ),
+  ).toBe(true);
+  const draft = screen.getByRole("textbox", { name: "Draft" });
+  const files = screen.getByLabelText("Draft files") as HTMLInputElement;
+  const file = new File(["keep"], "keep.txt");
+  fireEvent.change(files, { target: { files: [file] } });
+  draft.focus();
+  fireEvent.keyDown(draft, { key: "ArrowDown" });
+  fireEvent.keyDown(draft, { key: "Enter" });
+  expect(onOpenDir).toHaveBeenCalledExactlyOnceWith("Destination-files");
+  fireEvent.keyDown(draft, { key: "Tab" });
+  expect(onAttach).toHaveBeenCalledWith("Destination-files", true);
+  fireEvent.click(screen.getByRole("button", { name: "Destination.txt" }));
+  expect(onAttach).toHaveBeenCalledWith("Destination.txt", false);
+  fireEvent.compositionStart(draft);
+  fireEvent.keyDown(draft, { key: "Enter", isComposing: true });
+  expect(onOpenDir).toHaveBeenCalledOnce();
+  fireEvent.compositionEnd(draft);
+  expect(onSubmit).not.toHaveBeenCalled();
+  expect(draft).toHaveValue("Keep @Destination and text");
+  expect(files.files?.[0]).toBe(file);
+});
+
+it("cancels stale chat searches when the mention changes", async () => {
+  let finish!: (page: { data: api.ReferenceChat[]; has_more: boolean; next_cursor: null }) => void;
+  let signal: AbortSignal | undefined;
+  vi.mocked(api.searchReferenceChats).mockImplementationOnce((_query, _writable, nextSignal) => {
+    signal = nextSignal;
+    return new Promise((resolve) => {
+      finish = resolve;
+    });
+  });
+  const picker = (query: string) => (
+    <ComposerMentionMenu
+      query={query}
+      destinationId="target"
+      onReference={vi.fn()}
+      currentDir=""
+      activeIndex={0}
+      entries={[]}
+      onAttach={vi.fn()}
+      onOpenDir={vi.fn()}
+    />
+  );
+  const view = render(picker("old"));
+  view.rerender(picker("new"));
+  expect(signal?.aborted).toBe(true);
+  await screen.findByRole("button", { name: "Destination" });
+  await act(async () =>
+    finish({
+      data: [{ id: "old", title: "Stale chat", parent_id: null }],
+      has_more: false,
+      next_cursor: null,
+    }),
+  );
+  expect(screen.queryByRole("button", { name: "Stale chat" })).toBeNull();
+  expect(api.searchReferenceChats).toHaveBeenLastCalledWith(
+    "new",
+    false,
+    expect.any(AbortSignal),
+    undefined,
+    false,
+  );
+});
+
+it("keeps mobile Enter and IME input available without selecting or submitting references", async () => {
+  const original = window.matchMedia.bind(window);
+  const media = vi.spyOn(window, "matchMedia").mockImplementation((query) => ({
+    ...original(query),
+    matches: query === "(max-width: 767.98px)",
+  }));
+  try {
+    const attach = vi.fn(),
+      submit = vi.fn((event) => event.preventDefault());
+    render(
+      <form onSubmit={submit}>
+        <textarea aria-label="Mobile draft" defaultValue="Keep @Destination" />
+        <ComposerMentionMenu
+          query="Destination"
+          destinationId="target"
+          onReference={vi.fn()}
+          currentDir=""
+          activeIndex={0}
+          entries={[]}
+          onAttach={attach}
+          onOpenDir={vi.fn()}
+        />
+      </form>,
+    );
+    await screen.findByRole("button", { name: "Destination" });
+    const input = screen.getByRole("textbox", { name: "Mobile draft" });
+    input.focus();
+    expect(fireEvent.keyDown(input, { key: "Enter" })).toBe(true);
+    fireEvent.compositionStart(input);
+    expect(fireEvent.keyDown(input, { key: "Enter", isComposing: true, keyCode: 229 })).toBe(true);
+    fireEvent.compositionEnd(input);
+    expect(screen.queryByRole("button", { name: "Whole chat" })).toBeNull();
+    expect(input).toHaveValue("Keep @Destination");
+    expect(attach).not.toHaveBeenCalled();
+    expect(submit).not.toHaveBeenCalled();
+  } finally {
+    media.mockRestore();
+  }
 });

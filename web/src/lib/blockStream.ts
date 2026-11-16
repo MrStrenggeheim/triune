@@ -1065,6 +1065,9 @@ function* processEvent(state: ReducerState, event: StreamEvent): Generator<AnyBl
     case "session_mcp_startup":
     case "session_input_consumed":
     case "session_created":
+    case "session_sync":
+    case "session_heartbeat":
+    case "session_transport_error":
       return;
 
     // Mutates an existing block in the chat-store; see
@@ -1083,6 +1086,28 @@ function* processEvent(state: ReducerState, event: StreamEvent): Generator<AnyBl
  * sweeping, and reasoning↔text closure on tool calls and terminal
  * events.
  */
+function* positionedEventBlocks(state: ReducerState, event: StreamEvent): Generator<AnyBlock> {
+  const itemId =
+    "itemId" in event
+      ? event.itemId
+      : "item" in event && typeof event.item.id === "string"
+        ? event.item.id
+        : undefined;
+  for (const block of processEvent(state, event)) {
+    yield itemId &&
+    (block.ctx.itemId === itemId || block.ctx.itemId === slashCommandEchoItemId(itemId))
+      ? {
+          ...block,
+          ctx: {
+            ...block.ctx,
+            ...(event.position !== undefined ? { position: event.position } : {}),
+            ...(event.createdAtS !== undefined ? { createdAtS: event.createdAtS } : {}),
+          },
+        }
+      : block;
+  }
+}
+
 export class BlockStream {
   private flushThreshold: number;
 
@@ -1097,7 +1122,7 @@ export class BlockStream {
   async *reduce(events: AsyncIterable<StreamEvent>): AsyncIterable<AnyBlock> {
     const state = createState(this.flushThreshold);
     for await (const event of events) {
-      yield* processEvent(state, event);
+      yield* positionedEventBlocks(state, event);
     }
   }
 
@@ -1109,7 +1134,7 @@ export class BlockStream {
     const state = createState(this.flushThreshold);
     const out: AnyBlock[] = [];
     for (const event of events) {
-      for (const block of processEvent(state, event)) {
+      for (const block of positionedEventBlocks(state, event)) {
         out.push(block);
       }
     }

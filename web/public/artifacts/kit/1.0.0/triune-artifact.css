@@ -12,6 +12,8 @@
   --ta-control-surface: #eeecf2;
   --ta-secondary: #ffffff;
   --ta-border: #e4e1e9;
+  --ta-input: #e4e1e9;
+  --ta-input: #e4e1e9;
   --ta-ring: #68518b;
   --ta-success: #2ea65c;
   --ta-warning: #d4972a;
@@ -45,6 +47,7 @@
   --ta-hover: color-mix(in srgb, var(--ta-brand) 8%, var(--ta-content));
   --ta-hover-chrome: color-mix(in srgb, var(--ta-text) 6%, var(--ta-chrome));
   --ta-control-hover: var(--ta-control-surface);
+  --ta-control-active-border: color-mix(in srgb, var(--ta-primary) 35%, var(--ta-border));
   --ta-control-active: color-mix(in srgb, var(--ta-text) 10%, var(--ta-control-surface));
   --ta-close-hover: color-mix(in srgb, var(--ta-text) 12%, var(--ta-hover));
   --ta-close-active: color-mix(in srgb, var(--ta-text) 18%, var(--ta-hover));
@@ -64,6 +67,8 @@
   --ta-control-surface: #2d2933;
   --ta-secondary: #27272a;
   --ta-border: #39353f;
+  --ta-input: #39353f;
+  --ta-input: #39353f;
   --ta-ring: #68518b;
   --ta-error: #e65b77;
   color-scheme: dark;
@@ -81,6 +86,8 @@
     --ta-control-surface: #2d2933;
     --ta-secondary: #27272a;
     --ta-border: #39353f;
+    --ta-input: #39353f;
+    --ta-input: #39353f;
     --ta-ring: #68518b;
     --ta-error: #e65b77;
     color-scheme: dark;
@@ -121,6 +128,9 @@
 .ta-root :where(button, input, select, textarea, summary, a):focus-visible {
   outline: 3px solid color-mix(in srgb, var(--ta-ring) 50%, transparent);
   outline-offset: 2px;
+}
+.ta-root :is(.ta-btn, .ta-input, .ta-select, .ta-textarea):focus-visible {
+  border-color: var(--ta-control-active-border);
 }
 .ta-root :where(button, summary, select, label:has(input)) {
   cursor: pointer;
@@ -373,20 +383,24 @@
   accent-color: var(--ta-primary);
 }
 /* Checkbox's 16px surface and 4px corners follow the shared Checkbox, including its mixed state. */
-.ta-choice input[type="checkbox"] {
+.ta-root input[type="checkbox"] {
   appearance: none;
   display: grid;
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin: 0;
   place-content: center;
   border: 1px solid var(--ta-border);
   border-radius: var(--ta-radius-sm);
   background: var(--ta-content);
   color: var(--ta-primary-foreground);
 }
-.ta-choice input[type="checkbox"]:is(:checked, :indeterminate) {
+.ta-root input[type="checkbox"]:is(:checked, :indeterminate) {
   border-color: var(--ta-primary);
   background: var(--ta-primary);
 }
-.ta-choice input[type="checkbox"]:is(:checked, :indeterminate)::before {
+.ta-root input[type="checkbox"]:is(:checked, :indeterminate)::before {
   content: "";
   width: 12px;
   height: 12px;
@@ -394,15 +408,117 @@
   mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='none' stroke='black' stroke-width='3' stroke-linecap='round' stroke-linejoin='round' d='m20 6-11 11-5-5'/%3E%3C/svg%3E")
     center / contain no-repeat;
 }
-.ta-choice input[type="checkbox"]:indeterminate::before {
+.ta-root input[type="checkbox"]:indeterminate::before {
   mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='none' stroke='black' stroke-width='3' stroke-linecap='round' d='M5 12h14'/%3E%3C/svg%3E");
 }
 @media (forced-colors: active) {
-  .ta-choice input[type="checkbox"] {
+  .ta-root input[type="checkbox"] {
     appearance: auto;
   }
-  .ta-choice input[type="checkbox"]::before {
+  .ta-root input[type="checkbox"]::before {
     content: none;
+  }
+}
+/* Native range follows the app's theme-contrast-range: 6px track, 12px thumb. */
+.ta-root input[type="range"] {
+  --ta-range-progress: 0%;
+  appearance: none;
+  display: block;
+  width: 100%;
+  min-width: 0;
+  height: max(24px, var(--ta-target));
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ta-primary);
+  accent-color: var(--ta-primary);
+  cursor: pointer;
+}
+.ta-root input[type="range"]::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: var(--ta-radius-4xl);
+  background: linear-gradient(
+    to right,
+    var(--ta-primary) var(--ta-range-progress),
+    var(--ta-input, var(--ta-border)) var(--ta-range-progress)
+  );
+}
+.ta-root input[type="range"]:disabled {
+  cursor: default;
+}
+.ta-root input[type="range"]::-moz-range-track {
+  height: 6px;
+  border-radius: var(--ta-radius-4xl);
+  background: var(--ta-input, var(--ta-border));
+}
+.ta-root input[type="range"]::-moz-range-progress {
+  height: 6px;
+  border-radius: var(--ta-radius-4xl);
+  background: var(--ta-primary);
+}
+.ta-root input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  margin-top: -3px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--ta-primary);
+}
+.ta-root input[type="range"]::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--ta-primary);
+}
+.ta-root progress {
+  appearance: none;
+  display: block;
+  width: 100%;
+  height: 4px;
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--ta-radius-4xl);
+  background: var(--ta-control-surface);
+  color: var(--ta-primary);
+  accent-color: var(--ta-primary);
+}
+.ta-root progress::-webkit-progress-bar {
+  border-radius: inherit;
+  background: var(--ta-control-surface);
+}
+.ta-root progress::-webkit-progress-value {
+  border-radius: inherit;
+  background: var(--ta-primary);
+}
+.ta-root progress::-moz-progress-bar {
+  border-radius: inherit;
+  background: var(--ta-primary);
+}
+.ta-root progress.ta-progress--usage {
+  height: 3px;
+  border-radius: 0;
+}
+@media (forced-colors: active) {
+  .ta-root input[type="range"],
+  .ta-root progress {
+    appearance: auto;
+  }
+  .ta-root input[type="range"]::-webkit-slider-runnable-track,
+  .ta-root input[type="range"]::-moz-range-track,
+  .ta-root progress::-webkit-progress-bar {
+    background: Canvas;
+    outline: 1px solid CanvasText;
+  }
+  .ta-root input[type="range"]::-webkit-slider-thumb,
+  .ta-root input[type="range"]::-moz-range-thumb,
+  .ta-root input[type="range"]::-moz-range-progress,
+  .ta-root progress::-webkit-progress-value,
+  .ta-root progress::-moz-progress-bar {
+    background: Highlight;
   }
 }
 .ta-fieldset {

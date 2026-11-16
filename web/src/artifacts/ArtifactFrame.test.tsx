@@ -152,3 +152,36 @@ it("routes Open in tab through its consumer and uses the same opaque sandbox in 
   expect(frame.srcdoc).toContain("data-triune-kit-embedded");
   open.mockRestore();
 });
+
+it("caps inline documents to their dock view and expands through the existing route while retaining the iframe", async () => {
+  const onOpenTab = vi.fn();
+  const geometry = vi
+    .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+    .mockReturnValue({ top: 0, bottom: 400 } as DOMRect);
+  try {
+    renderFrame(
+      <div data-workbench-view="chat">
+        <ArtifactFrame
+          inline
+          html="<main>Retained</main>"
+          identity="inline:test"
+          title="Inline"
+          onOpenTab={onOpenTab}
+        />
+      </div>,
+    );
+    const frame = (await screen.findByTitle("Inline")) as HTMLIFrameElement;
+    const document = frame.srcdoc;
+    const container = frame.closest<HTMLElement>("[data-triune-artifact]")!;
+    expect(container.style.maxHeight).toContain("240px");
+    const scroller = screen.getByRole("region", { name: "Inline preview" });
+    scroller.scrollTop = 45;
+    fireEvent.click(screen.getByRole("button", { name: "Expand artifact" }));
+    expect(onOpenTab).toHaveBeenCalledOnce();
+    expect(screen.getByTitle("Inline")).toBe(frame);
+    expect(frame.srcdoc).toBe(document);
+    expect(scroller.scrollTop).toBe(45);
+  } finally {
+    geometry.mockRestore();
+  }
+});

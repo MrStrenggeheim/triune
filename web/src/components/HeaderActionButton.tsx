@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { forwardRef, type ComponentProps } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -18,7 +19,7 @@ export const HeaderActionButton = forwardRef<
       className={cn(
         className,
         "size-6 max-md:size-11 shrink-0 border-0 p-0 text-muted-foreground hover:text-foreground",
-        "bg-transparent hover:bg-transparent dark:hover:bg-transparent aria-expanded:bg-transparent focus-visible:border-transparent focus-visible:ring-0",
+        "bg-transparent hover:bg-transparent active:bg-transparent dark:hover:bg-transparent aria-expanded:bg-transparent focus-visible:border-transparent focus-visible:ring-0",
       )}
     >
       <span

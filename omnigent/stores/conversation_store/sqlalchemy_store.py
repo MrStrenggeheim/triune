@@ -810,6 +810,7 @@ def _to_item(row: SqlConversationItem, data_json: str) -> ConversationItem:
         created_at=row.created_at,
         data=parse_item_data(item_type, json.loads(data_json)),
         created_by=row.created_by,
+        position=row.position,
     )
 
 
@@ -2629,9 +2630,12 @@ class SqlAlchemyConversationStore(ConversationStore):
                 row.status = encode_item_status(status)
             return True
 
-        return run_write_transaction(
+        changed = run_write_transaction(
             self._conv_session_immediate, "transition_pending_input", write
         )
+        if changed:
+            self._invalidate_items(conversation_id, reset=True)
+        return changed
 
     def get_item(self, conversation_id: str, item_id: str) -> ConversationItem | None:
         """
@@ -2706,9 +2710,12 @@ class SqlAlchemyConversationStore(ConversationStore):
                 }
             )
 
-        return run_write_transaction(
+        item = run_write_transaction(
             self._conv_session_immediate, "confirm_framework_input", write
         )
+        if item is not None:
+            self._invalidate_items(conversation_id, reset=True)
+        return item
 
     def enrich_resource_event(
         self, conversation_id: str, item_id: str, data: dict[str, Any]
@@ -2747,9 +2754,18 @@ class SqlAlchemyConversationStore(ConversationStore):
             for key, value in data.items():
                 if key in REPORT_FIELDS:
                     continue
+                previous = resource.get(key)
+                if key == "task_input_position":
+                    if (
+                        previous is None
+                        and isinstance(value, int)
+                        and not isinstance(value, bool)
+                        and value >= 0
+                    ):
+                        resource[key] = value
+                    continue
                 if not value:
                     continue
-                previous = resource.get(key)
                 if not previous or (
                     key == "task_input"
                     and isinstance(value, str)
@@ -2763,7 +2779,10 @@ class SqlAlchemyConversationStore(ConversationStore):
             row.data = self._encode_item_data(updated.model_dump_json())
             return item.model_copy(update={"data": updated})
 
-        return run_write_transaction(self._conv_session_immediate, "enrich_resource_event", write)
+        item = run_write_transaction(self._conv_session_immediate, "enrich_resource_event", write)
+        if item is not None:
+            self._invalidate_items(conversation_id, reset=True)
+        return item
 
     def list_items(
         self,
@@ -2773,6 +2792,9 @@ class SqlAlchemyConversationStore(ConversationStore):
         before: str | None = None,
         order: str = "asc",
         type: str | None = None,
+        *,
+        after_position: int | None = None,
+        through_position: int | None = None,
     ) -> PagedList[ConversationItem]:
         """
         List items in a conversation with cursor-based pagination.
@@ -2823,6 +2845,10 @@ class SqlAlchemyConversationStore(ConversationStore):
                     SqlConversationItem.response_id != PENDING_INPUT_RESPONSE_ID,
                 )
             )
+            if after_position is not None:
+                stmt = stmt.where(SqlConversationItem.position > after_position)
+            if through_position is not None:
+                stmt = stmt.where(SqlConversationItem.position <= through_position)
             if type is not None:
                 stmt = stmt.where(SqlConversationItem.type == encode_item_type(type))
             if after:
@@ -2876,6 +2902,40 @@ class SqlAlchemyConversationStore(ConversationStore):
                 last_id=items[-1].id if items else None,
                 has_more=has_more,
             )
+
+    @staticmethod
+    def _invalidate_items(conversation_id: str, *, reset: bool) -> None:
+        from omnigent.runtime.session_stream import mark_items_changed
+
+        mark_items_changed(conversation_id, reset=reset)
+
+    def item_checkpoint(
+        self, conversation_id: str, *, through_position: int | None = None
+    ) -> dict[str, Any]:
+        """Return committed count and tail identity in one body-free statement."""
+        criteria = [
+            SqlConversationItem.workspace_id == current_workspace_id(),
+            SqlConversationItem.conversation_id == conversation_id,
+            SqlConversationItem.response_id != PENDING_INPUT_RESPONSE_ID,
+        ]
+        if through_position is not None:
+            criteria.append(SqlConversationItem.position <= through_position)
+        tail_id = (
+            select(SqlConversationItem.id)
+            .where(*criteria)
+            .order_by(SqlConversationItem.position.desc())
+            .limit(1)
+            .scalar_subquery()
+        )
+        with self._conv_session("item_checkpoint") as session:
+            count, position, item_id = session.execute(
+                select(
+                    func.count(SqlConversationItem.id),
+                    func.coalesce(func.max(SqlConversationItem.position), -1),
+                    tail_id,
+                ).where(*criteria)
+            ).one()
+        return {"last_position": position, "item_count": count, "last_item_id": item_id}
 
     @staticmethod
     def _resolve_item_cursor_position(
@@ -3281,6 +3341,7 @@ class SqlAlchemyConversationStore(ConversationStore):
                         created_at=cast(int, values["created_at"]),
                         data=item.data,
                         created_by=item.created_by,
+                        position=position,
                     )
                 )
                 if item.stable_id is not None:
@@ -3300,11 +3361,16 @@ class SqlAlchemyConversationStore(ConversationStore):
 
             return persisted
 
-        return run_write_transaction(
+        persisted = run_write_transaction(
             self._conv_session_immediate,
             "append_conversation_items",
             write,
         )
+        if any(not item.deduplicated for item in persisted):
+            self._invalidate_items(
+                conversation_id, reset=any(item.replaces_pending_id is not None for item in items)
+            )
+        return persisted
 
     def list_projects(
         self,
@@ -5964,6 +6030,7 @@ class SqlAlchemyConversationStore(ConversationStore):
             insert_metadata,
         )
 
+        self._invalidate_items(new_conv.id, reset=True)
         return _to_conversation(new_conv, fork_meta, fork_labels)
 
     def list_session_roots_for_agent(self, agent_id: str, limit: int) -> list[str]:
@@ -6165,6 +6232,8 @@ class SqlAlchemyConversationStore(ConversationStore):
         if ap_result is None:
             return False
         subtree_ids = ap_result
+        for deleted_id in subtree_ids:
+            self._invalidate_items(deleted_id, reset=True)
 
         def delete_metadata(session: Session) -> None:
             session.execute(

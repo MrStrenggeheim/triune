@@ -8079,6 +8079,90 @@ describe("full composer in independent conversation panes", () => {
     });
   });
 
+  it("focuses a retained main composer for each explicit open without restoring its draft again", async () => {
+    setSessionDraft("pane-second", { text: "Retained second draft", files: [] });
+    const consume = vi.fn(() => true);
+    const actions = { openConversation: vi.fn(), openView: vi.fn() };
+    const view = (id: number | null) => (
+      <WorkbenchProvider
+        value={{
+          ...actions,
+          composerFocus: {
+            request:
+              id === null
+                ? null
+                : {
+                    id,
+                    conversationId: "pane-second",
+                    viewId: "conversation:pane-second",
+                    scopeKey: "scope",
+                  },
+            consume,
+          },
+        }}
+      >
+        <Panes secondFocused />
+      </WorkbenchProvider>
+    );
+    const { rerender } = render(view(null));
+    expect(input("pane-second")).not.toHaveFocus();
+    fireEvent.change(input("pane-second"), { target: { value: "New unsent text" } });
+    input("pane-second").setSelectionRange(2, 5);
+    const focus = vi.spyOn(input("pane-second"), "focus");
+    rerender(view(1));
+    await waitFor(() => expect(input("pane-second")).toHaveFocus());
+    expect(focus).toHaveBeenLastCalledWith({ preventScroll: true });
+    expect(input("pane-second")).toHaveValue("New unsent text");
+    expect([input("pane-second").selectionStart, input("pane-second").selectionEnd]).toEqual([
+      2, 5,
+    ]);
+    rerender(view(null));
+    input("pane-first").focus();
+    rerender(view(2));
+    await waitFor(() => expect(input("pane-second")).toHaveFocus());
+    expect(consume).toHaveBeenCalledWith(1);
+    expect(consume).toHaveBeenCalledWith(2);
+  });
+
+  it.each(["mobile", "hidden", "read-only"] as const)(
+    "discards explicit focus for a %s composer",
+    async (variant) => {
+      if (variant === "mobile") {
+        const matchMedia = window.matchMedia;
+        vi.spyOn(window, "matchMedia").mockImplementation((query) => ({
+          ...matchMedia(query),
+          matches: query.includes("max-width: 767.98px"),
+        }));
+      }
+      const consume = vi.fn(() => true);
+      render(
+        <WorkbenchProvider
+          value={{
+            openConversation: vi.fn(),
+            openView: vi.fn(),
+            composerFocus: {
+              request: {
+                id: 1,
+                conversationId: "pane-second",
+                viewId: "conversation:pane-second",
+                scopeKey: "scope",
+              },
+              consume,
+            },
+          }}
+        >
+          <Panes
+            secondFocused
+            secondVisible={variant !== "hidden"}
+            secondReadOnly={variant === "read-only"}
+          />
+        </WorkbenchProvider>,
+      );
+      await waitFor(() => expect(consume).toHaveBeenCalledWith(1));
+      expect(input("pane-second")).not.toHaveFocus();
+    },
+  );
+
   it("gives global focus and model shortcuts only to a visible focused pane", async () => {
     const { rerender } = render(<Panes />);
     expect(document.activeElement).toBe(input("pane-first"));

@@ -692,3 +692,72 @@ it("retains saved preview identity and phase for only the second of two same-tur
     phase: "commentary",
   });
 });
+
+describe("canonical transcript wire metadata", () => {
+  it("preserves native identity, canonical order, phase and server time together", () => {
+    const item = {
+      id: "answer",
+      type: "message",
+      role: "assistant",
+      response_id: "turn",
+      position: 42,
+      created_at: 123,
+      phase: "final_answer",
+      stream_message_id: "native-answer",
+      content: [{ type: "output_text", text: "Answer" }],
+    };
+    expect(parseEvent("response.output_item.done", { item })).toMatchObject({
+      type: "message_done",
+      itemId: "answer",
+      position: 42,
+      createdAtS: 123,
+      phase: "final_answer",
+      messageId: "native-answer",
+      committedItem: item,
+    });
+  });
+
+  it("keeps revision and epoch separate from the canonical position cursor", () => {
+    expect(
+      parseEvent("session.sync", {
+        phase: "complete",
+        reset: true,
+        last_position: 42,
+        item_count: 12,
+        last_item_id: "tail",
+        stream_epoch: "epoch",
+        item_revision: 99,
+        reset_revision: 98,
+      }),
+    ).toEqual({
+      type: "session_sync",
+      phase: "complete",
+      reset: true,
+      lastPosition: 42,
+      itemCount: 12,
+      lastItemId: "tail",
+      streamEpoch: "epoch",
+      itemRevision: 99,
+      resetRevision: 98,
+    });
+  });
+
+  it.each([
+    { last_position: -2 },
+    { item_count: -1 },
+    { stream_epoch: null },
+    { phase: "partial" },
+  ])("rejects an unusable replay boundary %j", (invalid) => {
+    expect(
+      parseEvent("session.sync", {
+        phase: "complete",
+        reset: true,
+        last_position: -1,
+        item_count: 0,
+        last_item_id: null,
+        stream_epoch: "epoch",
+        ...invalid,
+      }),
+    ).toBeNull();
+  });
+});

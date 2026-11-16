@@ -55,7 +55,24 @@ export interface OpenConversationOptions {
   title?: string;
 }
 
+export interface ComposerFocusRequest {
+  id: number;
+  conversationId: string;
+  viewId: string;
+  scopeKey: string;
+}
+
+interface ComposerFocus {
+  request: ComposerFocusRequest | null;
+  consume: (id: number) => boolean;
+}
+const ComposerFocusContext = createContext<ComposerFocus | null>(null);
+export function useWorkbenchComposerFocus() {
+  return useContext(ComposerFocusContext);
+}
+
 export interface WorkbenchActions {
+  composerFocus?: ComposerFocus;
   openConversation: (id: string, options?: OpenConversationOptions) => void;
   openView: (request: OpenWorkbenchView, options?: { beside?: boolean }) => void;
   focusedConversationId?: string;
@@ -86,7 +103,9 @@ export function WorkbenchProvider({
   );
   return (
     <WorkbenchActionsContext.Provider value={actions}>
-      <WorkbenchContext.Provider value={selection}>{children}</WorkbenchContext.Provider>
+      <ComposerFocusContext.Provider value={value.composerFocus ?? null}>
+        <WorkbenchContext.Provider value={selection}>{children}</WorkbenchContext.Provider>
+      </ComposerFocusContext.Provider>
     </WorkbenchActionsContext.Provider>
   );
 }

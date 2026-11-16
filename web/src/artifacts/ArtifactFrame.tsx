@@ -5,6 +5,7 @@ import {
   DownloadIcon,
   ExternalLinkIcon,
   MoreHorizontalIcon,
+  MaximizeIcon,
   PanelsTopLeftIcon,
   WrapTextIcon,
 } from "lucide-react";
@@ -19,6 +20,7 @@ import { useViewerId } from "@/hooks/useViewerId";
 import { useConversationChatVisible } from "@/workbench/ScopedChatStore";
 import { openHtmlArtifactInNewTab } from "@/shell/codeViewerHelpers";
 import { toast } from "@/lib/notifications";
+import { useInlinePreviewBoundary } from "./inlinePreviewBoundary";
 import { artifactKit } from "./kit";
 import { ARTIFACT_SANDBOX, buildArtifactDocument, type ArtifactTheme } from "./artifactDocument";
 import { serializeArtifactState } from "./artifactProtocol";
@@ -58,11 +60,14 @@ export function ArtifactFrame({
   identity,
   title,
   onOpenTab,
+  inline = false,
 }: {
   html: string;
   identity: string;
   title: string;
   onOpenTab?: () => void;
+  /** In-chat embeds use the owning view cap; standalone previews keep their full area. */
+  inline?: boolean;
 }) {
   const viewerId = useViewerId();
   const chatVisible = useConversationChatVisible();
@@ -72,6 +77,7 @@ export function ArtifactFrame({
   const currentTheme = useRef<ArtifactTheme | undefined>(undefined);
   const container = useRef<HTMLDivElement>(null);
   const frame = useRef<HTMLIFrameElement>(null);
+  const boundaryStyle = useInlinePreviewBoundary(container, inline);
   const documentIdentity = useMemo(
     () => ({ html, identity, viewerId, channel: crypto.randomUUID() }),
     [html, identity, viewerId],
@@ -204,13 +210,26 @@ export function ArtifactFrame({
     });
   }
 
+  function openWindow() {
+    if (
+      !openHtmlArtifactInNewTab(completeDocument(), title, window, {
+        sandbox: ARTIFACT_SANDBOX,
+        newWindow: true,
+        prepared: true,
+      })
+    )
+      toast.error("The artifact window was blocked. Allow popups and retry.");
+  }
+
   return (
     <div
       ref={container}
-      className="not-prose min-w-0 rounded-lg border border-border bg-background"
+      className="not-prose flex min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border border-border bg-background"
+      style={boundaryStyle}
       data-triune-artifact={identity}
+      data-inline-preview={inline || undefined}
     >
-      <header className="flex min-h-10 items-center gap-2 border-b border-border px-2">
+      <header className="flex min-h-10 shrink-0 items-center gap-2 border-b border-border px-2">
         <span className="min-w-0 flex-1 truncate text-sm">{title}</span>
         <Tooltip>
           <TooltipTrigger asChild>
@@ -241,6 +260,16 @@ export function ArtifactFrame({
           </TooltipTrigger>
           <TooltipContent>Download artifact</TooltipContent>
         </Tooltip>
+        {inline && (
+          <HeaderActionButton
+            aria-label="Expand artifact"
+            tooltip="Expand artifact"
+            disabled={!documentHtml}
+            onClick={onOpenTab ?? openWindow}
+          >
+            <MaximizeIcon />
+          </HeaderActionButton>
+        )}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <HeaderActionButton aria-label="More" tooltip={false}>
@@ -251,63 +280,63 @@ export function ArtifactFrame({
             <DropdownMenuItem disabled={!onOpenTab} onSelect={onOpenTab}>
               <PanelsTopLeftIcon /> Open in tab
             </DropdownMenuItem>
-            <DropdownMenuItem
-              disabled={!documentHtml}
-              onSelect={() => {
-                if (
-                  !openHtmlArtifactInNewTab(completeDocument(), title, window, {
-                    sandbox: ARTIFACT_SANDBOX,
-                    newWindow: true,
-                    prepared: true,
-                  })
-                )
-                  toast.error("The artifact window was blocked. Allow popups and retry.");
-              }}
-            >
+            <DropdownMenuItem disabled={!documentHtml} onSelect={openWindow}>
               <ExternalLinkIcon /> Open in new window
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </header>
-      {!documentHtml && (
-        <p role="status" className="p-3 text-sm text-muted-foreground">
-          Preparing artifact…
-        </p>
-      )}
-      {documentHtml && (
-        <iframe
-          ref={frame}
-          title={title}
-          sandbox={ARTIFACT_SANDBOX}
-          referrerPolicy="no-referrer"
-          srcDoc={documentHtml}
-          hidden={source}
-          className="block w-full border-0"
-          style={{ height }}
-          onLoad={() => container.current?.dispatchEvent(new Event("triune-artifact:update"))}
-        />
-      )}
-      {source && (
-        <div className="max-h-[60dvh] overflow-auto">
-          <CodeBlock code={html} language={html.length > 512 * 1024 ? "text" : "html"} wrap={wrap}>
-            <CodeBlockHeader>
-              <CodeBlockTitle>HTML</CodeBlockTitle>
-              <CodeBlockActions>
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  aria-label="Toggle word wrap"
-                  aria-pressed={wrap}
-                  onClick={() => setWrap(!wrap)}
-                >
-                  <WrapTextIcon />
-                </Button>
-                <CodeBlockCopyButton aria-label="Copy source" />
-              </CodeBlockActions>
-            </CodeBlockHeader>
-          </CodeBlock>
-        </div>
-      )}
+      <div
+        className="min-h-0 overflow-auto overscroll-contain"
+        role="region"
+        aria-label={`${title} preview`}
+        tabIndex={0}
+      >
+        {!documentHtml && (
+          <p role="status" className="p-3 text-sm text-muted-foreground">
+            Preparing artifact…
+          </p>
+        )}
+        {documentHtml && (
+          <iframe
+            ref={frame}
+            title={title}
+            sandbox={ARTIFACT_SANDBOX}
+            referrerPolicy="no-referrer"
+            srcDoc={documentHtml}
+            hidden={source}
+            className="block w-full border-0"
+            style={{ height, display: source ? "none" : undefined }}
+            onLoad={() => container.current?.dispatchEvent(new Event("triune-artifact:update"))}
+          />
+        )}
+        {source && (
+          <div>
+            <CodeBlock
+              className="rounded-none border-0"
+              code={html}
+              language={html.length > 512 * 1024 ? "text" : "html"}
+              wrap={wrap}
+            >
+              <CodeBlockHeader>
+                <CodeBlockTitle>HTML</CodeBlockTitle>
+                <CodeBlockActions>
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    aria-label="Toggle word wrap"
+                    aria-pressed={wrap}
+                    onClick={() => setWrap(!wrap)}
+                  >
+                    <WrapTextIcon />
+                  </Button>
+                  <CodeBlockCopyButton aria-label="Copy source" />
+                </CodeBlockActions>
+              </CodeBlockHeader>
+            </CodeBlock>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

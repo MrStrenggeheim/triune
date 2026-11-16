@@ -165,3 +165,26 @@ it("skips an untouched blank editor while retaining its legal empty batch payloa
   fireEvent.click(screen.getByRole("button", { name: "Submit (0/2)" }));
   expect(submit).toHaveBeenCalledWith({ first: "" });
 });
+
+it("owns one visible focus treatment on the answer row while the inner controls stay neutral", () => {
+  const onSubmit = vi.fn();
+  render(
+    <AskUserQuestionForm
+      questions={questions}
+      onSubmit={onSubmit}
+      onReject={vi.fn()}
+      presentation="popup"
+    />,
+  );
+  const input = screen.getByRole("textbox", { name: "Custom answer text" });
+  const row = input.closest("label")!;
+  expect(row).toHaveClass("has-[:focus-visible]:ring-3", "has-[:focus-visible]:ring-ring/50");
+  expect(input).toHaveClass("outline-none");
+  expect(input.className).not.toMatch(/focus-visible:ring/);
+  expect(screen.getByTestId("ask-user-question-custom-toggle").className).not.toMatch(
+    /focus-visible:ring/,
+  );
+  fireEvent.change(input, { target: { value: "Keep this answer" } });
+  expect(row).toHaveClass("border-[var(--workspace-control-active-border)]");
+  expect(onSubmit).not.toHaveBeenCalled();
+});

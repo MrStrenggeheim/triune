@@ -12,7 +12,6 @@ import {
 } from "react";
 import * as DialogPrimitive from "radix-ui/dialog";
 import {
-  XIcon,
   ZoomInIcon,
   ZoomOutIcon,
   ChevronLeftIcon,
@@ -23,6 +22,8 @@ import {
 
 import { getEmbedRoot } from "@/lib/host";
 import { Button } from "@/components/ui/button";
+import { CloseButton } from "@/components/CloseButton";
+import { WorkspaceTabsScroller } from "@/shell/WorkspaceTabsScroller";
 import { cn } from "@/lib/utils";
 import { useChatImageGallery, type ChatGalleryScope } from "./ChatImageGallery";
 import { gallerySwipe, type GalleryImage } from "./imageGallery";
@@ -37,6 +38,39 @@ const ZOOM_STEP = 0.25;
 
 /** Pointer travel that separates a pan from a click, in CSS pixels. */
 const DRAG_SLOP_PX = 4;
+
+const PREVIEW_CONTROL_SURFACE =
+  "bg-background/80 text-foreground shadow-sm ring-1 ring-foreground/10 backdrop-blur-xs";
+
+/** Existing button/close roles with one material and isolated overlay hit targets. */
+const PreviewControl = React.forwardRef<
+  HTMLButtonElement,
+  React.ComponentProps<typeof Button> & { close?: boolean; grouped?: boolean }
+>(function PreviewControl({ close, grouped, className, onClick, onPointerDown, ...props }, ref) {
+  const Control = close ? CloseButton : Button;
+  return (
+    <Control
+      type="button"
+      variant="ghost"
+      size="icon-sm"
+      {...props}
+      ref={ref}
+      className={cn(
+        !grouped && PREVIEW_CONTROL_SURFACE,
+        "disabled:pointer-events-auto motion-reduce:transition-none [@media(any-pointer:coarse)]:min-h-11 [@media(any-pointer:coarse)]:min-w-11",
+        className,
+      )}
+      onPointerDown={(event) => {
+        event.stopPropagation();
+        onPointerDown?.(event);
+      }}
+      onClick={(event) => {
+        event.stopPropagation();
+        onClick?.(event);
+      }}
+    />
+  );
+});
 
 function useGalleryImageSource(source: string, initial?: string, enabled = true) {
   // External previews follow the browser's image path, never the session fetcher.
@@ -78,7 +112,6 @@ function GalleryThumbnail({
   useEffect(() => {
     const node = ref.current;
     if (!node) return;
-    if (selected) node.scrollIntoView?.({ block: "nearest", inline: "nearest" });
     if (typeof IntersectionObserver === "undefined") {
       setVisible(true);
       return;
@@ -93,6 +126,10 @@ function GalleryThumbnail({
     return () => observer.disconnect();
   }, [selected]);
   const display = useGalleryImageSource(image.source, undefined, visible || selected);
+  const [decoded, setDecoded] = useState<string>();
+  const [failed, setFailed] = useState<string>();
+  const unavailable = display.error || (!!display.src && failed === display.src);
+  const loading = !unavailable && (!display.src || decoded !== display.src);
   return (
     <Button
       ref={ref}
@@ -100,23 +137,41 @@ function GalleryThumbnail({
       variant="ghost"
       aria-label={`View image ${index + 1}: ${image.alt}`}
       aria-current={selected ? "true" : undefined}
-      className={cn(
-        "h-12 w-16 shrink-0 overflow-hidden rounded-md border p-0",
-        selected ? "border-primary ring-1 ring-primary" : "border-border bg-background/80",
-      )}
+      aria-busy={loading}
+      aria-description={unavailable ? "Thumbnail unavailable" : undefined}
+      className="h-16 w-20 shrink-0 p-0 motion-reduce:transition-none"
       onClick={onSelect}
     >
-      {display.src ? (
-        <img
-          src={display.src}
-          alt=""
-          loading="lazy"
-          referrerPolicy="no-referrer"
-          className="size-full object-cover"
-        />
-      ) : (
-        <ImageIcon className="size-4 text-muted-foreground" />
-      )}
+      <span
+        data-gallery-thumbnail-visual
+        className={cn(
+          "relative flex h-12 w-16 items-center justify-center overflow-hidden rounded-md border bg-muted",
+          selected ? "scale-110 border-primary ring-1 ring-primary" : "border-border",
+        )}
+      >
+        {loading && <span aria-hidden="true" className="absolute inset-0 bg-muted" />}
+        {display.src && !unavailable && (
+          <img
+            src={display.src}
+            alt=""
+            loading="lazy"
+            referrerPolicy="no-referrer"
+            className={cn("size-full object-cover", loading && "opacity-0")}
+            onLoad={async (event) => {
+              const node = event.currentTarget;
+              const src = display.src;
+              try {
+                await node.decode?.();
+                setDecoded(src);
+              } catch {
+                setFailed(src);
+              }
+            }}
+            onError={() => setFailed(display.src)}
+          />
+        )}
+        {unavailable && <ImageIcon className="size-4 text-muted-foreground" />}
+      </span>
     </Button>
   );
 }
@@ -236,8 +291,7 @@ export function ZoomableImage({
  * Zoom: scroll wheel, the +/- toolbar buttons, or
  * double-click to toggle between fit and 2x. Pan: drag while zoomed in. The
  * image is `object-contain` within a fixed-size viewport that clips overflow,
- * so the zoomed image never escapes the card. A click on the empty stage
- * around the image dismisses the preview.
+ * so the zoomed image never escapes the card. Content clicks toggle overlays.
  */
 function ZoomViewer({
   image,
@@ -245,12 +299,16 @@ function ZoomViewer({
   onNavigate,
   gallery,
   suppressClick,
+  controlsVisible,
+  onToggleControls,
 }: {
   image: LightboxImage;
   onClose: () => void;
   onNavigate: (direction: -1 | 1) => void;
   gallery: boolean;
   suppressClick: React.MutableRefObject<boolean>;
+  controlsVisible: boolean;
+  onToggleControls: () => void;
 }) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState(1);
@@ -338,13 +396,10 @@ function ZoomViewer({
     }
   };
 
-  // A click on the stage dismisses, but only a real one: a click whose target
-  // is the image (or the toolbar) is not "outside", and the click a pan leaves
-  // behind when the pointer is released would otherwise close the preview
-  // every time someone repositions a zoomed image.
-  const onStageClick = (e: React.MouseEvent) => {
-    if (e.target !== e.currentTarget || pannedRef.current) return;
-    onClose();
+  const onStageClick = () => {
+    if (pannedRef.current) return;
+    // The two clicks of a double-click cancel, leaving chrome unchanged.
+    onToggleControls();
   };
 
   const zoomed = zoom > MIN_ZOOM;
@@ -353,7 +408,7 @@ function ZoomViewer({
     <>
       <div
         ref={viewportRef}
-        className="absolute inset-x-0 top-0 flex items-center justify-center overflow-hidden"
+        className="absolute inset-0 flex items-center justify-center overflow-hidden"
         data-testid="lightbox-stage"
         onClick={onStageClick}
         onDoubleClick={() => applyZoom(zoomed ? MIN_ZOOM : 2)}
@@ -362,9 +417,8 @@ function ZoomViewer({
         onPointerUp={endDrag}
         onPointerCancel={endDrag}
         style={{
-          bottom: gallery ? "calc(7rem + var(--omnigent-safe-bottom, 0px))" : 0,
           touchAction: "none",
-          cursor: zoomed ? (dragRef.current ? "grabbing" : "grab") : "zoom-in",
+          cursor: zoomed ? (dragRef.current ? "grabbing" : "grab") : "default",
         }}
       >
         <img
@@ -379,54 +433,57 @@ function ZoomViewer({
           }}
         />
         {!display.src && !display.error && (
-          <p role="status" className="text-sm text-white">
+          <p role="status" className={cn("rounded-md px-3 py-2 text-sm", PREVIEW_CONTROL_SURFACE)}>
             Loading image…
           </p>
         )}
         {display.error && (
-          <p role="alert" className="text-sm text-white">
+          <p role="alert" className={cn("rounded-md px-3 py-2 text-sm", PREVIEW_CONTROL_SURFACE)}>
             Image unavailable. Close and reopen to retry.
           </p>
         )}
       </div>
-      {/* Zoom toolbar — bottom-center pill. */}
-      <div
-        style={{
-          bottom: gallery
-            ? "calc(6rem + var(--omnigent-safe-bottom, 0px))"
-            : "calc(0.75rem + var(--omnigent-safe-bottom, 0px))",
-        }}
-        className={cn(
-          "absolute left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-full bg-background/80 p-1 shadow-sm ring-1 ring-foreground/10 backdrop-blur-xs",
-          gallery ? "bottom-24" : "bottom-3",
-        )}
-      >
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          aria-label="Zoom out"
-          disabled={zoom <= MIN_ZOOM}
-          onClick={() => applyZoom(zoom - ZOOM_STEP * 2)}
+      <div hidden={!controlsVisible}>
+        <div
+          style={{
+            bottom: "calc(6.5rem + var(--omnigent-safe-bottom, 0px))",
+          }}
+          className={cn(
+            "absolute left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-full p-1",
+            PREVIEW_CONTROL_SURFACE,
+          )}
         >
-          <ZoomOutIcon />
-        </Button>
-        <TooltipButton
-          type="button"
-          aria-label="Reset zoom"
-          className="min-w-[3ch] cursor-pointer text-center text-sm tabular-nums text-muted-foreground hover:text-foreground"
-          onClick={resetView}
-        >
-          {Math.round(zoom * 100)}%
-        </TooltipButton>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          aria-label="Zoom in"
-          disabled={zoom >= MAX_ZOOM}
-          onClick={() => applyZoom(zoom + ZOOM_STEP * 2)}
-        >
-          <ZoomInIcon />
-        </Button>
+          <PreviewControl
+            grouped
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Zoom out"
+            disabled={zoom <= MIN_ZOOM}
+            onClick={() => applyZoom(zoom - ZOOM_STEP * 2)}
+          >
+            <ZoomOutIcon />
+          </PreviewControl>
+          <PreviewControl
+            grouped
+            type="button"
+            aria-label="Reset zoom"
+            size="sm"
+            className="min-w-[3ch] cursor-pointer text-center text-sm tabular-nums text-muted-foreground hover:text-foreground"
+            onClick={resetView}
+          >
+            {Math.round(zoom * 100)}%
+          </PreviewControl>
+          <PreviewControl
+            grouped
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Zoom in"
+            disabled={zoom >= MAX_ZOOM}
+            onClick={() => applyZoom(zoom + ZOOM_STEP * 2)}
+          >
+            <ZoomInIcon />
+          </PreviewControl>
+        </div>
       </div>
     </>
   );
@@ -436,8 +493,7 @@ function ZoomViewer({
  * Provides a single shared full-screen image viewer for the whole app. Any
  * image wired with {@link useImageZoomProps} opens here. Built on the Radix
  * Dialog primitive, so Escape closes it for free; an explicit "x" button and a
- * click on the empty stage around the image give the other two close
- * affordances.
+ * vertical swipe at fit provide the other close affordances.
  */
 export function ImageLightboxProvider({ children }: { children: React.ReactNode }) {
   const [image, setImage] = useState<LightboxImage | null>(null);
@@ -448,10 +504,19 @@ export function ImageLightboxProvider({ children }: { children: React.ReactNode 
   const [historyState, setHistoryState] = useState<"loading" | "ready" | "error">("ready");
   const [retry, setRetry] = useState(0);
   const suppressClick = useRef(false);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const [controlsVisible, setControlsVisible] = useState(true);
+  const toggleControls = useCallback(() => {
+    // Move focus out before hiding the overlay that currently owns it.
+    dialogRef.current?.focus({ preventScroll: true });
+    setControlsVisible((visible) => !visible);
+  }, []);
   const open = useCallback((img: LightboxImage) => {
+    setControlsVisible(true);
     setImage(img);
     setOpening(img);
     setImages([]);
+    setHistoryState(img.gallery ? "loading" : "ready");
     setSelected(0);
     setViewKey((key) => key + 1);
     suppressClick.current = false;
@@ -505,7 +570,7 @@ export function ImageLightboxProvider({ children }: { children: React.ReactNode 
   const select = useCallback(
     (index: number) => {
       const next = images[index];
-      if (!next) return;
+      if (!next || index === selected) return;
       setSelected(index);
       setImage({
         src: "",
@@ -516,7 +581,7 @@ export function ImageLightboxProvider({ children }: { children: React.ReactNode 
       });
       setViewKey((key) => key + 1);
     },
-    [images],
+    [images, selected],
   );
   const navigate = useCallback(
     (direction: -1 | 1) => select(selected + direction),
@@ -569,6 +634,7 @@ export function ImageLightboxProvider({ children }: { children: React.ReactNode 
               dark backdrop and can zoom to fill the whole viewport, clipped to
               the screen rather than to a small card. */}
           <DialogPrimitive.Content
+            ref={dialogRef}
             className={cn(
               "fixed inset-0 z-[60] outline-none",
               "duration-150 ease-[cubic-bezier(0.16,1,0.3,1)]",
@@ -578,12 +644,15 @@ export function ImageLightboxProvider({ children }: { children: React.ReactNode 
             )}
             // The image carries its own description; the title is for a11y only.
             aria-describedby={undefined}
-            // The stage fills the viewport, so no click is ever "outside" it
-            // as far as Radix is concerned; dismissing on a click around the
-            // image is the stage's own handler, which can tell a click on the
-            // image or a finished pan from a real one.
             onInteractOutside={(e) => e.preventDefault()}
             onKeyDown={(event) => {
+              if (
+                !controlsVisible &&
+                ["Tab", "ArrowLeft", "ArrowRight", "Enter", " "].includes(event.key)
+              ) {
+                setControlsVisible(true);
+                if (event.key === "Tab") event.preventDefault();
+              }
               if (images.length > 1 && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
                 event.preventDefault();
                 event.stopPropagation();
@@ -603,99 +672,121 @@ export function ImageLightboxProvider({ children }: { children: React.ReactNode 
                 onNavigate={navigate}
                 gallery={images.length > 1}
                 suppressClick={suppressClick}
+                controlsVisible={controlsVisible}
+                onToggleControls={toggleControls}
               />
             )}
-            {images.length > 1 && (
-              <>
-                <Button
-                  type="button"
-                  size="icon"
-                  variant="ghost"
-                  aria-label="Previous image"
-                  disabled={selected === 0}
-                  className="absolute top-1/2 left-3 bg-background/80"
-                  onClick={() => navigate(-1)}
-                >
-                  <ChevronLeftIcon />
-                </Button>
-                <Button
-                  type="button"
-                  size="icon"
-                  variant="ghost"
-                  aria-label="Next image"
-                  disabled={selected === images.length - 1}
-                  className="absolute top-1/2 right-3 bg-background/80"
-                  onClick={() => navigate(1)}
-                >
-                  <ChevronRightIcon />
-                </Button>
-                <div
-                  className="absolute inset-x-3 bottom-3 flex flex-col items-center gap-1"
-                  style={{ paddingBottom: "var(--omnigent-safe-bottom, 0px)" }}
-                >
-                  <p aria-live="polite" className="text-xs text-white">
-                    {selected + 1} / {images.length}
-                  </p>
-                  <div
-                    role="group"
-                    aria-label="Chat images"
-                    className="flex max-w-full gap-1 overflow-x-auto p-1"
+            <p role="status" className="sr-only">
+              {historyState === "loading"
+                ? "Loading chat images…"
+                : historyState === "error"
+                  ? "Could not load chat images. Retry image history."
+                  : images.length
+                    ? `Image ${selected + 1} of ${images.length}`
+                    : ""}
+            </p>
+            <div hidden={!controlsVisible} data-lightbox-controls>
+              {images.length > 1 && (
+                <>
+                  <PreviewControl
+                    size="icon"
+                    aria-label="Previous image"
+                    disabled={selected === 0}
+                    className="absolute top-1/2 -translate-y-1/2"
+                    style={{ left: "calc(0.75rem + var(--omnigent-safe-left, 0px))" }}
+                    onClick={() => navigate(-1)}
                   >
-                    {images.map((entry, index) => (
-                      <GalleryThumbnail
-                        key={entry.id}
-                        image={entry}
-                        index={index}
-                        selected={index === selected}
-                        onSelect={() => select(index)}
-                      />
+                    <ChevronLeftIcon />
+                  </PreviewControl>
+                  <PreviewControl
+                    size="icon"
+                    aria-label="Next image"
+                    disabled={selected === images.length - 1}
+                    className="absolute top-1/2 -translate-y-1/2"
+                    style={{ right: "calc(0.75rem + var(--omnigent-safe-right, 0px))" }}
+                    onClick={() => navigate(1)}
+                  >
+                    <ChevronRightIcon />
+                  </PreviewControl>
+                </>
+              )}
+              <div
+                className="absolute flex flex-col items-center gap-1"
+                style={{
+                  left: "calc(0.75rem + var(--omnigent-safe-left, 0px))",
+                  right: "calc(0.75rem + var(--omnigent-safe-right, 0px))",
+                  bottom: "calc(0.75rem + var(--omnigent-safe-bottom, 0px))",
+                }}
+              >
+                {historyState === "loading" && (
+                  <div
+                    aria-hidden="true"
+                    className="flex h-16 max-w-full items-center gap-1 overflow-hidden"
+                  >
+                    {[0, 1, 2].map((slot) => (
+                      <span key={slot} className="h-12 w-16 shrink-0 rounded-md bg-muted" />
                     ))}
                   </div>
-                </div>
-              </>
-            )}
-            {historyState === "loading" && (
-              <p role="status" className="absolute bottom-16 left-3 text-xs text-white">
-                Loading chat images…
-              </p>
-            )}
-            {historyState === "error" && (
-              <Button
-                type="button"
-                variant="secondary"
-                className="absolute bottom-16 left-3"
-                onClick={() => setRetry((count) => count + 1)}
-              >
-                Retry image history
-              </Button>
-            )}
-            <Button
-              type="button"
-              size="icon-sm"
-              variant="ghost"
-              aria-label="Download image"
-              className="absolute left-3 bg-background/70 hover:bg-background/90"
-              style={{ top: "calc(0.75rem + var(--omnigent-safe-top, 0px))" }}
-              onClick={() => void downloadImage()}
-            >
-              <DownloadIcon />
-            </Button>
-            <DialogPrimitive.Close asChild>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                // Offset by the top safe-area inset so the button clears the
-                // status bar / notch on native shells and stays tappable.
+                )}
+                {historyState === "ready" && images.length > 0 && (
+                  <>
+                    <p
+                      aria-hidden="true"
+                      className={cn("rounded-md px-2 text-xs", PREVIEW_CONTROL_SURFACE)}
+                    >
+                      {selected + 1} / {images.length}
+                    </p>
+                    <WorkspaceTabsScroller
+                      role="group"
+                      aria-label="Chat images"
+                      grow={false}
+                      activeAlignment="center"
+                      activeKey={images[selected]?.id}
+                      containWheel
+                      className="w-full"
+                      contentClassName="gap-1"
+                    >
+                      {images.map((entry, index) => (
+                        <GalleryThumbnail
+                          key={entry.id}
+                          image={entry}
+                          index={index}
+                          selected={index === selected}
+                          onSelect={() => select(index)}
+                        />
+                      ))}
+                    </WorkspaceTabsScroller>
+                  </>
+                )}
+                {historyState === "error" && (
+                  <PreviewControl size="sm" onClick={() => setRetry((count) => count + 1)}>
+                    Retry image history
+                  </PreviewControl>
+                )}
+              </div>
+              <PreviewControl
+                aria-label="Download image"
+                className="absolute"
                 style={{
                   top: "calc(0.75rem + var(--omnigent-safe-top, 0px))",
-                  right: "calc(0.75rem + var(--omnigent-safe-right, 0px))",
+                  left: "calc(0.75rem + var(--omnigent-safe-left, 0px))",
                 }}
-                className="absolute bg-background/70 hover:bg-background/90"
+                onClick={() => void downloadImage()}
               >
-                <XIcon />
-                <span className="sr-only">Close</span>
-              </Button>
-            </DialogPrimitive.Close>
+                <DownloadIcon />
+              </PreviewControl>
+              <DialogPrimitive.Close asChild>
+                <PreviewControl
+                  close
+                  aria-label="Close"
+                  className="absolute"
+                  style={{
+                    top: "calc(0.75rem + var(--omnigent-safe-top, 0px))",
+                    right: "calc(0.75rem + var(--omnigent-safe-right, 0px))",
+                  }}
+                />
+              </DialogPrimitive.Close>
+            </div>
           </DialogPrimitive.Content>
         </DialogPrimitive.Portal>
       </DialogPrimitive.Root>

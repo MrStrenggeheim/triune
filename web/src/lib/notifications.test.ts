@@ -158,6 +158,24 @@ describe("notification snapshots", () => {
 });
 
 describe("popup lifecycle", () => {
+  it("consumes previews on a center visit while preserving deadlines, progress patches and explicit reveals", () => {
+    const onAutoClose = vi.fn();
+    const id = toast("Saved", { onAutoClose });
+    vi.advanceTimersByTime(2000);
+    setNotificationCenterOpen(true);
+    expect(entry(id)).toMatchObject({ visible: true, previewSuppressed: true, unread: false });
+    const arriving = toast("During visit");
+    updateNotification(id, { progress: { active: true, value: 50 } });
+    setNotificationCenterOpen(false);
+    expect(entry(id)).toMatchObject({ visible: true, previewSuppressed: true });
+    expect(entry(arriving)).toMatchObject({ previewSuppressed: true, unread: false });
+    vi.advanceTimersByTime(8000);
+    expect(entry(id)?.visible).toBe(false);
+    expect(onAutoClose).toHaveBeenCalledOnce();
+    updateNotification(id, { title: "Explicit reveal" }, { reveal: true });
+    expect(entry(id)).toMatchObject({ visible: true, previewSuppressed: false, unread: true });
+  });
+
   it.each([
     ["normal", 10_000],
     ["success", 10_000],

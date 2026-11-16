@@ -421,30 +421,26 @@ describe("Sidebar session list", () => {
       selectSessionFilter("all");
 
       const sharedRow = screen.getByText("shared_session").closest("li")!;
-      const indicator = within(sharedRow).getByRole("img", { name: "Shared session" });
-      expect(indicator).not.toHaveAttribute("title");
-      expect(indicator.parentElement).toHaveAttribute("data-testid", "conversation-indicators");
+      const actions = within(sharedRow).getByTestId("conversation-actions");
+      expect(actions).not.toHaveAttribute("title");
+      expect(actions).toHaveAccessibleDescription(expect.stringContaining("Shared session"));
       expect(
         within(screen.getByText("private_session").closest("li")!).queryByRole("img"),
       ).toBeNull();
     },
   );
 
-  it("keeps the session state rightmost when a shared icon is also present", () => {
+  it("preserves sharing in the description alongside visible session state", () => {
     mockConversations([
-      conv("shared_running", "Claude Code", {
-        owner: "other@example.com",
-        status: "running",
-      }),
+      conv("shared_running", "Claude Code", { owner: "other@example.com", status: "running" }),
     ]);
     renderSidebar();
     selectSessionFilter("all");
-
     const row = screen.getByText("shared_running").closest("li")!;
-    const shared = within(row).getByRole("img", { name: "Shared session" });
-    const state = within(row).getByRole("img", { name: "Session running" });
-    expect(shared.parentElement).toBe(state.parentElement);
-    expect(shared.compareDocumentPosition(state) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(row).getByRole("img", { name: "Session running" })).toBeInTheDocument();
+    expect(within(row).getByTestId("conversation-actions")).toHaveAccessibleDescription(
+      expect.stringContaining("Shared session"),
+    );
   });
 
   it("does not mark the viewer's own sessions or sessions without ownership metadata", () => {
@@ -470,7 +466,9 @@ describe("Sidebar session list", () => {
     for (const filter of ["mine", "shared", "all", "archived"] as const) {
       selectSessionFilter(filter);
       const pinned = screen.getByText("Pinned").closest("section")!;
-      expect(within(pinned).getByRole("img", { name: "Shared session" })).toBeInTheDocument();
+      expect(within(pinned).getByTestId("conversation-actions")).toHaveAccessibleDescription(
+        expect.stringContaining("Shared session"),
+      );
     }
   });
 
@@ -616,27 +614,24 @@ describe("Sidebar session list", () => {
     act(() => setSessionDraft("conv_draft", { text: "unfinished message", files: [] }));
 
     const indicator = within(draftRow).getByTestId("conversation-draft-indicator");
-    expect(indicator).toHaveAccessibleName("Draft");
-    expect(indicator.parentElement).toHaveClass("flex", "shrink-0");
+    expect(indicator.closest("[role=img]")).toHaveAccessibleName("Draft");
+    expect(indicator.closest("button")).toHaveClass("shrink-0");
     expect(within(emptyRow).queryByTestId("conversation-draft-indicator")).toBeNull();
   });
 
-  it("lets the title shrink before the row actions", () => {
-    mockConversations([conv("conv_balanced", "Codex", { title: "Balanced row title" })]);
+  it("lets the title shrink before a stable action target", () => {
+    mockConversations([conv("balanced", "Claude Code", { title: "Balanced row title" })]);
     renderSidebar();
-    const link = screen.getByRole("link", { name: "Balanced row title" });
-    expect(link).toHaveClass("min-w-0", "flex-1");
-    const controls = screen.getByTestId("conversation-actions").parentElement!;
-    expect(controls).toHaveClass(
-      "shrink-0",
-      "md:w-0",
-      "md:group-hover/conversation:w-auto",
-      "md:group-focus-within/conversation:w-auto",
+    expect(screen.getByRole("link", { name: "Balanced row title" })).toHaveClass(
+      "min-w-0",
+      "flex-1",
     );
-    expect(controls).not.toHaveClass("absolute");
+    const target = screen.getByTestId("conversation-actions");
+    expect(target).toHaveClass("size-6", "shrink-0", "[@media(pointer:coarse)]:size-11");
+    expect(target.parentElement).not.toHaveClass("w-0", "md:w-0");
   });
 
-  it("keeps the approval tag in its own flex slot as actions appear", () => {
+  it("uses a compact count-aware question icon in the status surface", () => {
     mockConversations([
       conv("conv_awaiting", "Claude Code", {
         title: "Awaiting row title",
@@ -644,10 +639,11 @@ describe("Sidebar session list", () => {
       }),
     ]);
     renderSidebar();
-    const tag = screen.getByTestId("session-state-badge");
-    expect(tag).toHaveAttribute("data-state", "awaiting");
-    expect(tag.parentElement).toHaveClass("shrink-0");
-    expect(tag.parentElement!.className).not.toMatch(/absolute|opacity-0/);
+    const badge = screen.getByTestId("session-state-badge");
+    expect(badge).toHaveAttribute("data-state", "awaiting");
+    expect(badge).toHaveAttribute("aria-label", "1 approval prompt waiting");
+    expect(badge).not.toHaveTextContent("Needs response");
+    expect(badge.querySelector("svg")).not.toBeNull();
     expect(screen.getByRole("link", { name: "Awaiting row title" })).toHaveClass(
       "min-w-0",
       "flex-1",
@@ -661,11 +657,10 @@ describe("Sidebar session list", () => {
     renderSidebar();
     const slot = screen.getByTestId("conversation-indicators");
     expect(within(slot).getByRole("img", { name: "Session running" })).toBeInTheDocument();
-    expect(slot).toHaveClass("flex", "shrink-0", "items-center");
-    expect(slot).not.toHaveClass("absolute");
+    expect(slot.closest("button")).toHaveClass("shrink-0", "size-6");
   });
 
-  it("does not constrain a row's awaiting pill to the dot slot", () => {
+  it("constrains the compact question icon to the shared status cell", () => {
     // The "Needs response" pill is wider than the dot markers; the size-6 box
     // would clip its label, so the pill keeps its natural width.
     mockConversations([
@@ -677,8 +672,7 @@ describe("Sidebar session list", () => {
     renderSidebar();
 
     const slot = screen.getByTestId("session-state-badge").parentElement!;
-    expect(slot).toHaveClass("shrink-0");
-    expect(slot).not.toHaveClass("w-6");
+    expect(slot.closest("button")).toHaveClass("size-6", "shrink-0");
   });
 
   it("offers the four display filters and defaults to My sessions", () => {
@@ -1531,15 +1525,15 @@ describe("Sidebar failed session indicator", () => {
       await act(async () => {
         window.dispatchEvent(new StorageEvent("storage", { key, storageArea: localStorage }));
       });
-      expect(screen.getByRole("link", { name: "conv_b" })).not.toHaveClass(
+      expect(screen.getByRole("link", { name: "conv_b" }).closest("li")).not.toHaveClass(
         "bg-[var(--sidebar-active)]/50",
       );
-      expect(screen.getByRole("link", { name: "conv_c" })).toHaveClass(
+      expect(screen.getByRole("link", { name: "conv_c" }).closest("li")).toHaveClass(
         "bg-[var(--sidebar-active)]/50",
       );
-      expect(screen.getByRole("link", { name: "conv_c" })).not.toHaveClass("ring-1");
+      expect(screen.getByRole("link", { name: "conv_c" }).closest("li")).not.toHaveClass("ring-1");
       // The focused pane (first by default) also gets a ring.
-      expect(screen.getByRole("link", { name: "conv_a" })).toHaveClass("ring-1");
+      expect(screen.getByRole("link", { name: "conv_a" }).closest("li")).toHaveClass("ring-1");
       expect(readState.mock.calls.some(([id]) => id === "conv_a")).toBe(false);
     } finally {
       viewer.mockRestore();
@@ -1560,14 +1554,17 @@ describe("Sidebar failed session indicator", () => {
     const row = screen.getByRole("link", { name: /conv_error/ }).closest("li")!;
     const badge = within(row).getByRole("img", { name: "Latest message is an error" });
     expect(badge).toHaveAttribute("data-state", "error");
-    expect(badge.parentElement).toHaveClass("flex", "shrink-0");
+    expect(badge.closest("button")).toHaveClass("shrink-0");
     expect(within(row).getByText("(unread)")).toBeInTheDocument();
     expect(within(row).getByRole("img", { name: "New messages" })).toBeInTheDocument();
 
     act(() => markConversationSeen(session.id, session.updated_at));
 
     expect(within(row).queryByText("(unread)")).toBeNull();
-    expect(within(row).getByRole("img", { name: "Latest message is an error" })).toBe(badge);
+    expect(within(row).getByRole("img", { name: "Latest message is an error" })).toHaveAttribute(
+      "data-state",
+      "error",
+    );
   });
 
   it("keeps the error icon on the active, already-read session", () => {
@@ -1615,7 +1612,7 @@ describe("Sidebar failed session indicator", () => {
 
   it.each([
     { status: "running" as const, pending: 0, expected: "running" },
-    { status: "failed" as const, pending: 2, expected: "awaiting" },
+    { status: "failed" as const, pending: 2, expected: "error" },
   ])("lets $expected take precedence over a previous error", ({ status, pending, expected }) => {
     const session = conv("conv_error", "Codex", { status: "failed" });
     mockConversations([session]);
@@ -1627,7 +1624,9 @@ describe("Sidebar failed session indicator", () => {
     refresh();
 
     expect(within(row).getByTestId("session-state-badge")).toHaveAttribute("data-state", expected);
-    expect(within(row).queryByRole("img", { name: "Latest message is an error" })).toBeNull();
+    expect(within(row).queryByRole("img", { name: "Latest message is an error" }) !== null).toBe(
+      expected === "error",
+    );
   });
 
   it.each([
@@ -1749,7 +1748,10 @@ describe("Sidebar idle latest-message error", () => {
     expect(within(row).getByText("(unread)")).toBeInTheDocument();
     act(() => markConversationSeen(session.id, session.updated_at));
     expect(within(row).queryByText("(unread)")).toBeNull();
-    expect(within(row).getByRole("img", { name: "Latest message is an error" })).toBe(badge);
+    expect(within(row).getByRole("img", { name: "Latest message is an error" })).toHaveAttribute(
+      "data-state",
+      "error",
+    );
     expect(sessionsApi.fetchSessionItemsPage).toHaveBeenCalledTimes(1);
   });
 
@@ -2593,7 +2595,7 @@ describe("Sidebar collapsed project marker", () => {
   });
 
   it.each(["failed", "idle"] as const)(
-    "prioritizes a running session over an unread $0 sibling",
+    "keeps blocking failures ahead of work for an unread $0 sibling",
     (status) => {
       projectsMock.push("Customer X");
       seedReadState([
@@ -2617,16 +2619,18 @@ describe("Sidebar collapsed project marker", () => {
       const header = screen.getByRole("button", { name: /^Customer X/ });
       expect(within(header).getByTestId("session-state-badge")).toHaveAttribute(
         "data-state",
-        "running",
+        status === "failed" ? "error" : "running",
       );
-      expect(within(header).queryByRole("img", { name: "Latest message is an error" })).toBeNull();
+      expect(
+        within(header).queryByRole("img", { name: "Latest message is an error" }) !== null,
+      ).toBe(status === "failed");
     },
   );
 
   it.each([
     { status: "streaming" as const, terminalPending: false },
     { status: "idle" as const, terminalPending: true },
-  ])("prioritizes startup over a previous error for $status/$terminalPending", (startup) => {
+  ])("preserves a blocking error alongside startup for $status/$terminalPending", (startup) => {
     projectsMock.push("Customer X");
     mockConversations([
       conv("conv_error", "Codex", {
@@ -2640,7 +2644,7 @@ describe("Sidebar collapsed project marker", () => {
     const header = screen.getByRole("button", { name: /^Customer X/ });
     expect(within(header).getByTestId("session-state-badge")).toHaveAttribute(
       "data-state",
-      "starting",
+      "error",
     );
 
     act(() => useChatStore.setState({ status: "idle", terminalPending: false }));
@@ -2650,7 +2654,7 @@ describe("Sidebar collapsed project marker", () => {
     );
   });
 
-  it("prioritizes a pending approval over running and errored sessions", () => {
+  it("prioritizes a blocking problem over pending approval and running sessions", () => {
     projectsMock.push("Customer X");
     mockConversations([
       conv("conv_error", "Codex", {
@@ -2671,12 +2675,11 @@ describe("Sidebar collapsed project marker", () => {
     const header = screen.getByRole("button", { name: /^Customer X/ });
     expect(within(header).getByTestId("session-state-badge")).toHaveAttribute(
       "data-state",
-      "awaiting",
+      "error",
     );
     expect(
-      within(header).getByRole("img", { name: "2 approval prompts waiting" }),
+      within(header).getByRole("img", { name: "Latest message is an error" }),
     ).toBeInTheDocument();
-    expect(within(header).queryByRole("img", { name: "Latest message is an error" })).toBeNull();
   });
 
   it("shows the row's session-state badge on a collapsed project", () => {
@@ -2693,7 +2696,9 @@ describe("Sidebar collapsed project marker", () => {
     // marker surfaces on the project header.
     const header = screen.getByRole("button", { name: /^Customer X/ });
     expect(header).toHaveAttribute("aria-expanded", "false");
-    expect(within(header).getByText("Needs response")).toBeInTheDocument();
+    expect(
+      within(header).getByRole("img", { name: "1 approval prompt waiting" }),
+    ).toBeInTheDocument();
   });
 
   it("drops the header marker once the project is expanded", () => {
@@ -2850,31 +2855,16 @@ describe("Sidebar auto-expand Pinned on pin", () => {
   });
 });
 
-// The quick-pin affordance is hover-revealed on every row — including pinned
-// ones. A pinned row no longer keeps a persistent pin marker (the "Pinned"
-// section header already conveys the state); on hover it reveals the UNPIN
-// control.
+// Pin and Unpin share the same menu on every row.
 describe("Sidebar pin marker visibility", () => {
-  it("hover-reveals an unpin control on a pinned row (no persistent marker)", () => {
+  it.each([true, false])("offers pin state in the menu only (pinned=%s)", (pinned) => {
     mockConversations([conv("conv_pin", "Claude Code")]);
-    seedPins(["conv_pin"]);
+    if (pinned) seedPins(["conv_pin"]);
     renderSidebar();
-
-    const pinned = screen.getByText("Pinned").closest("section")!;
-    const pinButton = within(pinned).getByTestId("quick-pin-conversation");
-    // Hover-gated like every other row (no persistent opacity-100 marker), and
-    // the control unpins.
-    expect(pinButton.className).toContain("md:opacity-0");
-    expect(pinButton).toHaveAttribute("aria-label", "Unpin conversation");
-  });
-
-  it("hides the pin affordance until hover on an unpinned row", () => {
-    mockConversations([conv("conv_plain", "Claude Code")]);
-    renderSidebar();
-
-    const pinButton = screen.getByTestId("quick-pin-conversation");
-    // Unpinned: hover-gated reveal (opacity-0 until group-hover).
-    expect(pinButton.className).toContain("md:opacity-0");
+    expect(screen.queryByTestId("quick-pin-conversation")).toBeNull();
+    fireEvent.pointerDown(screen.getByTestId("conversation-actions"), { button: 0 });
+    expect(screen.getByTestId("pin-conversation")).toHaveTextContent(pinned ? "Unpin" : "Pin");
+    expect(screen.getByTestId("pin-conversation")).not.toHaveClass("md:hidden");
   });
 });
 
@@ -3528,7 +3518,8 @@ describe("Sidebar view options", () => {
     const row = screen.getByText("conv_meta").closest("li")!;
     expect(within(row).queryByTestId("session-row-meta")).toBeNull();
     expect(within(row).queryByTestId("session-row-updated")).toBeNull();
-    const controls = () => within(row).getByTestId("quick-pin-conversation").parentElement;
+    const controls = () =>
+      within(row).getByTestId("conversation-actions").closest("[data-sidebar-row-controls]");
     expect(controls()).not.toHaveClass("absolute");
 
     openViewSubmenu("session-show-menu");
@@ -3585,10 +3576,9 @@ describe("Sidebar view options", () => {
     fireEvent.click(screen.getByTestId("session-show-branch"));
     const row = within(screen.getByText("conv_workspace").closest("li")!);
     expect(row.getByTestId("session-row-meta")).toHaveTextContent(/^feature\/web$/);
-    expect(row.getByTestId("quick-pin-conversation").parentElement).toHaveClass(
-      "self-start",
-      "mt-[var(--list-row-padding-block)]",
-    );
+    expect(
+      row.getByTestId("conversation-actions").closest("[data-sidebar-row-controls]"),
+    ).toHaveClass("self-start", "mt-[var(--list-row-padding-block)]");
     expect(screen.getByText("recorded/branch")).toBeInTheDocument();
     expect(useSessionWorktreesMock).toHaveBeenCalledWith(
       "conv_workspace",

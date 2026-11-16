@@ -40,7 +40,10 @@ vi.mock("./useConversations", () => ({
   useSessionSearch: () => ({ data: undefined }),
 }));
 const fetchMock = vi.fn();
-const navigate = vi.fn((_path: string, apply: () => void, _isRelevant?: () => boolean) => apply());
+const navigate = vi.fn(
+  (_path: string, apply: () => void, _isRelevant?: () => boolean, _focusComposer?: boolean) =>
+    apply(),
+);
 const toggle = vi.fn();
 const isMobile = vi.fn(() => false);
 
@@ -197,7 +200,12 @@ describe("context search navigation and lifecycle", () => {
     expect(result.current.highlightTarget?.itemId).toBe("message-chat");
     expect(result.current.currentIndex).toBe(0);
     expect(result.current.query).toBe("needle");
-    expect(navigate).toHaveBeenCalledWith("/c/other", expect.any(Function), expect.any(Function));
+    expect(navigate).toHaveBeenCalledWith(
+      "/c/other",
+      expect.any(Function),
+      expect.any(Function),
+      expect.any(Boolean),
+    );
   });
 
   it("includes archived content only for the explicitly selected chat", async () => {
@@ -223,12 +231,18 @@ describe("context search navigation and lifecycle", () => {
     });
     expect(result.current.highlightTarget).toBe(first);
     act(() => result.current.move(1));
+    expect(navigate.mock.calls.at(-1)?.[3]).toBe(false);
     expect(result.current.highlightTarget).toMatchObject({
       itemId: "m1",
       range: { start: 7, end: 13 },
       requestId: 2,
     });
-    expect(navigate).toHaveBeenCalledWith("/c/chat", expect.any(Function), expect.any(Function));
+    expect(navigate).toHaveBeenCalledWith(
+      "/c/chat",
+      expect.any(Function),
+      expect.any(Function),
+      expect.any(Boolean),
+    );
   });
 
   it("All typing never navigates; explicit guarded activation preserves results/query after changing chats", async () => {
@@ -245,6 +259,7 @@ describe("context search navigation and lifecycle", () => {
       approve = apply;
     });
     act(() => result.current.activate({ hit: hits[0], range: hits[0].ranges[0] }));
+    expect(navigate.mock.calls.at(-1)?.[3]).toBe(true);
     expect(result.current.highlightTarget).toBeNull();
     act(() => approve?.());
     rerender({ activeSessionId: "other" });
@@ -296,7 +311,12 @@ describe("context search navigation and lifecycle", () => {
     act(() => result.current.move(1));
     await waitFor(() => expect(result.current.highlightTarget?.itemId).toBe("m2"));
     expect(result.current.currentOccurrences).toHaveLength(4);
-    expect(navigate).toHaveBeenCalledWith("/c/chat", expect.any(Function), expect.any(Function));
+    expect(navigate).toHaveBeenCalledWith(
+      "/c/chat",
+      expect.any(Function),
+      expect.any(Function),
+      expect.any(Boolean),
+    );
   });
 
   it.each(["query", "scope", "filter", "close"])(
@@ -348,7 +368,12 @@ describe("context search navigation and lifecycle", () => {
     expect(result.current.highlightTarget?.itemId).toBe("second");
     expect(result.current.hits.map((entry) => entry.item_id)).toEqual(["first"]);
     expect(result.current.messages.data?.pages[0].data).toHaveLength(1);
-    expect(navigate).toHaveBeenCalledWith("/c/chat", expect.any(Function), expect.any(Function));
+    expect(navigate).toHaveBeenCalledWith(
+      "/c/chat",
+      expect.any(Function),
+      expect.any(Function),
+      expect.any(Boolean),
+    );
   });
 
   it("ignores late superseded results and clears search when account/server changes", async () => {
@@ -414,7 +439,12 @@ describe("integrated search sidebar and match bar", () => {
     );
     fireEvent.keyDown(input, { key: "ArrowDown" });
     fireEvent.keyDown(input, { key: "Enter" });
-    expect(navigate).toHaveBeenCalledWith("/c/chat", expect.any(Function), expect.any(Function));
+    expect(navigate).toHaveBeenCalledWith(
+      "/c/chat",
+      expect.any(Function),
+      expect.any(Function),
+      expect.any(Boolean),
+    );
     expect(
       document.querySelector('[data-search-result="chat"]')?.closest("button"),
     ).toHaveAttribute("aria-pressed", "true");
@@ -622,15 +652,12 @@ describe("unified search filters and direct results", () => {
       );
     });
     const { result, rerender } = setup();
-    act(() =>
-      result.current.openResult(
-        occurrenceTarget({ hit: selected, range: selected.ranges[1] }, 0),
-        "needle",
-        "final",
-      ),
-    );
+    const sourceTarget = occurrenceTarget({ hit: selected, range: { ...selected.ranges[1] } }, 0);
+    act(() => result.current.openResult(sourceTarget, "needle", "final"));
     const target = result.current.highlightTarget;
+    sourceTarget.range.start = 0;
     rerender({ activeSessionId: "other" });
+    expect(result.current.highlightTarget?.range).toEqual({ start: 7, end: 13 });
     await waitFor(() => expect(result.current.currentIndex).toBe(3));
     expect(result.current.highlightTarget).toBe(target);
     expect(result.current.messageFilter).toBe("final");
@@ -639,7 +666,12 @@ describe("unified search filters and direct results", () => {
       itemId: "older",
       range: { start: 0, end: 6 },
     });
-    expect(navigate).toHaveBeenCalledWith("/c/other", expect.any(Function), expect.any(Function));
+    expect(navigate).toHaveBeenCalledWith(
+      "/c/other",
+      expect.any(Function),
+      expect.any(Function),
+      expect.any(Boolean),
+    );
   });
 
   it("searches only bodies in Current with a separate cache while keeping All titles selectable", async () => {
@@ -703,7 +735,12 @@ describe("unified search filters and direct results", () => {
     act(() => result.current.move(1));
     await waitFor(() => expect(result.current.highlightTarget?.itemId).toBe("body"));
     expect(result.current.currentIndex).toBe(0);
-    expect(navigate).toHaveBeenCalledWith("/c/chat", expect.any(Function), expect.any(Function));
+    expect(navigate).toHaveBeenCalledWith(
+      "/c/chat",
+      expect.any(Function),
+      expect.any(Function),
+      expect.any(Boolean),
+    );
   });
 
   it("retires failed-query notification actions after a filter change or close", async () => {
@@ -784,6 +821,9 @@ it("retains an immutable exact Current result through its own delayed destinatio
   });
   expect(result.current.query).toBe("needle");
   expect(result.current.scope).toBe("current");
+  const accepted = result.current.highlightTarget;
+  act(() => apply?.());
+  expect(result.current.highlightTarget).toBe(accepted);
 });
 
 it.each(["navigation", "identity", "newer-selection"])(

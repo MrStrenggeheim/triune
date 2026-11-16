@@ -1,3 +1,4 @@
+// Modified for Triune.
 // Per-tool display title formatter for the tool-call trigger row.
 //
 // The transcript was full of titles like `sys_os_shell({"command":"ls
@@ -237,15 +238,18 @@ export function formatToolTitle(
  * command is a bare `ls` re-categorize as directory listings, matching
  * the Claude Code TUI's step summaries.
  */
-type RunCategory = "shell" | "list" | "read" | "edit" | "search";
+type RunCategory = "shell" | "list" | "read" | "edit" | "search" | "agent";
 
 /** One tool call in a folded run: its name plus (optional) arguments. */
 export interface ToolRunCall {
   name: string;
   args?: Record<string, unknown>;
+  activityKey?: string;
+  pending?: boolean;
 }
 
 const RUN_CATEGORIES: Record<string, RunCategory> = {
+  subagent_activity: "agent",
   Bash: "shell",
   sys_os_shell: "shell",
   shell: "shell",
@@ -273,7 +277,14 @@ const RUN_CATEGORIES: Record<string, RunCategory> = {
   list: "list",
 };
 
-const RUN_CATEGORY_ORDER: readonly RunCategory[] = ["shell", "list", "read", "edit", "search"];
+const RUN_CATEGORY_ORDER: readonly RunCategory[] = [
+  "shell",
+  "list",
+  "read",
+  "edit",
+  "search",
+  "agent",
+];
 
 function runPhrase(category: RunCategory, n: number): string {
   const s = n === 1 ? "" : "s";
@@ -288,6 +299,8 @@ function runPhrase(category: RunCategory, n: number): string {
       return `edited ${n} file${s}`;
     case "search":
       return `ran ${n} search${n === 1 ? "" : "es"}`;
+    case "agent":
+      return `started or steered ${n} subagent${s}`;
   }
 }
 
@@ -417,8 +430,15 @@ function categorizeCall(call: ToolRunCall): RunCategory | "other" {
  */
 export function formatToolRunLabel(calls: ToolRunCall[]): string {
   const counts = new Map<RunCategory | "other", number>();
+  const agents = new Set<string>();
+  const pendingAgents = new Set<string>();
   for (const call of calls) {
     const category = categorizeCall(call);
+    if (category === "agent" && call.activityKey) {
+      if (call.pending) pendingAgents.add(call.activityKey);
+      if (agents.has(call.activityKey)) continue;
+      agents.add(call.activityKey);
+    }
     counts.set(category, (counts.get(category) ?? 0) + 1);
   }
 
@@ -434,7 +454,8 @@ export function formatToolRunLabel(calls: ToolRunCall[]): string {
     phrases.push(`called ${other} other tool${other === 1 ? "" : "s"}`);
   }
   const label = phrases.join(", ");
-  return label.charAt(0).toUpperCase() + label.slice(1);
+  const pending = pendingAgents.size ? ` (${pendingAgents.size} in progress)` : "";
+  return label.charAt(0).toUpperCase() + label.slice(1) + pending;
 }
 
 function asString(v: unknown): string | null {

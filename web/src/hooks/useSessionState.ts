@@ -1,5 +1,6 @@
+// Modified for Triune.
 // Per-row state derivation for the sidebar badge.
-// Priority: awaiting > running > error > no badge.
+// Priority: blocking problem > pending question > running > no badge.
 //
 // Liveness (runner / host reachability) is no longer a sidebar state:
 // it surfaces in the open-session view (see `useSessionLiveness`), so the
@@ -24,15 +25,27 @@ export type SessionState =
   // returns it; the sidebar row folds it in for the bound session only.
   | { kind: "starting" };
 
+/** Ordered facts let compact surfaces retain lower-priority information in descriptions. */
+export function getSessionStates(
+  conversation: Pick<Conversation, "status" | "pending_elicitations_count"> | undefined | null,
+  latestError: LatestSessionError | null = null,
+): SessionState[] {
+  const states: SessionState[] = [];
+  if (latestError === "disconnected") states.push({ kind: "disconnected" });
+  else if (
+    latestError !== "recovered_disconnect" &&
+    (conversation?.status === "failed" || latestError === "error")
+  )
+    states.push({ kind: "error" });
+  const pending = conversation?.pending_elicitations_count ?? 0;
+  if (pending > 0) states.push({ kind: "awaiting", count: pending });
+  if (conversation?.status === "running") states.push({ kind: "running" });
+  return states;
+}
+
 export function getSessionState(
   conversation: Pick<Conversation, "status" | "pending_elicitations_count"> | undefined | null,
   latestError: LatestSessionError | null = null,
 ): SessionState | null {
-  const pending = conversation?.pending_elicitations_count ?? 0;
-  if (pending > 0) return { kind: "awaiting", count: pending };
-  if (conversation?.status === "running") return { kind: "running" };
-  if (latestError === "disconnected") return { kind: "disconnected" };
-  if (latestError === "recovered_disconnect") return null;
-  if (conversation?.status === "failed" || latestError === "error") return { kind: "error" };
-  return null;
+  return getSessionStates(conversation, latestError)[0] ?? null;
 }

@@ -25,6 +25,7 @@ The approved workspace specification governs behavior; later owner corrections g
 | Keyboard focus           | Existing `--ring` treatment; preserve visible focus                                         |
 | Header geometry          | 48px Comfortable; 36px Compact, from the shared Appearance density                                                                |
 | Header action            | `HeaderActionButton`, 24px glyph surface; header target is row height minus 4px                                |
+| Tab-strip add action     | Shared 24px fine-pointer width with row-aligned height; narrow/coarse targets retain the 44px minimum          |
 | Sidebar toggle           | `SidebarToggle` with `SidebarPanelIcon`, filled segment when open                           |
 | Search modes             | Existing `SegmentedControl`, consistent scope/category sizing                               |
 | Switches                 | Shared `Switch`; off, on and disabled must remain distinguishable                           |
@@ -114,6 +115,17 @@ Popup composites use the shared inset, item-gap, text-gap and footer-gap roles i
 
 The isolated artifact kit consumes generated aliases and explicit host-provided theme values, with no external CDN or full SPA stylesheet.
 Its manifest declares native form semantics and optional tabs, disclosure and tooltip helpers; it does not imply complete React/Radix behavior parity.
+
+## Current answer focus and idle shelf
+
+Question answer rows own one keyboard focus surface, including their native selection input and free-form editor.
+The inner editor and selection input have no independent focus ring.
+Choice cards and ordinary focus borders use `--workspace-control-active-border`; the distinct keyboard ring remains 3px at the existing half-opacity.
+The composer retains its named shadow-only focus exception.
+
+Completed plans and settled resources do not reserve an automatic shelf.
+The existing chat menu can show/hide activity, open the recorded plan, or open Orchestration resources; a new pending question or approval reveals attention again.
+Manual hiding preserves pending answer drafts, and remounted chat views return to automatic visibility.
 
 ## Implementation guardrails
 

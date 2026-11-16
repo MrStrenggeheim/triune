@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BubbleView } from "@/pages/ChatPage";
+import { bubbleKey } from "@/components/chat/chatBubbleParts";
 import { useChatStore } from "@/store/chatStore";
 import { findMessageElement } from "@/lib/messageDeepLink";
 import { createBubbleCache, buildBubbles } from "@/lib/renderItems";
@@ -88,7 +89,7 @@ describe("sub-agent task and reply", () => {
       const card = screen.getByTestId(
         phase === "delegated" ? "subagent-activity" : "subagent-reply",
       );
-      expect(card).toHaveTextContent("Codex");
+      expect(card).toHaveTextContent("Curie");
       fireEvent.click(screen.getByRole("button", { name: "Expand activity" }));
       await act(async () =>
         client.setQueryData(childSessionsQueryKey("parent"), [
@@ -104,7 +105,7 @@ describe("sub-agent task and reply", () => {
       await waitFor(() => expect(card).toHaveTextContent("Hooke"));
       expect(screen.getByRole("button", { name: "Collapse activity" })).toBeInTheDocument();
       if (phase === "delegated") {
-        expect(card).toHaveTextContent("Orchestration header intake");
+        expect(card).toHaveTextContent("Inspect navigation");
         expect(card).toHaveTextContent("all instructions");
       } else expect(card).toHaveTextContent("Original captured report");
       expect(data.resource.agent_name).toBe("Codex");
@@ -124,10 +125,12 @@ describe("sub-agent task and reply", () => {
     );
     const card = screen.getByTestId("subagent-activity");
     expect(card).toHaveTextContent(
-      "Curie · Inspect navigationKeep **all instructions** behind deliberate expansion.Running",
+      "Curie · Inspect navigationInstruction: Inspect navigation. Keep **all instructions** behind deliberate expansion.Running",
     );
     expect(
-      screen.getByText("Keep **all instructions** behind deliberate expansion."),
+      screen.getByText(
+        "Instruction: Inspect navigation. Keep **all instructions** behind deliberate expansion.",
+      ),
     ).toBeVisible();
     expect(screen.queryByText("all instructions", { selector: "strong" })).not.toBeInTheDocument();
     await act(async () =>
@@ -157,7 +160,7 @@ describe("sub-agent task and reply", () => {
         </MemoryRouter>,
       );
       expect(screen.getByTestId("subagent-activity")).toHaveTextContent(
-        "Later name · Inspect navigationDelegated taskRunning",
+        "Later name · Inspect navigationNo captured messageRunning",
       );
       expect(screen.getByText("Running")).toBeVisible();
       expect(screen.getByText("Later name")).toBeVisible();
@@ -189,7 +192,7 @@ describe("sub-agent task and reply", () => {
     const card = screen.getByTestId("subagent-activity");
     const reply = screen.getByTestId("subagent-reply");
     expect(card).toHaveTextContent(
-      "Curie · Inspect navigationKeep **all instructions** behind deliberate expansion.Completed",
+      "Curie · Later taskInstruction: Inspect navigation. Keep **all instructions** behind deliberate expansion.Completed",
     );
     expect(card).not.toHaveTextContent("original result");
     expect(reply).toHaveTextContent("Curie replied");
@@ -244,6 +247,10 @@ describe("sub-agent task and reply", () => {
       const item = activity("returned", {
         ...identity,
         result_text: "Exact **answer**",
+        result_finality: "final_answer",
+        turn_id: "exact-turn",
+        result_position: 7,
+        result_ref: { conversation_id: "child", item_id: "exact-answer" },
         status: "completed",
       });
       const event = parseEvent("response.output_item.done", { item });
@@ -256,10 +263,11 @@ describe("sub-agent task and reply", () => {
           <BubbleView bubble={live[0]!} />
         </MemoryRouter>,
       );
-      expect(screen.getByTestId("subagent-reply")).toHaveTextContent(
-        `${identity.agent_name} replied`,
+      fireEvent.click(screen.getByRole("button", { name: /Started or steered/ }));
+      expect(screen.getByTestId("subagent-activity")).toHaveTextContent(
+        `${identity.agent_name} · Inspect navigationReply: Exact **answer**`,
       );
-      expect(screen.queryByTestId("subagent-activity")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("subagent-reply")).not.toBeInTheDocument();
       expect(screen.queryByTestId("message-timestamp")).not.toBeInTheDocument();
     },
   );
@@ -526,15 +534,13 @@ it("updates one plain-timeline card per child through spawn, repeated steering a
     return (
       <MemoryRouter>
         {bubbles.map((bubble) => (
-          <BubbleView
-            key={bubble.kind === "subagent_activity" ? bubble.itemId : JSON.stringify(bubble)}
-            bubble={bubble}
-          />
+          <BubbleView key={bubbleKey(bubble)} bubble={bubble} />
         ))}
       </MemoryRouter>
     );
   };
   const rendered = render(view(1));
+  fireEvent.click(screen.getByRole("button", { name: /Started or steered/ }));
   const original = screen.getByTestId("subagent-activity");
   for (let count = 2; count <= events.length; count++) {
     act(() => rendered.rerender(view(count)));
@@ -588,4 +594,40 @@ it.each([
   expect(await screen.findByText("· Navigation review")).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "Expand activity" }));
   expect(screen.getByTestId("subagent-activity")).toHaveTextContent("all instructions");
+});
+
+it("keeps the latest message visible while expanded and absorbs a real final into the spawn", async () => {
+  const records = [
+    activity("delegated", {
+      task_input: "Full **instruction**",
+      task_input_position: 1,
+      task_input_ref: { conversation_id: "child", item_id: "source-input" },
+    }),
+    activity("returned", {
+      result_text: "Final **reply**",
+      result_finality: "final_answer",
+      result_position: 3,
+      turn_id: "turn",
+      result_ref: { conversation_id: "child", item_id: "source-result" },
+    }),
+  ];
+  const blocks = itemsToBlocks(records);
+  useChatStore.setState({ blocks });
+  const bubbles = buildBubbles(blocks, null);
+  render(
+    <MemoryRouter>
+      {bubbles.map((bubble) => (
+        <BubbleView key={bubbleKey(bubble)} bubble={bubble} />
+      ))}
+    </MemoryRouter>,
+  );
+  fireEvent.click(screen.getByRole("button", { name: /Started or steered/ }));
+  expect(screen.getAllByTestId("subagent-activity")).toHaveLength(1);
+  expect(screen.queryByTestId("subagent-reply")).not.toBeInTheDocument();
+  const preview = screen.getByText("Reply: Final **reply**");
+  fireEvent.click(screen.getByRole("button", { name: "Expand activity" }));
+  expect(preview).toBeVisible();
+  expect(await screen.findByText("instruction")).toBeVisible();
+  expect(screen.getByText("reply")).toBeVisible();
+  expect(findMessageElement("returned")).toBe(screen.getByTestId("subagent-activity"));
 });

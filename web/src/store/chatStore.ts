@@ -1,5 +1,19 @@
 // Modified for Triune.
 import { insertRecoveredBlocks } from "./recoveryPlacement";
+import { TranscriptReplay, upsertCanonicalItem } from "./transcriptReplay";
+import { pendingPeerReceiptPlacement, projectPeerReceipts } from "@/lib/peerMessagePlacement";
+import {
+  sessionUpdatesSocket,
+  isRetryableTranscriptError,
+  type TranscriptCursor,
+} from "@/lib/sessionUpdatesSocket";
+import {
+  normalizeTranscript,
+  orderTranscriptBlocks,
+  refreshItemPositions,
+  transcriptIndex,
+  type TranscriptAnchor,
+} from "@/lib/transcriptOrder";
 import { reconcileQuestionBatches } from "@/lib/questionBatches";
 import { getCachedServerInfo } from "@/lib/capabilities";
 import { persistMessageQueue } from "@/lib/queuedMessagePersistence";
@@ -9,49 +23,12 @@ import {
   type MessageCommunication,
 } from "@/lib/messageCommunication";
 import { getBasePath } from "@/lib/basePath";
-// Module-scope Zustand store for the active chat session.
-//
-// The streaming state lives outside the React tree so it survives
-// component remounts, route changes, and any UI shuffling. The
-// session SSE stream is the source of truth — `switchTo` owns its
-// lifecycle, opening `GET /v1/sessions/{id}/stream` on bind and
-// pumping events into `state.blocks` via the BlockStream reducer.
-// `send` POSTs a single event to the session; the open stream
-// delivers the response.
-//
-// Data model:
-//   - `blocks: AnyBlock[]` — committed history + streaming output.
-//     The renderer walks this. Bind hydration prepends the committed
-//     item history; the live pump appends stream-delivered blocks at
-//     the end. Dedupe by `ctx.itemId` so stream-delivered persisted
-//     items don't double-render alongside hydrated ones.
-//   - `pendingUserMessages` — user inputs that have been POSTed but
-//     not yet observed via `session.input.consumed`. Held off `blocks`
-//     so streaming output from a prior turn can append cleanly at the
-//     end without needing special positional logic. The renderer
-//     displays them as user bubbles after the `blocks`-derived ones,
-//     and they migrate into `blocks` (plain append) the moment their
-//     `session.input.consumed` event arrives.
-//
-// Actions:
-//   send(text, agentId, opts)
-//     POSTs `{type: "message", ...}` to /events. The server returns
-//     the persisted item id synchronously; we push it onto
-//     `pendingUserMessages` so the bubble renders immediately. For a
-//     brand-new session, we first createSession + bindStream, then
-//     navigate via opts.onConversationCreated, then post. For an
-//     existing session whose stream has died (idle proxy disconnect),
-//     we rebind before posting so the response events aren't published
-//     into an empty subscriber set.
-//   stop()
-//     POSTs `{type: "interrupt"}` to /events. The local stream
-//     stays open; the server emits `session.interrupted` and
-//     `response.incomplete` which the pump handles.
-//   switchTo(convId)
-//     Single owner of stream-bind. Aborts the prior stream, resets
-//     state, then for non-null `convId` opens the new session's
-//     stream, fetches the items snapshot, and merges into blocks
-//     deduping by item id.
+// Conversation models outlive their views and consume the tab's shared updates
+// socket (with SSE compatibility for legacy servers).
+// Saved items upsert by ID and sort by server position.
+// Previews and itemless records carry explicit anchors and local sequence.
+// Pending input stays in its send/ack lane; the renderer projects its boundary
+// before grouping assistant work, preserving draft ownership and stable keys.
 
 import type { InfiniteData, QueryClient } from "@tanstack/react-query";
 import { create } from "zustand";
@@ -68,7 +45,12 @@ import { userInputElicitationKey } from "@/lib/askUserQuestion";
 import { LIVE_ITEM_PREFIX, PENDING_FILE_PREFIX, structuredErrorFields } from "@/lib/blocks";
 import { BlockStream } from "@/lib/blockStream";
 import { itemsToBlocks } from "@/lib/itemsToBlocks";
-import { isMessageItem, type ConversationItem, type MessageItem } from "@/lib/conversationItems";
+import {
+  isMessageItem,
+  preserveInputAttachments,
+  type ConversationItem,
+  type MessageItem,
+} from "@/lib/conversationItems";
 import { buildBubbles } from "@/lib/renderItems";
 import { emitBrowserActionRequest } from "@/lib/browserActionBus";
 import { emitUiOpenFile } from "@/lib/uiFileRequests";
@@ -591,6 +573,10 @@ export function removeLocalConversation(tempConvId: string): boolean {
  */
 export interface PendingUserMessage {
   tempId: string;
+  /** Persisted pending rows participate in canonical order before consumption. */
+  itemId?: string;
+  position?: number;
+  anchor?: TranscriptAnchor;
   /** Idempotency identity sent with this input, also used by persisted receipts. */
   stableId?: string;
   /** The create accepted this placeholder before returning uploaded file ids. */
@@ -3371,6 +3357,9 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
               ? {
                   ...p,
                   posted: true,
+                  ...(postResult.position !== undefined
+                    ? { position: postResult.position, itemId: postResult.itemId ?? p.stableId }
+                    : {}),
                   ...(postResult.pendingId ? { pendingId: postResult.pendingId } : {}),
                 }
               : p,
@@ -4749,7 +4738,24 @@ function entryGetter(entry: ConversationEntry): Getter {
  */
 function entrySetter(entry: ConversationEntry): Setter {
   return (partial) => {
-    const patch = typeof partial === "function" ? partial(entryGetter(entry)()) : partial;
+    const state = entryGetter(entry)();
+    let patch = typeof partial === "function" ? partial(state) : partial;
+    if (
+      (patch.blocks || patch.pendingUserMessages) &&
+      (sessionUpdatesSocket.supportsTranscripts() ||
+        (patch.blocks ?? state.blocks).some((block) => block.ctx.position !== undefined) ||
+        (patch.pendingUserMessages ?? state.pendingUserMessages).some(
+          (pending) => pending.position !== undefined,
+        ))
+    ) {
+      patch = {
+        ...patch,
+        ...normalizeTranscript(state, {
+          blocks: patch.blocks ?? state.blocks,
+          pendingUserMessages: patch.pendingUserMessages ?? state.pendingUserMessages,
+        }),
+      };
+    }
     const conversationPatch: Record<string, unknown> = {};
     const appPatch: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(patch)) {
@@ -4863,7 +4869,7 @@ useChatStore.setState = ((partial: unknown, replace?: boolean) => {
   }
   if (Object.keys(conversationPatch).length > 0) {
     // The entry's change notification mirrors this back onto the root store.
-    active.setState(conversationPatch as Partial<ConversationState>);
+    entrySetter(active)(conversationPatch as Partial<ConversationState>);
   }
 }) as typeof useChatStore.setState;
 
@@ -5298,6 +5304,43 @@ async function refreshSessionBinding(id: string): Promise<void> {
   setterFor(id)((s) => sessionBindingPatch(session, s, launchBeforeFetch));
 }
 
+/** Project authorized accepted peer receipts before block grouping. */
+function snapshotTranscriptBlocks(
+  id: string,
+  items: ConversationItem[],
+  session: Session,
+): AnyBlock[] {
+  const server = getOmnigentServerIdentity();
+  const viewer = getCurrentUserId();
+  if (!server || !viewer) return itemsToBlocks(items);
+  const scope = { server, viewer, conversationId: id };
+  const receipts = (session.pendingInputs ?? []).flatMap((input) => {
+    const receipt = pendingPeerReceiptPlacement(
+      {
+        item_id: input.itemId,
+        pending_id: input.pendingId,
+        position: input.position,
+        created_at: input.createdAtS,
+        content: input.content,
+        communication: input.communication,
+      },
+      scope,
+    );
+    return receipt ? [receipt] : [];
+  });
+  if (!receipts.length) return itemsToBlocks(items);
+  const projected = projectPeerReceipts(items, receipts, scope);
+  const aliases = new Map<string, string[]>();
+  for (const [alias, itemId] of projected.aliases) {
+    if (alias === itemId) continue;
+    aliases.set(itemId, [...(aliases.get(itemId) ?? []), alias]);
+  }
+  return itemsToBlocks(projected.items).map((block) => {
+    const itemAliases = block.ctx.itemId ? aliases.get(block.ctx.itemId) : undefined;
+    return itemAliases ? { ...block, ctx: { ...block.ctx, aliases: itemAliases } } : block;
+  });
+}
+
 /**
  * Start the session SSE stream, kick off the pump in the background
  * once the stream connects, then fetch metadata plus the most recent
@@ -5363,7 +5406,12 @@ async function bindStream(
   const mayObserve =
     typeof document === "undefined" ||
     (document.visibilityState !== "hidden" && (!navigator.locks || document.hasFocus()));
-  const hasSlot = mayObserve && (await acquireStreamSlot(id, controller.signal));
+  if (typeof WebSocket !== "undefined") observeTranscriptCapabilities();
+  const multiplexed =
+    typeof WebSocket !== "undefined"
+      ? await sessionUpdatesSocket.negotiateTranscript(controller.signal)
+      : false;
+  const hasSlot = mayObserve && (multiplexed || (await acquireStreamSlot(id, controller.signal)));
   const initialSlot = hasSlot ? heldStreamSlots.get(id) : undefined;
   if (!current()) {
     if (initialSlot && heldStreamSlots.get(id) === initialSlot) releaseStreamSlot(id);
@@ -5381,9 +5429,14 @@ async function bindStream(
   // bounded replay and exact-input dedupe as reconnects.
   void observeConversationStream({
     signal: controller.signal,
-    initialSlot: initialSlot ? observationSlot(initialSlot) : undefined,
+    initialSlot: initialSlot
+      ? observationSlot(initialSlot)
+      : multiplexed && mayObserve
+        ? { release: async () => {} }
+        : undefined,
     priority: () => (conversationRegistry.isFocused(id) ? 2 : 1),
     acquire: async () => {
+      if (sessionUpdatesSocket.supportsTranscripts()) return { release: async () => {} };
       if (!(await acquireStreamSlot(id, controller.signal))) return null;
       return observationSlot(heldStreamSlots.get(id)!);
     },
@@ -5425,6 +5478,7 @@ async function bindStream(
     throw new Error("chatStore.bindStream: queryClient not initialized");
   }
   const stateBeforeFetch = get();
+  const cursorBeforeFetch = transcriptCursors.get(controller);
   const launchBeforeFetch = mcpStartupBeforeSnapshot(id, stateBeforeFetch);
   try {
     if (stateBeforeFetch.blocks.length > 0) {
@@ -5447,7 +5501,8 @@ async function bindStream(
       fetchSessionItemsPage(id, { limit: INITIAL_WINDOW_ITEMS }),
     ]);
     if (isConversationDisposed(id)) return;
-    const items = page.items;
+    const canonicalReplayWon = transcriptCursors.get(controller) !== cursorBeforeFetch;
+    const items = canonicalReplayWon ? [] : page.items;
     const snapshotNativeMessageIds = nativeCompletedMessageIds(items);
     snapshotNativeMessageIds.forEach((messageId) => ignoredNativeMessageIds.add(messageId));
 
@@ -5460,7 +5515,7 @@ async function bindStream(
       cachedFamily === undefined ? true : supportsEffortControl(session, cachedFamily);
     const effectiveEffort = canApplyEffort ? (session.reasoningEffort ?? null) : null;
 
-    const snapshotBlocks = itemsToBlocks(items);
+    const snapshotBlocks = snapshotTranscriptBlocks(id, items, session);
     // Replay outstanding elicitation prompts from the snapshot.
     // The live SSE stream has no buffer, so a prompt that fired
     // before this chat was opened wouldn't render otherwise.
@@ -5468,7 +5523,10 @@ async function bindStream(
     const oldestItemId = items[0]?.id ?? null;
     const unsentDraft = hydratePending ? unsentSendToRestore(id, items) : null;
     set((state) => {
-      const currentBlocks = withoutNativePreviews(state.blocks, snapshotNativeMessageIds);
+      const currentBlocks = refreshItemPositions(
+        withoutNativePreviews(state.blocks, snapshotNativeMessageIds),
+        snapshotBlocks,
+      );
       const bindingPatch = sessionBindingPatch(session, state, launchBeforeFetch);
       const racedOptions = racedNativeModelOptions.get(id);
       const catalogWonBindRace =
@@ -5534,6 +5592,7 @@ async function bindStream(
       // keeping both would double-render and strand one of them.
       const toPending = (p: PendingInput): PendingUserMessage => ({
         tempId: p.pendingId,
+        ...(p.position !== undefined && p.itemId ? { itemId: p.itemId, position: p.position } : {}),
         content: p.content,
         ...(p.communication ? { communication: p.communication } : {}),
         ...(p.createdBy !== undefined ? { author: p.createdBy } : {}),
@@ -5616,15 +5675,15 @@ async function bindStream(
           : null;
       return {
         ...effectiveBindingPatch,
-        ...reconnectStatusPatch(session, state, launchBeforeFetch),
+        ...reconnectStatusPatch(session, state, launchBeforeFetch, stateBeforeFetch.todos),
         blocks: syntheticError !== null ? [...allBlocks, syntheticError] : allBlocks,
         pendingUserMessages: reconcilePendingMessages(snapshotPending, snapshotBlocks, session),
         ...(unsentDraft !== null && state.failedSendDraft === null
           ? { failedSendDraft: unsentDraft }
           : {}),
         loadingConversation: false,
-        hasMoreHistory: page.hasMore,
-        oldestItemId,
+        hasMoreHistory: canonicalReplayWon ? get().hasMoreHistory : page.hasMore,
+        oldestItemId: canonicalReplayWon ? get().oldestItemId : oldestItemId,
         // The window cursor was reset: void any in-flight loadMoreHistory.
         historyGeneration: state.historyGeneration + 1,
         // The voided page's stale early-return skips its own flag clear.
@@ -5667,11 +5726,6 @@ async function bindStream(
           state.sessionUsageByModel !== stateBeforeFetch.sessionUsageByModel
             ? state.sessionUsageByModel
             : (session.usageByModel ?? state.sessionUsageByModel),
-        todos: (session.todos ?? []) as {
-          content: string;
-          status: "pending" | "in_progress" | "completed";
-          activeForm: string;
-        }[],
       };
     });
     if (session.usageIncluded === false) void hydrateSessionUsage(id);
@@ -5816,11 +5870,7 @@ function markLivePreviewsInterrupted(id: string, set: Setter): void {
   });
 }
 
-function dropEphemeralInFlightBlocks(
-  id: string,
-  set: Setter,
-  nativePreviewBaselines: ReadonlyMap<string, string> | null = null,
-): void {
+function dropEphemeralInFlightBlocks(id: string, set: Setter): void {
   set((s) => {
     if (s.conversationId !== id) return {};
     const active = s.activeResponse;
@@ -5831,13 +5881,7 @@ function dropEphemeralInFlightBlocks(
     const kept: AnyBlock[] = [];
     for (const block of s.blocks) {
       if (isLiveProvisionalBlock(block)) {
-        const prefix = nativePreviewBaselines?.get(block.ctx.itemId ?? "");
-        if (prefix === undefined) continue;
-        kept.push(
-          block.type === "text_done" && block.fullText !== prefix
-            ? { ...block, fullText: prefix, hasCodeBlocks: prefix.includes("```") }
-            : block,
-        );
+        kept.push(block);
       } else if (
         block.type === "elicitation" ||
         block.type === "error" ||
@@ -5902,6 +5946,7 @@ function reconnectStatusPatch(
   session: Session,
   s: ChatState,
   launchBeforeFetch: ConversationState["mcpStartupLaunch"] | undefined,
+  todosBeforeFetch: ConversationState["todos"],
 ): Partial<ChatState> {
   if (s.conversationId !== null) {
     if (session.status === "running" && session.activeResponseId) {
@@ -5931,6 +5976,8 @@ function reconnectStatusPatch(
   // returns to "N background tasks still running" rather than vanishing on reconnect.
   patch.backgroundTaskCount = session.backgroundTaskCount ?? 0;
   patch.backgroundTasks = session.backgroundTasks ?? [];
+  // A live replacement, including an empty plan, wins over an older snapshot.
+  if (s.todos === todosBeforeFetch) patch.todos = session.todos ?? [];
   if (session.contextWindow != null) patch.contextWindow = session.contextWindow;
   if (session.lastTotalTokens != null) patch.tokensUsed = session.lastTotalTokens;
   if (session.totalCostUsd != null) patch.sessionCostUsd = session.totalCostUsd;
@@ -6074,7 +6121,12 @@ async function reconcileActiveSessionStatus(
     return;
   }
   set((s) => {
-    const patch = reconnectStatusPatch(session, s, stateBeforeFetch.mcpStartupLaunch);
+    const patch = reconnectStatusPatch(
+      session,
+      s,
+      stateBeforeFetch.mcpStartupLaunch,
+      stateBeforeFetch.todos,
+    );
     const blocks = snapshotCompactionSpinners(s.blocks, s.activeResponse, patch.activeResponse);
     return blocks === null ? patch : { ...patch, blocks };
   });
@@ -6247,37 +6299,9 @@ function captureElicitationIdsByStatus(blocks: AnyBlock[]): {
   return { pending, autoResolved, cards };
 }
 
-function blockWallClockS(block: AnyBlock): number | undefined {
-  return block.ctx.createdAtS ?? block.ctx.clientCreatedAtS;
-}
-
 /** Merge preserved itemless history back into a freshly loaded item window. */
 function mergeReconnectWindow(windowBlocks: AnyBlock[], tail: AnyBlock[]): AnyBlock[] {
-  const anchored: AnyBlock[] = [];
-  const liveTail: AnyBlock[] = [];
-  for (const block of tail) {
-    if (
-      block.ctx.itemId === null &&
-      (block.type === "elicitation" || block.type === "error") &&
-      blockWallClockS(block) !== undefined
-    ) {
-      anchored.push(block);
-    } else {
-      liveTail.push(block);
-    }
-  }
-
-  const merged = [...windowBlocks];
-  for (const block of anchored) {
-    const createdAtS = blockWallClockS(block)!;
-    const insertAt = merged.findIndex((candidate) => {
-      const candidateCreatedAtS = blockWallClockS(candidate);
-      return candidateCreatedAtS !== undefined && candidateCreatedAtS > createdAtS;
-    });
-    if (insertAt === -1) merged.push(block);
-    else merged.splice(insertAt, 0, block);
-  }
-  return [...merged, ...liveTail];
+  return orderTranscriptBlocks([...windowBlocks, ...tail]);
 }
 
 /**
@@ -6306,6 +6330,7 @@ async function rehydrateWindowOnReconnect(
   get: Getter,
   ignoredNativeMessageIds: Set<string>,
   launchBeforeFetch: ConversationState["mcpStartupLaunch"] | undefined,
+  todosBeforeFetch: ConversationState["todos"],
 ): Promise<void> {
   // Pinned at entry (still the caller's generation — its guards just passed).
   const generation = get().historyGeneration;
@@ -6325,7 +6350,7 @@ async function rehydrateWindowOnReconnect(
     return;
   const snapshotNativeMessageIds = nativeCompletedMessageIds(fresh.items);
   snapshotNativeMessageIds.forEach((messageId) => ignoredNativeMessageIds.add(messageId));
-  const freshBlocks = itemsToBlocks(fresh.items);
+  const freshBlocks = snapshotTranscriptBlocks(id, fresh.items, session);
   const snapshotPending = pendingElicitationBlocksFromSnapshot(session);
   const freshItemIds = new Set(fresh.items.map((it) => it.id));
   const gapUserTexts = committedUserTextsOf(
@@ -6353,7 +6378,7 @@ async function rehydrateWindowOnReconnect(
       windowBlocks,
       withoutRebuiltUserInputCards(tail, windowBlocks),
     );
-    const statusPatch = reconnectStatusPatch(session, s, launchBeforeFetch);
+    const statusPatch = reconnectStatusPatch(session, s, launchBeforeFetch, todosBeforeFetch);
     const blocks =
       reconcileElicitationBlocks(
         merged,
@@ -6495,6 +6520,9 @@ function reconcilePendingMessages(
       remaining[at] = {
         ...message!,
         pendingId: input.pendingId,
+        ...(input.position !== undefined && input.itemId
+          ? { itemId: input.itemId, position: input.position }
+          : {}),
         content: input.content,
         ...(input.communication ? { communication: input.communication } : {}),
       };
@@ -6519,6 +6547,9 @@ function reconcilePendingMessages(
     replayed.push({
       tempId: input.pendingId,
       pendingId: input.pendingId,
+      ...(input.position !== undefined && input.itemId
+        ? { itemId: input.itemId, position: input.position }
+        : {}),
       posted: true,
       content: input.content,
       ...(input.communication ? { communication: input.communication } : {}),
@@ -6538,6 +6569,7 @@ function scheduleCompletionRecovery(
   get: Getter,
   ignored: Set<string>,
 ): void {
+  if (sessionUpdatesSocket.supportsTranscripts()) return;
   const controller = get().abortController;
   if (!controller || completionRecoveries.get(controller)?.responseId === responseId) return;
   const job = { responseId };
@@ -6608,6 +6640,7 @@ async function backfillOnReconnect(
   if (queryClient === null) return;
   const bindingController = get().abortController;
   const launchBeforeFetch = mcpStartupBeforeSnapshot(id, get());
+  const todosBeforeFetch = get().todos;
   const blocksBeforeFetch = get().blocks;
   const responseBeforeFetch = get().activeResponse;
   if (!bounded && bindingController) snapshotBackfills.delete(bindingController);
@@ -6674,7 +6707,8 @@ async function backfillOnReconnect(
       );
       if (stale()) return;
       if (!progress.complete) {
-        if (!itemsOnly) set((state) => reconnectStatusPatch(session, state, launchBeforeFetch));
+        if (!itemsOnly)
+          set((state) => reconnectStatusPatch(session, state, launchBeforeFetch, todosBeforeFetch));
         return;
       }
       items = progress.items;
@@ -6738,11 +6772,12 @@ async function backfillOnReconnect(
       get,
       ignoredNativeMessageIds,
       launchBeforeFetch,
+      todosBeforeFetch,
     );
     return;
   }
 
-  const snapshotBlocks = itemsToBlocks(items);
+  const snapshotBlocks = snapshotTranscriptBlocks(id, items, session);
   const snapshotPending = pendingElicitationBlocksFromSnapshot(session);
   const snapshotItemIds = new Set(items.map((it) => it.id));
   set((s) => {
@@ -6751,17 +6786,17 @@ async function backfillOnReconnect(
       snapshotBlocks.filter((block) => block.type === "native_tool").map((block) => block.data),
       blocksBeforeFetch,
     );
-    const currentBlocks = withoutNativePreviews(refreshed, snapshotNativeMessageIds);
+    const currentBlocks = refreshItemPositions(
+      withoutNativePreviews(refreshed, snapshotNativeMessageIds),
+      snapshotBlocks,
+    );
     const seen = new Set(
       currentBlocks.map((b) => b.ctx.itemId).filter((iid): iid is string => Boolean(iid)),
     );
     const unseen = snapshotBlocks.filter((b) => b.ctx.itemId && !seen.has(b.ctx.itemId));
-    const reconciledBlocks =
-      s.isNativeTerminalSession && unseen.some((b) => b.type === "text_done" && b.ctx.itemId)
-        ? withoutInterruptedNativePreviews(currentBlocks, ignoredNativeMessageIds)
-        : currentBlocks;
+    const reconciledBlocks = currentBlocks;
     const patch: Partial<ChatState> = {
-      ...(!itemsOnly ? reconnectStatusPatch(session, s, launchBeforeFetch) : {}),
+      ...(!itemsOnly ? reconnectStatusPatch(session, s, launchBeforeFetch, todosBeforeFetch) : {}),
       // A gap-committed item can be a send whose POST died in the gap: it
       // retracts the draft, or marks it refused when the snapshot says the
       // runner rejected the forward (see `reconcileSendDraftWithSnapshot`).
@@ -6792,19 +6827,6 @@ async function backfillOnReconnect(
         }
       }
       nextBlocks = insertRecoveredBlocks(kept, snapshotBlocks, at >= 0 ? at : kept.length);
-      const anchored = nextBlocks.filter(
-        (candidate) =>
-          candidate.ctx.itemId === null &&
-          (candidate.type === "elicitation" || candidate.type === "error") &&
-          blockWallClockS(candidate) !== undefined,
-      );
-      if (anchored.length) {
-        const anchors = new Set(anchored);
-        nextBlocks = mergeReconnectWindow(
-          nextBlocks.filter((candidate) => !anchors.has(candidate)),
-          anchored,
-        );
-      }
     }
     if (!itemsOnly)
       nextBlocks = withoutDeliveredSendFailureCards(
@@ -6835,21 +6857,28 @@ async function backfillOnReconnect(
   });
 }
 
-// ── Presence idle reporting ─────────────────────────────────────────
-// The stream GET's `idle` query param is the entire client→server
-// presence uplink (no dedicated endpoint), so an idle flip is delivered
-// by recycling the live stream attempt — the same abort-and-reopen the
-// ingress already forces every ~5 minutes. The tracker aborts only the
-// per-attempt controller; the outer controller (teardown) stays live.
-// One entry per live stream: an idle flip must recycle EVERY open stream,
-// since each carries its own `idle` uplink. A single controller would leave
-// all but one stream reporting a stale flag once streams outlive a switch.
+// Presence uses a small socket message on the shared transport.
+// Legacy SSE-only servers still receive idle changes by recycling their attempt.
 const presenceAttemptControllers = new Set<AbortController>();
+const multiplexedAttempts = new WeakSet<AbortController>();
+const transcriptCursors = new WeakMap<AbortController, TranscriptCursor>();
+let observingTranscriptCapabilities = false;
+function observeTranscriptCapabilities(): void {
+  if (observingTranscriptCapabilities) return;
+  observingTranscriptCapabilities = true;
+  sessionUpdatesSocket.subscribeCapabilities(() => {
+    if (!sessionUpdatesSocket.supportsTranscripts()) return;
+    for (const attempt of presenceAttemptControllers)
+      if (!multiplexedAttempts.has(attempt)) attempt.abort();
+  });
+}
 const presenceIdle = createPresenceIdleTracker({
   onFlip: () => {
+    sessionUpdatesSocket.reportPresence(presenceIdle.idleNow());
     // Copy first: aborting settles each attempt's `finally`, which mutates
     // this set while we iterate it.
-    for (const controller of [...presenceAttemptControllers]) controller.abort();
+    for (const controller of [...presenceAttemptControllers])
+      if (!multiplexedAttempts.has(controller)) controller.abort();
   },
 });
 
@@ -6943,7 +6972,7 @@ export async function startStreamPump(
     });
   };
   const statusReconcileTimer =
-    typeof window === "undefined"
+    typeof window === "undefined" || sessionUpdatesSocket.supportsTranscripts()
       ? null
       : window.setInterval(runGuardedStatusReconcile, ACTIVE_SESSION_STATUS_RECONCILE_INTERVAL_MS);
   // Pending post-reconnect catch-up timers. Tracked so each reconnect cancels
@@ -7029,7 +7058,23 @@ export async function startStreamPump(
         const idle = presenceIdle.idleNow();
         let streamRes: Response;
         try {
-          streamRes = await openSessionStream(id, attempt.signal, { idle });
+          const cursor = transcriptCursors.get(controller) ?? { after_position: -1 };
+          const shared = sessionUpdatesSocket.supportsTranscripts()
+            ? await sessionUpdatesSocket.openTranscript(id, attempt.signal, cursor, idle)
+            : null;
+          if (shared) multiplexedAttempts.add(attempt);
+          streamRes =
+            shared ??
+            (await openSessionStream(id, attempt.signal, {
+              idle,
+              ...(transcriptCursors.has(controller)
+                ? {
+                    afterPosition: cursor.after_position,
+                    afterRevision: cursor.after_revision,
+                    streamEpoch: cursor.stream_epoch,
+                  }
+                : {}),
+            }));
         } catch (err) {
           if (err instanceof Error && err.name === "AbortError") {
             if (observationController.signal.aborted || isConversationDisposed(id)) break;
@@ -7103,6 +7148,20 @@ export async function startStreamPump(
         const reconnecting = hasConnected || hostReaddressed || reconcileAfterSlotWait;
         reconcileAfterSlotWait = false;
         const streamEpoch = streamRes.headers.get("x-omnigent-stream-epoch");
+        const replayPrefixes = new Map<string, string>();
+        if (reconnecting && previousStreamEpoch && streamEpoch) {
+          for (const block of get().blocks) {
+            if (!isLiveProvisionalBlock(block) || block.type !== "text_done" || !block.ctx.itemId)
+              continue;
+            if (previousStreamEpoch !== streamEpoch)
+              nativePreviewBaselines.set(block.ctx.itemId, block.fullText);
+            replayPrefixes.set(
+              block.ctx.itemId,
+              nativePreviewBaselines.get(block.ctx.itemId) ?? "",
+            );
+          }
+        }
+        previousStreamEpoch = streamEpoch;
         if (!hasConnected) clearSseLog(id);
         hasConnected = true;
         hostReaddressed = false;
@@ -7110,32 +7169,7 @@ export async function startStreamPump(
         consecutive404s = 0;
         presenceIdle.noteReported(idle);
         streamAttemptActivity.set(attempt, Date.now());
-        if (reconnecting) {
-          if (previousStreamEpoch === null || streamEpoch === null) {
-            nativePreviewBaselines.clear();
-          } else if (previousStreamEpoch !== streamEpoch) {
-            nativePreviewBaselines.clear();
-            for (const block of get().blocks) {
-              if (isLiveProvisionalBlock(block) && block.type === "text_done" && block.ctx.itemId) {
-                nativePreviewBaselines.set(block.ctx.itemId, block.fullText);
-              }
-            }
-          }
-          const liveIds = new Set(
-            get()
-              .blocks.filter(isLiveProvisionalBlock)
-              .map((block) => block.ctx.itemId),
-          );
-          for (const itemId of nativePreviewBaselines.keys()) {
-            if (!liveIds.has(itemId)) nativePreviewBaselines.delete(itemId);
-          }
-          dropEphemeralInFlightBlocks(
-            id,
-            set,
-            nativePreviewBaselines.size > 0 ? nativePreviewBaselines : null,
-          );
-        }
-        previousStreamEpoch = streamEpoch;
+        if (reconnecting) dropEphemeralInFlightBlocks(id, set);
         // Guard the byte stream with a silence watchdog: the server
         // heartbeats every 15 s, so a longer gap means a half-open socket
         // (laptop sleep, network path change, proxy reap). The guard ends
@@ -7162,8 +7196,13 @@ export async function startStreamPump(
           get,
           undefined,
           ignoredNativeMessageIds,
+          (retry) => {
+            if (retry) failedOpens++;
+            attempt.abort();
+          },
+          replayPrefixes,
         );
-        if (reconnecting) {
+        if (reconnecting && !multiplexedAttempts.has(attempt)) {
           await reconcileOnReconnect(id, set, get, ignoredNativeMessageIds);
           // reconcileOnReconnect can read a stale "running" when the server
           // just restarted and hasn't reprocessed the turn's completion yet,
@@ -7350,21 +7389,6 @@ function withoutNativePreviews(blocks: AnyBlock[], messageIds: Set<string>): Any
   });
 }
 
-/** A completed item supersedes interrupted previews; never guess by text. */
-function withoutInterruptedNativePreviews(
-  blocks: AnyBlock[],
-  ignoredMessages: Set<string>,
-): AnyBlock[] {
-  const interrupted = blocks.filter(
-    (block) =>
-      isLiveProvisionalBlock(block) && block.type === "text_done" && block.previewInterrupted,
-  );
-  if (interrupted.length === 0) return blocks;
-  interrupted.forEach((block) => ignoreLivePreview(block, ignoredMessages));
-  const removed = new Set(interrupted);
-  return blocks.filter((block) => !removed.has(block));
-}
-
 /**
  * Build a provisional in-flight assistant-text block for live streaming.
  *
@@ -7412,7 +7436,10 @@ function makeLiveTextBlock(
   };
 }
 
-type NativeTextDelta = Extract<StreamEvent, { type: "text_delta" }> & { messageId: string };
+type NativeTextDelta = Extract<StreamEvent, { type: "text_delta" }> & {
+  messageId: string;
+  replayPrefix?: string;
+};
 
 /**
  * Fold a frame's native chunks into their preview blocks in one store write.
@@ -7432,18 +7459,28 @@ type NativeTextDelta = Extract<StreamEvent, { type: "text_delta" }> & { messageI
 function applyLiveDeltas(set: Setter, deltas: NativeTextDelta[]): void {
   set((s) => {
     const blocks = s.blocks.slice();
-    for (const { messageId, delta, index } of deltas) {
+    const byId = new Map(transcriptIndex(s.blocks).items);
+    for (const { messageId, delta, index, replayPrefix } of deltas) {
       const itemId = LIVE_ITEM_PREFIX + messageId;
-      const at = blocks.findIndex((b) => b.ctx.itemId === itemId);
+      const at = byId.get(itemId) ?? -1;
       if (at === -1) {
         const live = s.activeResponse;
         const responseId = live?.state === "streaming" ? live.responseId : itemId;
+        byId.set(itemId, blocks.length);
         blocks.push(makeLiveTextBlock(itemId, delta, responseId, index));
         continue;
       }
       const existing = blocks[at]!;
       if (existing.type !== "text_done") continue;
-      const fullText = existing.fullText + delta;
+      if (
+        replayPrefix === undefined &&
+        index !== undefined &&
+        existing.streamIndex !== undefined &&
+        index <= existing.streamIndex
+      )
+        continue;
+      const fullText =
+        replayPrefix !== undefined ? replayPrefix + delta : existing.fullText + delta;
       const missedChunk =
         index !== undefined &&
         existing.streamIndex !== undefined &&
@@ -7454,6 +7491,7 @@ function applyLiveDeltas(set: Setter, deltas: NativeTextDelta[]): void {
         hasCodeBlocks: fullText.includes("```"),
         ...(index !== undefined ? { streamIndex: index } : {}),
         ...(missedChunk ? { previewInterrupted: true } : {}),
+        ...(replayPrefix !== undefined ? { previewInterrupted: false } : {}),
       };
     }
     const startupPatch = deltas.some(({ delta }) => delta.length > 0)
@@ -7469,10 +7507,7 @@ function applyLiveDeltas(set: Setter, deltas: NativeTextDelta[]): void {
 /** Append live output to the matching in-progress tool execution. */
 function applyLiveToolOutputDelta(set: Setter, callId: string, delta: string): void {
   set((s) => {
-    const at = s.blocks.findIndex(
-      (b): b is ToolGroup =>
-        b.type === "tool_group" && b.executions.some((execution) => execution.callId === callId),
-    );
+    const at = transcriptIndex(s.blocks).tools.get(callId) ?? -1;
     if (at === -1) return {};
     const group = s.blocks[at] as ToolGroup;
     const executions = group.executions.map((execution) =>
@@ -7725,10 +7760,23 @@ export async function pumpStreamEvents(
   get: Getter,
   scheduler: FrameScheduler = createRafScheduler(),
   ignoredMessages: Set<string> = new Set<string>(),
+  requestResume?: (retry?: boolean) => void,
+  nativeReplayPrefixes: ReadonlyMap<string, string> = new Map(),
 ): Promise<StreamEndReason> {
   const stream = new BlockStream();
   const sseResult: SseStreamResult = { sawDone: false };
-  const rawEvents = parseSseStream(body, sseResult);
+  const binding = get().abortController;
+  const rawEvents = (async function* () {
+    for await (const event of parseSseStream(body, sseResult)) {
+      if (
+        controller.signal.aborted ||
+        isConversationDisposed(id) ||
+        get().abortController !== binding
+      )
+        return;
+      yield event;
+    }
+  })();
   // Blocks awaiting their coalesced flush; `seenItemIds` dedupes against
   // both committed and still-buffered blocks. Lives for the whole stream
   // (one SSE connection); bounded by item count like `blocks` itself.
@@ -7736,18 +7784,14 @@ export async function pumpStreamEvents(
   const liveTextBuffer: NativeTextDelta[] = [];
   const seenItemIds = new Set<string>();
   const completedPreviewIds = new Map<string, string>();
+  const replay = new TranscriptReplay();
+  let resumeRequested = false;
+  const nativeMessagesSeen = new Set<string>();
   const previewToRetire = (block: AnyBlock, blocks: AnyBlock[]): AnyBlock | undefined => {
     const messageId = completedPreviewIds.get(block.ctx.itemId ?? "");
     if (messageId !== undefined)
-      return blocks.find((candidate) => candidate.ctx.itemId === LIVE_ITEM_PREFIX + messageId);
-    // Older relays omit native message identity; only an unambiguous same-turn preview is safe.
-    const candidates = blocks.filter(
-      (candidate) =>
-        isLiveProvisionalBlock(candidate) &&
-        (candidate.ctx.responseId === block.ctx.responseId ||
-          candidate.ctx.responseId.startsWith(LIVE_ITEM_PREFIX)),
-    );
-    return candidates.length === 1 ? candidates[0] : undefined;
+      return blocks[transcriptIndex(blocks).items.get(LIVE_ITEM_PREFIX + messageId) ?? -1];
+    return undefined;
   };
   const matchingPreview = (block: AnyBlock): boolean =>
     previewToRetire(block, get().blocks) !== undefined;
@@ -7801,11 +7845,107 @@ export async function pumpStreamEvents(
         };
       },
       (event) => {
+        if (event.type === "session_heartbeat" && !resumeRequested) {
+          const cursor = transcriptCursors.get(get().abortController ?? controller);
+          if (!cursor) {
+            // An additive checkpoint negotiates recovery on an SSE compatibility connection.
+            transcriptCursors.set(get().abortController ?? controller, { after_position: -1 });
+            resumeRequested = true;
+            requestResume?.();
+          } else if (
+            event.streamEpoch !== cursor.stream_epoch ||
+            (event.itemRevision !== undefined &&
+              cursor.after_revision !== undefined &&
+              event.itemRevision !== cursor.after_revision) ||
+            event.lastPosition > cursor.after_position ||
+            event.reconcileRequired
+          ) {
+            resumeRequested = true;
+            requestResume?.();
+          }
+        }
+        if (event.type === "session_transport_error") {
+          if (isRetryableTranscriptError(event.code)) requestResume?.(true);
+          else {
+            failUnavailableStream(set, `transcript unavailable (${event.code})`);
+            set({ status: "idle" });
+            sseResult.sawDone = true;
+          }
+        }
         if (event.type === "message_done" && event.messageId)
           completedPreviewIds.set(event.itemId, event.messageId);
         // Native previews must land before the next event can replace them
         // or change their turn attribution, approval state or terminal state.
         if (event.type !== "text_delta" || event.messageId === undefined) flushLiveText();
+        if (event.type === "session_sync") flush();
+        if (
+          event.committedItem &&
+          event.type !== "session_item_updated" &&
+          typeof event.committedItem.id === "string" &&
+          hasCommittedItem(get().blocks, event.committedItem.id)
+        ) {
+          flush();
+          handleSessionEvent({ type: "session_item_updated", item: event.committedItem }, id);
+        }
+        const rebuilt = replay.accept(event, get().blocks);
+        if (event.type === "session_sync" && event.phase === "complete") {
+          if (event.reset && !rebuilt) {
+            requestResume?.(true);
+            return;
+          }
+          transcriptCursors.set(get().abortController ?? controller, {
+            after_position: event.lastPosition,
+            after_revision: event.itemRevision,
+            stream_epoch: event.streamEpoch,
+          });
+        }
+        if (rebuilt) {
+          for (const block of get().blocks) {
+            if (
+              isLiveProvisionalBlock(block) &&
+              block.ctx.itemId &&
+              !transcriptIndex(rebuilt).items.has(block.ctx.itemId)
+            )
+              ignoreLivePreview(block, ignoredMessages);
+          }
+          set((state) => {
+            const pendingById = new Map<string, PendingUserMessage>();
+            for (const pending of state.pendingUserMessages) {
+              if (pending.initialDraft) continue;
+              for (const key of [
+                pending.itemId,
+                pending.stableId,
+                pending.pendingId,
+                pending.tempId,
+              ])
+                if (key) pendingById.set(key, pending);
+            }
+            const consumed = new Set<string>();
+            const blocks = rebuilt.map((block) => {
+              if (block.type !== "user_message" || block.ctx.responseId === "pending_input")
+                return block;
+              const pending = block.ctx.itemId ? pendingById.get(block.ctx.itemId) : undefined;
+              if (!pending) return block;
+              consumed.add(pending.tempId);
+              return {
+                ...block,
+                stableKey: block.stableKey ?? pending.tempId,
+                content: preserveInputAttachments(block.content, pending.content),
+              };
+            });
+            return {
+              blocks,
+              hasMoreHistory: false,
+              pendingUserMessages: consumed.size
+                ? state.pendingUserMessages.filter((pending) => !consumed.has(pending.tempId))
+                : state.pendingUserMessages,
+              oldestItemId:
+                blocks.find((block) => block.ctx.position !== undefined)?.ctx.itemId ?? null,
+              historyGeneration: state.historyGeneration + 1,
+              loadingMoreHistory: false,
+            };
+          });
+        }
         // Commit what the stream emitted before a turn edge applies, so the
         // edge's adoption and cleanup (e.g. of a "Compacting…" spinner) see it.
         if (
@@ -7822,11 +7962,21 @@ export async function pumpStreamEvents(
     get,
     (delta) => {
       if (controller.signal.aborted) return;
+      let pendingDelta = delta;
+      if (!nativeMessagesSeen.has(delta.messageId)) {
+        nativeMessagesSeen.add(delta.messageId);
+        const itemId = LIVE_ITEM_PREFIX + delta.messageId;
+        const existing = get().blocks[transcriptIndex(get().blocks).items.get(itemId) ?? -1];
+        const prefix = nativeReplayPrefixes.get(itemId);
+        if (prefix !== undefined) pendingDelta = { ...delta, replayPrefix: prefix };
+        else if (existing?.type === "text_done" && delta.delta.startsWith(existing.fullText))
+          pendingDelta = { ...delta, replayPrefix: "" };
+      }
       // Preserve block arrival order when native text follows reducer output.
       if (buffer.length) flush();
-      liveTextBuffer.push(delta);
-      const firstChunk = !get().blocks.some(
-        (block) => block.ctx.itemId === LIVE_ITEM_PREFIX + delta.messageId,
+      liveTextBuffer.push(pendingDelta);
+      const firstChunk = !transcriptIndex(get().blocks).items.has(
+        LIVE_ITEM_PREFIX + delta.messageId,
       );
       if (firstChunk || delta.final) flush();
       else scheduler.schedule(() => flush());
@@ -7928,28 +8078,6 @@ export async function pumpStreamEvents(
         continue;
       }
 
-      if (
-        block.type === "text_done" &&
-        block.ctx.itemId &&
-        !isLiveProvisionalBlock(block) &&
-        get().isNativeTerminalSession &&
-        get().blocks.some(
-          (candidate) =>
-            isLiveProvisionalBlock(candidate) &&
-            candidate.type === "text_done" &&
-            candidate.previewInterrupted,
-        )
-      ) {
-        flush();
-        set((s) => {
-          const blocks = withoutInterruptedNativePreviews(s.blocks, ignoredMessages);
-          return blocks === s.blocks ? {} : { blocks };
-        });
-        // The in-band item is already authoritative; also reconcile any
-        // other persisted items whose live event was missed in the gap.
-        void reconcileOnReconnect(id, set, get, ignoredMessages);
-      }
-
       // Native preview cleanup must run before the generic dedup below:
       // when a snapshot merge (reconnect/rebind) inserted this
       // authoritative item while its `live:*` preview was still on
@@ -8021,7 +8149,11 @@ export async function pumpStreamEvents(
         const bufferAt = buffer.findIndex(matchesStreamed);
         if (bufferAt !== -1) {
           const streamed = buffer[bufferAt] as TextDone;
-          buffer[bufferAt] = { ...streamed, ctx: { ...streamed.ctx, itemId } };
+          buffer[bufferAt] = {
+            ...streamed,
+            ...block,
+            ctx: { ...streamed.ctx, ...block.ctx, itemId },
+          };
           continue;
         }
         if (get().blocks.some(matchesStreamed)) {
@@ -8032,8 +8164,9 @@ export async function pumpStreamEvents(
             const at = s.blocks.findIndex(matchesStreamed);
             if (at === -1) return {};
             const streamed = s.blocks[at]!;
+            if (!matchesStreamed(streamed)) return {};
             const next = s.blocks.slice();
-            next[at] = { ...streamed, ctx: { ...streamed.ctx, itemId } };
+            next[at] = { ...streamed, ...block, ctx: { ...streamed.ctx, ...block.ctx, itemId } };
             return { blocks: next };
           });
           continue;
@@ -8127,6 +8260,8 @@ export async function pumpStreamEvents(
     // a deliberate server close (`[DONE]`) or a transport drop without it
     // (idle proxy disconnect / the Apps ~5-min cap) decides reconnection.
     flush();
+    if (controller.signal.aborted) return "aborted";
+    if (isConversationDisposed(id)) return "switched";
     return sseResult.sawDone ? "server_closed" : "dropped";
   } catch (err) {
     if (err instanceof Error && err.name === "AbortError") return "aborted";
@@ -8183,7 +8318,7 @@ function userContentFromEvent(event: SessionInputConsumedEvent): MessageContentB
 }
 
 export function hasCommittedItem(blocks: AnyBlock[], itemId: string): boolean {
-  return itemId !== "" && blocks.some((block) => block.ctx.itemId === itemId);
+  return itemId !== "" && transcriptIndex(blocks).items.has(itemId);
 }
 
 /**
@@ -8530,21 +8665,6 @@ function committedContentFor(
   const serverContent = userContentFromEvent(event);
   if (!serverContent) return pendingContent;
   return preserveInputAttachments(serverContent, pendingContent);
-}
-
-function preserveInputAttachments(
-  serverContent: MessageContentBlock[],
-  pendingContent: MessageContentBlock[] | null,
-): MessageContentBlock[] {
-  if (!pendingContent) return serverContent;
-  const serverHasFiles = serverContent.some(
-    (b) => b.type === "input_image" || b.type === "input_file",
-  );
-  if (serverHasFiles) return serverContent;
-  const pendingFiles = pendingContent.filter(
-    (b) => b.type === "input_image" || b.type === "input_file",
-  );
-  return pendingFiles.length > 0 ? [...pendingFiles, ...serverContent] : serverContent;
 }
 
 /** Fill provenance and uploads when a persisted item beats its pending receipt. */
@@ -8986,7 +9106,24 @@ export function handleSessionEvent(event: StreamEvent, streamConversationId?: st
   const applyToConversation = (
     patch: Partial<ConversationState> | ((s: ChatState) => Partial<ConversationState>),
   ): void => {
-    setterFor(sourceConversationId)(patch);
+    setterFor(sourceConversationId)((state) => {
+      const next = typeof patch === "function" ? patch(state) : patch;
+      if (event.type !== "session_input_consumed" || event.position === undefined) return next;
+      const blocks = (next.blocks ?? state.blocks).map((block) =>
+        block.ctx.itemId === event.itemId
+          ? {
+              ...block,
+              ctx: {
+                ...block.ctx,
+                position: event.position,
+                ...(event.responseId ? { responseId: event.responseId } : {}),
+                ...(event.createdAtS !== undefined ? { createdAtS: event.createdAtS } : {}),
+              },
+            }
+          : block,
+      );
+      return { ...next, blocks };
+    });
   };
 
   /**
@@ -9026,6 +9163,13 @@ export function handleSessionEvent(event: StreamEvent, streamConversationId?: st
   switch (event.type) {
     case "session_item_updated": {
       applyToConversation((state) => {
+        if (
+          typeof event.item.id === "string" &&
+          typeof event.item.position === "number" &&
+          event.item.type !== "resource_event"
+        ) {
+          return { blocks: upsertCanonicalItem(state.blocks, event.item as ConversationItem) };
+        }
         const blocks = updateLoadedResourceItems(state.blocks, [event.item]);
         return blocks === state.blocks ? {} : { blocks };
       });

@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { serializeContextReference, type ContextReference } from "./contextReferences";
 import type { ComposerAttachment } from "@/store/chatStore";
 import { nativeCodingAgentForHarness } from "@/lib/nativeCodingAgents";
@@ -109,21 +110,26 @@ export function parseMentionToken(query: string): { dir: string; filter: string 
 }
 
 /**
- * Filter a directory's entries by the typed segment, sort folders-first then
- * alphabetically, and cap the list. Generic over any ``{ name, type }`` row so
+ * Rank exact, prefix and substring matches, then folders and names, and cap
+ * the list. Generic over any ``{ name, type }`` row so
  * both the workspace-API and host-filesystem sources share one ranking. The cap
  * trims only the rendered *list*, never what gets delivered.
  */
-export function rankMentionEntries<T extends { name: string; type: string }>(
-  entries: T[],
-  filter: string,
-  cap: number = MENTION_MATCH_CAP,
-): T[] {
+export function rankMentionEntries<
+  T extends { name: string; type: string; matchesQuery?: boolean },
+>(entries: T[], filter: string, cap: number = MENTION_MATCH_CAP): T[] {
   const needle = filter.toLowerCase();
+  const relevance = (name: string) => {
+    const normalized = name.toLowerCase();
+    return normalized === needle ? 0 : normalized.startsWith(needle) ? 1 : 2;
+  };
   return entries
-    .filter((e) => e.name.toLowerCase().includes(needle))
+    .filter((e) => e.matchesQuery || e.name.toLowerCase().includes(needle))
     .sort((a, b) => {
-      if (a.type !== b.type) return a.type === "directory" ? -1 : 1;
+      const score = relevance(a.name) - relevance(b.name);
+      if (score) return score;
+      if ((a.type === "directory") !== (b.type === "directory"))
+        return a.type === "directory" ? -1 : 1;
       return a.name.localeCompare(b.name);
     })
     .slice(0, cap);

@@ -1343,9 +1343,10 @@ data: [DONE]
 404 Not Found — no session with that id
 ```
 
-**Live tail only.** No `starting_after` parameter, no replay of past
-events, no sequence numbers exposed on the wire. Reconnecting clients
-reconcile via the snapshot endpoint — see "Reconnect Contract".
+Without a cursor this remains a legacy live tail.
+`after_position` opts into canonical item replay, with `after_revision` and `stream_epoch` identifying the client's completed checkpoint.
+Items expose stable per-conversation `position`; this orders saved items and is separate from mutation revision.
+See "Reconnect Contract" for authoritative reset and append recovery.
 
 The stream stays open until the client disconnects or the conversation
 is closed; events flow in publish order. Multiple subscribers to the
@@ -1428,24 +1429,27 @@ in the native terminal, where the verdict is not observable.
 
 ### Reconnect Contract
 
-The session API has **no replay machinery**. To reconnect to a
-session after a disconnect:
+Modern clients share `WS /v1/sessions/updates` between list watches and transcript memberships.
+The server first announces `{"type":"capabilities","transcript_stream":1}`; clients use bounded SSE fallback when that capability is absent.
 
-1. **Open the SSE stream** (`GET /v1/sessions/{id}/stream`). The
-   stream is registered eagerly at session create and survives
-   across turns, so subscribing is safe at any point in the session
-   lifecycle — including before the first turn starts.
-2. **GET the snapshot** (`GET /v1/sessions/{id}`).
-3. **Dedupe items between the snapshot and the stream by item id.**
-   Items in `snapshot.items` that also appear in stream events are
-   the same item — drop the duplicate. Server-issued IDs are stable.
+1. Send `{"type":"subscribe","session_id":"conv_abc123","after_position":-1}` for the initial canonical replay.
+2. Receive `session.event` envelopes containing `session.sync` start, saved item frames, then `session.sync` complete.
+3. Upsert saved items by exact item ID and sort by `position`; on `reset:true`, replace canonical membership only after completion.
+4. Resume with the completed checkpoint's `after_position`, `after_revision` and `stream_epoch`.
+5. Apply `session.heartbeat` revision checkpoints; unchanged streams require no item read or replay.
 
-Opening the stream BEFORE the snapshot is still recommended so no
-events fire in the gap, but because the stream queue stays alive
-across turns, transient races during reconnect are bounded to the
-in-flight HTTP roundtrip rather than the full turn duration. Clients
-should rely on `session.input.consumed` events and item-id dedupe
-against the snapshot to reconcile accepted inputs.
+The live queue registers before replay and the read is fenced at its initial high-water position.
+Trusted same-epoch append cursors read later positions; old-item mutation/removal, epoch changes and untrusted revisions require authoritative reset.
+Pending inputs and live previews retain exact identities and explicit placement until their own replacement or terminal state; successful turn completion alone does not discard them.
+
+`unsubscribe` removes only its named membership; `presence` updates idle state without recycling transcript streams.
+Each membership is independently authorized and cleaned up; its overflow, revocation or routing error does not terminate other memberships or list watches.
+Revision state is workspace/process scoped; out-of-process direct SQL changes require explicit invalidation or reset.
+
+The same recovery contract is available through `GET /v1/sessions/{id}/stream?after_position=-1`.
+Legacy clients can subscribe before fetching a snapshot and deduplicate by stable item ID.
+Saved pending acknowledgements expose their canonical `item_id`, `position` and `created_at`; opaque pending handles are acknowledgement identities, not ordering keys.
+Host-routed clients retain their per-session SSE routes until the shared socket can route memberships across replicas.
 
 Native shell-mode inputs (`!cmd`) settle when the matching `terminal_command`
 input is persisted. Its output does not acknowledge an input, and no

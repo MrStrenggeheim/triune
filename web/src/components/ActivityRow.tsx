@@ -26,6 +26,7 @@ import "./ActivityRow.css";
 export function ActivityRow({
   icon,
   title,
+  titleDetail,
   status,
   preview,
   children,
@@ -41,10 +42,12 @@ export function ActivityRow({
   expanded: controlledExpanded,
   onExpandedChange,
   keepMounted = false,
+  keepSummaryWhenExpanded = false,
   searchItemIds,
 }: {
   icon: ReactNode;
   title: ReactNode;
+  titleDetail?: ReactNode;
   status?: ReactNode;
   preview?: string;
   children?: ReactNode;
@@ -62,6 +65,8 @@ export function ActivityRow({
   onExpandedChange?: (expanded: boolean) => void;
   /** Forms retain their local drafts while the disclosure is folded. */
   keepMounted?: boolean;
+  /** Compact agent cards retain their latest-message line while details are open. */
+  keepSummaryWhenExpanded?: boolean;
   searchItemIds?: readonly string[];
 }) {
   const preserveDisclosure = useTranscriptDisclosureAnchor();
@@ -105,6 +110,51 @@ export function ActivityRow({
       {title}
     </span>
   );
+  const heading = onOpen ? (
+    <Button
+      type="button"
+      variant="ghost"
+      aria-label={typeof title === "string" ? title : undefined}
+      aria-description={
+        descriptionText ?? (typeof description === "string" ? description : undefined)
+      }
+      className={`h-auto ${titleDetail ? "w-auto shrink-0" : "w-full"} min-w-0 justify-start rounded-none p-0 text-left font-medium hover:bg-transparent`}
+      onClick={href ? undefined : onOpen}
+      asChild={!!href}
+    >
+      {href ? (
+        <Link
+          to={href}
+          onClick={(event) => {
+            if (
+              event.button !== 0 ||
+              event.metaKey ||
+              event.ctrlKey ||
+              event.shiftKey ||
+              event.altKey
+            ) {
+              event.stopPropagation();
+              return;
+            }
+            event.preventDefault();
+            onOpen();
+          }}
+        >
+          {titleContent}
+        </Link>
+      ) : (
+        titleContent
+      )}
+    </Button>
+  ) : (
+    <div
+      className="flex min-w-0 items-center gap-1.5 truncate"
+      title={typeof title === "string" ? title : undefined}
+    >
+      {title}
+    </div>
+  );
+
   const row = (
     <div
       data-resource-row=""
@@ -122,51 +172,15 @@ export function ActivityRow({
         {icon}
       </span>
       <div className={`min-w-0 flex-1 ${message ? "activity-message-text" : ""}`}>
-        {onOpen ? (
-          <Button
-            type="button"
-            variant="ghost"
-            aria-label={typeof title === "string" ? title : undefined}
-            aria-description={
-              descriptionText ?? (typeof description === "string" ? description : undefined)
-            }
-            className="h-auto w-full min-w-0 justify-start rounded-none p-0 text-left font-medium hover:bg-transparent"
-            onClick={href ? undefined : onOpen}
-            asChild={!!href}
-          >
-            {href ? (
-              <Link
-                to={href}
-                onClick={(event) => {
-                  if (
-                    event.button !== 0 ||
-                    event.metaKey ||
-                    event.ctrlKey ||
-                    event.shiftKey ||
-                    event.altKey
-                  ) {
-                    event.stopPropagation();
-                    return;
-                  }
-                  event.preventDefault();
-                  onOpen();
-                }}
-              >
-                {titleContent}
-              </Link>
-            ) : (
-              titleContent
-            )}
-          </Button>
-        ) : (
-          <div
-            className="flex min-w-0 items-center gap-1.5 truncate"
-            title={typeof title === "string" ? title : undefined}
-          >
-            {title}
+        {titleDetail ? (
+          <div className="flex min-w-0 items-center gap-1">
+            {heading}
+            <span className="min-w-0 truncate">{titleDetail}</span>
           </div>
+        ) : (
+          heading
         )}
-        {(!message || !expanded) && (
+        {(!message || !expanded || keepSummaryWhenExpanded) && (
           <div
             className={`resource-description min-w-0 ${message ? "line-clamp-1 text-sm text-foreground [&_p]:my-0" : "truncate text-xs text-muted-foreground"}`}
             title={descriptionText ?? (typeof description === "string" ? description : undefined)}
@@ -262,6 +276,7 @@ export function ActivityRow({
   ) : (
     row
   );
+
   return (
     <div
       onClickCapture={preserveDisclosure}

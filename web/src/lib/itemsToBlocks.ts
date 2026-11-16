@@ -1,5 +1,6 @@
 // Modified for Triune; inherited notices remain applicable.
 import { messageSearchSource } from "./messageSearchSource";
+import { itemPosition } from "./transcriptOrder";
 import { readMessageCommunication } from "./messageCommunication";
 import { attachmentsFromContent } from "./chatAttachments";
 // Translate persisted `ConversationItem`s into a flat `AnyBlock[]` —
@@ -102,7 +103,10 @@ const ANSWER_SEPARATOR = '"="';
  */
 export function itemsToBlocks(items: ConversationItem[]): AnyBlock[] {
   const blocks: AnyBlock[] = [];
-  const normalizedItems = items.map((item) => {
+  const orderedItems = items.every((item) => itemPosition(item.position) !== undefined)
+    ? [...items].sort((a, b) => a.position! - b.position!)
+    : items;
+  const normalizedItems = orderedItems.map((item) => {
     const raw = item as unknown as { type: string; item?: Record<string, unknown> };
     return raw.type === "native_tool" && raw.item
       ? ({
@@ -110,6 +114,7 @@ export function itemsToBlocks(items: ConversationItem[]): AnyBlock[] {
           id: item.id,
           response_id: item.response_id,
           status: item.status,
+          position: item.position,
         } as ConversationItem)
       : item;
   });
@@ -348,6 +353,7 @@ function userMessageToBlock(item: MessageItem): UserMessageBlock {
     isMeta: item.is_meta === true,
     ...(readMessageCommunication(item.communication) ? { communication: item.communication } : {}),
     type: "user_message",
+    ...(item.response_id === "pending_input" ? { pending: true } : {}),
     ctx: ctxFor(item),
     // Forward the full content array verbatim so the renderer can
     // pluck text, images, and files without the translator imposing
@@ -536,6 +542,7 @@ function ctxFor(item: ConversationItem): BlockContext {
     timestamp: 0,
     responseId: item.response_id,
     itemId: item.id,
+    ...(itemPosition(item.position) !== undefined ? { position: item.position } : {}),
     ...(createdBy !== undefined ? { createdBy } : {}),
     ...(typeof item.created_at === "number" && item.created_at > 0
       ? { createdAtS: item.created_at }

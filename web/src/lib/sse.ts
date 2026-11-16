@@ -1,5 +1,6 @@
 // Modified for Triune.
 import { readMessageCommunication } from "./messageCommunication";
+import { itemPosition } from "./transcriptOrder";
 import { parseNativePermissionDelivery } from "./nativePermissionDelivery";
 import { questionBatchFromItem } from "./questionBatches";
 // Mirrors sdks/python-client/omnigent_client/_sse.py.
@@ -423,7 +424,93 @@ export function parseBackgroundTasks(raw: unknown): BackgroundTaskInfo[] | undef
  *   (forward-compatible — older clients ignore newer events).
  */
 export function parseEvent(rawType: string, data: Record<string, unknown>): StreamEvent | null {
+  const event = parseEventPayload(rawType, data);
+  const record = rawType === "session.input.consumed" ? data.data : data.item;
+  const positionedItem =
+    record &&
+    typeof record === "object" &&
+    !Array.isArray(record) &&
+    itemPosition((record as Record<string, unknown>).position) !== undefined
+      ? (record as Record<string, unknown>)
+      : undefined;
+  if (
+    rawType === "response.output_item.done" &&
+    positionedItem?.type === "message" &&
+    positionedItem.role === "user"
+  )
+    return { type: "session_item_updated", item: positionedItem, committedItem: positionedItem };
+  if (!event)
+    return rawType === "response.output_item.done" && positionedItem
+      ? { type: "session_item_updated", item: positionedItem, committedItem: positionedItem }
+      : null;
+  if (!record || typeof record !== "object" || Array.isArray(record)) return event;
+  const raw = record as Record<string, unknown>;
+  const position = itemPosition(raw.position);
+  const createdAtS =
+    typeof raw.created_at === "number" && Number.isFinite(raw.created_at)
+      ? raw.created_at
+      : undefined;
+  return position === undefined && createdAtS === undefined
+    ? event
+    : {
+        ...event,
+        ...(positionedItem && rawType === "response.output_item.done"
+          ? { committedItem: positionedItem }
+          : {}),
+        ...(position !== undefined ? { position } : {}),
+        ...(createdAtS !== undefined ? { createdAtS } : {}),
+      };
+}
+
+function parseEventPayload(rawType: string, data: Record<string, unknown>): StreamEvent | null {
   const eventType = normalizeEventType(rawType);
+
+  if (eventType === "session.transport_error" && typeof data.code === "string")
+    return { type: "session_transport_error", code: data.code };
+
+  if (eventType === "session.sync" || eventType === "session.heartbeat") {
+    const raw =
+      data.data && typeof data.data === "object" && !Array.isArray(data.data)
+        ? (data.data as Record<string, unknown>)
+        : data;
+    const lastPosition = raw.last_position;
+    const itemCount = raw.item_count;
+    if (
+      typeof lastPosition !== "number" ||
+      !Number.isSafeInteger(lastPosition) ||
+      lastPosition < -1 ||
+      typeof itemCount !== "number" ||
+      !Number.isSafeInteger(itemCount) ||
+      itemCount < 0 ||
+      typeof raw.stream_epoch !== "string" ||
+      (raw.last_item_id !== null && typeof raw.last_item_id !== "string")
+    )
+      return null;
+    const boundary = {
+      lastPosition,
+      itemCount,
+      lastItemId: raw.last_item_id as string | null,
+      streamEpoch: raw.stream_epoch,
+      ...(typeof raw.item_revision === "number" &&
+      Number.isSafeInteger(raw.item_revision) &&
+      raw.item_revision >= 0
+        ? { itemRevision: raw.item_revision }
+        : {}),
+      ...(typeof raw.reset_revision === "number" &&
+      Number.isSafeInteger(raw.reset_revision) &&
+      raw.reset_revision >= 0
+        ? { resetRevision: raw.reset_revision }
+        : {}),
+    };
+    if (eventType === "session.heartbeat")
+      return {
+        type: "session_heartbeat",
+        ...boundary,
+        reconcileRequired: raw.reconcile_required === true,
+      };
+    if (raw.phase !== "start" && raw.phase !== "complete") return null;
+    return { type: "session_sync", ...boundary, phase: raw.phase, reset: raw.reset === true };
+  }
 
   if (eventType === "session.background_tasks") {
     const conversationId = data.conversation_id;
@@ -917,6 +1004,7 @@ export function parseEvent(rawType: string, data: Record<string, unknown>): Stre
       type: "session_input_consumed",
       itemId,
       itemType,
+      ...(typeof p.response_id === "string" ? { responseId: p.response_id } : {}),
       isMeta: payload.is_meta === true,
       ...(typeof createdBy === "string" ? { createdBy } : {}),
       data: payload,

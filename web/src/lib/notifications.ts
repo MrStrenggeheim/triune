@@ -8,6 +8,8 @@ export interface NotificationEntry extends ToastT {
   createdAt: number;
   updatedAt: number;
   visible: boolean;
+  /** Opening history consumes the preview without shortening its action/expiry lifetime. */
+  previewSuppressed?: boolean;
   unread: boolean;
   /** Newly seen entries stay visible until this center visit ends. */
   seenInCurrentVisit?: boolean;
@@ -199,6 +201,7 @@ export function setNotificationCenterOpen(centerOpen: boolean): void {
         ...entry,
         unread: centerOpen ? false : entry.unread,
         seenInCurrentVisit: centerOpen && entry.unread,
+        previewSuppressed: centerOpen || entry.previewSuppressed,
       }),
     ),
     centerOpen,
@@ -229,6 +232,7 @@ export function notify(input: NotifyInput): NotificationId {
     createdAt: now,
     updatedAt: now,
     visible: input.visible ?? true,
+    previewSuppressed: snapshot.centerOpen,
     unread: !snapshot.centerOpen,
     seenInCurrentVisit: snapshot.centerOpen,
     actionPending: false,
@@ -254,6 +258,7 @@ export function updateNotification(
     createdAt: previous.createdAt,
     updatedAt: Date.now(),
     visible: reveal ? true : previous.visible,
+    previewSuppressed: reveal ? snapshot.centerOpen : previous.previewSuppressed,
     unread: reveal ? !snapshot.centerOpen : previous.unread,
     seenInCurrentVisit: reveal ? snapshot.centerOpen : previous.seenInCurrentVisit,
     actionPending: previous.actionPending,

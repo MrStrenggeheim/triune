@@ -1,4 +1,5 @@
 import { subagentCardItemIds } from "@/lib/subagentActivity";
+import { projectPendingTranscript } from "@/lib/transcriptOrder";
 import {
   hasTranscriptScrollOwner,
   useTranscriptDisclosureAnchor,
@@ -217,7 +218,10 @@ function TranscriptImpl({
   const targetId =
     searchTarget?.conversationId === conversationId ? searchTarget.itemId : messageId;
   const targetsHistory =
-    !!targetId && blocks.slice(0, inheritedEnd + 1).some((block) => block.ctx.itemId === targetId);
+    !!targetId &&
+    blocks
+      .slice(0, inheritedEnd + 1)
+      .some((block) => block.ctx.itemId === targetId || block.ctx.aliases?.includes(targetId));
   const historyExpanded = expandedHistoryId === historyId || targetsHistory;
   useEffect(() => {
     if (targetsHistory) setExpandedHistoryId(historyId);
@@ -237,7 +241,7 @@ function TranscriptImpl({
     const committed = stripGatedSubagentRoutingChips(
       reorderCommittedRequestElicitations(
         buildBubbles(
-          visibleBlocks,
+          projectPendingTranscript(visibleBlocks, pendingUserMessages, getCurrentAuthorId()),
           activeResponse,
           bubbleCacheRef.current,
           interruptedResponseIds,
@@ -337,10 +341,12 @@ function TranscriptImpl({
   // windowed DOM. `scrollToItem` is held in a ref so `ensureItemVisible` keeps a
   // stable identity; the reactive fields are lifted to state.
   const scrollToItemRef = useRef<TranscriptGeometry["scrollToItem"] | null>(null);
+  const cancelPendingScrollRef = useRef<TranscriptGeometry["cancelPendingScroll"] | null>(null);
   const [activeTurnId, setActiveTurnId] = useState<string | null>(null);
   const [spacerMeasureNonce, setSpacerMeasureNonce] = useState(0);
   const onGeometryChange = useCallback((geometry: TranscriptGeometry) => {
     scrollToItemRef.current = geometry.scrollToItem;
+    cancelPendingScrollRef.current = geometry.cancelPendingScroll;
     setActiveTurnId(geometry.activeTurnId);
     setSpacerMeasureNonce(geometry.rangeNonce);
   }, []);
@@ -352,6 +358,7 @@ function TranscriptImpl({
     (itemId: string) => scrollToItemRef.current?.(itemId, true) ?? false,
     [],
   );
+  const cancelPendingScroll = useCallback(() => cancelPendingScrollRef.current?.(), []);
 
   // Single nav instance shared by hotkey + buttons. System-message bubbles are
   // excluded — the hotkey is for navigating real user turns, not markers.
@@ -385,6 +392,7 @@ function TranscriptImpl({
     sources: searchSources,
     reveal: revealState,
     ensureMessageVisible: ensureSearchItemVisible,
+    cancelPendingScroll,
     ready: display.conversationId === conversationId && !!scroller?.el && !!scrollToItemRef.current,
     rangeNonce: spacerMeasureNonce,
   });
@@ -610,6 +618,7 @@ export function activeTurnIdAtBubbleIndex(bubbles: Bubble[], midIndex: number): 
  * scanning the windowed DOM.
  */
 export interface TranscriptGeometry {
+  cancelPendingScroll: () => void;
   /** Pulls a turn's row into the mounted window; false if its id isn't found. */
   scrollToItem: (itemId: string, mountOnly?: boolean) => boolean;
   /** itemId of the user turn owning the viewport midpoint, or null. */
@@ -1084,6 +1093,7 @@ export function VirtualBubbleList({
     // Closing search/deep-link navigation keeps the location the reader found.
     if (
       messageId ||
+      hasTranscriptScrollOwner(scrollEl) ||
       (previous?.conversationId === conversationId && previous.scrollEl === scrollEl)
     )
       return;
@@ -1108,6 +1118,10 @@ export function VirtualBubbleList({
     if (!saved || saved.atBottom) {
       const pinBottom = () => {
         if (done) return;
+        if (hasTranscriptScrollOwner(scrollEl)) {
+          finish();
+          return;
+        }
         c.state.isAtBottom = true;
         c.state.escapedFromLock = false;
         scrollEl.scrollTop = Math.max(0, scrollEl.scrollHeight - scrollEl.clientHeight - 1);
@@ -1121,7 +1135,7 @@ export function VirtualBubbleList({
       });
       frame = requestAnimationFrame(() => {
         pinBottom();
-        frame = requestAnimationFrame(finish);
+        if (!done) frame = requestAnimationFrame(finish);
       });
       return finish;
     }
@@ -1129,6 +1143,10 @@ export function VirtualBubbleList({
     c.stopScroll();
     const deadline = performance.now() + SCROLL_RESTORE_BUDGET_MS;
     const pinAnchor = () => {
+      if (hasTranscriptScrollOwner(scrollEl)) {
+        finish();
+        return;
+      }
       scrollEl.scrollTop = resolveTranscriptViewOffset(saved, (key) => {
         const index = bubblesRef.current.findIndex((bubble) => bubbleKey(bubble) === key);
         return index < 0 ? undefined : virtualizerRef.current.measurementsCache[index]?.start;
@@ -1141,7 +1159,7 @@ export function VirtualBubbleList({
         return;
       }
       pinAnchor();
-      frame = requestAnimationFrame(tick);
+      if (!done) frame = requestAnimationFrame(tick);
     };
     pinAnchor();
     frame = requestAnimationFrame(tick);
@@ -1151,7 +1169,7 @@ export function VirtualBubbleList({
   const scrollToItem = useCallback((itemId: string, mountOnly = false): boolean => {
     const index = bubblesRef.current.findIndex(
       (b) =>
-        (b.kind === "user" && b.itemId === itemId) ||
+        (b.kind === "user" && (b.itemId === itemId || b.aliases?.includes(itemId))) ||
         (b.kind === "subagent_activity" && subagentCardItemIds(b.data).includes(itemId)) ||
         (b.kind === "assistant" &&
           (b.responseId === itemId ||
@@ -1169,11 +1187,13 @@ export function VirtualBubbleList({
     if (mountOnly) {
       // Search owns subsequent measurement correction and cancellation.
       // Avoid starting the virtualizer's independent index-reconcile loop.
+      virtualizerRef.current.cancelScroll();
       const offset = virtualizerRef.current.getOffsetForIndex(index, "auto")?.[0];
       if (offset !== undefined) c.state.scrollTop = offset;
     } else virtualizerRef.current.scrollToIndex(index, { align: "center" });
     return true;
   }, []);
+  const cancelPendingScroll = useCallback(() => virtualizerRef.current.cancelScroll(), []);
 
   const totalSize = virtualizer.getTotalSize();
   const range = virtualizer.range;
@@ -1291,8 +1311,8 @@ export function VirtualBubbleList({
   // spacer anchor that has remounted gets a fresh measure.
   const rangeNonce = (range?.startIndex ?? -1) * 100003 + (range?.endIndex ?? -1);
   useEffect(() => {
-    onGeometryChange({ scrollToItem, activeTurnId, rangeNonce });
-  }, [onGeometryChange, scrollToItem, activeTurnId, rangeNonce]);
+    onGeometryChange({ scrollToItem, cancelPendingScroll, activeTurnId, rangeNonce });
+  }, [onGeometryChange, scrollToItem, cancelPendingScroll, activeTurnId, rangeNonce]);
 
   if (disableVirtualization) {
     return (

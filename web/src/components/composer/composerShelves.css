@@ -29,20 +29,6 @@
   isolation: isolate;
 }
 
-/* Stay behind the composer corners while the last shelf completes its exit. */
-.composer-shelf-stack:has(.composer-shelf-presence)::after,
-.composer-shelf-stack > .composer-shelf-presence::after {
-  content: "";
-  position: absolute;
-  inset-inline: 0;
-  top: 100%;
-  height: var(--composer-outer-radius);
-  border-inline: var(--composer-shelf-border-width) solid var(--border);
-  background: var(--composer-shelf-background);
-  pointer-events: none;
-  z-index: -1;
-}
-
 .composer-shelf-presence {
   position: relative;
   display: grid;
@@ -57,14 +43,29 @@
   transition-timing-function: ease-out;
 }
 
+.composer-shelf-presence[hidden] {
+  display: none;
+}
+
 .composer-shelf-clip {
   min-width: 0;
   min-height: 0;
-  overflow: clip;
+  /* Clip the collapsing slot while letting its continuous surface reach
+     behind the next layer's rounded corners. */
+  clip-path: inset(0 0 calc(-1 * var(--composer-outer-radius)));
 }
 
 .composer-shelf-content {
   min-width: 0;
+  border: var(--composer-shelf-border-width) solid var(--border);
+  border-bottom: 0;
+  border-radius: var(--composer-outer-radius) var(--composer-outer-radius) 0 0;
+  background: var(--composer-shelf-background);
+  padding: var(--composer-shelf-inset);
+  padding-bottom: calc(
+    var(--composer-shelf-inset) + var(--composer-shelf-border-width) + var(--composer-outer-radius)
+  );
+  margin-bottom: calc(-1 * var(--composer-outer-radius));
   opacity: 0;
   transform: translateY(100%);
   transition:
@@ -91,16 +92,6 @@
   margin-inline: 0;
 }
 
-/* Backing lives outside the motion clip, underneath the next rounded shelf. */
-.composer-shelf-stack > .composer-shelf-presence::after {
-  z-index: 0;
-}
-
-.composer-shelf-stack > .composer-shelf-presence > .composer-shelf-clip {
-  position: relative;
-  z-index: 1;
-}
-
 .composer-shelf-surface,
 .composer-shelf-stack .composer-subagent-surface {
   border: var(--composer-shelf-border-width) solid var(--border);
@@ -110,6 +101,14 @@
   padding: var(--composer-shelf-inset);
   /* The absent bottom border still contributes to the button-box inset. */
   padding-bottom: calc(var(--composer-shelf-inset) + var(--composer-shelf-border-width));
+}
+
+/* The presence layer owns paint and insets; its live child keeps its layout. */
+.composer-shelf-content :is(.composer-shelf-surface, .composer-subagent-surface) {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
 }
 
 .composer-shelf-surface button {

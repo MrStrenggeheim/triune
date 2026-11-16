@@ -98,10 +98,10 @@ export function WorkbenchAppBar({
               ref={openButton}
               variant="default"
               size="sm"
-              className="h-8 gap-1.5 p-[5px] text-primary-foreground"
+              className="max-md:size-11! max-md:p-0 pointer-coarse:min-h-11! pointer-coarse:min-w-11!"
               aria-label="Open view"
             >
-              <PlusIcon data-icon-size="16" className="size-4 p-0" />
+              <PlusIcon data-icon="inline-start" />
               <span className="hidden md:inline">Open</span>
             </Button>
           </OpenViewMenu>

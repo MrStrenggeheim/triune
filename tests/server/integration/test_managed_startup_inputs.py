@@ -539,6 +539,11 @@ async def test_queued_input_preserves_identity_and_rechecks_access(
     response = await auth_client.post(f"/v1/sessions/{session_id}/events", json=_INPUT)
     assert response.status_code == 202, response.text
     [entry] = startup.conversations.list_pending_inputs(session_id)
+    assert response.json()["position"] == entry.position == 0
+    pending_snapshot = (await auth_client.get(f"/v1/sessions/{session_id}")).json()
+    assert pending_snapshot["pending_inputs"][0]["position"] == entry.position
+    assert pending_snapshot["pending_inputs"][0]["item_id"] == entry.id
+    assert pending_snapshot["pending_inputs"][0]["created_at"] == entry.created_at
     if revoke_access:
         startup_permissions.revoke(user_id, session_id)
     forwarded: list[dict[str, Any]] = []

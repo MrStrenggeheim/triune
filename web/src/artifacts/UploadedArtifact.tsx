@@ -75,6 +75,7 @@ export function UploadedArtifact({
     !!preview.openAttachment && preview.canOpenAttachment?.(request, "tab") !== false;
   return (
     <ArtifactFrame
+      inline
       key={`${sessionId}:${reference.file_id}`}
       identity={`${sessionId}:${reference.file_id}`}
       title={reference.title || data.filename}

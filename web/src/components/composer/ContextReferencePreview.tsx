@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { useContext } from "react";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -42,7 +43,7 @@ export function ContextReferencePreview({
           {JSON.stringify(reference.items, null, 2)}
         </pre>
         <div className="flex gap-2">
-          <Button variant="outline" asChild>
+          <Button type="button" variant="outline" asChild>
             <a
               href={referenceSourceUrl(reference.source_id, reference.boundary_id)}
               target="_blank"
@@ -53,6 +54,7 @@ export function ContextReferencePreview({
           </Button>
           {navigation && (
             <Button
+              type="button"
               variant="outline"
               onClick={() =>
                 navigation.openConversation(reference.source_id, {
@@ -64,7 +66,11 @@ export function ContextReferencePreview({
               Open beside
             </Button>
           )}
-          {onAttach && <Button onClick={onAttach}>Add reference</Button>}
+          {onAttach && (
+            <Button type="button" onClick={onAttach}>
+              Add reference
+            </Button>
+          )}
         </div>
       </DialogContent>
     </Dialog>

@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { useRef } from "react";
 import {
   act,
@@ -16,6 +17,7 @@ import {
 } from "./useAcceptedConversationRoute";
 
 const onError = vi.fn();
+const onRejected = vi.fn();
 afterEach(cleanup);
 function RouteHarness({
   accept,
@@ -40,6 +42,7 @@ function RouteHarness({
     onAccepted,
     navigate,
     onError,
+    onRejected,
   });
   return (
     <>
@@ -69,6 +72,7 @@ it("restores the full accepted URL on cancel and accepts a repeated selection", 
     expect(screen.getByLabelText("url")).toHaveTextContent("/c/a?file=keep#anchor"),
   );
   expect(accept.mock.calls.filter(([id]) => id === "a")).toHaveLength(1);
+  expect(onRejected).toHaveBeenCalledOnce();
   accept.mockResolvedValue(true);
   fireEvent.click(screen.getByText("Open B"));
   await waitFor(() => expect(screen.getByLabelText("accepted")).toHaveTextContent("/c/b"));
@@ -200,4 +204,38 @@ it("keeps only the newest search activation while owner decisions overlap", asyn
   rerender({ ...options, ownerId: "c", href: "/c/c", acceptedHref: "/c/c" });
   expect(latest).toHaveBeenCalledOnce();
   expect(first).not.toHaveBeenCalled();
+});
+
+it("binds cancellation to its own search selection so a stale refusal cannot cancel the latest intent", async () => {
+  const options = ownerOptions();
+  const decisions = new Map<string, (allowed: boolean) => void>();
+  options.selectOwner = vi.fn(
+    (id: string) =>
+      new Promise<boolean>((resolve) => {
+        decisions.set(id, resolve);
+      }),
+  );
+  const cancelOld = vi.fn();
+  const cancelLatest = vi.fn();
+  const { result } = renderHook(useConversationOwnerNavigation, { initialProps: options });
+  act(() => {
+    result.current(
+      "/c/old",
+      () => {},
+      () => true,
+      cancelOld,
+    );
+    result.current(
+      "/c/latest",
+      () => {},
+      () => true,
+      cancelLatest,
+    );
+  });
+  await act(async () => decisions.get("old")!(false));
+  expect(cancelOld).toHaveBeenCalledOnce();
+  expect(cancelLatest).not.toHaveBeenCalled();
+  await act(async () => decisions.get("latest")!(true));
+  expect(options.navigate).toHaveBeenCalledExactlyOnceWith("/c/latest");
+  expect(cancelLatest).not.toHaveBeenCalled();
 });

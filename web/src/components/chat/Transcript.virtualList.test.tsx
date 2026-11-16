@@ -273,9 +273,57 @@ it("restores a retained reader anchor after hidden clamping, without accepting h
   expect(scrollEl.scrollTop).toBe(420);
 });
 
+it.each([false, true])(
+  "saved restore yields permanently to explicit navigation, saved anchor=%s",
+  async (hasAnchor) => {
+    vi.useFakeTimers();
+    const visible = vi.spyOn(scopedChat, "useConversationChatVisible").mockReturnValue(true);
+    const id = `restore-search-owner-${hasAnchor}`;
+    useChatStore.setState({ conversationId: id });
+    const scrollEl = document.createElement("div");
+    Object.defineProperties(scrollEl, {
+      clientHeight: { configurable: true, value: 500 },
+      scrollHeight: { configurable: true, value: 3000 },
+    });
+    const bubbles = Array.from({ length: 12 }, (_, index) => ({
+      ...bubble,
+      itemId: `${id}-${index}`,
+    }));
+    const tree = () => list(false, scrollEl, vi.fn(), false, bubbles, id);
+    const view = render(tree());
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(64);
+    });
+    scrollEl.scrollTop = hasAnchor ? 333 : 2500;
+    fireEvent.scroll(scrollEl);
+    visible.mockReturnValue(false);
+    view.rerender(tree());
+    visible.mockReturnValue(true);
+    view.rerender(tree());
+    // Search can be accepted after the retained pane has started restoring.
+    const release = claimTranscriptScrollOwner(scrollEl);
+    scrollEl.scrollTop = 900;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(64);
+    });
+    expect(scrollEl.scrollTop).toBe(900);
+    release();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1800);
+    });
+    expect(scrollEl.scrollTop).toBe(900);
+  },
+);
+
 it("publishes navigation that distinguishes loaded and missing turns", async () => {
   const scrollEl = document.createElement("div");
   const onGeometryChange = vi.fn<(geometry: TranscriptGeometry) => void>();
+  const passThrough = vi.mocked(useVirtualizer).getMockImplementation()!;
+  const cancelScroll = vi.fn();
+  const scrollToIndex = vi.fn();
+  vi.mocked(useVirtualizer).mockImplementation((options) =>
+    Object.assign(passThrough(options), { cancelScroll, scrollToIndex }),
+  );
 
   render(list(false, scrollEl, onGeometryChange));
 
@@ -283,6 +331,11 @@ it("publishes navigation that distinguishes loaded and missing turns", async () 
   const geometry = onGeometryChange.mock.calls.at(-1)![0];
   expect(geometry.scrollToItem("user-1")).toBe(true);
   expect(geometry.scrollToItem("missing")).toBe(false);
+  geometry.cancelPendingScroll();
+  expect(cancelScroll).toHaveBeenCalledOnce();
+  expect(geometry.scrollToItem("user-1", true)).toBe(true);
+  expect(cancelScroll).toHaveBeenCalledTimes(2);
+  expect(scrollToIndex).toHaveBeenCalledOnce();
 });
 
 it("recognizes unhandled native find keyboard shortcuts", () => {

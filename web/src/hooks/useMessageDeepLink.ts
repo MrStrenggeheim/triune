@@ -85,7 +85,9 @@ export function useMessageDeepLink(
 
     if (findMessageElement(messageId, root?.current ?? document)) {
       appliedKeyRef.current = key;
-      scrollToMessage(messageId, flashUserMessage, ensureMessageVisible, root?.current ?? document);
+      // A mounted row needs only the native scroll; a virtual index reconcile
+      // would keep writing after a newer exact-occurrence search takes over.
+      scrollToMessage(messageId, flashUserMessage, undefined, root?.current ?? document);
       return;
     }
     // Geometry publishes a new range after this scroll mounts the target.

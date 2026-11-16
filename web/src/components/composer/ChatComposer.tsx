@@ -347,6 +347,7 @@ function composerListEdit(textarea: HTMLTextAreaElement) {
 export function ComposerInputArea({ className, ...props }: ComponentPropsWithoutRef<"div">) {
   return (
     <div
+      data-composer-input-area
       className={cn(
         "composer-input-text relative overflow-hidden pt-3 pb-1 text-ui",
         COMPOSER_CONTENT_INSET_CLASS,

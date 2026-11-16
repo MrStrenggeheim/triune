@@ -1,3 +1,4 @@
+// Modified for Triune; inherited notices remain applicable.
 // Persistent WebSocket client for `WS /v1/sessions/updates`.
 //
 // Replaces the sidebar's 4 s HTTP poll of `GET /v1/sessions` with a single
@@ -17,7 +18,7 @@
 // access-checks every watched id against the connection's user.
 
 import { isHostRoutingEnabled, resolveWebSocketUrl } from "@/lib/host";
-import { modalHostId } from "@/lib/sessionHost";
+import { modalHostId, isModalHostResolved } from "@/lib/sessionHost";
 import type { SessionListWireItem } from "@/lib/sessionListCache";
 
 /** A frame pushed by the server over the updates stream. */
@@ -27,7 +28,31 @@ export type SessionUpdatesFrame =
   | { type: "removed"; ids: string[] }
   | { type: "hosts_changed" }
   | { type: "projects_changed" }
-  | { type: "heartbeat" };
+  | { type: "heartbeat" }
+  | { type: "capabilities"; transcript_stream?: number };
+
+export interface TranscriptCursor {
+  after_position: number;
+  after_revision?: number;
+  stream_epoch?: string;
+}
+
+export const TRANSCRIPT_NEGOTIATION_MS = 750;
+
+export function isRetryableTranscriptError(code: string): boolean {
+  return [
+    "stream_overflow",
+    "stream_reconnect",
+    "stream_failed",
+    "runner_unavailable",
+    "replica_unavailable",
+  ].includes(code);
+}
+
+interface TranscriptSubscription {
+  controller: ReadableStreamDefaultController<Uint8Array>;
+  close: () => void;
+}
 
 type FrameListener = (frame: SessionUpdatesFrame) => void;
 
@@ -106,6 +131,102 @@ class SessionUpdatesSocket {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private watchdogTimer: ReturnType<typeof setTimeout> | null = null;
   private started = false;
+  private transcriptCapability: boolean | null = null;
+  private readonly capabilityListeners = new Set<() => void>();
+  private readonly transcripts = new Map<string, TranscriptSubscription>();
+
+  supportsTranscripts(): boolean {
+    // This socket is pinned to the modal host; routed sessions retain their own replica path.
+    return this.transcriptCapability === true && !isHostRoutingEnabled();
+  }
+
+  subscribeCapabilities(listener: () => void): () => void {
+    this.capabilityListeners.add(listener);
+    return () => this.capabilityListeners.delete(listener);
+  }
+
+  /** Legacy sockets ignore subscribe; bounded negotiation keeps their SSE path usable. */
+  negotiateTranscript(signal: AbortSignal): Promise<boolean> {
+    if (signal.aborted || typeof WebSocket === "undefined" || isHostRoutingEnabled())
+      return Promise.resolve(false);
+    if (!this.started && (!isHostRoutingEnabled() || isModalHostResolved())) this.start();
+    if (this.transcriptCapability !== null) return Promise.resolve(this.transcriptCapability);
+    return new Promise((resolve) => {
+      const finish = () => {
+        clearTimeout(timer);
+        this.capabilityListeners.delete(finish);
+        signal.removeEventListener("abort", finish);
+        resolve(!signal.aborted && this.supportsTranscripts());
+      };
+      const timer = setTimeout(finish, TRANSCRIPT_NEGOTIATION_MS);
+      this.capabilityListeners.add(finish);
+      signal.addEventListener("abort", finish, { once: true });
+    });
+  }
+
+  /** One independently cancellable conversation on the tab's existing socket. */
+  async openTranscript(
+    sessionId: string,
+    signal: AbortSignal,
+    cursor: TranscriptCursor,
+    idle: boolean,
+  ): Promise<Response | null> {
+    if (!(await this.negotiateTranscript(signal))) return null;
+    if (signal.aborted) throw new DOMException("Aborted", "AbortError");
+    // A known compatible server reconnects through this socket; never open a parallel SSE.
+    if (!this.connected)
+      await new Promise<void>((resolve, reject) => {
+        const unsubscribe = this.subscribeStatus(() => {
+          if (this.connected) {
+            cleanup();
+            resolve();
+          }
+        });
+        const abort = () => {
+          cleanup();
+          reject(new DOMException("Aborted", "AbortError"));
+        };
+        const cleanup = () => {
+          unsubscribe();
+          signal.removeEventListener("abort", abort);
+        };
+        signal.addEventListener("abort", abort, { once: true });
+        if (signal.aborted) abort();
+      });
+    this.transcripts.get(sessionId)?.close();
+    let subscription: TranscriptSubscription;
+    const cleanup = () => {
+      signal.removeEventListener("abort", abort);
+      if (this.transcripts.get(sessionId) !== subscription) return;
+      this.transcripts.delete(sessionId);
+      this.send({ type: "unsubscribe", session_id: sessionId });
+    };
+    const abort = () => subscription.close();
+    const body = new ReadableStream<Uint8Array>({
+      start: (controller) => {
+        subscription = {
+          controller,
+          close: () => {
+            cleanup();
+            controller.close();
+          },
+        };
+        this.transcripts.set(sessionId, subscription);
+        signal.addEventListener("abort", abort, { once: true });
+      },
+      cancel: cleanup,
+    });
+    this.send({ type: "subscribe", session_id: sessionId, ...cursor, idle });
+    return new Response(body, { headers: { "Content-Type": "text/event-stream" } });
+  }
+
+  reportPresence(idle: boolean): void {
+    if (this.supportsTranscripts()) this.send({ type: "presence", idle });
+  }
+
+  private send(frame: Record<string, unknown>): void {
+    if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(frame));
+  }
 
   /** Open the connection (idempotent). */
   start(): void {
@@ -133,6 +254,9 @@ class SessionUpdatesSocket {
       ws.close();
     }
     this.setConnected(false);
+    for (const subscription of [...this.transcripts.values()]) subscription.close();
+    this.transcriptCapability = null;
+    for (const listener of this.capabilityListeners) listener();
   }
 
   /**
@@ -202,6 +326,7 @@ class SessionUpdatesSocket {
     }
     this.ws = ws;
     ws.onopen = () => {
+      if (this.ws !== ws) return;
       this.failedAttempts = 0;
       this.setConnected(true);
       // Start the silence watchdog: from here we expect at least a
@@ -209,14 +334,18 @@ class SessionUpdatesSocket {
       this.armWatchdog();
       this.sendWatch();
     };
-    ws.onmessage = (event) => this.handleMessage(event);
+    ws.onmessage = (event) => {
+      if (this.ws === ws) this.handleMessage(event);
+    };
     ws.onerror = () => {
       // `onerror` is always followed by `onclose`; let close drive retry.
     };
     ws.onclose = () => {
+      if (this.ws !== ws) return;
       this.ws = null;
       this.clearWatchdog();
       this.setConnected(false);
+      for (const subscription of [...this.transcripts.values()]) subscription.close();
       if (this.started) this.scheduleReconnect();
     };
   }
@@ -276,10 +405,44 @@ class SessionUpdatesSocket {
     // the link is alive, so push the silence deadline out.
     this.armWatchdog();
     if (typeof event.data !== "string") return;
-    let frame: SessionUpdatesFrame;
+    let frame:
+      | SessionUpdatesFrame
+      | { type: "session.event"; session_id: string; event: Record<string, unknown> }
+      | { type: "session.error"; session_id: string; code: string };
     try {
-      frame = JSON.parse(event.data) as SessionUpdatesFrame;
+      frame = JSON.parse(event.data) as typeof frame;
     } catch {
+      return;
+    }
+    if (!frame || typeof frame !== "object") return;
+    if (frame.type === "capabilities") {
+      this.transcriptCapability = frame.transcript_stream === 1;
+      for (const listener of [...this.capabilityListeners]) listener();
+    }
+    if (frame.type === "session.event" || frame.type === "session.error") {
+      const subscription = this.transcripts.get(frame.session_id);
+      if (!subscription) return;
+      if (frame.type === "session.error") {
+        subscription.controller.enqueue(
+          new TextEncoder().encode(
+            `event: session.transport_error\ndata: ${JSON.stringify({ code: frame.code })}\n\n`,
+          ),
+        );
+        subscription.close();
+        // Authorization failures settle only this membership; other streams stay connected.
+        if (!isRetryableTranscriptError(frame.code))
+          console.warn(`[session-updates] transcript ${frame.session_id}: ${frame.code}`);
+        return;
+      }
+      const payload = frame.event;
+      if (!payload || typeof payload !== "object" || typeof payload.type !== "string") return;
+      if ((subscription.controller.desiredSize ?? 0) < -1024) {
+        subscription.close();
+        return;
+      }
+      subscription.controller.enqueue(
+        new TextEncoder().encode(`event: ${payload.type}\ndata: ${JSON.stringify(payload)}\n\n`),
+      );
       return;
     }
     for (const listener of this.listeners) listener(frame);

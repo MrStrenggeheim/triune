@@ -1,5 +1,5 @@
 // Modified for Triune.
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   toast,
@@ -27,6 +27,7 @@ afterEach(() => {
   });
   cleanup();
   vi.clearAllTimers();
+  vi.restoreAllMocks();
   vi.useRealTimers();
 });
 function mount() {
@@ -41,6 +42,138 @@ function mount() {
 }
 
 describe("shared notifications", () => {
+  it("consumes decaying previews into history without shortening expiry or resurfacing on close", async () => {
+    mount();
+    const onAutoClose = vi.fn();
+    let id!: string | number;
+    act(() => {
+      id = toast("New saved record", { duration: 6000, onAutoClose });
+    });
+    await act(() => vi.advanceTimersByTimeAsync(2000));
+    fireEvent.pointerEnter(screen.getByText("New saved record").closest("article")!);
+    fireEvent.click(screen.getByRole("button", { name: "Notifications" }));
+    const history = screen.getByRole("dialog", { name: "Notifications" });
+    expect(within(history).getByText("New saved record")).toBeInTheDocument();
+    expect(document.querySelectorAll(`[data-notification-id="${id}"]`)).toHaveLength(1);
+    expect(getNotificationSnapshot().entries[0]).toMatchObject({
+      id,
+      visible: true,
+      previewSuppressed: true,
+      unread: false,
+    });
+    expect(onAutoClose).not.toHaveBeenCalled();
+    act(() => toast("Arrived in feed"));
+    expect(within(history).getByText("Arrived in feed")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Close notifications" }));
+    expect(screen.queryByText("New saved record")).toBeNull();
+    expect(screen.queryByText("Arrived in feed")).toBeNull();
+    await act(() => vi.advanceTimersByTimeAsync(4100));
+    expect(onAutoClose).toHaveBeenCalledOnce();
+    expect(getNotificationSnapshot().entries.find((entry) => entry.id === id)).toMatchObject({
+      visible: false,
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Notifications" }));
+    expect(screen.getByText("New saved record")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Close notifications" }));
+    expect(screen.queryByText("New saved record")).toBeNull();
+    act(() => toast("Explicit new reveal", { id }));
+    expect(screen.getByText("Explicit new reveal")).toBeInTheDocument();
+  });
+
+  it("keeps required prompts, active cancellation and Undo usable when previews move into the feed", async () => {
+    mount();
+    const cancel = vi.fn();
+    const undo = vi.fn();
+    act(() => {
+      toast.custom(() => <button>Required permission</button>, {
+        id: "required",
+        dismissible: false,
+      });
+      notify({
+        id: "transfer",
+        title: "Upload active",
+        progress: { active: true, value: 30 },
+        cancel: { label: "Cancel upload", onClick: cancel },
+      });
+      toast("Archived", { action: { label: "Undo", onClick: undo } });
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Notifications" }));
+    expect(screen.getByRole("button", { name: "Required permission" })).toBeInTheDocument();
+    expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "30");
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel upload" }));
+    await waitFor(() => {
+      expect(undo).toHaveBeenCalledOnce();
+      expect(cancel).toHaveBeenCalledOnce();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Close notifications" }));
+    expect(screen.getByRole("button", { name: "Required permission" })).toBeInTheDocument();
+    expect(getNotificationSnapshot().entries.some((entry) => entry.id === "required")).toBe(true);
+    expect(screen.queryByText("Upload active")).toBeNull();
+  });
+
+  it("anchors one preview viewport to the topmost rightmost visible bell and uses the exact feed width", async () => {
+    let hidden = false;
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      if (!this.hasAttribute("data-notification-bell")) return new DOMRect();
+      const place =
+        this.parentElement?.closest<HTMLElement>("[data-bell-position]")?.dataset.bellPosition;
+      if (place === "inert") return new DOMRect(990, 0, 24, 24);
+      return place === "hidden" || (hidden && place === "right")
+        ? new DOMRect()
+        : new DOMRect(place === "right" ? 950 : 600, place === "lower" ? 80 : 8, 24, 24);
+    });
+    function Layout({ width }: { width: number }) {
+      return (
+        <NotificationLayoutProvider width={width} bottom="16px">
+          <div data-bell-position="hidden" hidden>
+            <NotificationBell />
+          </div>
+          <div data-bell-position="inert" ref={(node) => node?.setAttribute("inert", "")}>
+            <NotificationBell />
+          </div>
+          <div data-bell-position="lower">
+            <NotificationBell />
+          </div>
+          <div data-bell-position="left">
+            <NotificationBell />
+          </div>
+          <div data-bell-position="right">
+            <NotificationBell />
+          </div>
+          <Toaster />
+        </NotificationLayoutProvider>
+      );
+    }
+    const view = render(<Layout width={371} />);
+    act(() => toast("Anchored preview"));
+    const preview = screen.getByRole("region", { name: "Notifications" });
+    expect(preview.style.top).toContain("44px");
+    expect(preview.style.right).toContain("50px");
+    expect(preview).toHaveStyle({ width: "371px" });
+    expect(document.querySelectorAll("aside[aria-label=Notifications]")).toHaveLength(1);
+    view.rerender(<Layout width={289} />);
+    expect(preview).toHaveStyle({ width: "289px" });
+    const bells = screen.getAllByRole("button", { name: "Notifications" });
+    fireEvent.click(bells[bells.length - 1]);
+    expect(screen.getByRole("dialog", { name: "Notifications" })).toHaveStyle({ width: "289px" });
+    expect(screen.queryByRole("region", { name: "Notifications" })).toBeNull();
+    // A retained header becoming hidden releases its open-center ownership.
+    act(() => {
+      hidden = true;
+      window.dispatchEvent(new Event("resize"));
+    });
+    expect(screen.queryByRole("dialog", { name: "Notifications" })).toBeNull();
+    expect(getNotificationSnapshot().centerOpen).toBe(false);
+    act(() => toast("After owner hides"));
+    expect(screen.getByRole("region", { name: "Notifications" })).toHaveTextContent(
+      "After owner hides",
+    );
+    expect(preview.style.right).toContain("400px");
+  });
+
   it("filters previously read entries while retaining newly seen notices and recovery actions", async () => {
     mount();
     const retry = vi.fn();
@@ -227,7 +360,8 @@ describe("shared notifications", () => {
     expect(normal.className).toBe(progress.className);
     expect(normal).toHaveClass("density-row");
     expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "25");
-    expect(normal.closest("aside")).toHaveStyle({ width: "320px", maxWidth: "calc(100vw - 2rem)" });
+    expect(normal.closest("aside")).toHaveStyle({ width: "320px" });
+    expect(normal.closest("aside")!.style.maxWidth).toContain("--omnigent-safe-left");
     fireEvent.click(screen.getByRole("button", { name: "Notifications" }));
     expect(screen.getByTestId("ordinary")).toHaveClass("density-row");
     expect(screen.getByTestId("activity")).toHaveClass("density-row");

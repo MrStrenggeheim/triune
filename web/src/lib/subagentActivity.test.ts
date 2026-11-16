@@ -3,6 +3,10 @@
 import { expect, it } from "vitest";
 import type { ChildSessionInfo } from "@/hooks/useChildSessions";
 import {
+  canonicalSubagentCards,
+  subagentCardMessages,
+  latestSubagentCardMessage,
+  subagentCardItemIds,
   readSubagentActivity,
   shortTaskText,
   subagentName,
@@ -346,4 +350,114 @@ it("does not duplicate a report already rendered as an actual native/peer messag
   expect(
     shouldRenderSubagentReply(readSubagentActivity(returned)!, blocks, "other-conversation"),
   ).toBe(true);
+});
+
+it("absorbs returns and steering into one spawn, retaining exact source order and final snapshots", () => {
+  const instruction = event(
+    "delegated",
+    {
+      task_input: "Initial instruction",
+      task_summary: "Original summary",
+      task_input_ref: { conversation_id: "child", item_id: "input-1" },
+      task_input_position: 2,
+    },
+    "spawn",
+  );
+  const report = event(
+    "returned",
+    {
+      turn_id: "turn-1",
+      result_text: "A longer final report",
+      result_finality: "final_answer",
+      result_revision: 1,
+      result_position: 4,
+      result_ref: { conversation_id: "child", item_id: "answer-1" },
+    },
+    "report",
+  );
+  const steering = event(
+    "delegated",
+    {
+      task_input: "Later instruction",
+      task_summary: "Changed summary",
+      task_input_ref: { conversation_id: "child", item_id: "input-2" },
+      task_input_position: 6,
+    },
+    "steer",
+  );
+  const enriched = event(
+    "returned",
+    {
+      ...report.resource,
+      result_text: "Short final",
+      result_finality: "adapter_result",
+      result_revision: 2,
+      result_ref: { conversation_id: "child", item_id: "answer-exact" },
+    },
+    "report-enriched",
+  );
+  const records = [instruction, report, steering, enriched];
+  const cards = canonicalSubagentCards(itemsToBlocks(records));
+  const card = cards.get("spawn")!;
+  expect([...cards.keys()]).toEqual(["spawn", "report", "steer", "report-enriched"]);
+  expect(cards.get("report")).toBe(card);
+  expect(card.resource).toMatchObject({ task_summary: "Original summary" });
+  const messages = subagentCardMessages(card);
+  expect(messages.map((message) => message.text)).toEqual([
+    "Initial instruction",
+    "Short final",
+    "Later instruction",
+  ]);
+  expect(messages[1]?.activity.resultRef).toEqual({
+    conversationId: "child",
+    itemId: "answer-exact",
+  });
+  expect(latestSubagentCardMessage(messages)?.text).toBe("Later instruction");
+  expect(subagentCardItemIds(card)).toEqual(records.map((record) => record.id));
+  expect(canonicalSubagentCards(itemsToBlocks(records)).get("spawn")).toBe(card);
+  expect(records[1]?.resource).toMatchObject({ result_text: "A longer final report" });
+});
+
+it("keeps unknown finality and cross-conversation order out of previews", () => {
+  const sources = [
+    event("delegated", { task_input: "Proven instruction" }),
+    event("returned", {
+      result_text: "Unphased commentary",
+      status: "completed",
+      result_position: 99,
+    }),
+    event(
+      "returned",
+      {
+        result_text: "Parent handback",
+        result_finality: "handback",
+        result_position: 100,
+        result_ref: { conversation_id: "parent", item_id: "parent-answer" },
+      },
+      "handback",
+    ),
+  ];
+  const card = canonicalSubagentCards(itemsToBlocks(sources)).get("delegated")!;
+  const messages = subagentCardMessages(card);
+  expect(messages.map((message) => message.text)).toEqual([
+    "Proven instruction",
+    "Parent handback",
+  ]);
+  expect(latestSubagentCardMessage(messages)?.text).toBe("Proven instruction");
+});
+
+it("handles returned-only windows and prepends without changing the spawn identity", () => {
+  const returned = event("returned", {
+    result_text: "Final",
+    result_finality: "final_answer",
+    turn_id: "turn",
+  });
+  const returnedCard = canonicalSubagentCards(itemsToBlocks([returned])).get("returned")!;
+  const fullCard = canonicalSubagentCards(itemsToBlocks([event("delegated"), returned])).get(
+    "delegated",
+  )!;
+  expect((returnedCard.resource as Record<string, unknown>).card_key).toBe(
+    (fullCard.resource as Record<string, unknown>).card_key,
+  );
+  expect(subagentCardItemIds(fullCard)).toContain("returned");
 });

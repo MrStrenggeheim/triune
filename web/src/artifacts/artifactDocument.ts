@@ -113,6 +113,7 @@ function innerBridge(channel: string, initialState: unknown, initialActive: bool
     form: controls().map(control => ({
       value: control.value,
       checked: "checked" in control ? control.checked : undefined,
+      indeterminate: control.type === "checkbox" ? control.indeterminate : undefined,
       selectedIndex: "selectedIndex" in control ? control.selectedIndex : undefined
     })),
     details: [...document.querySelectorAll("details")].map(detail => detail.open),
@@ -135,6 +136,8 @@ function innerBridge(channel: string, initialState: unknown, initialActive: bool
         if (!saved) return;
         if (typeof saved.value === "string") control.value = saved.value;
         if (typeof saved.checked === "boolean" && "checked" in control) control.checked = saved.checked;
+        if (typeof saved.indeterminate === "boolean" && control.type === "checkbox")
+          control.indeterminate = saved.indeterminate;
         if (typeof saved.selectedIndex === "number" && "selectedIndex" in control)
           control.selectedIndex = saved.selectedIndex;
       });
@@ -145,6 +148,7 @@ function innerBridge(channel: string, initialState: unknown, initialActive: bool
     } else {
       applicationState = value;
     }
+    window.dispatchEvent(new Event("triune-artifact:restored"));
     restoring = false;
   };
   const applyTheme = theme => {

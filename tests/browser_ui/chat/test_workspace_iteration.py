@@ -1,16 +1,20 @@
 # Modified for Triune.
 """Approved chat-owned layouts and captured attachment tabs through the built SPA."""
 
+import json
 import re
 from pathlib import Path
+from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 import pytest
-from playwright.sync_api import Page, Route, expect
+from playwright.sync_api import Locator, Page, Route, expect
 
-from tests.browser_ui.chat.session_contract import list_payload, message_item
+from tests.browser_ui.chat._geometry_helpers import assert_no_overlap, box
+from tests.browser_ui.chat.session_contract import ChatSessionContract, list_payload, message_item
 from tests.browser_ui.chat.test_unified_workspace import (
     WorkspaceJourney,
+    _assert_workspace_search_centered,
     _capture,
     _navigate_chat,
     _open,
@@ -293,209 +297,6 @@ def test_queue_markdown_links_reuse_source_or_neighbor_without_repeated_split(
     assert browser_errors == []
 
 
-def test_peer_cards_and_orchestration_keep_attribution_and_minimal_controls(
-    page: Page,
-    workspace_journey: WorkspaceJourney,
-    browser_contract: BrowserContract,
-    output_path: str,
-    browser_errors: list[str],
-) -> None:
-    first, source = workspace_journey.chats
-    source.update_session(sub_agent_name="James", agent_name="James")
-    body = "\n".join(
-        f"Check {index}: preserve the file editor and original downloads." for index in range(12)
-    )
-    peer = message_item("peer-card", "user", body, response_id="peer-response")
-    peer.update(
-        created_at=1704067200,
-        communication={
-            "kind": "peer",
-            "message_id": "peer-communication",
-            "source_conversation_id": source.session_id,
-            "source_agent_id": source.agent_id,
-            "source_agent_name": "James",
-            "source_title": "Chat B",
-            "destination_conversation_id": first.session_id,
-            "delivery_state": "confirmed",
-            "receipt": "transcript",
-            "sent_at": 1704067200,
-        },
-    )
-    completed = {
-        "id": "completed-agent",
-        "type": "resource_event",
-        "status": "completed",
-        "response_id": "agent-return",
-        "created_at": 1704067201,
-        "event_type": "session.subagent.returned",
-        "resource_type": "session",
-        "resource_id": "child-ada",
-        "resource": {
-            "title": "Ada",
-            "agent_name": "Ada",
-            "task_summary": "Check access",
-            "dispatch_id": "ada-dispatch",
-            "result_text": "**Access verified.**\n\n"
-            + "\n".join(
-                f"- Report item {index}: preserve the original scope." for index in range(12)
-            ),
-            "result_ref": {"conversation_id": "child-ada", "item_id": "ada-result"},
-            "status": "completed",
-        },
-    }
-    delegated = {
-        **completed,
-        "id": "delegated-agent",
-        "response_id": "agent-start",
-        "created_at": 1704067199,
-        "event_type": "session.subagent.delegated",
-        "resource": {
-            "title": "Ada",
-            "agent_name": "Ada",
-            "dispatch_id": "ada-dispatch",
-            "task_summary": "Check access",
-            "task_input": "Inspect the selected workspace and verify its original access scope.",
-        },
-    }
-    first.set_items(
-        [
-            completed,
-            peer,
-            delegated,
-            message_item(
-                "literal-header",
-                "user",
-                "Peer message from conversation example; this is my quotation.",
-                response_id="human-quote",
-            ),
-        ]
-    )
-    children = [
-        {
-            "id": f"child-{name.lower()}",
-            "title": name,
-            "agent_name": name,
-            "task_summary": "Verify editing" if name == "James" else "Check access",
-            "tool": name,
-            "session_name": name,
-            "kind": "sub_agent",
-            "current_task_status": "in_progress" if name == "James" else "completed",
-            "busy": name == "James",
-            "last_message_preview": None,
-            "pending_elicitations_count": 0,
-            "created_at": 1704067200,
-            "updated_at": 1704067220,
-            "labels": {"omnigent.codex_native.agent_nickname": name},
-        }
-        for name in ("James", "Ada")
-    ]
-    browser_contract.json(
-        f"/v1/sessions/{first.session_id}/child_sessions", list_payload(children)
-    )
-    for child in children:
-        browser_contract.json(f"/v1/sessions/{child['id']}/child_sessions", list_payload([]))
-        browser_contract.json(
-            f"/v1/sessions/{child['id']}",
-            {
-                **first.session_snapshot(),
-                "id": child["id"],
-                "title": child["title"],
-                "agent_name": child["agent_name"],
-                "sub_agent_name": child["agent_name"],
-                "status": "running" if child["busy"] else "idle",
-            },
-        )
-    browser_contract.json(
-        f"/v1/sessions/{first.session_id}/activity",
-        {
-            "coverage": "complete",
-            "data": [
-                {
-                    "id": "shell-tests",
-                    "kind": "terminal",
-                    "session_id": first.session_id,
-                    "terminal_id": "tests",
-                    "name": "tests",
-                    "state": "running",
-                    "started_at": 1704067230,
-                }
-            ],
-        },
-    )
-    page.context.grant_permissions(["clipboard-read", "clipboard-write"])
-    page.set_viewport_size({"width": 1440, "height": 1000})
-    page.goto(first.url)
-    chat = _view(page, "Chat A")
-    card = chat.get_by_test_id("peer-message")
-    expect(card.locator("header")).to_contain_text("James from Chat B")
-    expect(
-        chat.get_by_text(
-            "Peer message from conversation example; this is my quotation.", exact=True
-        )
-    ).to_be_visible()
-    assert chat.get_by_text(
-        "Peer message from conversation example; this is my quotation.", exact=True
-    ).evaluate("element => !!element.closest('.is-user')")
-    expect(card.get_by_text("In transcript", exact=True)).to_have_count(0)
-    card.hover()
-    card.get_by_role("button", name="Copy", exact=True).click()
-    assert page.evaluate("navigator.clipboard.readText()") == body
-    card.get_by_role("button", name="Copy link", exact=True).click()
-    copied = page.evaluate("navigator.clipboard.readText()")
-    assert f"/c/{first.session_id}" in copied and "peer-card" in copied
-    card.get_by_role("button", name="Show full", exact=True).click()
-    expect(card.get_by_role("button", name="Show less", exact=True)).to_be_visible()
-    card.get_by_role("button", name="Show less", exact=True).click()
-    task = chat.get_by_test_id("subagent-activity")
-    expect(task).to_contain_text("Ada: Check access")
-    expect(task).to_contain_text("Completed")
-    expect(task.get_by_role("button", name="Agent actions", exact=True)).to_have_count(0)
-    expect(task.get_by_text("Inspect the selected workspace", exact=False)).to_have_count(0)
-    reply = chat.get_by_test_id("subagent-reply")
-    expect(reply).to_contain_text("Ada replied")
-    expect(reply.locator('[data-streamdown="strong"]')).to_contain_text("Access verified.")
-    reply.get_by_role("button", name="Show full", exact=True).click()
-    expect(reply).to_contain_text("Report item 11")
-    reply.get_by_role("button", name="Copy", exact=True).click()
-    assert page.evaluate("navigator.clipboard.readText()") == completed["resource"]["result_text"]
-    reply.get_by_role("button", name="Show less", exact=True).click()
-    _capture(page, output_path, "desktop-minimal-peer-and-completed-agent")
-    task.get_by_role("link", name="Inspect Ada in Orchestration", exact=True).click()
-    orchestration = _view(page, "Orchestration")
-    inspector = page.get_by_role("dialog", name="Ada", exact=True)
-    expect(inspector).to_have_count(0)
-    task.get_by_role("link", name="Inspect Ada in Orchestration", exact=True).click()
-    expect(inspector).to_have_count(0)
-    expect(page.get_by_role("tab", name="Orchestration", exact=True)).to_have_count(1)
-    expect(
-        page.get_by_role("tab", name="Orchestration", exact=True).locator("svg.lucide-workflow")
-    ).to_have_count(1)
-    orchestration.get_by_role("button", name="All", exact=True).click()
-    entries = orchestration.get_by_role("list", name="Agents", exact=True)
-    expect(entries).to_contain_text("James")
-    expect(entries).to_contain_text("Ada")
-    expect(orchestration.get_by_role("list", name="Shells", exact=True)).to_contain_text("tests")
-    expect(
-        orchestration.get_by_role("group", name="Orchestration filter", exact=True)
-    ).to_be_visible()
-    expect(orchestration.get_by_role("heading", name="Recent", exact=True)).to_have_count(0)
-    expect(orchestration.get_by_role("button", name="Open Ada", exact=True)).to_have_count(0)
-    orchestration.get_by_role("button", name="Orchestration options", exact=True).click()
-    expect(page.get_by_role("menuitemradio", name="Messages", exact=True)).to_have_count(0)
-    expect(page.get_by_role("menuitem", name="History coverage", exact=True)).to_have_count(0)
-    page.keyboard.press("Escape")
-    _capture(page, output_path, "desktop-flat-orchestration")
-    page.set_viewport_size({"width": 390, "height": 844})
-    if page.get_by_role("button", name="Close navigation", exact=True).is_visible():
-        page.keyboard.press("Control+b")
-    page.get_by_role("tab", name="Chat A", exact=True).click()
-    expect(card).to_be_visible()
-    _capture(page, output_path, "mobile-minimal-peer-and-agent")
-    page.locator("html").evaluate("element => element.classList.add('dark')")
-    _capture(page, output_path, "mobile-dark-peer-and-agent")
-    assert browser_errors == []
-
-
 def test_selected_quote_menu_reuses_app_controls_and_retains_destination_draft(
     page: Page,
     workspace_journey: WorkspaceJourney,
@@ -697,4 +498,593 @@ def test_quote_subchat_opens_before_launch_and_hides_inherited_history(
     for route in launches:
         route.fulfill(json={"runner_id": "quote-runner"})
     assert source.event_posts == [] and child.event_posts == []
+    assert browser_errors == []
+
+
+_ITERATION5_PROFILES = [
+    pytest.param(
+        {"phone": False, "density": "comfortable", "theme": "light"},
+        marks=pytest.mark.browser_context_args(
+            viewport={"width": 1440, "height": 1000}, has_touch=False, is_mobile=False
+        ),
+        id="desktop-light-comfortable",
+    ),
+    pytest.param(
+        {"phone": True, "density": "compact", "theme": "dark"},
+        marks=[
+            pytest.mark.only_browser("chromium"),
+            pytest.mark.browser_context_args(
+                viewport={"width": 390, "height": 844}, has_touch=True, is_mobile=True
+            ),
+        ],
+        id="phone-dark-compact",
+    ),
+]
+
+
+def _iteration5_activate(target: Locator, profile: dict[str, Any]) -> None:
+    target.tap() if profile["phone"] else target.click()
+
+
+def _iteration5_start(page: Page, chat: ChatSessionContract, profile: dict[str, Any]) -> None:
+    page.emulate_media(reduced_motion="reduce")
+    page.goto(chat.url)
+    expect(
+        _view(page, chat.session_snapshot()["title"]).get_by_label("Message the agent")
+    ).to_be_visible()
+    page.evaluate(
+        """profile => {
+          document.documentElement.dataset.listDensity = profile.density;
+          document.documentElement.classList.toggle('dark', profile.theme === 'dark');
+        }""",
+        profile,
+    )
+    assert page.evaluate("matchMedia('(pointer: coarse)').matches") == profile["phone"]
+
+
+def _iteration5_sidebar(page: Page, profile: dict[str, Any]) -> Locator:
+    opener = page.get_by_role("button", name="Open navigation", exact=True)
+    if opener.is_visible():
+        _iteration5_activate(opener, profile)
+    sidebar = page.get_by_role("complementary", name="Conversations", include_hidden=True)
+    expect(sidebar).to_have_attribute("aria-hidden", "false")
+    return sidebar
+
+
+@pytest.mark.parametrize("profile", _ITERATION5_PROFILES)
+def test_iteration5_sidebar_status_actions_and_hierarchy(
+    page: Page,
+    workspace_journey: WorkspaceJourney,
+    browser_contract: BrowserContract,
+    output_path: str,
+    browser_errors: list[str],
+    profile: dict[str, Any],
+) -> None:
+    """One live hierarchy proves grouped status, shared action surface and native hit targets."""
+    first, second = workspace_journey.chats
+    first.update_session(
+        project_id="iteration5-project",
+        labels={"omni_project": "Iteration five"},
+        pending_elicitations_count=2,
+        status="running",
+        activity={"own_status": "idle", "descendant_running": True},
+    )
+    second.update_session(
+        branch={"source_conversation_id": first.session_id, "reference_only": True},
+        status="running",
+        activity={"own_status": "running", "descendant_running": False},
+    )
+    browser_contract.json(
+        "/v1/projects", list_payload([{"id": "iteration5-project", "name": "Iteration five"}])
+    )
+    browser_contract.json(
+        "/v1/sessions/projects", [{"id": "iteration5-project", "name": "Iteration five"}]
+    )
+    browser_contract.json(
+        "/v1/projects/iteration5-project/sessions",
+        lambda _: list_payload([chat.session_snapshot() for chat in workspace_journey.chats]),
+    )
+    # Unfiltered pinned results advertise a legacy server that stores pins locally.
+    browser_contract.json(
+        "/v1/sessions",
+        lambda request: list_payload(
+            [
+                chat.session_snapshot()
+                for chat in workspace_journey.chats
+                if parse_qs(urlparse(request.url).query).get("pinned") != ["true"]
+                or chat.session_snapshot()["labels"].get("omnigent.pinned")
+            ]
+        ),
+    )
+    page.context.grant_permissions(["clipboard-read", "clipboard-write"])
+    _iteration5_start(page, first, profile)
+    sidebar = _iteration5_sidebar(page, profile)
+    projects = sidebar.get_by_role("button", name="Projects", exact=True)
+    if projects.get_attribute("aria-expanded") == "false":
+        _iteration5_activate(projects, profile)
+    project = sidebar.locator('[data-sidebar-drop-name="Iteration five"]')
+    project_header = project.locator("h2 button[aria-expanded]").first
+    expect(project_header).to_be_visible()
+    if project_header.get_attribute("aria-expanded") == "false":
+        _iteration5_activate(project_header, profile)
+    parent = sidebar.locator(f'[data-sidebar-session-id="{first.session_id}"]')
+    actions = parent.get_by_role("button", name="Conversation actions", exact=True)
+    expect(
+        parent.locator('[data-testid="session-state-badge"][data-state="awaiting"]')
+    ).to_have_count(1)
+    expect(
+        parent.locator('[data-testid="session-state-badge"][data-state="running"]')
+    ).to_have_count(1)
+    assert actions.get_attribute("aria-describedby")
+    assert "2 approval prompts waiting" in actions.evaluate(
+        "el => document.getElementById(el.getAttribute('aria-describedby')).textContent"
+    )
+    target = box(actions)
+    assert target["width"] == pytest.approx(44 if profile["phone"] else 24, abs=1)
+    _iteration5_activate(
+        parent.get_by_role("button", name="Session status", exact=True)
+        if profile["phone"]
+        else actions,
+        profile,
+    )
+    expect(page.get_by_role("menuitem", name="Pin", exact=True)).to_be_visible()
+    expect(page.get_by_test_id("quick-pin-conversation")).to_have_count(0)
+    page.keyboard.press("Escape")
+    _iteration5_activate(
+        parent.get_by_role("button", name="Expand subchats of Chat A", exact=True), profile
+    )
+    expect(
+        parent.locator('[data-state="running"][data-testid="session-state-badge"]')
+    ).to_have_count(0)
+    expect(
+        parent.locator('[data-state="awaiting"][data-testid="session-state-badge"]')
+    ).to_have_count(1)
+    child = sidebar.locator(f'[data-sidebar-session-id="{second.session_id}"]')
+    expect(
+        child.locator('[data-state="running"][data-testid="session-state-badge"]')
+    ).to_have_count(1)
+    guide = child.locator("[data-sidebar-tree-guide]").last
+    density_gap = child.evaluate(
+        "el => parseFloat(getComputedStyle(el).getPropertyValue('--list-row-gap'))"
+    )
+    assert box(child)["x"] - box(guide)["x"] - box(guide)["width"] >= density_gap - 1
+    assert parent.evaluate("el => getComputedStyle(el).backgroundColor") not in (
+        "transparent",
+        "rgba(0, 0, 0, 0)",
+    )
+    expect(parent.get_by_role("link", name="Chat A", exact=True)).to_have_css(
+        "background-color", "rgba(0, 0, 0, 0)"
+    )
+    density_gap = parent.evaluate(
+        "el => parseFloat(getComputedStyle(el).getPropertyValue('--list-row-gap'))"
+    )
+    folder = sidebar.locator('[data-sidebar-drop-name="Iteration five"]')
+    project_guide = box(folder.locator("[data-sidebar-tree-guide]").first)
+    branch_guide = box(child.locator("[data-sidebar-tree-guide]").last)
+    assert box(parent)["x"] - project_guide["x"] - project_guide["width"] >= density_gap - 1
+    assert box(child)["x"] - branch_guide["x"] - branch_guide["width"] >= density_gap - 1
+    inset = child.evaluate("el => el.style.getPropertyValue('--sidebar-row-inset')")
+    _iteration5_activate(
+        child.get_by_role("button", name="Conversation actions", exact=True), profile
+    )
+    _iteration5_activate(page.get_by_role("menuitem", name="Rename", exact=True), profile)
+    rename = page.get_by_test_id("rename-conversation-input")
+    expect(rename).to_be_focused()
+    assert (
+        rename.evaluate("el => el.closest('li').style.getPropertyValue('--sidebar-row-inset')")
+        == inset
+    )
+    page.keyboard.press("Escape")
+    _iteration5_activate(
+        child.get_by_role("button", name="Conversation actions", exact=True), profile
+    )
+    _iteration5_activate(page.get_by_role("menuitem", name="Copy link", exact=True), profile)
+    assert page.evaluate("navigator.clipboard.readText()") == second.url
+    expect(parent.get_by_role("link", name="Chat A", exact=True)).to_have_attribute(
+        "aria-current", "page"
+    )
+    assert all(chat.session_patches == [] for chat in workspace_journey.chats)
+    _iteration5_activate(
+        child.get_by_role("button", name="Conversation actions", exact=True), profile
+    )
+    with page.expect_response(
+        lambda response: (
+            response.url == f"{browser_contract.base_url}/v1/sessions/{second.session_id}"
+            and response.request.method == "PATCH"
+        )
+    ) as pin_response:
+        _iteration5_activate(page.get_by_role("menuitem", name="Pin", exact=True), profile)
+    assert pin_response.value.ok
+    expect(sidebar.get_by_text("Pinned", exact=True)).to_be_visible()
+    assert any("labels" in patch for patch in second.session_patches)
+    search_button = sidebar.get_by_role("button", name="Search", exact=True)
+    assert search_button.get_attribute("aria-keyshortcuts")
+    _iteration5_activate(search_button, profile)
+    if profile["phone"]:
+        expect(sidebar).to_have_attribute("aria-hidden", "true")
+        _iteration5_activate(
+            page.get_by_test_id("context-search-bar").get_by_role(
+                "button", name="Edit search query", exact=True
+            ),
+            profile,
+        )
+    expect(page.get_by_label("Search chats", exact=True)).to_be_focused()
+    page.get_by_label("Search chats", exact=True).fill("Preserved search query")
+    expect(page.get_by_label("Search chats", exact=True)).to_have_value("Preserved search query")
+    _capture(page, output_path, f"iteration5-sidebar-{profile['theme']}-{profile['density']}")
+    assert all(chat.event_posts == [] for chat in workspace_journey.chats)
+    assert browser_errors == []
+
+
+@pytest.mark.parametrize("profile", _ITERATION5_PROFILES)
+def test_iteration5_accepted_session_focus_and_search_scroll(
+    page: Page,
+    workspace_journey: WorkspaceJourney,
+    browser_contract: BrowserContract,
+    output_path: str,
+    browser_errors: list[str],
+    profile: dict[str, Any],
+) -> None:
+    """Cross retained/sidebar/palette/result boundaries once, preserving query and exact reveal."""
+    first, second = workspace_journey.chats
+    target = f"{second.session_id}-needle"
+    text = "Final needle then needle."
+    rows = []
+    for index in range(16):
+        rows.append(
+            message_item(
+                f"focus-request-{index}", "user", f"Request {index}", response_id=f"focus-{index}"
+            )
+        )
+        rows.append(
+            message_item(
+                target if index == 7 else f"focus-answer-{index}",
+                "assistant",
+                text
+                if index == 7
+                else "\n\n".join(f"Paragraph {line} from turn {index}." for line in range(18)),
+                response_id=f"focus-{index}",
+            )
+        )
+    second.set_items(list(reversed(rows)))
+    browser_contract.json(
+        "/v1/sessions/search/messages",
+        {
+            "data": [
+                {
+                    "session_id": second.session_id,
+                    "title": "Chat B",
+                    "item_id": target,
+                    "role": "assistant",
+                    "created_at": 1,
+                    "text": text,
+                    "text_start": 0,
+                    "content_hash": "iteration5",
+                    "snippet": text,
+                    "snippet_start": 0,
+                    "ranges": [{"start": 6, "end": 12}, {"start": 18, "end": 24}],
+                    "occurrence_count": 2,
+                }
+            ],
+            "has_more": False,
+            "next_cursor": None,
+        },
+    )
+    _iteration5_start(page, first, profile)
+    first_input = _view(page, "Chat A").get_by_label("Message the agent")
+    _iteration5_activate(first_input, profile)
+    first_input.fill("Retained A draft")
+    first_input.evaluate("el => el.setSelectionRange(2, 7)")
+    _navigate_chat(page, second)
+    second_input = _view(page, "Chat B").get_by_label("Message the agent")
+    expect(second_input).to_be_visible()
+    expect(second_input).not_to_be_focused() if profile["phone"] else expect(
+        second_input
+    ).to_be_focused()
+    _iteration5_activate(second_input, profile)
+    second_input.fill("Retained B draft")
+    _navigate_chat(page, first)
+    expect(first_input).to_have_value("Retained A draft")
+    expect(first_input).not_to_be_focused() if profile["phone"] else expect(
+        first_input
+    ).to_be_focused()
+    _iteration5_sidebar(page, profile)
+    _iteration5_activate(
+        page.locator(f'aside [data-sidebar-session-id="{first.session_id}"] a').first, profile
+    )
+    expect(first_input).not_to_be_focused() if profile["phone"] else expect(
+        first_input
+    ).to_be_focused()
+    expect(first_input).to_have_value("Retained A draft")
+    assert first_input.evaluate("el => [el.selectionStart, el.selectionEnd]") == [2, 7]
+    page.keyboard.press("ControlOrMeta+Alt+s")
+    palette = page.get_by_role("dialog", name="Switch session", exact=True)
+    expect(palette).to_be_visible()
+    page.get_by_test_id("command-palette-input").fill("Chat B")
+    _iteration5_activate(palette.get_by_role("option", name="Chat B", exact=True), profile)
+    expect(palette).to_have_count(0)
+    expect(second_input).to_have_value("Retained B draft")
+    expect(second_input).not_to_be_focused() if profile["phone"] else expect(
+        second_input
+    ).to_be_focused()
+    _iteration5_activate(second_input, profile)
+    page.keyboard.press("ControlOrMeta+f")
+    query = page.get_by_label("Search chats", exact=True)
+    query.fill("need")
+    expect(query).to_be_focused()
+    query.fill("needle ")
+    _assert_workspace_search_centered(page, "Chat B", target, 6)
+    expect(query).to_be_focused()
+    if profile["phone"]:
+        # The open drawer's scrim covers the application-bar toggle.
+        scrim = page.get_by_test_id("sidebar-scrim")
+        scrim.tap(position={"x": box(scrim)["width"] - 4, "y": 150})
+        expect(
+            page.get_by_role("complementary", name="Conversations", include_hidden=True)
+        ).to_have_attribute("aria-hidden", "true")
+    _iteration5_activate(
+        page.get_by_test_id("context-search-bar").get_by_role(
+            "button", name="Next match", exact=True
+        ),
+        profile,
+    )
+    _assert_workspace_search_centered(page, "Chat B", target, 18)
+    expect(second_input).not_to_be_focused()
+    expect(query).to_have_value("needle ")
+    _iteration5_activate(
+        page.get_by_test_id("context-search-bar").get_by_role(
+            "button", name="Edit search query", exact=True
+        ),
+        profile,
+    )
+    scope = page.get_by_role("group", name="Search scope", exact=True)
+    _iteration5_activate(scope.get_by_role("button", name="All chats", exact=True), profile)
+    page.keyboard.press("ControlOrMeta+Alt+s")
+    expect(palette).to_be_visible()
+    page.get_by_test_id("command-palette-input").fill("Chat A")
+    _iteration5_activate(palette.get_by_role("option", name="Chat A", exact=True), profile)
+    expect(palette).to_have_count(0)
+    expect(page).to_have_url(first.url)
+    expect(query).to_have_value("needle ")
+    _iteration5_activate(
+        page.locator('[data-search-result="message"]').filter(has_text=text).first, profile
+    )
+    expect(page).to_have_url(second.url)
+    _assert_workspace_search_centered(page, "Chat B", target, 6)
+    expect(second_input).not_to_be_focused() if profile["phone"] else expect(
+        second_input
+    ).to_be_focused()
+    assert _saved_dock(page)["activeConversationId"] == second.session_id
+    expect(second_input).to_have_value("Retained B draft")
+    _capture(page, output_path, f"iteration5-focus-search-{profile['theme']}-{profile['density']}")
+    assert all(
+        chat.event_posts == [] and chat.session_patches == [] for chat in workspace_journey.chats
+    )
+    assert browser_errors == []
+
+
+@pytest.mark.parametrize("profile", _ITERATION5_PROFILES)
+def test_iteration5_identity_coherence_and_optical_tab_add_gap(
+    page: Page,
+    workspace_journey: WorkspaceJourney,
+    browser_contract: BrowserContract,
+    output_path: str,
+    browser_errors: list[str],
+    profile: dict[str, Any],
+) -> None:
+    """One captured child converges across real owners, then measures painted plus geometry."""
+    first = workspace_journey.chats[0]
+    child_id = "iteration5-native-child"
+    labels = {
+        "omnigent.codex_native.agent_nickname": "Curie",
+        "omnigent.subagent.card_summary": "Check access",
+    }
+    child = {
+        "id": child_id,
+        "title": "Task title must not become the recipient name",
+        "agent_name": "codex-native-ui",
+        "tool": "codex-native-ui",
+        "session_name": "task",
+        "task_summary": "Check access",
+        "current_task_status": "in_progress",
+        "busy": True,
+        "pending_elicitations_count": 0,
+        "last_message_preview": "Reply: Latest report",
+        "created_at": 1704067200,
+        "updated_at": 1704067202,
+        "labels": labels,
+    }
+    browser_contract.json(
+        f"/v1/sessions/{first.session_id}/child_sessions", lambda _: list_payload([child])
+    )
+    browser_contract.json(f"/v1/sessions/{child_id}/child_sessions", list_payload([]))
+    browser_contract.json(
+        f"/v1/sessions/{child_id}",
+        lambda _: {**first.session_snapshot(), **child, "parent_session_id": first.session_id},
+    )
+    delegated = {
+        "id": "identity-instruction",
+        "type": "resource_event",
+        "status": "completed",
+        "response_id": "identity-dispatch",
+        "created_at": 1704067200,
+        "event_type": "session.subagent.delegated",
+        "resource_type": "session",
+        "resource_id": child_id,
+        "resource": {
+            "agent_name": "codex-native-ui",
+            "task_summary": "Stale captured task",
+            "dispatch_id": "identity-dispatch",
+            "task_input": "Original instruction",
+            "task_input_ref": {"conversation_id": child_id, "item_id": "captured-instruction"},
+            "task_input_position": 1,
+        },
+    }
+    returned = {
+        **delegated,
+        "id": "identity-return",
+        "created_at": 1704067202,
+        "event_type": "session.subagent.returned",
+        "resource": {
+            **delegated["resource"],
+            "result_text": "Latest report",
+            "result_finality": "final_answer",
+            "result_revision": 1,
+            "result_ref": {"conversation_id": child_id, "item_id": "captured-return"},
+            "result_position": 2,
+            "status": "completed",
+        },
+    }
+    peer = message_item(
+        "identity-peer", "user", "Original peer instruction", response_id="identity-peer"
+    )
+    peer["communication"] = {
+        "kind": "peer",
+        "message_id": "identity-peer",
+        "source_conversation_id": first.session_id,
+        "source_agent_name": "codex-native-ui",
+        "source_title": "Chat A",
+        "destination_conversation_id": child_id,
+        "delivery_state": "confirmed",
+    }
+    first.set_items([returned, peer, delegated])
+    _iteration5_start(page, first, profile)
+    first.wait_for_stream()
+    chat = _view(page, "Chat A")
+    group = chat.get_by_role("button", name=re.compile(r"Started or steered .*subagent"))
+    if group.count() and group.first.get_attribute("aria-expanded") == "false":
+        _iteration5_activate(group.first, profile)
+    task = chat.get_by_test_id("subagent-activity")
+    expect(task).to_have_count(1)
+    expect(task).to_contain_text("Curie")
+    expect(task).to_contain_text("Check access")
+    expect(task).to_contain_text("Reply: Latest report")
+    peer_card = chat.get_by_test_id("peer-message")
+    expect(peer_card).to_contain_text("Chat A sent to Curie")
+    expect(peer_card).to_contain_text("Check access")
+    expect(peer_card).to_contain_text("Reply: Latest report")
+    expect(peer_card.get_by_role("button", name="Copy", exact=True)).to_have_count(0)
+    task_node = task.element_handle()
+    assert task_node
+    child.update(
+        labels={
+            **labels,
+            "omnigent.codex_native.agent_nickname": "Boole",
+            "omnigent.subagent.card_summary": "Review focus",
+        },
+        last_message_preview="Instruction: Continue review",
+        updated_at=1704067203,
+    )
+    first.emit(
+        {
+            "event": "session.child_session.updated",
+            "data": {
+                "conversation_id": first.session_id,
+                "child_session_id": child_id,
+                "child": child,
+            },
+        }
+    )
+    steering = {
+        **delegated,
+        "id": "identity-steering",
+        "created_at": 1704067203,
+        "resource": {
+            **delegated["resource"],
+            "task_input": "Continue review",
+            "task_input_ref": {"conversation_id": child_id, "item_id": "captured-steering"},
+            "task_input_position": 3,
+        },
+    }
+    first.emit({"event": "response.output_item.done", "data": {"item": steering}})
+    expect(task).to_contain_text("Boole")
+    expect(task).to_contain_text("Review focus")
+    expect(task).to_contain_text("Instruction: Continue review")
+    expect(peer_card).to_contain_text("Chat A sent to Boole")
+    expect(peer_card).to_contain_text("Review focus")
+    expect(peer_card).to_contain_text("Instruction: Continue review")
+    assert task_node.evaluate("el => el.isConnected")
+    expect(task).to_have_count(1)
+    _capture(
+        page, output_path, f"iteration5-agent-card-peer-{profile['theme']}-{profile['density']}"
+    )
+    _iteration5_activate(chat.get_by_test_id("subagent-task-pill"), profile)
+    agents_popup = page.get_by_role("dialog", name=re.compile(r"1 sub-agent"))
+    expect(agents_popup).to_contain_text("Boole")
+    expect(agents_popup).to_contain_text("Review focus")
+    expect(agents_popup).to_contain_text("Instruction: Continue review")
+    _capture(page, output_path, f"iteration5-agent-shelf-{profile['theme']}-{profile['density']}")
+    page.keyboard.press("Escape")
+    _iteration5_activate(
+        task.get_by_role("link", name="Inspect Boole in Orchestration", exact=True), profile
+    )
+    orchestration = _view(page, "Orchestration")
+    entry = orchestration.locator(f'[data-agent-id="{child_id}"]')
+    expect(entry).to_contain_text("Boole")
+    expect(entry).to_contain_text("Review focus")
+    expect(entry).to_contain_text("Instruction: Continue review")
+    expect(orchestration.get_by_role("dialog", name="Boole", exact=True)).to_have_count(0)
+    tab = page.get_by_role("tab", name="Orchestration", exact=True)
+    header = tab.locator(
+        "xpath=ancestor::*[contains(concat(' ', normalize-space(@class), ' '), "
+        "' dock-pane-header ')][1]"
+    )
+    add = header.get_by_role("button", name="Add view to pane", exact=True)
+    final_tab = header.locator(".dock-tab-group").last
+    expect(add).to_be_visible()
+    assert_no_overlap(box(final_tab), box(add))
+    if profile["phone"]:
+        assert min(box(add)["width"], box(add)["height"]) >= 44
+    last_bounds, add_bounds = box(final_tab), box(add)
+    painted = add.locator("svg").evaluate("""svg => {
+      const points = [...svg.querySelectorAll('path,line')].flatMap(path => {
+        const b = path.getBBox(), m = path.getScreenCTM();
+        const inset = parseFloat(getComputedStyle(path).strokeWidth) / 2;
+        return [new DOMPoint(b.x-inset,b.y-inset).matrixTransform(m),
+          new DOMPoint(b.x+b.width+inset,b.y+b.height+inset).matrixTransform(m)];
+      });
+      return {left: Math.min(...points.map(p=>p.x)), right: Math.max(...points.map(p=>p.x))};
+    }""")
+    gap = painted["left"] - (last_bounds["x"] + last_bounds["width"])
+    assert 0 <= gap <= (24 if profile["phone"] else 14), {"painted": painted, "gap": gap}
+    add.focus()
+    page.keyboard.press("Enter")
+    expect(page.get_by_role("menuitem", name="Explorer", exact=True)).to_be_visible()
+    page.keyboard.press("Escape")
+    expect(add).to_be_focused()
+    _capture(page, output_path, f"iteration5-tab-optics-{profile['theme']}-{profile['density']}")
+    if profile["phone"]:
+        for destination in ("Explorer", "Changes"):
+            _iteration5_activate(add, profile)
+            _iteration5_activate(
+                page.get_by_role("menuitem", name=destination, exact=True), profile
+            )
+            expect(page.get_by_role("tab", name=destination, exact=True)).to_be_visible()
+        strip = header.locator(".dock-tabs")
+        assert strip.evaluate("el => el.scrollWidth > el.clientWidth")
+        strip.evaluate("el => { el.scrollLeft = el.scrollWidth; }")
+        expect(add).to_be_visible()
+        _iteration5_activate(add, profile)
+        expect(page.get_by_role("menuitem", name="Explorer", exact=True)).to_be_visible()
+        page.keyboard.press("Escape")
+    Path(output_path).mkdir(parents=True, exist_ok=True)
+    (Path(output_path) / "iteration5-tab-optics.json").write_text(
+        json.dumps(
+            {
+                "profile": profile,
+                "painted": painted,
+                "optical_gap": gap,
+                "add_target": add_bounds,
+                "last_tab": last_bounds,
+                "phase": "before additional overflow tabs",
+            },
+            indent=2,
+        )
+    )
+    _capture(
+        page, output_path, f"iteration5-identity-tab-gap-{profile['theme']}-{profile['density']}"
+    )
+    assert all(
+        chat.event_posts == [] and chat.session_patches == [] for chat in workspace_journey.chats
+    )
     assert browser_errors == []

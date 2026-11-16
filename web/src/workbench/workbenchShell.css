@@ -99,6 +99,12 @@ html[data-electron-mac] .unified-workbench .sidebar-header-row {
   height: calc(var(--workbench-header-height) - 4px);
 }
 
+@media (min-width: 768px) and (hover: hover) and (pointer: fine) {
+  .unified-workbench .dock-tab-add [data-header-action-button] {
+    width: 24px;
+  }
+}
+
 .unified-workbench
   .workbench-app-bar
   :is([aria-label="Open view"], [aria-label="Search or run a command"]) {

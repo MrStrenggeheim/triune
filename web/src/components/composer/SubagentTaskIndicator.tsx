@@ -13,7 +13,7 @@ import { childStatus } from "@/shell/subagentStatus";
 import { useWorkbenchActions } from "@/workbench/WorkbenchContext";
 import { AgentResourceRow } from "@/shell/ChatActivityPanel";
 import { interrupt } from "@/lib/sessionsApi";
-import { subagentName } from "@/lib/subagentActivity";
+import { useAgentPresentation } from "@/hooks/useAgentPresentation";
 import {
   COMPOSER_COLLAPSED_LABEL_CLASS,
   COMPOSER_WORKSPACE_COLLAPSED_LABEL_CLASS,
@@ -79,6 +79,7 @@ function SubagentNavigationRow({
   const search = sessionNavigationSearch(useLocation().search);
   const navigate = useNavigate();
   const workbench = useWorkbenchActions();
+  const display = useAgentPresentation(child.id, conversationId, { child });
   return (
     <li>
       <AgentResourceRow
@@ -89,7 +90,7 @@ function SubagentNavigationRow({
           onNavigate();
           if (workbench)
             workbench.openView(
-              { kind: "conversation", conversationId: child.id, title: subagentName(child) },
+              { kind: "conversation", conversationId: child.id, title: display.name },
               { beside: true },
             );
           else navigate({ pathname: `/c/${child.id}`, search });

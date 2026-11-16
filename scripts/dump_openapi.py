@@ -1,3 +1,4 @@
+# Triune modification: stabilize shared-handler operation IDs in exported API documents.
 """Generate and post-process the omnigent OpenAPI 3.2 document.
 
 The omnigent server runs on FastAPI 0.135.x, which emits OpenAPI
@@ -818,6 +819,23 @@ def _enrich_spec(spec: dict[str, Any]) -> None:
     _normalize_inline_descriptions(spec)
 
 
+def _normalize_shared_operation_ids(paths: dict[str, Any]) -> None:
+    """Give each method its own ID when FastAPI reuses a multi-method route ID."""
+    for methods in paths.values():
+        operations = {
+            method: operation
+            for method, operation in methods.items()
+            if method in _HTTP_METHODS and isinstance(operation, dict)
+        }
+        ids = [operation.get("operationId") for operation in operations.values()]
+        for method, operation in operations.items():
+            operation_id = operation.get("operationId")
+            if isinstance(operation_id, str) and ids.count(operation_id) > 1:
+                stem, separator, suffix = operation_id.rpartition("_")
+                if separator and suffix in _HTTP_METHODS:
+                    operation["operationId"] = f"{stem}_{method}"
+
+
 def generate_spec() -> dict[str, Any]:
     """
     Build, generate, and post-process the OpenAPI 3.2 spec.
@@ -852,6 +870,7 @@ def generate_spec() -> dict[str, Any]:
 
     # Rewrite SSE routes' content entries to use ``itemSchema``.
     paths = spec.get("paths", {})
+    _normalize_shared_operation_ids(paths)
     for path, method in _SSE_ROUTES:
         _rewrite_sse_route(paths, path, method)
 

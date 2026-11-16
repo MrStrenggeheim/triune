@@ -1,3 +1,4 @@
+// Modified for Triune; inherited notices remain applicable.
 "use client";
 
 import * as React from "react";
@@ -7,6 +8,11 @@ import { getEmbedRoot } from "@/lib/host";
 import { cn } from "@/lib/utils";
 import { CompactKbd } from "@/components/ui/kbd";
 import { useMenuGuardedTooltip } from "@/hooks/useMenuGuardedTooltip";
+import {
+  AnchoredPopupProvider,
+  useAnchoredPopupBounds,
+  usePopupTriggerRef,
+} from "./anchored-popup";
 
 type TooltipShortcut = readonly string[] | readonly (readonly string[])[];
 const TooltipProviderContext = React.createContext(false);
@@ -178,20 +184,22 @@ function Tooltip({
     [id],
   );
   const root = (
-    <TooltipPrimitive.Root
-      data-slot="tooltip"
-      {...props}
-      open={requestedOpen && active}
-      onOpenChange={(next) => {
-        if (next && requestedOpen) claim();
-        else if (open === undefined) {
-          setActive(false);
-          if (activeTooltip?.id === id) activeTooltip = null;
-        }
-        setInternalOpen(next);
-        onOpenChange?.(next);
-      }}
-    />
+    <AnchoredPopupProvider open={requestedOpen && active}>
+      <TooltipPrimitive.Root
+        data-slot="tooltip"
+        {...props}
+        open={requestedOpen && active}
+        onOpenChange={(next) => {
+          if (next && requestedOpen) claim();
+          else if (open === undefined) {
+            setActive(false);
+            if (activeTooltip?.id === id) activeTooltip = null;
+          }
+          setInternalOpen(next);
+          onOpenChange?.(next);
+        }}
+      />
+    </AnchoredPopupProvider>
   );
   return hasProvider ? root : <TooltipProvider>{root}</TooltipProvider>;
 }
@@ -206,6 +214,7 @@ const TooltipTrigger = React.forwardRef<
   ref,
 ) {
   const keyboardFocusTarget = React.useContext(TooltipKeyboardFocusContext);
+  const triggerRef = usePopupTriggerRef(ref);
   // Strip a trigger's native title at render time; React still owns the DOM.
   const child =
     asChild &&
@@ -222,7 +231,7 @@ const TooltipTrigger = React.forwardRef<
   return (
     <TooltipTriggerContext.Provider value={suppressNestedTooltip}>
       <TooltipPrimitive.Trigger
-        ref={ref}
+        ref={triggerRef}
         data-slot="tooltip-trigger"
         asChild={asChild}
         aria-label={title}
@@ -315,12 +324,14 @@ function TooltipContent({
   description,
   align: _align,
   sideOffset: _sideOffset,
+  collisionPadding,
   style,
   ...props
 }: React.ComponentProps<typeof TooltipPrimitive.Content> & {
   shortcut?: TooltipShortcut;
   description?: React.ReactNode;
 }) {
+  const bounds = useAnchoredPopupBounds(collisionPadding, { maxWidth: 272, ...style });
   return (
     <TooltipPrimitive.Portal container={getEmbedRoot() ?? undefined}>
       <TooltipPrimitive.Content
@@ -328,15 +339,21 @@ function TooltipContent({
         side={side === "bottom" ? "bottom" : "top"}
         align="center"
         sideOffset={8}
+        collisionPadding={bounds.collisionPadding}
         className={cn(
-          "z-50 inline-flex w-fit max-w-[272px] origin-(--radix-tooltip-content-transform-origin) items-center gap-3.5",
+          "z-50 w-fit max-w-[272px] origin-(--radix-tooltip-content-transform-origin)",
           className,
           "rounded-[7px] border border-[#e2e2e8] bg-white px-[11px] py-[9px] text-[13px] leading-[1.45] font-medium text-[#30303a] shadow-[0_3px_12px_#2020300d] **:data-[slot=kbd]:min-w-[19px] **:data-[slot=kbd]:h-[20px] **:data-[slot=kbd]:w-auto **:data-[slot=kbd]:rounded-[3px] **:data-[slot=kbd]:border-[#e5e5eb] **:data-[slot=kbd]:bg-[#fafafb] **:data-[slot=kbd]:text-[11px] **:data-[slot=kbd]:font-normal **:data-[slot=kbd]:text-[#767680] data-[state=delayed-open]:animate-in data-[state=delayed-open]:fade-in-0 data-[state=delayed-open]:zoom-in-95 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
-          description && "flex-col items-stretch gap-0",
         )}
         {...props}
         style={{
-          ...style,
+          ...bounds.style,
+          maxHeight:
+            "min(320px, var(--radix-tooltip-content-available-height, calc(100dvh - 16px)))",
+          overflow: "auto",
+          overscrollBehavior: "contain",
+          overflowWrap: "anywhere",
+          whiteSpace: "pre-wrap",
           backgroundColor: "#fff",
           color: "#30303a",
           borderColor: "#e2e2e8",
@@ -344,21 +361,14 @@ function TooltipContent({
           boxShadow: "0 3px 12px #2020300d",
         }}
       >
-        {description ? (
-          <>
-            <div className="flex items-center justify-between gap-3.5">
-              <span>{children}</span>
-              {shortcut && shortcut.length > 0 && <TooltipShortcutKeys shortcut={shortcut} />}
-            </div>
-            <div className="mt-[5px] text-xs leading-[1.5] font-normal text-[#777781]">
-              {description}
-            </div>
-          </>
-        ) : (
-          <>
-            {children}
-            {shortcut && shortcut.length > 0 && <TooltipShortcutKeys shortcut={shortcut} />}
-          </>
+        <div className="flex min-w-0 items-center justify-between gap-3.5">
+          <span className="min-w-0">{children}</span>
+          {shortcut && shortcut.length > 0 && <TooltipShortcutKeys shortcut={shortcut} />}
+        </div>
+        {description && (
+          <div className="mt-[5px] text-xs leading-[1.5] font-normal text-[#777781]">
+            {description}
+          </div>
         )}
       </TooltipPrimitive.Content>
     </TooltipPrimitive.Portal>

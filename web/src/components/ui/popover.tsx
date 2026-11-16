@@ -6,26 +6,47 @@ import * as PopoverPrimitive from "radix-ui/popover";
 
 import { getEmbedRoot } from "@/lib/host";
 import { cn } from "@/lib/utils";
+import {
+  AnchoredPopupProvider,
+  usePopupTriggerRef,
+  useAnchoredPopupBounds,
+  usePopupOpenState,
+} from "./anchored-popup";
 
 function Popover({ ...props }: React.ComponentProps<typeof PopoverPrimitive.Root>) {
-  return <PopoverPrimitive.Root data-slot="popover" {...props} />;
+  const state = usePopupOpenState(props);
+  return (
+    <AnchoredPopupProvider open={state.open}>
+      <PopoverPrimitive.Root data-slot="popover" {...props} {...state} />
+    </AnchoredPopupProvider>
+  );
 }
 
-function PopoverTrigger({ ...props }: React.ComponentProps<typeof PopoverPrimitive.Trigger>) {
-  return <PopoverPrimitive.Trigger data-slot="popover-trigger" {...props} />;
-}
+const PopoverTrigger = React.forwardRef<
+  HTMLButtonElement,
+  React.ComponentPropsWithoutRef<typeof PopoverPrimitive.Trigger>
+>(function PopoverTrigger(props, ref) {
+  const triggerRef = usePopupTriggerRef(ref);
+  return <PopoverPrimitive.Trigger ref={triggerRef} data-slot="popover-trigger" {...props} />;
+});
 
 function PopoverContent({
   className,
   align = "center",
   sideOffset = 4,
+  side = "bottom",
+  collisionPadding,
+  style,
   ...props
 }: React.ComponentProps<typeof PopoverPrimitive.Content>) {
+  const bounds = useAnchoredPopupBounds(collisionPadding, style, !props.hidden);
   return (
     <PopoverPrimitive.Portal container={getEmbedRoot() ?? undefined} forceMount={props.forceMount}>
       <PopoverPrimitive.Content
         data-slot="popover-content"
-        align={align}
+        {...bounds}
+        side={side}
+        align={side === "left" || side === "right" ? align : "center"}
         sideOffset={sideOffset}
         className={cn(
           "z-50 flex w-72 origin-(--radix-popover-content-transform-origin) flex-col gap-2.5 rounded-lg bg-popover p-2.5 text-ui text-popover-foreground shadow-menu ring-1 ring-foreground/10 outline-hidden duration-150 ease-[cubic-bezier(0.16,1,0.3,1)] data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",

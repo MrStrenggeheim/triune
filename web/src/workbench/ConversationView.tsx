@@ -22,6 +22,11 @@ import { useWorkspaceResources } from "@/shell/useWorkspaceResources";
 import { FileViewerContext } from "@/shell/FileViewerContext";
 import { isOwnerLevel, workspaceSharingBlocked } from "@/lib/permissionsApi";
 import { HeaderConversationMenu } from "@/shell/HeaderConversationMenu";
+import {
+  ComposerShelfVisibilityProvider,
+  ComposerShelfMenuItems,
+  useComposerShelfMenuCloseAutoFocus,
+} from "@/components/composer/ComposerShelfVisibility";
 import { ForkDialogContextProvider } from "@/shell/ForkDialogContext";
 import { ForkSessionDialog } from "@/shell/ForkSessionDialog";
 import { ContextSearchBar } from "@/shell/ContextSearchBar";
@@ -96,15 +101,17 @@ export const ConversationView = memo(function ConversationView({
       visible={visible}
       focused={isFocused}
     >
-      <ScopedConversationTerminal key={conversationId} conversationId={conversationId}>
-        <ConversationViewContent
-          conversationId={conversationId}
-          visible={visible}
-          focused={isFocused}
-        >
-          {children}
-        </ConversationViewContent>
-      </ScopedConversationTerminal>
+      <ComposerShelfVisibilityProvider>
+        <ScopedConversationTerminal key={conversationId} conversationId={conversationId}>
+          <ConversationViewContent
+            conversationId={conversationId}
+            visible={visible}
+            focused={isFocused}
+          >
+            {children}
+          </ConversationViewContent>
+        </ScopedConversationTerminal>
+      </ComposerShelfVisibilityProvider>
     </ScopedChatStoreProvider>
   );
 });
@@ -121,6 +128,7 @@ const ConversationViewContent = memo(function ConversationViewContent({
   children?: ReactNode;
 }) {
   const useChatStore = useConversationChatStore();
+  const onShelfMenuCloseAutoFocus = useComposerShelfMenuCloseAutoFocus();
   const { session, error } = useSession(conversationId);
   const { data: agent } = useSessionAgent(conversationId);
   const canEdit = useCanEdit(conversationId);
@@ -283,6 +291,8 @@ const ConversationViewContent = memo(function ConversationViewContent({
           onFork={() => openFork()}
           hasAgentInfo
           onAgentInfo={openInfo}
+          workspaceItems={<ComposerShelfMenuItems conversationId={conversationId} />}
+          onMenuCloseAutoFocus={onShelfMenuCloseAutoFocus}
         />
       )}
     </div>

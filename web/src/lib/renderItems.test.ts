@@ -353,9 +353,11 @@ describe("sub-agent timeline events", () => {
         kind: "assistant",
         responseId: "parent_turn",
         lifecycle: streaming ? "streaming" : "completed",
-        items: [{ kind: "tool", state: "input-available" }],
+        items: [
+          { kind: "tool", state: "input-available" },
+          { kind: "subagent_activity", itemId: "notice_1" },
+        ],
       },
-      { kind: "subagent_activity", itemId: "notice_1" },
     ]);
     expect(liveCandidateAssistantIndex(bubbles)).toBe(0);
   });
@@ -488,12 +490,11 @@ describe("sub-agent timeline events", () => {
     ]);
   });
 
-  it("keeps notices standalone until work follows them", () => {
+  it("groups isolated activity with tools before and after parent output", () => {
     const notices = [notice("started"), notice("returned")];
     expect(buildBubbles([prompt, ...notices], null).map((bubble) => bubble.kind)).toEqual([
       "user",
-      "subagent_activity",
-      "subagent_activity",
+      "assistant",
     ]);
     expect(buildStreamed([...notices, answer])).toMatchObject([
       {
@@ -521,9 +522,15 @@ describe("sub-agent timeline events", () => {
       }),
     ).toMatchObject([
       { kind: "user" },
-      { kind: "assistant", lifecycle: "streaming", items: [{ kind: "text" }] },
-      { kind: "subagent_activity", itemId: "started" },
-      { kind: "subagent_activity", itemId: "returned" },
+      {
+        kind: "assistant",
+        lifecycle: "streaming",
+        items: [
+          { kind: "text" },
+          { kind: "subagent_activity", itemId: "started" },
+          { kind: "subagent_activity", itemId: "returned" },
+        ],
+      },
     ]);
     // File artifacts remain visible alongside the following work.
     const file: AnyBlock = {

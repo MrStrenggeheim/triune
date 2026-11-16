@@ -5,24 +5,29 @@ import {
   useContext,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   useSyncExternalStore,
   type ReactNode,
   type CSSProperties,
+  type ComponentProps,
 } from "react";
+import * as PopoverPrimitive from "radix-ui/popover";
 import { BellIcon, CheckCheckIcon, EyeIcon, EyeOffIcon, Loader2Icon } from "lucide-react";
 import type { ToasterProps } from "sonner";
 import { CloseButton } from "@/components/CloseButton";
 import { HeaderActionButton } from "./HeaderActionButton";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Popover, PopoverTrigger } from "@/components/ui/popover";
+import { useAnchoredPopupBounds } from "@/components/ui/anchored-popup";
+import { getEmbedRoot } from "@/lib/host";
+import { cn } from "@/lib/utils";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { NotificationCard } from "./NotificationCard";
 import {
   clearCompletedNotifications,
   getNotificationSnapshot,
-  hideNotification,
   setNotificationCenterOpen,
   setShowReadNotifications,
   subscribeNotifications,
@@ -30,20 +35,21 @@ import {
 
 function collapseCenter() {
   setNotificationCenterOpen(false);
-  for (const entry of getNotificationSnapshot().entries) {
-    if (entry.dismissible !== false) hideNotification(entry.id);
-  }
 }
 
 const NotificationLayout = createContext<{
   width: number;
   bottom: string;
   ownerId?: string | null;
+  anchorBounds?: { top: number; right: number } | null;
+  boundary?: HTMLElement | null;
+  registerBell: (id: string, node: HTMLButtonElement | null) => void;
   openFor: (id: string) => void;
   closeFor: (id: string) => void;
 }>({
   width: 320,
   bottom: "calc(1rem + var(--omnigent-inset-bottom, 0px))",
+  registerBell: () => {},
   openFor: () => setNotificationCenterOpen(true),
   closeFor: collapseCenter,
 });
@@ -59,6 +65,78 @@ export function NotificationLayoutProvider({
 }) {
   const [ownerId, setOwnerId] = useState<string | null>(null);
   const owner = useRef<string | null>(null);
+  const [bells, setBells] = useState(new Map<string, HTMLButtonElement>());
+  const [anchorBounds, setAnchorBounds] = useState<{ top: number; right: number } | null>(null);
+  const [boundary, setBoundary] = useState<HTMLDivElement | null>(null);
+  const registerBell = useCallback((id: string, node: HTMLButtonElement | null) => {
+    setBells((previous) => {
+      if (previous.get(id) === node || (!node && !previous.has(id))) return previous;
+      const next = new Map(previous);
+      if (node) next.set(id, node);
+      else next.delete(id);
+      return next;
+    });
+  }, []);
+  useLayoutEffect(() => {
+    // One layout owner observes bell/header changes, independently of notification count.
+    const selectAnchor = () => {
+      const visible = [...bells.values()].filter((bell) => {
+        if (!bell.isConnected || bell.closest("[hidden], [inert]")) return false;
+        const rect = bell.getBoundingClientRect();
+        return (
+          rect.width > 0 &&
+          rect.height > 0 &&
+          rect.bottom > 0 &&
+          rect.top < window.innerHeight &&
+          rect.right > 0 &&
+          rect.left < window.innerWidth &&
+          (bell.checkVisibility?.({ checkOpacity: true, checkVisibilityCSS: true }) ?? true)
+        );
+      });
+      visible.sort((left, right) => {
+        const a = left.getBoundingClientRect();
+        const b = right.getBoundingClientRect();
+        return a.top - b.top || b.right - a.right;
+      });
+      const rect = visible[0]?.getBoundingClientRect();
+      const next = rect ? { top: rect.bottom + 12, right: window.innerWidth - rect.right } : null;
+      setAnchorBounds((previous) =>
+        previous?.top === next?.top && previous?.right === next?.right ? previous : next,
+      );
+      const currentOwner = owner.current && bells.get(owner.current);
+      if (currentOwner && !visible.includes(currentOwner)) {
+        owner.current = null;
+        setOwnerId(null);
+        collapseCenter();
+      }
+    };
+    selectAnchor();
+    const resize = new ResizeObserver(selectAnchor);
+    const mutation = new MutationObserver(selectAnchor);
+    const ancestors = new Set<Element>();
+    for (const bell of bells.values()) {
+      for (let node: Element | null = bell; node; node = node.parentElement) ancestors.add(node);
+    }
+    for (const node of ancestors) {
+      resize.observe(node);
+      mutation.observe(node, {
+        attributes: true,
+        attributeFilter: ["hidden", "style", "class", "inert"],
+      });
+    }
+    window.addEventListener("resize", selectAnchor);
+    window.addEventListener("scroll", selectAnchor, true);
+    window.visualViewport?.addEventListener("resize", selectAnchor);
+    window.visualViewport?.addEventListener("scroll", selectAnchor);
+    return () => {
+      resize.disconnect();
+      mutation.disconnect();
+      window.removeEventListener("resize", selectAnchor);
+      window.removeEventListener("scroll", selectAnchor, true);
+      window.visualViewport?.removeEventListener("resize", selectAnchor);
+      window.visualViewport?.removeEventListener("scroll", selectAnchor);
+    };
+  }, [bells]);
   const openFor = useCallback((id: string) => {
     owner.current = id;
     setOwnerId(id);
@@ -71,20 +149,67 @@ export function NotificationLayoutProvider({
     collapseCenter();
   }, []);
   const value = useMemo(
-    () => ({ width, bottom, ownerId, openFor, closeFor }),
-    [width, bottom, ownerId, openFor, closeFor],
+    () => ({ width, bottom, ownerId, anchorBounds, boundary, registerBell, openFor, closeFor }),
+    [width, bottom, ownerId, anchorBounds, boundary, registerBell, openFor, closeFor],
   );
-  return <NotificationLayout.Provider value={value}>{children}</NotificationLayout.Provider>;
+  return (
+    <NotificationLayout.Provider value={value}>
+      <div
+        ref={setBoundary}
+        aria-hidden
+        data-notification-boundary
+        className="pointer-events-none fixed invisible"
+        style={{
+          top: "max(16px, var(--omnigent-inset-top, 0px))",
+          right: "max(16px, var(--omnigent-safe-right, 0px))",
+          bottom: "max(16px, var(--omnigent-inset-bottom, 0px))",
+          left: "max(16px, var(--omnigent-safe-left, 0px))",
+        }}
+      />
+      {children}
+    </NotificationLayout.Provider>
+  );
 }
 
 function useNotificationLayout(): CSSProperties {
   const { width } = useContext(NotificationLayout);
-  return { width: Math.round(width), maxWidth: "calc(100vw - 2rem)" };
+  return {
+    width: Math.round(width),
+    maxWidth:
+      "calc(100vw - max(16px, var(--omnigent-safe-left, 0px)) - max(16px, var(--omnigent-safe-right, 0px)))",
+  };
+}
+
+/** Notifications keep the owner's explicit end alignment through the shared collision helper. */
+function NotificationPopupContent({
+  className,
+  style,
+  ...props
+}: ComponentProps<typeof PopoverPrimitive.Content>) {
+  const { boundary } = useContext(NotificationLayout);
+  const bounds = useAnchoredPopupBounds(boundary ? 0 : 16, style);
+  return (
+    <PopoverPrimitive.Portal container={getEmbedRoot() ?? undefined}>
+      <PopoverPrimitive.Content
+        {...bounds}
+        collisionBoundary={boundary}
+        side="bottom"
+        align="end"
+        sideOffset={12}
+        className={cn("text-ui outline-hidden", className)}
+        {...props}
+      />
+    </PopoverPrimitive.Portal>
+  );
 }
 
 export function NotificationBell() {
   const id = useId();
-  const { ownerId, openFor, closeFor } = useContext(NotificationLayout);
+  const { ownerId, registerBell, openFor, closeFor } = useContext(NotificationLayout);
+  const bellRef = useCallback(
+    (node: HTMLButtonElement | null) => registerBell(id, node),
+    [id, registerBell],
+  );
   useEffect(() => () => closeFor(id), [id, closeFor]);
   const { entries, centerOpen, showRead } = useSyncExternalStore(
     subscribeNotifications,
@@ -127,6 +252,8 @@ export function NotificationBell() {
             <span className="inline-flex">
               <PopoverTrigger asChild>
                 <HeaderActionButton
+                  ref={bellRef}
+                  data-notification-bell
                   type="button"
                   variant="ghost"
                   size="icon-xs"
@@ -161,12 +288,9 @@ export function NotificationBell() {
             Notifications{running.length ? ` · ${running.length} in progress` : ""}
           </TooltipContent>
         </Tooltip>
-        <PopoverContent
-          align="end"
-          sideOffset={12}
-          collisionPadding={16}
-          style={style}
-          className="z-[80] gap-0 overflow-hidden p-0"
+        <NotificationPopupContent
+          style={{ ...style, maxHeight: "var(--radix-popper-available-height)" }}
+          className="z-[80] flex flex-col gap-0 overflow-hidden rounded-lg bg-popover text-popover-foreground shadow-menu ring-1 ring-foreground/10"
           role="dialog"
           aria-label="Notifications"
         >
@@ -198,7 +322,7 @@ export function NotificationBell() {
             <CloseButton aria-label="Close notifications" onClick={() => onOpenChange(false)} />
           </header>
           <div
-            className="max-h-[60vh] overflow-y-auto overscroll-contain"
+            className="min-h-0 max-h-[60vh] overflow-y-auto overscroll-contain"
             aria-label="Notification history"
           >
             {!hasHistory && (
@@ -245,7 +369,7 @@ export function NotificationBell() {
               </div>
             )}
           </div>
-        </PopoverContent>
+        </NotificationPopupContent>
       </Popover>
     </TooltipProvider>
   );
@@ -258,22 +382,33 @@ export function NotificationToasts(_props: ToasterProps) {
     getNotificationSnapshot,
     getNotificationSnapshot,
   );
-  const { bottom } = useContext(NotificationLayout);
+  const { anchorBounds } = useContext(NotificationLayout);
   const style = useNotificationLayout();
+  const bounds = useAnchoredPopupBounds(16, style);
+  const left = `max(${bounds.collisionPadding.left}px, var(--omnigent-safe-left, 0px))`;
+  const right = `max(${bounds.collisionPadding.right}px, var(--omnigent-safe-right, 0px))`;
+  const top = anchorBounds
+    ? `max(${bounds.collisionPadding.top}px, var(--omnigent-inset-top, 0px), ${anchorBounds.top}px)`
+    : "calc(max(16px, var(--omnigent-inset-top, 0px)) + var(--density-header-height, 48px) + 12px)";
   const required = entries.filter((entry) => entry.dismissible === false && entry.visible);
   const ordinary = entries
-    .filter((entry) => entry.dismissible !== false && entry.visible)
+    .filter((entry) => entry.dismissible !== false && entry.visible && !entry.previewSuppressed)
     .slice(-3)
     .reverse();
   return (
     <aside
+      role="region"
       aria-label="Notifications"
       aria-live="polite"
-      className="pointer-events-auto fixed right-4 z-[70] flex max-h-[calc(var(--omnigent-viewport-height,100dvh)-5rem)] flex-col gap-[var(--list-row-gap)] overflow-y-auto overscroll-contain p-px"
+      className="pointer-events-auto fixed z-[70] flex flex-col gap-[var(--list-row-gap)] overflow-y-auto overscroll-contain p-px"
       style={{
-        ...style,
+        ...bounds.style,
         display: centerOpen || (!required.length && !ordinary.length) ? "none" : undefined,
-        bottom: `calc(${bottom} + max(0px, 100lvh - var(--omnigent-viewport-height, 100lvh)))`,
+        top,
+        right: anchorBounds
+          ? `clamp(${right}, ${anchorBounds.right}px, calc(100vw - ${style.width}px - ${left}))`
+          : right,
+        maxHeight: `max(0px, calc(var(--omnigent-viewport-height, 100dvh) - ${top} - max(${bounds.collisionPadding.bottom}px, var(--omnigent-inset-bottom, 0px))))`,
       }}
     >
       {!centerOpen && required.map((entry) => <NotificationCard key={entry.id} entry={entry} />)}

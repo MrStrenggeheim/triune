@@ -208,7 +208,7 @@ it("shows settled history in separate sections ordered by observed activity", ()
   const { container } = render(panel());
   const agentRows = within(screen.getByRole("list", { name: "Agents" })).getAllByRole("listitem");
   expect(
-    agentRows.map((row) => row.querySelector(".min-w-0.flex-1")?.firstElementChild?.textContent),
+    agentRows.map((row) => row.querySelector("button[aria-label]")?.getAttribute("aria-label")),
   ).toEqual(["Failed agent", "James", "Older"]);
   expect(agentRows[0]).toHaveTextContent("Failed");
   expect(agentRows[1]).toHaveTextContent("Completed");
@@ -244,8 +244,7 @@ it("uses the shared header control for All, Agents and Shells", () => {
 it("renders Markdown descriptions outside the opening button", async () => {
   agents([
     child({
-      task_summary:
-        "Inspect **dispatches** and `reports` with [context](https://example.test/context).",
+      task_summary: "Inspect **dispatches** and `reports` with [context](https://x.test/c).",
     }),
   ]);
   const open = vi.fn();

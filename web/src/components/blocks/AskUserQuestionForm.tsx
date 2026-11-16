@@ -6,6 +6,8 @@ import { type ChangeEvent, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import type { ClaudeQuestion } from "@/lib/askUserQuestion";
 import { cn } from "@/lib/utils";
+import { CONTROL_WITHIN_FOCUS_CLASS } from "@/lib/designContract";
+import { selectionCardClass } from "@/components/ui/selection-card";
 import { readResourceViewState, writeResourceViewState } from "@/lib/resourceViewStorage";
 
 /**
@@ -345,7 +347,7 @@ export function AskUserQuestionForm({
                 value={customRowValue}
                 onChange={(e) => handleCustomInput(currentKey, e)}
                 data-testid="ask-user-question-custom-input"
-                className="field-sizing-content min-w-0 flex-1 resize-none rounded-sm bg-transparent text-ui placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="field-sizing-content min-w-0 flex-1 resize-none rounded-sm bg-transparent text-ui placeholder:text-muted-foreground outline-none"
               />
             </label>
           )}
@@ -414,12 +416,9 @@ export function AskUserQuestionForm({
 // Keep its selection treatment with native radio and checkbox semantics here.
 function choiceRowClass(selected: boolean) {
   return cn(
-    "flex items-start gap-2 rounded-lg border-2 p-2 cursor-pointer text-ui text-foreground",
-    selected
-      ? "border-primary bg-primary/5"
-      : "border-border hover:border-border-strong hover:bg-muted hover:shadow-sm",
+    selectionCardClass(selected, "flex items-start gap-2 p-2 cursor-pointer text-ui"),
+    CONTROL_WITHIN_FOCUS_CLASS,
   );
 }
 
-const choiceInputClass =
-  "mt-1 size-4 shrink-0 accent-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2";
+const choiceInputClass = "mt-1 size-4 shrink-0 accent-primary outline-none";

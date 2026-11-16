@@ -55,6 +55,7 @@ export interface ElicitResult {
 
 /** Response body of `POST /v1/sessions/{id}/events` (202 Accepted). */
 export interface PostEventResponse {
+  position?: number;
   /** True for item-typed events (persisted); false for interrupt / approval. */
   queued: boolean;
   /**
@@ -225,6 +226,9 @@ interface SessionResponseWire {
    */
   pending_inputs?: {
     pending_id: string;
+    item_id?: string;
+    created_at?: number;
+    position?: number;
     content: MessageContentBlock[];
     created_by?: string;
     communication?: unknown;
@@ -371,6 +375,13 @@ function sessionFromWire(wire: SessionResponseWire): Session {
       const communication = readMessageCommunication(p.communication);
       return {
         pendingId: p.pending_id,
+        ...(typeof p.item_id === "string" ? { itemId: p.item_id } : {}),
+        ...(typeof p.created_at === "number" && Number.isFinite(p.created_at)
+          ? { createdAtS: p.created_at }
+          : {}),
+        ...(typeof p.position === "number" && Number.isSafeInteger(p.position) && p.position >= 0
+          ? { position: p.position }
+          : {}),
         content: p.content,
         ...(p.created_by !== undefined ? { createdBy: p.created_by } : {}),
         ...(communication ? { communication } : {}),
@@ -463,6 +474,7 @@ export async function apiErrorFromResponse(res: Response): Promise<ApiError> {
 
 function postEventResponseFromWire(wire: {
   queued: boolean;
+  position?: number;
   item_id?: string;
   denied?: boolean;
   pending_id?: string;
@@ -471,6 +483,11 @@ function postEventResponseFromWire(wire: {
 }): PostEventResponse {
   return {
     queued: wire.queued,
+    ...(typeof wire.position === "number" &&
+    Number.isSafeInteger(wire.position) &&
+    wire.position >= 0
+      ? { position: wire.position }
+      : {}),
     itemId: wire.item_id,
     denied: wire.denied,
     pendingId: wire.pending_id,
@@ -1441,6 +1458,7 @@ export async function postEvent(
   return postEventResponseFromWire(
     (await res.json()) as {
       queued: boolean;
+      position?: number;
       item_id?: string;
       denied?: boolean;
       pending_id?: string;
@@ -1468,9 +1486,14 @@ export async function postEvent(
 export function openSessionStream(
   sessionId: string,
   signal: AbortSignal,
-  opts?: { idle?: boolean },
+  opts?: { idle?: boolean; afterPosition?: number; afterRevision?: number; streamEpoch?: string },
 ): Promise<Response> {
-  const query = opts?.idle ? "?idle=true" : "";
+  const params = new URLSearchParams();
+  if (opts?.idle) params.set("idle", "true");
+  if (opts?.afterPosition !== undefined) params.set("after_position", String(opts.afterPosition));
+  if (opts?.afterRevision !== undefined) params.set("after_revision", String(opts.afterRevision));
+  if (opts?.streamEpoch !== undefined) params.set("stream_epoch", opts.streamEpoch);
+  const query = params.size ? `?${params}` : "";
   return authenticatedFetch(`/v1/sessions/${encodeURIComponent(sessionId)}/stream${query}`, {
     headers: { Accept: "text/event-stream" },
     signal,

@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { conversationPage } from "@/test/sidebarMockHelpers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -129,12 +130,14 @@ describe("sidebar active highlight in selection mode", () => {
     getSessionSlimMock.mockImplementation((id: string) => Promise.resolve(snapshot(id, null)));
 
     renderAt("/c/conv_active", true);
-    await waitFor(() => expect(rowFor("conv_active")).toHaveClass("bg-[var(--sidebar-active)]"));
+    await waitFor(() =>
+      expect(rowFor("conv_active").closest("li")).toHaveClass("bg-[var(--sidebar-active)]"),
+    );
 
     fireEvent.click(rowFor("conv_other"));
 
-    expect(rowFor("conv_other")).toHaveClass("bg-[var(--sidebar-active)]");
-    expect(rowFor("conv_active")).not.toHaveClass("bg-[var(--sidebar-active)]");
+    expect(rowFor("conv_other").closest("li")).toHaveClass("bg-[var(--sidebar-active)]");
+    expect(rowFor("conv_active").closest("li")).not.toHaveClass("bg-[var(--sidebar-active)]");
   });
 
   it("drops the active-session highlight once selection mode is on", async () => {
@@ -143,15 +146,17 @@ describe("sidebar active highlight in selection mode", () => {
 
     // Viewing conv_active — it starts highlighted as the active route.
     renderAt("/c/conv_active");
-    await waitFor(() => expect(rowFor("conv_active")).toHaveClass("bg-[var(--sidebar-active)]"));
+    await waitFor(() =>
+      expect(rowFor("conv_active").closest("li")).toHaveClass("bg-[var(--sidebar-active)]"),
+    );
 
     // Toggle "Select sessions": the active highlight must clear because no row
     // is explicitly selected yet.
     fireEvent.click(screen.getByRole("button", { name: "Select sessions" }));
     await waitFor(() =>
-      expect(rowFor("conv_active")).not.toHaveClass("bg-[var(--sidebar-active)]"),
+      expect(rowFor("conv_active").closest("li")).not.toHaveClass("bg-[var(--sidebar-active)]"),
     );
-    expect(rowFor("conv_other")).not.toHaveClass("bg-[var(--sidebar-active)]");
+    expect(rowFor("conv_other").closest("li")).not.toHaveClass("bg-[var(--sidebar-active)]");
   });
 
   it("highlights only the explicitly-selected row, not the active one", async () => {
@@ -159,14 +164,18 @@ describe("sidebar active highlight in selection mode", () => {
     getSessionSlimMock.mockImplementation((id: string) => Promise.resolve(snapshot(id, null)));
 
     renderAt("/c/conv_active");
-    await waitFor(() => expect(rowFor("conv_active")).toHaveClass("bg-[var(--sidebar-active)]"));
+    await waitFor(() =>
+      expect(rowFor("conv_active").closest("li")).toHaveClass("bg-[var(--sidebar-active)]"),
+    );
 
     fireEvent.click(screen.getByRole("button", { name: "Select sessions" }));
 
     // Explicitly select the OTHER row — it gets the highlight; the active row
     // stays unhighlighted because it wasn't selected.
     fireEvent.click(rowFor("conv_other"));
-    await waitFor(() => expect(rowFor("conv_other")).toHaveClass("bg-[var(--sidebar-active)]"));
-    expect(rowFor("conv_active")).not.toHaveClass("bg-[var(--sidebar-active)]");
+    await waitFor(() =>
+      expect(rowFor("conv_other").closest("li")).toHaveClass("bg-[var(--sidebar-active)]"),
+    );
+    expect(rowFor("conv_active").closest("li")).not.toHaveClass("bg-[var(--sidebar-active)]");
   });
 });

@@ -1,4 +1,5 @@
 // Modified for Triune.
+import { useAgentPresentation } from "@/hooks/useAgentPresentation";
 import { useContext } from "react";
 import { QueryClientContext } from "@tanstack/react-query";
 import { MessageCircleIcon, WorkflowIcon } from "lucide-react";
@@ -9,23 +10,20 @@ import { useChildSessions } from "@/hooks/useChildSessions";
 import { Link, useLocation, useNavigate } from "@/lib/routing";
 import { sessionNavigationSearch } from "@/lib/sessionNavigation";
 import {
-  formatSubagentTask,
-  meaningfulTaskSummary,
   subagentCardItemIds,
   readSubagentActivity,
   subagentEventStatus,
-  subagentActivityName,
   recordedSubagentReturn,
   shouldRenderSubagentReply,
   subagentMatchesChild,
-  subagentTaskDescription,
   shortTaskText,
+  subagentCardMessages,
   type SubagentActivity,
 } from "@/lib/subagentActivity";
 import { useConversationChatStore, useConversationChatVisible } from "@/workbench/ScopedChatStore";
 import { useWorkbenchActions } from "@/workbench/WorkbenchContext";
 import { SubagentTaskRow } from "./SubagentTaskRow";
-import { SubagentReply } from "./SubagentReply";
+import { SubagentReply, SubagentReportContent } from "./SubagentReply";
 import { childStatus, type AgentStatus } from "@/shell/subagentStatus";
 
 export function SubagentActivityMessage({ data }: { data: Record<string, unknown> }) {
@@ -94,21 +92,13 @@ function RecordedTask({
       data={data}
       activity={activity}
       conversationId={conversationId}
-      agentName={subagentActivityName(activity, child)}
-      taskSummary={
-        meaningfulTaskSummary(child?.labels?.["omnigent.subagent.card_summary"]) ??
-        meaningfulTaskSummary(activity.taskDescription) ??
-        (child
-          ? canonical
-            ? meaningfulTaskSummary(child.task_summary)
-            : subagentTaskDescription(child)
-          : null)
-      }
       status={
-        status ??
-        (activity.phase === "delegated" && child && hasCurrentState && matchesTask
+        canonical && child && hasCurrentState && matchesTask
           ? childStatus(child)
-          : undefined)
+          : (status ??
+            (activity.phase === "delegated" && child && hasCurrentState && matchesTask
+              ? childStatus(child)
+              : undefined))
       }
     />
   );
@@ -118,15 +108,11 @@ function Task({
   data,
   activity,
   conversationId,
-  agentName,
-  taskSummary,
   status,
 }: {
   data: Record<string, unknown>;
   activity: SubagentActivity;
   conversationId: string | null;
-  agentName?: string;
-  taskSummary?: string | null;
   status?: AgentStatus;
 }) {
   const workbench = useWorkbenchActions();
@@ -137,31 +123,17 @@ function Task({
   params.set("panel", "activity");
   params.set("focusAgentId", activity.sessionId);
   const to = { pathname: `/c/${encodeURIComponent(origin)}`, search: `?${params.toString()}` };
-  const name = agentName ?? activity.agentName ?? activity.agentRole ?? "Agent";
+  const display = useAgentPresentation(activity.sessionId, conversationId, {
+    data,
+    activity,
+  });
+  const name = display.name;
   const resource = data.resource as Record<string, unknown> | undefined;
-  const dispatches = Array.isArray(resource?.card_dispatches)
-    ? resource.card_dispatches.flatMap((value) => {
-        const dispatch = readSubagentActivity(value);
-        return dispatch?.phase === "delegated" && dispatch.itemId !== activity.itemId
-          ? [dispatch]
-          : [];
-      })
-    : [];
-  const task = taskSummary ?? activity.taskDescription;
+  const canonical = Array.isArray(resource?.card_dispatches);
+  const messages = canonical ? subagentCardMessages(data) : [];
+  const task = display.task;
   const input = activity.taskInput;
-  const firstLine = input?.split("\n", 1)[0].trim();
-  const heading = firstLine
-    ?.replace(/^#+\s*/, "")
-    .replace(/[.!?:]+$/, "")
-    .toLowerCase();
-  const repeatsTitle =
-    heading ===
-    (task
-      ? formatSubagentTask(task)
-          .replace(/[.!?:]+$/, "")
-          .toLowerCase()
-      : undefined);
-  const preview = repeatsTitle ? input?.split("\n").slice(1).join("\n").trim() : firstLine;
+  const preview = display.preview ?? "No captured message";
   const action = (
     <>
       <Button variant="ghost" size="icon-xs" aria-label={`Open ${name} chat beside`} asChild>
@@ -223,7 +195,7 @@ function Task({
       </Button>
     </>
   );
-  if (activity.phase === "returned")
+  if (!canonical && activity.phase === "returned")
     return (
       <SubagentReply
         activity={activity}
@@ -242,6 +214,7 @@ function Task({
       data-message-aliases={JSON.stringify(subagentCardItemIds(data))}
     >
       <SubagentTaskRow
+        keepSummaryWhenExpanded={canonical}
         searchItemIds={subagentCardItemIds(data)}
         agentName={name}
         description={task ? shortTaskText(task, 80) : "Delegated task"}
@@ -249,36 +222,67 @@ function Task({
         action={action}
         preview={preview ? shortTaskText(preview, 180) : "Delegated task"}
       >
-        {input ? (
-          <div className="group space-y-2 py-1 text-sm">
-            <div data-search-item-id={activity.itemId}>
-              <ConversationScopeContext.Provider
-                value={activity.taskInputRef?.conversationId ?? conversationId}
-              >
-                <FilePathAwareMessageResponse
-                  sourceItemId={activity.taskInputRef?.itemId ?? activity.itemId}
-                  breaks
-                  mode="static"
-                >
-                  {input}
-                </FilePathAwareMessageResponse>
-              </ConversationScopeContext.Provider>
-            </div>
-            {dispatches.map((dispatch) => (
-              <div key={dispatch.itemId} data-search-item-id={dispatch.itemId}>
-                <ConversationScopeContext.Provider
-                  value={dispatch.taskInputRef?.conversationId ?? conversationId}
-                >
-                  <FilePathAwareMessageResponse
-                    sourceItemId={dispatch.taskInputRef?.itemId ?? dispatch.itemId}
-                    breaks
-                    mode="static"
+        {canonical ? (
+          messages.length > 0 ? (
+            <div className="space-y-3 py-1 text-sm">
+              {Array.from(new Set(messages.map((message) => message.activity.dispatchId))).map(
+                (dispatchId) => (
+                  <section
+                    key={dispatchId ?? "unknown"}
+                    className="space-y-2"
+                    aria-label={dispatchId ? `Dispatch ${dispatchId}` : "Captured messages"}
                   >
-                    {dispatch.taskInput ?? ""}
-                  </FilePathAwareMessageResponse>
-                </ConversationScopeContext.Provider>
-              </div>
-            ))}
+                    {messages
+                      .filter((message) => message.activity.dispatchId === dispatchId)
+                      .map((message) => (
+                        <div
+                          key={`${message.direction}:${message.activity.itemId}:${message.activity.turnId}`}
+                          data-search-item-id={message.activity.itemId}
+                        >
+                          <div className="text-xs text-muted-foreground">{message.direction}</div>
+                          {message.direction === "Reply" ? (
+                            <SubagentReportContent
+                              activity={message.activity}
+                              conversationId={conversationId}
+                              shownText={message.text}
+                            />
+                          ) : (
+                            <ConversationScopeContext.Provider
+                              value={
+                                message.activity.taskInputRef?.conversationId ?? conversationId
+                              }
+                            >
+                              <FilePathAwareMessageResponse
+                                sourceItemId={
+                                  message.activity.taskInputRef?.itemId ?? message.activity.itemId
+                                }
+                                breaks
+                                mode="static"
+                              >
+                                {message.text}
+                              </FilePathAwareMessageResponse>
+                            </ConversationScopeContext.Provider>
+                          )}
+                        </div>
+                      ))}
+                  </section>
+                ),
+              )}
+            </div>
+          ) : undefined
+        ) : input ? (
+          <div className="group space-y-2 py-1 text-sm" data-search-item-id={activity.itemId}>
+            <ConversationScopeContext.Provider
+              value={activity.taskInputRef?.conversationId ?? conversationId}
+            >
+              <FilePathAwareMessageResponse
+                sourceItemId={activity.taskInputRef?.itemId ?? activity.itemId}
+                breaks
+                mode="static"
+              >
+                {input}
+              </FilePathAwareMessageResponse>
+            </ConversationScopeContext.Provider>
           </div>
         ) : undefined}
       </SubagentTaskRow>

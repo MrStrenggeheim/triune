@@ -69,7 +69,12 @@ import {
   isTextBlock,
   keyedAttachments,
 } from "@/lib/blocks";
-import { type Bubble, type RenderItem, bubblesEqual } from "@/lib/renderItems";
+import {
+  type Bubble,
+  type RenderItem,
+  bubblesEqual,
+  mergePlacedPendingBubbles,
+} from "@/lib/renderItems";
 import { PeerMessage } from "@/components/blocks/PeerMessage";
 import { castAskUserQuestionPayload, parseAskUserQuestionPreview } from "@/lib/askUserQuestion";
 import { messageInputKind, type MessageCommunication } from "@/lib/messageCommunication";
@@ -235,6 +240,9 @@ export function buildPendingBubbles(
       userAuthored: !p.communication,
       // No server item id yet; tempId keeps React keys stable until promotion.
       itemId: p.tempId,
+      ...(p.itemId ? { itemId: p.itemId, stableKey: p.tempId } : {}),
+      ...(p.position !== undefined ? { position: p.position } : {}),
+      ...(p.anchor ? { anchor: p.anchor } : {}),
       pending: true,
       ...(p.communication ? { communication: p.communication } : {}),
       ...(p.sentMidTurn ? { awaitingAgent: true } : {}),
@@ -293,6 +301,8 @@ function liftAboveCreateRoutingChips(committed: Bubble[], end: number): number {
 // the prompt above a trailing REQUEST-phase card or create-time routing chip.
 export function mergePendingBubbles(committed: Bubble[], pending: Bubble[]): Bubble[] {
   if (pending.length === 0) return committed;
+  if (pending.some((bubble) => bubble.position !== undefined || bubble.anchor))
+    return mergePlacedPendingBubbles(committed, pending);
   let insertAt = committed.length;
   while (insertAt > 0 && isStandaloneElicitationBubble(committed[insertAt - 1]!)) {
     insertAt -= 1;
@@ -376,7 +386,10 @@ export function bubbleKey(bubble: Bubble): string {
   if (bubble.kind === "compaction_loading") return `compaction_loading:${bubble.itemId}`;
   if (bubble.kind === "compaction") return `compaction:${bubble.itemId}`;
   if (bubble.kind === "routing_decision") return `routing_decision:${bubble.itemId}`;
-  if (bubble.kind === "subagent_activity") return `subagent_activity:${bubble.itemId}`;
+  if (bubble.kind === "subagent_activity") {
+    const resource = bubble.data.resource as Record<string, unknown> | undefined;
+    return `subagent_activity:${typeof resource?.card_key === "string" ? resource.card_key : bubble.itemId}`;
+  }
   return `assistant:${bubble.stableId}`;
 }
 
@@ -611,6 +624,7 @@ export const BubbleView = memo(
             communication={bubble.communication}
             content={bubble.content}
             itemId={bubble.itemId}
+            aliases={bubble.aliases}
             createdAtS={bubble.createdAtS}
             pending={bubble.pending}
           />

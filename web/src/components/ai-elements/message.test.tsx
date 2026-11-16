@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { setEmbedRoot } from "@/lib/host";
@@ -241,6 +242,29 @@ describe.each([true, false])("Mermaid fullscreen (embedded=%s)", (embedded) => {
       vi.stubGlobal("IntersectionObserver", VisibleIntersectionObserver);
       // jsdom has no SVG layout; keep the real Mermaid renderer and supply its measurements.
       const originalGetBBox = Object.getOwnPropertyDescriptor(SVGElement.prototype, "getBBox");
+      const originalGetScreenCTM = Object.getOwnPropertyDescriptor(
+        SVGElement.prototype,
+        "getScreenCTM",
+      );
+      const identity = { inverse: () => identity };
+      Object.defineProperty(SVGElement.prototype, "getScreenCTM", {
+        configurable: true,
+        value: () => identity,
+      });
+      vi.stubGlobal(
+        "DOMPoint",
+        class {
+          x: number;
+          y: number;
+          constructor(x: number, y: number) {
+            this.x = x;
+            this.y = y;
+          }
+          matrixTransform() {
+            return this;
+          }
+        },
+      );
       Object.defineProperty(SVGElement.prototype, "getBBox", {
         configurable: true,
         value: () => ({ x: 0, y: 0, width: 100, height: 40 }),
@@ -259,13 +283,21 @@ describe.each([true, false])("Mermaid fullscreen (embedded=%s)", (embedded) => {
         );
         const svg = container.querySelector('svg[id^="mermaid-"]')!;
         expect(svg.textContent).toContain("Alpha");
+        const preview = container.querySelector<HTMLElement>(".chat-mermaid")!;
+        expect(Boolean(preview.style.maxHeight)).toBe(_surface !== "preview/editor");
+        const scroller = within(preview).getByRole("region", { name: "Diagram preview" });
+        expect(scroller).toHaveAttribute("tabindex", "0");
+        scroller.scrollTop = 35;
         expect(screen.getAllByRole("button", { name: "View fullscreen" })).toHaveLength(1);
         fireEvent.click(screen.getByRole("button", { name: "View fullscreen" }));
         const exit = screen.getByRole("button", { name: "Exit fullscreen" });
         const overlay = exit.parentElement!;
         expect(overlay.parentElement).toBe(embedded ? root : document.body);
         expect(overlay.querySelector('svg[id^="mermaid-"]')?.outerHTML).toBe(svg.outerHTML);
+        expect(overlay.closest(".chat-mermaid")).toBeNull();
         fireEvent.click(exit);
+        expect(scroller.scrollTop).toBe(35);
+        expect(preview.querySelector('svg[id^="mermaid-"]')).toBe(svg);
         expect(screen.queryByRole("button", { name: "Exit fullscreen" })).toBeNull();
         fireEvent.click(screen.getByRole("button", { name: "View fullscreen" }));
         fireEvent.keyDown(window, { key: "Escape" });
@@ -276,6 +308,9 @@ describe.each([true, false])("Mermaid fullscreen (embedded=%s)", (embedded) => {
         if (originalGetBBox)
           Object.defineProperty(SVGElement.prototype, "getBBox", originalGetBBox);
         else delete (SVGElement.prototype as { getBBox?: unknown }).getBBox;
+        if (originalGetScreenCTM)
+          Object.defineProperty(SVGElement.prototype, "getScreenCTM", originalGetScreenCTM);
+        else delete (SVGElement.prototype as { getScreenCTM?: unknown }).getScreenCTM;
       }
     },
     15_000,

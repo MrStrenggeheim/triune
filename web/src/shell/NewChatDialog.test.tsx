@@ -9386,7 +9386,12 @@ describe("NewChatLandingScreen @-file-mention", () => {
 
       expect((input() as HTMLTextAreaElement).value).toBe("@README");
       expect(screen.queryByText("@README.md")).not.toBeInTheDocument();
-      expect(authenticatedFetchMock).not.toHaveBeenCalled();
+      // The unified picker may search chat references; Enter must not create/send a session.
+      expect(
+        authenticatedFetchMock.mock.calls.every(
+          ([, init]) => !init?.method || init.method === "GET",
+        ),
+      ).toBe(true);
     } finally {
       restoreViewport();
     }

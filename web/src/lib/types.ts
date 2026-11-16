@@ -66,6 +66,9 @@ export interface AgyPermission {
 export interface PendingInput {
   /** Server index id, e.g. ``"pending_a1b2c3"``; the bubble's stable key. */
   pendingId: string;
+  itemId?: string;
+  createdAtS?: number;
+  position?: number;
   /** Message content blocks as POSTed (file blocks carry real ids). */
   content: MessageContentBlock[];
   communication?: MessageCommunication;

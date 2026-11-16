@@ -31,7 +31,12 @@ export function useContextSearchController({
   activeSessionId?: string;
   sidebarOpen: boolean;
   setSidebarOpen: (open: boolean) => void;
-  navigate: (path: string, onNavigated: () => void, isRelevant?: () => boolean) => void;
+  navigate: (
+    path: string,
+    onNavigated: () => void,
+    isRelevant?: () => boolean,
+    focusComposer?: boolean,
+  ) => void;
   onToggleLeftSidebar: () => void;
   onToggleRightSidebar: () => void;
   isMobile: () => boolean;
@@ -171,14 +176,15 @@ export function useContextSearchController({
   const openResult = useCallback(
     (target: ContextSearchTarget, value: string, filter = messageFilter) => {
       if (!open) previousSidebarOpen.current = sidebarOpen;
+      const selected = structuredClone(target);
       activationId.current += 1;
-      pendingResult.current = target;
+      pendingResult.current = selected;
       setQueryState(value);
       setSettledQuery(value.trim());
       setMessageFilterState(filter);
       setOpen(true);
       setSidebarOpen(!isMobile());
-      setHighlightTarget({ ...target, requestId: ++requestId.current });
+      setHighlightTarget({ ...selected, requestId: ++requestId.current });
       setUnavailable(null);
       autoJumped.current = `${identity}:${scope}:${scope === "current" ? target.conversationId : ""}:${filter}:${value.trim()}`;
     },
@@ -248,7 +254,7 @@ export function useContextSearchController({
   }, [open, queryReady, highlightTarget, activeSessionId, currentIndex, activeMessages]);
 
   const activate = useCallback(
-    (occurrence: SearchOccurrence, explicit = true) => {
+    (occurrence: SearchOccurrence, explicit = true, focusComposer = explicit) => {
       if (occurrence.hit.kind === "chat" || !queryReady) return;
       const selected = structuredClone(occurrenceTarget(occurrence, 0));
       const generation = liveQueryIdentity.current;
@@ -259,14 +265,22 @@ export function useContextSearchController({
       if (explicit) pendingResult.current = selected;
       const relevant = () =>
         generation === liveQueryIdentity.current && activation === activationId.current;
+      let applied = false;
       const apply = () => {
-        if (!relevant()) return;
+        if (applied || !relevant()) return;
+        applied = true;
         pendingNavigation.current = null;
         setHighlightTarget({ ...selected, requestId: ++requestId.current });
         setUnavailable(null);
         if (explicit && isMobile()) setSidebarOpen(false);
       };
-      if (explicit) navigate(`/c/${encodeURIComponent(selected.conversationId)}`, apply, relevant);
+      if (explicit)
+        navigate(
+          `/c/${encodeURIComponent(selected.conversationId)}`,
+          apply,
+          relevant,
+          focusComposer,
+        );
       else if (occurrence.hit.session_id === activeSessionId) apply();
     },
     [activeSessionId, navigate, isMobile, setSidebarOpen, queryReady],
@@ -321,14 +335,14 @@ export function useContextSearchController({
             const occurrence = direction === 1 ? occurrences[count] : occurrences.at(-1);
             if ((occurrence && direction === 1) || !result.hasNextPage) {
               const selected = occurrence ?? occurrences[0];
-              if (selected) activate(selected);
+              if (selected) activate(selected, true, false);
               return;
             }
           }
         })();
         return;
       }
-      if (count) activate(currentOccurrences[(next + count) % count]);
+      if (count) activate(currentOccurrences[(next + count) % count], true, false);
     },
     [queryReady, currentOccurrences, currentIndex, activeMessages, activeSessionId, activate],
   );
@@ -363,6 +377,7 @@ export function useContextSearchController({
           if (isMobile()) setSidebarOpen(false);
         },
         relevant,
+        true,
       );
     },
     [

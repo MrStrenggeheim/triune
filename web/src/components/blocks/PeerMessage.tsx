@@ -1,7 +1,9 @@
 // Modified for Triune.
+import { useAgentPresentation } from "@/hooks/useAgentPresentation";
 import { useContext, useMemo } from "react";
-import { MessageCircleIcon, SendIcon } from "lucide-react";
+import { CheckIcon, ClockIcon, CircleAlertIcon, MessageCircleIcon, SendIcon } from "lucide-react";
 import { QueryClientContext, useQuery } from "@tanstack/react-query";
+import { Badge } from "@/components/ui/badge";
 import { ActivityRow } from "@/components/ActivityRow";
 import { ActivityNavigation } from "@/shell/ChatActivityPanel";
 import {
@@ -27,15 +29,30 @@ interface PeerMessageProps {
   communication: MessageCommunication;
   content: MessageContentBlock[];
   itemId: string;
+  /** Conversation-local aliases verified by the receipt projection. */
+  aliases?: readonly string[];
+  /** Exact item in the linked conversation, provided by authorized server records. */
+  relatedItemId?: string;
   createdAtS?: number;
   pending?: boolean;
 }
 
-type PeerSource = Pick<Session, "title" | "subAgentName" | "agentName">;
-const selectPeerSource = ({ title, subAgentName, agentName }: Session): PeerSource => ({
+type PeerSource = Pick<
+  Session,
+  "title" | "subAgentName" | "agentName" | "labels" | "parentSessionId"
+>;
+const selectPeerSource = ({
   title,
   subAgentName,
   agentName,
+  labels,
+  parentSessionId,
+}: Session): PeerSource => ({
+  title,
+  subAgentName,
+  agentName,
+  labels,
+  parentSessionId,
 });
 
 function AuthorizedPeerMessage(props: PeerMessageProps) {
@@ -78,6 +95,8 @@ function AuthorizedPeerMessage(props: PeerMessageProps) {
       source={!query.isError ? query.data : undefined}
       destination={!destination.isError ? destination.data : undefined}
       sourceAgentName={!query.isError ? props.communication.source_agent_name : undefined}
+      sourceDenied={query.isError}
+      destinationDenied={destination.isError}
     />
   );
 }
@@ -99,15 +118,21 @@ function PeerMessageContent({
   communication,
   content,
   itemId,
+  aliases,
+  relatedItemId,
   source,
   destination,
   sourceTitle,
   sourceAgentName,
+  sourceDenied,
+  destinationDenied,
 }: PeerMessageProps & {
   source?: PeerSource;
   destination?: PeerSource;
   sourceTitle?: string | null;
   sourceAgentName?: string | null;
+  sourceDenied?: boolean;
+  destinationDenied?: boolean;
 }) {
   const workbench = useWorkbenchActions();
   const useChatStore = useConversationChatStore();
@@ -123,7 +148,7 @@ function PeerMessageContent({
     [content],
   );
   // Parse only a bounded excerpt while collapsed.
-  const preview = useMemo(
+  const fallbackPreview = useMemo(
     () =>
       text
         .slice(0, 768)
@@ -133,15 +158,37 @@ function PeerMessageContent({
         .join("\n"),
     [text],
   );
-  const name =
-    sourceAgentName?.trim() || source?.subAgentName?.trim() || source?.agentName?.trim() || "Agent";
   const sourceId = communication.source_conversation_id;
   const outgoing = !!sourceId && conversationId === sourceId;
   const relatedId = outgoing ? communication.destination_conversation_id : sourceId;
-  const title = source?.title?.trim() || sourceTitle?.trim() || "conversation";
-  const relatedTitle = outgoing ? destination?.title?.trim() || "conversation" : title;
+  const sender = useAgentPresentation(sourceId ?? "", conversationId, {
+    session: source,
+    recordedName: sourceAgentName,
+    recordedTitle: sourceTitle,
+    denied: sourceDenied,
+  });
+  const recipient = useAgentPresentation(
+    communication.destination_conversation_id,
+    conversationId,
+    { session: destination, denied: destinationDenied },
+  );
+  const name = sender.name;
+  const relatedDisplay = outgoing ? recipient : sender;
+  const relatedTitle = relatedDisplay.name;
+  const preview = relatedDisplay.preview ?? fallbackPreview;
   const messageConversationId =
     conversationId === sourceId ? sourceId : communication.destination_conversation_id;
+  const relatedHref = relatedId
+    ? `/c/${encodeURIComponent(relatedId)}${relatedItemId ? `?message=${encodeURIComponent(relatedItemId)}` : ""}`
+    : undefined;
+  const deliveryLabel =
+    communication.delivery_state === "confirmed"
+      ? "Received"
+      : communication.delivery_state === "failed"
+        ? "Failed"
+        : communication.delivery_state === "unknown"
+          ? "Unknown delivery"
+          : "Queued";
   const menuConversationId =
     conversationId === sourceId
       ? communication.destination_conversation_id
@@ -153,12 +200,31 @@ function PeerMessageContent({
       data-testid="peer-message"
       data-direction={outgoing ? "sent" : "received"}
       data-message-id={itemId}
+      data-message-aliases={aliases ? JSON.stringify(aliases) : undefined}
+      data-delivery-state={communication.delivery_state}
     >
       <ContextMenu>
         <ContextMenuTrigger asChild>
           <div>
             <ActivityRow
               presentation="message"
+              searchItemIds={[itemId, ...(aliases ?? [])]}
+              status={
+                <Badge
+                  variant={communication.delivery_state === "failed" ? "destructive" : "secondary"}
+                  role="status"
+                  className="w-fit text-xs font-normal"
+                >
+                  {communication.delivery_state === "confirmed" ? (
+                    <CheckIcon aria-hidden="true" />
+                  ) : communication.delivery_state === "failed" ? (
+                    <CircleAlertIcon aria-hidden="true" />
+                  ) : (
+                    <ClockIcon aria-hidden="true" />
+                  )}
+                  {deliveryLabel}
+                </Badge>
+              }
               icon={
                 outgoing ? (
                   <SendIcon aria-hidden="true" />
@@ -175,7 +241,7 @@ function PeerMessageContent({
                         {outgoing ? "sent to" : "from"}
                       </span>{" "}
                       <Link
-                        to={`/c/${encodeURIComponent(relatedId)}`}
+                        to={relatedHref!}
                         className="min-w-0 truncate rounded-sm text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                         onClick={(event) => {
                           if (
@@ -187,7 +253,10 @@ function PeerMessageContent({
                             !event.altKey
                           ) {
                             event.preventDefault();
-                            workbench.openConversation(relatedId, { beside: true });
+                            workbench.openConversation(relatedId, {
+                              beside: true,
+                              messageId: relatedItemId,
+                            });
                           }
                         }}
                       >
@@ -195,15 +264,22 @@ function PeerMessageContent({
                       </Link>
                     </>
                   )}
+                  {relatedDisplay.task && (
+                    <span className="min-w-0 truncate">· {relatedDisplay.task}</span>
+                  )}
                 </>
               }
               actions={
                 <ActivityNavigation
                   name={relatedTitle}
-                  openHref={relatedId ? `/c/${encodeURIComponent(relatedId)}` : undefined}
+                  openHref={relatedHref}
                   onOpen={
                     relatedId && workbench
-                      ? () => workbench.openConversation(relatedId, { beside: true })
+                      ? () =>
+                          workbench.openConversation(relatedId, {
+                            beside: true,
+                            messageId: relatedItemId,
+                          })
                       : undefined
                   }
                   orchestrationHref={
@@ -225,19 +301,23 @@ function PeerMessageContent({
                 />
               }
               summary={
-                <ConversationScopeContext.Provider value={messageConversationId ?? null}>
-                  <FilePathAwareMessageResponse
-                    sourceItemId={itemId}
-                    breaks
-                    mode="static"
-                    className={cn(
-                      "text-sm leading-5 [&>*]:my-0 [&_p]:my-0 [&_p]:leading-5",
-                      flashing && "animate-message-highlight",
-                    )}
-                  >
-                    {preview}
-                  </FilePathAwareMessageResponse>
-                </ConversationScopeContext.Provider>
+                relatedDisplay.preview ? (
+                  <span>{preview}</span>
+                ) : (
+                  <ConversationScopeContext.Provider value={messageConversationId ?? null}>
+                    <FilePathAwareMessageResponse
+                      sourceItemId={itemId}
+                      breaks
+                      mode="static"
+                      className={cn(
+                        "text-sm leading-5 [&>*]:my-0 [&_p]:my-0 [&_p]:leading-5",
+                        flashing && "animate-message-highlight",
+                      )}
+                    >
+                      {preview}
+                    </FilePathAwareMessageResponse>
+                  </ConversationScopeContext.Provider>
+                )
               }
             >
               <ConversationScopeContext.Provider value={messageConversationId ?? null}>

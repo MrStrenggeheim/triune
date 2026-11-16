@@ -1,3 +1,4 @@
+# Modified for Triune.
 """Integration tests for ``GET /v1/sessions/{id}/child_sessions``.
 
 The endpoint exposes sub-agent (child) sessions spawned from a parent
@@ -525,18 +526,23 @@ async def test_child_sessions_handles_child_without_agent_id(
 # ── Last message preview ─────────────────────────────────
 
 
+@pytest.mark.parametrize(
+    ("phase", "expected"),
+    [
+        ("final_answer", "Reply: Found a stale token check in auth/middleware.py"),
+        ("commentary", "Instruction: find the auth bug"),
+        (None, "Instruction: find the auth bug"),
+    ],
+)
 async def test_child_sessions_returns_latest_message_preview(
     client: httpx.AsyncClient,
     db_uri: str,
+    phase: str | None,
+    expected: str,
 ) -> None:
     """
-    A child with committed message items surfaces the latest message
-    text as ``last_message_preview``.
-
-    Seeds three messages and asserts the route returns the most recent
-    one (not the first or a concatenation). Proves both that
-    ``list_items(..., order='desc', limit=1)`` is used and that
-    ``input_text`` / ``output_text`` blocks are extracted.
+    The preview identifies the latest real instruction or final reply.
+    Unknown finality and commentary cannot replace the last instruction.
 
     :param client: The test HTTP client.
     :param db_uri: Per-test SQLite database URI.
@@ -570,6 +576,7 @@ async def test_child_sessions_returns_latest_message_preview(
                 data=MessageData(
                     role="assistant",
                     agent="researcher",
+                    phase="commentary",
                     content=[{"type": "output_text", "text": "investigating now"}],
                 ),
             ),
@@ -579,6 +586,7 @@ async def test_child_sessions_returns_latest_message_preview(
                 data=MessageData(
                     role="assistant",
                     agent="researcher",
+                    phase=phase,
                     content=[
                         {
                             "type": "output_text",
@@ -593,7 +601,7 @@ async def test_child_sessions_returns_latest_message_preview(
     resp = await client.get(f"/v1/sessions/{session['id']}/child_sessions")
     assert resp.status_code == 200
     row = resp.json()["data"][0]
-    assert row["last_message_preview"] == "Found a stale token check in auth/middleware.py"
+    assert row["last_message_preview"] == expected
 
 
 async def test_child_sessions_preview_skips_meta_messages(
@@ -629,7 +637,8 @@ async def test_child_sessions_preview_skips_meta_messages(
                 data=MessageData(
                     role="assistant",
                     agent="researcher",
-                    content=[{"type": "output_text", "text": "Visible child progress"}],
+                    phase="final_answer",
+                    content=[{"type": "output_text", "text": "Visible child reply"}],
                 ),
             ),
             NewConversationItem(
@@ -647,7 +656,7 @@ async def test_child_sessions_preview_skips_meta_messages(
     resp = await client.get(f"/v1/sessions/{session['id']}/child_sessions")
     assert resp.status_code == 200
     row = resp.json()["data"][0]
-    assert row["last_message_preview"] == "Visible child progress"
+    assert row["last_message_preview"] == "Reply: Visible child reply"
 
 
 @pytest.mark.parametrize(
@@ -811,7 +820,7 @@ async def test_child_sessions_truncates_long_message_preview(
     db_uri: str,
 ) -> None:
     """
-    Messages longer than the 150-char preview limit are truncated with
+    Messages longer than the 180-char preview limit are truncated with
     a trailing ellipsis, and the total preview length stays bounded.
 
     :param client: The test HTTP client.
@@ -826,7 +835,7 @@ async def test_child_sessions_truncates_long_message_preview(
         title="researcher:auth",
         agent_id=session["agent_id"],
     )
-    # 200 chars — exceeds the 150 limit.
+    # The prefix and text share the same bounded preview.
     long_text = "x" * 200
     conv_store.append(
         child.id,
@@ -837,6 +846,7 @@ async def test_child_sessions_truncates_long_message_preview(
                 data=MessageData(
                     role="assistant",
                     agent="researcher",
+                    phase="final_answer",
                     content=[{"type": "output_text", "text": long_text}],
                 ),
             ),
@@ -850,7 +860,8 @@ async def test_child_sessions_truncates_long_message_preview(
     # The preview replaces one char with the ellipsis, so total
     # length stays at the limit. Failure indicates the truncation
     # math drifted (off-by-one, wrong cap, etc.).
-    assert len(preview) == 150
+    assert preview.startswith("Reply: ")
+    assert len(preview) == 180
 
 
 # ── Title without colon (legacy / malformed) ─────────────

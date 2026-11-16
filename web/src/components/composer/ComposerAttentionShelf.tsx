@@ -1,5 +1,5 @@
 // Modified for Triune.
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ListTodoIcon, MessageCircleQuestionMarkIcon, ShieldCheckIcon } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { useConversationChatStore } from "@/workbench/ScopedChatStore";
@@ -16,6 +16,7 @@ import { COMPOSER_WORKSPACE_COLLAPSED_LABEL_CLASS } from "./ChatComposer";
 import { ComposerShelf } from "./ComposerShelf";
 import { useChildSessions } from "@/hooks/useChildSessions";
 import { childStatus } from "@/shell/subagentStatus";
+import { useComposerShelfVisibility } from "./ComposerShelfVisibility";
 
 export function isQuestionRequest(block: ElicitationBlock): boolean {
   if (block.codexCommand || block.exitPlanMode) return false;
@@ -48,6 +49,21 @@ export function ComposerAttentionShelf() {
   );
   const todos = useChatStore((state) => state.todos);
   const completed = todos.filter((todo) => todo.status === "completed").length;
+  const { visible, planRequest } = useComposerShelfVisibility({
+    conversationId,
+    active:
+      pending.length > 0 ||
+      completed < todos.length ||
+      backgroundCount > 0 ||
+      children.some((child) =>
+        ["launching", "working", "awaiting", "disconnected"].includes(childStatus(child).activity),
+      ),
+    hasContent: pending.length > 0 || todos.length > 0 || backgroundCount > 0 || hasAgents,
+    hasPlan: todos.length > 0,
+    requiredIds: pending.map(
+      (block) => `${block.targetSessionId ?? conversationId}:${block.elicitationId}`,
+    ),
+  });
   const requests = useMemo(
     () => ({
       questions: [
@@ -65,32 +81,21 @@ export function ComposerAttentionShelf() {
     [pending, conversationId],
   );
   const [open, setOpen] = useState<"questions" | "approvals" | "plan" | null>(null);
+  const lastPlanRequest = useRef(0);
+  useEffect(() => {
+    if (planRequest === lastPlanRequest.current) return;
+    lastPlanRequest.current = planRequest;
+    if (planRequest > 0 && todos.length > 0) setOpen("plan");
+  }, [planRequest, todos.length]);
+  useEffect(() => {
+    if (!visible) setOpen(null);
+  }, [visible]);
   const [mountedRequests, setMountedRequests] = useState({
     conversationId,
     questions: false,
     approvals: false,
   });
   const requestTriggers = useRef<Partial<Record<"questions" | "approvals", HTMLButtonElement>>>({});
-  const [questionWidth, setQuestionWidth] = useState<number>();
-  useLayoutEffect(() => {
-    if (open !== "questions") return;
-    const trigger = requestTriggers.current.questions;
-    const column =
-      trigger?.closest<HTMLElement>(".composer-shelf-stack") ??
-      trigger?.closest<HTMLElement>('[data-testid="composer-attention-shelf"]');
-    if (!column) return;
-    const measure = () => {
-      const style = getComputedStyle(column);
-      const width =
-        column.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
-      if (width > 0) setQuestionWidth(width);
-    };
-    measure();
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(measure);
-    observer.observe(column);
-    return () => observer.disconnect();
-  }, [open, conversationId]);
   useEffect(() => setOpen(null), [conversationId]);
   useEffect(() => {
     if (open === "plan" ? !todos.length : open && !requests[open].length) setOpen(null);
@@ -100,7 +105,8 @@ export function ComposerAttentionShelf() {
     <ComposerShelf
       key={conversationId}
       retainContent={false}
-      present={pending.length > 0 || todos.length > 0 || backgroundCount > 0 || hasAgents}
+      present={visible}
+      keepMounted={pending.length > 0 || todos.length > 0 || backgroundCount > 0 || hasAgents}
     >
       <ComposerWorkspaceBar
         shelfInset
@@ -156,7 +162,6 @@ export function ComposerAttentionShelf() {
                   aria-hidden={open !== kind || undefined}
                   style={{
                     ...(open !== kind ? { display: "none" } : {}),
-                    ...(kind === "questions" ? { maxWidth: questionWidth } : {}),
                   }}
                   side="top"
                   align="start"

@@ -6,6 +6,17 @@ import type { ElicitationBlock } from "@/lib/blocks";
 import type * as ChildSessionsModule from "@/hooks/useChildSessions";
 import { useChatStore } from "@/store/chatStore";
 import { ComposerAttentionShelf } from "./ComposerAttentionShelf";
+import {
+  ComposerShelfVisibilityProvider,
+  ComposerShelfMenuItems,
+  useComposerShelfMenuCloseAutoFocus,
+} from "./ComposerShelfVisibility";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { WorkbenchProvider } from "@/workbench/WorkbenchContext";
 import userEvent from "@testing-library/user-event";
 
 vi.mock("@/hooks/useRuntimeNotices", () => ({
@@ -275,7 +286,7 @@ it("keeps required schema fields and decline semantics in the plain popup", () =
   expect(submitApproval).toHaveBeenCalledExactlyOnceWith("schema-question", "decline", undefined);
 });
 
-it("tracks the composer content width with one observer only while questions are open", () => {
+it("shares composer collision bounds with one observer per open shelf popup", () => {
   const observers: {
     callback: ResizeObserverCallback;
     observe: ReturnType<typeof vi.fn>;
@@ -303,13 +314,22 @@ it("tracks the composer content width with one observer only while questions are
     );
     const column = container.querySelector(".composer-shelf-stack")!;
     let columnWidth = 422;
-    Object.defineProperty(column, "clientWidth", { get: () => columnWidth });
+    column.getBoundingClientRect = () =>
+      ({
+        left: 100,
+        right: 100 + columnWidth,
+        width: columnWidth,
+        top: 600,
+        bottom: 640,
+        height: 40,
+      }) as DOMRect;
     expect(
       observers.filter((observer) => observer.observe.mock.calls.some(([node]) => node === column)),
     ).toHaveLength(0);
     fireEvent.click(screen.getByRole("button", { name: "Questions: 1" }));
     const popup = screen.getByRole("dialog", { name: "Questions" });
-    expect(popup).toHaveStyle({ maxWidth: "398px" });
+    expect(popup.style.maxWidth).toContain("--radix-popper-available-width");
+    expect(popup).toHaveAttribute("data-align", "center");
     expect(popup.className).toContain("30rem");
     const widths = observers.filter((observer) =>
       observer.observe.mock.calls.some(([node]) => node === column),
@@ -319,13 +339,111 @@ it("tracks the composer content width with one observer only while questions are
       columnWidth = 300;
       widths[0].callback([], {} as ResizeObserver);
     });
-    expect(popup).toHaveStyle({ maxWidth: "276px" });
+    expect(popup.style.maxWidth).toContain("--radix-popper-available-width");
     fireEvent.keyDown(document.body, { key: "Escape" });
     expect(widths[0].disconnect).toHaveBeenCalledOnce();
     fireEvent.click(screen.getByRole("button", { name: "Approvals: 1" }));
     expect(screen.getByRole("dialog", { name: "Approvals" }).className).toContain("25rem");
-    expect(screen.getByRole("dialog", { name: "Approvals" }).style.maxWidth).toBe("");
+    expect(screen.getByRole("dialog", { name: "Approvals" }).style.maxWidth).toContain(
+      "--radix-popper-available-width",
+    );
   } finally {
     vi.unstubAllGlobals();
+  }
+});
+
+function ShelfActivityMenu({ modal }: { modal: boolean }) {
+  const onCloseAutoFocus = useComposerShelfMenuCloseAutoFocus();
+  return (
+    <DropdownMenu modal={modal}>
+      <DropdownMenuTrigger>Activity menu</DropdownMenuTrigger>
+      <DropdownMenuContent onCloseAutoFocus={onCloseAutoFocus}>
+        <ComposerShelfMenuItems conversationId="conv" />
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+function mountShelfWithMenu(openView = vi.fn(), modal = true) {
+  return render(
+    <MemoryRouter>
+      <WorkbenchProvider value={{ openConversation: vi.fn(), openView }}>
+        <ComposerShelfVisibilityProvider>
+          <ComposerAttentionShelf />
+          <ShelfActivityMenu modal={modal} />
+        </ComposerShelfVisibilityProvider>
+      </WorkbenchProvider>
+    </MemoryRouter>,
+  );
+}
+const openActivityMenu = () =>
+  fireEvent.pointerDown(screen.getByRole("button", { name: "Activity menu" }), {
+    button: 0,
+    ctrlKey: false,
+  });
+
+it.each([true, false])("reopens a settled plan after its menu closes (modal %s)", (modal) => {
+  vi.useFakeTimers();
+  try {
+    useChatStore.setState({
+      todos: [{ content: "Finished step", status: "completed", activeForm: "" }],
+    });
+    const openView = vi.fn();
+    const { container } = mountShelfWithMenu(openView, modal);
+    expect(container.querySelector(".composer-shelf-presence")).toHaveAttribute("hidden");
+    expect(screen.queryByRole("button", { name: /Plan:/ })).toBeNull();
+    openActivityMenu();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Open plan" }));
+    act(() => vi.advanceTimersByTime(20));
+    expect(screen.getByRole("dialog", { name: "Plan" })).toHaveTextContent("Finished step");
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    openActivityMenu();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Hide activity shelf" }));
+    act(() => vi.advanceTimersByTime(200));
+    expect(container.querySelector(".composer-shelf-presence")).toHaveAttribute("hidden");
+    openActivityMenu();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Open activity resources" }));
+    expect(openView).toHaveBeenCalledWith(
+      {
+        kind: "activity",
+        conversationId: "conv",
+        source: { kind: "chat", conversationId: "conv" },
+        title: "Orchestration",
+      },
+      { beside: true },
+    );
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("preserves pending answers across manual hiding and re-reveals new questions or approvals", () => {
+  vi.useFakeTimers();
+  try {
+    useChatStore.setState({ blocks: [request("first", true)] });
+    mountShelfWithMenu();
+    act(() => vi.advanceTimersByTime(20));
+    fireEvent.click(screen.getByRole("button", { name: "Questions: 1" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Custom answer text" }), {
+      target: { value: "Keep this answer" },
+    });
+    openActivityMenu();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Hide activity shelf" }));
+    act(() => vi.advanceTimersByTime(200));
+    expect(screen.queryByRole("button", { name: "Questions: 1" })).toBeNull();
+    openActivityMenu();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Show activity shelf" }));
+    act(() => vi.advanceTimersByTime(20));
+    fireEvent.click(screen.getByRole("button", { name: "Questions: 1" }));
+    expect(screen.getByRole("textbox", { name: "Custom answer text" })).toHaveValue(
+      "Keep this answer",
+    );
+    openActivityMenu();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Hide activity shelf" }));
+    act(() => vi.advanceTimersByTime(200));
+    act(() => useChatStore.setState({ blocks: [request("first", true), request("new-approval")] }));
+    expect(screen.getByRole("button", { name: "Approvals: 1" })).toBeVisible();
+  } finally {
+    vi.useRealTimers();
   }
 });

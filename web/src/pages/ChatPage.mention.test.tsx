@@ -1,3 +1,4 @@
+// Modified for Triune.
 import type * as UseWorkspaceChangedFilesModule from "@/hooks/useWorkspaceChangedFiles";
 import type * as UseSessionModule from "@/hooks/useSession";
 import type * as UseHostsModule from "@/hooks/useHosts";
@@ -498,13 +499,14 @@ describe("Composer @-file-mention browser (native sessions)", () => {
     expect(onSend).not.toHaveBeenCalled();
   });
 
-  it("still sends a settled zero-match token literally (not gated)", () => {
-    // WHY (M1 boundary): the gate is for the *loading* window only. A token
-    // that simply matches no file ("@nomatch") is the user's literal text and
-    // Enter must send it — gating all non-null mentions would trap that.
+  it("keeps an open zero-match picker from submitting the composed draft", () => {
     const onSend = vi.fn();
     renderWithTooltips(<Composer {...composerProps({ onSend })} />);
     type("ping @nomatch");
+    fireEvent.keyDown(textarea(), { key: "Enter" });
+    expect(onSend).not.toHaveBeenCalled();
+    expect(textarea()).toHaveValue("ping @nomatch");
+    fireEvent.keyDown(textarea(), { key: "Escape" });
     fireEvent.keyDown(textarea(), { key: "Enter" });
     expect(onSend).toHaveBeenCalledWith("ping @nomatch", undefined);
   });

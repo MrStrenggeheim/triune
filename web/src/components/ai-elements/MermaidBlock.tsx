@@ -1,10 +1,13 @@
+// Modified for Triune.
 import { Button } from "@/components/ui/button";
+import { useInlinePreviewBoundary } from "@/artifacts/inlinePreviewBoundary";
 import { getEmbedRoot } from "@/lib/host";
 import type { ComponentProps, ReactNode, RefObject } from "react";
 import { cloneElement, isValidElement, useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useResolvedThemeMode } from "@/components/theme/useResolvedThemeMode";
 import { useMermaidAppearance } from "./mermaidTheme";
+import "./MermaidBlock.css";
 
 // Streamdown portals fullscreen to document.body, outside the embed's scoped CSS.
 export const MERMAID_NO_FULLSCREEN = { fullscreen: false } as const;
@@ -104,34 +107,64 @@ function MermaidFullscreen({ blockRef }: { blockRef: RefObject<HTMLDivElement | 
   );
 }
 
-// The .chat-mermaid rule reserves a slot beside Streamdown's download/copy toolbar.
-export function MermaidBlock({ block }: { block: ReactNode }) {
+// Retain Streamdown's renderer/actions inside one preview frame.
+export function MermaidBlock({ block, inline = true }: { block: ReactNode; inline?: boolean }) {
   const blockRef = useRef<HTMLDivElement>(null);
+  const boundary = useInlinePreviewBoundary(blockRef, inline);
   const mode = useResolvedThemeMode();
   const appearance = useMermaidAppearance(mode);
+  useEffect(() => {
+    const node = blockRef.current;
+    if (!node) return;
+    const prepare = () => {
+      const body = node.querySelector<HTMLElement>(
+        '[data-streamdown="mermaid-block"] > div:last-child',
+      );
+      if (!body) return;
+      body.tabIndex = 0;
+      body.setAttribute("role", "region");
+      body.setAttribute("aria-label", "Diagram preview");
+    };
+    prepare();
+    const observer = new MutationObserver(prepare);
+    observer.observe(node, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, []);
   return (
     <div
       ref={blockRef}
-      className="chat-mermaid relative [&_[data-streamdown=mermaid]_svg]:shrink-0"
+      className="chat-mermaid relative flex min-h-0 flex-col overflow-hidden rounded-lg border border-border bg-background [&_[data-streamdown=mermaid]_svg]:shrink-0"
+      style={boundary}
+      data-inline-preview={inline || undefined}
     >
       {isValidElement(block) ? cloneElement(block, { key: appearance.key }) : block}
-      <div className="absolute top-2 right-2 z-20 flex items-center rounded-md border border-sidebar bg-sidebar/80 px-1.5 py-1 supports-[backdrop-filter]:bg-sidebar/70 supports-[backdrop-filter]:backdrop-blur">
+      <div className="absolute top-2 right-2 z-20 flex items-center">
         <MermaidFullscreen blockRef={blockRef} />
       </div>
     </div>
   );
 }
 
-function MermaidPre({ children }: ComponentProps<"pre">) {
+function MermaidPre({ children, inline = true }: ComponentProps<"pre"> & { inline?: boolean }) {
   // Preserve Streamdown's default handling of ordinary code fences.
   const block = isValidElement(children)
     ? cloneElement(children, { "data-block": "true" } as Record<string, unknown>)
     : children;
-  return isMermaidPre(children) ? <MermaidBlock block={block} /> : block;
+  return isMermaidPre(children) ? <MermaidBlock block={block} inline={inline} /> : block;
+}
+
+function MermaidViewPre(props: ComponentProps<"pre">) {
+  return <MermaidPre {...props} inline={false} />;
 }
 
 // Keep the replacement toolbar and disabled native fullscreen together on every surface.
 export const MERMAID_STREAMDOWN_PROPS = {
   components: { pre: MermaidPre },
   controls: { mermaid: MERMAID_NO_FULLSCREEN },
+};
+
+/** Standalone/editor views keep their own scrolling and full-height geometry. */
+export const MERMAID_PREVIEW_STREAMDOWN_PROPS = {
+  ...MERMAID_STREAMDOWN_PROPS,
+  components: { pre: MermaidViewPre },
 };

@@ -1,3 +1,4 @@
+// Modified for Triune; inherited notices remain applicable.
 // TypeScript types mirroring the server's `ConversationItem` discriminated
 // union, plus fetch helpers for cursor-paginated history loading.
 //
@@ -20,6 +21,8 @@ export interface BaseItem {
   type: string;
   response_id: string;
   status: string;
+  /** Zero-based canonical order within this conversation. */
+  position?: number;
   /** Server-side creation time (unix epoch seconds). Drives the
    *  completed-turn "Worked for" duration for reloaded history. */
   created_at?: number;
@@ -234,3 +237,19 @@ export function isTerminalCommandItem(item: ConversationItem): item is TerminalC
 // Cursor-paginated history fetching lives in `sessionsApi.ts`
 // (`fetchSessionItemsPage`) so it shares the authenticated fetch
 // wrapper and the windowed-load contract with the initial bind.
+
+/** Keep accepted uploads when a native echo carries only text. */
+export function preserveInputAttachments(
+  serverContent: MessageContentBlock[],
+  pendingContent: MessageContentBlock[] | null,
+): MessageContentBlock[] {
+  if (!pendingContent) return serverContent;
+  const serverHasFiles = serverContent.some(
+    (b) => b.type === "input_image" || b.type === "input_file",
+  );
+  if (serverHasFiles) return serverContent;
+  const pendingFiles = pendingContent.filter(
+    (b) => b.type === "input_image" || b.type === "input_file",
+  );
+  return pendingFiles.length > 0 ? [...pendingFiles, ...serverContent] : serverContent;
+}

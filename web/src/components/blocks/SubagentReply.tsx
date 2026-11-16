@@ -26,36 +26,6 @@ export function SubagentReply({
     .split("\n", 4)
     .slice(0, 3)
     .join("\n");
-  const ref = activity.resultRef ?? activity.resultRefs[0];
-  const sourceConversationId = ref?.conversationId ?? conversationId;
-  const sourceItemId = ref?.itemId ?? activity.itemId;
-  const parts = activity.resultParts;
-  const hasExactParts = parts.length > 0 && parts.map((part) => part.text).join("\n\n") === text;
-  function renderText(shownText: string) {
-    let offset = 0;
-    const segments = hasExactParts
-      ? parts.flatMap((part) => {
-          const shown = shownText.slice(offset, offset + part.text.length);
-          offset += part.text.length + 2;
-          return shown ? [{ ...part, text: shown }] : [];
-        })
-      : [{ text: shownText, ref: { conversationId: sourceConversationId, itemId: sourceItemId } }];
-    return segments.map((segment) => (
-      <ConversationScopeContext.Provider
-        key={`${segment.ref.conversationId}:${segment.ref.itemId}`}
-        value={segment.ref.conversationId}
-      >
-        <FilePathAwareMessageResponse
-          sourceItemId={segment.ref.itemId}
-          breaks
-          mode="static"
-          className="text-sm leading-5 [&>*]:my-0 [&_p]:my-0 [&_p]:leading-5"
-        >
-          {segment.text}
-        </FilePathAwareMessageResponse>
-      </ConversationScopeContext.Provider>
-    ));
-  }
   return (
     <article
       className="group min-w-0 text-sm"
@@ -74,10 +44,62 @@ export function SubagentReply({
           </>
         }
         actions={action}
-        summary={renderText(preview)}
+        summary={
+          <SubagentReportContent
+            activity={activity}
+            conversationId={conversationId}
+            shownText={preview}
+          />
+        }
       >
-        {renderText(text)}
+        <SubagentReportContent
+          activity={activity}
+          conversationId={conversationId}
+          shownText={text}
+        />
       </ActivityRow>
     </article>
   );
+}
+
+/** Each captured report part keeps its original conversation and item scope. */
+export function SubagentReportContent({
+  activity,
+  conversationId,
+  shownText,
+}: {
+  activity: SubagentActivity;
+  conversationId: string | null;
+  shownText: string;
+}) {
+  const text = activity.resultText ?? "";
+  const ref = activity.resultRef ?? activity.resultRefs[0];
+  const sourceConversationId = ref?.conversationId ?? conversationId;
+  const sourceItemId = ref?.itemId ?? activity.itemId;
+  const parts = activity.resultParts;
+  const hasExactParts = parts.length > 0 && parts.map((part) => part.text).join("\n\n") === text;
+
+  let offset = 0;
+  const segments = hasExactParts
+    ? parts.flatMap((part) => {
+        const shown = shownText.slice(offset, offset + part.text.length);
+        offset += part.text.length + 2;
+        return shown ? [{ ...part, text: shown }] : [];
+      })
+    : [{ text: shownText, ref: { conversationId: sourceConversationId, itemId: sourceItemId } }];
+  return segments.map((segment) => (
+    <ConversationScopeContext.Provider
+      key={`${segment.ref.conversationId}:${segment.ref.itemId}`}
+      value={segment.ref.conversationId}
+    >
+      <FilePathAwareMessageResponse
+        sourceItemId={segment.ref.itemId}
+        breaks
+        mode="static"
+        className="text-sm leading-5 [&>*]:my-0 [&_p]:my-0 [&_p]:leading-5"
+      >
+        {segment.text}
+      </FilePathAwareMessageResponse>
+    </ConversationScopeContext.Provider>
+  ));
 }

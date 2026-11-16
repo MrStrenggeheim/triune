@@ -13,7 +13,10 @@ export const DESIGN_SEMANTIC_TOKENS = {
 export const DESIGN_DARK_SEMANTIC_TOKENS = { destructive: "#e65b77" } as const;
 
 export const CONTROL_FOCUS_CLASS =
-  "focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50";
+  "focus-visible:border-[var(--workspace-control-active-border)] focus-visible:ring-3 focus-visible:ring-ring/50";
+
+export const CONTROL_WITHIN_FOCUS_CLASS =
+  "has-[:focus-visible]:border-[var(--workspace-control-active-border)] has-[:focus-visible]:ring-3 has-[:focus-visible]:ring-ring/50";
 
 /** Named focus exception: retain the composer's original textarea-focus shadow. */
 export const COMPOSER_FOCUS_CLASS = "has-[textarea:focus]:shadow-[var(--composer-shadow-focus)]";
@@ -28,6 +31,7 @@ export const DESIGN_ROLES = {
     "color-mix(in srgb, var(--brand-accent) 8%, var(--workspace-content))",
   "workspace-hover-on-chrome": "color-mix(in srgb, var(--foreground) 6%, var(--workspace-chrome))",
   "workspace-control-hover": "var(--muted)",
+  "workspace-control-active-border": "color-mix(in srgb, var(--primary) 35%, var(--border))",
   "workspace-control-active": "color-mix(in srgb, var(--foreground) 10%, var(--workspace-group))",
   "workspace-close-hover":
     "color-mix(in srgb, var(--foreground) 12%, var(--workspace-hover-on-content))",
@@ -85,6 +89,7 @@ export const ARTIFACT_TOKEN_ALIASES = {
   "--ta-muted": "--muted-foreground",
   "--ta-secondary": "--secondary",
   "--ta-border": "--border",
+  "--ta-input": "--input",
   "--ta-success": "--success",
   "--ta-warning": "--warning",
   "--ta-error": "--destructive",
@@ -97,6 +102,7 @@ export const ARTIFACT_TOKEN_ALIASES = {
   "--ta-hover": "--workspace-hover-on-content",
   "--ta-hover-chrome": "--workspace-hover-on-chrome",
   "--ta-control-hover": "--workspace-control-hover",
+  "--ta-control-active-border": "--workspace-control-active-border",
   "--ta-control-active": "--workspace-control-active",
   "--ta-close-hover": "--workspace-close-hover",
   "--ta-close-active": "--workspace-close-active",

@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { MermaidErrorComponentProps, MermaidOptions } from "streamdown";
 import { useResolvedThemeMode } from "@/components/theme/useResolvedThemeMode";
@@ -267,7 +268,7 @@ export function MermaidError({ chart, error }: MermaidErrorComponentProps) {
       <div data-testid="mermaid-escaped">
         <div
           aria-label="Mermaid chart"
-          className="flex justify-center [&_svg]:h-auto [&_svg]:max-w-full"
+          className="overflow-auto [&_svg]:mx-auto [&_svg]:block [&_svg]:h-auto [&_svg]:max-w-none"
           // Mermaid's own render under securityLevel "strict": the same trusted,
           // sanitized markup Streamdown injects for a diagram that parsed first time.
           dangerouslySetInnerHTML={{ __html: escaped.svg }}

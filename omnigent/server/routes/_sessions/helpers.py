@@ -1784,6 +1784,7 @@ def _publish_input_consumed(
         type="session.input.consumed",
         data=SessionInputConsumedPayload(
             item_id=item.id,
+            position=item.position,
             type=item.type,
             data=item.data.model_dump() if item.data is not None else {},
             created_by=item.created_by,
@@ -4881,7 +4882,9 @@ def _publish_child_status_to_parent(session_id: str, status: str) -> None:
         summary = _child_session_summary_from_conversation(
             conv,
             parent_id,
-            _latest_message_preview(items_by_child.get(conv.id, [])),
+            _latest_message_preview(
+                items_by_child.get(conv.id, []), limit_chars=180, label_direction=True
+            ),
             cached_status=status,
         )
         event = SessionChildSessionUpdatedEvent(
@@ -9717,15 +9720,16 @@ async def _stream_live_events(
     viewer_user_id: str | None = None,
     viewer_idle: bool = False,
     presence_root_id: str | None = None,
+    recovery: Any = None,
+    presence_membership: dict[str, Any] | None = None,
+    raise_overflow: bool = False,
 ) -> AsyncIterator[str]:
     """
     Yield SSE-formatted events from the conversation's live stream.
 
-    Events are delivered live from the moment :func:`session_stream.subscribe`
-    is invoked forward — there is no buffer and no replay. Events
-    published before this generator subscribed are lost; clients
-    reconcile pre-subscribe state via the snapshot endpoint
-    (``GET /v1/sessions/{id}``) and dedupe by item id.
+    Register the bounded live queue before optional persisted recovery.
+    Recovery replays append positions or resets after old-item mutation;
+    legacy callers keep their snapshot plus live-tail behavior.
 
     An intentional session close emits ``[DONE]``. Server shutdown and
     subscriber overflow instead end without it so clients reconnect and
@@ -9794,8 +9798,17 @@ async def _stream_live_events(
         if presence_root_id is None:
             raise ValueError("presence_root_id is required when viewer_user_id is set")
         presence_token = presence.connect(
-            presence_root_id, session_id, viewer_user_id, viewer_idle
+            presence_root_id,
+            session_id,
+            viewer_user_id,
+            presence_membership.get("idle", viewer_idle)
+            if presence_membership is not None
+            else viewer_idle,
         )
+        if presence_membership is not None:
+            presence_membership.update(
+                token=presence_token, root_id=presence_root_id, user_id=viewer_user_id
+            )
     try:
         # ``aclosing`` propagates outer ``aclose`` into ``subscribe``;
         # a bare ``async for`` would leave the subscriber slot until GC.
@@ -9811,11 +9824,17 @@ async def _stream_live_events(
                 # awaits and is not dedup-sensitive.
                 pre_ready_snapshot=lambda: inflight_text.snapshot_for(session_id),
                 on_subscribed=on_subscribed,
+                replay=recovery.events if recovery is not None and recovery.enabled else None,
             )
         ) as live_events:
             async for event in live_events:
                 if await request.is_disconnected():
                     break
+                if recovery is not None:
+                    await recovery.authorize()
+                    event = await recovery.prepare(event)
+                    if event is None:
+                        continue
                 event_type = event.get("type")
                 if not isinstance(event_type, str):
                     raise ValueError(
@@ -9824,6 +9843,8 @@ async def _stream_live_events(
                 validated = _SERVER_STREAM_EVENT_ADAPTER.validate_python(event)
                 yield _format_sse(event_type, validated.model_dump())
     except session_stream.SubscriberOverflowError:
+        if raise_overflow:
+            raise
         _logger.warning(
             "session stream subscriber overflowed for %s; closing for snapshot reconnect",
             session_id,
@@ -9843,6 +9864,8 @@ async def _stream_live_events(
             and presence_root_id is not None
         ):
             presence.disconnect(presence_root_id, viewer_user_id, presence_token)
+        if presence_membership is not None:
+            presence_membership.clear()
 
 
 def _validate_terminal_launch_args(value: list[str] | None) -> list[str] | None:
@@ -11147,6 +11170,8 @@ def _registered_runner_id(
 def _latest_message_preview(
     items: list[ConversationItem],
     limit_chars: int = _CHILD_PREVIEW_LIMIT,
+    *,
+    label_direction: bool = False,
 ) -> str | None:
     """
     Return a single-line text preview from newest-first message items.
@@ -11177,6 +11202,11 @@ def _latest_message_preview(
         collapsed = " ".join(" ".join(parts).split())
         if not collapsed:
             continue
+        if label_direction and item.data.role == "assistant" and item.data.phase != "final_answer":
+            continue
+        if label_direction and item.data.role in ("user", "assistant"):
+            direction = "Instruction" if item.data.role == "user" else "Reply"
+            collapsed = f"{direction}: {collapsed}"
         if len(collapsed) <= limit_chars:
             return collapsed
         # Trim to one char less than the limit so the trailing ellipsis
@@ -11308,8 +11338,10 @@ def _child_session_summary_from_conversation(
     if last_message_preview is None and _is_codex_native_subagent(conv):
         raw_prompt = labels.get(_CODEX_NATIVE_SUBAGENT_PROMPT_LABEL_KEY)
         if raw_prompt:
-            collapsed = " ".join(raw_prompt.split())
-            last_message_preview = collapsed[:_CHILD_PREVIEW_LIMIT] or None
+            collapsed = "Instruction: " + " ".join(raw_prompt.split())
+            last_message_preview = (
+                collapsed if len(collapsed) <= 180 else collapsed[:179].rstrip() + "…"
+            )
 
     from omnigent.native.child_metadata import child_metadata
 

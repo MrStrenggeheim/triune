@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { describe, expect, it } from "vitest";
 import {
   formatToolRunLabel,
@@ -259,6 +260,20 @@ describe("formatToolTitle", () => {
 });
 
 describe("formatToolRunLabel", () => {
+  it("counts resource identities once alongside shell and file actions", () => {
+    expect(
+      formatToolRunLabel([
+        { name: "Bash", args: { command: "echo one" } },
+        { name: "Bash", args: { command: "echo two" } },
+        { name: "Bash", args: { command: "echo three" } },
+        { name: "Bash", args: { command: "ls /repo" } },
+        { name: "subagent_activity", activityKey: "parent:child", pending: true },
+        { name: "subagent_activity", activityKey: "parent:child", pending: true },
+      ]),
+    ).toBe(
+      "Ran 3 shell commands, listed 1 directory, started or steered 1 subagent (1 in progress)",
+    );
+  });
   const call = (name: string, args?: Record<string, unknown>) => ({ name, args });
 
   it("labels single-category folds with the CLI-style phrase, pluralized", () => {

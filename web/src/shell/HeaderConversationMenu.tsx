@@ -1,3 +1,4 @@
+// Modified for Triune.
 import {
   useEffect,
   useRef,
@@ -93,6 +94,7 @@ interface HeaderConversationMenuProps {
   viewItems?: ReactNode;
   /** Mobile workspace-rail entries (Files · Agents · Shells · Logs). */
   workspaceItems?: ReactNode;
+  onMenuCloseAutoFocus?: (event: Event) => void;
 }
 
 export function HeaderConversationMenu({
@@ -109,6 +111,7 @@ export function HeaderConversationMenu({
   onAgentInfo,
   viewItems = null,
   workspaceItems = null,
+  onMenuCloseAutoFocus,
 }: HeaderConversationMenuProps) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -408,6 +411,7 @@ export function HeaderConversationMenu({
           </HeaderActionButton>
         </DropdownMenuTrigger>
         <DropdownMenuContent
+          onCloseAutoFocus={onMenuCloseAutoFocus}
           align={isMobile ? "end" : "start"}
           className={cn(
             "min-w-56",

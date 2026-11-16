@@ -32,7 +32,7 @@ import contextlib
 import logging
 import threading
 import weakref
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterable
 from typing import Any
 
 from omnigent.db.workspace_cache import WorkspaceScopedCache
@@ -70,6 +70,24 @@ _subscribers: WorkspaceScopedCache[
     set[tuple[asyncio.Queue[dict[str, Any] | object], asyncio.AbstractEventLoop]],
 ] = WorkspaceScopedCache()
 _lock = threading.Lock()
+# Process-local invalidation, never a second transcript or body cache.
+_item_revisions: WorkspaceScopedCache[str, tuple[int, int]] = WorkspaceScopedCache()
+
+
+def item_revision(conversation_id: str) -> tuple[int, int]:
+    """Return (revision, latest revision requiring authoritative reset)."""
+    with _lock:
+        return _item_revisions.get(conversation_id, (0, 0))
+
+
+def mark_items_changed(conversation_id: str, *, reset: bool = False) -> None:
+    """Invalidate after a durable commit; epoch changes invalidate lost process state."""
+    with _lock:
+        revision, reset_revision = _item_revisions.get(conversation_id, (0, 0))
+        revision += 1
+        _item_revisions[conversation_id] = (revision, revision if reset else reset_revision)
+
+
 # Queue objects have process-unique identity and disappear with their subscriptions.
 _internal_queues: weakref.WeakSet[asyncio.Queue[Any]] = weakref.WeakSet()
 
@@ -79,6 +97,8 @@ def _enqueue_or_overflow(
     item: dict[str, Any] | object,
 ) -> None:
     """Enqueue *item*, replacing a full backlog with an overflow signal."""
+    if getattr(queue, "_session_stream_overflowed", False):
+        return
     try:
         queue.put_nowait(item)
         return
@@ -90,6 +110,7 @@ def _enqueue_or_overflow(
             queue.get_nowait()
         except asyncio.QueueEmpty:
             break
+    queue._session_stream_overflowed = True  # type: ignore[attr-defined]
     queue.put_nowait(_OVERFLOW)
 
 
@@ -422,6 +443,7 @@ async def subscribe(
     ready_event: dict[str, Any] | None = None,
     pre_ready_snapshot: Callable[[], Iterable[dict[str, Any]]] | None = None,
     on_subscribed: Callable[[], Awaitable[Iterable[dict[str, Any]]]] | None = None,
+    replay: Callable[[], AsyncGenerator[dict[str, Any], None]] | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     """
     Subscribe to live events for a conversation.
@@ -486,6 +508,9 @@ async def subscribe(
         first guarantees no delta is dropped between snapshot and tail.
         Best-effort: exceptions are swallowed so a slow/failing snapshot
         never blocks live delivery. ``None`` skips the snapshot.
+    :param replay: Optional required persisted replay, run after slot registration
+        and the ready event, before snapshots and the live tail.
+        Errors propagate so clients cannot mistake an incomplete replay for success.
     :returns: An async iterator of event dicts. Each event is
         yielded verbatim as it was passed to :func:`publish`,
         plus synthetic heartbeat dicts when *heartbeat_interval_s*
@@ -523,6 +548,10 @@ async def subscribe(
     try:
         if ready_event is not None:
             yield ready_event
+        if replay is not None:
+            async with contextlib.aclosing(replay()) as replay_events:
+                async for replay_event in replay_events:
+                    yield replay_event
         for pre_ready_event in pre_ready_events:
             yield pre_ready_event
         if on_subscribed is not None:
@@ -542,12 +571,18 @@ async def subscribe(
                 snapshot_events = ()
             for snapshot_event in snapshot_events:
                 yield snapshot_event
+        heartbeat_deadline = (
+            loop.time() + heartbeat_interval_s if heartbeat_interval_s is not None else None
+        )
         while True:
             if heartbeat_interval_s is None:
                 item = await queue.get()
             else:
                 try:
-                    item = await asyncio.wait_for(queue.get(), timeout=heartbeat_interval_s)
+                    assert heartbeat_deadline is not None
+                    item = await asyncio.wait_for(
+                        queue.get(), timeout=max(0, heartbeat_deadline - loop.time())
+                    )
                 except TimeoutError:
                     # Queue was idle past the heartbeat deadline. Emit
                     # a synthetic keepalive. Its wire bytes give the
@@ -555,6 +590,7 @@ async def subscribe(
                     # the client's SSE read-timeout something to fire
                     # against if the socket has gone half-open (e.g.
                     # after a laptop sleep).
+                    heartbeat_deadline = loop.time() + heartbeat_interval_s
                     yield {"type": "session.heartbeat"}
                     continue
             if item is _DONE:

@@ -1,3 +1,4 @@
+// Modified for Triune.
 import {
   readReferenceDraft,
   writeReferenceDraft,
@@ -205,7 +206,13 @@ export function useMentionBrowser(params: MentionBrowserParams): MentionBrowser 
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>): boolean => {
-    if (!mentionOpen || mentionEntries.length === 0) return false;
+    if (!mentionOpen) return false;
+    if (e.key === "Escape") {
+      e.preventDefault();
+      dismiss();
+      return true;
+    }
+    if (mentionEntries.length === 0) return false;
     const active = mentionIndex >= 0 ? mentionEntries[mentionIndex] : undefined;
     if (e.key === "ArrowDown") {
       e.preventDefault();
@@ -228,11 +235,6 @@ export function useMentionBrowser(params: MentionBrowserParams): MentionBrowser 
     if (e.key === "Tab" && active) {
       e.preventDefault();
       attachMention(active.path, active.type === "directory");
-      return true;
-    }
-    if (e.key === "Escape") {
-      e.preventDefault();
-      dismiss();
       return true;
     }
     return false;

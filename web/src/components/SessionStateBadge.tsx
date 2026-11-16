@@ -1,3 +1,4 @@
+// Modified for Triune.
 // Sidebar status indicator. Approval surfaces as a "Needs response" tag so
 // it reads at a glance; other states stay compact. Verbose copy
 // (incl. the approval count) lives in the tooltip.
@@ -8,21 +9,47 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import type { SessionState } from "@/hooks/useSessionState";
 import { cn } from "@/lib/utils";
 import type { ReactElement } from "react";
-import { CircleAlertIcon } from "lucide-react";
+import { CircleAlertIcon, CircleHelpIcon, PencilIcon } from "lucide-react";
+
+export type SidebarStatus = SessionState | { kind: "draft" };
+
+/** Attention and activity each choose independently; lower facts remain in descriptions. */
+export function getSessionStatusGroups(states: readonly SessionState[], hasDraft: boolean) {
+  const attention: SidebarStatus | null =
+    states.find((state) => state.kind === "error" || state.kind === "disconnected") ??
+    states.find((state) => state.kind === "awaiting") ??
+    (hasDraft ? { kind: "draft" } : null);
+  const activity =
+    states.find((state) => state.kind === "running" || state.kind === "starting") ??
+    states.find((state) => state.kind === "unseen") ??
+    null;
+  return { attention, activity };
+}
 
 export interface SessionStateBadgeProps {
-  state: SessionState;
+  state: SidebarStatus;
+  compact?: boolean;
+  tooltip?: boolean;
 }
 
 interface Visual {
-  kind: SessionState["kind"];
+  kind: SidebarStatus["kind"];
   ariaLabel: string;
   tooltip: string;
   render: () => ReactElement;
 }
 
-function describe(state: SessionState): Visual {
+export function describeSessionState(state: SidebarStatus): Visual {
   switch (state.kind) {
+    case "draft":
+      return {
+        kind: state.kind,
+        ariaLabel: "Draft",
+        tooltip: "Draft",
+        render: () => (
+          <PencilIcon aria-hidden data-testid="conversation-draft-indicator" className="size-3.5" />
+        ),
+      };
     case "awaiting": {
       const tooltip =
         state.count === 1 ? "1 approval prompt waiting" : `${state.count} approval prompts waiting`;
@@ -89,21 +116,33 @@ function Dot({ tone }: { tone: string }) {
   return <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", tone)} />;
 }
 
-export function SessionStateBadge({ state }: SessionStateBadgeProps) {
-  const visual = describe(state);
+export function SessionStateBadge({
+  state,
+  compact = false,
+  tooltip = true,
+}: SessionStateBadgeProps) {
+  const visual = describeSessionState(state);
+  const badge = (
+    <span
+      data-testid="session-state-badge"
+      data-state={visual.kind}
+      role="img"
+      aria-label={visual.ariaLabel}
+      className="inline-flex h-5 shrink-0 items-center justify-center"
+    >
+      {compact && state.kind === "disconnected" ? (
+        <CircleAlertIcon aria-hidden className="size-3.5 text-muted-foreground" />
+      ) : compact && state.kind === "awaiting" ? (
+        <CircleHelpIcon aria-hidden className="size-3.5 text-brand-accent" />
+      ) : (
+        visual.render()
+      )}
+    </span>
+  );
+  if (!tooltip) return badge;
   return (
     <Tooltip>
-      <TooltipTrigger asChild>
-        <span
-          data-testid="session-state-badge"
-          data-state={visual.kind}
-          role="img"
-          aria-label={visual.ariaLabel}
-          className="inline-flex h-5 shrink-0 items-center justify-center"
-        >
-          {visual.render()}
-        </span>
-      </TooltipTrigger>
+      <TooltipTrigger asChild>{badge}</TooltipTrigger>
       {/* Opens left: the badge sits at the right edge of the narrow
           sidebar, so a right-opening tooltip would overflow the panel. */}
       <TooltipContent side="left">{visual.tooltip}</TooltipContent>

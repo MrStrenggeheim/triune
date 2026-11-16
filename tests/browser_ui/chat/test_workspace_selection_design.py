@@ -47,6 +47,11 @@ def _large_inline_artifact_html(padding: int = 760 * 1024) -> bytes:
 <main class="ta-root ta-stack" data-ta-init style="padding:12px">
 <h1 class="ta-heading">Uploaded local tool</h1>
 <label class="ta-field">Artifact draft<input class="ta-input" value="Initial draft"></label>
+<label class="ta-choice"><input type="checkbox" aria-label="Saved checkbox">Include results</label>
+<label class="ta-choice">
+<input type="checkbox" aria-label="Saved mixed checkbox" data-ta-mixed>Mixed results</label>
+<label class="ta-field">Level
+<input type="range" min="0" max="100" step="5" value="20" aria-label="Saved level"></label>
 <details><summary>Local details</summary><p>Restored disclosure content</p></details>
 <p class="ta-list-row">Density follows Appearance</p>
 <!--"""
@@ -55,6 +60,8 @@ def _large_inline_artifact_html(padding: int = 760 * 1024) -> bytes:
 <output aria-label="Artifact count">0</output>
 <script>
 window.artifactInstance=String(Date.now())+':'+String(Math.random());
+window.artifactFormEdits=0;
+document.querySelector('main').addEventListener('input',()=>window.artifactFormEdits++);
 const saved=window.TriuneArtifactState.get();let count=Number(saved?.count)||0;
 const output=document.querySelector('output');output.textContent=String(count);
 document.querySelector('#artifact-tail').addEventListener('click',()=>{
@@ -79,10 +86,14 @@ def test_uploaded_artifact_fence_retains_appearance_state_and_originals(
     padding: int,
 ) -> None:
     """Sealed upload contract, portable exports and source-chat artifact controls."""
+    from tests.browser_ui.chat._geometry_helpers import TOLERANCE, box
+
     chat, other = workspace_journey.chats
     chat.reject_uploads = False
     file_id, filename, title = "browser-upload-1", "large-local-tool.html", "Large local tool"
-    html = _large_inline_artifact_html(padding)
+    html = _large_inline_artifact_html(padding).replace(
+        b'style="padding:12px"', b'style="padding:12px;min-height:1400px"'
+    )
     if padding > 512 * 1024:
         assert len(html) > 740 * 1024
     evidence = Path(output_path).resolve()
@@ -127,6 +138,7 @@ def test_uploaded_artifact_fence_retains_appearance_state_and_originals(
             )
     page.context.grant_permissions(["clipboard-read", "clipboard-write"])
     page.set_viewport_size({"width": width, "height": 1000})
+    page.emulate_media(reduced_motion="reduce")
     page.goto(chat.url)
     chat.wait_for_stream()
     composer = _view(page, "Chat A").get_by_label("Message the agent")
@@ -173,8 +185,8 @@ def test_uploaded_artifact_fence_retains_appearance_state_and_originals(
     outer = artifact.get_by_title(title, exact=True)
     expect(outer).to_be_visible(timeout=30_000)
     toolbar = artifact.locator(":scope > header")
-    expect(toolbar.get_by_role("button")).to_have_count(3)
-    for label in ("Source", "Download artifact", "More"):
+    expect(toolbar.get_by_role("button")).to_have_count(4)
+    for label in ("Source", "Download artifact", "Expand artifact", "More"):
         expect(toolbar.get_by_role("button", name=label, exact=True)).to_be_enabled()
     for label, tooltip in (
         ("Source", "Show artifact source"),
@@ -195,10 +207,70 @@ def test_uploaded_artifact_fence_retains_appearance_state_and_originals(
     expect(inner.get_by_role("button", name="Run tail action")).to_be_visible()
     boot = inner.locator("body").evaluate("() => window.artifactInstance")
     outer_identity = outer.element_handle()
+    body = artifact.get_by_role("region", name=f"{title} preview", exact=True)
+    page.wait_for_function("""() => {
+      const body = document.querySelector('[data-inline-preview] > [role="region"]');
+      return body && body.scrollHeight > body.clientHeight;
+    }""")
+
+    def inline_geometry() -> dict:
+        geometry = artifact.evaluate("""element => {
+          const view = element.closest('[data-chat-surface], .side-chat-backdrop, ' +
+            '[data-workbench-view], [data-resource-view]').getBoundingClientRect();
+          const top = visualViewport?.offsetTop ?? 0;
+          const height = visualViewport?.height ?? innerHeight;
+          const header = element.querySelector(':scope > header');
+          const body = element.querySelector(':scope > [role="region"]');
+          return {available: Math.min(view.bottom, top + height) - Math.max(view.top, top),
+            frame: element.getBoundingClientRect().toJSON(),
+            header: header.getBoundingClientRect().toJSON(),
+            body: body.getBoundingClientRect().toJSON(),
+            borders: [getComputedStyle(element).borderTopWidth,
+              getComputedStyle(header).borderBottomWidth, getComputedStyle(body).borderTopWidth],
+            bodyPadding: getComputedStyle(body).padding,
+            scrollHeight: body.scrollHeight, clientHeight: body.clientHeight};
+        }""")
+        assert geometry["frame"]["height"] == pytest.approx(
+            geometry["available"] * 0.6, abs=TOLERANCE
+        ), geometry
+        assert geometry["borders"] == ["1px", "1px", "0px"], geometry
+        assert geometry["bodyPadding"] == "0px", geometry
+        assert geometry["body"]["y"] == pytest.approx(
+            geometry["header"]["y"] + geometry["header"]["height"], abs=TOLERANCE
+        ), geometry
+        assert geometry["scrollHeight"] > geometry["clientHeight"], geometry
+        return geometry
+
+    initial_geometry = inline_geometry()
+    body.evaluate("node => { node.scrollTop = 48; }")
+    page.set_viewport_size({"width": width, "height": 760})
+    page.wait_for_function("""() => {
+      const frame = document.querySelector('[data-inline-preview][data-triune-artifact]');
+      const view = frame.closest('[data-chat-surface], [data-workbench-view]');
+      return frame.getBoundingClientRect().height <= view.getBoundingClientRect().height * .6 + 1;
+    }""")
+    resized_geometry = inline_geometry()
+    assert box(artifact)["height"] < initial_geometry["frame"]["height"]
+    assert body.evaluate("node => node.scrollTop") == 48
+    assert outer.evaluate("(node, original) => node === original", outer_identity)
+    assert inner.locator("body").evaluate("() => window.artifactInstance") == boot
+    body.evaluate("node => { node.scrollTop = 0; }")
+    page.set_viewport_size({"width": width, "height": 1000})
     expect(inner.locator("main")).to_have_attribute("data-density", "comfortable")
     inner.get_by_role("button", name="Run tail action").click()
     expect(inner.get_by_label("Artifact count")).to_have_text("1")
     inner.get_by_label("Artifact draft").fill("Draft survives Appearance and reload")
+    inner.get_by_label("Saved checkbox", exact=True).check()
+    mixed = inner.get_by_label("Saved mixed checkbox", exact=True)
+    expect(mixed).to_have_js_property("indeterminate", True)
+    mixed.evaluate(
+        "node => { node.checked = true; node.dispatchEvent(new Event('change', {bubbles:true})); }"
+    )
+    level = inner.get_by_label("Saved level", exact=True)
+    level.press("End")
+    level.press("ArrowLeft")
+    expect(level).to_have_value("95")
+    form_edits = inner.locator("body").evaluate("() => window.artifactFormEdits")
     inner.get_by_text("Local details", exact=True).click()
     expect(inner.get_by_text("Restored disclosure content")).to_be_visible()
     _capture(page, str(evidence), "artifact-uploaded-interactive-tail")
@@ -228,6 +300,10 @@ def test_uploaded_artifact_fence_retains_appearance_state_and_originals(
     expect(root).to_have_attribute("data-density", "compact")
     expect(root).to_have_css("font-size", "17px")
     expect(root).to_have_css("font-family", re.compile("Georgia"))
+    expect(inner.get_by_label("Saved checkbox", exact=True)).to_be_checked()
+    expect(mixed).to_have_js_property("indeterminate", True)
+    expect(level).to_have_value("95")
+    assert inner.locator("body").evaluate("() => window.artifactFormEdits") == form_edits
     appearance = root.evaluate("""node => {
         const style = getComputedStyle(node);
         return {fontFamily: style.fontFamily, fontSize: style.fontSize,
@@ -309,6 +385,12 @@ def test_uploaded_artifact_fence_retains_appearance_state_and_originals(
             "Draft survives Appearance and reload"
         )
         expect(saved_inner.get_by_text("Restored disclosure content")).to_be_visible()
+        expect(saved_inner.get_by_label("Saved checkbox", exact=True)).to_be_checked()
+        expect(saved_inner.get_by_label("Saved mixed checkbox", exact=True)).to_have_js_property(
+            "indeterminate", True
+        )
+        expect(saved_inner.get_by_label("Saved level", exact=True)).to_have_value("95")
+        assert saved_inner.locator("body").evaluate("() => window.artifactFormEdits") == 0
         expect(saved_inner.locator("main")).to_have_attribute("data-theme", "dark")
         expect(saved_inner.locator("main")).to_have_attribute("data-density", "compact")
         expect(saved_inner.locator("main")).to_have_css("font-size", "17px")
@@ -331,12 +413,13 @@ def test_uploaded_artifact_fence_retains_appearance_state_and_originals(
     )
     _capture(popup, str(evidence), "artifact-new-window")
     popup.close()
-    more.click()
-    page.get_by_role("menuitem", name="Open in tab", exact=True).click()
+    toolbar.get_by_role("button", name="Expand artifact", exact=True).click()
     expect(page.get_by_role("tab", name=title, exact=True)).to_have_count(1)
     docked = _view(page, title).locator("[data-triune-artifact]")
     expect(docked).to_have_attribute("data-triune-artifact", f"{chat.session_id}:{file_id}")
     expect(docked.locator(":scope > header").get_by_role("button")).to_have_count(3)
+    expect(docked.get_by_role("button", name="Expand artifact", exact=True)).to_have_count(0)
+    expect(docked).to_have_css("max-height", "none")
     docked_inner = docked.locator("iframe").content_frame.frame_locator("iframe")
     expect(docked_inner.get_by_label("Artifact count")).to_have_text("1")
     expect(docked_inner.get_by_label("Artifact draft")).to_have_value(
@@ -349,9 +432,19 @@ def test_uploaded_artifact_fence_retains_appearance_state_and_originals(
     _capture(page, str(evidence), "artifact-source-chat-preview-tab")
     page.get_by_role("button", name=f"Close {title}", exact=True).click()
     page.get_by_role("tab", name="Chat A", exact=True).click()
+    more.click()
+    page.get_by_role("menuitem", name="Open in tab", exact=True).click()
+    expect(page.get_by_role("tab", name=title, exact=True)).to_have_count(1)
+    page.get_by_role("button", name=f"Close {title}", exact=True).click()
+    page.get_by_role("tab", name="Chat A", exact=True).click()
     page.reload()
     chat.wait_for_stream()
     expect(outer).to_be_visible(timeout=30_000)
+    expect(inner.get_by_label("Saved checkbox", exact=True)).to_be_checked()
+    expect(inner.get_by_label("Saved mixed checkbox", exact=True)).to_have_js_property(
+        "indeterminate", True
+    )
+    expect(inner.get_by_label("Saved level", exact=True)).to_have_value("95")
     expect(inner.get_by_label("Artifact count")).to_have_text("1")
     expect(inner.get_by_label("Artifact draft")).to_have_value(
         "Draft survives Appearance and reload"
@@ -377,6 +470,7 @@ def test_uploaded_artifact_fence_retains_appearance_state_and_originals(
                 "appearance": appearance,
                 "source_language": language,
                 "viewport_width": width,
+                "inline_geometry": {"initial": initial_geometry, "resized": resized_geometry},
             },
             indent=2,
         )

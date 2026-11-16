@@ -17,6 +17,7 @@ import httpx
 from fastapi import (
     APIRouter,
     HTTPException,
+    Query,
     Request,
 )
 from fastapi.responses import StreamingResponse
@@ -911,6 +912,36 @@ def register_events_routes(
             )
         return user_id, conv
 
+    async def ack_with_position(session_id: str, ack: dict[str, Any]) -> dict[str, Any]:
+        """Expose an existing receipt's order without minting another sequence."""
+        if not ack.get("queued") and "delivery_state" not in ack:
+            # Runner transcript batches already carry canonical items on the
+            # stream; keep their bulk acknowledgement free of per-item reads.
+            return ack
+        item_id = ack.get("item_id")
+        if isinstance(item_id, str):
+            saved = await asyncio.to_thread(conversation_store.get_item, session_id, item_id)
+            if saved is not None:
+                return {
+                    **ack,
+                    "position": saved.position,
+                    "item_id": saved.id,
+                    "created_at": saved.created_at,
+                }
+        pending_id = ack.get("pending_id")
+        if isinstance(pending_id, str):
+            for saved in await asyncio.to_thread(
+                conversation_store.list_pending_inputs, session_id
+            ):
+                if pending_inputs.make_pending_id(session_id, saved.id) == pending_id:
+                    return {
+                        **ack,
+                        "position": saved.position,
+                        "item_id": saved.id,
+                        "created_at": saved.created_at,
+                    }
+        return ack
+
     @event_router.post(
         "/sessions/{session_id}/events",
         # Internal event ingestion — hidden from the public API reference.
@@ -924,7 +955,7 @@ def register_events_routes(
         request: Request,
         session_id: str,
         body: SessionEventInput | list[SessionEventInput],
-    ) -> dict[str, bool | str] | list[dict[str, bool | str]]:
+    ) -> dict[str, Any] | list[dict[str, Any]]:
         """
         Route entry for :func:`_post_event_impl`.
 
@@ -974,13 +1005,14 @@ def register_events_routes(
                         session_id, list(run), conversation_store
                     )
                     acks.extend({"queued": False, "item_id": item_id} for item_id in item_ids)
-                return acks
-            return await _post_event_impl(
+                return [await ack_with_position(session_id, ack) for ack in acks]
+            ack = await _post_event_impl(
                 request,
                 session_id,
                 body,
                 in_flight=in_flight if body.type in {"message", "session_message"} else None,
             )
+            return await ack_with_position(session_id, ack)
 
     router.include_router(event_router)
 
@@ -1660,6 +1692,7 @@ def register_events_routes(
             return {
                 "queued": True,
                 "pending_id": pending_inputs.make_pending_id(session_id, saved.id),
+                "position": saved.position,
             }
         # ── Policy evaluation (path-agnostic) ────────────────
         # Evaluate policies BEFORE persistence/runner forwarding so
@@ -3777,9 +3810,8 @@ def register_events_routes(
 
     # ── GET /sessions/{session_id}/stream ────────────────────────
 
-    # Live-tail only. Clients reconnect via GET /v1/sessions/{id}
-    # for snapshot, then open a new stream; events that fire
-    # between are deduped client-side by item id (see API.md).
+    # Legacy callers retain live-tail semantics; an explicit cursor opts into
+    # subscription-before-replay with revision-based reset after old-row changes.
     @router.get(
         "/sessions/{session_id}/stream",
         # response_model=None: returns StreamingResponse, not a model.
@@ -3806,14 +3838,18 @@ def register_events_routes(
         request: Request,
         session_id: str,
         idle: bool = False,
+        after_position: int | None = Query(default=None, ge=-1),
+        after_revision: int | None = Query(default=None, ge=0),
+        stream_epoch: str | None = None,
     ) -> StreamingResponse:
         """
         Subscribe to the session's live SSE event stream.
 
-        Does NOT replay history; clients reconcile via the snapshot
-        endpoint. The generator emits ``[DONE]`` on normal completion
-        and uses ``finally`` only for presence cleanup — see
-        :func:`_stream_live_events`.
+        An explicit ``after_position`` enables persisted recovery after live
+        registration; ``after_revision`` and ``stream_epoch`` permit append-only
+        resume when no old-position mutation occurred.
+        An untrusted cursor resets canonical membership.
+        Legacy callers without a cursor retain live-tail behavior.
 
         Holding this stream open registers the caller as a session
         *viewer* (presence): co-viewers' streams receive
@@ -3830,8 +3866,7 @@ def register_events_routes(
             e.g. ``"conv_abc123"``.
         :param idle: Presence idle flag computed by the web client
             at connect time (tab backgrounded ≥ its debounce). An
-            idle *flip* mid-view arrives as a reconnect carrying the
-            new value — there is no separate update endpoint.
+            idle flip can reconnect SSE or update the existing WebSocket membership.
         :returns: An SSE :class:`StreamingResponse`.
         :raises OmnigentError: 404 if no session exists.
         """
@@ -3858,6 +3893,58 @@ def register_events_routes(
             runner_client,
             conversation_store,
             conversation=conv,
+        )
+
+        from omnigent.server.session_recovery import SessionRecovery
+
+        async def authorize_stream() -> None:
+            await _require_access_and_level(
+                user_id, session_id, LEVEL_READ, permission_store, conversation_store
+            )
+            current = await asyncio.to_thread(conversation_store.get_conversation, session_id)
+            if current is None:
+                raise _session_not_found()
+            if current.runner_id != conv.runner_id:
+                # Reconnect through the normal strict runner preparation path.
+                raise ConnectionError("Session runner changed during stream")
+            if runner_router is not None:
+                current_client = await _get_runner_client(session_id, runner_router)
+                if current_client is None and current.runner_id:
+                    await _raise_if_runner_on_another_replica(
+                        current, request.app.state, conversation_store
+                    )
+                if current_client is not runner_client:
+                    raise ConnectionError("Session runner route changed during stream")
+
+        request.state.stream_authorize = authorize_stream
+
+        from omnigent.server.subagent_activity import recover_subagent_activity
+
+        async def can_read_source(source_id: str) -> bool:
+            try:
+                await _require_access_and_level(
+                    user_id, source_id, LEVEL_READ, permission_store, conversation_store
+                )
+                return True
+            except OmnigentError as exc:
+                if exc.code in {ErrorCode.FORBIDDEN, ErrorCode.NOT_FOUND}:
+                    return False
+                raise
+
+        async def project_items(items):
+            return await recover_subagent_activity(
+                session_id, items, conversation_store, can_read_source
+            )
+
+        recovery = SessionRecovery(
+            conversation_store,
+            session_id,
+            authorize_stream,
+            enabled=after_position is not None,
+            after_position=after_position if after_position is not None else -1,
+            after_revision=after_revision,
+            stream_epoch=stream_epoch,
+            project=project_items,
         )
 
         async def _resource_snapshot() -> list[dict[str, Any]]:
@@ -3954,6 +4041,9 @@ def register_events_routes(
                 # the CHILD conversation's stream, and per-conversation
                 # scoping would hide co-viewers on other agents.
                 presence_root_id=conv.root_conversation_id,
+                recovery=recovery,
+                presence_membership=getattr(request.state, "presence_membership", None),
+                raise_overflow=getattr(request.state, "multiplex", False),
             ),
             media_type="text/event-stream",
             headers={

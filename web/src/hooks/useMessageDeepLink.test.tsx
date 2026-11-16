@@ -146,6 +146,16 @@ describe("useMessageDeepLink", () => {
     expect(useChatStore.getState().flashItemId).toBe("msg_old");
   });
 
+  it("does not restart virtual index navigation for an already mounted message", () => {
+    document.body.innerHTML = '<div data-message-id="msg_1">hello</div>';
+    const ensureMessageVisible = vi.fn(() => true);
+    renderHook(() => useMessageDeepLink("conv_1", { ensureMessageVisible }), {
+      wrapper: wrapperFor("/c/conv_1?message=msg_1"),
+    });
+    expect(scrollSpy).toHaveBeenCalledOnce();
+    expect(ensureMessageVisible).not.toHaveBeenCalled();
+  });
+
   it("pages older history when the target is not yet in the DOM", async () => {
     const loadMoreHistory = vi.fn(async () => {
       useChatStore.setState({ loadingMoreHistory: false, hasMoreHistory: false });

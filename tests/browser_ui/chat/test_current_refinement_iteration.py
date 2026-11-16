@@ -511,7 +511,7 @@ def test_portrait_and_tiny_image_footer_containment(
 ) -> None:
     first = workspace_journey.chats[0]
     page.set_viewport_size({"width": width, "height": 844 if width == 390 else 1000})
-    page.emulate_media(color_scheme="light")
+    page.emulate_media(color_scheme="light", reduced_motion="reduce")
     attachment = message_item(
         "narrow-images",
         "user",
@@ -662,15 +662,103 @@ def test_portrait_and_tiny_image_footer_containment(
         assert downloaded.value.suggested_filename == row["name"]
         assert Path(downloaded.value.path()).read_bytes() == originals[row["name"]]
 
-    # Inventory comes from message history, and selection retains original bytes.
+    # Retain the scroller before the modal hides its tabpanel from role queries.
+    transcript = chat.locator('[role="log"] > div').first.element_handle()
+    assert transcript is not None
+    # Delay the existing history contract after the transcript has rendered.
+    pending_history: list[Route] = []
+    browser_contract.route(
+        browser_contract._matcher(f"/v1/sessions/{first.session_id}/items"),
+        lambda route: pending_history.append(route),
+    )
     chat.get_by_role("button", name="Zoom image: portrait.png", exact=True).click()
     gallery = page.get_by_role("dialog")
+    stage = gallery.get_by_test_id("lightbox-stage")
+    preview = gallery.get_by_role("img", name="portrait.png", exact=True)
+    expect(preview).to_have_js_property("naturalHeight", 1000)
+    original_preview = preview.element_handle()
+    loading_stage, loading_image = box(stage), box(preview)
+    expect(gallery.get_by_role("status")).to_have_text("Loading chat images…")
+    skeletons = gallery.locator('[data-lightbox-controls] div[aria-hidden="true"] > span')
+    expect(skeletons).to_have_count(3)
+    skeleton = box(skeletons.first)
+    assert skeleton["width"] == 64 and skeleton["height"] == 48, skeleton
+    loading_status = box(gallery.get_by_role("status"))
+    assert loading_status["width"] <= 1 and loading_status["height"] <= 1, loading_status
+    expect(gallery.get_by_role("group", name="Chat images", exact=True)).to_have_count(0)
+    assert pending_history, "Gallery must request the authorized message inventory"
+    for request in pending_history:
+        request.fulfill(json=list_payload([attachment]))
     expect(gallery.get_by_text("1 / 2", exact=True)).to_be_visible()
+    assert preview.evaluate("(node, original) => node === original", original_preview)
+    assert box(stage) == pytest.approx(loading_stage, abs=TOLERANCE)
+    assert box(preview) == pytest.approx(loading_image, abs=TOLERANCE)
+    roll = gallery.get_by_role("group", name="Chat images", exact=True)
+
+    def selected_center() -> dict:
+        page.wait_for_function("""() => {
+          const roll = document.querySelector('[aria-label="Chat images"]');
+          const selected = roll?.querySelector('[aria-current="true"]');
+          if (!selected) return false;
+          const frame = roll.getBoundingClientRect(), slot = selected.getBoundingClientRect();
+          return Math.abs(slot.x + slot.width / 2 - frame.x - frame.width / 2) <= 1;
+        }""")
+        frame, slot = box(roll), box(roll.locator('[aria-current="true"]'))
+        assert slot["x"] + slot["width"] / 2 == pytest.approx(
+            frame["x"] + frame["width"] / 2, abs=TOLERANCE
+        )
+        return {"roll": frame, "selected": slot}
+
+    def click_disabled_arrow(label: str, count: str) -> None:
+        arrow = gallery.get_by_role("button", name=label, exact=True)
+        expect(arrow).to_be_disabled()
+        assert arrow.evaluate("""node => {
+          const bounds = node.getBoundingClientRect();
+          return node.contains(document.elementFromPoint(
+            bounds.x + bounds.width / 2, bounds.y + bounds.height / 2));
+        }"""), label
+        bounds = box(arrow)
+        for _ in range(2):
+            page.mouse.click(bounds["x"] + bounds["width"] / 2, bounds["y"] + bounds["height"] / 2)
+        expect(gallery).to_be_visible()
+        expect(gallery.get_by_text(count, exact=True)).to_be_visible()
+        expect(gallery.get_by_role("button", name="Close", exact=True)).to_be_visible()
+
+    first_center = selected_center()
+    click_disabled_arrow("Previous image", "1 / 2")
+    expect(stage).to_have_css("cursor", "default")
+    preview.click()
+    expect(gallery.get_by_role("button", name="Close", exact=True)).to_have_count(0)
+    assert box(stage) == pytest.approx(loading_stage, abs=TOLERANCE)
+    assert box(preview) == pytest.approx(loading_image, abs=TOLERANCE)
+    gallery.press("Tab")
+    expect(gallery.get_by_role("button", name="Close", exact=True)).to_be_visible()
+    assert transcript.evaluate("node => node.isConnected")
+    background = transcript.evaluate("node => [scrollY, node.scrollTop]")
+    roll_bounds = box(roll)
+    page.mouse.move(
+        roll_bounds["x"] + roll_bounds["width"] / 2,
+        roll_bounds["y"] + roll_bounds["height"] / 2,
+    )
+    page.mouse.wheel(0, 80)
+    page.wait_for_function("document.querySelector('[aria-label=\"Chat images\"]').scrollLeft > 0")
+    expect(gallery.get_by_role("button", name="Reset zoom", exact=True)).to_have_text("100%")
+    assert transcript.evaluate("node => [scrollY, node.scrollTop]") == background
+    image_bounds = box(preview)
+    page.mouse.move(
+        image_bounds["x"] + image_bounds["width"] / 2,
+        image_bounds["y"] + image_bounds["height"] / 2,
+    )
+    page.mouse.wheel(0, -80)
+    expect(gallery.get_by_role("button", name="Reset zoom", exact=True)).to_have_text("150%")
+    gallery.get_by_role("button", name="Reset zoom", exact=True).click()
     gallery.get_by_role("button", name="Next image", exact=True).click()
     expect(gallery.get_by_role("img", name="tiny.png", exact=True)).to_have_js_property(
         "naturalWidth", 1
     )
     expect(gallery.get_by_text("2 / 2", exact=True)).to_be_visible()
+    last_center = selected_center()
+    click_disabled_arrow("Next image", "2 / 2")
     gallery.press("ArrowLeft")
     expect(gallery.get_by_role("img", name="portrait.png", exact=True)).to_have_js_property(
         "naturalHeight", 1000
@@ -679,6 +767,20 @@ def test_portrait_and_tiny_image_footer_containment(
     with page.expect_download() as selected_download:
         gallery.get_by_role("button", name="Download image", exact=True).click()
     assert Path(selected_download.value.path()).read_bytes() == originals["tiny.png"]
+    (evidence / "gallery-overlay-geometry.json").write_text(
+        json.dumps(
+            {
+                "viewport_width": width,
+                "loading_stage": loading_stage,
+                "loading_image": loading_image,
+                "skeleton": skeleton,
+                "first_center": first_center,
+                "last_center": last_center,
+            },
+            indent=2,
+        )
+        + "\n"
+    )
     gallery.get_by_role("button", name="Close", exact=True).click()
     expect(gallery).to_have_count(0)
 
@@ -1163,6 +1265,7 @@ def test_notice_popup_transport_fixture(
     }
     path = f"/v1/sessions/{first.session_id}/runtime-notices"
     browser_contract.json(path, lambda _request: {**list_payload([notice]), "quotas": quotas})
+    page.clock.install()
     page.goto(first.url)
     editor = _view(page, "Chat A").get_by_label("Message the agent")
     editor.fill("Keep this draft while reading notices")
@@ -1255,10 +1358,34 @@ def test_notice_popup_transport_fixture(
     row = page.locator(f'aside [data-sidebar-session-id="{second.session_id}"]')
     row.hover()
     row.get_by_role("button", name="Conversation actions", exact=True).click()
+    page.clock.pause_at(page.evaluate("Date.now() + 1000"))
     page.get_by_role("menuitem", name="Archive", exact=True).click()
+    page.clock.run_for(100)
     notification = page.get_by_test_id("archive-undo-toast-item")
     expect(notification).to_be_visible()
-    notification.hover()
+    if appearance.startswith("mobile"):
+        scrim = page.get_by_role("button", name="Close sidebar", exact=True)
+        scrim.click(position={"x": box(scrim)["width"] - 8, "y": 200})
+        page.clock.run_for(100)
+    bell = page.get_by_role("banner", name="Application").get_by_role(
+        "button", name="Notifications", exact=True
+    )
+    preview = page.get_by_role("region", name="Notifications", exact=True)
+    expect(preview.get_by_test_id("archive-undo-toast-item")).to_be_visible()
+    notification_id = notification.get_attribute("data-notification-id")
+    assert notification_id
+    retained_card = page.locator(f'[data-notification-id="{notification_id}"]')
+    expect(retained_card).to_have_count(1)
+    bell_bounds, preview_bounds = box(bell), box(preview)
+    assert preview_bounds["y"] == pytest.approx(
+        bell_bounds["y"] + bell_bounds["height"] + 12, abs=TOLERANCE
+    ), (bell_bounds, preview_bounds)
+    assert preview_bounds["x"] + preview_bounds["width"] == pytest.approx(
+        min(bell_bounds["x"] + bell_bounds["width"], page.viewport_size["width"] - 16),
+        abs=TOLERANCE,
+    ), (bell_bounds, preview_bounds)
+    assert_no_overlap(bell_bounds, preview_bounds)
+    assert_within_viewport(preview_bounds, page.viewport_size["width"])
 
     def notification_geometry(card: Locator, *, history: bool = False) -> dict:
         close = card.locator("[data-close-button]")
@@ -1280,22 +1407,55 @@ def test_notice_popup_transport_fixture(
                 assert_no_overlap(box(card.locator("time")), box(action))
         return {"card": box(card), "target": target, "surface": surface}
 
-    notification_measurements = {"popup": notification_geometry(notification)}
+    notification_measurements = {
+        "id": notification_id,
+        "bell": bell_bounds,
+        "viewport": preview_bounds,
+        "configuredWidth": preview.evaluate("element => element.style.width"),
+        "popup": notification_geometry(notification),
+    }
     _capture(page, output_path, f"{appearance}-notification-popup-geometry")
-    notification.get_by_role("button", name="Hide notification", exact=True).click()
-    if appearance.startswith("mobile"):
-        scrim = page.get_by_role("button", name="Close sidebar", exact=True)
-        scrim.click(position={"x": box(scrim)["width"] - 8, "y": 200})
-    page.get_by_role("banner", name="Application").get_by_role(
-        "button", name="Notifications", exact=True
-    ).click()
+    page.clock.run_for(1000)
+    expect(notification).to_be_visible()
+    expect(notification.get_by_role("button", name="Undo", exact=True)).to_be_visible()
+    bell.click()
+    page.clock.run_for(100)
     center = page.get_by_role("dialog", name="Notifications", exact=True)
+    expect(preview).to_be_hidden()
     _assert_opaque_popup(center, output_path, f"{appearance}-notifications")
     history_card = center.get_by_test_id("archive-undo-toast-item")
+    expect(history_card).to_have_attribute("data-notification-id", notification_id)
+    expect(retained_card).to_have_count(1)
+    expect(history_card.get_by_role("button", name="Undo", exact=True)).to_be_visible()
+    expect(history_card.get_by_role("button", name="View archived", exact=True)).to_be_visible()
+    center_bounds = box(center)
+    assert (
+        center.evaluate("element => element.style.width")
+        == notification_measurements["configuredWidth"]
+    )
+    assert center_bounds["width"] == pytest.approx(preview_bounds["width"], abs=TOLERANCE)
+    notification_measurements["feed"] = center_bounds
     notification_measurements["history"] = notification_geometry(history_card, history=True)
     header = center.locator(".notification-center-header")
     for action in header.get_by_role("button").all():
         assert_same_vertical_center(box(header), box(action))
+    center.get_by_role("button", name="Close notifications", exact=True).click()
+    expect(preview).to_be_hidden()
+    expect(retained_card).to_have_count(0)
+    bell.click()
+    page.clock.run_for(100)
+    expect(history_card).to_have_attribute("data-notification-id", notification_id)
+    expect(history_card.get_by_role("button", name="Undo", exact=True)).to_be_visible()
+    center.get_by_role("button", name="Close notifications", exact=True).click()
+    page.clock.fast_forward(6000)
+    expect(preview).to_be_hidden()
+    expect(retained_card).to_have_count(0)
+    bell.click()
+    page.clock.run_for(100)
+    expect(history_card).to_have_attribute("data-notification-id", notification_id)
+    expect(retained_card).to_have_count(1)
+    expect(history_card.get_by_role("button", name="Restore", exact=True)).to_be_visible()
+    notification_measurements["expiredHistory"] = notification_geometry(history_card, history=True)
     with page.expect_response(
         lambda response: (
             response.request.method == "PATCH"
@@ -1305,6 +1465,9 @@ def test_notice_popup_transport_fixture(
         history_card.get_by_role("button", name=re.compile(r"^(Undo|Restore)$")).click()
     expect(editor).to_have_value("Keep this draft while reading notices")
     center.get_by_role("button", name="Close notifications", exact=True).click()
+    expect(preview).to_be_hidden()
+    expect(retained_card).to_have_count(0)
+    page.clock.resume()
     (Path(output_path) / "notification-geometry.json").write_text(
         json.dumps(notification_measurements, indent=2) + "\n"
     )
@@ -1313,3 +1476,437 @@ def test_notice_popup_transport_fixture(
     expect(_view(page, "Chat B").get_by_label("Message the agent")).to_be_visible()
     expect(page.get_by_role("button", name="Notices: 1", exact=True)).to_have_count(0)
     assert first.event_posts == [] and second.event_posts == []
+
+
+def _finish_finite_control_motion(control: Locator) -> None:
+    control.evaluate("""async element => {
+      await Promise.all(element.getAnimations({subtree: true})
+        .filter(animation => animation.effect &&
+          Number.isFinite(animation.effect.getTiming().iterations))
+        .map(animation => animation.finished.catch(() => {})));
+    }""")
+
+
+def _assert_centered_control_popup(
+    page: Page, popup: Locator, trigger: Locator, *, column: Locator | None = None
+) -> dict:
+    expect(popup).to_be_visible()
+    _finish_finite_control_motion(popup)
+    popup_box, trigger_box = box(popup), box(trigger)
+    left, right = 8.0, float(page.viewport_size["width"] - 8)
+    if column is not None:
+        bounds = column.evaluate("""element => {
+          const rect = element.getBoundingClientRect(), style = getComputedStyle(element);
+          return {left:rect.left + (parseFloat(style.paddingLeft) || 0),
+            right:rect.right - (parseFloat(style.paddingRight) || 0)};
+        }""")
+        left, right = max(left, bounds["left"]), min(right, bounds["right"])
+    assert popup_box["width"] <= right - left + TOLERANCE, popup_box
+    expected_left = max(
+        left,
+        min(
+            trigger_box["x"] + trigger_box["width"] / 2 - popup_box["width"] / 2,
+            right - popup_box["width"],
+        ),
+    )
+    assert popup_box["x"] == pytest.approx(expected_left, abs=TOLERANCE)
+    expect(popup).to_have_attribute("data-align", "center")
+    assert_within_viewport(popup_box, page.viewport_size["width"])
+    return {"popup": popup_box, "trigger": trigger_box, "bounds": [left, right]}
+
+
+def test_iteration5_composer_mention_safety_and_local_caret(
+    page: Page,
+    workspace_journey: WorkspaceJourney,
+    browser_contract: BrowserContract,
+    output_path: str,
+    appearance: str,
+) -> None:
+    Path(output_path).mkdir(parents=True, exist_ok=True)
+    first, second = workspace_journey.chats
+    first.harness = "claude-native"
+    first.set_items(
+        [
+            message_item("caret-quote", "assistant", "Quote local caret proof", response_id="q"),
+            message_item(
+                "caret-history", "assistant", "History paragraph.\n\n" * 90, response_id="h"
+            ),
+        ]
+    )
+    listing = list_payload([{"path": "notes.py", "name": "notes.py", "type": "file", "bytes": 20}])
+    for environment in (
+        f"/v1/sessions/{first.session_id}/resources/environments/default",
+        "/v1/workbench-workspaces/workspace-files/resources/environments/default",
+    ):
+        browser_contract.json(environment + "/filesystem", listing)
+    browser_contract.json(
+        "/v1/context-references/chats",
+        {
+            "data": [{"id": second.session_id, "title": "Chat B", "parent_id": None}],
+            "has_more": False,
+            "next_cursor": None,
+        },
+    )
+    browser_contract.json(
+        f"/v1/sessions/{second.session_id}/context-reference",
+        {
+            "version": 1,
+            "snapshot_id": "caret-chat-reference",
+            "source_id": second.session_id,
+            "source_title": "Chat B",
+            "destination_id": first.session_id,
+            "scope": "whole",
+            "boundary_id": second.session_id + "-answer",
+            "captured_at": 1704067200,
+            "items": [],
+            "quote": None,
+            "audience": "Browser fixture",
+            "representation": "Exact items",
+        },
+        method="POST",
+    )
+    page.goto(first.url)
+    chat = _view(page, "Chat A")
+    editor = chat.get_by_label("Message the agent", exact=True)
+    expect(editor).to_be_visible()
+    first.wait_for_stream()
+    editor.evaluate("""element => {
+      const form = element.closest('form'); form.dataset.testSubmits = '0';
+      form.addEventListener('submit', () => {
+        form.dataset.testSubmits = String(Number(form.dataset.testSubmits) + 1);
+      });
+    }""")
+    page.locator('input[type="file"]').first.set_input_files(
+        {"name": "keep.txt", "mimeType": "text/plain", "buffer": b"retained file"}
+    )
+    expect(chat.get_by_role("button", name="Remove keep.txt", exact=True)).to_be_visible()
+    editor.fill("Keep @notes")
+    picker = chat.locator("[data-context-reference-picker]")
+    expect(picker.get_by_role("tablist")).to_have_count(0)
+    picker.get_by_role("button", name="notes.py", exact=True).click()
+    expect(editor).to_have_value("Keep ")
+    expect(chat.get_by_text("@notes.py", exact=True)).to_be_visible()
+    editor.fill("Keep @Chat")
+    chat_choice = picker.get_by_role("button", name="Chat B", exact=True)
+    expect(chat_choice).to_be_visible()
+    editor.press("Enter")
+    if appearance.startswith("mobile"):
+        expect(editor).to_have_value("Keep @Chat\n")
+        expect(picker).to_have_count(0)
+        assert first.event_posts == []
+        editor.fill("Keep @Chat")
+        chat_choice.click()
+    picker.get_by_role("button", name="Whole chat", exact=True).click()
+    page.get_by_role("button", name="Add reference", exact=True).click()
+    expect(chat.get_by_role("button", name="Remove keep.txt", exact=True)).to_be_visible()
+    assert editor.evaluate("element => element.closest('form').dataset.testSubmits") == "0"
+    assert first.event_posts == []
+
+    editor.focus()
+    draft = "\n".join(
+        f"Draft line {index}: keep wrapped caret content " * 2 for index in range(22)
+    )
+    editor.fill(draft)
+    page.evaluate(
+        "() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))"
+    )
+    editor.evaluate(
+        """element => {
+          element.setSelectionRange(element.value.length, element.value.length);
+          element.scrollTop = element.scrollHeight;
+        }"""
+    )
+    transcript = chat.locator('[role="log"] > div').first
+    before = transcript.evaluate("element => element.scrollTop")
+    root_before = page.evaluate("document.scrollingElement.scrollTop")
+    editor.press("Alt+Enter")
+    expect(editor).to_have_value(draft + "\n")
+    page.evaluate(
+        "() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))"
+    )
+    caret = editor.evaluate("""element => ({scrollTop:element.scrollTop,
+      remaining:element.scrollHeight - element.clientHeight - element.scrollTop,
+      lineHeight:parseFloat(getComputedStyle(element).lineHeight),
+      selection:[element.selectionStart, element.selectionEnd]})""")
+    assert caret["scrollTop"] > 0 and caret["remaining"] <= TOLERANCE, caret
+    assert caret["selection"] == [len(draft) + 1, len(draft) + 1], caret
+    assert transcript.evaluate("element => element.scrollTop") == pytest.approx(
+        before, abs=TOLERANCE
+    )
+    assert page.evaluate("document.scrollingElement.scrollTop") == root_before
+
+    chat.get_by_text("Quote local caret proof", exact=True).evaluate("""element => {
+      const range = document.createRange(); range.selectNodeContents(element);
+      const selection = window.getSelection();
+      selection.removeAllRanges(); selection.addRange(range);
+      document.dispatchEvent(new Event('selectionchange'));
+    }""")
+    page.get_by_role("menu", name="Selected text", exact=True).get_by_role(
+        "menuitem", name="Reply", exact=True
+    ).click()
+    quoted = chat.get_by_label("Reply text before quote 1", exact=True)
+    expect(quoted).to_have_value(draft + "\n")
+    quoted.evaluate("""element => {
+      element.focus({preventScroll:true});
+      element.setSelectionRange(element.value.length, element.value.length);
+      const area = element.closest('[data-composer-input-area]');
+      area.scrollTop += element.getBoundingClientRect().bottom
+        - area.getBoundingClientRect().bottom
+        - parseFloat(getComputedStyle(element).lineHeight);
+    }""")
+    before = transcript.evaluate("element => element.scrollTop")
+    root_before = page.evaluate("document.scrollingElement.scrollTop")
+    quoted.press("Alt+Enter")
+    expect(quoted).to_have_value(draft + "\n\n")
+    page.evaluate(
+        "() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))"
+    )
+    quote_geometry = quoted.evaluate("""element => {
+      const area = element.closest('[data-composer-input-area]');
+      return {field:element.getBoundingClientRect().toJSON(),
+        area:area.getBoundingClientRect().toJSON(),
+        inputScroll:element.scrollTop, areaScroll:area.scrollTop,
+        selection:[element.selectionStart,element.selectionEnd]};
+    }""")
+    assert quote_geometry["inputScroll"] == 0 and quote_geometry["areaScroll"] > 0, quote_geometry
+    assert quote_geometry["field"]["bottom"] <= quote_geometry["area"]["bottom"] + TOLERANCE
+    assert quote_geometry["selection"] == [len(draft) + 2, len(draft) + 2]
+    assert transcript.evaluate("element => element.scrollTop") == pytest.approx(
+        before, abs=TOLERANCE
+    )
+    assert page.evaluate("document.scrollingElement.scrollTop") == root_before
+    assert first.event_posts == []
+    (Path(output_path) / f"{appearance}-composer-caret.json").write_text(
+        json.dumps({"textarea": caret, "quote": quote_geometry}, indent=2) + "\n"
+    )
+    _capture(page, output_path, f"{appearance}-composer-mention-caret")
+
+
+def test_iteration5_settled_shelf_manual_reveal_and_answer_focus(
+    page: Page,
+    workspace_journey: WorkspaceJourney,
+    browser_contract: BrowserContract,
+    output_path: str,
+    appearance: str,
+) -> None:
+    Path(output_path).mkdir(parents=True, exist_ok=True)
+    first = workspace_journey.chats[0]
+    first.update_session(
+        todos=[{"content": "Control proof", "status": "in_progress", "activeForm": ""}],
+        background_task_count=0,
+        background_tasks=[],
+    )
+    page.goto(first.url)
+    chat = _view(page, "Chat A")
+    editor = chat.get_by_label("Message the agent", exact=True)
+    editor.fill("Retain shelf draft")
+    first.wait_for_stream()
+    shelf = chat.get_by_test_id("composer-attention-shelf")
+    expect(shelf.get_by_role("button", name="Plan: 0 of 1 completed", exact=True)).to_be_visible()
+    todos = [{"content": "Control proof", "status": "completed", "activeForm": ""}]
+    first.update_session(todos=todos)
+    first.emit(
+        {
+            "event": "session.todos",
+            "data": {"type": "session.todos", "conversation_id": first.session_id, "todos": todos},
+        }
+    )
+    expect(shelf).to_be_hidden()
+    assert (
+        shelf.evaluate(
+            "element => element.closest('.composer-shelf-presence').getBoundingClientRect().height"
+        )
+        == 0
+    )
+    actions = chat.get_by_test_id("header-conversation-actions")
+    actions.click()
+    page.get_by_role("menuitem", name="Open plan", exact=True).click()
+    plan = page.get_by_role("dialog", name="Plan", exact=True)
+    expect(plan).to_contain_text("Control proof")
+    page.keyboard.press("Escape")
+    actions.click()
+    page.get_by_role("menuitem", name="Hide activity shelf", exact=True).click()
+    expect(shelf).to_be_hidden()
+
+    resolves: list[dict] = []
+
+    def resolve(route: Route) -> None:
+        resolves.append(route.request.post_data_json)
+        route.fulfill(json={"status": "ok"})
+
+    browser_contract.route(
+        browser_contract._matcher(
+            f"/v1/sessions/{first.session_id}/elicitations/idle-question/resolve"
+        ),
+        resolve,
+    )
+    first.emit(
+        {
+            "event": "response.elicitation_request",
+            "data": {
+                "type": "response.elicitation_request",
+                "elicitation_id": "idle-question",
+                "params": {
+                    "mode": "form",
+                    "message": "Choose scope",
+                    "phase": "tool_call",
+                    "policy_name": "native",
+                    "requestedSchema": {},
+                    "ask_user_question": {
+                        "questions": [
+                            {
+                                "id": "scope",
+                                "question": "Which scope?",
+                                "options": [{"label": "Focused"}],
+                                "multiSelect": False,
+                            }
+                        ]
+                    },
+                },
+            },
+        }
+    )
+    question = shelf.get_by_role("button", name="Questions: 1", exact=True)
+    expect(question).to_be_visible()
+    question.click()
+    panel = page.get_by_role("dialog", name="Questions", exact=True)
+    popup_geometry = _assert_centered_control_popup(
+        page, panel, question, column=chat.locator(".composer-shelf-stack")
+    )
+    custom = panel.get_by_role("textbox", name="Custom answer text", exact=True)
+    custom.fill("Retain this unsent answer")
+    custom.focus()
+    focus = custom.evaluate("""element => {
+      const inner = getComputedStyle(element), outer = getComputedStyle(element.closest('label'));
+      return {visible:element.matches(':focus-visible'), innerShadow:inner.boxShadow,
+        innerOutline:inner.outlineStyle, outerShadow:outer.boxShadow};
+    }""")
+    assert focus["visible"] and focus["innerShadow"] == "none", focus
+    assert focus["innerOutline"] == "none" and focus["outerShadow"] != "none", focus
+    answer_node = custom.element_handle()
+    page.keyboard.press("Escape")
+    actions.click()
+    page.get_by_role("menuitem", name="Hide activity shelf", exact=True).click()
+    expect(shelf).to_be_hidden()
+    actions.click()
+    page.get_by_role("menuitem", name="Show activity shelf", exact=True).click()
+    question.click()
+    expect(custom).to_have_value("Retain this unsent answer")
+    assert answer_node and answer_node.evaluate("element => element.isConnected")
+    page.keyboard.press("Escape")
+    actions.click()
+    page.get_by_role("menuitem", name="Hide activity shelf", exact=True).click()
+    expect(shelf).to_be_hidden()
+    first.emit(
+        {
+            "event": "response.elicitation_request",
+            "data": {
+                "type": "response.elicitation_request",
+                "elicitation_id": "new-idle-approval",
+                "params": {
+                    "mode": "form",
+                    "message": "Approve focused checks",
+                    "phase": "tool_call",
+                    "policy_name": "native",
+                    "requestedSchema": {},
+                },
+            },
+        }
+    )
+    expect(shelf.get_by_role("button", name="Approvals: 1", exact=True)).to_be_visible()
+    expect(editor).to_have_value("Retain shelf draft")
+    assert resolves == [] and first.event_posts == []
+    (Path(output_path) / f"{appearance}-shelf-focus.json").write_text(
+        json.dumps({"popup": popup_geometry, "focus": focus}, indent=2) + "\n"
+    )
+    _capture(page, output_path, f"{appearance}-shelf-idle-reveal-focus")
+    actions.click()
+    page.get_by_role("menuitem", name="Open activity resources", exact=True).click()
+    expect(_view(page, "Orchestration")).to_be_visible()
+
+
+def test_iteration5_header_usage_held_paint_and_popup_bounds(
+    page: Page,
+    workspace_journey: WorkspaceJourney,
+    output_path: str,
+    appearance: str,
+) -> None:
+    Path(output_path).mkdir(parents=True, exist_ok=True)
+    first = workspace_journey.chats[0]
+    first.update_session(last_total_tokens=8192, context_window=256000)
+    page.goto(first.url)
+    chat = _view(page, "Chat A")
+    usage = chat.get_by_role("button", name="Usage", exact=True)
+    expect(usage).to_be_visible()
+
+    def paint(control: Locator) -> dict:
+        _finish_finite_control_motion(control)
+        return control.evaluate("""element => {
+          const surface = element.querySelector('[data-header-action-surface]') || element;
+          const glyph = surface.querySelector('svg'), style = getComputedStyle(element);
+          const canvas = document.createElement('canvas'); canvas.width = canvas.height = 1;
+          const context = canvas.getContext('2d'); context.fillStyle = style.backgroundColor;
+          context.fillRect(0,0,1,1);
+          return {target:element.getBoundingClientRect().toJSON(),
+            surface:surface.getBoundingClientRect().toJSON(),
+            glyph:glyph.getBoundingClientRect().toJSON(),
+            outerAlpha:context.getImageData(0,0,1,1).data[3],
+            color:getComputedStyle(surface).backgroundColor,
+            padding:[style.paddingLeft,style.paddingRight],gap:style.columnGap,
+            iconPadding:getComputedStyle(glyph).paddingLeft};
+        }""")
+
+    rest = paint(usage)
+    usage.hover()
+    hover = paint(usage)
+    page.mouse.down()
+    try:
+        held = paint(usage)
+        assert held["color"] != hover["color"], (hover, held)
+        assert held["surface"]["width"] == pytest.approx(24, abs=TOLERANCE)
+        assert held["surface"]["height"] == pytest.approx(24, abs=TOLERANCE)
+        assert held["glyph"]["width"] == pytest.approx(16, abs=TOLERANCE)
+        _capture(page, output_path, f"{appearance}-usage-held-paint")
+    finally:
+        page.mouse.up()
+    popup = page.get_by_role("dialog", name="Conversation usage", exact=True)
+    usage_bounds = _assert_centered_control_popup(page, popup, usage)
+    opened = paint(usage)
+    for state in (hover, held, opened):
+        assert state["target"] == pytest.approx(rest["target"], abs=TOLERANCE)
+        assert state["surface"] == pytest.approx(rest["surface"], abs=TOLERANCE)
+        assert state["outerAlpha"] == 0, state
+    page.keyboard.press("Escape")
+    open_button = page.get_by_role("button", name="Open view", exact=True, include_hidden=True)
+    open_rest = paint(open_button)
+    assert open_rest["glyph"]["width"] == pytest.approx(16, abs=TOLERANCE)
+    assert open_rest["iconPadding"] == "1px", open_rest
+    if appearance.startswith("mobile"):
+        assert open_rest["target"]["width"] >= 44 and open_rest["target"]["height"] >= 44
+    else:
+        assert open_rest["padding"] == ["6px", "10px"] and open_rest["gap"] == "4px"
+        assert open_rest["target"]["height"] == pytest.approx(28, abs=TOLERANCE)
+    open_button.hover()
+    open_hover = paint(open_button)
+    page.mouse.down()
+    try:
+        open_held = paint(open_button)
+    finally:
+        page.mouse.up()
+    for state in (open_hover, open_held):
+        assert state["target"] == pytest.approx(open_rest["target"], abs=TOLERANCE)
+    open_popup = page.locator('[data-slot="dropdown-menu-content"][data-state="open"]')
+    open_bounds = _assert_centered_control_popup(page, open_popup, open_button)
+    page.keyboard.press("Escape")
+    (Path(output_path) / f"{appearance}-header-controls.json").write_text(
+        json.dumps(
+            {
+                "usage": {"rest": rest, "hover": hover, "held": held, "open": opened},
+                "usagePopup": usage_bounds,
+                "open": open_rest,
+                "openPopup": open_bounds,
+            },
+            indent=2,
+        )
+        + "\n"
+    )

@@ -161,3 +161,89 @@ def test_kit_control_row_keeps_labeled_controls_aligned(page: Page) -> None:
             for field in geometry["fields"]:
                 assert field["position"] == "static", geometry
                 assert field["label"]["bottom"] < field["control"]["top"], geometry
+
+
+def test_kit_native_checkbox_range_and_progress(page: Page) -> None:
+    """Exercise source assets directly; no SPA, server, credentials or models."""
+    css = (_WEB / "src/artifacts/kit/triune-artifact.css").read_text()
+    helper = (_WEB / "src/artifacts/kit/triune-artifact.js").read_text()
+    page.set_content(f"""<style>{css}</style><main class="ta-root">
+<form><label class="ta-choice">
+<input id="check" name="choice" type="checkbox" data-ta-mixed>Choose</label>
+<label class="ta-field">Amount
+<input id="range" name="amount" type="range" min="10" max="50" step="5" value="20">
+</label>
+<input id="disabled" aria-label="Disabled amount" type="range" value="70" disabled>
+<progress id="progress" aria-label="Progress" value="20" max="50"></progress>
+<progress id="usage" class="ta-progress--usage" aria-label="Usage" value="40" max="100"></progress>
+<button type="reset">Reset</button></form></main>""")
+    page.add_script_tag(content=helper)
+    page.evaluate("""() => {
+      TriuneArtifact.init(document.querySelector('main'));
+      window.submits = 0; window.inputs = 0; window.changes = 0;
+      document.querySelector('form').addEventListener('submit', e => {
+        e.preventDefault(); submits++;
+      });
+      document.querySelector('form').addEventListener('input', () => inputs++);
+      document.querySelector('form').addEventListener('change', () => changes++);
+    }""")
+    for theme in ("light", "dark"):
+        for density in ("comfortable", "compact"):
+            page.locator("main").evaluate(
+                "(root, values) => { root.dataset.theme=values[0]; "
+                "root.dataset.density=values[1]; }",
+                [theme, density],
+            )
+            geometry = page.evaluate("""() => {
+              const style = id => getComputedStyle(document.getElementById(id));
+              const rect = id => document.getElementById(id).getBoundingClientRect();
+              return {checkbox:[rect('check').width,rect('check').height,
+                  style('check').borderRadius],
+                rangeHeight:rect('range').height,
+                choiceHeight:document.querySelector('.ta-choice').getBoundingClientRect().height,
+                progressHeight:rect('progress').height, usageHeight:rect('usage').height,
+                progressRadius:style('progress').borderRadius,
+                usageRadius:style('usage').borderRadius,
+                coarse:matchMedia('(any-pointer: coarse)').matches,
+                fill:document.querySelector('#range').style.getPropertyValue('--ta-range-progress'),
+                appearance:style('range').appearance, disabledOpacity:style('disabled').opacity,
+                overflow:document.documentElement.scrollWidth > innerWidth};
+            }""")
+            assert geometry["checkbox"] == [16, 16, "4px"], geometry
+            assert geometry["rangeHeight"] >= (44 if geometry["coarse"] else 24), geometry
+            assert geometry["choiceHeight"] >= (44 if geometry["coarse"] else 32), geometry
+            assert geometry["progressHeight"] == 4 and geometry["usageHeight"] == 3, geometry
+            assert geometry["usageRadius"] == "0px", geometry
+            assert geometry["fill"] == "25%" and geometry["appearance"] == "none", geometry
+            assert geometry["disabledOpacity"] == "0.5" and not geometry["overflow"], geometry
+    assert page.locator("#check").evaluate("n => n.indeterminate")
+    page.locator("#check").focus()
+    page.keyboard.press("Space")
+    expect(page.locator("#check")).to_be_checked()
+    assert not page.locator("#check").evaluate("n => n.indeterminate")
+    page.locator("#range").focus()
+    page.keyboard.press("ArrowRight")
+    expect(page.locator("#range")).to_have_value("25")
+    assert (
+        page.locator("#range").evaluate("n => n.style.getPropertyValue('--ta-range-progress')")
+        == "37.5%"
+    )
+    assert page.evaluate("new FormData(document.querySelector('form')).get('amount')") == "25"
+    before = page.evaluate("[inputs, changes]")
+    page.evaluate("""() => { document.querySelector('#range').value='50';
+      dispatchEvent(new Event('triune-artifact:restored')); }""")
+    assert (
+        page.locator("#range").evaluate("n => n.style.getPropertyValue('--ta-range-progress')")
+        == "100%"
+    )
+    assert page.evaluate("[inputs, changes]") == before
+    page.get_by_role("button", name="Reset").click()
+    expect(page.locator("#range")).to_have_value("20")
+    assert (
+        page.locator("#range").evaluate("n => n.style.getPropertyValue('--ta-range-progress')")
+        == "25%"
+    )
+    assert page.evaluate("submits") == 0
+    page.emulate_media(forced_colors="active")
+    assert page.locator("#check").evaluate("n => getComputedStyle(n).appearance") == "auto"
+    page.emulate_media(forced_colors="none")

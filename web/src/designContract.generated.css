@@ -26,6 +26,7 @@
   );
   --workspace-hover-on-chrome: color-mix(in srgb, var(--foreground) 6%, var(--workspace-chrome));
   --workspace-control-hover: var(--muted);
+  --workspace-control-active-border: color-mix(in srgb, var(--primary) 35%, var(--border));
   --workspace-control-active: color-mix(in srgb, var(--foreground) 10%, var(--workspace-group));
   --workspace-close-hover: color-mix(
     in srgb,

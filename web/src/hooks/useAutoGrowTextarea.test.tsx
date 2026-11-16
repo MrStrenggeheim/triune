@@ -1,7 +1,11 @@
-import { render } from "@testing-library/react";
+// Modified for Triune.
+import { act, fireEvent, render } from "@testing-library/react";
 import { useLayoutEffect, useRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useAutoGrowTextarea } from "./useAutoGrowTextarea";
+import { revealTextareaCaret } from "@/lib/textareaCaret";
+
+vi.mock("@/lib/textareaCaret", () => ({ revealTextareaCaret: vi.fn() }));
 
 // A controllable ResizeObserver stand-in. jsdom has none, so the hook's
 // re-measure path is dead unless we provide one. We capture the callback so
@@ -53,6 +57,8 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.useRealTimers();
+  vi.clearAllMocks();
 });
 
 describe("useAutoGrowTextarea", () => {
@@ -371,3 +377,74 @@ describe("useAutoGrowTextarea", () => {
     expect(ta.style.height).toBe("40px");
   });
 });
+
+it("reveals focused edits after resize settling without authorizing later resize-only reveals", () => {
+  vi.useFakeTimers();
+  const { getByTestId } = render(<Harness value="long draft" />);
+  const ta = getByTestId("ta") as HTMLTextAreaElement;
+  const wrapper = getByTestId("wrapper") as HTMLDivElement;
+  stubScrollHeight(ta, 800);
+  ta.focus();
+  vi.mocked(revealTextareaCaret).mockImplementation(() => {
+    expect(ta.style.height).toBe("200px");
+    expect(ta.style.overflowY).toBe("");
+    expect(wrapper.style.height).toBe("");
+  });
+  fireEvent.input(ta, { target: { value: "long draft\n" } });
+  expect(revealTextareaCaret).not.toHaveBeenCalled();
+  act(() => vi.advanceTimersByTime(20));
+  // A quoted flex field can still scroll internally until ResizeObserver
+  // settles its grown height and clears that temporary offset.
+  expect(revealTextareaCaret).not.toHaveBeenCalled();
+  roCallback?.([], {} as ResizeObserver);
+  expect(revealTextareaCaret).not.toHaveBeenCalled();
+  act(() => vi.advanceTimersByTime(20));
+  expect(revealTextareaCaret).toHaveBeenCalledExactlyOnceWith(ta);
+  roCallback?.([], {} as ResizeObserver);
+  expect(revealTextareaCaret).toHaveBeenCalledOnce();
+});
+
+it("defers IME reveal until composition ends and cancels it on blur or draft replacement", () => {
+  vi.useFakeTimers();
+  const { getByTestId } = render(<Harness value="draft" />);
+  const ta = getByTestId("ta") as HTMLTextAreaElement;
+  stubScrollHeight(ta, 800);
+  ta.focus();
+  fireEvent.compositionStart(ta);
+  fireEvent.input(ta, { target: { value: "draft text" } });
+  act(() => vi.advanceTimersByTime(20));
+  expect(revealTextareaCaret).not.toHaveBeenCalled();
+  fireEvent.compositionEnd(ta);
+  act(() => vi.advanceTimersByTime(40));
+  expect(revealTextareaCaret).toHaveBeenCalledOnce();
+  vi.mocked(revealTextareaCaret).mockClear();
+  fireEvent.input(ta);
+  ta.blur();
+  act(() => vi.advanceTimersByTime(20));
+  expect(revealTextareaCaret).not.toHaveBeenCalled();
+  ta.focus();
+  fireEvent.input(ta);
+  ta.value = "restored draft";
+  act(() => vi.advanceTimersByTime(20));
+  expect(revealTextareaCaret).not.toHaveBeenCalled();
+});
+
+it.each(["blur", "replacement", "composition", "unmount"])(
+  "cancels a measured edit before reveal on %s",
+  (reason) => {
+    vi.useFakeTimers();
+    const { getByTestId, unmount } = render(<Harness value="draft" />);
+    const ta = getByTestId("ta") as HTMLTextAreaElement;
+    stubScrollHeight(ta, 800);
+    ta.focus();
+    fireEvent.input(ta, { target: { value: "draft\n" } });
+    act(() => vi.advanceTimersByTime(20));
+    expect(revealTextareaCaret).not.toHaveBeenCalled();
+    if (reason === "blur") ta.blur();
+    if (reason === "replacement") ta.value = "restored draft";
+    if (reason === "composition") fireEvent.compositionStart(ta);
+    if (reason === "unmount") unmount();
+    act(() => vi.advanceTimersByTime(40));
+    expect(revealTextareaCaret).not.toHaveBeenCalled();
+  },
+);

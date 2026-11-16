@@ -94,8 +94,11 @@ def _assert_active_hit(page: Page, hit: dict[str, Any]) -> None:
         prefix.selectNodeContents(body);
         prefix.setEnd(range.startContainer, range.startOffset);
         const rect = range.getBoundingClientRect();
+        const scroller = owner.closest('[role="log"]')?.firstElementChild;
+        const view = scroller?.getBoundingClientRect();
         return prefix.toString().length === start && range.toString().length === end - start
-            && rect.width > 0 && rect.height > 0;
+            && rect.width > 0 && rect.height > 0 && !!view
+            && rect.top >= view.top - 1 && rect.bottom <= view.bottom + 1;
     }""",
         arg={"itemId": hit["item_id"], **hit["ranges"][0]},
         timeout=5_000,
@@ -325,8 +328,15 @@ def test_unified_search_results_filters_and_commands(
     expect(page).to_have_url(first.url)
     expect(_view(page, "Chat A")).to_be_visible()
     _assert_active_hit(page, hits[1])
-    expect(composer).to_have_value(draft)
     bar = _view(page, "Chat A").get_by_test_id("context-search-bar")
+    # Palette message navigation dismisses the mobile drawer without clearing Search.
+    if viewport_kind == "mobile":
+        expect(query).to_have_count(0)
+        bar.get_by_role("button", name="Edit search query", exact=True).click()
+    expect(query).to_have_value("needle")
+    if viewport_kind == "mobile":
+        page.get_by_test_id("sidebar-scrim").click(position={"x": 385, "y": 500})
+    expect(composer).to_have_value(draft)
     expect(bar).not_to_contain_text(re.compile(r"In this chat|unavailable", re.IGNORECASE))
     bar.get_by_role("button", name="Close search", exact=True).click()
 
@@ -349,6 +359,12 @@ def test_unified_search_results_filters_and_commands(
     expect(archive).to_be_visible()
     _assert_active_hit(page, hits[-1])
     archive_bar = archive.get_by_test_id("context-search-bar")
+    if viewport_kind == "mobile":
+        expect(query).to_have_count(0)
+        archive_bar.get_by_role("button", name="Edit search query", exact=True).click()
+    expect(query).to_have_value("needle")
+    if viewport_kind == "mobile":
+        page.get_by_test_id("sidebar-scrim").click(position={"x": 385, "y": 500})
     expect(archive_bar).not_to_contain_text("unavailable")
     archive_bar.get_by_role("button", name="Close search", exact=True).click()
 

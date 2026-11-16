@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
@@ -138,6 +139,8 @@ function artifactRules(mode) {
           ["--ta-control-surface", tokens.muted],
           ["--ta-secondary", tokens.secondary],
           ["--ta-border", tokens.border],
+          ["--ta-input", tokens.input],
+          ["--ta-input", tokens.input],
           ["--ta-ring", tokens.primary],
           ["--ta-success", DESIGN_SEMANTIC_TOKENS.success],
           ["--ta-warning", DESIGN_SEMANTIC_TOKENS.warning],
@@ -176,6 +179,8 @@ function artifactRules(mode) {
           ["--ta-control-surface", tokens.muted],
           ["--ta-secondary", tokens.secondary],
           ["--ta-border", tokens.border],
+          ["--ta-input", tokens.input],
+          ["--ta-input", tokens.input],
           ["--ta-ring", tokens.primary],
           ["--ta-error", DESIGN_DARK_SEMANTIC_TOKENS.destructive],
           ["color-scheme", "dark"],
@@ -249,7 +254,24 @@ const manifest = {
     network: "none",
   },
   native_behavior: {
-    supported: ["tabs", "disclosure", "arrowless tooltip", "theme control", "density control"],
+    supported: [
+      "tabs",
+      "disclosure",
+      "arrowless tooltip",
+      "theme control",
+      "density control",
+      "native checkbox and mixed state",
+      "native range",
+      "native progress",
+    ],
+    form_controls: {
+      checkbox:
+        "input[type=checkbox]; .ta-choice label supplies the touch target; data-ta-mixed initializes indeterminate",
+      range:
+        "input[type=range]; native min/max/step/value; optional refresh(root) after programmatic writes",
+      progress:
+        "progress[value][max]; omit value for unknown progress; ta-progress--usage uses the flat usage track",
+    },
     parity_limits: [
       "Native adapters do not import React or Radix behavior.",
       "Native select popups and radio paint remain browser-owned.",

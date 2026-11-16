@@ -1,4 +1,6 @@
+// Modified for Triune.
 import { type RefObject, useLayoutEffect, useRef } from "react";
+import { revealTextareaCaret } from "@/lib/textareaCaret";
 
 /**
  * Cache scrollTop of all ancestor elements up to document.documentElement.
@@ -185,5 +187,54 @@ export function useAutoGrowTextarea(
     const ro = new ResizeObserver(() => measureTextarea(ta, maxRows, onGrowthRef.current, true));
     ro.observe(ta);
     return () => ro.disconnect();
+  }, [ref, maxRows]);
+
+  // Native and custom input share this path; restored drafts and resize-only
+  // measurements never acquire permission to move a caret's scroll owner.
+  useLayoutEffect(() => {
+    const ta = ref.current;
+    if (!ta) return;
+    let frame = 0;
+    let composing = false;
+    let editedValue: string | null = null;
+    const schedule = () => {
+      editedValue = ta.value;
+      cancelAnimationFrame(frame);
+      if (composing || ta.ownerDocument.activeElement !== ta) return;
+      frame = requestAnimationFrame(() => {
+        if (editedValue !== ta.value || ta.ownerDocument.activeElement !== ta) return;
+        measureTextarea(ta, maxRows, onGrowthRef.current, false);
+        // A quoted flex field can keep its old height until ResizeObserver
+        // settles the released wrapper; reveal against that final layout.
+        frame = requestAnimationFrame(() => {
+          if (editedValue !== ta.value || ta.ownerDocument.activeElement !== ta) return;
+          editedValue = null;
+          revealTextareaCaret(ta);
+        });
+      });
+    };
+    const start = () => {
+      composing = true;
+      cancelAnimationFrame(frame);
+    };
+    const end = () => {
+      composing = false;
+      schedule();
+    };
+    const blur = () => {
+      editedValue = null;
+      cancelAnimationFrame(frame);
+    };
+    ta.addEventListener("input", schedule, true);
+    ta.addEventListener("compositionstart", start);
+    ta.addEventListener("compositionend", end);
+    ta.addEventListener("blur", blur);
+    return () => {
+      cancelAnimationFrame(frame);
+      ta.removeEventListener("input", schedule, true);
+      ta.removeEventListener("compositionstart", start);
+      ta.removeEventListener("compositionend", end);
+      ta.removeEventListener("blur", blur);
+    };
   }, [ref, maxRows]);
 }

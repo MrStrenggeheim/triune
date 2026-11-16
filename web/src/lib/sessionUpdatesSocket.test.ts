@@ -1,8 +1,11 @@
+// Modified for Triune.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as host from "./host";
 import {
   HEARTBEAT_WATCHDOG_MS,
   nextPushedSession,
   sessionUpdatesSocket,
+  TRANSCRIPT_NEGOTIATION_MS,
 } from "./sessionUpdatesSocket";
 
 // Minimal stand-in for the browser WebSocket: records sends/closes and lets
@@ -21,6 +24,7 @@ class FakeWebSocket {
   onclose: (() => void) | null = null;
   closeCount = 0;
   readonly url: string;
+  readonly sent: Record<string, unknown>[] = [];
 
   constructor(url: string) {
     // Plain field assignment, not a TS parameter property — the latter is
@@ -29,8 +33,8 @@ class FakeWebSocket {
     FakeWebSocket.instances.push(this);
   }
 
-  send(): void {
-    // The watch-set send is irrelevant to the watchdog; ignore it.
+  send(data: string): void {
+    this.sent.push(JSON.parse(data));
   }
 
   close(): void {
@@ -190,5 +194,189 @@ describe("nextPushedSession", () => {
     // already committed to the authoritative id would be handed a second one.
     latestWs().emit({ type: "changed", items: [{ id: "conv_late" }] });
     await expect(mine).resolves.toBeNull();
+  });
+});
+
+describe("sessionUpdatesSocket transcript multiplexing", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    FakeWebSocket.instances = [];
+    vi.stubGlobal("WebSocket", FakeWebSocket as unknown as typeof WebSocket);
+    sessionUpdatesSocket.start();
+    latestWs().open();
+  });
+  afterEach(() => {
+    sessionUpdatesSocket.stop();
+    vi.restoreAllMocks();
+    vi.clearAllTimers();
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+  const ready = () => latestWs().emit({ type: "capabilities", transcript_stream: 1 });
+  const event = (id: string, text: string) =>
+    latestWs().emit({
+      type: "session.event",
+      session_id: id,
+      event: { type: "response.output_text.delta", delta: text },
+    });
+  const decode = (value: Uint8Array | undefined) => new TextDecoder().decode(value);
+
+  it("preserves the per-session replica route when host routing is enabled", async () => {
+    const routing = vi.spyOn(host, "isHostRoutingEnabled").mockReturnValue(true);
+    ready();
+    expect(sessionUpdatesSocket.supportsTranscripts()).toBe(false);
+    expect(
+      await sessionUpdatesSocket.openTranscript(
+        "remote-session",
+        new AbortController().signal,
+        { after_position: -1 },
+        false,
+      ),
+    ).toBeNull();
+    expect(latestWs().sent.some((frame) => frame.type === "subscribe")).toBe(false);
+    routing.mockRestore();
+  });
+
+  it("bounds legacy capability negotiation without sending an ignored subscription", async () => {
+    const controller = new AbortController();
+    const open = sessionUpdatesSocket.openTranscript(
+      "legacy",
+      controller.signal,
+      { after_position: -1 },
+      false,
+    );
+    await vi.advanceTimersByTimeAsync(TRANSCRIPT_NEGOTIATION_MS - 1);
+    expect(latestWs().sent.filter((frame) => frame.type === "subscribe")).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await open).toBeNull();
+    ready();
+    expect(sessionUpdatesSocket.supportsTranscripts()).toBe(true);
+  });
+
+  it("routes two transcripts and watch traffic over one socket with independent cancellation", async () => {
+    ready();
+    const a = new AbortController();
+    const b = new AbortController();
+    const first = await sessionUpdatesSocket.openTranscript(
+      "a",
+      a.signal,
+      { after_position: 10, after_revision: 22, stream_epoch: "epoch" },
+      false,
+    );
+    const second = await sessionUpdatesSocket.openTranscript(
+      "b",
+      b.signal,
+      { after_position: -1 },
+      true,
+    );
+    const firstReader = first!.body!.getReader();
+    const secondReader = second!.body!.getReader();
+    const listFrames: unknown[] = [];
+    const stop = sessionUpdatesSocket.subscribe((frame) => listFrames.push(frame));
+    try {
+      expect(FakeWebSocket.instances).toHaveLength(1);
+      expect(latestWs().sent).toContainEqual({
+        type: "subscribe",
+        session_id: "a",
+        after_position: 10,
+        after_revision: 22,
+        stream_epoch: "epoch",
+        idle: false,
+      });
+      event("unsubscribed", "private");
+      event("a", "first");
+      expect(decode((await firstReader.read()).value)).toContain('"delta":"first"');
+      event("b", "second");
+      expect(decode((await secondReader.read()).value)).toContain('"delta":"second"');
+      latestWs().emit({ type: "changed", items: [] });
+      expect(listFrames).toEqual([{ type: "changed", items: [] }]);
+      a.abort();
+      expect((await firstReader.read()).done).toBe(true);
+      expect(latestWs().sent.at(-1)).toEqual({ type: "unsubscribe", session_id: "a" });
+      event("b", "still live");
+      expect(decode((await secondReader.read()).value)).toContain("still live");
+      expect(latestWs().closeCount).toBe(0);
+    } finally {
+      stop();
+      a.abort();
+      b.abort();
+    }
+  });
+
+  it("reports idle presence without recycling or resetting any membership", async () => {
+    ready();
+    const controller = new AbortController();
+    await sessionUpdatesSocket.openTranscript(
+      "a",
+      controller.signal,
+      { after_position: -1 },
+      false,
+    );
+    const socket = latestWs();
+    const before = socket.sent.length;
+    sessionUpdatesSocket.reportPresence(true);
+    sessionUpdatesSocket.reportPresence(false);
+    expect(socket.sent.slice(before)).toEqual([
+      { type: "presence", idle: true },
+      { type: "presence", idle: false },
+    ]);
+    expect(socket.closeCount).toBe(0);
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    controller.abort();
+  });
+
+  it("isolates a subscription authorization error and retains its explicit code", async () => {
+    ready();
+    const a = new AbortController();
+    const b = new AbortController();
+    const first = await sessionUpdatesSocket.openTranscript(
+      "a",
+      a.signal,
+      { after_position: -1 },
+      false,
+    );
+    const second = await sessionUpdatesSocket.openTranscript(
+      "b",
+      b.signal,
+      { after_position: -1 },
+      false,
+    );
+    const readA = first!.body!.getReader();
+    const readB = second!.body!.getReader();
+    latestWs().emit({ type: "session.error", session_id: "a", code: "forbidden" });
+    expect(decode((await readA.read()).value)).toContain('"code":"forbidden"');
+    expect((await readA.read()).done).toBe(true);
+    event("b", "authorized");
+    expect(decode((await readB.read()).value)).toContain("authorized");
+    expect(latestWs().closeCount).toBe(0);
+    a.abort();
+    b.abort();
+  });
+
+  it("does not deliver old-socket frames after scope stop and restart", async () => {
+    ready();
+    const old = latestWs();
+    const staleMessage = old.onmessage!;
+    sessionUpdatesSocket.stop();
+    sessionUpdatesSocket.start();
+    latestWs().open();
+    ready();
+    const controller = new AbortController();
+    const response = await sessionUpdatesSocket.openTranscript(
+      "same-id",
+      controller.signal,
+      { after_position: -1 },
+      false,
+    );
+    staleMessage({
+      data: JSON.stringify({
+        type: "session.event",
+        session_id: "same-id",
+        event: { type: "response.output_text.delta", delta: "old viewer" },
+      }),
+    } as MessageEvent);
+    event("same-id", "current viewer");
+    expect(decode((await response!.body!.getReader().read()).value)).toContain("current viewer");
+    controller.abort();
   });
 });

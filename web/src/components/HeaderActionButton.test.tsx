@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { createRef } from "react";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
@@ -25,6 +26,11 @@ it("keeps the button ref and events on the touch target and status indicators in
   expect(ref.current).toBe(button);
   expect(screen.getAllByRole("button")).toHaveLength(1);
   expect(button).toHaveClass("size-6", "max-md:size-11");
+  expect(button).toHaveClass(
+    "hover:bg-transparent",
+    "active:bg-transparent",
+    "aria-expanded:bg-transparent",
+  );
   const surface = button.querySelector("[data-header-action-surface]")!;
   expect(surface).toHaveClass("size-6", "[&_svg:not([data-icon-size])]:size-4");
   expect(button.querySelector('[data-icon-size="status"]')).toHaveClass("size-2.5");

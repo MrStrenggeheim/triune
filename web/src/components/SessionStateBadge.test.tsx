@@ -1,7 +1,8 @@
+// Modified for Triune.
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { SessionStateBadge } from "./SessionStateBadge";
+import { SessionStateBadge, getSessionStatusGroups } from "./SessionStateBadge";
 import type { SessionState } from "@/hooks/useSessionState";
 
 function renderBadge(state: SessionState) {
@@ -94,3 +95,45 @@ describe("SessionStateBadge — per-state rendering", () => {
     );
   });
 });
+
+it("offers the same count-aware compact visual without a nested tooltip", () => {
+  render(<SessionStateBadge state={{ kind: "awaiting", count: 4 }} compact tooltip={false} />);
+  const badge = screen.getByRole("img", { name: "4 approval prompts waiting" });
+  expect(badge.querySelector("svg")).not.toBeNull();
+  expect(badge).not.toHaveTextContent("Needs response");
+  expect(badge).not.toHaveAttribute("data-slot", "tooltip-trigger");
+});
+
+it.each([
+  {
+    states: [
+      { kind: "error" },
+      { kind: "awaiting", count: 2 },
+      { kind: "running" },
+      { kind: "unseen" },
+    ],
+    draft: true,
+    attention: "error",
+    activity: "running",
+  },
+  {
+    states: [{ kind: "awaiting", count: 2 }, { kind: "running" }],
+    draft: true,
+    attention: "awaiting",
+    activity: "running",
+  },
+  { states: [{ kind: "unseen" }], draft: true, attention: "draft", activity: "unseen" },
+  { states: [], draft: false, attention: undefined, activity: undefined },
+] satisfies {
+  states: SessionState[];
+  draft: boolean;
+  attention: string | undefined;
+  activity: string | undefined;
+}[])(
+  "selects independent attention=$attention and activity=$activity groups",
+  ({ states, draft, attention, activity }) => {
+    const groups = getSessionStatusGroups(states, draft);
+    expect(groups.attention?.kind).toBe(attention);
+    expect(groups.activity?.kind).toBe(activity);
+  },
+);

@@ -5,12 +5,12 @@
   "namespace": "ta-* / --ta-*",
   "assets": {
     "triune-artifact.css": {
-      "bytes": 15514,
-      "sha256": "080c6a82cb254800e0be769f3013a6c7fd9769a3a03b01280349b7e073529e4f"
+      "bytes": 18588,
+      "sha256": "b4878bcc5c3cacf236107493440866e78f23d97d0e4bd9ac9c3f0df60e0f7d74"
     },
     "triune-artifact.js": {
-      "bytes": 4267,
-      "sha256": "3d2488883ab52e892f6de06f3ab103b80eca7cc69ff96ac3b7ee3ed983651498",
+      "bytes": 5131,
+      "sha256": "3ce379eb682d14e211ff3eaa5239e4b05f47333538dc6b6203dec81c3b40220e",
       "optional": true
     },
     "triune-icons.svg": {
@@ -31,7 +31,21 @@
     "network": "none"
   },
   "native_behavior": {
-    "supported": ["tabs", "disclosure", "arrowless tooltip", "theme control", "density control"],
+    "supported": [
+      "tabs",
+      "disclosure",
+      "arrowless tooltip",
+      "theme control",
+      "density control",
+      "native checkbox and mixed state",
+      "native range",
+      "native progress"
+    ],
+    "form_controls": {
+      "checkbox": "input[type=checkbox]; .ta-choice label supplies the touch target; data-ta-mixed initializes indeterminate",
+      "range": "input[type=range]; native min/max/step/value; optional refresh(root) after programmatic writes",
+      "progress": "progress[value][max]; omit value for unknown progress; ta-progress--usage uses the flat usage track"
+    },
     "parity_limits": [
       "Native adapters do not import React or Radix behavior.",
       "Native select popups and radio paint remain browser-owned.",
@@ -109,6 +123,7 @@
     "--ta-muted": "--muted-foreground",
     "--ta-secondary": "--secondary",
     "--ta-border": "--border",
+    "--ta-input": "--input",
     "--ta-success": "--success",
     "--ta-warning": "--warning",
     "--ta-error": "--destructive",
@@ -121,6 +136,7 @@
     "--ta-hover": "--workspace-hover-on-content",
     "--ta-hover-chrome": "--workspace-hover-on-chrome",
     "--ta-control-hover": "--workspace-control-hover",
+    "--ta-control-active-border": "--workspace-control-active-border",
     "--ta-control-active": "--workspace-control-active",
     "--ta-close-hover": "--workspace-close-hover",
     "--ta-close-active": "--workspace-close-active",

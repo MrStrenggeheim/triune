@@ -3,6 +3,12 @@
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setEmbedRoot, setEmbedScopeRoot } from "@/lib/host";
+import {
+  mermaidBoundary,
+  mermaidContrast,
+  mermaidTextOn,
+  mixMermaidColor,
+} from "./mermaidPresentation";
 import { resolveMermaidAppearance, triuneMermaid, useMermaidAppearance } from "./mermaidTheme";
 
 const engine = vi.hoisted(() => ({ initialize: vi.fn(), render: vi.fn() }));
@@ -30,7 +36,7 @@ afterEach(() => {
 });
 
 describe("resolved Mermaid theme", () => {
-  it("uses app tokens, measured UI typography and only the three renderer radius gaps", () => {
+  it("uses app tokens and measured UI typography while preserving semantic geometry", () => {
     const style = document.documentElement.style;
     style.setProperty("--workspace-content", "#fefefe");
     style.setProperty("--foreground", "#123456");
@@ -51,21 +57,69 @@ describe("resolved Mermaid theme", () => {
       primaryColor: "#fefefe",
       primaryTextColor: "#123456",
       activationBorderColor: "#1c7455",
-      actorBkg: "#eef7f3",
+      actorBkg: "#fefefe",
       fontSize: "17px",
-      radius: 6,
     });
-    expect(config.themeCSS).toContain(".cluster > rect { rx: 8px; ry: 8px; }");
-    expect(config.themeCSS).toContain("rect.actor { rx: 6px; ry: 6px; }");
-    expect(config.themeCSS).toContain("rect.note { rx: 4px; ry: 4px; }");
-    expect(config.themeCSS).not.toMatch(/\.node|circle|path|font|fill|stroke/);
+    expect(config.themeVariables).not.toHaveProperty("radius");
+    expect(config.themeCSS).not.toMatch(/\brx:|\bry:|border-radius/);
+    expect(config.themeCSS).toContain("font-size:17px");
+    expect(config.flowchart).toMatchObject({
+      nodeSpacing: 24,
+      rankSpacing: 56,
+      padding: 12,
+      subGraphTitleMargin: { top: 4, bottom: 8 },
+    });
     expect(config.flowchart?.useMaxWidth).toBe(false);
   });
 
   it("composites translucent boundaries onto the actual content surface", () => {
     document.documentElement.style.setProperty("--workspace-content", "#18181b");
     document.documentElement.style.setProperty("--border", "rgba(255, 0, 0, 0.5)");
-    expect(resolveMermaidAppearance("dark").config.themeVariables?.clusterBorder).toBe("#8c0c0e");
+    expect(resolveMermaidAppearance("dark").config.themeVariables?.gridColor).toBe("#8c0c0e");
+  });
+
+  it.each(["light", "dark"] as const)(
+    "uses the selected accent and fill-aware contrast in %s mode",
+    (mode) => {
+      const style = document.documentElement.style;
+      const canvas = mode === "dark" ? "#18181b" : "#fefefe";
+      style.setProperty("--workspace-content", canvas);
+      style.setProperty("--foreground", canvas); // Deliberately unreadable custom preference.
+      style.setProperty("--primary", "#bb9900");
+      style.setProperty("--link", "#ddcc44");
+      style.setProperty("--border-strong", canvas);
+      style.setProperty("--muted-foreground", canvas);
+      const { config, surfaces } = resolveMermaidAppearance(mode);
+      expect(surfaces.groups).toEqual(
+        [0.08, 0.16, 0.24].map((weight) =>
+          mixMermaidColor(mode === "dark" ? "#ddcc44" : "#bb9900", canvas, weight),
+        ),
+      );
+      const tokens = config.themeVariables!;
+      expect(mermaidContrast(tokens.primaryTextColor, canvas)).toBeGreaterThanOrEqual(4.5);
+      for (const fill of [canvas, ...surfaces.groups]) {
+        expect(mermaidContrast(tokens.clusterBorder, fill)).toBeGreaterThanOrEqual(3.15);
+        expect(mermaidContrast(tokens.lineColor, fill)).toBeGreaterThanOrEqual(3.15);
+      }
+      for (let index = 0; index < 8; index++) {
+        expect(
+          mermaidContrast(tokens[`gitBranchLabel${index}`], tokens[`git${index}`]),
+        ).toBeGreaterThanOrEqual(4.5);
+        expect(
+          mermaidContrast(tokens[`cScaleLabel${index}`], tokens[`cScale${index}`]),
+        ).toBeGreaterThanOrEqual(4.5);
+      }
+      expect(config).not.toHaveProperty("packet");
+      expect(config).not.toHaveProperty("radar");
+    },
+  );
+
+  it("chooses a passing foreground when neither preference works and rejects impossible shared boundaries", () => {
+    expect(mermaidTextOn("#ffffff", "#eeeeee", "#dddddd")).toBe("#000000");
+    expect(mermaidTextOn("#000000", "#111111", "#222222")).toBe("#ffffff");
+    expect(() => mermaidBoundary("#888888", ["#000000", "#888888", "#ffffff"], "#111111")).toThrow(
+      "cannot share",
+    );
   });
 
   it("resolves the embedded dark root rather than unrelated document tokens", () => {

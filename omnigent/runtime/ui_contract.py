@@ -14,7 +14,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 from urllib.parse import urlsplit
 
-UI_CONTRACT_VERSION = "2026-11-15.1"
+UI_CONTRACT_VERSION = "2026-11-16.1"
 ARTIFACT_KIT_VERSION = "1.0.0"
 
 # Output syntax is product guidance. Action names below are filtered against
@@ -31,7 +31,8 @@ _GROUPS: dict[str, dict[str, Any]] = {
             " math$$; fenced mermaid diagrams; real source links."
         ),
         "ui": (
-            "Selectable message text, code controls, KaTeX math, Mermaid preview and source links."
+            "Selectable text, code controls, math and Appearance-aware Mermaid previews. "
+            "Preserve native diagram shapes; the renderer supplies default fonts and colors."
         ),
         "lifecycle": "Use authoritative final/progress phases supplied by the adapter.",
         "persistence": "Captured transcript text and supported source annotations.",
@@ -84,7 +85,10 @@ _GROUPS: dict[str, dict[str, Any]] = {
             "Update existing plan/task identity, with pending/in-progress/completed "
             "states and provider-supported plan review."
         ),
-        "ui": "Plan shelf, task progress and status cards.",
+        "ui": (
+            "Plan/task progress; settled shelves hide automatically and remain available "
+            "in the chat menu."
+        ),
         "lifecycle": (
             "Keep original dispatch task; progress cannot replace an authoritative final report."
         ),
@@ -112,11 +116,14 @@ _GROUPS: dict[str, dict[str, Any]] = {
             "Use a short capitalized task heading separately from the full instructions."
         ),
         "output": (
-            "One updating activity card per child with assignment provenance; attributed "
-            "replies and peer incoming/outgoing "
-            "messages retain linked source chats."
+            "One updating child card with a shared display name, short task and latest "
+            "verified Instruction/Reply; full source messages remain in its details. "
+            "Peer messages retain exact receipt identity and linked source chats."
         ),
-        "ui": "Stable message cards, child tabs and originating Orchestration.",
+        "ui": (
+            "Shared identity across cards, shelf and Orchestration; activity joins "
+            "expandable tool groups."
+        ),
         "lifecycle": (
             "Acceptance is not execution; readable history does not imply "
             "reply/steering/stop capability."
@@ -208,11 +215,13 @@ _GROUPS: dict[str, dict[str, Any]] = {
             "kit CSS/icons/runtime. Full documents and fragments may use local "
             "HTML/CSS/JavaScript, SVG and canvas. Align labeled controls with "
             "ta-control-row and ta-field; match button/input/select --sm or --xs "
-            "sizes. Keep labels above their controls."
+            "sizes. Keep labels above controls. Use ta-choice for checkbox labels, "
+            "native range/progress controls and data-ta-init for kit form helpers."
         ),
         "ui": (
-            "Isolated interactive frame with highlighted source, portable download, "
-            "and supported view-tab/new-window actions in More."
+            "One isolated frame with top controls, highlighted source and portable download. "
+            "Inline height is bounded with scrolling/Expand; view-tab/new-window "
+            "actions remain available."
         ),
         "lifecycle": (
             "Host updates theme/density/visibility; use the injected "

@@ -3009,20 +3009,22 @@ def _merge_disallowed_tools(args: list[str], extra: tuple[str, ...]) -> list[str
 _NATIVE_INPUT_PENDING_KEY = "native_input_pending"
 _NATIVE_INPUT_RECEIPTS_KEY = "native_input_receipts"
 _NATIVE_INPUT_RECEIPT_TTL_S = 60.0
+_NATIVE_INPUT_TOKEN_PREFIX = "[Triune input receipt: "
+_NATIVE_INPUT_TOKENS_KEY = "native_input_receipt_tokens"
 
 
 def _native_input_prompt_hash(text: str) -> str:
     return hashlib.sha256(_unwrap_pasted_content_markers(text).strip().encode()).hexdigest()
 
 
-def _arm_native_input_receipt(bridge_dir: Path, text: str) -> None:
-    """Bind only structured System submissions to their server-issued input identity."""
+def _arm_native_input_receipt(bridge_dir: Path, text: str) -> str:
+    """Wrap peer delivery in a one-use capability bound to private submission state."""
     from omnigent.native.input_diagnostics import current_input_attributes
 
     attributes = current_input_attributes()
     input_id = (
         attributes.get("input_stable_id")
-        if attributes.get("input_origin_kind") == "system"
+        if attributes.get("input_origin_kind") in ("system", "peer")
         else None
     )
     with _bridge_metadata_write_lock(bridge_dir):
@@ -3036,17 +3038,66 @@ def _arm_native_input_receipt(bridge_dir: Path, text: str) -> None:
             and isinstance(session_id, str)
             and session_id
         ):
-            state[_NATIVE_INPUT_PENDING_KEY] = {
+            pending = {
                 "input_id": input_id,
                 "session_id": session_id,
-                "prompt_hash": _native_input_prompt_hash(text),
+                "origin_kind": attributes["input_origin_kind"],
+                "delivery_attempt_id": attributes.get("delivery_attempt_id"),
                 "armed_at": time.time(),
             }
+            if attributes["input_origin_kind"] == "system":
+                pending["prompt_hash"] = _native_input_prompt_hash(text)
+            else:
+                attempt = attributes.get("delivery_attempt_id")
+                if not isinstance(attempt, str) or not re.fullmatch(r"[0-9a-f]{32}", attempt):
+                    raise ValueError("Peer delivery requires a structured delivery attempt")
+                previous_generation = state.get("native_input_generation", 0)
+                if (
+                    not isinstance(previous_generation, int)
+                    or isinstance(previous_generation, bool)
+                    or previous_generation < 0
+                ):
+                    raise ValueError("Invalid native receipt generation")
+                generation = previous_generation + 1
+                state["native_input_generation"] = generation
+                pending["generation"] = generation
+                pending["receipt_token"] = f"v1:{generation}:{attempt}:{secrets.token_urlsafe(32)}"
+                text = f"{_NATIVE_INPUT_TOKEN_PREFIX}{pending['receipt_token']}]\n{text}"
+            state[_NATIVE_INPUT_PENDING_KEY] = pending
+        elif attributes.get("input_origin_kind") == "peer":
+            raise ValueError("Peer delivery requires a pinned native session")
         _write_json_file(bridge_dir / _STATE_FILE, state)
+    return text
+
+
+def _split_native_input_envelope(text: str) -> tuple[str | None, str]:
+    first, separator, body = _unwrap_pasted_content_markers(text).partition("\n")
+    if separator and first.startswith(_NATIVE_INPUT_TOKEN_PREFIX) and first.endswith("]"):
+        token = first[len(_NATIVE_INPUT_TOKEN_PREFIX) : -1]
+        if re.fullmatch(r"v1:[1-9][0-9]*:[0-9a-f]{32}:[A-Za-z0-9_-]{43}", token):
+            return token, body
+    return None, text
+
+
+def _commit_native_input_receipt(state: _JsonObject, pending: _JsonObject, prompt_id: str) -> None:
+    receipts = state.get(_NATIVE_INPUT_RECEIPTS_KEY)
+    receipts = dict(receipts) if isinstance(receipts, dict) else {}
+    key = f"{pending['session_id']}:{prompt_id}"
+    if key in receipts and receipts[key] != pending["input_id"]:
+        raise ValueError("Native prompt already belongs to another input")
+    receipts[key] = pending["input_id"]
+    peer_tokens = state.get(_NATIVE_INPUT_TOKENS_KEY)
+    peer_keys = set(peer_tokens) if isinstance(peer_tokens, dict) else set()
+    retained = dict(
+        [(key, value) for key, value in receipts.items() if key not in peer_keys][-64:]
+    )
+    retained.update({key: receipts[key] for key in peer_keys if key in receipts})
+    state[_NATIVE_INPUT_RECEIPTS_KEY] = retained
+    state.pop(_NATIVE_INPUT_PENDING_KEY, None)
 
 
 def _record_native_input_receipt(state: _JsonObject, payload: _JsonObject) -> None:
-    """Associate native hook prompt_id with the private injection record, never a text prefix."""
+    """Require exact transport identity for peers and a same-session submission hook."""
     pending = state.get(_NATIVE_INPUT_PENDING_KEY)
     prompt_id = payload.get("prompt_id")
     prompt = payload.get("prompt")
@@ -3057,17 +3108,32 @@ def _record_native_input_receipt(state: _JsonObject, payload: _JsonObject) -> No
         or not isinstance(prompt_id, str)
         or not prompt_id
         or len(prompt_id) > 128
-        or not isinstance(prompt, str)
         or payload.get("session_id") != pending.get("session_id")
-        or not 0 <= time.time() - pending.get("armed_at", 0) <= _NATIVE_INPUT_RECEIPT_TTL_S
-        or _native_input_prompt_hash(prompt) != pending.get("prompt_hash")
+        or payload.get("session_id") != state.get("claude_session_id")
+        or not isinstance(prompt, str)
     ):
         return
-    receipts = state.get(_NATIVE_INPUT_RECEIPTS_KEY)
-    receipts = dict(receipts) if isinstance(receipts, dict) else {}
-    receipts[f"{payload['session_id']}:{prompt_id}"] = pending["input_id"]
-    state[_NATIVE_INPUT_RECEIPTS_KEY] = dict(list(receipts.items())[-64:])
-    state.pop(_NATIVE_INPUT_PENDING_KEY, None)
+    if pending.get("origin_kind") == "peer":
+        token, _ = _split_native_input_envelope(prompt)
+        expected = pending.get("receipt_token")
+        if (
+            token is None
+            or not isinstance(expected, str)
+            or not secrets.compare_digest(token, expected)
+            or pending.get("generation") != state.get("native_input_generation")
+        ):
+            return
+        tokens = state.get(_NATIVE_INPUT_TOKENS_KEY)
+        tokens = dict(tokens) if isinstance(tokens, dict) else {}
+        tokens[f"{pending['session_id']}:{prompt_id}"] = token
+        state[_NATIVE_INPUT_TOKENS_KEY] = tokens
+    elif not 0 <= time.time() - pending.get(
+        "armed_at", 0
+    ) <= _NATIVE_INPUT_RECEIPT_TTL_S or _native_input_prompt_hash(prompt) != pending.get(
+        "prompt_hash"
+    ):
+        return
+    _commit_native_input_receipt(state, pending, prompt_id)
 
 
 def native_input_receipt_for_item(
@@ -3104,10 +3170,45 @@ def native_input_receipt_for_item(
     waiting = (
         isinstance(pending, dict)
         and pending.get("session_id") == item.native_session_id
-        and 0 <= time.time() - pending.get("armed_at", 0) <= _NATIVE_INPUT_RECEIPT_TTL_S
-        and pending.get("prompt_hash") == _native_input_prompt_hash(text)
+        and (
+            _split_native_input_envelope(text)[0] == pending.get("receipt_token")
+            and pending.get("receipt_token") is not None
+            and pending.get("generation") == state.get("native_input_generation")
+            if pending.get("origin_kind") == "peer"
+            else (
+                0 <= time.time() - pending.get("armed_at", 0) <= _NATIVE_INPUT_RECEIPT_TTL_S
+                and pending.get("prompt_hash") == _native_input_prompt_hash(text)
+            )
+        )
     )
     return None, waiting
+
+
+def apply_native_input_receipt(
+    bridge_dir: Path, item: ClaudeTranscriptItem
+) -> tuple[ClaudeTranscriptItem, bool]:
+    """Bind the echo and remove only its verified transport envelope before persistence."""
+    input_id, waiting = native_input_receipt_for_item(bridge_dir, item)
+    if input_id is None:
+        return item, waiting
+    state = _read_json_file(bridge_dir / _STATE_FILE)
+    tokens = state.get(_NATIVE_INPUT_TOKENS_KEY, {}) if isinstance(state, dict) else {}
+    expected = (
+        tokens.get(f"{item.native_session_id}:{item.native_prompt_id}")
+        if isinstance(tokens, dict)
+        else None
+    )
+    content = item.data.get("content")
+    if isinstance(expected, str):
+        if not isinstance(content, list) or not content or not isinstance(content[0], dict):
+            raise ValueError("Native receipt echo is missing its authenticated envelope")
+        text = content[0].get("text")
+        token, body = _split_native_input_envelope(text) if isinstance(text, str) else (None, "")
+        if token is None or not secrets.compare_digest(token, expected):
+            raise ValueError("Native receipt echo does not carry its authenticated envelope")
+        content = [{**content[0], "text": body}, *content[1:]]
+        item = replace(item, data={**item.data, "content": content})
+    return replace(item, input_stable_id=input_id), False
 
 
 def record_hook_event(bridge_dir: Path, payload: _JsonObject) -> None:
@@ -4561,6 +4662,10 @@ def _paste_and_submit(
     # Clear stale text first, or the paste lands inside the person's draft and
     # Enter submits both together.
     _clear_composer(socket_path, tmux_target)
+    original_text = text
+    text = _arm_native_input_receipt(bridge_dir, text)
+    if text != original_text:
+        needle = _submit_needle(text)
     # Trailing newline absorbs a trailing "\" so it can't escape the submit Enter.
     # Delivered through a tmux buffer, NOT ``send-keys`` argv: tmux caps one
     # client→server command at ~16KB, so per-byte hex argv blew up with
@@ -4636,7 +4741,6 @@ def _paste_and_submit(
         if transcript_path is not None and native_session_id is not None
         else None
     )
-    _arm_native_input_receipt(bridge_dir, text)
     _run_tmux(socket_path, "send-keys", "-t", tmux_target, "Enter")
     delivery_diagnostics.record_details(submit_sent=True)
     if not draft_seen:

@@ -1,3 +1,4 @@
+import { copySessionLink } from "@/lib/sessionShareLink";
 import { middleClickHandlers } from "@/lib/middleClick";
 // Modified for Triune.
 import { recordPointerInput, pointerInputProps } from "./sidebarPointerInteraction";
@@ -80,6 +81,7 @@ import {
   Minimize2Icon,
   MoreHorizontalIcon,
   PencilIcon,
+  LinkIcon,
   PinIcon,
   PinOffIcon,
   PlusIcon,
@@ -90,7 +92,6 @@ import {
   SquareIcon,
   SquareCheckIcon,
   Trash2Icon,
-  UsersIcon,
   WalletIcon,
   XIcon,
   type LucideIcon,
@@ -204,7 +205,12 @@ import { PermissionsModal } from "@/components/PermissionsModal";
 import { ProjectSettingsDialog } from "./ProjectSettingsDialog";
 import { ProjectRowIcon } from "./ProjectPicker";
 import { EmojiPicker } from "@/components/ProjectIconPicker";
-import { SessionStateBadge } from "@/components/SessionStateBadge";
+import {
+  SessionStateBadge,
+  describeSessionState,
+  getSessionStatusGroups,
+  type SidebarStatus,
+} from "@/components/SessionStateBadge";
 import { useSessionRunnerOnline } from "@/hooks/RunnerHealthProvider";
 import { useActiveRootSessionId } from "@/hooks/useSession";
 import { isSessionStoppable } from "@/lib/sessionStop";
@@ -212,7 +218,7 @@ import { SidebarEditRow } from "./SidebarEditRow";
 import { hasSessionDraft, useHasSessionDraft, useSessionDraftIds } from "@/lib/sessionDrafts";
 import { useNow } from "@/hooks/useNow";
 import { useOptimisticTitle } from "@/lib/optimisticTitles";
-import { getSessionState, type SessionState } from "@/hooks/useSessionState";
+import { getSessionState, getSessionStates, type SessionState } from "@/hooks/useSessionState";
 import { useSessionErrorStates } from "@/hooks/useSessionErrors";
 import type { LatestSessionError } from "@/lib/sessionError";
 import { useChatStore } from "@/store/chatStore";
@@ -296,6 +302,9 @@ import { ForkSessionDialog } from "./ForkSessionDialog";
 import { SessionActionMenuItem } from "@/components/SessionActionMenuItem";
 import { useSessionActionRestrictions } from "@/hooks/useSessionActionRestrictions";
 import {
+  sidebarChildInset,
+  SIDEBAR_STATUS_VISUAL,
+  SIDEBAR_MENU_VISUAL,
   SIDEBAR_ROW,
   SIDEBAR_HEADING,
   SIDEBAR_HOVER_HIGHLIGHT,
@@ -316,7 +325,12 @@ import {
   writeSidebarConversationDrag,
   type SidebarConversationDrag,
 } from "./sidebarConversationDrag";
-import { CompactShortcutKeys, newSessionAriaShortcut } from "@/components/KeyboardShortcut";
+import {
+  CompactShortcutKeys,
+  newSessionAriaShortcut,
+  commandAriaShortcut,
+  useCommandShortcutKeys,
+} from "@/components/KeyboardShortcut";
 
 const DROP_TARGET_HIGHLIGHT = SIDEBAR_ACTIVE_HIGHLIGHT;
 
@@ -695,6 +709,7 @@ function SidebarImpl({
   peek,
 }: SidebarProps) {
   const workbenchActions = useWorkbench();
+  const searchKeys = useCommandShortcutKeys("find");
   const contextSearch = useContextSearch();
   const mobileViewport = useIsMobileViewport();
   const sidebarData = useSidebarData();
@@ -1329,17 +1344,23 @@ function SidebarImpl({
                     variant="ghost"
                     className={cn(
                       SIDEBAR_ROW,
-                      "density-row flex w-full justify-start font-normal",
+                      "group/sidebar-search relative density-row flex w-full justify-start font-normal",
                       SIDEBAR_HOVER_HIGHLIGHT,
                     )}
                     onClick={() => {
                       onOpenSearch();
                       if (isMobileViewport()) onClose();
                     }}
+                    tooltipShortcut={searchKeys}
+                    aria-keyshortcuts={commandAriaShortcut("find") || undefined}
                     componentId="sidebar.search"
                   >
                     <SearchIcon className="ui-icon text-muted-foreground" />
                     Search
+                    <CompactShortcutKeys
+                      command="find"
+                      className="pointer-events-none absolute top-1/2 right-2 -translate-y-1/2 opacity-0 group-focus-visible/sidebar-search:opacity-100 [&_kbd]:w-auto [&_kbd]:min-w-4 [&_kbd]:px-0.5 [&_kbd]:font-sans [&_kbd]:text-[10px] [@media((hover:hover)_and_(pointer:fine))]:group-hover/sidebar-search:opacity-100"
+                    />
                   </Button>
                 )}
                 {canvasEnabled && (
@@ -3384,21 +3405,21 @@ function projectMarkerState(
       awaiting += state.count;
     } else if (state?.kind === "running") {
       running = true;
-    } else if (c.id === startingConversationId) {
-      starting = true;
     } else if (state?.kind === "error") {
       error = true;
     } else if (state?.kind === "disconnected") {
       disconnected = true;
+    } else if (c.id === startingConversationId) {
+      starting = true;
     } else if (isConversationUnseen(c.id, c.updated_at, c.status)) {
       unseen = true;
     }
   }
+  if (disconnected) return { kind: "disconnected" };
+  if (error) return { kind: "error" };
   if (awaiting > 0) return { kind: "awaiting", count: awaiting };
   if (running) return { kind: "running" };
   if (starting) return { kind: "starting" };
-  if (error) return { kind: "error" };
-  if (disconnected) return { kind: "disconnected" };
   if (unseen) return { kind: "unseen" };
   return null;
 }
@@ -3559,7 +3580,7 @@ function SectionHeader({
             hasAction && cn(markerFade, actionFocusFade),
           )}
         >
-          <SessionStateBadge state={marker} />
+          <SessionStateBadge state={marker} compact />
         </span>
       )}
     </TooltipButton>
@@ -4122,11 +4143,7 @@ function ConversationSection({
       {!isCollapsed && (
         <div
           className="relative pt-1"
-          style={
-            indentRows
-              ? { paddingInlineStart: "calc(var(--list-row-padding-inline) + 12px)" }
-              : undefined
-          }
+          style={indentRows ? { paddingInlineStart: sidebarChildInset(1) } : undefined}
         >
           {indentRows && <SidebarTreeGuides depth={1} />}
           {conversations.length === 0 && emptyMessage ? (
@@ -4303,6 +4320,7 @@ function ConversationMenuItems({
   const atPinCap = useContext(PinCapacityContext);
   const pinSaving = useContext(PinSavingContext);
   const workbench = useWorkbench();
+  const rebasePath = useRebasePath();
   const grids = useGridSessions();
   const gridLayout = grids?.enabled
     ? (grids.activeGrid?.layout ?? grids.conversationId)
@@ -4383,9 +4401,7 @@ function ConversationMenuItems({
           Open to side
         </C.Item>
       )}
-      {/* Pin/Unpin — mobile-only (md:hidden); desktop uses the
-          hover-revealed quick-pin button. Archived rows omit it (archive
-          outranks pin). */}
+
       {!isArchived && gridOptions.length > 0 && (
         <C.Sub>
           <C.SubTrigger>Open in grid</C.SubTrigger>
@@ -4405,13 +4421,24 @@ function ConversationMenuItems({
         <C.Item
           data-testid="pin-conversation"
           disabled={pinSaving || (!isPinned && atPinCap)}
-          className="md:hidden"
           onSelect={() => onTogglePinned(conversation.id)}
         >
           {isPinned ? <PinOffIcon className="size-3.5" /> : <PinIcon className="size-3.5" />}
           {isPinned ? "Unpin" : "Pin"}
         </C.Item>
       )}
+      <C.Item
+        data-testid="copy-conversation-link"
+        onSelect={() => {
+          void copySessionLink(conversation.id, rebasePath).then(
+            () => showToast("Link copied"),
+            () => showToast("Couldn’t copy link"),
+          );
+        }}
+      >
+        <LinkIcon className="size-3.5" />
+        Copy link
+      </C.Item>
       {/* Single-user mode has no other users to share with — omit the item
           entirely rather than showing it disabled. */}
       {!isSingleUser &&
@@ -4767,6 +4794,7 @@ function ConversationBranchRow({
       <ConversationRow
         {...props}
         treeDepth={ancestors.length}
+        childrenExpanded={expanded && children.length > 0}
         openElsewhere={!props.isActive && branches.openIds.includes(id)}
         treeControl={
           !props.conversation.provisional &&
@@ -4830,6 +4858,7 @@ function ConversationBranchRow({
 
 function ConversationRowImpl({
   treeDepth = 0,
+  childrenExpanded = false,
   treeControl,
   openElsewhere = false,
   conversation,
@@ -4846,6 +4875,7 @@ function ConversationRowImpl({
   onProjectAssigned,
 }: {
   treeDepth?: number;
+  childrenExpanded?: boolean;
   treeControl?: ReactNode;
   openElsewhere?: boolean;
   conversation: Conversation;
@@ -4866,11 +4896,6 @@ function ConversationRowImpl({
 }) {
   const workbench = useWorkbench();
   const nativeDragHandlers = useContext(NativeSidebarDragContext);
-  const atPinCap = useContext(PinCapacityContext);
-  const pinSaving = useContext(PinSavingContext);
-  let pinTooltip = isPinned ? "Unpin" : "Pin";
-  if (pinSaving) pinTooltip = "Saving pins…";
-  else if (!isPinned && atPinCap) pinTooltip = "Unpin a session first";
   const hostsById = useContext(HostsByIdContext);
   const navigate = useNavigate();
   // A client-only `temp:` row (navigate-first create window): no server session
@@ -4997,7 +5022,15 @@ function ConversationRowImpl({
   // Live state and unread flags retain separate indicators.
   const errorConversations = useMemo(() => [conversation], [conversation]);
   const [latestError] = useSessionErrorStates(errorConversations);
-  const derivedState = getSessionState(conversation, latestError);
+  const rowStatus = conversation.activity
+    ? conversation.activity.own_status === "running" ||
+      conversation.activity.own_status === "failed"
+      ? conversation.activity.own_status
+      : !childrenExpanded && conversation.activity.descendant_running === true
+        ? "running"
+        : conversation.activity.own_status
+    : conversation.status;
+  const sessionStates = getSessionStates({ ...conversation, status: rowStatus }, latestError);
   // The bound session's launch/relaunch window: a send is in flight (local
   // status "streaming") or the runner is auto-creating the PTY
   // (`terminalPending`), but the server hasn't confirmed `running` yet — a
@@ -5008,19 +5041,29 @@ function ConversationRowImpl({
   const isStartingUp = useChatStore(
     (s) => s.conversationId === conversation.id && (s.status === "streaming" || s.terminalPending),
   );
-  const sessionState =
-    derivedState?.kind === "awaiting" || derivedState?.kind === "running"
-      ? derivedState
-      : isStartingUp
-        ? { kind: "starting" as const }
-        : (derivedState ?? (hasUnseenMessages ? { kind: "unseen" as const } : null));
-  // The open composer shows its own draft; other rows retain drafts alongside live state.
+  if (isStartingUp && !sessionStates.some((state) => state.kind === "running"))
+    sessionStates.push({ kind: "starting" });
+  if (hasUnseenMessages) sessionStates.push({ kind: "unseen" });
+  // The open composer shows its own draft; other rows retain it in the status description.
   const showDraftIndicator = hasDraft && !isActive;
   const showSharedIndicator = !isOwner;
-  const hasSessionIndicator = sessionState !== null || showDraftIndicator;
-  // The "Show → Updated" timestamp takes the indicator slot only when it's free.
+  const statusGroups = getSessionStatusGroups(sessionStates, showDraftIndicator);
+  const statusIcons = [statusGroups.attention, statusGroups.activity].filter(
+    (state): state is SidebarStatus => state !== null,
+  );
+  const firstStatus = statusIcons.length === 2 ? statusIcons[0] : null;
+  const menuStatus = statusIcons.at(-1);
+  const statusDescription = [
+    ...sessionStates.map((state) => describeSessionState(state).ariaLabel),
+    showDraftIndicator && "Draft",
+    showSharedIndicator && "Shared session",
+  ]
+    .filter(Boolean)
+    .join("; ");
+  const statusDescriptionId = useId();
+  // Updated metadata keeps its own space independently of status changes.
   const show = useContext(SidebarShowContext);
-  const showUpdated = show.includes("updated") && !hasSessionIndicator;
+  const showUpdated = show.includes("updated");
   const metaEnvironment = show.includes("environment") ? (
     <SessionEnvironmentLabel conversation={conversation} hostsById={hostsById} />
   ) : null;
@@ -5107,9 +5150,14 @@ function ConversationRowImpl({
   // and only a row that saw both clicks may enter rename.
   const recentClickTimesRef = useRef<number[]>([]);
 
+  const hierarchyStyle = {
+    "--sidebar-row-inset": sidebarChildInset(treeDepth),
+    marginInlineStart: "var(--sidebar-row-inset)",
+  } as CSSProperties;
   if (isEditing) {
     return (
-      <li>
+      <li className="relative" style={hierarchyStyle}>
+        <SidebarTreeGuides depth={treeDepth} />
         <SidebarEditRow
           // Prefer the just-committed name so a rename reopened before the
           // prop catches up starts from what the row shows.
@@ -5278,16 +5326,11 @@ function ConversationRowImpl({
       className={cn(
         SIDEBAR_ROW,
         "density-row",
-        "density-tree-row relative flex flex-col justify-center text-left text-foreground transition-colors",
-        SIDEBAR_HOVER_HIGHLIGHT,
+        "density-tree-row relative flex flex-col justify-center text-left text-inherit transition-colors",
         // Full width (not 100%+1rem) so the highlight stays inset from the
         // right edge, aligning with the project/folder rows above.
         "w-full min-w-0 flex-1",
         selectionMode && "pr-2 pl-8",
-        !selectionMode && isActive && SIDEBAR_ACTIVE_HIGHLIGHT,
-        !selectionMode && !isActive && inActiveGrid && SIDEBAR_GRID_MEMBER_HIGHLIGHT,
-        !selectionMode && gridSelected && SIDEBAR_GRID_SELECTED_RING,
-        selectionMode && isSelected && SIDEBAR_ACTIVE_HIGHLIGHT,
       )}
       onClick={(e) => {
         recentClickTimesRef.current = [...recentClickTimesRef.current.slice(-1), performance.now()];
@@ -5349,7 +5392,15 @@ function ConversationRowImpl({
   // Conversation`) drops `provisional` and the full row renders.
   if (isProvisionalRow) {
     return (
-      <li ref={rowRef} className="group/conversation relative">
+      <li
+        ref={rowRef}
+        style={hierarchyStyle}
+        className={cn(
+          "group/conversation relative",
+          isActive ? SIDEBAR_ACTIVE_HIGHLIGHT : SIDEBAR_HOVER_HIGHLIGHT,
+        )}
+      >
+        <SidebarTreeGuides depth={treeDepth} />
         {rowLink}
       </li>
     );
@@ -5365,15 +5416,7 @@ function ConversationRowImpl({
       data-sidebar-session-id={conversation.id}
       data-sidebar-drop={isPinned && pinOrder ? "pin-order" : undefined}
       data-open-elsewhere={openElsewhere || undefined}
-      style={
-        {
-          "--sidebar-row-inset":
-            treeDepth > 0
-              ? `calc(var(--list-row-padding-inline) + 12px + ${treeDepth - 1} * ${SIDEBAR_TREE_INDENT})`
-              : "0px",
-          marginInlineStart: "var(--sidebar-row-inset)",
-        } as CSSProperties
-      }
+      style={hierarchyStyle}
       onMouseDown={(event) => {
         // Portaled dialogs bubble through this row but must not start a drag.
         if (
@@ -5393,9 +5436,9 @@ function ConversationRowImpl({
         }
       }}
       className={cn(
-        "group/conversation relative flex min-w-0 items-center rounded-[var(--radius-otto-button)] pr-1",
+        "sidebar-row-surface group/conversation relative flex min-w-0 items-center rounded-[var(--radius-otto-button)] pr-1 text-foreground",
         "gap-[var(--list-gap)]",
-        SIDEBAR_HOVER_HIGHLIGHT,
+        (selectionMode ? !isSelected : !isActive && !inActiveGrid) && SIDEBAR_HOVER_HIGHLIGHT,
         !selectionMode && isActive && SIDEBAR_ACTIVE_HIGHLIGHT,
         !selectionMode && !isActive && inActiveGrid && SIDEBAR_GRID_MEMBER_HIGHLIGHT,
         !selectionMode && gridSelected && SIDEBAR_GRID_SELECTED_RING,
@@ -5441,104 +5484,100 @@ function ConversationRowImpl({
           )}
         </span>
       ) : null}
-      {/* Actions take their own width before the persistent status and disclosure. */}
       {!selectionMode && (
         <ContextMenu onOpenChange={setContextMenuOpen}>
           <ContextMenuTrigger asChild>
             <div
+              data-sidebar-row-controls
               className={cn(
-                "flex shrink-0 items-center gap-0.5",
-                "[@media((hover:hover)_and_(pointer:fine))]:md:group-[[data-input=mouse]:not(:hover):not(:has(:focus-visible)):not([data-menu-open])]/conversation:w-0",
-                "[@media((hover:hover)_and_(pointer:fine))]:md:group-[[data-input=mouse]:not(:hover):not(:has(:focus-visible)):not([data-menu-open])]/conversation:overflow-hidden",
+                "flex shrink-0 items-center",
+                SIDEBAR_INDICATOR_GAP,
                 (metaEnvironment !== null || metaRepo !== null || metaBranch !== null) &&
                   "self-start mt-[var(--list-row-padding-block)]",
               )}
             >
-              {/* Archived rows omit the pin entirely: pinning is meaningless there
-              (archive outranks pin), so there's no pin action even on hover. */}
-              {!isArchived && (
-                <Tooltip disableHoverableContent>
-                  <TooltipContent>{pinTooltip}</TooltipContent>
-                  <TooltipTrigger asChild>
+              {showUpdated && (
+                <span data-testid="session-row-updated" className="text-sm text-muted-foreground">
+                  <SessionUpdatedLabel updatedAt={conversation.updated_at} />
+                </span>
+              )}
+              {treeControl}
+              {(firstStatus || isOwner) && (
+                <div
+                  className={cn(
+                    "relative shrink-0 size-6 [@media(pointer:coarse)]:size-11",
+                    !firstStatus &&
+                      "hidden [@media((hover:hover)_and_(pointer:fine))]:group-has-[:focus-visible]/conversation:inline-flex [@media((hover:hover)_and_(pointer:fine))]:group-data-[menu-open]/conversation:inline-flex [@media((hover:hover)_and_(pointer:fine))]:group-[[data-input=mouse]:hover]/conversation:inline-flex",
+                  )}
+                >
+                  {firstStatus && (
                     <Button
                       type="button"
                       variant="ghost"
                       size="icon-xs"
-                      aria-label={isPinned ? "Unpin conversation" : "Pin conversation"}
-                      data-testid="quick-pin-conversation"
-                      aria-disabled={pinSaving || (!isPinned && atPinCap)}
-                      className={cn(
-                        // Desktop-only quick affordance: hidden on mobile (the kebab's
-                        // Pin item below covers that), hover/focus-revealed from `md`
-                        // up. Pinned rows no longer keep a persistent pin marker, since
-                        // the "Pinned" section header (and pinned-first ordering inside
-                        // a project) already conveys the pinned state. Revealed glyph:
-                        // unpin if pinned, pin otherwise.
-                        //
-                        // `md:inline-flex` (not `md:block`): the Button base is
-                        // `inline-flex` and relies on it for `items-center
-                        // justify-center` to center the icon. `md:block` would override
-                        // that display and collapse the centering, leaving the glyph
-                        // pinned to the top-left of the button — so keep the flex
-                        // display when revealing it.
-                        "text-muted-foreground transition-opacity",
-                        "hidden md:inline-flex",
-                      )}
-                      onClick={(e) => {
-                        // Keep the toggle click off the surrounding Link (no navigation).
-                        e.preventDefault();
-                        e.stopPropagation();
-                        if (pinSaving) return;
-                        onTogglePinned(conversation.id);
+                      tabIndex={-1}
+                      aria-label="Session status"
+                      aria-describedby={statusDescription ? statusDescriptionId : undefined}
+                      aria-haspopup="menu"
+                      aria-expanded={menuOpen}
+                      tooltipDescription={statusDescription || undefined}
+                      className="relative size-full text-muted-foreground"
+                      onClick={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        setMenuOpen(true);
                       }}
                     >
-                      {isPinned ? (
-                        <PinOffIcon className="size-3.5" data-icon-size="14" />
-                      ) : (
-                        <PinIcon className="size-3.5" data-icon-size="14" />
-                      )}
+                      <span
+                        data-testid="conversation-secondary-indicator"
+                        className={cn(
+                          "pointer-events-none absolute inset-0 flex items-center justify-center",
+                          SIDEBAR_STATUS_VISUAL,
+                        )}
+                      >
+                        <SessionStateBadge state={firstStatus} compact tooltip={false} />
+                      </span>
                     </Button>
-                  </TooltipTrigger>
-                </Tooltip>
+                  )}
+                  {isOwner && (
+                    <Tooltip disableHoverableContent>
+                      <TooltipContent>{isArchived ? "Unarchive" : "Archive"}</TooltipContent>
+                      <TooltipTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-xs"
+                          aria-label={
+                            isArchived ? "Unarchive conversation" : "Archive conversation"
+                          }
+                          data-testid="quick-archive-conversation"
+                          className={cn(
+                            "absolute inset-0 z-10 text-muted-foreground opacity-0 pointer-events-none [@media(pointer:coarse)]:hidden",
+                            SIDEBAR_MENU_VISUAL,
+                            "group-has-[:focus-visible]/conversation:pointer-events-auto group-data-[menu-open]/conversation:pointer-events-auto [@media((hover:hover)_and_(pointer:fine))]:group-[[data-input=mouse]:hover]/conversation:pointer-events-auto",
+                          )}
+                          onClick={(e) => {
+                            // Keep the toggle click off the surrounding Link (no navigation).
+                            e.preventDefault();
+                            e.stopPropagation();
+                            if (!isArchived) {
+                              runArchive();
+                            } else {
+                              runUnarchive();
+                            }
+                          }}
+                        >
+                          {isArchived ? (
+                            <ArchiveRestoreIcon className="size-3.5" data-icon-size="14" />
+                          ) : (
+                            <ArchiveIcon className="size-3.5" data-icon-size="14" />
+                          )}
+                        </Button>
+                      </TooltipTrigger>
+                    </Tooltip>
+                  )}
+                </div>
               )}
-              {/* Archive is owner-only, same as the kebab's Archive item; non-owners
-              don't get the quick affordance and instead see that item disabled
-              with an explanation. */}
-              {isOwner && (
-                <Tooltip disableHoverableContent>
-                  <TooltipContent>{isArchived ? "Unarchive" : "Archive"}</TooltipContent>
-                  <TooltipTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-xs"
-                      aria-label={isArchived ? "Unarchive conversation" : "Archive conversation"}
-                      data-testid="quick-archive-conversation"
-                      className={cn(
-                        "text-muted-foreground transition-opacity",
-                        "hidden md:inline-flex",
-                      )}
-                      onClick={(e) => {
-                        // Keep the toggle click off the surrounding Link (no navigation).
-                        e.preventDefault();
-                        e.stopPropagation();
-                        if (!isArchived) {
-                          runArchive();
-                        } else {
-                          runUnarchive();
-                        }
-                      }}
-                    >
-                      {isArchived ? (
-                        <ArchiveRestoreIcon className="size-3.5" data-icon-size="14" />
-                      ) : (
-                        <ArchiveIcon className="size-3.5" data-icon-size="14" />
-                      )}
-                    </Button>
-                  </TooltipTrigger>
-                </Tooltip>
-              )}
-
               <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
                 <DropdownMenuTrigger asChild>
                   <Button
@@ -5546,16 +5585,42 @@ function ConversationRowImpl({
                     variant="ghost"
                     size="icon-xs"
                     aria-label="Conversation actions"
+                    tooltipDescription={statusDescription || undefined}
+                    aria-describedby={statusDescription ? statusDescriptionId : undefined}
                     data-testid="conversation-actions"
-                    // Touch keeps the menu reachable; desktop reveals it on hover or focus.
-                    className={cn("text-muted-foreground transition-opacity")}
-                    onClick={(e) => {
-                      // Keep the trigger click from bubbling into the Link.
-                      e.preventDefault();
-                      e.stopPropagation();
+                    className="relative shrink-0 text-muted-foreground [@media(pointer:coarse)]:size-11"
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
                     }}
                   >
-                    <MoreHorizontalIcon className="size-3.5" data-icon-size="14" />
+                    {statusDescription && (
+                      <span id={statusDescriptionId} className="sr-only">
+                        {statusDescription}
+                      </span>
+                    )}
+                    <span
+                      data-testid="conversation-indicators"
+                      className={cn(
+                        "pointer-events-none absolute inset-0 flex items-center justify-center",
+                        SIDEBAR_STATUS_VISUAL,
+                      )}
+                    >
+                      {menuStatus ? (
+                        <SessionStateBadge state={menuStatus} compact tooltip={false} />
+                      ) : (
+                        <MoreHorizontalIcon className="size-3.5" data-icon-size="14" />
+                      )}
+                    </span>
+                    <span
+                      aria-hidden
+                      className={cn(
+                        "pointer-events-none absolute inset-0 flex items-center justify-center opacity-0",
+                        SIDEBAR_MENU_VISUAL,
+                      )}
+                    >
+                      <MoreHorizontalIcon className="size-3.5" data-icon-size="14" />
+                    </span>
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="min-w-44">
@@ -5577,47 +5642,6 @@ function ConversationRowImpl({
           </ContextMenuContent>
         </ContextMenu>
       )}
-      {!selectionMode && (hasSessionIndicator || showSharedIndicator || showUpdated) && (
-        <span
-          data-testid="conversation-indicators"
-          className={cn(
-            "flex shrink-0 items-center",
-            SIDEBAR_INDICATOR_GAP,
-            (metaEnvironment !== null || metaRepo !== null || metaBranch !== null) &&
-              "self-start mt-[var(--list-row-padding-block)]",
-          )}
-        >
-          {showUpdated && (
-            <span data-testid="session-row-updated" className="text-sm text-muted-foreground">
-              <SessionUpdatedLabel updatedAt={conversation.updated_at} />
-            </span>
-          )}
-          {showSharedIndicator && (
-            <span
-              role="img"
-              aria-label="Shared session"
-              className="inline-flex h-5 items-center text-muted-foreground"
-            >
-              <UsersIcon className="size-3.5" aria-hidden />
-            </span>
-          )}
-          {showDraftIndicator && (
-            <span
-              role="img"
-              aria-label="Draft"
-              data-testid="conversation-draft-indicator"
-              className="inline-flex h-5 items-center text-muted-foreground"
-            >
-              <PencilIcon aria-hidden className="size-3.5" />
-            </span>
-          )}
-          {sessionState !== null && <SessionStateBadge state={sessionState} />}
-          {hasUnseenMessages && sessionState?.kind !== "unseen" && (
-            <SessionStateBadge state={{ kind: "unseen" }} />
-          )}
-        </span>
-      )}
-      {!selectionMode && treeControl}
       {/* Mount only while open — one per row, its hook tree + JSX would
           otherwise run closed on every row re-render. */}
       {shareOpen && (
@@ -5809,6 +5833,7 @@ const RENDERED_CONVERSATION_FIELDS: readonly (keyof Conversation)[] = [
   "title",
   "archived",
   "status",
+  "activity",
   "updated_at",
   "git_branch",
   "host_id",
@@ -5834,6 +5859,7 @@ function conversationRenderEqual(a: Conversation, b: Conversation): boolean {
 const ConversationRow = memo(ConversationRowImpl, (prev, next) => {
   return (
     prev.treeDepth === next.treeDepth &&
+    prev.childrenExpanded === next.childrenExpanded &&
     prev.treeControl === next.treeControl &&
     prev.openElsewhere === next.openElsewhere &&
     prev.isActive === next.isActive &&

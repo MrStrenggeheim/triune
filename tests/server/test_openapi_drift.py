@@ -1,3 +1,4 @@
+# Modified for Triune.
 """Strict drift detector for the checked-in OpenAPI artifact.
 
 Whereas :mod:`tests.server.test_stream_events` validates a specific
@@ -42,6 +43,19 @@ _OPENAPI_JSON_PATH: Path = _REPO_ROOT / "openapi.json"
 # readable; the developer regenerates and inspects the full diff
 # via ``git diff openapi.json`` after running the script.
 _MAX_DIFF_LINES: int = 60
+
+
+def test_shared_route_operation_ids_do_not_depend_on_selected_method() -> None:
+    module = _load_dump_openapi_module()
+    for selected in ("get", "post", "put", "patch", "delete"):
+        methods = {
+            method: {"operationId": f"workspace_resource_path_{selected}"}
+            for method in ("get", "post", "put", "patch", "delete")
+        }
+        module._normalize_shared_operation_ids({"/workspace": methods})
+        assert {method: operation["operationId"] for method, operation in methods.items()} == {
+            method: f"workspace_resource_path_{method}" for method in methods
+        }
 
 
 def _load_dump_openapi_module() -> Any:

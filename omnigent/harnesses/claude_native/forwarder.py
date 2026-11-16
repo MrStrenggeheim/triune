@@ -5430,15 +5430,13 @@ async def _forward_available_items(
             seen_source_ids.append(item.source_id)
             seen.add(item.source_id)
             continue
-        from omnigent.harnesses.claude_native.bridge import native_input_receipt_for_item
+        from omnigent.harnesses.claude_native.bridge import apply_native_input_receipt
 
-        input_id, waiting_for_receipt = await asyncio.to_thread(
-            native_input_receipt_for_item, bridge_dir, item
+        item, waiting_for_receipt = await asyncio.to_thread(
+            apply_native_input_receipt, bridge_dir, item
         )
         if waiting_for_receipt:
             return updated
-        if input_id is not None:
-            item = replace(item, input_stable_id=input_id)
         retry_key = f"item:{item.source_id}"
         if retry_tracker.retry_delay_s(retry_key) is not None:
             return updated

@@ -1,8 +1,11 @@
+// Modified for Triune.
 import { TooltipButton } from "@/components/ui/tooltip";
 import { useRef, type ReactNode } from "react";
 import { CheckIcon } from "lucide-react";
 import { useOmnigentAnalytics } from "@/lib/analytics";
 import { cn } from "@/lib/utils";
+import { CONTROL_FOCUS_CLASS } from "@/lib/designContract";
+import { selectionCardClass } from "@/components/ui/selection-card";
 
 export interface CardRadioOption<T extends string> {
   value: T;
@@ -64,7 +67,11 @@ export function CardRadioGroup<T extends string>({
               select(next);
               refs.current.get(next)?.focus();
             }}
-            className={themeCardClass(selected, cardClassName)}
+            className={cn(
+              selectionCardClass(selected, "relative flex flex-col outline-none"),
+              CONTROL_FOCUS_CLASS,
+              cardClassName,
+            )}
           >
             {selected && <SelectedBadge />}
             {item.body}
@@ -83,15 +90,5 @@ function SelectedBadge() {
     >
       <CheckIcon className="size-3" />
     </span>
-  );
-}
-
-function themeCardClass(selected: boolean, layout?: string) {
-  return cn(
-    "relative flex flex-col rounded-lg border-2 transition-[color,background-color,border-color,box-shadow]",
-    selected
-      ? "border-primary bg-primary/5"
-      : "border-border hover:border-border-strong hover:bg-muted hover:shadow-sm",
-    layout,
   );
 }

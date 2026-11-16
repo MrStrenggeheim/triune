@@ -1,3 +1,4 @@
+# Modified for Triune.
 """Tests for SqlAlchemyConversationStore."""
 
 from __future__ import annotations
@@ -1119,6 +1120,7 @@ def test_append_error_item_round_trips_for_history(
         "type": "error",
         "status": "completed",
         "created_at": read_back.created_at,
+        "position": 0,
         "source": "execution",
         "code": "native_terminal_start_failed",
         "message": "Native Codex requires the 'codex' CLI on PATH.",

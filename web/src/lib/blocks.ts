@@ -1,5 +1,6 @@
 // Modified for Triune.
 import type { MessageCommunication } from "./messageCommunication";
+import type { TranscriptAnchor } from "./transcriptOrder";
 import type { ChatAttachmentContent } from "./chatAttachments";
 import type { NativePermissionDelivery } from "./nativePermissionDelivery";
 // Mirrors sdks/python-client/omnigent_client/_blocks.py.
@@ -47,6 +48,12 @@ export interface BlockContext {
   timestamp: number;
   responseId: string;
   itemId: string | null;
+  /** Canonical server order; timestamps remain display/duration metadata only. */
+  position?: number;
+  /** Explicit placement for previews and itemless records. */
+  anchor?: TranscriptAnchor;
+  /** Destination-local receipt aliases supplied by an authoritative projection. */
+  aliases?: readonly string[];
   createdBy?: string;
   /** Server-side creation time (unix epoch seconds), when the item came
    *  from history hydration. A DIFFERENT clock from `timestamp` (page-
@@ -242,6 +249,9 @@ export interface ResponseStartBlock {
  * user input directly, not as a block).
  */
 export interface UserMessageBlock {
+  /** Render-only provisional projection; send state remains in pendingUserMessages. */
+  pending?: boolean;
+  awaitingAgent?: boolean;
   userAuthored?: boolean;
   isMeta?: boolean;
   communication?: MessageCommunication;

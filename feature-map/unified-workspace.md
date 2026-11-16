@@ -164,16 +164,28 @@ Compare the same two/four/twelve-chat scenarios when measuring latency; browser/
 - Incoming peer cards show the actual trusted agent name and source chat, up to three compact lines, and Show full/less.
 - The shared user-message footer copies complete text and creates links for the owning conversation, independently of focus.
 - Ordinary human quotations of peer transport headers retain their human presentation.
-- One task card retains each dispatch's name/instructions and updates status; returned text is a distinct attributed Markdown reply with compact expansion.
+- One task card per child updates the shared agent/chat name, short task and latest real Instruction or Reply across chat, shelf and Orchestration.
+- Agent activity joins ordinary counted tool groups and the final Worked fold; incoming peer cards occupy their original receipt position once.
 - Orchestration uses Workflow, current-chat origin by default, separate Agents/Shells sections and a shared category filter, including settled work.
 - Source selection chooses Chat or combined Host/workspace; the selected root constrains host inventory.
 - Agent and shell rows open named tabs; historical output never attaches or launches a process.
 - Native child input and steering require current runtime capabilities, independently of transcript readability.
-- Hidden chats detach streams while retaining state; denied stream slots wait instead of exhausting HTTP/1 connections.
+- Visible chats share one tab-level transcript socket when supported; hidden chats retain state and resume from completed position/revision checkpoints.
+- Older servers and deployments using host routing retain the authorized per-session SSE path.
 - Orchestration rows open resources in tabs, with no redundant Open button; graph remains available without internal history-coverage or Messages entries.
 - Native Codex inputs retain their canonical identity through start/steer and echo; unresolved historical messages are not reclassified by text.
 - Peer file references resolve their captured sender target and retain recipient/source ACL and host/runner ownership checks.
 - Pane-plus hit targets follow shared density; updating a captured-original menu does not discard or replace a dirty document.
 
-Verification: `tests/browser_ui/chat/test_workspace_iteration.py::test_peer_cards_and_orchestration_keep_attribution_and_minimal_controls`, `web/src/components/blocks/PeerMessage.test.tsx`, `web/src/components/chat/MessageFooter.test.tsx`, `web/src/components/blocks/SubagentActivityMessage.test.tsx`, `web/src/shell/ChatActivityPanel.test.tsx` and `web/src/workbench/DockWorkspace.test.tsx`.
+Verification: `tests/browser_ui/chat/test_workspace_iteration.py::test_iteration5_identity_coherence_and_optical_tab_add_gap`, `tests/browser_ui/chat/test_recovery_activity_contract.py`, `web/src/components/blocks/PeerMessage.test.tsx`, `web/src/components/chat/MessageFooter.test.tsx`, `web/src/components/blocks/SubagentActivityMessage.test.tsx`, `web/src/shell/ChatActivityPanel.test.tsx` and `web/src/workbench/DockWorkspace.test.tsx`.
 Attribution and file boundaries: `tests/server/integration/test_session_orchestration.py`, `tests/server/routes/test_chat_attachments.py`, `tests/harnesses/codex_native/forwarder/test_user_messages.py` and `tests/inner/test_codex_native_executor.py`.
+
+### Canonical transcript and navigation acceptance
+
+- `tests/browser_ui/chat/test_transcript_multiplex.py` opens two chats on one socket, delivers a preview or committed answer before its user echo, and compares the settled transcript with reload.
+- The same journey exercises position/revision recovery after missed old-item updates and removals while preserving an unsent draft.
+- `tests/browser_ui/chat/test_workspace_iteration.py::test_iteration5_sidebar_status_actions_and_hierarchy` verifies collapsed-child roll-up, the two collapsing status groups, selected control surfaces and menu actions on desktop and phone.
+- `tests/browser_ui/chat/test_workspace_iteration.py::test_iteration5_accepted_session_focus_and_search_scroll` checks explicit desktop session focus, mobile tap-to-type and exact search positioning without stealing the query focus.
+- `tests/browser_ui/chat/test_search_navigation.py::test_search_virtual_reveal_original_source_and_cancel` covers virtualized source reveal, delayed geometry and manual-scroll cancellation; search-result theme variants remain in `test_search_results.py`.
+
+These browser contracts use isolated transport fixtures; they do not establish physical mobile keyboard behavior or live provider ordering.

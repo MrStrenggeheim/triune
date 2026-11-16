@@ -11,6 +11,11 @@ import { cn } from "@/lib/utils";
 import { useOmnigentAnalytics } from "@/lib/analytics";
 import { ChevronDownIcon, CheckIcon, ChevronUpIcon } from "lucide-react";
 import { CONTROL_FOCUS_CLASS } from "@/lib/designContract";
+import {
+  AnchoredPopupProvider,
+  useAnchoredPopupBounds,
+  usePopupTriggerRef,
+} from "./anchored-popup";
 
 const SelectOpenContext = React.createContext(false);
 
@@ -37,18 +42,20 @@ function Select({
       }
     : onValueChange;
   return (
-    <SelectOpenContext.Provider value={open}>
-      <SelectPrimitive.Root
-        data-slot="select"
-        onValueChange={handleValueChange}
-        {...props}
-        open={open}
-        onOpenChange={(next) => {
-          setInternalOpen(next);
-          onOpenChange?.(next);
-        }}
-      />
-    </SelectOpenContext.Provider>
+    <AnchoredPopupProvider open={open}>
+      <SelectOpenContext.Provider value={open}>
+        <SelectPrimitive.Root
+          data-slot="select"
+          onValueChange={handleValueChange}
+          {...props}
+          open={open}
+          onOpenChange={(next) => {
+            setInternalOpen(next);
+            onOpenChange?.(next);
+          }}
+        />
+      </SelectOpenContext.Provider>
+    </AnchoredPopupProvider>
   );
 }
 
@@ -73,6 +80,7 @@ const SelectTrigger = React.forwardRef<
   }
 >(function SelectTrigger({ className, size = "default", children, title, ...props }, ref) {
   const open = React.useContext(SelectOpenContext);
+  const triggerRef = usePopupTriggerRef(ref);
   return (
     <ButtonTooltip
       label={props["aria-label"] ?? title ?? buttonLabel(children)}
@@ -82,7 +90,7 @@ const SelectTrigger = React.forwardRef<
       expanded={open}
     >
       <SelectPrimitive.Trigger
-        ref={ref}
+        ref={triggerRef}
         data-slot="select-trigger"
         data-state={open ? "open" : "closed"}
         data-size={size}
@@ -107,8 +115,11 @@ function SelectContent({
   children,
   position = "item-aligned",
   align = "center",
+  collisionPadding,
+  style,
   ...props
 }: React.ComponentProps<typeof SelectPrimitive.Content>) {
+  const bounds = useAnchoredPopupBounds(collisionPadding, style, position === "popper");
   return (
     <SelectPrimitive.Portal container={getEmbedRoot() ?? undefined}>
       <SelectPrimitive.Content
@@ -121,8 +132,9 @@ function SelectContent({
           className,
         )}
         position={position}
-        align={align}
+        align={position === "popper" ? "center" : align}
         {...props}
+        {...(position === "popper" ? bounds : { collisionPadding, style })}
       >
         <SelectScrollUpButton />
         <SelectPrimitive.Viewport

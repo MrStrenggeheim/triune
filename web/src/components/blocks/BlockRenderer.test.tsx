@@ -12,6 +12,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildBubbles, type RenderItem } from "@/lib/renderItems";
+import type { AnyBlock } from "@/lib/blocks";
 import { itemsToBlocks } from "@/lib/itemsToBlocks";
 import { ConversationScrollLockContext } from "@/components/ai-elements/conversation";
 import { FileViewerContext } from "@/shell/FileViewerContext";
@@ -22,7 +23,118 @@ import { ChatSearchRevealContext } from "@/lib/chatSearchHighlights";
 import { AttachmentPreviewContext } from "@/components/ChatAttachment";
 import { BlockRenderer, rendersOnlyWorkedFold } from "./BlockRenderer";
 
+const activityGroupReveal = {
+  revealedItems: new Set(["returned"]),
+  originalSources: new Map<string, string>(),
+  revealRequest: { itemId: "returned", revision: 1 },
+  reveal: vi.fn(),
+  showOriginal: vi.fn(),
+};
+
 afterEach(cleanup);
+
+it("groups mixed activities once per child, preserves disclosure on status updates and reveals exact aliases", async () => {
+  const context = (itemId: string) => ({
+    agent: null,
+    depth: 0,
+    turn: 0,
+    timestamp: 0,
+    responseId: "parent-turn",
+    itemId,
+  });
+  const shells: AnyBlock = {
+    type: "tool_group",
+    ctx: context("shells"),
+    iteration: 0,
+    executions: ["echo one", "echo two", "echo three", "ls /repo"].map((command, index) => ({
+      name: "Bash",
+      arguments: { command },
+      argsSummary: command,
+      callId: `shell-${index}`,
+      agentName: "parent",
+      executedBy: "server",
+      output: "ok",
+    })),
+  };
+  const activity = (id: string, dispatch: string, returned = false): AnyBlock => ({
+    type: "native_tool",
+    ctx: context(id),
+    toolType: "subagent_activity",
+    label: "Agent activity",
+    data: {
+      id,
+      type: "resource_event",
+      conversation_id: "parent",
+      resource_type: "session",
+      event_type: returned ? "session.subagent.returned" : "session.subagent.delegated",
+      resource_id: "child",
+      resource: {
+        title: "Peirce",
+        agent_name: "Peirce",
+        agent_name_source: "native",
+        task_summary: "Review the implementation",
+        dispatch_id: dispatch,
+        status: returned ? "completed" : "running",
+      },
+    },
+  });
+  const assigned = activity("assigned", "first");
+  const steered = activity("steered", "second");
+  const answer: AnyBlock = {
+    type: "text_done",
+    ctx: context("answer"),
+    fullText: "The final answer.",
+    hasCodeBlocks: false,
+    phase: "final_answer",
+  };
+  const items = (settled: boolean) => {
+    const bubbles = buildBubbles(
+      [
+        shells,
+        assigned,
+        steered,
+        ...(settled ? [activity("returned", "second", true)] : []),
+        answer,
+      ],
+      null,
+    );
+    expect(bubbles).toHaveLength(1);
+    const bubble = bubbles[0]!;
+    expect(bubble.kind).toBe("assistant");
+    if (bubble.kind !== "assistant") throw new Error("Expected the parent work bubble");
+    expect(bubble.items.filter((item) => item.kind === "subagent_activity")).toHaveLength(1);
+    return bubble.items;
+  };
+  const view = (settled: boolean, final = false) => (
+    <MemoryRouter>
+      <ChatSearchRevealContext.Provider value={final ? activityGroupReveal : null}>
+        <BlockRenderer
+          items={items(settled)}
+          sessionStatus={final ? "idle" : "running"}
+          turnLifecycle={final ? "completed" : "streaming"}
+        />
+      </ChatSearchRevealContext.Provider>
+    </MemoryRouter>
+  );
+  const { rerender } = render(view(false));
+  const prefix = "Ran 3 shell commands, listed 1 directory, started or steered 1 subagent";
+  const trigger = screen.getByRole("button", { name: `${prefix} (1 in progress)` });
+  expect(trigger).toHaveAttribute("aria-expanded", "false");
+  expect(screen.queryByTestId("subagent-activity")).toBeNull();
+  fireEvent.click(trigger);
+  expect(screen.getAllByTestId("subagent-activity")).toHaveLength(1);
+  rerender(view(true));
+  expect(screen.getByRole("button", { name: prefix })).toHaveAttribute("aria-expanded", "true");
+  expect(screen.getAllByTestId("subagent-activity")).toHaveLength(1);
+  expect(screen.getByText("The final answer.")).toBeDefined();
+  rerender(view(true, true));
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Worked" })).toHaveAttribute("aria-expanded", "true"),
+  );
+  expect(screen.getByRole("button", { name: prefix })).toHaveAttribute("aria-expanded", "true");
+  expect(screen.getAllByTestId("subagent-activity")).toHaveLength(1);
+  expect(screen.getByText("The final answer.")).toBeDefined();
+});
 
 // Stick-to-bottom lock fixture for the fold's expand snap. Module scope so
 // the provider value is a constant (jsx-no-constructed-context-values);
@@ -556,7 +668,7 @@ describe("BlockRenderer dispatch", () => {
           <BlockRenderer items={items} sessionStatus="running" />
         </MemoryRouter>,
       );
-      expect(screen.getByText("Called 2 tools")).toBeDefined();
+      expect(screen.getByText(noticeAfter ? "Called 3 tools" : "Called 2 tools")).toBeDefined();
       expect(screen.queryByText("Called 5 tools")).toBeNull();
       // The recent tools must be visible as a tail OUTSIDE the collapsed
       // group — the most-recent tool renders (the collapsed group's content
@@ -1390,6 +1502,13 @@ describe("BlockRenderer dispatch", () => {
           node.getAttribute("data-phase") === "returned" ? "Completed Peirce" : "Started Peirce",
         );
 
+      const expandedNotices = () => {
+        for (const trigger of screen.queryAllByRole("button", { name: /started or steered/i })) {
+          if (trigger.getAttribute("aria-expanded") === "false") fireEvent.click(trigger);
+        }
+        return noticeLabels();
+      };
+
       it("folds task and reply cards with process work behind one row", () => {
         renderTurn([
           tool(1, "spawn_agent"),
@@ -1403,7 +1522,7 @@ describe("BlockRenderer dispatch", () => {
         expect(noticeLabels()).toEqual([]);
 
         fireEvent.click(screen.getByRole("button", { name: "Worked" }));
-        expect(noticeLabels()).toEqual(["Started Peirce", "Completed Peirce"]);
+        expect(expandedNotices()).toEqual(["Started Peirce", "Completed Peirce"]);
       });
 
       it.each([false, true])(
@@ -1414,7 +1533,7 @@ describe("BlockRenderer dispatch", () => {
             continued,
           );
           expect(screen.getAllByRole("button", { name: "Worked" })).toHaveLength(1);
-          expect(noticeLabels()).toEqual(continued ? ["Started Peirce"] : []);
+          expect(expandedNotices()).toEqual(continued ? ["Started Peirce"] : []);
         },
       );
 
@@ -1471,11 +1590,11 @@ describe("BlockRenderer dispatch", () => {
               />
             </MemoryRouter>,
           );
-          expect(noticeLabels()).toEqual(
+          expect(expandedNotices()).toEqual(
             continued ? labels.filter((label) => label === "Completed Peirce") : [],
           );
           fireEvent.click(screen.getByRole("button", { name: "Worked for 42s" }));
-          expect(noticeLabels()).toEqual(labels);
+          expect(expandedNotices()).toEqual(labels);
         },
       );
 
@@ -1488,7 +1607,7 @@ describe("BlockRenderer dispatch", () => {
         expect(screen.getAllByTestId("turn-worked-fold")).toHaveLength(1);
         expect(noticeLabels()).toEqual([]);
         fireEvent.click(screen.getByRole("button", { name: "Worked" }));
-        expect(noticeLabels()).toEqual(["Completed Peirce"]);
+        expect(expandedNotices()).toEqual(["Completed Peirce"]);
       });
 
       it("opens the shared fold when exact reveal targets a settled task card", () => {
@@ -1506,7 +1625,7 @@ describe("BlockRenderer dispatch", () => {
           "aria-expanded",
           "true",
         );
-        expect(noticeLabels()).toEqual(["Completed Peirce"]);
+        expect(expandedNotices()).toEqual(["Completed Peirce"]);
       });
 
       it("keeps a terminal error unfolded when a notice lands after it", () => {
@@ -1517,7 +1636,7 @@ describe("BlockRenderer dispatch", () => {
           notice("n1", "returned"),
         ]);
         expect(screen.queryByTestId("turn-worked-fold")).toBeNull();
-        expect(noticeLabels()).toEqual(["Completed Peirce"]);
+        expect(expandedNotices()).toEqual(["Completed Peirce"]);
       });
 
       it("streams a woken lead's unnamed output after its settled fold", () => {
@@ -1547,7 +1666,7 @@ describe("BlockRenderer dispatch", () => {
           "aria-expanded",
           "false",
         );
-        expect(noticeLabels()).toEqual(["Completed Peirce"]);
+        expect(expandedNotices()).toEqual(["Completed Peirce"]);
         expect(screen.getByText("Reading Peirce's result.")).toBeDefined();
       });
     });

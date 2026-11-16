@@ -67,11 +67,15 @@ Uploaded HTML can render inline with an explicit `triune-artifact` code fence co
 The shared isolated viewer retains complete bytes, local interactions and bounded state, with highlighted source and a portable self-contained download.
 Its More menu opens a Triune view tab or an isolated new window; ordinary attachment downloads retain the original bytes.
 The first-party artifact kit supplies Appearance-aware native controls without external CDNs.
+Native checkbox, mixed-state checkbox, range and progress controls retain their form behavior and restored state.
 Its versioned assets and manifest ship beneath `artifacts/kit/`; see the [artifact feature map](../feature-map/artifacts.md).
+Inline HTML and Mermaid previews cap at 60% of the visible owning view, scroll internally and retain Expand controls.
+Standalone file, editor and expanded previews retain their own scroll area without that cap.
 
 The packaged UI capability catalog and `sys_ui_capabilities` describe available rendering formats, tools, scopes and fallbacks.
 Harness adapters deliver product guidance through their supported startup/discovery channels while preserving author configuration.
-Mermaid diagrams use one shared pre-render Triune theme and retain source, expansion and download controls.
+Mermaid diagrams use one shared Appearance-aware theme and retain source, expansion and download controls.
+Native shapes, depth washes, contrasting labels and contextual label backings carry through SVG export.
 
 ## File editing and navigation
 
@@ -84,10 +88,15 @@ See the unified-workspace feature map for source mappings and desktop/mobile acc
 ## Performance and retained views
 
 Views retain drafts, buffers, undo state and terminal lifecycles while inactive presentation and view-owned polling pause.
-Hidden chat streams detach without discarding their retained state; live streams obey the origin connection budget and reconcile missed items when shown again.
+Hidden chat memberships detach without discarding retained state and reconcile missed items when shown again.
+On servers advertising `transcript_stream:1`, one updates WebSocket per browser tab carries list watches, independently authorized transcript memberships and presence.
+Saved items reconcile by exact ID and committed conversation position; pending previews retain explicit anchors until their own committed identity replaces them.
+Reconnect resumes from position, revision and stream-epoch cursors: trusted same-epoch appends replay the tail, while old-item changes or untrusted cursors require an authoritative reset.
+Reset replaces committed membership while preserving drafts, uploads and unmatched previews; unchanged heartbeats cause no history reads or replay.
+Revision tracking is process-local and workspace-scoped; writes bypassing its mutation hooks require explicit invalidation or reset.
+Older servers use SSE after bounded capability negotiation of 750ms; host-routed sessions retain their existing SSE routing.
 Visible panes and two recent hidden layout groups stay mounted briefly; older recoverable views retire while their saved layouts remain intact.
 Editors, terminals and other views with local state remain resident until they can be restored safely.
-Browser windows yield stream slots on blur or hide, and visible panes without a live slot catch up through bounded snapshots without capacity notices.
 Stable resource boundaries and scoped subscriptions avoid updating unrelated chats when switching layouts or opening files.
 File links add their tab before original capture completes; editing starts after the original is retained through the authenticated capture route.
 Snapshots use binary artifacts with small versioned metadata, while existing captures remain readable.
@@ -101,14 +110,19 @@ It does not disable ordinary subagents or cancel accepted work.
 Peer cards show the trusted sender and source chat through the shared compact expandable message card.
 Orchestration defaults to the current chat and separates agents from shells, including completed work, with a shared category filter and supported Stop controls.
 Its alternative Host/workspace source uses the existing combined selector and limits inventory to the chosen root.
-Task rows retain dispatch-specific names, instructions and results; their buttons open the child or its originating Orchestration in tabs.
-One activity card tracks each child agent and updates in place across steering and lifecycle events.
+Task rows retain dispatch-specific instructions and results; their buttons open the child or its originating Orchestration in tabs.
+Cards, peer messages, Orchestration and shelf rows share one current agent name, independent short task and latest proven Instruction/Reply preview from authorized caches.
+One canonical activity card tracks each child agent and updates in place across steering and lifecycle events, retaining its stable key and absorbed source aliases.
+The latest preview follows exact child-source positions and explicit finality; progress and unknown assistant finality never become Reply.
 Captured reports retain their assignment identity and attributed Markdown presentation.
 Late report capture updates the existing stored item and loaded transcript; steering preserves the original task identity.
 Orchestration rows open on click, render scoped Markdown and align natural-width status badges outside the colored surface.
 Routine coverage diagnostics stay internal, and choosing Host/workspace starts from the selected chat's captured location.
 The original composer shelf reuses existing question, approval, shell, agent and plan components without dropdown chevrons.
 Queue and attention shelves share a gapless density-aware stack, with 200ms entrance/exit and immediate reduced-motion behavior.
+Each moving shelf paints one continuous surface beneath the next layer's rounded corners.
+Settled shelves auto-hide without deleting plans or resources; the conversation menu can reopen the shelf, plan or Orchestration.
+New questions and approvals restore automatic attention; manual visibility remains local to the retained view and resets on remount.
 Each actual question batch has one needs-input entry and one card that becomes its answered receipt.
 Pending and answered in-chat cards retain drafts and header pagination; expanded answered bodies show only the answer.
 Shelf question popups show the bold question, answers and one row of Previous, Decline and counted Skip/Next/Submit actions, bounded by composer width.
@@ -146,6 +160,8 @@ Their timestamp/copy/link footer slots are omitted for now; ordinary human and a
 Expanding a shared card retains its leading icon, status and controls in a stable header while the complete body opens below.
 Completed-turn work includes native task and reply cards; missing live activity items recover from authorized canonical history.
 Each child keeps one stable activity card and assignment-specific final reports, with progress excluded from automatic replies.
+Child cards reuse the tool-call expander and command, file and subagent counts; questions, approvals and final parent answers retain separate boundaries.
+Exact source reveal opens both tool and Worked folds while preserving canonical card aliases.
 Framework wake dispatch preserves System authority, including Claude's correlated native prompt receipt; internal inbox instructions do not add a redundant visible message.
 Reusable native children create task cards from committed assignments rather than empty session creation, preserving each assignment and its final report.
 
@@ -161,3 +177,17 @@ Exceptional provider Notices and a compact Usage control live in the conversatio
 Usage prioritizes observed context, compact session totals and reported quota windows; token/cache accounting and observation details expand on demand.
 Interactive popup surfaces use opaque theme colors so their text and controls remain readable in dark mobile views.
 Information retains agent/session details, MCP controls, policies and version diagnostics.
+
+## Iteration5 source status and deferred work
+
+The iteration5 behavior above describes the source candidate; build, release validation and activation are recorded separately.
+The following iteration6 requests remain unimplemented in this pass.
+
+| Request | Deferred scope |
+| --- | --- |
+| `MOBILE-IMAGE-GESTURES-6` | Further mobile image gestures |
+| `PLAN-ACTIVE-BOX-6` | Active-plan box |
+| `MOBILE-SAFE-TOP-6` | Mobile top safe-area refinement |
+| `MOBILE-COMPACT-SHELF-6` | Mobile compact shelf refinement |
+| `STARTUP-DESTINATION-6` | Startup destination |
+| `POPUP-VERTICAL-ANCHOR-6` | Popup spacing from header/shelf edges |

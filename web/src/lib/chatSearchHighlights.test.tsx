@@ -7,6 +7,7 @@ import {
   chatQueryRanges,
   chatSearchSources,
   searchSourceElement,
+  searchSourceForItem,
   sourceOccurrenceRange,
 } from "./chatSearchHighlights";
 
@@ -22,6 +23,19 @@ function body(html: string) {
 }
 
 describe("exact chat occurrence mapping", () => {
+  it("resolves a verified peer alias without duplicating its counted source", () => {
+    const sources = chatSearchSources([
+      {
+        kind: "user",
+        itemId: "receipt",
+        aliases: ["pending-handle"],
+        content: [{ type: "input_text", text: "One exact occurrence" }],
+      },
+    ]);
+    expect(sources).toHaveLength(1);
+    expect(searchSourceForItem(sources, "pending-handle")).toBe(sources[0]);
+    expect(searchSourceForItem(sources, "unrelated")).toBeUndefined();
+  });
   it("locates and maps actual plain-text assistant fallbacks without including row controls", () => {
     const source = "😀".repeat(35000) + " needle✓ then needle✓.";
     const sources = chatSearchSources([

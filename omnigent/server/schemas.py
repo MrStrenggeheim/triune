@@ -1146,7 +1146,7 @@ class CreateResponseRequest(BaseModel):
     injection_id: str | None = None
     # Server-side identity of the native web input, independent of native transcript matching.
     input_stable_id: str | None = None
-    input_origin_kind: Literal["system"] | None = None
+    input_origin_kind: Literal["system", "peer"] | None = None
     pending_id: str | None = None
     delivery_attempt_id: str | None = None
     input_enqueued_at_ms: int | None = None
@@ -3896,6 +3896,7 @@ class SessionInputConsumedPayload(BaseModel):
     data: dict[str, Any]
     created_by: str | None = None
     cleared_pending_id: str | None = None
+    position: int | None = Field(default=None, ge=0)
 
     model_config = ConfigDict(extra="ignore")
 
@@ -4351,6 +4352,27 @@ class SessionHeartbeatEvent(_SSEEventBase):
 
     type: Literal["session.heartbeat"]
     server_time: str | None = None
+    last_position: int | None = Field(default=None, ge=-1)
+    item_count: int | None = Field(default=None, ge=0)
+    last_item_id: str | None = None
+    stream_epoch: str | None = None
+    reconcile_required: bool = False
+    item_revision: int | None = Field(default=None, ge=0)
+    reset_revision: int | None = Field(default=None, ge=0)
+
+
+class SessionSyncEvent(_SSEEventBase):
+    """Canonical replay boundary; reset replaces the client's committed set."""
+
+    type: Literal["session.sync"]
+    phase: Literal["start", "complete"]
+    item_revision: int = Field(ge=0)
+    reset_revision: int = Field(ge=0)
+    reset: bool = False
+    last_position: int = Field(ge=-1)
+    item_count: int = Field(ge=0)
+    last_item_id: str | None = None
+    stream_epoch: str
 
 
 class PresenceViewer(BaseModel):
@@ -5134,6 +5156,7 @@ ServerStreamEvent = Annotated[
     | OutputFileDoneEvent
     | HeartbeatEvent
     | SessionHeartbeatEvent
+    | SessionSyncEvent
     # ── Transient (SSE-only) — synchronous decision request ────
     | ElicitationRequestEvent
     | ElicitationResolvedEvent

@@ -13,6 +13,7 @@ REPORT_FIELDS = frozenset(
         "result_item_id",
         "result_finality",
         "result_revision",
+        "result_position",
     }
 )
 _FINALITY = {"unknown": 0, "final_answer": 1, "adapter_result": 2, "handback": 3}

@@ -57,5 +57,20 @@ Those previously Apache-licensed features retain their original permissions.
 - Fix selected queued-send lifecycle ownership, wrapping/width, preview footer alignment and shared plan/scrollbar treatment.
 - Retain offline shell output with safe errors and consistent outcome/Stop semantics.
 
+## Iteration5 source changes — 2026-11-16
+
+These entries describe source changes, without asserting release activation.
+
+- Order saved transcript items by committed position and exact identity; preserve pending previews, drafts and uploads through revision/epoch cursor recovery and authoritative reset.
+- Share one updates WebSocket per tab for authorized transcript memberships, list watches and presence; retain bounded legacy and host-routing SSE fallback.
+- Bind native Claude peer receipts to exact one-use delivery capabilities, preserving receipt position and restart identity without replaying historical unbound inputs.
+- Share agent name, short task and latest proven Instruction/Reply across cards, peers, Orchestration and shelves; retain one canonical child card, source aliases and tool-group disclosure.
+- Paint continuous moving shelf layers, auto-hide settled activity and expose manual reopening; new questions and approvals restore attention without discarding stored state.
+- Reuse shared controls for header geometry, popup alignment, answer focus, safe mention selection and local caret visibility; preserve mobile tap-to-type and desktop navigation intent.
+- Center gallery selection, retain overlay and loading state, and cap inline HTML/Mermaid previews at 60% of their owning view with internal scrolling and expansion.
+- Extend artifact-kit native checkbox, mixed-state, range and progress controls, including restoration; preserve shared Mermaid styling through SVG export.
+- Align sidebar selection, status, pin/copy-link menus and shortcut labels; preserve search reveal ownership, bounded shell output and notification placement.
+- Normalize exported OpenAPI operation IDs per HTTP verb for shared multi-method handlers; add drift coverage and create browser-evidence directories before writes.
+
 [LICENSING.md](LICENSING.md) defines scope and the required notice.
 Git diffs against the imported baseline identify exact modified paths and lines.

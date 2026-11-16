@@ -18,6 +18,10 @@ export function WorkspaceTabsScroller({
   viewportRef: suppliedViewportRef,
   className,
   contentClassName,
+  activeAlignment = "nearest",
+  activeKey,
+  containWheel = false,
+  style,
   ...viewportProps
 }: {
   children: ReactNode;
@@ -26,6 +30,10 @@ export function WorkspaceTabsScroller({
   overflowControlRef?: RefObject<HTMLDivElement | null>;
   viewportRef?: RefObject<HTMLDivElement | null>;
   contentClassName?: string;
+  activeAlignment?: "nearest" | "center";
+  /** Selection identity; center only on selection/resize, preserving manual scrolling. */
+  activeKey?: string | number;
+  containWheel?: boolean;
 } & HTMLAttributes<HTMLDivElement>) {
   const localViewportRef = useRef<HTMLDivElement>(null);
   const viewportRef = suppliedViewportRef ?? localViewportRef;
@@ -57,7 +65,12 @@ export function WorkspaceTabsScroller({
     const content = contentRef.current;
     if (!viewport || !content) return;
     const wheel = (event: WheelEvent) => {
-      if (viewport.scrollWidth <= viewport.clientWidth) return;
+      const overflowing = viewport.scrollWidth > viewport.clientWidth;
+      if (containWheel) {
+        event.stopPropagation();
+        if (!overflowing) event.preventDefault();
+      }
+      if (!overflowing) return;
       // Leave native horizontal gestures alone. Ctrl-wheel must be non-passive
       // to scroll tabs instead of zooming the page.
       if (event.deltaX && !event.ctrlKey) return;
@@ -67,35 +80,58 @@ export function WorkspaceTabsScroller({
       const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? viewport.clientWidth : 1;
       viewport.scrollLeft += delta * unit;
     };
-    // Keep the active tab in view as the rail or tab list resizes.
-    const observer = new ResizeObserver(() => {
+    viewport.addEventListener("wheel", wheel, { passive: false });
+    return () => viewport.removeEventListener("wheel", wheel);
+  }, [containWheel, viewportRef]);
+
+  useLayoutEffect(() => {
+    const viewport = viewportRef.current;
+    const content = contentRef.current;
+    if (!viewport || !content) return;
+    const align = () => {
       const active = content.querySelector<HTMLElement>(
         '[aria-current="true"], [aria-selected="true"]',
       );
       // A grouped tab includes its close control in the visible scroll target.
       const target = active?.closest<HTMLElement>("[data-workspace-tab]") ?? active;
-      target?.scrollIntoView({ block: "nearest", inline: "nearest" });
-    });
+      if (!target) return;
+      if (activeAlignment === "center") {
+        // Equal endpoint space lets even the first/last fixed slot reach center.
+        content.style.paddingInline = `${Math.max(0, (viewport.clientWidth - target.offsetWidth) / 2)}px`;
+        const slot = target.getBoundingClientRect();
+        const frame = viewport.getBoundingClientRect();
+        viewport.scrollLeft +=
+          slot.left +
+          slot.width / 2 -
+          (frame.left + viewport.clientLeft + viewport.clientWidth / 2);
+      } else {
+        content.style.paddingInline = "";
+        target.scrollIntoView({ block: "nearest", inline: "nearest" });
+      }
+    };
+    if (activeAlignment === "center") align();
+    const observer = new ResizeObserver(align);
     observer.observe(viewport);
     observer.observe(content);
-    viewport.addEventListener("wheel", wheel, { passive: false });
+    window.addEventListener("resize", align);
     return () => {
       observer.disconnect();
-      viewport.removeEventListener("wheel", wheel);
+      window.removeEventListener("resize", align);
     };
-  }, [viewportRef]);
+  }, [activeAlignment, activeKey, viewportRef]);
 
   return (
     <div
       {...viewportProps}
       ref={viewportRef}
       data-workspace-tabs-viewport
+      style={{ ...(containWheel ? { overscrollBehavior: "contain" } : {}), ...style }}
       className={`no-drag min-w-0 ${grow ? "flex-1" : "flex-[0_1_auto]"} overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${className ?? ""}`}
     >
       <div
         ref={contentRef}
         data-workspace-tabs-content
-        className={`flex w-max items-center gap-0.5 ${contentClassName ?? ""}`}
+        className={`flex w-max items-center gap-0.5 ${activeAlignment === "center" ? "transition-none" : ""} ${contentClassName ?? ""}`}
       >
         {children}
       </div>

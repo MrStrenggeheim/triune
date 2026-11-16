@@ -12,12 +12,15 @@ export function ComposerShelf({
   children,
   className,
   retainContent = true,
+  keepMounted = false,
 }: {
   present: boolean;
   children: ReactNode;
   className?: string;
   /** Resolved requests must dismiss their portals while the surface exits. */
   retainContent?: boolean;
+  /** Manual hiding must retain pending form drafts without reserving space. */
+  keepMounted?: boolean;
 }) {
   const [mounted, setMounted] = useState(present);
   const [shown, setShown] = useState(false);
@@ -48,7 +51,8 @@ export function ComposerShelf({
       media.removeEventListener("change", update);
     };
   }, [present]);
-  if (!mounted && !present) return null;
+  const hidden = !mounted && !present;
+  if (hidden && !keepMounted) return null;
   return (
     <div
       ref={(node) => {
@@ -58,6 +62,7 @@ export function ComposerShelf({
       data-shown={shown}
       data-exiting={!present || undefined}
       aria-hidden={!present || undefined}
+      hidden={hidden}
     >
       <div className="composer-shelf-clip">
         <div className="composer-shelf-content">

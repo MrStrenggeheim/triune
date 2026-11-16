@@ -1,6 +1,7 @@
 // Modified for Triune.
 import type { ChildSessionInfo } from "@/hooks/useChildSessions";
 import type { AgentStatus } from "@/shell/subagentStatus";
+import { itemPosition } from "./transcriptOrder";
 import type { AnyBlock } from "@/lib/blocks";
 
 export interface SubagentItemRef {
@@ -31,6 +32,11 @@ export interface SubagentActivity {
   resultRef: SubagentItemRef | null;
   resultRefs: SubagentItemRef[];
   resultParts: SubagentResultPart[];
+  turnId: string | null;
+  resultFinality: "unknown" | "final_answer" | "adapter_result" | "handback";
+  resultRevision: number | null;
+  taskInputPosition: number | null;
+  resultPosition: number | null;
 }
 
 function text(value: unknown): string | null {
@@ -199,6 +205,16 @@ export function readSubagentActivity(item: Record<string, unknown>): SubagentAct
         })
       : [],
     resultParts,
+    turnId: text(fields.turn_id),
+    resultFinality:
+      fields.result_finality === "final_answer" ||
+      fields.result_finality === "adapter_result" ||
+      fields.result_finality === "handback"
+        ? fields.result_finality
+        : "unknown",
+    resultRevision: itemPosition(fields.result_revision) ?? null,
+    taskInputPosition: itemPosition(fields.task_input_position) ?? null,
+    resultPosition: itemPosition(fields.result_position) ?? null,
   };
 }
 
@@ -303,7 +319,7 @@ export function canonicalSubagentCards(
   const cards = new Map<string, Record<string, unknown>>();
   for (const group of groups.values()) {
     const delegated = group.filter((entry) => entry.activity.phase === "delegated");
-    const first = delegated[0];
+    const first = delegated[0] ?? group[0];
     if (!first?.activity.itemId) continue;
     const dispatches = new Map<string, SubagentActivity>();
     let latestDispatch = "";
@@ -317,7 +333,7 @@ export function canonicalSubagentCards(
     }
     const latest = dispatches.get(latestDispatch)!;
     const resource = first.data.resource as Record<string, unknown>;
-    const summary = first.activity.taskDescription;
+    const summary = group.find((entry) => entry.activity.taskDescription)?.activity.taskDescription;
     const sources = group.map((entry) => entry.data);
     const cached = cardCache.get(first.data);
     const card =
@@ -327,23 +343,25 @@ export function canonicalSubagentCards(
         ? cached.card
         : {
             ...first.data,
+            event_type: "session.subagent.delegated",
             resource: {
               ...resource,
               task_summary: summary ?? null,
+              card_key: JSON.stringify([
+                first.data.conversation_id ?? null,
+                first.activity.sessionId,
+              ]),
               card_status: latest.status,
               card_phase: latest.phase,
-              card_aliases: group
-                .filter(
-                  (entry) => entry.activity.phase === "delegated" || !entry.activity.resultText,
-                )
-                .flatMap((entry) => (entry.activity.itemId ? [entry.activity.itemId] : [])),
+              card_aliases: group.flatMap((entry) =>
+                entry.activity.itemId ? [entry.activity.itemId] : [],
+              ),
               card_dispatches: sources,
             },
           };
     cardCache.set(first.data, { sources, card });
     cards.set(first.activity.itemId, card);
-    for (const entry of delegated.slice(1))
-      if (entry.activity.itemId) cards.set(entry.activity.itemId, card);
+    for (const entry of group) if (entry.activity.itemId) cards.set(entry.activity.itemId, card);
   }
   return cards;
 }
@@ -356,4 +374,102 @@ export function subagentCardItemIds(data: Record<string, unknown>): string[] {
     : typeof data.id === "string"
       ? [data.id]
       : [];
+}
+
+export interface SubagentCardMessage {
+  direction: "Instruction" | "Reply";
+  activity: SubagentActivity;
+  position: number | null;
+  text: string;
+}
+
+const finalityRank = { unknown: 0, final_answer: 1, adapter_result: 2, handback: 3 };
+
+/** Reports replace text and exact source references together within one dispatch/turn. */
+function replacesReport(previous: SubagentActivity, incoming: SubagentActivity): boolean {
+  const rank = finalityRank[incoming.resultFinality];
+  const oldRank = finalityRank[previous.resultFinality];
+  return (
+    rank > oldRank ||
+    (rank === oldRank && (incoming.resultRevision ?? 0) > (previous.resultRevision ?? 0))
+  );
+}
+
+/** Unknown finality and inventory previews never become child-authored replies. */
+export function subagentCardMessages(data: Record<string, unknown>): SubagentCardMessage[] {
+  const resource = data.resource as Record<string, unknown> | undefined;
+  const sources = Array.isArray(resource?.card_dispatches) ? resource.card_dispatches : [data];
+  const messages = new Map<string, SubagentCardMessage>();
+  for (const source of sources) {
+    if (!source || typeof source !== "object" || Array.isArray(source)) continue;
+    const activity = readSubagentActivity(source);
+    if (!activity) continue;
+    const dispatch =
+      activity.dispatchId ??
+      (activity.taskInputRef ? JSON.stringify(activity.taskInputRef) : activity.itemId);
+    if (activity.taskInput && activity.phase === "delegated") {
+      const key = JSON.stringify([
+        "instruction",
+        activity.sessionId,
+        activity.taskInputRef ?? activity.itemId,
+      ]);
+      if (!messages.has(key))
+        messages.set(key, {
+          direction: "Instruction",
+          activity,
+          text: activity.taskInput,
+          position:
+            activity.taskInputRef?.conversationId === activity.sessionId
+              ? activity.taskInputPosition
+              : null,
+        });
+    }
+    if (
+      activity.resultText &&
+      activity.resultFinality !== "unknown" &&
+      activity.phase === "returned"
+    ) {
+      const key = JSON.stringify([
+        "reply",
+        activity.sessionId,
+        dispatch,
+        activity.turnId ?? activity.itemId,
+      ]);
+      const previous = messages.get(key);
+      const refs = [
+        ...(activity.resultRef ? [activity.resultRef] : []),
+        ...activity.resultRefs,
+        ...activity.resultParts.map((part) => part.ref),
+      ];
+      if (!previous || replacesReport(previous.activity, activity))
+        messages.set(key, {
+          direction: "Reply",
+          activity,
+          text: activity.resultText,
+          // Enrichment changes the snapshot, never the occurrence's order.
+          position: previous
+            ? previous.position
+            : refs.length > 0 && refs.every((ref) => ref.conversationId === activity.sessionId)
+              ? activity.resultPosition
+              : null,
+        });
+    }
+  }
+  return [...messages.values()];
+}
+
+/** Only canonical child positions can order exact input and report references. */
+export function latestSubagentCardMessage(
+  messages: readonly SubagentCardMessage[],
+): SubagentCardMessage | undefined {
+  let latest: SubagentCardMessage | undefined;
+  for (const message of messages) {
+    if (
+      message.position !== null &&
+      (latest?.position == null || message.position > latest.position)
+    )
+      latest = message;
+  }
+  // A legacy spawn instruction is proven; capture time does not prove a report is newer.
+  return latest ?? messages.find((message) => message.direction === "Instruction");
 }

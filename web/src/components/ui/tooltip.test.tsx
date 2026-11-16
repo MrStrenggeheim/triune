@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "./collapsible";
 import { createRef } from "react";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
@@ -199,6 +200,55 @@ describe("canonical button tooltips", () => {
     expect(panel().firstElementChild).toHaveTextContent("Compare changesCtrlG");
     expect(panel().lastElementChild).toHaveTextContent("Choose Git changes or an agent turn.");
   });
+
+  it.each([undefined, "Inspect the complete command\nincluding its final argument"])(
+    "preserves long multiline guidance with description=%s within a wrapping, scrollable panel",
+    async (description) => {
+      const command = `printf '%s' ${"unbroken-path/".repeat(80)}final-argument\nprintf 'done'`;
+      render(
+        <Tooltip open>
+          <TooltipTrigger>Command details</TooltipTrigger>
+          <TooltipContent description={description}>{command}</TooltipContent>
+        </Tooltip>,
+      );
+      await screen.findByRole("tooltip");
+      // Inspect rendered text directly to check exact newlines and final arguments.
+      const content = panel();
+      expect(content.firstElementChild?.textContent).toBe(command);
+      if (description) expect(content.lastElementChild?.textContent).toBe(description);
+      expect(content).toHaveStyle({
+        minWidth: "0",
+        maxWidth: "min(272px, var(--radix-popper-available-width, calc(100vw - 16px)))",
+        maxHeight: "min(320px, var(--radix-tooltip-content-available-height, calc(100dvh - 16px)))",
+        overflow: "auto",
+        overflowWrap: "anywhere",
+        whiteSpace: "pre-wrap",
+      });
+    },
+  );
+
+  it.each(["object", "callback"])(
+    "preserves the %s trigger ref through popup bounds context",
+    async (kind) => {
+      const objectRef = createRef<HTMLButtonElement>();
+      const callbackRef = vi.fn();
+      const { unmount } = render(
+        <Tooltip open>
+          <TooltipTrigger asChild ref={kind === "object" ? objectRef : callbackRef}>
+            <button type="button">Command details</button>
+          </TooltipTrigger>
+          <TooltipContent>Complete command</TooltipContent>
+        </Tooltip>,
+      );
+      await screen.findByRole("tooltip");
+      const trigger = screen.getByRole("button", { name: "Command details" });
+      if (kind === "object") expect(objectRef.current).toBe(trigger);
+      else expect(callbackRef).toHaveBeenLastCalledWith(trigger);
+      unmount();
+      if (kind === "object") expect(objectRef.current).toBeNull();
+      else expect(callbackRef).toHaveBeenLastCalledWith(null);
+    },
+  );
 
   it.each(["title", "aria-label", "text"])(
     "opens native %s guidance on focus, retains refs and submits the form",

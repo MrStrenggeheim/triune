@@ -245,6 +245,46 @@ def _view(page: Page, title: str) -> Locator:
     return page.get_by_role("tabpanel", name=title, exact=True)
 
 
+def _assert_workspace_search_centered(
+    page: Page, title: str, item_id: str, source_offset: int
+) -> None:
+    """Measure the matched view rather than an earlier retained, hidden chat."""
+    view = _view(page, title)
+    expect(view).to_be_visible()
+    page.wait_for_function(
+        """({view, item, offset}) => {
+          const range = [...(CSS.highlights.get('chat-search-active') ?? [])]
+            .find(range => view.contains(range.startContainer));
+          if (!range || range.toString() !== 'needle') return false;
+          const owner = range.startContainer.parentElement.closest('[data-search-item-id]');
+          if (owner?.dataset.searchItemId !== item) return false;
+          const body = owner.querySelector('.message-markdown, [data-chat-plain-text]');
+          const before = document.createRange(); before.selectNodeContents(body);
+          before.setEnd(range.startContainer, range.startOffset);
+          if (before.toString().length !== offset) return false;
+          const rect = range.getBoundingClientRect();
+          const viewport = view.querySelector('[role="log"] > div').getBoundingClientRect();
+          return rect.height > 0 && viewport.height > 0 &&
+            Math.abs(rect.top + rect.height/2 - viewport.top - viewport.height/2) <= 1;
+        }""",
+        arg={"view": view.element_handle(), "item": item_id, "offset": source_offset},
+        timeout=5_000,
+    )
+    drift = view.evaluate("""view => new Promise(resolve => {
+      const samples = [];
+      function tick() {
+        const range = [...CSS.highlights.get('chat-search-active')]
+          .find(range => view.contains(range.startContainer));
+        const rect = range.getBoundingClientRect();
+        const viewport = view.querySelector('[role="log"] > div').getBoundingClientRect();
+        samples.push(rect.top + rect.height/2 - viewport.top - viewport.height/2);
+        if (samples.length < 30) requestAnimationFrame(tick); else resolve(samples);
+      }
+      requestAnimationFrame(tick);
+    })""")
+    assert max(drift) - min(drift) < 1, drift
+
+
 def _navigate_chat(page: Page, chat: ChatSessionContract) -> None:
     if page.get_by_role("button", name="Open navigation", exact=True).is_visible():
         page.get_by_role("button", name="Open navigation", exact=True).click()

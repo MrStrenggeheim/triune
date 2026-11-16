@@ -63,6 +63,7 @@ export function SubagentTaskRow({
   action,
   preview,
   children,
+  keepSummaryWhenExpanded,
 }: {
   searchItemIds?: readonly string[];
   agentName: string;
@@ -71,12 +72,14 @@ export function SubagentTaskRow({
   action?: ReactNode;
   preview?: string;
   children?: ReactNode;
+  keepSummaryWhenExpanded?: boolean;
 }) {
   const label = formatSubagentTask(description);
   return (
     <ActivityRow
       searchItemIds={searchItemIds}
       presentation="message"
+      keepSummaryWhenExpanded={keepSummaryWhenExpanded}
       icon={<BotIcon aria-hidden="true" className="size-3.5" />}
       title={
         <>

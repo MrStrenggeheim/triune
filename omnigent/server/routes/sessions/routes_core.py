@@ -13,6 +13,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
+import anyio
 import httpx
 from fastapi import (
     APIRouter,
@@ -2325,6 +2326,7 @@ def register_core_routes(
                 reason="authentication required",
             )
         await websocket.accept()
+        await websocket.send_text(json.dumps({"type": "capabilities", "transcript_stream": 1}))
         _logger.info(
             "session-updates stream connected",
             extra=debug_event("session_updates", phase="connected"),
@@ -2394,6 +2396,10 @@ def register_core_routes(
             if time.monotonic() - last_send_monotonic >= _sf._SESSION_UPDATES_HEARTBEAT_INTERVAL_S:
                 await _send({"type": "heartbeat"})
 
+        from omnigent.server.session_multiplex import SessionMultiplex
+
+        transcript_streams = SessionMultiplex(router, websocket, _send, emit_lock)
+
         async def _reader() -> None:
             """Apply incoming watch-set updates and snapshot each one."""
             nonlocal watched
@@ -2402,6 +2408,8 @@ def register_core_routes(
                 try:
                     msg = json.loads(raw)
                 except json.JSONDecodeError:
+                    continue
+                if isinstance(msg, dict) and await transcript_streams.handle(msg):
                     continue
                 if not isinstance(msg, dict) or msg.get("type") != "watch":
                     # Forward-compatible: ignore frames we don't understand.
@@ -2547,32 +2555,36 @@ def register_core_routes(
         reader_task = asyncio.create_task(_reader(), name="session-updates-reader")
         ticker_task = asyncio.create_task(_ticker(), name="session-updates-ticker")
         discovery_task = asyncio.create_task(_discovery(), name="session-updates-discovery")
+        tasks = {reader_task, ticker_task, discovery_task}
         try:
-            done, pending = await asyncio.wait(
-                {reader_task, ticker_task, discovery_task},
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            for task in pending:
-                task.cancel()
-                with contextlib.suppress(asyncio.CancelledError, Exception):
-                    await task
+            done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
             for task in done:
+                if task.cancelled():
+                    continue
                 exc = task.exception()
-                # A client disconnect is the normal terminal condition; any
-                # other exception is a real bug worth surfacing in logs.
                 if exc is not None and not isinstance(exc, WebSocketDisconnect):
                     _logger.warning(
                         "session-updates stream task crashed: %r",
                         exc,
                         extra=debug_event("session_updates", phase="error"),
                     )
+        except asyncio.CancelledError:
+            # ASGI disconnect can cancel this scope before the reader observes it.
+            pass
         finally:
-            _logger.info(
-                "session-updates stream disconnected",
-                extra=debug_event("session_updates", phase="disconnected"),
-            )
-            with contextlib.suppress(RuntimeError):
-                await websocket.close()
+            # Match the existing dictation route: finish resource cleanup even
+            # when the ASGI cancellation scope is already cancelled.
+            with anyio.CancelScope(shield=True):
+                for task in tasks:
+                    task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+                await transcript_streams.close()
+                _logger.info(
+                    "session-updates stream disconnected",
+                    extra=debug_event("session_updates", phase="disconnected"),
+                )
+                with contextlib.suppress(RuntimeError):
+                    await websocket.close()
 
     # ── Codex-native goal controls ───────────────────────────────
 

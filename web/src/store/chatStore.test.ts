@@ -38,6 +38,7 @@ import { messageInputKind, type MessageCommunication } from "@/lib/messageCommun
 import { buildBubbles } from "@/lib/renderItems";
 import { getSessionSlim, INITIAL_WINDOW_ITEMS, SESSION_HISTORY_PAGE_SIZE } from "@/lib/sessionsApi";
 import { SSE_STALL_TIMEOUT_MS } from "@/lib/sse";
+import { sessionUpdatesSocket } from "@/lib/sessionUpdatesSocket";
 import { serializeReplyDraft, type StoredReplyDraft } from "@/lib/replyDraft";
 import { clearUnsentSends, peekUnsentSend, rememberUnsentSend } from "@/lib/unsentSends";
 import {
@@ -279,6 +280,9 @@ let sessionPendingInputs: Map<
   string,
   {
     pending_id: string;
+    item_id?: string;
+    position?: number;
+    created_at?: number;
     content: unknown[];
     created_by?: string;
     communication?: MessageCommunication;
@@ -513,6 +517,8 @@ function makeFakeSlotManager(
 }
 
 beforeEach(() => {
+  // This suite's default router models the legacy SSE server; WS boundaries have their own fake socket cases.
+  vi.stubGlobal("WebSocket", undefined);
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   sessionSnapshots = new Map();
   sessionItems = new Map();
@@ -1127,6 +1133,92 @@ describe("chatStore — lazy subtree usage", () => {
 });
 
 describe("chatStore — switchTo", () => {
+  describe("todo snapshot hydration", () => {
+    it.each(["cold", "preloaded", "retained"])(
+      "hydrates and clears snapshot todos through a %s conversation",
+      async (path) => {
+        const id = "conv_todos";
+        const items = [userMessage("resp_todos", "Keep the transcript")];
+        seedSession(id, items);
+        seedSession("conv_away", []);
+        let todos: ConversationState["todos"] | undefined = [];
+        fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+          if (String(input).split("?")[0] === `/v1/sessions/${id}`)
+            return mockResponse({ id, agent_id: "agent_xyz", status: "idle", todos });
+          return defaultFetchHandler(input, init);
+        });
+        if (path === "preloaded") bindConversationForTest(id, { blocks: itemsToBlocks(items) });
+        if (path === "retained") {
+          await useChatStore.getState().switchTo(id);
+          await useChatStore.getState().switchTo("conv_away");
+        }
+
+        todos = [{ content: "Control proof", status: "in_progress", activeForm: "" }];
+        await useChatStore.getState().switchTo(id);
+        await vi.waitFor(() => expect(useChatStore.getState().todos).toEqual(todos));
+        expect(useChatStore.getState().blocks.map((block) => block.ctx.itemId)).toEqual([
+          items[0]!.id,
+        ]);
+        expect(useChatStore.getState().loadingConversation).toBe(false);
+
+        await useChatStore.getState().switchTo("conv_away");
+        todos = undefined;
+        await useChatStore.getState().switchTo(id);
+        await vi.waitFor(() => expect(useChatStore.getState().todos).toEqual([]));
+      },
+    );
+
+    it.each(
+      ["cold", "preloaded", "retained"].flatMap((path) =>
+        [false, true].map((cleared) => ({ path, cleared })),
+      ),
+    )(
+      "preserves newer live todos during a delayed $path snapshot (cleared: $cleared)",
+      async ({ path, cleared }) => {
+        const id = "conv_todos_race";
+        const items = [userMessage("resp_todos_race", "Keep the transcript")];
+        seedSession(id, items);
+        seedSession("conv_away", []);
+        if (path === "preloaded") bindConversationForTest(id, { blocks: itemsToBlocks(items) });
+        if (path === "retained") {
+          await useChatStore.getState().switchTo(id);
+          await useChatStore.getState().switchTo("conv_away");
+        }
+        let finishSnapshot!: (response: Response) => void;
+        const pending = new Promise<Response>((resolve) => {
+          finishSnapshot = resolve;
+        });
+        const readSnapshot = vi.fn(() => pending);
+        fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+          if (String(input).split("?")[0] === `/v1/sessions/${id}`) return readSnapshot();
+          return defaultFetchHandler(input, init);
+        });
+        const binding = useChatStore.getState().switchTo(id);
+        await vi.waitFor(() => expect(readSnapshot).toHaveBeenCalledOnce());
+        const liveTodos: ConversationState["todos"] = cleared
+          ? []
+          : [{ content: "New live plan", status: "completed", activeForm: "" }];
+        handleSessionEvent({ type: "session_todos", conversationId: id, todos: liveTodos }, id);
+        expect(useChatStore.getState().todos).toBe(liveTodos);
+
+        finishSnapshot(
+          mockResponse({
+            id,
+            agent_id: "agent_xyz",
+            status: "waiting",
+            todos: [{ content: "Stale plan", status: "in_progress", activeForm: "" }],
+          }),
+        );
+        await binding;
+        await vi.waitFor(() => expect(useChatStore.getState().sessionStatus).toBe("waiting"));
+        expect(useChatStore.getState().todos).toBe(liveTodos);
+        expect(useChatStore.getState().blocks.map((block) => block.ctx.itemId)).toEqual([
+          items[0]!.id,
+        ]);
+      },
+    );
+  });
+
   it("hydrates blocks from the session snapshot when switching to a real conv id", async () => {
     const items: ConversationItem[] = [
       userMessage("resp_1", "hello"),
@@ -13802,7 +13894,7 @@ describe("chatStore — startStreamPump reconnect loop", () => {
     expect(sinks).toHaveLength(2);
     sinks[1]!.push(sse("response.output_text.delta", { message_id: "m1", index: 0, delta: "Hi" }));
     await vi.advanceTimersByTimeAsync(20);
-    expect(preview()?.previewInterrupted).toBeUndefined();
+    expect(preview()?.previewInterrupted).toBe(false);
 
     sinks[1]!.push("data: [DONE]\n\n");
     sinks[1]!.close();
@@ -13912,7 +14004,7 @@ describe("chatStore — startStreamPump reconnect loop", () => {
     }
   });
 
-  it("uses a conservative preview after a headerless hop between server epochs", async () => {
+  it("preserves a preview through a headerless hop between server epochs", async () => {
     seedSession("conv_epoch_unknown", []);
     const sinks = routeStreamOpens(["server-a", "", "server-b"]);
     const controller = new AbortController();
@@ -13943,7 +14035,7 @@ describe("chatStore — startStreamPump reconnect loop", () => {
       );
       await vi.advanceTimersByTimeAsync(20);
       expect(useChatStore.getState().blocks.find((b) => b.ctx.itemId === "live:m1")).toMatchObject({
-        fullText: "after",
+        fullText: "before after",
       });
     } finally {
       controller.abort();
@@ -14003,7 +14095,7 @@ describe("chatStore — startStreamPump reconnect loop", () => {
     sinks[0]!.close();
     await vi.advanceTimersByTimeAsync(6000);
     expect(sinks).toHaveLength(2);
-    expect(useChatStore.getState().blocks.some((b) => b.ctx.itemId === "live:m1")).toBe(false);
+    expect(useChatStore.getState().blocks.some((b) => b.ctx.itemId === "live:m1")).toBe(true);
     sinks[1]!.push(
       sse("response.output_text.delta", { message_id: "m1", index: 1, delta: "before after" }),
     );
@@ -14192,8 +14284,10 @@ describe("chatStore — startStreamPump reconnect loop", () => {
       });
 
       // The completed item was committed while the browser stream was down;
-      // Claude does not put MessageDisplay's m1 ID in its transcript item.
-      seedSessionItems("conv_interrupted_gap", [assistantMessage("resp_1", "canonical answer")]);
+      // The saved item carries its authoritative stream message identity.
+      seedSessionItems("conv_interrupted_gap", [
+        assistantMessage("resp_1", "canonical answer", "m1"),
+      ]);
       sinks[0]!.close();
       await vi.advanceTimersByTimeAsync(6000);
       expect(sinks).toHaveLength(2);
@@ -14246,7 +14340,9 @@ describe("chatStore — startStreamPump reconnect loop", () => {
         sse("response.output_text.delta", { message_id: "m1", index: 2, delta: "preview" }),
       );
       await vi.advanceTimersByTimeAsync(20);
-      seedSessionItems("conv_interrupted_retry", [assistantMessage("resp_1", "canonical answer")]);
+      seedSessionItems("conv_interrupted_retry", [
+        assistantMessage("resp_1", "canonical answer", "m1"),
+      ]);
       sinks[0]!.error();
       // The reconnect's first backfill attempt fails (itemAttempts === 1). The
       // post-reconnect catch-up burst (RECONNECT_STATUS_CATCHUP_DELAYS_MS, first
@@ -16176,8 +16272,11 @@ describe("chatStore — startStreamPump reconnect loop", () => {
     await loop;
   });
 
-  it("re-hydrate restores itemless blocks at their transcript time", async () => {
+  it("re-hydrate preserves explicit itemless anchors despite skewed clock stamps", async () => {
     const preGap = Array.from({ length: 30 }, (_, i) => gapUser("kpre", i));
+    preGap.forEach((item, position) => {
+      item.position = position;
+    });
     const windowItems = preGap.slice(-SESSION_HISTORY_PAGE_SIZE);
     seedSession("conv_keep", preGap);
     // The prompt is still parked server-side, so the snapshot lists it —
@@ -16212,6 +16311,7 @@ describe("chatStore — startStreamPump reconnect loop", () => {
         responseId: "",
         itemId: null,
         clientCreatedAtS: 9_260,
+        anchor: { afterItemId: preGap.at(-1)!.id, afterPosition: 29, sequence: 1 },
       },
       elicitationId: "elic_keep",
       message: "Allow the tool call?",
@@ -16233,6 +16333,7 @@ describe("chatStore — startStreamPump reconnect loop", () => {
         responseId: "",
         itemId: null,
         clientCreatedAtS: 9_580,
+        anchor: { afterItemId: preGap.at(-1)!.id, afterPosition: 29, sequence: 2 },
       },
       message: "boom",
       source: "",
@@ -16254,6 +16355,7 @@ describe("chatStore — startStreamPump reconnect loop", () => {
     const gap = Array.from({ length: 100 }, (_, i) => gapUser("kgap", i));
     gap.forEach((item, i) => {
       item.created_at = 9_000 + i * 10;
+      item.position = 30 + i;
     });
     seedSessionItems("conv_keep", [...preGap, ...gap]);
     sinks[0]!.error();
@@ -16263,8 +16365,7 @@ describe("chatStore — startStreamPump reconnect loop", () => {
     const state = useChatStore.getState();
     // The fresh fetch returns ITEMS only — dropping these blocks would lose
     // the pending ApprovalCard (and the failure reason) with no way back.
-    // Appending them after the fresh window was the ordering bug: a 9:26 card
-    // rendered below messages from 10+ minutes later after reconnect.
+    // Captured boundaries retain order independently of server/client clock skew.
     const ordered = state.blocks.map((b) => b.ctx.itemId ?? b.type);
     expect(ordered.indexOf("elicitation")).toBeLessThan(ordered.indexOf("msg_kgap_0080_user"));
     expect(ordered.indexOf("error")).toBeLessThan(ordered.indexOf("msg_kgap_0080_user"));
@@ -16353,7 +16454,7 @@ describe("chatStore — startStreamPump reconnect loop", () => {
     // The message commits while the socket is dead: the server removes
     // it from reconnect replay (no replay on the next connection) and
     // it lands in the items store instead.
-    seedSessionItems("conv_native_commit", [assistantMessage("resp_n", "Hello world!")]);
+    seedSessionItems("conv_native_commit", [assistantMessage("resp_n", "Hello world!", "m2")]);
     sinks[0]!.error();
     await drainAsync();
     expect(sinks).toHaveLength(2);
@@ -17304,18 +17405,18 @@ describe("chatStore — live delta streaming (claude-native)", () => {
       previewInterrupted: true,
     });
 
-    sink.push(messageDone("ci_1", "resp_l", "first second third"));
+    sink.push(messageDone("ci_1", "resp_l", "first second third", "m1"));
     await tick();
     expect(provisional()).toBeUndefined();
     expect(useChatStore.getState().blocks.some((b) => b.ctx.itemId === "ci_1")).toBe(true);
     controller.abort();
   });
 
-  it("replaces interrupted native text with a fetched canonical item on completion", async () => {
+  it("replaces interrupted native text by exact identity without a snapshot", async () => {
     const id = "conv_live_replacement";
     useChatStore.setState({ conversationId: id, blocks: [], isNativeTerminalSession: true });
     const canonical: ConversationItem = {
-      ...assistantMessage("resp_l", "first missing last"),
+      ...assistantMessage("resp_l", "first missing last", "m1"),
       id: "ci_1",
     };
     seedSessionItems(id, [canonical]);
@@ -17331,11 +17432,11 @@ describe("chatStore — live delta streaming (claude-native)", () => {
     sink.push(nativeDelta("m1", 2, "last", true));
     await tick();
     expect(provisional()?.previewInterrupted).toBe(true);
-    sink.push(messageDone("ci_1", "resp_l", "first missing last"));
+    sink.push(messageDone("ci_1", "resp_l", "first missing last", "m1"));
     await tick();
     await tick();
 
-    expect(itemFetches).toBeGreaterThan(0);
+    expect(itemFetches).toBe(0);
     expect(provisional()).toBeUndefined();
     const text = useChatStore.getState().blocks.filter((b) => b.type === "text_done");
     expect(text).toHaveLength(1);
@@ -17364,11 +17465,20 @@ describe("chatStore — live delta streaming (claude-native)", () => {
 
     sink.push(messageDone("ci_1", "resp_l", "canonical first"));
     await tick();
-    expect(useChatStore.getState().blocks.map((b) => b.ctx.itemId)).toEqual(["ci_1"]);
+    expect(useChatStore.getState().blocks.map((b) => b.ctx.itemId)).toEqual([
+      "live:m1",
+      "live:m2",
+      "ci_1",
+    ]);
     sink.push(messageDone("ci_2", "resp_l", "canonical second"));
     await tick();
     manual.fire();
-    expect(useChatStore.getState().blocks.map((b) => b.ctx.itemId)).toEqual(["ci_1", "ci_2"]);
+    expect(useChatStore.getState().blocks.map((b) => b.ctx.itemId)).toEqual([
+      "live:m1",
+      "live:m2",
+      "ci_1",
+      "ci_2",
+    ]);
     controller.abort();
   });
 
@@ -17485,7 +17595,7 @@ describe("chatStore — live delta streaming (claude-native)", () => {
     await tick();
     expect(provisional()?.ctx.itemId).toBe("live:m1");
 
-    sink.push(messageDone("ci_1", "resp_l", "Hello world"));
+    sink.push(messageDone("ci_1", "resp_l", "Hello world", "m1"));
     await tick();
 
     // The provisional is gone and the authoritative text_done (real item
@@ -17553,7 +17663,7 @@ describe("chatStore — live delta streaming (claude-native)", () => {
       ],
     }));
 
-    sink.push(messageDone("ci_1", "resp_l", "Hello world"));
+    sink.push(messageDone("ci_1", "resp_l", "Hello world", "m1"));
     await tick();
 
     // Exactly one rendering: the committed item. The preview is removed.
@@ -17605,7 +17715,7 @@ describe("chatStore — live delta streaming (claude-native)", () => {
     sink.push(nativeDelta("pi-turn-0:msg:0", 0, "PONG", false));
     sink.push(nativeDelta("pi-turn-0:msg:0", 1, "", true));
     await tick();
-    sink.push(messageDone("msg_real", "pi-turn-0", "PONG"));
+    sink.push(messageDone("msg_real", "pi-turn-0", "PONG", "pi-turn-0:msg:0"));
     await tick();
 
     // The provisional preview must be removed — exactly one
@@ -17643,7 +17753,7 @@ describe("chatStore — live delta streaming (claude-native)", () => {
         data: { requested_at: 1704067200, response_id: "codex_turn_123" },
       }),
     );
-    sink.push(messageDone("ci_partial", "codex_turn_123", "partial answer"));
+    sink.push(messageDone("ci_partial", "codex_turn_123", "partial answer", "codex-stream-1"));
     sink.push(
       sse("session.status", {
         type: "session.status",
@@ -17713,7 +17823,7 @@ describe("chatStore — live delta streaming (claude-native)", () => {
 
     // The committed item follows the normal reducer path after the preview
     // is removed, so its position reflects the done event's arrival.
-    sink.push(messageDone("ci_1", "resp_l", "Let me check that."));
+    sink.push(messageDone("ci_1", "resp_l", "Let me check that.", "m1"));
     await tick();
     const textIdx = idxOf((b) => b.ctx.itemId === "ci_1");
     const elicitIdx2 = idxOf((b) => b.type === "elicitation");
@@ -17735,7 +17845,7 @@ describe("chatStore — live delta streaming (claude-native)", () => {
     sink.push(sse("response.created", { id: "resp_l", status: "in_progress", output: [] }));
     sink.push(nativeDelta("m1", 0, "first", true));
     await tick();
-    sink.push(messageDone("ci_1", "resp_l", "first"));
+    sink.push(messageDone("ci_1", "resp_l", "first", "m1"));
     await tick();
     // m1 committed, no provisional left.
     expect(provisional()).toBeUndefined();
@@ -22868,5 +22978,346 @@ describe("chatStore — durable server queue", () => {
     expect(row.deliveryError).toBeTruthy();
     expect(await useChatStore.getState().deleteQueuedMessage(row.queueId)).toBe(false);
     expect(useChatStore.getState().queuedMessages[0]?.text).toBe("keep complete draft");
+  });
+});
+
+describe("canonical transcript event-script equivalence", () => {
+  const checkpoint = (phase: "start" | "complete", items: ConversationItem[]) =>
+    sse("session.sync", {
+      phase,
+      reset: true,
+      stream_epoch: "script-epoch",
+      item_count: items.length,
+      last_position: items.at(-1)?.position ?? -1,
+      last_item_id: items.at(-1)?.id ?? null,
+    });
+  const done = (item: ConversationItem) => sse("response.output_item.done", { item });
+  const consumed = (item: ConversationItem) =>
+    sse("session.input.consumed", {
+      data: {
+        item_id: item.id,
+        position: item.position,
+        response_id: item.response_id,
+        type: "message",
+        cleared_pending_id: "pending-q2",
+        data: {
+          role: "user",
+          user_authored: true,
+          content: [{ type: "input_text", text: "Second question" }],
+        },
+      },
+    });
+  const projection = (blocks: AnyBlock[]) =>
+    buildBubbles(blocks, null).map((bubble) =>
+      bubble.kind === "user"
+        ? ["user", bubble.itemId, bubble.content]
+        : bubble.kind === "assistant"
+          ? ["assistant", bubble.items]
+          : bubble,
+    );
+
+  for (const variant of ["preview-first", "committed-first"] as const) {
+    it(`${variant} converges before reconnect when the native user echo is late`, async () => {
+      const q1 = { ...userMessage("one", "First question"), position: 0 };
+      const a1 = { ...assistantMessage("one", "First answer"), position: 1 };
+      const q2 = { ...userMessage("two", "Second question"), position: 2 };
+      const a2 = {
+        ...assistantMessage("two", "Second answer", "native-a2"),
+        position: 3,
+        phase: "final_answer",
+      };
+      const bound = bindConversationForTest(`order-${variant}`, {
+        blocks: itemsToBlocks([q1, a1]),
+        isNativeTerminalSession: true,
+        activeResponse: { responseId: "two", state: "streaming", error: null },
+      });
+      bound.set({
+        pendingUserMessages: [
+          {
+            tempId: "temp-q2",
+            pendingId: "pending-q2",
+            content: [{ type: "input_text", text: "Second question" }],
+          },
+        ],
+      });
+      const sink = pushableStream();
+      const loop = pumpStreamEvents(
+        `order-${variant}`,
+        sink.stream,
+        new AbortController(),
+        bound.set,
+        bound.get,
+      );
+      sink.push(
+        variant === "preview-first"
+          ? sse("response.output_text.delta", {
+              message_id: "native-a2",
+              index: 0,
+              final: true,
+              delta: "Second answer",
+            })
+          : done(a2),
+      );
+      await tick();
+      sink.push(consumed(q2));
+      sink.push(done(a2));
+      sink.push("data: [DONE]\n\n");
+      sink.close();
+      await loop;
+      expect(bound.get().pendingUserMessages).toEqual([]);
+      expect(bound.get().blocks.map((block) => block.ctx.itemId)).toEqual([
+        q1.id,
+        a1.id,
+        q2.id,
+        a2.id,
+      ]);
+      expect(projection(bound.get().blocks)).toEqual(projection(itemsToBlocks([q1, a1, q2, a2])));
+    });
+  }
+
+  it.each(Array.from({ length: 24 }, (_, seed) => seed))(
+    "generated reorder/drop/duplicate/recycle script %i equals cold load after authoritative reset",
+    async (seed) => {
+      const saved = Array.from({ length: 8 }, (_, index) => ({
+        ...(index % 2
+          ? assistantMessage(`turn-${index >> 1}`, `Answer ${index}`, `native-${index}`)
+          : userMessage(`turn-${index >> 1}`, `Question ${index}`)),
+        position: index,
+      }));
+      const stale = { ...assistantMessage("obsolete", "Removed during disconnect"), position: 9 };
+      const bound = bindConversationForTest(`script-${seed}`, {
+        blocks: itemsToBlocks([saved[0]!, stale]),
+        isNativeTerminalSession: true,
+        pendingUserMessages: [
+          {
+            tempId: "accepted-local",
+            stableId: saved[2]!.id,
+            content: [{ type: "input_text", text: "Question 2" }],
+          },
+          {
+            tempId: "unsent-local",
+            initialDraft: { text: "Question 2", files: [] },
+            content: [{ type: "input_text", text: "Question 2" }],
+          },
+        ],
+      });
+      const controller = new AbortController();
+      const sink = pushableStream();
+      const loop = pumpStreamEvents(
+        `script-${seed}`,
+        sink.stream,
+        controller,
+        bound.set,
+        bound.get,
+      );
+      let random = seed + 1;
+      const shuffled = [...saved].sort(() => {
+        random = (random * 1664525 + 1013904223) >>> 0;
+        return (random % 3) - 1;
+      });
+      shuffled.forEach((item, index) => {
+        if ((index + seed) % 4 !== 0) sink.push(done(item));
+        if ((index + seed) % 3 === 0) sink.push(done(item));
+      });
+      sink.close(); // A dropped/hiding observation keeps its retained model.
+      expect(await loop).toBe("dropped");
+      const replacement = {
+        ...saved[1]!,
+        content: [{ type: "output_text", text: "Edited old-position answer" }],
+      } as ConversationItem;
+      const canonical = saved.map((item) => (item.id === replacement.id ? replacement : item));
+      const resumed = pushableStream();
+      const resumedLoop = pumpStreamEvents(
+        `script-${seed}`,
+        resumed.stream,
+        controller,
+        bound.set,
+        bound.get,
+      );
+      resumed.push(checkpoint("start", canonical));
+      canonical.forEach((item) => resumed.push(done(item)));
+      resumed.push(checkpoint("complete", canonical));
+      resumed.push("data: [DONE]\n\n");
+      resumed.close();
+      await resumedLoop;
+      expect(projection(bound.get().blocks)).toEqual(projection(itemsToBlocks(canonical)));
+      expect(bound.get().blocks.some((block) => block.ctx.itemId === stale.id)).toBe(false);
+      expect(bound.get().pendingUserMessages.map((pending) => pending.tempId)).toEqual([
+        "unsent-local",
+      ]);
+      expect(bound.get().blocks.find((block) => block.ctx.itemId === saved[2]!.id)).toMatchObject({
+        stableKey: "accepted-local",
+      });
+    },
+  );
+});
+
+it("binds independent conversation stores through one negotiated tab socket without SSE", async () => {
+  vi.useFakeTimers();
+  class TranscriptSocket {
+    static OPEN = 1;
+    static instances: TranscriptSocket[] = [];
+    readyState = 0;
+    onopen: (() => void) | null = null;
+    onmessage: ((event: MessageEvent) => void) | null = null;
+    onclose: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    sent: Record<string, unknown>[] = [];
+    constructor() {
+      TranscriptSocket.instances.push(this);
+      queueMicrotask(() => {
+        this.readyState = 1;
+        this.onopen?.();
+        this.emit({ type: "capabilities", transcript_stream: 1 });
+      });
+    }
+    emit(frame: unknown) {
+      this.onmessage?.({ data: JSON.stringify(frame) } as MessageEvent);
+    }
+    send(data: string) {
+      const frame = JSON.parse(data);
+      this.sent.push(frame);
+      if (frame.type !== "subscribe") return;
+      const boundary = {
+        type: "session.sync",
+        reset: true,
+        last_position: -1,
+        item_count: 0,
+        last_item_id: null,
+        stream_epoch: "multiplex-test",
+        item_revision: 0,
+        reset_revision: 0,
+      };
+      this.emit({
+        type: "session.event",
+        session_id: frame.session_id,
+        event: { ...boundary, phase: "start" },
+      });
+      this.emit({
+        type: "session.event",
+        session_id: frame.session_id,
+        event: { ...boundary, phase: "complete" },
+      });
+    }
+    close() {
+      this.readyState = 3;
+      this.onclose?.();
+    }
+  }
+  vi.stubGlobal("WebSocket", TranscriptSocket);
+  seedSession("mux-one", []);
+  seedSession("mux-two", []);
+  try {
+    await useChatStore.getState().switchTo("mux-one");
+    await ensureConversationStreamed("mux-two");
+    await vi.advanceTimersByTimeAsync(50);
+    const socket = TranscriptSocket.instances[0]!;
+    expect(TranscriptSocket.instances).toHaveLength(1);
+    expect(
+      socket.sent.filter((frame) => frame.type === "subscribe").map((frame) => frame.session_id),
+    ).toEqual(["mux-one", "mux-two"]);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/stream"))).toEqual([]);
+    const first = { ...assistantMessage("one", "First private answer"), position: 0 };
+    const second = { ...assistantMessage("two", "Second private answer"), position: 0 };
+    socket.emit({
+      type: "session.event",
+      session_id: "mux-one",
+      event: { type: "response.output_item.done", item: first },
+    });
+    socket.emit({
+      type: "session.event",
+      session_id: "mux-two",
+      event: { type: "response.output_item.done", item: second },
+    });
+    await vi.advanceTimersByTimeAsync(50);
+    expect(
+      conversationRegistry
+        .peek("mux-one")!
+        .getState()
+        .blocks.map((block) => block.ctx.itemId),
+    ).toEqual([first.id]);
+    expect(
+      conversationRegistry
+        .peek("mux-two")!
+        .getState()
+        .blocks.map((block) => block.ctx.itemId),
+    ).toEqual([second.id]);
+    releaseConversation("mux-two");
+    expect(socket.sent.at(-1)).toEqual({ type: "unsubscribe", session_id: "mux-two" });
+    expect(conversationRegistry.peek("mux-one")!.getState().abortController?.signal.aborted).toBe(
+      false,
+    );
+  } finally {
+    releaseConversation("mux-one");
+    releaseConversation("mux-two");
+    sessionUpdatesSocket.stop();
+    await vi.advanceTimersByTimeAsync(1);
+  }
+});
+
+it("projects an accepted pending peer before grouping and keeps its original ID, position and aliases", async () => {
+  const id = "peer-projection";
+  vi.mocked(getCurrentUserId).mockReturnValue("viewer");
+  const before = { ...assistantMessage("before", "Before peer"), position: 150 };
+  const after = { ...assistantMessage("after", "After peer"), position: 152 };
+  const communication: MessageCommunication = {
+    kind: "peer",
+    message_id: "receipt-151",
+    source_conversation_id: "source",
+    destination_conversation_id: id,
+    delivery_state: "queued",
+    receipt: "accepted",
+  };
+  seedSession(id, [before, after]);
+  sessionPendingInputs.set(id, [
+    {
+      pending_id: "opaque-pending",
+      item_id: "receipt-151",
+      position: 151,
+      created_at: 100,
+      communication,
+      content: [{ type: "input_text", text: "Peer input" }],
+    },
+  ]);
+  await useChatStore.getState().switchTo(id);
+  const state = useChatStore.getState();
+  expect(state.blocks.map((block) => block.ctx.itemId)).toEqual([
+    before.id,
+    "receipt-151",
+    after.id,
+  ]);
+  expect(state.pendingUserMessages).toEqual([]);
+  const bubbles = buildBubbles(state.blocks, null);
+  expect(bubbles.map((bubble) => bubble.kind)).toEqual(["assistant", "user", "assistant"]);
+  expect(bubbles[1]).toMatchObject({
+    itemId: "receipt-151",
+    position: 151,
+    aliases: ["opaque-pending"],
+    communication: { delivery_state: "queued", receipt: "accepted" },
+  });
+  handleSessionEvent(
+    {
+      type: "session_item_updated",
+      item: {
+        id: "receipt-151",
+        position: 151,
+        type: "message",
+        role: "user",
+        response_id: "native-turn",
+        status: "completed",
+        created_at: 100,
+        communication: { ...communication, delivery_state: "confirmed", receipt: "transcript" },
+        content: [{ type: "input_text", text: "Peer input" }],
+      },
+    },
+    id,
+  );
+  expect(
+    useChatStore.getState().blocks.filter((block) => block.ctx.itemId === "receipt-151"),
+  ).toHaveLength(1);
+  expect(buildBubbles(useChatStore.getState().blocks, null)[1]).toMatchObject({
+    position: 151,
+    aliases: ["opaque-pending"],
+    communication: { delivery_state: "confirmed" },
   });
 });

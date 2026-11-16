@@ -1,8 +1,13 @@
+// Modified for Triune.
 import { TooltipButton } from "@/components/ui/tooltip";
 import { useEffect, useRef } from "react";
-import { FileTextIcon, FolderIcon, PlusIcon } from "lucide-react";
+import { FileTextIcon, FolderIcon, MessageCircleIcon, PlusIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { WorkspaceFile } from "@/hooks/useWorkspaceChangedFiles";
+import type { ReferenceChat } from "@/lib/contextReferences";
+import { parseMentionToken, rankMentionEntries } from "@/lib/composerMentions";
+
+const EMPTY_CHATS: ReferenceChat[] = [];
 
 interface FileMentionMenuProps {
   /** Directory currently being browsed ("" = workspace root). */
@@ -21,6 +26,9 @@ interface FileMentionMenuProps {
   onOpenDir: (path: string) => void;
   /** Attach a file (isDir=false) or whole folder (isDir=true) as a unit. */
   onAttach: (path: string, isDir: boolean) => void;
+  query?: string;
+  chats?: ReferenceChat[];
+  onChooseChat?: (chat: ReferenceChat) => void;
 }
 
 /**
@@ -37,13 +45,29 @@ export function FileMentionMenu({
   loading = false,
   onOpenDir,
   onAttach,
+  query = "",
+  chats = EMPTY_CHATS,
+  onChooseChat,
 }: FileMentionMenuProps) {
+  const rows = rankMentionEntries(
+    [
+      ...entries.map((entry) => ({ ...entry, chat: undefined as ReferenceChat | undefined })),
+      ...chats.map((chat) => ({
+        type: "chat",
+        path: chat.id,
+        name: chat.title,
+        chat,
+        matchesQuery: true,
+      })),
+    ],
+    parseMentionToken(query).filter,
+  );
   const listRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (activeIndex < 0 || !listRef.current) return;
     listRef.current.querySelector('[data-active="true"]')?.scrollIntoView({ block: "nearest" });
-  }, [activeIndex]);
-  if (entries.length === 0 && !loading) return null;
+  }, [activeIndex, entries, chats]);
+  if (rows.length === 0 && !loading) return null;
 
   return (
     <div className="absolute bottom-full left-0 z-10 mb-2 flex items-end gap-2">
@@ -55,11 +79,11 @@ export function FileMentionMenu({
           <span className="truncate">{currentDir ? `/${currentDir}` : "Workspace"}</span>
           <span className="shrink-0 text-[10px]">↵ open · ⇥ attach</span>
         </div>
-        {entries.length === 0 && loading ? (
+        {rows.length === 0 && loading ? (
           <div className="px-1.5 py-1 text-ui text-muted-foreground">Loading…</div>
         ) : (
           <div ref={listRef} role="listbox" className="max-h-80 overflow-y-auto">
-            {entries.map((entry, i) => {
+            {rows.map((entry, i) => {
               const isDir = entry.type === "directory";
               return (
                 <div
@@ -75,13 +99,28 @@ export function FileMentionMenu({
                 >
                   <TooltipButton
                     type="button"
+                    data-mention-primary
                     // preventDefault keeps the textarea focused while clicking.
                     onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => (isDir ? onOpenDir(entry.path) : onAttach(entry.path, false))}
+                    onClick={() =>
+                      entry.chat
+                        ? onChooseChat?.(entry.chat)
+                        : isDir
+                          ? onOpenDir(entry.path)
+                          : onAttach(entry.path, false)
+                    }
                     className="flex min-w-0 flex-1 items-center gap-2 hover:text-foreground"
-                    title={isDir ? `Open ${entry.name}` : `Attach ${entry.name}`}
+                    title={
+                      entry.chat
+                        ? entry.name
+                        : isDir
+                          ? `Open ${entry.name}`
+                          : `Attach ${entry.name}`
+                    }
                   >
-                    {isDir ? (
+                    {entry.chat ? (
+                      <MessageCircleIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                    ) : isDir ? (
                       <FolderIcon className="size-3.5 shrink-0 text-slate-500 dark:text-slate-400" />
                     ) : (
                       <FileTextIcon className="size-3.5 shrink-0 text-slate-500 dark:text-slate-400" />
@@ -94,6 +133,7 @@ export function FileMentionMenu({
                   {isDir && (
                     <TooltipButton
                       type="button"
+                      data-mention-attach
                       onMouseDown={(e) => e.preventDefault()}
                       onClick={() => onAttach(entry.path, true)}
                       className="flex shrink-0 items-center gap-0.5 rounded-md border border-border px-1.5 py-0.5 text-sm text-muted-foreground hover:bg-accent hover:text-foreground"

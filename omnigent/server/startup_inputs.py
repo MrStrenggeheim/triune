@@ -269,6 +269,9 @@ class ManagedStartupInputs:
         return [
             {
                 "pending_id": pending_inputs.make_pending_id(session_id, item.id),
+                "position": item.position,
+                "item_id": item.id,
+                "created_at": item.created_at,
                 "content": input_content(item),
                 **(
                     {

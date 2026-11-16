@@ -1,0 +1,48 @@
+/* PolyForm Noncommercial 1.0.0; see LICENSING.md. */
+/* Required Notice: Copyright 2026 MrStrenggeheim. Triune (https://github.com/MrStrenggeheim/triune). */
+/* One preview frame; the diagram body owns overflow. */
+.chat-mermaid > [data-streamdown="mermaid-block"] {
+  min-height: 0;
+  margin: 0;
+  gap: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
+}
+
+.chat-mermaid > [data-streamdown="mermaid-block"] > div:first-child {
+  height: 2.5rem;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+  padding-inline: 0.5rem;
+}
+
+.chat-mermaid > div[data-streamdown="mermaid-block"] > .sticky {
+  position: absolute;
+  top: 0.5rem;
+  right: 2.5rem;
+  height: 1.5rem;
+  margin: 0;
+}
+
+.chat-mermaid > [data-streamdown="mermaid-block"] [data-streamdown="mermaid-block-actions"] {
+  margin: 0;
+  gap: 0.5rem;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+  backdrop-filter: none;
+}
+
+.chat-mermaid > [data-streamdown="mermaid-block"] > div:last-child {
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+}

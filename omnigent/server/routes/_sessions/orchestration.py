@@ -12847,7 +12847,7 @@ async def _child_session_summaries_from_conversations(
         10,
     )
     previews = {
-        child_id: _latest_message_preview(message_items)
+        child_id: _latest_message_preview(message_items, limit_chars=180, label_direction=True)
         for child_id, message_items in message_items_by_child.items()
     }
     return [
@@ -14169,6 +14169,16 @@ async def _get_session_snapshot(
                     known[item["pending_id"]]["communication"] = item["communication"]
             else:
                 response.pending_inputs.append(item)
+    saved_pending = await asyncio.to_thread(conv_store.list_pending_inputs, session_id)
+    pending_by_id = {
+        pending_inputs.make_pending_id(session_id, item.id): item for item in saved_pending
+    }
+    for pending in response.pending_inputs:
+        saved = pending_by_id.get(pending["pending_id"])
+        if saved is not None:
+            pending["position"] = saved.position
+            pending["item_id"] = saved.id
+            pending["created_at"] = saved.created_at
     return response
 
 

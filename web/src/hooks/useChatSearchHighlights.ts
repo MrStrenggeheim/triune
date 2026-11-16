@@ -46,6 +46,8 @@ export interface ChatSearchHighlightOptions {
   sources?: readonly SearchSource[];
   reveal?: ChatSearchRevealState;
   ensureMessageVisible: (id: string) => boolean;
+  /** Stop an earlier virtual index navigation before exact-range positioning. */
+  cancelPendingScroll?: () => void;
   ready: boolean;
   rangeNonce?: number;
 }
@@ -222,6 +224,7 @@ export function useChatSearchHighlights(options: ChatSearchHighlightOptions): vo
     scroller.ownerDocument.addEventListener("keydown", interrupt);
     releaseScrollOwner = claimTranscriptScrollOwner(scroller);
     releaseConversationScrollLock(scroller);
+    latest.current.options.cancelPendingScroll?.();
     // Stop a deep-link's already-started native smooth scroll as search takes ownership.
     scrollElement?.scrollTo?.({ top: scrollElement.scrollTop, behavior: "instant" });
     const notify = (message: string, retryHistory = false) => {
@@ -263,7 +266,9 @@ export function useChatSearchHighlights(options: ChatSearchHighlightOptions): vo
       let mountAttempts = 0;
       let lastMountAt = 0;
       let revealed = false;
-      let signature = "";
+      let geometry: number[] | undefined;
+      let alignedGeometry: number[] | undefined;
+      let resolved = false;
       let stableSince = performance.now();
       let correctionDeadline: number | undefined;
       for (let poll = 0; poll < 1000; poll++) {
@@ -274,6 +279,10 @@ export function useChatSearchHighlights(options: ChatSearchHighlightOptions): vo
           (value) => value.itemId === target.itemId,
         );
         if (!source) {
+          if (resolved) {
+            releaseScrollOwner();
+            return;
+          }
           if (performance.now() >= loadDeadline || pages >= MAX_HISTORY_PAGES) {
             notify("Couldn’t finish loading this message.", true);
             return;
@@ -313,11 +322,19 @@ export function useChatSearchHighlights(options: ChatSearchHighlightOptions): vo
           continue;
         }
         if (!validSource(source, target)) {
+          if (resolved) {
+            releaseScrollOwner();
+            return;
+          }
           notify("This message changed. Search again to find its current text.");
           return;
         }
         renderDeadline ??= performance.now() + RENDER_BUDGET_MS;
-        if (performance.now() >= (correctionDeadline ?? renderDeadline)) {
+        if (performance.now() >= Math.min(correctionDeadline ?? renderDeadline, renderDeadline)) {
+          if (resolved && alignedGeometry) {
+            releaseScrollOwner();
+            return;
+          }
           notify("Couldn’t finish positioning this match. Retry when its layout settles.");
           return;
         }
@@ -344,7 +361,11 @@ export function useChatSearchHighlights(options: ChatSearchHighlightOptions): vo
             lastMountAt = performance.now();
             current.ensureMessageVisible(source.rowId);
           }
-        } else if (!existingRange || isRangeHidden(existingRange, scroller)) {
+        } else {
+          mountedRow = undefined;
+          mountAttempts = 0;
+        }
+        if (row && (!existingRange || isRangeHidden(existingRange, scroller))) {
           // Compatibility for bubble owners without the reveal context.
           const expand = Array.from(row.querySelectorAll("button")).find((button) =>
             button.textContent?.startsWith("Show full prompt ("),
@@ -369,6 +390,9 @@ export function useChatSearchHighlights(options: ChatSearchHighlightOptions): vo
           continue;
         }
         if (!range) {
+          alignedGeometry = undefined;
+          geometry = undefined;
+          stableSince = performance.now();
           // Closed/unmounted content remains render-pending. A future activation
           // can retry; it never creates an unavailable verdict for a valid item.
           await pause();
@@ -377,24 +401,38 @@ export function useChatSearchHighlights(options: ChatSearchHighlightOptions): vo
         const bounds = range.getBoundingClientRect();
         const viewport = scrollElement?.getBoundingClientRect();
         if (bounds.height <= 0 || (viewport && viewport.height <= 0)) {
+          alignedGeometry = undefined;
+          geometry = undefined;
+          stableSince = performance.now();
           await pause();
           continue;
         }
         const contentTop = bounds.top - (viewport?.top ?? 0) + (scrollElement?.scrollTop ?? 0);
+        const targetGeometry = [contentTop, bounds.height, viewport?.height ?? 0];
+        // Keep following late target layout within the original render budget.
+        // Unrelated tail growth and manual scroll offsets are not target movement.
+        if (
+          resolved &&
+          alignedGeometry?.every((value, index) => Math.abs(value - targetGeometry[index]) <= 1)
+        ) {
+          await pause();
+          continue;
+        }
+        alignedGeometry = undefined;
         const destination =
           scrollElement && viewport
             ? Math.max(
                 0,
                 Math.min(
-                  contentTop - (viewport.height - bounds.height) / 2,
+                  contentTop - Math.max(0, viewport.height - bounds.height) / 2,
                   Math.max(0, scrollElement.scrollHeight - viewport.height),
                 ),
               )
             : 0;
-        const measured = JSON.stringify([contentTop, bounds.height, viewport?.height, destination]);
+        const measured = [...targetGeometry, destination];
         const now = performance.now();
-        if (measured !== signature) {
-          signature = measured;
+        if (!geometry?.every((value, index) => Math.abs(value - measured[index]) <= 1)) {
+          geometry = measured;
           stableSince = now;
         }
         if (now - stableSince >= SETTLE_MS) {
@@ -405,10 +443,13 @@ export function useChatSearchHighlights(options: ChatSearchHighlightOptions): vo
               bounds.top + Math.min(bounds.height, viewport.height) <=
                 viewport.top + viewport.height + 1);
           if (Math.abs(residual) <= 1 && visible && !isRangeHidden(range, scroller)) {
-            releaseScrollOwner();
+            alignedGeometry = targetGeometry;
+            correctionDeadline = undefined;
             completed.current = key;
-            latest.current.options.onResolved?.({ target, status: "resolved" });
-            return;
+            if (!resolved) latest.current.options.onResolved?.({ target, status: "resolved" });
+            resolved = true;
+            await pause();
+            continue;
           }
           if (scrollElement && Math.abs(residual) > 1)
             scrollElement.scrollBy({ top: residual, behavior: "auto" });

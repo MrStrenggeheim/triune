@@ -65,6 +65,26 @@ Preconditions: follow the [verification skill](skills/verify-omnigent/SKILL.md),
 </div>
 ```
 
+### Kit native form controls
+
+Checkboxes inside a kit root use the app's 16px surface, 4px corners, check and mixed glyphs.
+Wrap each checkbox in `.ta-choice` so its label supplies the coarse target; `data-ta-mixed` initializes native `indeterminate` once.
+All native ranges in an opted-in root use the app's 6px track and 12px thumb with native min/max/step/value, labels and disabled state.
+`TriuneArtifact.init(root)` updates range fill on input, change and reset; call `TriuneArtifact.refresh(root)` after silent programmatic writes.
+Native `<progress>` uses the app's 4px rounded track; `.ta-progress--usage` selects the flat 3px usage track.
+Omit progress value when the amount is unknown.
+The adapters keep native keyboard, form and input/change behavior and support forced-colors.
+
+```html
+<main class="ta-root" data-ta-init>
+  <label class="ta-choice"><input type="checkbox" name="include" data-ta-mixed>Include results</label>
+  <label class="ta-field"><span class="ta-label">Amount</span><input type="range" name="amount" min="0" max="100" value="40"></label>
+  <progress class="ta-progress--usage" aria-label="Usage" value="40" max="100"></progress>
+</main>
+```
+
+Source checks: `web/src/artifacts/kit/formControls.test.ts` and `test_kit_native_checkbox_range_and_progress` in the source browser boundary.
+
 ## Gotchas
 
 - Ordinary `html` fences remain code; only an explicit artifact fence requests execution.

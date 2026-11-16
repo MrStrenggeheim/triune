@@ -1,3 +1,4 @@
+# Modified for Triune.
 """Tests for the ``WS /v1/sessions/updates`` push stream.
 
 The endpoint replaces the web app's HTTP poll of ``GET /v1/sessions``:
@@ -970,3 +971,207 @@ def test_unknown_descendant_coverage_stays_null_in_list_and_ws(
         ) as ws:
             ws.send_text(json.dumps({"type": "watch", "session_ids": [session_id]}))
             assert _recv_until(ws, {"snapshot"})["items"][0]["activity"] == row["activity"]
+
+
+def _recv_transcript(ws, session_id, event_type, *, phase=None):
+    for _ in range(100):
+        frame = _recv_until(ws, {"session.event", "session.error"})
+        if frame["session_id"] != session_id:
+            continue
+        assert frame["type"] != "session.error", frame
+        event = frame["event"]
+        if event["type"] == event_type and (phase is None or event.get("phase") == phase):
+            return event
+    raise AssertionError(f"No {event_type} frame for {session_id}")
+
+
+def _subscribe(ws, sid, **cursor):
+    ws.send_json({"type": "subscribe", "session_id": sid, **cursor})
+    return _recv_transcript(ws, sid, "session.sync", phase="complete")
+
+
+@pytest.mark.timeout(20)
+def test_multiplex_replay_watch_presence_and_unsubscribe(app, stores, monkeypatch):
+    from omnigent.entities import MessageData, NewConversationItem
+    from omnigent.runtime import session_stream
+    from omnigent.server import presence
+
+    monkeypatch.setattr(presence, "_LEAVE_GRACE_S", 0)
+    first = _seed_session(stores, owner=ALICE, title="first")
+    second = _seed_session(stores, owner=ALICE, title="second")
+    item = stores[0].append(
+        first,
+        [
+            NewConversationItem(
+                type="message",
+                response_id="turn",
+                data=MessageData(
+                    role="user",
+                    content=[{"type": "input_text", "text": "canonical"}],
+                ),
+            )
+        ],
+    )[0]
+    with TestClient(app).websocket_connect(
+        "/v1/sessions/updates", headers={"X-Forwarded-Email": ALICE}
+    ) as ws:
+        assert ws.receive_json() == {"type": "capabilities", "transcript_stream": 1}
+        ws.send_json({"type": "watch", "session_ids": [first, second]})
+        assert len(_recv_until(ws, {"snapshot"})["items"]) == 2
+        ws.send_json({"type": "subscribe", "session_id": first})
+        saved = _recv_transcript(ws, first, "response.output_item.done")
+        assert saved["item"]["id"] == item.id and saved["item"]["position"] == 0
+        _recv_transcript(ws, first, "session.sync", phase="complete")
+        _subscribe(ws, second)
+        assert session_stream.has_subscribers(first) and session_stream.has_subscribers(second)
+        ws.send_json({"type": "presence", "session_id": first, "idle": True})
+        viewers = _recv_transcript(ws, first, "session.presence")["viewers"]
+        while viewers and not viewers[0]["idle"]:
+            viewers = _recv_transcript(ws, first, "session.presence")["viewers"]
+        assert viewers[0]["user_id"] == ALICE and viewers[0]["idle"]
+        ws.send_json({"type": "unsubscribe", "session_id": first})
+        assert _recv_until(ws, {"session.unsubscribed"})["session_id"] == first
+        assert not session_stream.has_subscribers(first)
+        session_stream.publish(
+            second,
+            {
+                "type": "session.changed_files.invalidated",
+                "session_id": second,
+                "environment_id": "default",
+            },
+        )
+        assert (
+            _recv_transcript(ws, second, "session.changed_files.invalidated")["session_id"]
+            == second
+        )
+    assert not session_stream.has_subscribers(second)
+    assert presence.snapshot(first, first)["viewers"] == []
+    assert presence.snapshot(second, second)["viewers"] == []
+
+
+@pytest.mark.timeout(20)
+def test_multiplex_authorization_and_active_revocation_are_member_scoped(app, stores):
+    from omnigent.runtime import session_stream
+
+    first = _seed_session(stores, owner=ALICE, title="first")
+    second = _seed_session(stores, owner=ALICE, title="second")
+    secret = _seed_session(stores, owner=BOB, title="secret")
+    with TestClient(app).websocket_connect(
+        "/v1/sessions/updates", headers={"X-Forwarded-Email": ALICE}
+    ) as ws:
+        _subscribe(ws, first)
+        _subscribe(ws, second)
+        ws.send_json({"type": "subscribe", "session_id": secret})
+        error = _recv_until(ws, {"session.error"})
+        assert error["session_id"] == secret and error["code"] == "not_found"
+        assert not session_stream.has_subscribers(secret)
+        stores[2].revoke(ALICE, first)
+        session_stream.publish(
+            first,
+            {
+                "type": "session.changed_files.invalidated",
+                "session_id": first,
+                "environment_id": "default",
+            },
+        )
+        error = _recv_until(ws, {"session.error"})
+        assert error["session_id"] == first and error["code"] == "not_found"
+        assert not session_stream.has_subscribers(first)
+        session_stream.publish(
+            second,
+            {
+                "type": "session.changed_files.invalidated",
+                "session_id": second,
+                "environment_id": "default",
+            },
+        )
+        assert (
+            _recv_transcript(ws, second, "session.changed_files.invalidated")["session_id"]
+            == second
+        )
+        ws.send_json({"type": "watch", "session_ids": [second]})
+        assert _recv_until(ws, {"snapshot"})["items"][0]["id"] == second
+
+
+@pytest.mark.timeout(20)
+def test_multiplex_member_overflow_keeps_other_subscription(app, stores, monkeypatch):
+    from omnigent.runtime import session_stream
+
+    monkeypatch.setattr(session_stream, "_SUBSCRIBER_QUEUE_MAX_EVENTS", 8)
+    first = _seed_session(stores, owner=ALICE, title="slow")
+    second = _seed_session(stores, owner=ALICE, title="healthy")
+    with TestClient(app).websocket_connect(
+        "/v1/sessions/updates", headers={"X-Forwarded-Email": ALICE}
+    ) as ws:
+        _subscribe(ws, first)
+        _subscribe(ws, second)
+        for _ in range(100):
+            session_stream.publish(
+                first,
+                {
+                    "type": "session.changed_files.invalidated",
+                    "session_id": first,
+                    "environment_id": "default",
+                },
+            )
+        error = _recv_until(ws, {"session.error"})
+        assert error == {"type": "session.error", "session_id": first, "code": "stream_overflow"}
+        assert not session_stream.has_subscribers(first)
+        session_stream.publish(
+            second,
+            {
+                "type": "session.changed_files.invalidated",
+                "session_id": second,
+                "environment_id": "default",
+            },
+        )
+        assert (
+            _recv_transcript(ws, second, "session.changed_files.invalidated")["session_id"]
+            == second
+        )
+
+
+@pytest.mark.timeout(20)
+def test_multiplex_runner_preparation_fails_before_subscribing(app, stores, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from omnigent.errors import ErrorCode, OmnigentError
+    from omnigent.runtime import session_stream
+
+    sid = _seed_session(stores, owner=ALICE, title="runner")
+    ensure = AsyncMock(
+        side_effect=OmnigentError("Runner is on another replica", code=ErrorCode.CONFLICT)
+    )
+    monkeypatch.setattr(sessions_routes, "_ensure_runner_relay_ready", ensure)
+    with TestClient(app).websocket_connect(
+        "/v1/sessions/updates", headers={"X-Forwarded-Email": ALICE}
+    ) as ws:
+        ws.send_json({"type": "subscribe", "session_id": sid})
+        error = _recv_until(ws, {"session.error"})
+        assert error["session_id"] == sid and error["code"] == "conflict"
+        assert not session_stream.has_subscribers(sid)
+        ensure.assert_awaited_once()
+        ws.send_json({"type": "watch", "session_ids": [sid]})
+        assert _recv_until(ws, {"snapshot"})["items"][0]["id"] == sid
+
+
+@pytest.mark.timeout(20)
+def test_multiplex_validates_cursor_and_caps_memberships(app, stores, monkeypatch):
+    from omnigent.runtime import session_stream
+
+    monkeypatch.setattr("omnigent.server.session_multiplex._MAX_MEMBERSHIPS", 1)
+    first = _seed_session(stores, owner=ALICE, title="active")
+    second = _seed_session(stores, owner=ALICE, title="over limit")
+    with TestClient(app).websocket_connect(
+        "/v1/sessions/updates", headers={"X-Forwarded-Email": ALICE}
+    ) as ws:
+        _subscribe(ws, first)
+        ws.send_json({"type": "subscribe", "session_id": second, "after_position": -2})
+        assert _recv_until(ws, {"session.error"})["code"] == "invalid_input"
+        ws.send_json({"type": "subscribe", "session_id": second})
+        assert _recv_until(ws, {"session.error"})["code"] == "subscription_limit"
+        assert session_stream.has_subscribers(first)
+        assert not session_stream.has_subscribers(second)
+        ws.send_json({"type": "presence", "session_id": second, "idle": True})
+        ws.send_json({"type": "unsubscribe", "session_id": first})
+        assert _recv_until(ws, {"session.unsubscribed"})["session_id"] == first

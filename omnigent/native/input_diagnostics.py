@@ -54,7 +54,7 @@ _input_context: ContextVar[dict[str, object] | None] = ContextVar(
 
 
 def input_attributes(source: Mapping[str, object] | None) -> dict[str, str | int]:
-    """Keep server-issued input identity, enqueue time, and structured System origin."""
+    """Keep server-issued input identity, enqueue time, and structured application origin."""
     attrs: dict[str, str | int] = {}
     if source is None:
         return attrs
@@ -66,8 +66,8 @@ def input_attributes(source: Mapping[str, object] | None) -> dict[str, str | int
     origin = source.get("input_origin_kind")
     if isinstance(communication, dict):
         origin = communication.get("kind")
-    if "input_stable_id" in attrs and origin == "system":
-        attrs["input_origin_kind"] = "system"
+    if "input_stable_id" in attrs and origin in ("system", "peer"):
+        attrs["input_origin_kind"] = origin
     enqueued_at = source.get("input_enqueued_at_ms")
     if (
         isinstance(enqueued_at, int)

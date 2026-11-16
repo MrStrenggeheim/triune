@@ -1,3 +1,4 @@
+# Modified for Triune.
 """In-memory who-is-viewing registry for the session presence UI.
 
 Tracks which users currently hold a live SSE stream open
@@ -250,6 +251,21 @@ def connect(root_id: str, conversation_id: str, user_id: str, idle: bool) -> str
     if changed:
         _broadcast(root_id)
     return token
+
+
+def update_idle(root_id: str, user_id: str, token: str, idle: bool) -> bool:
+    """Update only the exact socket-owned membership; retain join time and identity."""
+    with _lock:
+        entry = _viewers.get(root_id, {}).get(user_id)
+        if entry is None or token not in entry.connections:
+            return False
+        entry.connections[token].idle = idle
+        aggregate = all(connection.idle for connection in entry.connections.values())
+        changed = aggregate != entry.idle
+        entry.idle = aggregate
+    if changed:
+        _broadcast(root_id)
+    return True
 
 
 def disconnect(root_id: str, user_id: str, token: str) -> None:

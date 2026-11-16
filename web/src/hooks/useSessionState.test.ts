@@ -1,5 +1,6 @@
+// Modified for Triune.
 import { describe, expect, it } from "vitest";
-import { getSessionState } from "./useSessionState";
+import { getSessionState, getSessionStates } from "./useSessionState";
 import type { Conversation } from "@/hooks/useConversations";
 
 function conv(
@@ -38,11 +39,11 @@ describe("getSessionState — priority composition", () => {
     expect(getSessionState(conv({ status: "idle" }), "error")).toEqual({ kind: "error" });
   });
 
-  it("keeps running and approval states ahead of a previous message error", () => {
-    expect(getSessionState(conv({ status: "running" }), "error")).toEqual({ kind: "running" });
+  it("puts a known problem before work and pending input", () => {
+    expect(getSessionState(conv({ status: "running" }), "error")).toEqual({ kind: "error" });
     expect(
       getSessionState(conv({ status: "idle", pending_elicitations_count: 1 }), "error"),
-    ).toEqual({ kind: "awaiting", count: 1 });
+    ).toEqual({ kind: "error" });
   });
 
   it("returns error from the existing failed session status", () => {
@@ -65,10 +66,9 @@ describe("getSessionState — priority composition", () => {
     expect(getSessionState(conversation)).toBeNull();
   });
 
-  it("treats failed + pending elicitation as awaiting (the actionable signal)", () => {
+  it("prioritizes a blocking failure over a pending question", () => {
     expect(getSessionState(conv({ status: "failed", pending_elicitations_count: 2 }))).toEqual({
-      kind: "awaiting",
-      count: 2,
+      kind: "error",
     });
   });
 
@@ -89,4 +89,10 @@ describe("getSessionState — priority composition", () => {
     // Older sessions whose server payload predates the `status` field.
     expect(getSessionState(conv({}))).toBeNull();
   });
+});
+
+it("retains simultaneous problem, approval count and work facts in canonical order", () => {
+  expect(
+    getSessionStates({ status: "running", pending_elicitations_count: 3 }, "disconnected"),
+  ).toEqual([{ kind: "disconnected" }, { kind: "awaiting", count: 3 }, { kind: "running" }]);
 });

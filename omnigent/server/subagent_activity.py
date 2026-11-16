@@ -279,6 +279,8 @@ def _refresh_task_input(metadata: dict[str, object], store: ConversationStore) -
     if isinstance(prompt, str) and prompt:
         metadata["task_input"] = prompt
         metadata["task_input_captured"] = True
+        if row.position is not None:
+            metadata["task_input_position"] = row.position
 
 
 def _turn_report(
@@ -328,6 +330,9 @@ def _turn_report(
         "result_refs": refs,
         "result_parts": [{"text": part, **ref} for part, ref in zip(parts, refs, strict=True)],
         "result_finality": finality,
+        "result_position": max(
+            (row.position for row, _ in selected if row.position is not None), default=None
+        ),
         "result_revision": len(refs),
     }
 
@@ -559,8 +564,12 @@ def _fully_captured_activity(
         "task_input_captured"
     ) is not True:
         return False
+    if resource.get("task_input_ref") and resource.get("task_input_position") is None:
+        return False
     if event_type == "session.subagent.delegated":
         return True
+    if resource.get("result_position") is None:
+        return False
     parts = resource.get("result_parts")
     if not isinstance(parts, list) or not parts:
         return False
@@ -657,6 +666,8 @@ async def recover_subagent_activity(
                 prompt = arguments.get("prompt") if isinstance(arguments, dict) else None
             if isinstance(prompt, str) and prompt:
                 resource["task_input"] = prompt
+                if request.position is not None:
+                    resource["task_input_position"] = request.position
         if (
             not resource.get("result_text")
             or resource.get("result_ref")
@@ -664,6 +675,7 @@ async def recover_subagent_activity(
         ):
             parts = []
             result_parts = []
+            result_positions = []
             refs = resource.get("result_refs") or [resource.get("result_ref")]
             for ref in refs[:32] if isinstance(refs, list) else []:
                 result = await source(ref)
@@ -699,7 +711,11 @@ async def recover_subagent_activity(
                 if text:
                     parts.append(text)
                     result_parts.append({"text": text, **ref})
+                    if result.position is not None:
+                        result_positions.append(result.position)
             if parts:
+                if result_positions:
+                    resource["result_position"] = max(result_positions)
                 resource["result_text"] = "\n\n".join(parts)
                 resource["result_parts"] = result_parts
                 resource["result_refs"] = [

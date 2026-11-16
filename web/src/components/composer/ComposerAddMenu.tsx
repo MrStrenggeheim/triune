@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+// Modified for Triune.
+import { useRef, useState } from "react";
 import {
   FolderIcon,
   LightbulbIcon,
@@ -63,45 +64,17 @@ export function ComposerAddMenu({
   const [open, setOpen] = useState(false);
   const [showProjects, setShowProjects] = useState(false);
   const pendingGoalRef = useRef(false);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const [geometry, setGeometry] = useState({ width: 456, alignOffset: 0, sideOffset: 6 });
-  const measure = useCallback(() => {
-    const trigger = triggerRef.current;
-    const composer = trigger?.closest("[data-composer-card]");
-    if (!trigger || !composer) return;
-    const triggerRect = trigger.getBoundingClientRect();
-    const composerRect = composer.getBoundingClientRect();
-    setGeometry({
-      width: composerRect.width,
-      alignOffset: composerRect.left - triggerRect.left,
-      sideOffset: triggerRect.top - composerRect.top + 6,
-    });
-  }, []);
-  useEffect(() => {
-    if (!open) return;
-    const composer = triggerRef.current?.closest("[data-composer-card]");
-    if (!composer) return;
-    const observer = new ResizeObserver(measure);
-    observer.observe(composer);
-    window.addEventListener("resize", measure);
-    return () => {
-      observer.disconnect();
-      window.removeEventListener("resize", measure);
-    };
-  }, [open, measure]);
 
   return (
     <DropdownMenu
       open={open}
       onOpenChange={(nextOpen) => {
-        if (nextOpen) measure();
-        else setShowProjects(false);
+        if (!nextOpen) setShowProjects(false);
         setOpen(nextOpen);
       }}
     >
       <DropdownMenuTrigger asChild>
         <Button
-          ref={triggerRef}
           type="button"
           size="icon"
           variant="ghost"
@@ -127,13 +100,12 @@ export function ComposerAddMenu({
           }
         }}
         side="top"
-        align="start"
-        alignOffset={geometry.alignOffset}
-        sideOffset={geometry.sideOffset}
+        align="center"
+        sideOffset={6}
         collisionPadding={12}
         aria-label="Add"
         className="composer-add-menu max-w-[calc(100vw-24px)] rounded-[16px]"
-        style={{ width: geometry.width }}
+        style={{ width: "var(--radix-popper-available-width)" }}
         data-testid={`${testIdPrefix}-add-menu`}
       >
         {showProjects ? (

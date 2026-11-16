@@ -1,3 +1,4 @@
+// Modified for Triune.
 // Shared read-only mermaid renderer for the markdown preview (CodeViewer) and
 // the rich-text editor (TipTapCodeBlockView), so a diagram looks identical
 // whether the file is read or edited. Streamdown's mermaid plugin sanitises the
@@ -5,7 +6,7 @@
 
 import { triuneMermaid as mermaid } from "@/components/ai-elements/mermaidTheme";
 import { Streamdown } from "streamdown";
-import { MERMAID_STREAMDOWN_PROPS } from "@/components/ai-elements/MermaidBlock";
+import { MERMAID_PREVIEW_STREAMDOWN_PROPS } from "@/components/ai-elements/MermaidBlock";
 import { MarkdownErrorBoundary } from "@/components/ai-elements/MarkdownErrorBoundary";
 import { mermaidOptionsForTheme } from "@/components/ai-elements/MermaidError";
 import { useResolvedThemeMode } from "@/components/theme/useResolvedThemeMode";
@@ -26,7 +27,7 @@ export function MermaidPreview({ source }: { source: string }) {
         {/* Mermaid renders async with no cancellation. Remount on source or theme
             changes to discard a superseded in-flight render. */}
         <Streamdown
-          {...MERMAID_STREAMDOWN_PROPS}
+          {...MERMAID_PREVIEW_STREAMDOWN_PROPS}
           key={`${themeMode}:${trimmed}`}
           plugins={MERMAID_STREAMDOWN_PLUGINS}
           mermaid={mermaidOptionsForTheme(themeMode)}

@@ -16,6 +16,7 @@ import { Sidebar } from "./Sidebar";
 import { SIDEBAR_CONVERSATION_DRAG_MIME } from "./sidebarConversationDrag";
 import { clearSessionDrafts, setSessionDraft } from "@/lib/sessionDrafts";
 import { markConversationUnread, resetReadStateForTests } from "@/hooks/useUnseenConversations";
+import { readEffectiveBindings, writeKeybindingOverrides } from "@/lib/keybindingPreferences";
 import { resourceViewStorageScope, writeResourceViewState } from "@/lib/resourceViewStorage";
 
 const actions = vi.hoisted(() => ({
@@ -175,7 +176,10 @@ it("uses trailing parent-only count/disclosure without reserving a leading root 
     "cursor-pointer",
     "[@media((hover:hover)_and_(pointer:fine))]:group-data-[input=mouse]/sidebar:hover:bg-[color-mix(in_srgb,var(--foreground)_6%,var(--workspace-hover-on-chrome))]",
   );
-  expect(root.lastElementChild).toBe(expand);
+  expect(
+    expand.compareDocumentPosition(within(root).getByTestId("conversation-actions")) &
+      Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
   expect(root.style.getPropertyValue("--sidebar-row-inset")).toBe("0px");
   expect(screen.queryByText("Conversations")).toBeNull();
   expect(document.querySelector(".sidebar-header-row")).toBeNull();
@@ -185,7 +189,7 @@ it("uses trailing parent-only count/disclosure without reserving a leading root 
   const child = await screen.findByRole("link", { name: "one" });
   expect(child.closest("li")!.style.marginInlineStart).toBe("var(--sidebar-row-inset)");
   expect(child.closest("li")!.style.getPropertyValue("--sidebar-row-inset")).toBe(
-    "calc(var(--list-row-padding-inline) + 12px + 0 * var(--sidebar-tree-indent, 10px))",
+    "calc(var(--list-row-padding-inline) + 8px + var(--list-row-gap) + 0 * var(--sidebar-tree-indent, 10px))",
   );
   expect(screen.queryByRole("link", { name: "two" })).toBeNull();
   expect(screen.getByRole("button", { name: "Expand subchats of one" })).toHaveTextContent("3");
@@ -219,22 +223,18 @@ it.each([
     renderTree("two");
     const row = (await screen.findByRole("link", { name: /root/ })).closest("li")!;
     const indicators = within(row).getByTestId("conversation-indicators");
-    expect(indicators).toHaveClass("gap-[var(--list-row-gap)]", "shrink-0", "items-center");
     expect(row).toHaveClass("gap-[var(--list-gap)]", "min-w-0");
     expect(within(row).getByRole("link")).toHaveClass("min-w-0", "flex-1");
-    expect(
-      within(indicators).getByRole("img", { name: "Draft" }).querySelector(".lucide-pencil"),
-    ).not.toBeNull();
-    expect(within(indicators).getByRole("img", { name: marker })).toBeInTheDocument();
-    expect(within(indicators).getByRole("img", { name: "New messages" })).toBeInTheDocument();
-    fireEvent.pointerDown(within(row).getByRole("button", { name: "Conversation actions" }), {
-      button: 0,
-    });
+    expect(within(row).getByRole("img", { name: marker })).toBeInTheDocument();
+    const trigger = within(row).getByRole("button", { name: "Conversation actions" });
+    expect(trigger).toHaveAccessibleDescription(expect.stringContaining("Draft"));
+    expect(trigger).toHaveAccessibleDescription(expect.stringContaining("New messages"));
+    expect(trigger).toContainElement(indicators);
+    fireEvent.pointerDown(trigger, { button: 0 });
     expect(screen.getByRole("menuitem", { name: "Open to side" })).toBeInTheDocument();
-    expect(
-      within(indicators).getByRole("img", { name: "Draft", hidden: true }),
-    ).toBeInTheDocument();
-    expect(indicators.className).not.toMatch(/opacity-0|absolute/);
+    expect(row).toHaveAttribute("data-menu-open", "true");
+    expect(trigger).toHaveAccessibleDescription(expect.stringContaining("Draft"));
+    expect(indicators.className).toContain("group-data-[menu-open]/conversation:opacity-0");
   },
 );
 
@@ -352,6 +352,11 @@ it("preloads hierarchy, expands four levels, and retains navigation, menus and e
   const row = leaf.closest("[data-sidebar-session-id]")!;
   fireEvent.contextMenu(within(row as HTMLElement).getByRole("link"));
   expect(await screen.findByRole("menuitem", { name: /Rename/ })).toBeInTheDocument();
+  const inset = (row as HTMLElement).style.getPropertyValue("--sidebar-row-inset");
+  fireEvent.click(screen.getByRole("menuitem", { name: /Rename/ }));
+  const renameRow = screen.getByTestId("rename-conversation-input").closest("li")!;
+  expect(renameRow.style.getPropertyValue("--sidebar-row-inset")).toBe(inset);
+  expect(renameRow.querySelectorAll("[data-sidebar-tree-guide]")).toHaveLength(4);
   fireEvent.keyDown(document.activeElement!, { key: "Escape" });
   mounted.unmount();
   renderTree("four");
@@ -518,4 +523,65 @@ it("keeps ancestors collapsed when focusing a durable descendant", async () => {
     expect(screen.getByRole("button", { name: "Expand subchats of root" })).toHaveTextContent("4"),
   );
   expect(screen.queryByRole("link", { name: "one" })).toBeNull();
+});
+
+it.each([
+  { own: "idle" as const, descendant: true, expandedState: null },
+  { own: "running" as const, descendant: true, expandedState: "running" },
+  { own: "failed" as const, descendant: true, expandedState: "error" },
+  { own: "idle" as const, descendant: null, expandedState: null },
+])(
+  "hides only descendant activity when children expand: own=$own, descendant=$descendant",
+  async ({ own, descendant, expandedState }) => {
+    vi.mocked(useConversations).mockReturnValue(
+      conversationPage([
+        {
+          ...rows[0],
+          status: descendant ? "running" : own,
+          activity: { own_status: own, descendant_running: descendant },
+        },
+      ]),
+    );
+    renderTree("two");
+    const row = (await screen.findByRole("link", { name: "root" })).closest("li")!;
+    const before = within(row).queryByTestId("session-state-badge");
+    if (own === "running" || (descendant && own === "idle"))
+      expect(before).toHaveAttribute("data-state", "running");
+    else if (own === "failed") expect(before).toHaveAttribute("data-state", "error");
+    else expect(before).toBeNull();
+    fireEvent.click(await screen.findByRole("button", { name: "Expand subchats of root" }));
+    const after = within(row).queryByTestId("session-state-badge");
+    if (expandedState) expect(after).toHaveAttribute("data-state", expandedState);
+    else expect(after).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Collapse subchats of root" }));
+    if (own === "idle" && descendant)
+      expect(within(row).getByTestId("session-state-badge")).toHaveAttribute(
+        "data-state",
+        "running",
+      );
+  },
+);
+
+it("keeps Search chips and ARIA synchronized with Find remapping and unbinding", async () => {
+  renderTree("root", undefined, vi.fn());
+  const search = await screen.findByRole("button", { name: "Search" });
+  const binding = readEffectiveBindings().find((row) => row.command === "find")!;
+  expect(search).toHaveAttribute("aria-keyshortcuts");
+  act(() => {
+    writeKeybindingOverrides({
+      [binding.id]: {
+        when: binding.when,
+        stroke: { modifiers: ["Alt"] as const, match: { key: "j" } },
+      },
+    });
+  });
+  expect(search).toHaveAttribute("aria-keyshortcuts", "Alt+j");
+  expect(search.querySelectorAll("kbd")).toHaveLength(2);
+  expect(search).toHaveTextContent("J");
+  act(() => {
+    writeKeybindingOverrides({ [binding.id]: null });
+  });
+  const unbound = screen.getByRole("button", { name: "Search" });
+  expect(unbound).not.toHaveAttribute("aria-keyshortcuts");
+  expect(unbound.querySelector("kbd")).toBeNull();
 });

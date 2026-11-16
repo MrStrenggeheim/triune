@@ -8,6 +8,7 @@ import {
   useAcceptedConversationRoute,
   useConversationOwnerNavigation,
 } from "./useAcceptedConversationRoute";
+import { useSessionComposerFocus } from "./useSessionComposerFocus";
 import { focusedResourceTarget } from "./resourceTarget";
 import { OpenViewMenu } from "./OpenViewMenu";
 import { Button } from "@/components/ui/button";
@@ -445,12 +446,28 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
       cancelled = true;
     };
   }, [migrationSource]);
+  const href = location.pathname + location.search + location.hash;
+  const composerFocus = useSessionComposerFocus({
+    scopeKey: dock.scopeKey,
+    active,
+    href,
+    focusedViewId: focusedView?.id,
+  });
+  const {
+    begin: beginComposerFocus,
+    accept: acceptComposerFocus,
+    acceptConversation: acceptConversationFocus,
+    reject: rejectComposerFocus,
+    hasPending: hasPendingComposerFocus,
+    cancel: cancelComposerFocus,
+  } = composerFocus;
   const skipLayoutForRoute = useRef<string | null>(null);
   const routeConversationRef = useRef(conversationId);
   routeConversationRef.current = conversationId;
   const openConversation = useCallback(
     (id: string, options?: OpenConversationOptions) => {
       const current = dockRef.current;
+      const focusTicket = beginComposerFocus(id);
       const mode = options?.mode ?? (options?.beside ? "beside" : "layout");
       if (mode !== "layout") {
         current.addView(conversationView(id, options?.title ?? titlesRef.current.get(id)), {
@@ -458,6 +475,7 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
           edge: mode === "beside" ? "right" : undefined,
         });
         setLastConversation(id);
+        acceptComposerFocus(focusTicket);
         if (options?.messageId) {
           skipLayoutForRoute.current = id;
           navigate(`/c/${encodeURIComponent(id)}?message=${encodeURIComponent(options.messageId)}`);
@@ -470,65 +488,79 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
         void current
           .navigateConversation(id)
           .then((allowed) => {
-            if (!allowed) return;
+            if (!allowed) {
+              rejectComposerFocus(focusTicket);
+              return;
+            }
             const latest = dockRef.current;
             if (latest.scopeKey !== capturedScopeKey || latest.activeConversationId !== id) return;
             const view = conversationView(id, titlesRef.current.get(id));
             if (latest.layout.views.some((item) => item.id === view.id)) latest.focusView(view.id);
             else latest.addView(view, conversationPlacement(latest.layout, latest.pinnedViewIds));
             setLastConversation(id);
+            acceptComposerFocus(focusTicket);
           })
-          .catch((onRouteError) =>
+          .catch((onRouteError) => {
+            rejectComposerFocus(focusTicket);
             toast.error(
               onRouteError instanceof Error ? onRouteError.message : "Could not restore layout",
-            ),
-          );
+            );
+          });
         return;
       }
       navigate(
         `/c/${encodeURIComponent(id)}${options?.messageId ? `?message=${encodeURIComponent(options.messageId)}` : ""}`,
       );
     },
-    [navigate],
+    [navigate, beginComposerFocus, acceptComposerFocus, rejectComposerFocus],
   );
-  const openConversationAt = useCallback((id: string, placement: DockPlacement) => {
-    dockRef.current.addView(conversationView(id, titlesRef.current.get(id)), placement);
-    setLastConversation(id);
-    if (isMobileViewport()) setSidebarOpen(false);
-  }, []);
+  const openConversationAt = useCallback(
+    (id: string, placement: DockPlacement) => {
+      const ticket = beginComposerFocus(id);
+      dockRef.current.addView(conversationView(id, titlesRef.current.get(id)), placement);
+      setLastConversation(id);
+      acceptComposerFocus(ticket);
+      if (isMobileViewport()) setSidebarOpen(false);
+    },
+    [beginComposerFocus, acceptComposerFocus],
+  );
   const acceptConversation = useCallback(
     (id: string) => dockRef.current.navigateConversation(id),
     [],
   );
   const restoredLayoutScope = useRef<string | null>(null);
-  const onConversationAccepted = useCallback((id: string) => {
-    const latest = dockRef.current;
-    if (restoredLayoutScope.current !== latest.scopeKey) {
-      restoredLayoutScope.current = latest.scopeKey;
-      if (
-        latest.activeConversationId === id &&
-        latest.hasChatLayout &&
-        latest.layout.views.length
-      ) {
-        setLastConversation(id);
-        return;
+  const onConversationAccepted = useCallback(
+    (id: string) => {
+      const latest = dockRef.current;
+      if (restoredLayoutScope.current !== latest.scopeKey) {
+        restoredLayoutScope.current = latest.scopeKey;
+        if (
+          !hasPendingComposerFocus(id) &&
+          latest.activeConversationId === id &&
+          latest.hasChatLayout &&
+          latest.layout.views.length
+        ) {
+          setLastConversation(id);
+          return;
+        }
       }
-    }
-    const existing = latest.layout.views.find((view) => view.id === `conversation:${id}`);
-    if (existing) latest.focusView(existing.id);
-    else
-      latest.addView(
-        conversationView(id, titlesRef.current.get(id)),
-        conversationPlacement(latest.layout, latest.pinnedViewIds, lastConversationRef.current),
-      );
-    setLastConversation(id);
-  }, []);
+      const existing = latest.layout.views.find((view) => view.id === `conversation:${id}`);
+      if (existing) latest.focusView(existing.id);
+      else
+        latest.addView(
+          conversationView(id, titlesRef.current.get(id)),
+          conversationPlacement(latest.layout, latest.pinnedViewIds, lastConversationRef.current),
+        );
+      setLastConversation(id);
+      acceptConversationFocus(id);
+    },
+    [acceptConversationFocus, hasPendingComposerFocus],
+  );
   const onRouteError = useCallback(
     (error: unknown) =>
       toast.error(error instanceof Error ? error.message : "Could not restore layout"),
     [],
   );
-  const href = location.pathname + location.search + location.hash;
   const acceptedHref = useAcceptedConversationRoute({
     active,
     conversationId,
@@ -539,6 +571,7 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
     onAccepted: onConversationAccepted,
     navigate,
     onError: onRouteError,
+    onRejected: cancelComposerFocus,
   });
   useEffect(() => {
     if (
@@ -862,6 +895,7 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
     },
     [resourceShortcuts],
   );
+  const searchFocusTicket = useRef<ReturnType<typeof beginComposerFocus> | null>(null);
   const navigateToOwner = useConversationOwnerNavigation({
     active,
     scopeKey: dock.scopeKey,
@@ -882,14 +916,33 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
       );
       setLastConversation(id);
       ensureVisible();
+      if (searchFocusTicket.current?.conversationId === id)
+        acceptComposerFocus(searchFocusTicket.current);
     },
     onError: onRouteError,
   });
+  const navigateSearch = useCallback(
+    (
+      path: string,
+      complete: () => void,
+      relevant: () => boolean = () => true,
+      focusComposer = false,
+    ) => {
+      if (!relevant()) return;
+      rejectComposerFocus(searchFocusTicket.current);
+      const match = path.match(/^\/c\/([^/?#]+)/);
+      const ticket =
+        focusComposer && match ? beginComposerFocus(decodeURIComponent(match[1])) : null;
+      searchFocusTicket.current = ticket;
+      navigateToOwner(path, complete, relevant, () => rejectComposerFocus(ticket));
+    },
+    [navigateToOwner, beginComposerFocus, rejectComposerFocus],
+  );
   const search = useContextSearchController({
     activeSessionId: focusedConversationId,
     sidebarOpen,
     setSidebarOpen,
-    navigate: navigateToOwner,
+    navigate: navigateSearch,
     onToggleLeftSidebar: toggleSidebar,
     onToggleRightSidebar: () => openFocused("files"),
     isMobile: isMobileViewport,
@@ -1597,6 +1650,7 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
       openConversation,
       openView,
       focusedConversationId,
+      composerFocus: composerFocus.value,
       layoutOwnerConversationId: dock.activeConversationId,
       openConversationIds,
     }),
@@ -1604,6 +1658,7 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
       openConversation,
       openView,
       focusedConversationId,
+      composerFocus.value,
       dock.activeConversationId,
       openConversationIds,
     ],
@@ -1777,14 +1832,19 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
                   onToggleRightSidebar={() => openFocused("files")}
                   onMessageSearch={(id, query, target, filter) => {
                     const captured = target ? structuredClone(target) : null;
-                    navigateToOwner(`/c/${encodeURIComponent(id)}`, () => {
-                      if (captured) search.openResult(captured, query, filter);
-                      else {
-                        search.openSearch("current");
-                        search.setQuery(query);
-                        if (filter) search.setMessageFilter(filter);
-                      }
-                    });
+                    navigateSearch(
+                      `/c/${encodeURIComponent(id)}`,
+                      () => {
+                        if (captured) search.openResult(captured, query, filter);
+                        else {
+                          search.openSearch("current");
+                          search.setQuery(query);
+                          if (filter) search.setMessageFilter(filter);
+                        }
+                      },
+                      undefined,
+                      true,
+                    );
                   }}
                 />
               )}

@@ -1,5 +1,6 @@
 // Modified for Triune; inherited notices remain applicable.
 import { canonicalSubagentCards } from "./subagentActivity";
+import type { TranscriptAnchor } from "./transcriptOrder";
 import { messageInputKind, type MessageCommunication } from "./messageCommunication";
 import type { ChatAttachmentContent } from "./chatAttachments";
 import type { NativePermissionDelivery } from "./nativePermissionDelivery";
@@ -171,13 +172,14 @@ export type RenderItem =
     };
 
 /** A bubble cluster. The page maps over these. */
-export type Bubble =
+export type Bubble = (
   | {
       kind: "user";
       userAuthored?: boolean;
       isMeta?: boolean;
       communication?: MessageCommunication;
       itemId: string;
+      aliases?: readonly string[];
       /** Queued input that does not yet have a persisted transcript item. */
       pending?: boolean;
       /** Pending input sent mid-turn that the agent hasn't read yet. */
@@ -253,7 +255,81 @@ export type Bubble =
       agent?: string;
       /** Routing identity (harness, scope, decision id …); absent on legacy rows. */
       routing?: RoutingDecisionExtras;
-    };
+    }
+) & {
+  position?: number;
+  anchor?: TranscriptAnchor;
+  transcriptItemIds?: string[];
+};
+
+function bubblePlacement(
+  blocks: AnyBlock[],
+): Pick<Bubble, "position" | "anchor" | "transcriptItemIds"> {
+  const source = blocks.find((block) => block.ctx.position !== undefined || block.ctx.anchor);
+  if (!source) return {};
+  return {
+    ...(source.ctx.position !== undefined ? { position: source.ctx.position } : {}),
+    ...(source.ctx.anchor ? { anchor: source.ctx.anchor } : {}),
+    transcriptItemIds: blocks.flatMap((block) => (block.ctx.itemId ? [block.ctx.itemId] : [])),
+  };
+}
+
+/** Merge persisted pending rows by position and optimistic rows at their captured boundary. */
+export function mergePlacedPendingBubbles(committed: Bubble[], pending: Bubble[]): Bubble[] {
+  const result = [...committed];
+  for (const bubble of pending) {
+    if (bubble.kind !== "user") continue;
+    if (
+      result.some(
+        (candidate) =>
+          candidate.transcriptItemIds?.includes(bubble.itemId) ||
+          (candidate.kind === "user" && candidate.itemId === bubble.itemId),
+      )
+    )
+      continue;
+    let at = result.length;
+    if (bubble.position !== undefined) {
+      const found = result.findIndex(
+        (candidate) => candidate.position !== undefined && candidate.position > bubble.position!,
+      );
+      if (found !== -1) at = found;
+    } else if (bubble.anchor) {
+      const { afterItemId, afterPosition } = bubble.anchor;
+      // Early output can explicitly name the still-pending input as its predecessor.
+      const output = result.findIndex(
+        (candidate) =>
+          candidate.anchor?.afterItemId === bubble.itemId ||
+          (!!bubble.stableKey && candidate.anchor?.afterItemId === bubble.stableKey),
+      );
+      if (output !== -1) at = output;
+      else {
+        const predecessor = result.findLastIndex(
+          (candidate) =>
+            afterItemId !== null &&
+            (candidate.transcriptItemIds?.includes(afterItemId) ||
+              ("itemId" in candidate && candidate.itemId === afterItemId)),
+        );
+        if (predecessor !== -1) at = predecessor + 1;
+        else {
+          const successor = result.findIndex(
+            (candidate) => candidate.position !== undefined && candidate.position > afterPosition,
+          );
+          if (successor !== -1) at = successor;
+        }
+      }
+    }
+    // Pending siblings sharing a boundary retain the store's stable sequence.
+    while (
+      at < result.length &&
+      result[at]!.kind === "user" &&
+      result[at]!.anchor?.afterItemId === bubble.anchor?.afterItemId &&
+      (result[at]!.anchor?.sequence ?? Infinity) < (bubble.anchor?.sequence ?? -1)
+    )
+      at++;
+    result.splice(at, 0, bubble);
+  }
+  return result;
+}
 
 const TEXT_BLOCK_TYPES = new Set(["text_chunk", "text_done"]);
 const REASONING_BLOCK_TYPES = new Set(["reasoning_start", "reasoning_chunk", "reasoning_block"]);
@@ -427,7 +503,6 @@ export function buildBubbles(
         new Map(),
         superseded,
         liveTurnId,
-        sessionRunning,
       ).bubbles,
       activeResponse,
     );
@@ -469,7 +544,6 @@ export function buildBubbles(
       subIndexSeed,
       superseded,
       liveTurnId,
-      sessionRunning,
     );
     cache.blocks = blocks;
     cache.activeResponse = activeResponse;
@@ -492,7 +566,6 @@ export function buildBubbles(
     new Map(),
     superseded,
     liveTurnId,
-    sessionRunning,
   );
   cache.blocks = blocks;
   cache.activeResponse = activeResponse;
@@ -832,7 +905,6 @@ function walkBubbles(
   subIndexByResp: Map<string, number>,
   superseded: ReadonlySet<number>,
   liveTurnId: string | null = null,
-  sessionRunning = false,
 ): { bubbles: Bubble[]; lastBubbleStart: number; lastBubbleCount: number } {
   const bubbles: Bubble[] = [...seedBubbles];
   // One cross-bubble result index per walk: the relay backdates a
@@ -877,42 +949,6 @@ function walkBubbles(
       continue;
     }
 
-    // A settled notice after the parent's answer belongs to that completed
-    // turn. While the session is live it stays standalone until named work
-    // establishes whether it opens a woken response instead.
-    if (isSubagentActivityBlock(b) && workBesideNotice(blocks, i, 1) === undefined) {
-      lastBubbleStart = i;
-      lastBubbleCount = 0;
-      const previous = bubbles[bubbles.length - 1];
-      const joinsCompletedParent =
-        !sessionRunning &&
-        activeResponse?.state !== "streaming" &&
-        previous?.kind === "assistant" &&
-        previous.lifecycle === "completed" &&
-        previous.items.some((item) => item.kind === "text" && item.text.trim() !== "");
-      const joined: RenderItem[] = [];
-      for (; i < blocks.length && isNoticeTransparent(blocks[i]!); i += 1) {
-        const notice = blocks[i]!;
-        if (isNonRenderingBlock(notice)) expandNextAssistantResponseId = null;
-        if (!isSubagentActivityBlock(notice)) continue;
-        const item: RenderItem = {
-          kind: "subagent_activity",
-          itemId: notice.ctx.itemId ?? `subagent_activity_${i}`,
-          data: notice.data,
-        };
-        if (joinsCompletedParent) joined.push(item);
-        else {
-          bubbles.push({ kind: "subagent_activity", itemId: item.itemId!, data: item.data });
-          lastBubbleCount += 1;
-        }
-      }
-      if (joinsCompletedParent && previous?.kind === "assistant") {
-        bubbles[bubbles.length - 1] = { ...previous, items: [...previous.items, ...joined] };
-        lastBubbleCount = 1;
-      }
-      continue;
-    }
-
     if (b.type === "user_message" || isTerminalCommandInput(b)) {
       // A native harness can accept a steering message without ending the
       // response already in progress. In persisted history that user message
@@ -933,10 +969,15 @@ function walkBubbles(
           : bubbles.length;
       bubbles.push({
         kind: "user",
+        ...bubblePlacement([b]),
+        ...(b.type === "user_message" && b.pending
+          ? { pending: true, ...(b.awaitingAgent ? { awaitingAgent: true } : {}) }
+          : {}),
         userAuthored: b.type === "user_message" ? b.userAuthored : true,
         isMeta: b.type === "user_message" ? b.isMeta : false,
         ...(b.type === "user_message" && b.communication ? { communication: b.communication } : {}),
         itemId: b.ctx.itemId ?? `user_${i}`,
+        ...(b.ctx.aliases?.length ? { aliases: b.ctx.aliases } : {}),
         content:
           b.type === "user_message" ? b.content : [{ type: "input_text", text: `!${b.input}` }],
         ...(b.type === "terminal_command" ? { shellCommand: b.input } : {}),
@@ -1094,10 +1135,7 @@ function walkBubbles(
         // that has shown never reopens to show the new response streaming.
         if (
           i > groupStart &&
-          (groupOpenedOnSentinel ||
-            noticeSeparatesResponses(blocks, groupStart, i) ||
-            ((sessionRunning || activeResponse?.state === "streaming") &&
-              workBesideNotice(blocks, i, 1) === undefined))
+          (groupOpenedOnSentinel || noticeSeparatesResponses(blocks, groupStart, i))
         ) {
           break;
         }
@@ -1139,13 +1177,20 @@ function walkBubbles(
     // Skip `live:` preview ids for keying — the authoritative item
     // replaces the preview in place, and keying off the transient id
     // would remount the whole bubble at that swap.
+    const firstKeyBlock = groupBlocks.find(
+      (bk) =>
+        bk.type !== "tool_result" &&
+        bk.ctx.itemId !== null &&
+        !bk.ctx.itemId.startsWith(LIVE_ITEM_PREFIX),
+    );
+    const cardResource =
+      firstKeyBlock && isSubagentActivityBlock(firstKeyBlock)
+        ? (firstKeyBlock.data.resource as Record<string, unknown> | undefined)
+        : undefined;
     const firstItemId =
-      groupBlocks.find(
-        (bk) =>
-          bk.type !== "tool_result" &&
-          bk.ctx.itemId !== null &&
-          !bk.ctx.itemId.startsWith(LIVE_ITEM_PREFIX),
-      )?.ctx.itemId ?? null;
+      typeof cardResource?.card_key === "string"
+        ? cardResource.card_key
+        : (firstKeyBlock?.ctx.itemId ?? null);
     const stableId = firstItemId ?? `${groupResponseId}:${subIndex}`;
 
     lastBubbleStart = groupStart;
@@ -1181,6 +1226,7 @@ function walkBubbles(
       );
     bubbles.push({
       kind: "assistant",
+      ...bubblePlacement(groupBlocks),
       responseId: groupResponseId,
       stableId,
       lifecycle,
@@ -2061,6 +2107,7 @@ export function bubblesEqual(a: Bubble, b: Bubble): boolean {
   if (a.kind === "user" && b.kind === "user") {
     if (
       a.itemId !== b.itemId ||
+      a.aliases !== b.aliases ||
       Boolean(a.pending) !== Boolean(b.pending) ||
       Boolean(a.awaitingAgent) !== Boolean(b.awaitingAgent) ||
       a.createdBy !== b.createdBy ||

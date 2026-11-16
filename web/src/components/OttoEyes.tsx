@@ -1,5 +1,6 @@
 // Modified for Triune.
 import { useEffect, useRef } from "react";
+import { copyTextFieldTypography } from "@/lib/textFieldMirror";
 import { OttoIcon } from "@/components/icons/OttoIcon";
 
 // Eye geometry in the SVG's own viewBox coordinate system (0 0 1024 1024).
@@ -81,13 +82,7 @@ function textFieldCaretPoint(el: TextField): ScreenPoint | null {
   const mirror = doc.createElement("div");
   // The `font` shorthand carries family/size/weight/style/line-height together
   // and resets the rest, so the mirror's glyph metrics match the field exactly.
-  mirror.style.font = cs.font;
-  mirror.style.letterSpacing = cs.letterSpacing;
-  mirror.style.wordSpacing = cs.wordSpacing;
-  mirror.style.textTransform = cs.textTransform;
-  mirror.style.textIndent = cs.textIndent;
-  mirror.style.tabSize = cs.tabSize;
-  mirror.style.direction = cs.direction;
+  copyTextFieldTypography(mirror, cs);
   mirror.style.position = "absolute";
   mirror.style.top = "0";
   mirror.style.left = "0";

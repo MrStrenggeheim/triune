@@ -583,6 +583,16 @@
       "BackgroundTaskInfo": {
         "description": "One still-running background shell from the claude-native `Stop` hook.\n\nClaude Code leaves finished shells in the hook's `background_tasks`\narray, so the list surfaced here is filtered to the non-terminal ones \u2014\nits length matches the `background_task_count` tally. Every field is\nbest-effort: the hook shape is external, so an entry missing one field\nstill yields a usable row (e.g. a `description` with no `command`).",
         "properties": {
+          "can_open": {
+            "default": false,
+            "title": "Can Open",
+            "type": "boolean"
+          },
+          "can_stop": {
+            "default": false,
+            "title": "Can Stop",
+            "type": "boolean"
+          },
           "command": {
             "anyOf": [
               {
@@ -607,6 +617,18 @@
             "description": "Human-readable label, e.g. `\"Wait for CI\"`.",
             "title": "Description"
           },
+          "exit_code": {
+            "anyOf": [
+              {
+                "format": "int64",
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exit Code"
+          },
           "id": {
             "anyOf": [
               {
@@ -619,6 +641,61 @@
             "description": "Opaque per-shell identifier, e.g. `\"abc123\"`.",
             "title": "Id"
           },
+          "output_preview": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Preview"
+          },
+          "resource_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resource Id"
+          },
+          "resource_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resource Url"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
           "status": {
             "anyOf": [
               {
@@ -630,6 +707,54 @@
             ],
             "description": "Per-task status, e.g. `\"running\"`.",
             "title": "Status"
+          },
+          "stop_disabled_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stop Disabled Reason"
+          },
+          "stop_method": {
+            "anyOf": [
+              {
+                "enum": [
+                  "POST",
+                  "DELETE"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stop Method"
+          },
+          "stop_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stop Url"
+          },
+          "terminal_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Terminal Id"
           },
           "type": {
             "anyOf": [
@@ -645,6 +770,20 @@
           }
         },
         "title": "BackgroundTaskInfo",
+        "type": "object"
+      },
+      "Body_attach_generated_file_v1_sessions__session_id__attachments_post": {
+        "properties": {
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_attach_generated_file_v1_sessions__session_id__attachments_post",
         "type": "object"
       },
       "Body_update_session_agent_v1_sessions__session_id__agent_put": {
@@ -798,6 +937,21 @@
             "title": "Args",
             "type": "object"
           },
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
+          },
           "sequence_number": {
             "anyOf": [
               {
@@ -830,6 +984,21 @@
       "CancelledEvent": {
         "description": "Terminal event for a turn cancelled before completion.",
         "properties": {
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
+          },
           "response": {
             "$ref": "#/components/schemas/ResponseObject",
             "description": "The final response object with `status=\"cancelled\"`."
@@ -859,6 +1028,144 @@
           "response"
         ],
         "title": "CancelledEvent",
+        "type": "object"
+      },
+      "CaptureReference": {
+        "properties": {
+          "boundary_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Boundary Id"
+          },
+          "destination_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Destination Id"
+          },
+          "message_ids": {
+            "items": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Message Ids",
+            "type": "array"
+          },
+          "quote": {
+            "anyOf": [
+              {
+                "maxLength": 32000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quote"
+          },
+          "scope": {
+            "enum": [
+              "whole",
+              "last_answer",
+              "messages",
+              "quote"
+            ],
+            "title": "Scope",
+            "type": "string"
+          }
+        },
+        "required": [
+          "scope"
+        ],
+        "title": "CaptureReference",
+        "type": "object"
+      },
+      "ChangeWorkspace": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_host_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Host Id"
+          },
+          "expected_runner_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Runner Id"
+          },
+          "expected_workspace": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "title": "Expected Workspace",
+            "type": "string"
+          },
+          "recover_operation_id": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recover Operation Id"
+          },
+          "request_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Request Id",
+            "type": "string"
+          },
+          "validate_only": {
+            "default": false,
+            "title": "Validate Only",
+            "type": "boolean"
+          },
+          "workspace": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "title": "Workspace",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id",
+          "workspace",
+          "expected_workspace",
+          "expected_runner_id"
+        ],
+        "title": "ChangeWorkspace",
         "type": "object"
       },
       "ChildSessionList": {
@@ -1153,6 +1460,21 @@
             "description": "Synthetic `call_id` the SDK uses to reconcile the local task; `None` when no pending tool call row exists for the task.",
             "title": "Call Id"
           },
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
+          },
           "sequence_number": {
             "anyOf": [
               {
@@ -1308,6 +1630,21 @@
             "default": null,
             "title": "Compacted Messages"
           },
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
+          },
           "sequence_number": {
             "anyOf": [
               {
@@ -1448,6 +1785,21 @@
       "CompactionFailedEvent": {
         "description": "Conversation history compaction failed.\n\nEmitted by `omnigent/server/routes/sessions.py` when\n`compact_conversation_now()` raises. Clients that rendered a\n\"Compacting\u2026\" spinner on `CompactionInProgressEvent`\nshould dismiss it without leaving a permanent marker, since the\nconversation history was not modified.",
         "properties": {
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
+          },
           "sequence_number": {
             "anyOf": [
               {
@@ -1477,6 +1829,21 @@
       "CompactionInProgressEvent": {
         "description": "Conversation history is being compacted.\n\nEmitted by `omnigent/runtime/compaction.py` while a\ncompaction step runs so clients can render a \"summarizing\nhistory\u2026\" indicator. Wire shape matches `compaction.py:765`.\n\nA long compaction is announced repeatedly (once per status poll), so\nclients must treat every event carrying the same `started_at` as one\ncompaction \u2014 refreshing their indicator rather than stacking another.",
         "properties": {
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
+          },
           "sequence_number": {
             "anyOf": [
               {
@@ -1520,6 +1887,21 @@
       "CompletedEvent": {
         "description": "Terminal event for a successfully completed turn.\n\nCarries the final\n`omnigent.server.schemas.ResponseObject`.",
         "properties": {
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
+          },
           "response": {
             "$ref": "#/components/schemas/ResponseObject",
             "description": "The final response object with `status=\"completed\"`."
@@ -1549,6 +1931,115 @@
           "response"
         ],
         "title": "CompletedEvent",
+        "type": "object"
+      },
+      "ConversationBranch": {
+        "description": "A frozen transcript boundary; IDs carry no ancestor titles or grants.",
+        "properties": {
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "int64",
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "inherited_item_count": {
+            "anyOf": [
+              {
+                "format": "int64",
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inherited Item Count"
+          },
+          "inherited_last_item_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inherited Last Item Id"
+          },
+          "recovery": {
+            "default": "legacy_unknown",
+            "enum": [
+              "replay",
+              "legacy_unknown",
+              "unavailable"
+            ],
+            "title": "Recovery",
+            "type": "string"
+          },
+          "reference_boundary_item_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reference Boundary Item Id"
+          },
+          "reference_only": {
+            "default": false,
+            "title": "Reference Only",
+            "type": "boolean"
+          },
+          "root_conversation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Root Conversation Id"
+          },
+          "source_conversation_id": {
+            "title": "Source Conversation Id",
+            "type": "string"
+          },
+          "source_item_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Item Id"
+          },
+          "source_response_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Response Id"
+          }
+        },
+        "required": [
+          "source_conversation_id"
+        ],
+        "title": "ConversationBranch",
         "type": "object"
       },
       "ConversationDeleted": {
@@ -1596,7 +2087,7 @@
                 "type": "null"
               }
             ],
-            "description": "Identity of the human actor who authored this item, or `None` for agent/tool/system items and single-user mode. Lets owner and collaborator messages be distinguished.",
+            "description": "Authenticated account responsible for this input, when known. Agent authorship comes from `data.communication`, independently of this account.",
             "title": "Created By"
           },
           "data": {
@@ -1642,6 +2133,19 @@
             "description": "Store-assigned item ID, e.g. `\"msg_abc123\"`.",
             "title": "Id",
             "type": "string"
+          },
+          "position": {
+            "anyOf": [
+              {
+                "format": "int64",
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Position"
           },
           "response_id": {
             "description": "The task/response ID this item belongs to.",
@@ -1767,6 +2271,55 @@
         "title": "CreateDirectoryRequest",
         "type": "object"
       },
+      "CreateManualTerminal": {
+        "additionalProperties": false,
+        "properties": {
+          "cwd": {
+            "anyOf": [
+              {
+                "maxLength": 8192,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cwd"
+          },
+          "session_key": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Key"
+          },
+          "terminal": {
+            "default": "shell",
+            "maxLength": 256,
+            "title": "Terminal",
+            "type": "string"
+          },
+          "usage_session_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Usage Session Id"
+          }
+        },
+        "title": "CreateManualTerminal",
+        "type": "object"
+      },
       "CreateProjectRequest": {
         "additionalProperties": false,
         "description": "Request body for `POST /v1/projects`.",
@@ -1832,6 +2385,21 @@
       "CreatedEvent": {
         "description": "Initial event emitted at the start of every streaming response.\n\nCarries the freshly-allocated\n`omnigent.server.schemas.ResponseObject` (status will\nbe `\"queued\"` or `\"in_progress\"` depending on whether the\ntask started immediately).",
         "properties": {
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
+          },
           "response": {
             "$ref": "#/components/schemas/ResponseObject",
             "description": "The newly-allocated response object."
@@ -1890,6 +2458,21 @@
             "description": "Unique correlation id for this request \u2014 appears in the consumer's approval event payload, e.g. `\"elicit_abc123\"`.",
             "title": "Elicitation Id",
             "type": "string"
+          },
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
           },
           "method": {
             "const": "elicitation/create",
@@ -2060,6 +2643,21 @@
             "description": "Correlation id of the elicitation being cleared, e.g. `\"elicit_abc123\"`. Must match the id of a prior `ElicitationRequestEvent`.",
             "title": "Elicitation Id",
             "type": "string"
+          },
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
           },
           "reason": {
             "anyOf": [
@@ -2262,6 +2860,21 @@
           "error": {
             "$ref": "#/components/schemas/RetryErrorDetail",
             "description": "Classified error description."
+          },
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
           },
           "sequence_number": {
             "anyOf": [
@@ -2657,6 +3270,21 @@
       "FailedEvent": {
         "description": "Terminal event for a turn that ended with an error.\n\nCarries a `omnigent.server.schemas.FailedResponseObject`\nwhose `error` field describes the failure. Response metadata may\nbe absent when the failure occurs before response allocation.",
         "properties": {
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
+          },
           "response": {
             "anyOf": [
               {
@@ -2973,6 +3601,28 @@
             "title": "Output",
             "type": "string"
           },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "source_call_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Call Id"
+          },
           "subagent_return_id": {
             "anyOf": [
               {
@@ -3154,6 +3804,21 @@
       "HeartbeatEvent": {
         "description": "Keepalive event emitted on a fixed cadence during streaming.\n\nLets consumers detect stalled producers via missed-interval\ntiming. Cadence is set by `_HEARTBEAT_INTERVAL_S` in\n`omnigent/runtime/workflow.py` (15 seconds at the time of\nwriting). Wire shape matches the existing emit at\n`omnigent/runtime/workflow.py:4636-4639`.\n\nPer `designs/SERVER_HARNESS_CONTRACT.md` \u00a7Heartbeats, the\nevent MAY carry timing metadata so consumers can do richer\ndead-detection than \"did anything arrive\":\n\n- `server_time` is the producer's wall-clock at emission,\n  letting consumers detect clock drift between producer and\n  consumer.\n- `last_event_seq` is the `sequence_number` of the most\n  recent NON-heartbeat event (or `None` when this is the\n  first heartbeat before any user-visible event), letting\n  consumers detect dropped events on reconnect.\n\nBoth fields are optional on the wire (`None` round-trips as\nomitted) so older AP\u2192harness pairs that pre-date the field\naddition still parse cleanly.",
         "properties": {
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
+          },
           "last_event_seq": {
             "anyOf": [
               {
@@ -3242,6 +3907,29 @@
           "routable_models"
         ],
         "title": "HostModelOptionsResponse",
+        "type": "object"
+      },
+      "HostWorkspaceInput": {
+        "additionalProperties": false,
+        "properties": {
+          "host_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Host Id",
+            "type": "string"
+          },
+          "root": {
+            "maxLength": 8192,
+            "minLength": 1,
+            "title": "Root",
+            "type": "string"
+          }
+        },
+        "required": [
+          "host_id",
+          "root"
+        ],
+        "title": "HostWorkspaceInput",
         "type": "object"
       },
       "ImportFailureRef": {
@@ -3452,6 +4140,21 @@
       "InProgressEvent": {
         "description": "Event emitted once the task transitions to in-progress.\n\nAlways follows `response.created` (and `response.queued`\nfor background tasks).",
         "properties": {
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
+          },
           "response": {
             "$ref": "#/components/schemas/ResponseObject",
             "description": "The response object with `status=\"in_progress\"`."
@@ -3501,6 +4204,21 @@
       "IncompleteEvent": {
         "description": "Terminal event for a turn that ended without completing\n(e.g. hit the iteration cap or token budget).",
         "properties": {
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
+          },
           "response": {
             "$ref": "#/components/schemas/ResponseObject",
             "description": "The final response object with `status=\"incomplete\"` and `incomplete_details` populated describing the reason."
@@ -4116,9 +4834,182 @@
         "title": "McpToolsResponse",
         "type": "object"
       },
+      "MessageCommunication": {
+        "additionalProperties": false,
+        "description": "Server or native-adapter supplied provenance; never inferred from message text.",
+        "properties": {
+          "delivery_state": {
+            "default": "unknown",
+            "enum": [
+              "pending",
+              "queued",
+              "confirmed",
+              "unknown",
+              "failed"
+            ],
+            "title": "Delivery State",
+            "type": "string"
+          },
+          "destination_conversation_id": {
+            "title": "Destination Conversation Id",
+            "type": "string"
+          },
+          "hop_count": {
+            "default": 0,
+            "format": "int64",
+            "maximum": 16.0,
+            "minimum": 0.0,
+            "title": "Hop Count",
+            "type": "integer"
+          },
+          "kind": {
+            "enum": [
+              "peer",
+              "native_agent",
+              "system",
+              "external"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "message_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Message Id",
+            "type": "string"
+          },
+          "receipt": {
+            "anyOf": [
+              {
+                "enum": [
+                  "accepted",
+                  "transcript",
+                  "inbox_drained",
+                  "model_consumed"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Receipt"
+          },
+          "reply_to_message_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reply To Message Id"
+          },
+          "sent_at": {
+            "anyOf": [
+              {
+                "format": "int64",
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sent At"
+          },
+          "source_agent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Agent Id"
+          },
+          "source_agent_name": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Agent Name"
+          },
+          "source_conversation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Conversation Id"
+          },
+          "source_resource_scope": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Resource Scope"
+          },
+          "source_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Title"
+          },
+          "task_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Id"
+          }
+        },
+        "required": [
+          "kind",
+          "message_id",
+          "destination_conversation_id"
+        ],
+        "title": "MessageCommunication",
+        "type": "object"
+      },
       "MessageData": {
         "description": "Data for a message item (user or assistant).\n\n**Parameters**\n\n- `agent` \u2014 Agent name (required for assistant messages, absent for user). Serialized as `\"model\"` in JSON.",
         "properties": {
+          "communication": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MessageCommunication"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Trusted peer/native provenance, independent of model role."
+          },
           "content": {
             "description": "Heterogeneous content blocks, e.g. `[{\"type\": \"input_text\", \"text\": \"Hello\"}]`.",
             "items": {
@@ -4150,6 +5041,33 @@
               }
             ],
             "title": "Model"
+          },
+          "phase": {
+            "anyOf": [
+              {
+                "enum": [
+                  "commentary",
+                  "final_answer"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phase"
+          },
+          "resource_scope": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resource Scope"
           },
           "role": {
             "description": "`\"user\"` or `\"assistant\"`.",
@@ -4196,7 +5114,7 @@
           },
           "user_authored": {
             "default": false,
-            "description": "Confirmed or conservatively preserved user input; prevents legacy content cleanup from hiding literal agent markup.",
+            "description": "Human input confirmed by a trusted submission or adapter identity, independently of protocol role and account identity.",
             "title": "User Authored",
             "type": "boolean"
           }
@@ -4206,6 +5124,207 @@
           "content"
         ],
         "title": "MessageData",
+        "type": "object"
+      },
+      "MessageSearchHit": {
+        "properties": {
+          "content_hash": {
+            "title": "Content Hash",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "int64",
+            "title": "Created At",
+            "type": "integer"
+          },
+          "item_id": {
+            "title": "Item Id",
+            "type": "string"
+          },
+          "kind": {
+            "default": "message",
+            "enum": [
+              "message",
+              "chat"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "occurrence_count": {
+            "format": "int64",
+            "title": "Occurrence Count",
+            "type": "integer"
+          },
+          "phase": {
+            "anyOf": [
+              {
+                "enum": [
+                  "commentary",
+                  "final_answer"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phase"
+          },
+          "ranges": {
+            "items": {
+              "$ref": "#/components/schemas/MessageSearchRange"
+            },
+            "title": "Ranges",
+            "type": "array"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          },
+          "sender_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sender Name"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "snippet": {
+            "title": "Snippet",
+            "type": "string"
+          },
+          "snippet_start": {
+            "format": "int64",
+            "title": "Snippet Start",
+            "type": "integer"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "text_start": {
+            "format": "int64",
+            "title": "Text Start",
+            "type": "integer"
+          },
+          "text_truncated": {
+            "title": "Text Truncated",
+            "type": "boolean"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "title_ranges": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/MessageSearchRange"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title Ranges"
+          },
+          "user_authored": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Authored"
+          }
+        },
+        "required": [
+          "session_id",
+          "title",
+          "item_id",
+          "role",
+          "created_at",
+          "text",
+          "content_hash",
+          "snippet",
+          "snippet_start",
+          "ranges",
+          "occurrence_count",
+          "text_start",
+          "text_truncated"
+        ],
+        "title": "MessageSearchHit",
+        "type": "object"
+      },
+      "MessageSearchPage": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/MessageSearchHit"
+            },
+            "title": "Data",
+            "type": "array"
+          },
+          "has_more": {
+            "title": "Has More",
+            "type": "boolean"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "data",
+          "has_more",
+          "next_cursor"
+        ],
+        "title": "MessageSearchPage",
+        "type": "object"
+      },
+      "MessageSearchRange": {
+        "description": "Half-open UTF-16 offsets into a result's text.",
+        "properties": {
+          "end": {
+            "format": "int64",
+            "title": "End",
+            "type": "integer"
+          },
+          "start": {
+            "format": "int64",
+            "title": "Start",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "start",
+          "end"
+        ],
+        "title": "MessageSearchRange",
         "type": "object"
       },
       "ModelUsage": {
@@ -4291,6 +5410,23 @@
           }
         },
         "title": "ModelUsage",
+        "type": "object"
+      },
+      "MoveInput": {
+        "properties": {
+          "beforeQueueId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Beforequeueid"
+          }
+        },
+        "title": "MoveInput",
         "type": "object"
       },
       "NativeModelOption": {
@@ -4496,6 +5632,21 @@
             "description": "Original filename if the annotation supplied one, e.g. `\"report.pdf\"`. `None` otherwise.",
             "title": "Filename"
           },
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
+          },
           "sequence_number": {
             "anyOf": [
               {
@@ -4526,6 +5677,21 @@
       "OutputItemDoneEvent": {
         "description": "A conversation output item completed during the turn.\n\nCarries any item type the conversation persists (message,\nfunction_call, function_call_output, reasoning, compaction,\nnative_tool, \u2026). The `item` payload's wire shape merges\ncommon fields (`id`, `type`, `status`) with the\ntype-specific data fields \u2014 it is NOT nested as\n`{type, data}`.",
         "properties": {
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
+          },
           "item": {
             "additionalProperties": true,
             "description": "The completed item dict. Heterogeneous and item-type-specific; see `omnigent/entities/conversation.py` for the per-type `*Data` shapes that drive serialization. Example for a function_call item: `{\"id\": \"fc_abc123\", \"type\": \"function_call\", \"status\": \"action_required\", \"name\": \"search.web\", \"arguments\": \"{\\\"q\\\": \\\"foo\\\"}\", \"call_id\": \"call_xyz\"}`.",
@@ -4559,6 +5725,55 @@
         "title": "OutputItemDoneEvent",
         "type": "object"
       },
+      "OutputItemUpdatedEvent": {
+        "description": "Replace the existing persisted item with this ID, preserving its position.",
+        "properties": {
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
+          },
+          "item": {
+            "additionalProperties": true,
+            "title": "Item",
+            "type": "object"
+          },
+          "sequence_number": {
+            "anyOf": [
+              {
+                "format": "int64",
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Sequence Number"
+          },
+          "type": {
+            "const": "response.output_item.updated",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "item"
+        ],
+        "title": "OutputItemUpdatedEvent",
+        "type": "object"
+      },
       "OutputTextDeltaEvent": {
         "description": "Incremental assistant-text token emitted during streaming.\n\nWire shape matches the existing raw-dict emit at\n`omnigent/runtime/workflow.py:1352-1356`.",
         "properties": {
@@ -4579,6 +5794,21 @@
             "default": null,
             "description": "Optional provider completion marker for the message.",
             "title": "Final"
+          },
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
           },
           "index": {
             "anyOf": [
@@ -4886,6 +6116,21 @@
             "title": "Conversation Id",
             "type": "string"
           },
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
+          },
           "phase": {
             "default": "",
             "description": "The policy phase the DENY landed on, e.g. `\"tool_call\"`.",
@@ -5058,6 +6303,21 @@
       "QueuedEvent": {
         "description": "Optional event emitted between `created` and `in_progress`\nfor background tasks that are queued before they start.\n\nForeground streaming responses skip this event.",
         "properties": {
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
+          },
           "response": {
             "$ref": "#/components/schemas/ResponseObject",
             "description": "The response object with `status=\"queued\"`."
@@ -5087,6 +6347,126 @@
           "response"
         ],
         "title": "QueuedEvent",
+        "type": "object"
+      },
+      "QueuedInput": {
+        "additionalProperties": false,
+        "properties": {
+          "agentId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agentid"
+          },
+          "command": {
+            "anyOf": [
+              {
+                "const": "compact",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Command"
+          },
+          "event": {
+            "$ref": "#/components/schemas/SessionEventInput"
+          },
+          "fileMetadata": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filemetadata"
+          },
+          "hostId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hostid"
+          },
+          "queueId": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Queueid",
+            "type": "string"
+          },
+          "replyDraft": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replydraft"
+          },
+          "requiresRetry": {
+            "default": false,
+            "title": "Requiresretry",
+            "type": "boolean"
+          },
+          "stableId": {
+            "pattern": "^[0-9a-f]{32}$",
+            "title": "Stableid",
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 1000000,
+            "title": "Text",
+            "type": "string"
+          },
+          "workspaceRevision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspacerevision"
+          },
+          "workspaceRoot": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspaceroot"
+          }
+        },
+        "required": [
+          "queueId",
+          "stableId",
+          "text",
+          "event"
+        ],
+        "title": "QueuedInput",
         "type": "object"
       },
       "ReadStatePutRequest": {
@@ -5171,6 +6551,21 @@
       "ReasoningStartedEvent": {
         "description": "Marker emitted once when a reasoning block begins.\n\nFired even when the reasoning content itself is encrypted /\nredacted (so no delta events follow), letting clients render\na \"thinking\u2026\" indicator regardless of provider verification\nstatus. Wire shape matches `omnigent/runtime/workflow.py:1350`.",
         "properties": {
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
+          },
           "sequence_number": {
             "anyOf": [
               {
@@ -5204,6 +6599,21 @@
             "description": "The summary text fragment, e.g. `\"Will use the search tool to gather context.\"`.",
             "title": "Delta",
             "type": "string"
+          },
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
           },
           "sequence_number": {
             "anyOf": [
@@ -5239,6 +6649,21 @@
             "description": "The reasoning text fragment, e.g. `\"Considering the user's intent...\"`.",
             "title": "Delta",
             "type": "string"
+          },
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
           },
           "sequence_number": {
             "anyOf": [
@@ -5295,6 +6720,22 @@
           "reset"
         ],
         "title": "ResetSessionModelOverrideResponse",
+        "type": "object"
+      },
+      "ResolveWorkspaceInput": {
+        "additionalProperties": false,
+        "properties": {
+          "session_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Session Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id"
+        ],
+        "title": "ResolveWorkspaceInput",
         "type": "object"
       },
       "ResourceEventData": {
@@ -5556,6 +6997,21 @@
             "$ref": "#/components/schemas/RetryErrorDetail",
             "description": "Classified error description for the failure being retried."
           },
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
+          },
           "max_attempts": {
             "description": "Total tries allowed by the retry policy, e.g. `3`. Lets clients render \"attempt 2 of 3\".",
             "format": "int64",
@@ -5737,6 +7193,355 @@
         "title": "RoutingDecisionData",
         "type": "object"
       },
+      "RuntimeNotice": {
+        "description": "An observed provider notice with no implied native response action.",
+        "properties": {
+          "blocking": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blocking"
+          },
+          "category": {
+            "default": "provider",
+            "enum": [
+              "quota",
+              "provider"
+            ],
+            "title": "Category",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "double",
+            "title": "Created At",
+            "type": "number"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "native_subtype": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Native Subtype"
+          },
+          "observed_at": {
+            "anyOf": [
+              {
+                "format": "double",
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observed At"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Id"
+          },
+          "requires_action": {
+            "default": false,
+            "title": "Requires Action",
+            "type": "boolean"
+          },
+          "reset_at": {
+            "anyOf": [
+              {
+                "format": "double",
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reset At"
+          },
+          "revision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revision"
+          },
+          "severity": {
+            "enum": [
+              "info",
+              "warning",
+              "error"
+            ],
+            "title": "Severity",
+            "type": "string"
+          },
+          "source_kind": {
+            "default": "unknown",
+            "enum": [
+              "native",
+              "sdk",
+              "unknown"
+            ],
+            "title": "Source Kind",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "message",
+          "severity",
+          "created_at"
+        ],
+        "title": "RuntimeNotice",
+        "type": "object"
+      },
+      "RuntimeNoticeObservedEvent": {
+        "description": "Internal SDK observer transport; the server persists before publishing.",
+        "properties": {
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
+          },
+          "observation": {
+            "additionalProperties": true,
+            "title": "Observation",
+            "type": "object"
+          },
+          "sequence_number": {
+            "anyOf": [
+              {
+                "format": "int64",
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Sequence Number"
+          },
+          "type": {
+            "const": "session.runtime_notice",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "observation"
+        ],
+        "title": "RuntimeNoticeObservedEvent",
+        "type": "object"
+      },
+      "RuntimeNoticesChangedEvent": {
+        "properties": {
+          "conversation_id": {
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
+          },
+          "sequence_number": {
+            "anyOf": [
+              {
+                "format": "int64",
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Sequence Number"
+          },
+          "type": {
+            "const": "session.runtime_notices",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "conversation_id"
+        ],
+        "title": "RuntimeNoticesChangedEvent",
+        "type": "object"
+      },
+      "RuntimeNoticesResponse": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/RuntimeNotice"
+            },
+            "title": "Data",
+            "type": "array"
+          },
+          "quotas": {
+            "items": {
+              "$ref": "#/components/schemas/RuntimeQuota"
+            },
+            "title": "Quotas",
+            "type": "array"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "RuntimeNoticesResponse",
+        "type": "object"
+      },
+      "RuntimeQuota": {
+        "description": "A provider-reported account quota observation.",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "observed_at": {
+            "format": "double",
+            "title": "Observed At",
+            "type": "number"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "reset_at": {
+            "anyOf": [
+              {
+                "format": "double",
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reset At"
+          },
+          "source_kind": {
+            "enum": [
+              "native",
+              "sdk",
+              "unknown"
+            ],
+            "title": "Source Kind",
+            "type": "string"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "used_percent": {
+            "anyOf": [
+              {
+                "format": "double",
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Used Percent"
+          },
+          "window": {
+            "title": "Window",
+            "type": "string"
+          },
+          "window_minutes": {
+            "anyOf": [
+              {
+                "format": "double",
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Window Minutes"
+          }
+        },
+        "required": [
+          "id",
+          "provider",
+          "window",
+          "observed_at",
+          "source_kind"
+        ],
+        "title": "RuntimeQuota",
+        "type": "object"
+      },
       "SandboxStatus": {
         "description": "Managed-sandbox launch progress for a `host_type=\"managed\"` session.\n\nCarried on the session snapshot only while the session's\nbackground sandbox launch is in flight or has failed; `None`\nfor sessions without a managed launch and once the launch\nsucceeds (the session then looks like any host-bound session).",
         "properties": {
@@ -5862,6 +7667,11 @@
           },
           "dictation_available": {
             "title": "Dictation Available",
+            "type": "boolean"
+          },
+          "durable_host_initial_input": {
+            "default": false,
+            "title": "Durable Host Initial Input",
             "type": "boolean"
           },
           "durable_initial_input": {
@@ -6046,6 +7856,7 @@
             "response.incomplete": "#/components/schemas/IncompleteEvent",
             "response.output_file.done": "#/components/schemas/OutputFileDoneEvent",
             "response.output_item.done": "#/components/schemas/OutputItemDoneEvent",
+            "response.output_item.updated": "#/components/schemas/OutputItemUpdatedEvent",
             "response.output_text.delta": "#/components/schemas/OutputTextDeltaEvent",
             "response.policy_denied": "#/components/schemas/PolicyDeniedEvent",
             "response.queued": "#/components/schemas/QueuedEvent",
@@ -6054,6 +7865,7 @@
             "response.reasoning_text.delta": "#/components/schemas/ReasoningTextDeltaEvent",
             "response.retry": "#/components/schemas/RetryEvent",
             "session.agent_changed": "#/components/schemas/SessionAgentChangedEvent",
+            "session.background_tasks": "#/components/schemas/SessionBackgroundTasksEvent",
             "session.btw_sidechat": "#/components/schemas/SessionBtwSidechatEvent",
             "session.changed_files.invalidated": "#/components/schemas/SessionChangedFilesInvalidatedEvent",
             "session.child_session.updated": "#/components/schemas/SessionChildSessionUpdatedEvent",
@@ -6071,14 +7883,18 @@
             "session.reasoning_effort": "#/components/schemas/SessionReasoningEffortEvent",
             "session.resource.created": "#/components/schemas/SessionResourceCreatedEvent",
             "session.resource.deleted": "#/components/schemas/SessionResourceDeletedEvent",
+            "session.runtime_notice": "#/components/schemas/RuntimeNoticeObservedEvent",
+            "session.runtime_notices": "#/components/schemas/RuntimeNoticesChangedEvent",
             "session.sandbox_status": "#/components/schemas/SessionSandboxStatusEvent",
             "session.status": "#/components/schemas/SessionStatusEvent",
             "session.superseded": "#/components/schemas/SessionSupersededEvent",
+            "session.sync": "#/components/schemas/SessionSyncEvent",
             "session.terminal.activity": "#/components/schemas/SessionTerminalActivityEvent",
             "session.terminal_pending": "#/components/schemas/SessionTerminalPendingEvent",
             "session.title": "#/components/schemas/SessionTitleEvent",
             "session.todos": "#/components/schemas/SessionTodosEvent",
             "session.usage": "#/components/schemas/SessionUsageEvent",
+            "session.workspace": "#/components/schemas/SessionWorkspaceEvent",
             "turn.cancelled": "#/components/schemas/TurnCancelledEvent",
             "turn.completed": "#/components/schemas/TurnCompletedEvent",
             "turn.failed": "#/components/schemas/TurnFailedEvent",
@@ -6090,6 +7906,12 @@
         "oneOf": [
           {
             "$ref": "#/components/schemas/SessionStatusEvent"
+          },
+          {
+            "$ref": "#/components/schemas/SessionBackgroundTasksEvent"
+          },
+          {
+            "$ref": "#/components/schemas/SessionWorkspaceEvent"
           },
           {
             "$ref": "#/components/schemas/SessionUsageEvent"
@@ -6117,6 +7939,12 @@
           },
           {
             "$ref": "#/components/schemas/SessionTodosEvent"
+          },
+          {
+            "$ref": "#/components/schemas/RuntimeNoticeObservedEvent"
+          },
+          {
+            "$ref": "#/components/schemas/RuntimeNoticesChangedEvent"
           },
           {
             "$ref": "#/components/schemas/SessionTerminalPendingEvent"
@@ -6182,6 +8010,9 @@
             "$ref": "#/components/schemas/OutputItemDoneEvent"
           },
           {
+            "$ref": "#/components/schemas/OutputItemUpdatedEvent"
+          },
+          {
             "$ref": "#/components/schemas/OutputFileDoneEvent"
           },
           {
@@ -6189,6 +8020,9 @@
           },
           {
             "$ref": "#/components/schemas/SessionHeartbeatEvent"
+          },
+          {
+            "$ref": "#/components/schemas/SessionSyncEvent"
           },
           {
             "$ref": "#/components/schemas/ElicitationRequestEvent"
@@ -6258,6 +8092,36 @@
           }
         ]
       },
+      "SessionActivity": {
+        "description": "Own runtime status and authorized nested work, without descendant identity.",
+        "properties": {
+          "descendant_running": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Descendant Running"
+          },
+          "own_status": {
+            "enum": [
+              "idle",
+              "running",
+              "failed"
+            ],
+            "title": "Own Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "own_status"
+        ],
+        "title": "SessionActivity",
+        "type": "object"
+      },
       "SessionAgentChangedEvent": {
         "description": "The session's bound agent changed.\n\nEmitted after a session's MCP servers are edited (the agent's bundle\nis rewritten). Connected clients re-derive their cached session state\n(bound agent, harness presentation labels) from a fresh snapshot.",
         "properties": {
@@ -6275,6 +8139,21 @@
             "description": "Session identifier, e.g. `\"conv_abc123\"`.",
             "title": "Conversation Id",
             "type": "string"
+          },
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
           },
           "sequence_number": {
             "anyOf": [
@@ -6305,6 +8184,69 @@
         "title": "SessionAgentChangedEvent",
         "type": "object"
       },
+      "SessionBackgroundTasksEvent": {
+        "description": "A shell inventory update independent of the assistant turn lifecycle.",
+        "properties": {
+          "background_task_count": {
+            "format": "int64",
+            "minimum": 0,
+            "title": "Background Task Count",
+            "type": "integer"
+          },
+          "background_tasks": {
+            "items": {
+              "$ref": "#/components/schemas/BackgroundTaskInfo"
+            },
+            "title": "Background Tasks",
+            "type": "array"
+          },
+          "conversation_id": {
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
+          },
+          "sequence_number": {
+            "anyOf": [
+              {
+                "format": "int64",
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Sequence Number"
+          },
+          "type": {
+            "const": "session.background_tasks",
+            "default": "session.background_tasks",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "conversation_id",
+          "background_task_count",
+          "background_tasks"
+        ],
+        "title": "SessionBackgroundTasksEvent",
+        "type": "object"
+      },
       "SessionBtwSidechatEvent": {
         "description": "A Claude Code `/btw` side-chat exchange to show transiently.\n\n`/btw` opens an ephemeral side conversation whose answer Claude Code\nkeeps only in its in-TUI overlay \u2014 it is never written to the session\ntranscript. The claude-native forwarder scrapes the settled overlay\nfrom the pane and emits this event so the managed web UI can show the\nsame ephemeral overlay (dismissed with Escape), WITHOUT adding a\npersisted side-chat turn to the main conversation.\n\nCategory: **transient** (SSE-only), live-only by design. Nothing is\npersisted and there is no SSE replay, so a reload drops the overlay \u2014\nmatching the terminal, where Escape closes it and leaves no history.\n\nThe wire shape is FLAT (not enveloped):\n`{\"type\": \"session.btw_sidechat\", \"conversation_id\": <id>, \"question\": <str>, \"answer\": <str>, \"truncated\": <bool>}`.",
         "properties": {
@@ -6317,6 +8259,21 @@
             "description": "The conversation whose stream this rides.",
             "title": "Conversation Id",
             "type": "string"
+          },
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
           },
           "question": {
             "description": "The `/btw` request line as typed, e.g. `\"/btw is this backward compatible?\"`.",
@@ -6366,6 +8323,21 @@
             "description": "Environment whose changes were invalidated, e.g. `\"default\"`.",
             "title": "Environment Id",
             "type": "string"
+          },
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
           },
           "sequence_number": {
             "anyOf": [
@@ -6418,6 +8390,21 @@
             "title": "Conversation Id",
             "type": "string"
           },
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
+          },
           "sequence_number": {
             "anyOf": [
               {
@@ -6460,6 +8447,21 @@
             "title": "Conversation Id",
             "type": "string"
           },
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
+          },
           "sequence_number": {
             "anyOf": [
               {
@@ -6495,6 +8497,21 @@
             "description": "Session identifier, e.g. `\"conv_abc123\"`.",
             "title": "Conversation Id",
             "type": "string"
+          },
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
           },
           "mode": {
             "description": "The active collaboration mode string, e.g. `\"plan\"` or `\"default\"`. Category: **transient** (SSE-only). The server also writes `omnigent.codex_native.collaboration_mode` on the conversation labels, so reconnect clients restore the same state from the session snapshot.",
@@ -6555,6 +8572,21 @@
             "title": "Conversation Id",
             "type": "string"
           },
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
+          },
           "parent_session_id": {
             "anyOf": [
               {
@@ -6596,6 +8628,67 @@
         "title": "SessionCreatedEvent",
         "type": "object"
       },
+      "SessionEventInput": {
+        "description": "A single client-submitted event/input item for a session.\n\nUsed both as an element of `initial_items` on session\ncreation and as the body of `POST /v1/sessions/{id}/events`.\nCarries a discriminator (`type`) and a free-form `data`\npayload whose shape is interpreted by the route layer based\non `type` (e.g. user message, function-call output,\napproval, interrupt).",
+        "properties": {
+          "created_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional internal attribution actor for runner- originated events that are triggered by a prior human turn.",
+            "title": "Created By"
+          },
+          "data": {
+            "additionalProperties": true,
+            "description": "Type-specific payload. Shape varies by `type`; for `\"message\"` this looks like `{\"role\": \"user\", \"content\": [{\"type\": \"input_text\", \"text\": \"Hello\"}]}`. For `\"interrupt\"` this is typically `{}`.",
+            "title": "Data",
+            "type": "object"
+          },
+          "model_override": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional per-event LLM model override used when this event starts a fresh agent turn. Distinct from the session's bound agent; it substitutes for the agent spec's `llm.model` for that turn.",
+            "title": "Model Override"
+          },
+          "tools": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional OpenAI function-tool dicts registered when this event creates a new task. Mirrors `CreateResponseRequest.tools`, e.g. `[{\"type\": \"function\", \"function\": {\"name\": \"get_weather\", \"description\": \"...\", \"parameters\": {...}}}]`. Ignored when the event steers into an active task: that task's tools are fixed at start time.",
+            "title": "Tools"
+          },
+          "type": {
+            "description": "Discriminator for the event/input kind, e.g. `\"message\"`, `\"function_call_output\"`, `\"interrupt\"`.",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "title": "SessionEventInput",
+        "type": "object"
+      },
       "SessionForkRequest": {
         "additionalProperties": false,
         "description": "Request body for `POST /v1/sessions/{source_id}/fork`.\n\nCreates a deep copy of an existing session's items into a new\nsession. All fields are optional.",
@@ -6616,6 +8709,11 @@
             "default": false,
             "description": "Opt-in for the DANGEROUS codex-native full-bypass (`--dangerously-bypass-approvals-and-sandbox`) on the fork. The source's bypass label is ALWAYS dropped on a fork (a bypass-armed source can never silently re-arm its clone), so this is the only way a fork enables it \u2014 an explicit, banner-gated opt-in from the dialog, mirroring the new-session approval selector. `True` stamps `omnigent.codex_native.bypass_sandbox` on the fork; `False` / omitted leaves the fork in Codex's normal approval/sandbox stance. Only meaningful for a codex-native target; ignored otherwise.",
             "title": "Codex Bypass Sandbox",
+            "type": "boolean"
+          },
+          "durable_subchat": {
+            "default": false,
+            "title": "Durable Subchat",
             "type": "boolean"
           },
           "host_id": {
@@ -6709,6 +8807,18 @@
             "description": "Title for the forked session. When `None`, the server derives `\"Fork of <source_title>\"`.",
             "title": "Title"
           },
+          "up_to_item_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Exact inclusive item boundary captured when branching. Mutually exclusive with `up_to_response_id`; use this when creation is deferred so later items in the same response are not inherited.",
+            "title": "Up To Item Id"
+          },
           "up_to_response_id": {
             "anyOf": [
               {
@@ -6779,6 +8889,94 @@
       "SessionHeartbeatEvent": {
         "description": "Idle-stream keepalive on `GET /v1/sessions/{id}/stream`.\n\nEmitted by the session-stream route on a fixed cadence whenever\nthe underlying publish queue has been quiet (no turn in flight,\nno resource events). Distinct from `HeartbeatEvent`\n(`response.heartbeat`), which is per-turn and is driven by\nthe runtime workflow while a response is producing output.\n\nWhy this exists: the session stream stays open across many turns\nand through idle periods (waiting for the user to type). Without\na periodic emit, intermediate proxies, OS-level sockets, and the\nclient's SSE read-timeout can leave a half-open stream\nundetected for minutes after a network event (laptop sleep,\nWi-Fi handoff). The heartbeat puts a regular byte on the wire\nso the client's read-timeout and the server's\n`request.is_disconnected()` check both fire promptly.\n\nConsumers MAY ignore the payload entirely (the bytes crossing\nthe wire are sufficient). The optional `server_time` mirrors\n`HeartbeatEvent` for symmetry and debugging.",
         "properties": {
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
+          },
+          "item_count": {
+            "anyOf": [
+              {
+                "format": "int64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Item Count"
+          },
+          "item_revision": {
+            "anyOf": [
+              {
+                "format": "int64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Item Revision"
+          },
+          "last_item_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Last Item Id"
+          },
+          "last_position": {
+            "anyOf": [
+              {
+                "format": "int64",
+                "minimum": -1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Last Position"
+          },
+          "reconcile_required": {
+            "default": false,
+            "title": "Reconcile Required",
+            "type": "boolean"
+          },
+          "reset_revision": {
+            "anyOf": [
+              {
+                "format": "int64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reset Revision"
+          },
           "sequence_number": {
             "anyOf": [
               {
@@ -6805,6 +9003,18 @@
             "description": "ISO 8601 UTC timestamp at emission, e.g. `\"2026-05-25T10:30:00Z\"`. `None` when the producer chose not to populate it.",
             "title": "Server Time"
           },
+          "stream_epoch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Stream Epoch"
+          },
           "type": {
             "const": "session.heartbeat",
             "description": "Always `\"session.heartbeat\"`.",
@@ -6824,6 +9034,21 @@
           "data": {
             "$ref": "#/components/schemas/SessionInputConsumedPayload",
             "description": "The decoded queued-item payload \u2014 see `SessionInputConsumedPayload`."
+          },
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
           },
           "sequence_number": {
             "anyOf": [
@@ -6892,6 +9117,20 @@
             "title": "Item Id",
             "type": "string"
           },
+          "position": {
+            "anyOf": [
+              {
+                "format": "int64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Position"
+          },
           "type": {
             "description": "The item type discriminator \u2014 `\"message\"` for user messages, `\"function_call_output\"` for tool results, etc. Mirrors `omnigent.server.schemas.SessionEventInput`'s `type` field.",
             "title": "Type",
@@ -6912,6 +9151,21 @@
           "data": {
             "$ref": "#/components/schemas/SessionInterruptedPayload",
             "description": "The interrupt metadata \u2014 see `SessionInterruptedPayload`."
+          },
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
           },
           "sequence_number": {
             "anyOf": [
@@ -7042,6 +9296,16 @@
       "SessionListItem": {
         "description": "Lightweight session summary for `GET /v1/sessions` list responses.\n\nSame shape as `SessionResponse` minus `items`.",
         "properties": {
+          "activity": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SessionActivity"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "agent_id": {
             "description": "Durable identifier of the bound agent.",
             "title": "Agent Id",
@@ -7064,6 +9328,16 @@
             "description": "Whether the session is archived. Archived sessions are returned by `GET /v1/sessions` only when the request passes `include_archived=true`; the sidebar groups them into a dedicated \"Archived\" section. `False` for normal sessions.",
             "title": "Archived",
             "type": "boolean"
+          },
+          "branch": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ConversationBranch"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "comments_count": {
             "default": 0,
@@ -7325,6 +9599,22 @@
             ],
             "description": "Absolute path on disk where the runner cd's, e.g. `\"/Users/corey/universe/src/foo\"`. `None` for sessions that haven't been bound to a host workspace.",
             "title": "Workspace"
+          },
+          "workspace_revision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Revision"
+          },
+          "workspace_switching": {
+            "default": false,
+            "title": "Workspace Switching",
+            "type": "boolean"
           }
         },
         "required": [
@@ -7344,6 +9634,21 @@
             "description": "Session identifier, e.g. `\"conv_abc123\"`.",
             "title": "Conversation Id",
             "type": "string"
+          },
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
           },
           "sequence_number": {
             "anyOf": [
@@ -7389,6 +9694,21 @@
             "title": "Conversation Id",
             "type": "string"
           },
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
+          },
           "model": {
             "description": "The model the harness reports the session is on, VERBATIM in the harness's own spelling, e.g. `\"claude-opus-4-8[1m]\"` or `\"gpt-5.6-luna\"` \u2014 never collapsed to a picker alias. Category: **transient** (SSE-only). The server also writes `reported_model` on the conversation (served on the snapshot's `llm_model`), so on reconnect clients restore the display from the snapshot rather than from a replayed event.",
             "title": "Model",
@@ -7430,6 +9750,21 @@
             "title": "Conversation Id",
             "type": "string"
           },
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
+          },
           "sequence_number": {
             "anyOf": [
               {
@@ -7464,6 +9799,21 @@
             "description": "Session identifier, e.g. `\"conv_abc123\"`.",
             "title": "Conversation Id",
             "type": "string"
+          },
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
           },
           "permission_mode": {
             "description": "The active mode, e.g. `\"auto\"` or `\"plan\"`. Category: **transient** (SSE-only). The server also writes `omnigent.claude_native.permission_mode` on the conversation labels, so reconnecting clients restore the same state from the session snapshot.",
@@ -7505,6 +9855,21 @@
             "description": "The conversation whose stream delivered this event \u2014 the root or a sub-agent conversation, e.g. `\"conv_abc123\"`. Matches the streamed conversation (not necessarily the tree's root) so clients can guard events by the conversation they are viewing.",
             "title": "Conversation Id",
             "type": "string"
+          },
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
           },
           "sequence_number": {
             "anyOf": [
@@ -7595,6 +9960,21 @@
             "title": "Conversation Id",
             "type": "string"
           },
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
+          },
           "reasoning_effort": {
             "anyOf": [
               {
@@ -7638,6 +10018,21 @@
       "SessionResourceCreatedEvent": {
         "description": "A session resource was created.\n\nEmitted when a terminal is launched, a file is uploaded, or\nany other resource is materialized under a session. Wire shape\nis FLAT: `{\"type\": \"session.resource.created\", \"resource\": <SessionResourceObject-like dict>}`.",
         "properties": {
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
+          },
           "resource": {
             "additionalProperties": true,
             "description": "The newly created resource object.",
@@ -7674,6 +10069,21 @@
       "SessionResourceDeletedEvent": {
         "description": "A session resource was deleted.\n\nEmitted when a terminal is closed, a file is deleted, or\nany other resource is removed from a session.",
         "properties": {
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
+          },
           "resource_id": {
             "description": "Opaque id of the deleted resource.",
             "title": "Resource Id",
@@ -7895,6 +10305,16 @@
             "description": "Per-shell detail for the running tally above, so a reload can restore each shell's description/command. `None` when none are tracked (or when an older runner reported only the count).",
             "title": "Background Tasks"
           },
+          "branch": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ConversationBranch"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "context_window": {
             "anyOf": [
               {
@@ -8107,6 +10527,18 @@
             ],
             "description": "Per-session LLM model override, e.g. `\"claude-opus-4-7\"`. `None` means no override is active (the agent's `llm_model` applies). Set via `PATCH /v1/sessions/{id}` or the REPL's `/model` command; both write the same column so the web UI and the TUI stay in sync.",
             "title": "Model Override"
+          },
+          "native_child_capabilities": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Native Child Capabilities"
           },
           "native_usage_baseline": {
             "anyOf": [
@@ -8373,6 +10805,22 @@
             ],
             "description": "Absolute path on disk where the runner cd's, e.g. `\"/Users/corey/universe/src/foo\"`. Set when the session was bound to a host workspace at create-time, or when the CLI captured `os.getcwd()` at session-create. Always `None` when not yet validated against a host. When a git worktree was created for the session, this is the worktree directory path.",
             "title": "Workspace"
+          },
+          "workspace_revision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Revision"
+          },
+          "workspace_switching": {
+            "default": false,
+            "title": "Workspace Switching",
+            "type": "boolean"
           }
         },
         "required": [
@@ -8417,6 +10865,21 @@
             "default": null,
             "description": "Failure detail when `stage == \"failed\"`, e.g. `\"managed sandbox launch failed: spend limit reached\"`. `None` otherwise. Category: **transient** (SSE-only). On reconnect, clients seed the progress indicator from the session snapshot's `sandbox_status` field, which is populated by `_session_sandbox_status_cache` at snapshot build time.",
             "title": "Error"
+          },
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
           },
           "provider": {
             "anyOf": [
@@ -8536,6 +10999,21 @@
             "default": null,
             "description": "Machine-readable failure detail, present only when `status == \"failed\"`. Carries the message the runner attached when a turn died \u2014 most importantly a SETUP-phase failure (spec resolution, spawn-env build) that ends the turn before any `response.failed` event is emitted. `None` for every non-failed transition. Clients render `error.message` as the terminal error line; without it a setup failure shows as a silent end."
           },
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
+          },
           "response_id": {
             "anyOf": [
               {
@@ -8597,6 +11075,21 @@
             "title": "Conversation Id",
             "type": "string"
           },
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
+          },
           "reason": {
             "const": "clear",
             "default": "clear",
@@ -8637,9 +11130,126 @@
         "title": "SessionSupersededEvent",
         "type": "object"
       },
+      "SessionSyncEvent": {
+        "description": "Canonical replay boundary; reset replaces the client's committed set.",
+        "properties": {
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
+          },
+          "item_count": {
+            "format": "int64",
+            "minimum": 0,
+            "title": "Item Count",
+            "type": "integer"
+          },
+          "item_revision": {
+            "format": "int64",
+            "minimum": 0,
+            "title": "Item Revision",
+            "type": "integer"
+          },
+          "last_item_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Last Item Id"
+          },
+          "last_position": {
+            "format": "int64",
+            "minimum": -1,
+            "title": "Last Position",
+            "type": "integer"
+          },
+          "phase": {
+            "enum": [
+              "start",
+              "complete"
+            ],
+            "title": "Phase",
+            "type": "string"
+          },
+          "reset": {
+            "default": false,
+            "title": "Reset",
+            "type": "boolean"
+          },
+          "reset_revision": {
+            "format": "int64",
+            "minimum": 0,
+            "title": "Reset Revision",
+            "type": "integer"
+          },
+          "sequence_number": {
+            "anyOf": [
+              {
+                "format": "int64",
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Sequence Number"
+          },
+          "stream_epoch": {
+            "title": "Stream Epoch",
+            "type": "string"
+          },
+          "type": {
+            "const": "session.sync",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "phase",
+          "item_revision",
+          "reset_revision",
+          "last_position",
+          "item_count",
+          "stream_epoch"
+        ],
+        "title": "SessionSyncEvent",
+        "type": "object"
+      },
       "SessionTerminalActivityEvent": {
         "description": "A terminal's pane produced output (runner-determined activity pulse).\n\nPowers the web \"active\" badge for any terminal without a client PTY\nattach \u2014 the runner's per-terminal pane watcher emits this when the\npane content changes. Transient (a live pulse; not persisted, not in\nthe connect snapshot).",
         "properties": {
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
+          },
           "sequence_number": {
             "anyOf": [
               {
@@ -8686,6 +11296,21 @@
             "title": "Conversation Id",
             "type": "string"
           },
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
+          },
           "pending": {
             "description": "`True` while the terminal is being created; `False` once it lands or auto-create fails. Category: **transient** (SSE-only). On reconnect, clients seed the spinner from the session snapshot's `terminal_pending` field, which is populated by `_session_terminal_pending_cache` at snapshot build time.",
             "title": "Pending",
@@ -8727,6 +11352,21 @@
             "title": "Conversation Id",
             "type": "string"
           },
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
+          },
           "sequence_number": {
             "anyOf": [
               {
@@ -8767,6 +11407,21 @@
             "description": "Session identifier, e.g. `\"conv_abc123\"`.",
             "title": "Conversation Id",
             "type": "string"
+          },
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
           },
           "sequence_number": {
             "anyOf": [
@@ -8945,6 +11600,21 @@
             "title": "Conversation Id",
             "type": "string"
           },
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
+          },
           "sequence_number": {
             "anyOf": [
               {
@@ -9000,6 +11670,68 @@
           "conversation_id"
         ],
         "title": "SessionUsageEvent",
+        "type": "object"
+      },
+      "SessionWorkspaceEvent": {
+        "properties": {
+          "conversation_id": {
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
+          },
+          "operation_id": {
+            "title": "Operation Id",
+            "type": "string"
+          },
+          "phase": {
+            "title": "Phase",
+            "type": "string"
+          },
+          "sequence_number": {
+            "anyOf": [
+              {
+                "format": "int64",
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Sequence Number"
+          },
+          "switching": {
+            "title": "Switching",
+            "type": "boolean"
+          },
+          "type": {
+            "const": "session.workspace",
+            "default": "session.workspace",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "conversation_id",
+          "switching",
+          "operation_id",
+          "phase"
+        ],
+        "title": "SessionWorkspaceEvent",
         "type": "object"
       },
       "SetCodexGoalRequest": {
@@ -9441,6 +12173,21 @@
             "title": "Delta",
             "type": "string"
           },
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
+          },
           "sequence_number": {
             "anyOf": [
               {
@@ -9472,6 +12219,21 @@
       "TurnCancelledEvent": {
         "description": "Emitted when a turn is interrupted by the user or system.",
         "properties": {
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
+          },
           "sequence_number": {
             "anyOf": [
               {
@@ -9507,6 +12269,21 @@
       "TurnCompletedEvent": {
         "description": "Emitted when a turn finishes successfully with no pending work.",
         "properties": {
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
+          },
           "sequence_number": {
             "anyOf": [
               {
@@ -9548,6 +12325,21 @@
             "title": "Error",
             "type": "object"
           },
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
+          },
           "sequence_number": {
             "anyOf": [
               {
@@ -9583,6 +12375,21 @@
       "TurnStartedEvent": {
         "description": "Emitted when the runner starts a new turn for a session.",
         "properties": {
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
+          },
           "sequence_number": {
             "anyOf": [
               {
@@ -9618,6 +12425,21 @@
       "UiOpenFileEvent": {
         "description": "Ask current session viewers to open a workspace-relative file; never replayed.",
         "properties": {
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
+          },
           "path": {
             "title": "Path",
             "type": "string"
@@ -10338,7 +13160,7 @@
   },
   "info": {
     "description": "Omnigent is an open-source meta-harness for building and running AI agents. This is the REST API exposed by the Omnigent server: use it to create and drive **sessions**, manage **agents**, **hosts**, and **runners**, attach **contextual policies**, post **comments**, and work with session **resources** \u2014 files, terminals, and sandboxed environments.\n\n## Base URL\n\nOmnigent is self-hosted. The server binds `http://127.0.0.1:6767` by default (`omnigent server`); point the base URL at your own deployment.\n\n## Authentication\n\nThere is no API-key or bearer-token scheme. Identity is supplied by the deployment's configured auth provider (`OMNIGENT_AUTH_PROVIDER`):\n\n- **Trusted proxy header** (default) \u2014 an upstream proxy injects an identity header (`X-Forwarded-Email`, configurable). Single-user local runtimes fall back to a reserved `local` user.\n- **Session cookie** \u2014 a signed session cookie minted after an interactive OIDC or accounts login. It is named `ap_session` over HTTP (the advertised local default) and `__Host-ap_session` under HTTPS, where the `__Host-` prefix guards against subdomain cookie-tossing.\n\nAuth is configured server-side; clients send the cookie or proxy header according to your deployment.\n\n## Streaming\n\n`GET /v1/sessions/{session_id}/stream` streams Server-Sent Events (`text/event-stream`). Each event conforms to the `ServerStreamEvent` schema documented below.\n",
-    "title": "Omnigent Server",
+    "title": "Triune Server",
     "version": "0.1.0"
   },
   "openapi": "3.2.0",
@@ -10948,6 +13770,84 @@
           }
         },
         "summary": "Branding Logo"
+      }
+    },
+    "/v1/context-references/chats": {
+      "get": {
+        "operationId": "reference_chats_v1_context_references_chats_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "query",
+            "required": false,
+            "schema": {
+              "default": "",
+              "maxLength": 200,
+              "title": "Query",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "After"
+            }
+          },
+          {
+            "in": "query",
+            "name": "writable",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Writable",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "messages",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Messages",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reference Chats",
+        "tags": [
+          "sessions"
+        ]
       }
     },
     "/v1/extensions": {
@@ -13296,6 +16196,16 @@
           },
           {
             "in": "query",
+            "name": "include_side_chats",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Side Chats",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
             "name": "project",
             "required": false,
             "schema": {
@@ -13434,6 +16344,142 @@
           }
         },
         "summary": "List Session Projects",
+        "tags": [
+          "sessions"
+        ]
+      }
+    },
+    "/v1/sessions/search/messages": {
+      "get": {
+        "description": "Return one authorized page of messages and optional chat-title hits.\n\nFinal includes trusted human messages and confirmed final agent replies.\nText retains the raw one-space block join; all offsets use UTF-16.\nTruncated text reports its full-source offset explicitly.",
+        "operationId": "search_session_messages_v1_sessions_search_messages_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "query",
+            "required": true,
+            "schema": {
+              "maxLength": 512,
+              "title": "Query",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "session_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 40,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 1024,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_archived",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Archived",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "visibility",
+            "required": false,
+            "schema": {
+              "default": "all",
+              "pattern": "^(all|mine|shared|archived)$",
+              "title": "Visibility",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "message_filter",
+            "required": false,
+            "schema": {
+              "default": "all",
+              "enum": [
+                "all",
+                "final",
+                "user"
+              ],
+              "title": "Message Filter",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_titles",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Titles",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageSearchPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Search Session Messages",
         "tags": [
           "sessions"
         ]
@@ -13649,6 +16695,56 @@
           }
         },
         "summary": "Update Session",
+        "tags": [
+          "sessions"
+        ]
+      }
+    },
+    "/v1/sessions/{session_id}/activity": {
+      "get": {
+        "operationId": "get_session_activity_v1_sessions__session_id__activity_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_children",
+            "required": false,
+            "schema": {
+              "default": true,
+              "title": "Include Children",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Session Activity",
         "tags": [
           "sessions"
         ]
@@ -14045,6 +17141,289 @@
         "tags": [
           "session_mcp_servers"
         ]
+      }
+    },
+    "/v1/sessions/{session_id}/attachments": {
+      "post": {
+        "operationId": "attach_generated_file_v1_sessions__session_id__attachments_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_attach_generated_file_v1_sessions__session_id__attachments_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Attach Generated File V1 Sessions  Session Id  Attachments Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Attach Generated File",
+        "tags": [
+          "sessions"
+        ]
+      }
+    },
+    "/v1/sessions/{session_id}/attachments/references/{item_id}": {
+      "get": {
+        "operationId": "reference_v1_sessions__session_id__attachments_references__item_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "title": "Path",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reference"
+      }
+    },
+    "/v1/sessions/{session_id}/attachments/references/{item_id}/capture": {
+      "post": {
+        "operationId": "capture_v1_sessions__session_id__attachments_references__item_id__capture_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "title": "Path",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Capture"
+      }
+    },
+    "/v1/sessions/{session_id}/attachments/references/{item_id}/location": {
+      "get": {
+        "operationId": "reference_location_v1_sessions__session_id__attachments_references__item_id__location_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "title": "Path",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Reference Location V1 Sessions  Session Id  Attachments References  Item Id  Location Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reference Location"
+      }
+    },
+    "/v1/sessions/{session_id}/attachments/references/{item_id}/metadata": {
+      "get": {
+        "description": "Classify an authorized reference without transferring its file contents.",
+        "operationId": "reference_metadata_v1_sessions__session_id__attachments_references__item_id__metadata_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "title": "Path",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Reference Metadata V1 Sessions  Session Id  Attachments References  Item Id  Metadata Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reference Metadata"
       }
     },
     "/v1/sessions/{session_id}/auto-title": {
@@ -14945,6 +18324,51 @@
         ]
       }
     },
+    "/v1/sessions/{session_id}/native-child-capabilities": {
+      "get": {
+        "description": "Read current child controls without fetching transcript or launching a runtime.",
+        "operationId": "get_native_child_capabilities_v1_sessions__session_id__native_child_capabilities_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Native Child Capabilities V1 Sessions  Session Id  Native Child Capabilities Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Native Child Capabilities",
+        "tags": [
+          "sessions"
+        ]
+      }
+    },
     "/v1/sessions/{session_id}/owner": {
       "get": {
         "description": "Return the owner of a session.\n\nRequires read-level access.\n\n**Returns:** `{\"owner\": \"<user_id>\"}` or `{\"owner\": null}`.",
@@ -14982,6 +18406,75 @@
           }
         },
         "summary": "Get Session Owner",
+        "tags": [
+          "sessions"
+        ]
+      }
+    },
+    "/v1/sessions/{session_id}/peer-messages": {
+      "get": {
+        "description": "Inspect a bounded transcript page; continue via last_id even on empty pages.",
+        "operationId": "list_peer_messages_v1_sessions__session_id__peer_messages_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "After"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Peer Messages",
         "tags": [
           "sessions"
         ]
@@ -15475,6 +18968,332 @@
         ]
       }
     },
+    "/v1/sessions/{session_id}/queued-messages": {
+      "get": {
+        "operationId": "list_queue_v1_sessions__session_id__queued_messages_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Queue V1 Sessions  Session Id  Queued Messages Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Queue",
+        "tags": [
+          "queued messages"
+        ]
+      },
+      "post": {
+        "operationId": "enqueue_v1_sessions__session_id__queued_messages_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QueuedInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Enqueue V1 Sessions  Session Id  Queued Messages Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Enqueue",
+        "tags": [
+          "queued messages"
+        ]
+      }
+    },
+    "/v1/sessions/{session_id}/queued-messages/{queue_id}": {
+      "delete": {
+        "operationId": "remove_v1_sessions__session_id__queued_messages__queue_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "queue_id",
+            "required": true,
+            "schema": {
+              "title": "Queue Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Remove V1 Sessions  Session Id  Queued Messages  Queue Id  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Remove",
+        "tags": [
+          "queued messages"
+        ]
+      },
+      "patch": {
+        "operationId": "edit_v1_sessions__session_id__queued_messages__queue_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "queue_id",
+            "required": true,
+            "schema": {
+              "title": "Queue Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QueuedInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Edit V1 Sessions  Session Id  Queued Messages  Queue Id  Patch",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Edit",
+        "tags": [
+          "queued messages"
+        ]
+      }
+    },
+    "/v1/sessions/{session_id}/queued-messages/{queue_id}/move": {
+      "post": {
+        "operationId": "move_v1_sessions__session_id__queued_messages__queue_id__move_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "queue_id",
+            "required": true,
+            "schema": {
+              "title": "Queue Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MoveInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Move V1 Sessions  Session Id  Queued Messages  Queue Id  Move Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Move",
+        "tags": [
+          "queued messages"
+        ]
+      }
+    },
+    "/v1/sessions/{session_id}/queued-messages/{queue_id}/send": {
+      "post": {
+        "operationId": "send_v1_sessions__session_id__queued_messages__queue_id__send_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "queue_id",
+            "required": true,
+            "schema": {
+              "title": "Queue Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Send V1 Sessions  Session Id  Queued Messages  Queue Id  Send Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Send",
+        "tags": [
+          "queued messages"
+        ]
+      }
+    },
     "/v1/sessions/{session_id}/read-state": {
       "put": {
         "description": "Set the calling user's read-state for one session.\n\nRequires `LEVEL_READ` on the session in multi-user mode \u2014 you can\nonly track read-state for sessions you can see. Stores the values\nverbatim (the client enforces the baseline's monotonicity and the\nunread semantics); the server does not interpret them against\nsession status. Returns `204` \u2014 the client already has the\noptimistic state and re-reads the authoritative value on the next\n`GET /v1/sessions` poll.\n\n**Parameters**\n\n- `body` \u2014 The validated `ReadStatePutRequest`.\n\n**Returns:** An empty `204 No Content` response.\n\n**Raises**\n\n- `OmnigentError` \u2014 403 if the caller lacks read access.",
@@ -15679,11 +19498,10 @@
     },
     "/v1/sessions/{session_id}/resources/environments/{environment_id}/changes": {
       "get": {
-        "description": "List all files changed since session start (flat, registry-backed).\n\nReturns the watchdog change set for the session \u2014 every file\ncreated, modified, or deleted since the session began, regardless\nof directory depth.  Use for the flat \"changed files\" view.\n\n**Returns:** Flat list of changed filesystem entries with `status`.",
+        "description": "List Git-backed session status or explicitly scoped captured agent history.",
         "operationId": "list_environment_filesystem_changes_v1_sessions__session_id__resources_environments__environment_id__changes_get",
         "parameters": [
           {
-            "description": "Session/conversation identifier.",
             "in": "path",
             "name": "session_id",
             "required": true,
@@ -15693,13 +19511,62 @@
             }
           },
           {
-            "description": "Environment resource id.",
             "in": "path",
             "name": "environment_id",
             "required": true,
             "schema": {
               "title": "Environment Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "source",
+            "required": false,
+            "schema": {
+              "default": "session",
+              "pattern": "^(session|agent)$",
+              "title": "Source",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "path",
+            "required": false,
+            "schema": {
+              "default": "",
+              "maxLength": 8192,
+              "title": "Path",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "baseline",
+            "required": false,
+            "schema": {
+              "default": "session",
+              "pattern": "^(last_turn|session)$",
+              "title": "Baseline",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "turn_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 256,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Turn Id"
             }
           }
         ],
@@ -17708,6 +21575,162 @@
         ]
       }
     },
+    "/v1/sessions/{session_id}/resources/shells": {
+      "get": {
+        "operationId": "list_shells_v1_sessions__session_id__resources_shells_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Shells",
+        "tags": [
+          "session_resources"
+        ]
+      }
+    },
+    "/v1/sessions/{session_id}/resources/shells/{source}/{resource_id}": {
+      "get": {
+        "operationId": "read_shell_v1_sessions__session_id__resources_shells__source___resource_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "source",
+            "required": true,
+            "schema": {
+              "title": "Source",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "resource_id",
+            "required": true,
+            "schema": {
+              "title": "Resource Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Read Shell",
+        "tags": [
+          "session_resources"
+        ]
+      }
+    },
+    "/v1/sessions/{session_id}/resources/shells/{source}/{resource_id}/stop": {
+      "post": {
+        "operationId": "stop_shell_v1_sessions__session_id__resources_shells__source___resource_id__stop_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "source",
+            "required": true,
+            "schema": {
+              "title": "Source",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "resource_id",
+            "required": true,
+            "schema": {
+              "title": "Resource Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Stop Shell",
+        "tags": [
+          "session_resources"
+        ]
+      }
+    },
     "/v1/sessions/{session_id}/resources/terminals": {
       "get": {
         "description": "Return only terminal resources for a session.\n\nThe runner endpoint's pagination params (`limit` / `after` /\n`before` / `order`) are forwarded from the incoming query\nstring \u2014 without this, a client-requested `order=asc` (the web\nterminal tabs rely on creation order to keep the session's own\nterminal first) would be silently dropped and the runner's\n`desc` default would apply.\n\n**Returns:** `PaginatedList` of terminal resources.",
@@ -17944,6 +21967,48 @@
         ]
       }
     },
+    "/v1/sessions/{session_id}/runtime-notices": {
+      "get": {
+        "operationId": "get_runtime_notices_v1_sessions__session_id__runtime_notices_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeNoticesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Runtime Notices",
+        "tags": [
+          "sessions"
+        ]
+      }
+    },
     "/v1/sessions/{session_id}/sign-in-link": {
       "get": {
         "description": "Return the sign-in link the session's terminal is waiting on right now.\n\nAsked by the error card at click time, so the user opens the live\nprompt rather than a link saved earlier that its launcher process has\nsince abandoned.\n\n**Returns:** The runner's `{\"pending\", \"url\", \"code\", \"terminal_id\"}` payload.",
@@ -17988,7 +22053,7 @@
     },
     "/v1/sessions/{session_id}/stream": {
       "get": {
-        "description": "Subscribe to the session's live SSE event stream.\n\nDoes NOT replay history; clients reconcile via the snapshot\nendpoint. The generator emits `[DONE]` on normal completion\nand uses `finally` only for presence cleanup \u2014 see\n`_stream_live_events`.\n\nHolding this stream open registers the caller as a session\n*viewer* (presence): co-viewers' streams receive\n`session.presence` events on join/leave/idle edges, and\nthis stream's snapshot-on-connect includes the current\nviewer list. Presence is scoped to the session tree's root\nconversation, so viewers of different agents/sub-agents in\none session see each other. See\n`omnigent/server/presence.py`.\n\n**Returns:** An SSE `StreamingResponse`.\n\n**Raises**\n\n- `OmnigentError` \u2014 404 if no session exists.",
+        "description": "Subscribe to the session's live SSE event stream.\n\nAn explicit `after_position` enables persisted recovery after live\nregistration; `after_revision` and `stream_epoch` permit append-only\nresume when no old-position mutation occurred.\nAn untrusted cursor resets canonical membership.\nLegacy callers without a cursor retain live-tail behavior.\n\nHolding this stream open registers the caller as a session\n*viewer* (presence): co-viewers' streams receive\n`session.presence` events on join/leave/idle edges, and\nthis stream's snapshot-on-connect includes the current\nviewer list. Presence is scoped to the session tree's root\nconversation, so viewers of different agents/sub-agents in\none session see each other. See\n`omnigent/server/presence.py`.\n\n**Returns:** An SSE `StreamingResponse`.\n\n**Raises**\n\n- `OmnigentError` \u2014 404 if no session exists.",
         "operationId": "stream_session_v1_sessions__session_id__stream_get",
         "parameters": [
           {
@@ -18002,7 +22067,7 @@
             }
           },
           {
-            "description": "Presence idle flag computed by the web client at connect time (tab backgrounded \u2265 its debounce). An idle *flip* mid-view arrives as a reconnect carrying the new value \u2014 there is no separate update endpoint.",
+            "description": "Presence idle flag computed by the web client at connect time (tab backgrounded \u2265 its debounce). An idle flip can reconnect SSE or update the existing WebSocket membership.",
             "in": "query",
             "name": "idle",
             "required": false,
@@ -18010,6 +22075,56 @@
               "default": false,
               "title": "Idle",
               "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after_position",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": -1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "After Position"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after_revision",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "After Revision"
+            }
+          },
+          {
+            "in": "query",
+            "name": "stream_epoch",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Stream Epoch"
             }
           }
         ],
@@ -18097,9 +22212,197 @@
         ]
       }
     },
+    "/v1/sessions/{session_id}/workspace": {
+      "get": {
+        "operationId": "get_workspace_v1_sessions__session_id__workspace_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Workspace",
+        "tags": [
+          "sessions"
+        ]
+      },
+      "post": {
+        "operationId": "change_workspace_v1_sessions__session_id__workspace_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChangeWorkspace"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Change Workspace",
+        "tags": [
+          "sessions"
+        ]
+      }
+    },
+    "/v1/sessions/{source_id}/context-reference": {
+      "post": {
+        "operationId": "capture_reference_v1_sessions__source_id__context_reference_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "source_id",
+            "required": true,
+            "schema": {
+              "title": "Source Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CaptureReference"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Capture Reference",
+        "tags": [
+          "sessions"
+        ]
+      }
+    },
+    "/v1/sessions/{source_id}/context-reference/check": {
+      "post": {
+        "operationId": "check_reference_v1_sessions__source_id__context_reference_check_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "source_id",
+            "required": true,
+            "schema": {
+              "title": "Source Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CaptureReference"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Check Reference",
+        "tags": [
+          "sessions"
+        ]
+      }
+    },
     "/v1/sessions/{source_id}/fork": {
       "post": {
-        "description": "Fork an existing session into a new session.\n\nDeep-copies the source session's conversation items and\nclones the agent into a new session. When `body.agent_id`\nis set, the fork binds that agent instead of the\nsource's \u2014 switching harness (e.g. Claude-SDK \u2192 Claude Code,\nor Claude \u2192 Codex). The source's model settings carry over\nonly within the same provider family; a same-family native\ntarget also carries conversation history (the runner rebuilds\nits transcript). The REPL/CLI binds the fork to its runner via\n`PATCH /v1/sessions/{id}` after creation.\n\nWhen `body.up_to_response_id` is set, only history up to and\nincluding that response is copied into the fork (a \"fork from\nthis response\"); a native target then rebuilds its transcript\nfrom the truncated items instead of resuming the source's full\nnative transcript.\n\nThe dialog's run-config picks (`body.model_override`,\n`body.reasoning_effort`, `body.terminal_launch_args` \u2014 the\npermission-/approval-mode selector) override what the fork would\notherwise inherit. Each is opt-in: a field omitted from the request\nkeeps the inherited value (model/effort within the same provider\nfamily; launch args on a same-agent fork), while a field present\nwins \u2014 a clear alias (`\"default\"`) resets to the bound agent's\ndefault, and an explicit launch-args list also drops the source's\ncopied permission-mode / codex-bypass labels so they can't shadow\nthe freshly chosen mode.\n\nA sub-agent source is allowed, which is how a sub-agent is\npromoted to a session of its own: the fork is always a fresh\ntop-level conversation (no parent, its own spawn-tree root, its\nown owner grant), so it appears in the sidebar and outlives the\nparent. The source keeps running under its parent untouched,\nand the fork does not adopt the source's own children.\n\n`body.host_type: \"managed\"` gives the fork its own\nserver-provisioned sandbox instead of leaving it unbound for the\ncaller to bind a host to. It schedules the same background launch\na managed create does \u2014 this POST returns before the sandbox\nexists \u2014 and the sandbox is registered to the FORKING caller, not\nto the source session's owner. The fork's workspace is the\nrepository named by `body.workspace`, or the one the source\nrecorded when that field is omitted. `body.host_id` names the\nfork's new sandbox host, as on a managed create.\n\n**Parameters**\n\n- `body` \u2014 The validated `SessionForkRequest`.\n\n**Returns:** A `SessionResponse` describing the newly created fork (status `\"idle\"`).\n\n**Raises**\n\n- `OmnigentError` \u2014 404 if *source_id* does not exist or `body.agent_id` names no agent; 403/404 if the caller lacks read access on the source, or on the session that owns a session-scoped `body.agent_id`; 400 if the source has no agent binding, `body.up_to_response_id` names no response in the source session, or a managed fork asks for a sandbox this server has not configured; 409 if `body.host_id` is already in use; 410 if the source's agent was removed or a required bundle copy finds its source missing.",
+        "description": "Fork an existing session into a new session.\n\nDeep-copies the source session's conversation items and\nclones the agent into a new session. When `body.agent_id`\nis set, the fork binds that agent instead of the\nsource's \u2014 switching harness (e.g. Claude-SDK \u2192 Claude Code,\nor Claude \u2192 Codex). The source's model settings carry over\nonly within the same provider family; a same-family native\ntarget also carries conversation history (the runner rebuilds\nits transcript). The REPL/CLI binds the fork to its runner via\n`PATCH /v1/sessions/{id}` after creation.\n\nWhen `body.up_to_response_id` is set, only history up to and\nincluding that response is copied into the fork (a \"fork from\nthis response\"); a native target then rebuilds its transcript\nfrom the truncated items instead of resuming the source's full\nnative transcript.\n\nThe dialog's run-config picks (`body.model_override`,\n`body.reasoning_effort`, `body.terminal_launch_args` \u2014 the\npermission-/approval-mode selector) override what the fork would\notherwise inherit. Each is opt-in: a field omitted from the request\nkeeps the inherited value (model/effort within the same provider\nfamily; launch args on a same-agent fork), while a field present\nwins \u2014 a clear alias (`\"default\"`) resets to the bound agent's\ndefault, and an explicit launch-args list also drops the source's\ncopied permission-mode / codex-bypass labels so they can't shadow\nthe freshly chosen mode.\n\nA sub-agent source is allowed, which is how a sub-agent is\npromoted to a session of its own: the fork is always a fresh\ntop-level conversation (no parent, its own spawn-tree root, its\nown owner grant), so it appears in the sidebar and outlives the\nparent. The source keeps running under its parent untouched,\nand the fork does not adopt the source's own children.\n\n`body.host_type: \"managed\"` gives the fork its own\nserver-provisioned sandbox instead of leaving it unbound for the\ncaller to bind a host to. It schedules the same background launch\na managed create does \u2014 this POST returns before the sandbox\nexists \u2014 and the sandbox is registered to the FORKING caller, not\nto the source session's owner. The fork's workspace is the\nrepository named by `body.workspace`, or the one the source\nrecorded when that field is omitted. `body.host_id` names the\nfork's new sandbox host, as on a managed create.\n\n**Parameters**\n\n- `body` \u2014 The validated `SessionForkRequest`. `up_to_item_id` captures an exact inclusive boundary for deferred creation. New forks receive durable branch provenance and inherited reference context; their delegation parent/root fields remain independent.\n\n**Returns:** A `SessionResponse` describing the newly created fork (status `\"idle\"`).\n\n**Raises**\n\n- `OmnigentError` \u2014 404 if *source_id* does not exist or `body.agent_id` names no agent; 403/404 if the caller lacks read access on the source, or on the session that owns a session-scoped `body.agent_id`; 400 if the source has no agent binding, `body.up_to_response_id` names no response in the source session, or a managed fork asks for a sandbox this server has not configured; 409 if `body.host_id` is already in use; 410 if the source's agent was removed or a required bundle copy finds its source missing.",
         "operationId": "fork_session_v1_sessions__source_id__fork_post",
         "parameters": [
           {
@@ -18355,6 +22658,691 @@
         "summary": "Get Usage",
         "tags": [
           "usage"
+        ]
+      }
+    },
+    "/v1/workbench-workspaces": {
+      "get": {
+        "operationId": "list_workspaces_v1_workbench_workspaces_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Workspaces V1 Workbench Workspaces Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Workspaces",
+        "tags": [
+          "workbench-workspaces"
+        ]
+      },
+      "post": {
+        "operationId": "create_workspace_v1_workbench_workspaces_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HostWorkspaceInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Create Workspace V1 Workbench Workspaces Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Workspace",
+        "tags": [
+          "workbench-workspaces"
+        ]
+      }
+    },
+    "/v1/workbench-workspaces/resolve": {
+      "post": {
+        "operationId": "resolve_workspace_v1_workbench_workspaces_resolve_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResolveWorkspaceInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Resolve Workspace V1 Workbench Workspaces Resolve Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Resolve Workspace",
+        "tags": [
+          "workbench-workspaces"
+        ]
+      }
+    },
+    "/v1/workbench-workspaces/{workspace_id}": {
+      "get": {
+        "operationId": "get_workspace_v1_workbench_workspaces__workspace_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Workspace V1 Workbench Workspaces  Workspace Id  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Workspace",
+        "tags": [
+          "workbench-workspaces"
+        ]
+      }
+    },
+    "/v1/workbench-workspaces/{workspace_id}/resources/{resource}": {
+      "delete": {
+        "operationId": "workspace_resource_v1_workbench_workspaces__workspace_id__resources__resource__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "resource",
+            "required": true,
+            "schema": {
+              "title": "Resource",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Workspace Resource",
+        "tags": [
+          "workbench-workspaces"
+        ]
+      },
+      "get": {
+        "operationId": "workspace_resource_v1_workbench_workspaces__workspace_id__resources__resource__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "resource",
+            "required": true,
+            "schema": {
+              "title": "Resource",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Workspace Resource",
+        "tags": [
+          "workbench-workspaces"
+        ]
+      },
+      "patch": {
+        "operationId": "workspace_resource_v1_workbench_workspaces__workspace_id__resources__resource__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "resource",
+            "required": true,
+            "schema": {
+              "title": "Resource",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Workspace Resource",
+        "tags": [
+          "workbench-workspaces"
+        ]
+      },
+      "post": {
+        "operationId": "workspace_resource_v1_workbench_workspaces__workspace_id__resources__resource__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "resource",
+            "required": true,
+            "schema": {
+              "title": "Resource",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Workspace Resource",
+        "tags": [
+          "workbench-workspaces"
+        ]
+      },
+      "put": {
+        "operationId": "workspace_resource_v1_workbench_workspaces__workspace_id__resources__resource__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "resource",
+            "required": true,
+            "schema": {
+              "title": "Resource",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Workspace Resource",
+        "tags": [
+          "workbench-workspaces"
+        ]
+      }
+    },
+    "/v1/workbench-workspaces/{workspace_id}/terminals": {
+      "get": {
+        "operationId": "list_terminals_v1_workbench_workspaces__workspace_id__terminals_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Terminals V1 Workbench Workspaces  Workspace Id  Terminals Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Terminals",
+        "tags": [
+          "workbench-terminals"
+        ]
+      },
+      "post": {
+        "operationId": "create_terminal_v1_workbench_workspaces__workspace_id__terminals_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateManualTerminal"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Create Terminal V1 Workbench Workspaces  Workspace Id  Terminals Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Terminal",
+        "tags": [
+          "workbench-terminals"
+        ]
+      }
+    },
+    "/v1/workbench-workspaces/{workspace_id}/terminals/options": {
+      "get": {
+        "operationId": "terminal_options_v1_workbench_workspaces__workspace_id__terminals_options_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Terminal Options V1 Workbench Workspaces  Workspace Id  Terminals Options Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Terminal Options",
+        "tags": [
+          "workbench-terminals"
+        ]
+      }
+    },
+    "/v1/workbench-workspaces/{workspace_id}/terminals/{terminal_id}": {
+      "delete": {
+        "operationId": "stop_v1_workbench_workspaces__workspace_id__terminals__terminal_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "terminal_id",
+            "required": true,
+            "schema": {
+              "title": "Terminal Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Stop V1 Workbench Workspaces  Workspace Id  Terminals  Terminal Id  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Stop",
+        "tags": [
+          "workbench-terminals"
+        ]
+      },
+      "get": {
+        "operationId": "get_terminal_v1_workbench_workspaces__workspace_id__terminals__terminal_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "terminal_id",
+            "required": true,
+            "schema": {
+              "title": "Terminal Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Terminal V1 Workbench Workspaces  Workspace Id  Terminals  Terminal Id  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Terminal",
+        "tags": [
+          "workbench-terminals"
+        ]
+      }
+    },
+    "/v1/workbench-workspaces/{workspace_id}/terminals/{terminal_id}/stop": {
+      "post": {
+        "operationId": "stop_v1_workbench_workspaces__workspace_id__terminals__terminal_id__stop_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "terminal_id",
+            "required": true,
+            "schema": {
+              "title": "Terminal Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Stop V1 Workbench Workspaces  Workspace Id  Terminals  Terminal Id  Stop Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Stop",
+        "tags": [
+          "workbench-terminals"
         ]
       }
     }

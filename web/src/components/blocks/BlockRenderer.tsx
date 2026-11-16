@@ -779,7 +779,7 @@ function isPersistentToolCard(item: RenderItem): boolean {
 }
 
 function isToolItem(item: RenderItem): boolean {
-  return item.kind === "tool" || item.kind === "native_tool";
+  return item.kind === "tool" || item.kind === "native_tool" || item.kind === "subagent_activity";
 }
 
 /**
@@ -796,9 +796,9 @@ function findStreamingRunStart(items: RenderItem[]): number {
   return i;
 }
 
-/** The live edge: a sub-agent notice landing after it doesn't end it. */
+/** Activity cards participate in the same live tool tail as other calls. */
 function lastWorkIndex(items: RenderItem[]): number {
-  return items.findLastIndex((item) => item.kind !== "subagent_activity");
+  return items.length - 1;
 }
 
 /**
@@ -1012,6 +1012,10 @@ function SearchableAssistantText({
  * yet (text/reasoning chunks emitted before their `output_item.done`).
  */
 function keyFor(item: RenderItem, index: number): string {
+  if (item.kind === "subagent_activity") {
+    const resource = item.data.resource as Record<string, unknown> | undefined;
+    if (typeof resource?.card_key === "string") return `subagent_activity:${resource.card_key}`;
+  }
   if (item.itemId) return `${item.kind}:${item.itemId}`;
   if (item.kind === "tool") return `tool:${item.execution.callId}`;
   if (item.kind === "elicitation") return `elicitation:${item.elicitationId}`;

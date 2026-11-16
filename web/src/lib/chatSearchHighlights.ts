@@ -8,6 +8,15 @@ export interface SearchSource {
   itemId: string;
   rowId: string;
   text: string;
+  aliases?: readonly string[];
+}
+
+/** Aliases identify the same occurrence and must not duplicate the search corpus. */
+export function searchSourceForItem(
+  sources: readonly SearchSource[],
+  itemId: string,
+): SearchSource | undefined {
+  return sources.find((source) => source.itemId === itemId || source.aliases?.includes(itemId));
 }
 
 /** Transcript-owned reveal state outlives individual virtual rows. */
@@ -33,6 +42,7 @@ export function chatSearchSources(bubbles: readonly Bubble[]): SearchSource[] {
           itemId: bubble.itemId,
           rowId: bubble.itemId,
           text: messageSearchSource(bubble.content),
+          ...(bubble.aliases?.length ? { aliases: bubble.aliases } : {}),
         },
       ];
     }
@@ -62,7 +72,11 @@ export function searchSourceElement(root: Element, source: SearchSource): Elemen
     (element) => element.dataset.searchItemId === source.itemId,
   );
   // A user row itself carries the stored item identity.
-  const owner = section ?? (source.rowId === source.itemId ? row : null);
+  const owner =
+    section ??
+    (source.rowId === source.itemId || row.getAttribute("data-message-id") === source.rowId
+      ? row
+      : null);
   return owner?.querySelector(CHAT_SEARCH_BODY_SELECTOR) ?? null;
 }
 

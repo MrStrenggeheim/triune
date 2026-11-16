@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { useEffect, useRef, useState, type RefObject } from "react";
 
 /** Roll back rejected URLs so the same destination can be requested again. */
@@ -11,6 +12,7 @@ export function useAcceptedConversationRoute({
   onAccepted,
   navigate,
   onError,
+  onRejected,
 }: {
   active: boolean;
   conversationId?: string;
@@ -21,6 +23,7 @@ export function useAcceptedConversationRoute({
   onAccepted: (id: string) => void;
   navigate: (url: string, options: { replace: boolean }) => void;
   onError: (error: unknown) => void;
+  onRejected?: () => void;
 }) {
   const lastAccepted = useRef(href);
   const acceptedScope = useRef<string | null>(null);
@@ -44,17 +47,32 @@ export function useAcceptedConversationRoute({
       .then((allowed) => {
         if (cancelled) return;
         if (allowed) accepted();
-        else navigate(lastAccepted.current, { replace: true });
+        else {
+          onRejected?.();
+          navigate(lastAccepted.current, { replace: true });
+        }
       })
       .catch((error) => {
         if (cancelled) return;
+        onRejected?.();
         navigate(lastAccepted.current, { replace: true });
         onError(error);
       });
     return () => {
       cancelled = true;
     };
-  }, [active, conversationId, href, scopeKey, skip, accept, onAccepted, navigate, onError]);
+  }, [
+    active,
+    conversationId,
+    href,
+    scopeKey,
+    skip,
+    accept,
+    onAccepted,
+    navigate,
+    onError,
+    onRejected,
+  ]);
   return acceptedHref;
 }
 
@@ -81,6 +99,7 @@ export function useConversationOwnerNavigation(options: {
     generation: number;
     complete: () => void;
     relevant: () => boolean;
+    cancel: () => void;
   } | null>(null);
   useEffect(() => {
     if (!pending) return;
@@ -92,6 +111,7 @@ export function useConversationOwnerNavigation(options: {
       (current.href !== pending.source && current.href !== pending.path)
     ) {
       setPending(null);
+      pending.cancel();
       return;
     }
     if (
@@ -101,7 +121,10 @@ export function useConversationOwnerNavigation(options: {
     )
       return;
     setPending(null);
-    if (!pending.relevant()) return;
+    if (!pending.relevant()) {
+      pending.cancel();
+      return;
+    }
     current.onSelected(pending.id);
     pending.complete();
   }, [
@@ -113,7 +136,12 @@ export function useConversationOwnerNavigation(options: {
     pending,
   ]);
   const select = useRef(
-    (path: string, complete: () => void = () => {}, relevant: () => boolean = () => true) => {
+    (
+      path: string,
+      complete: () => void = () => {},
+      relevant: () => boolean = () => true,
+      cancel: () => void = () => {},
+    ) => {
       const current = live.current;
       const match = path.match(/^\/c\/([^/?#]+)/);
       if (!current.active || !relevant()) return;
@@ -135,8 +163,10 @@ export function useConversationOwnerNavigation(options: {
             latest.href !== current.href ||
             generation.current !== request ||
             !relevant()
-          )
+          ) {
+            cancel();
             return;
+          }
           setPending({
             id,
             path,
@@ -145,12 +175,15 @@ export function useConversationOwnerNavigation(options: {
             generation: request,
             complete,
             relevant,
+            cancel,
           });
           latest.navigate(path);
         })
         .catch((error) => {
-          if (generation.current === request && live.current.scopeKey === current.scopeKey)
+          if (generation.current === request && live.current.scopeKey === current.scopeKey) {
+            cancel();
             live.current.onError(error);
+          }
         });
     },
   );

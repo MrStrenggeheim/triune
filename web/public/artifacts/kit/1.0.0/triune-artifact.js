@@ -6,9 +6,25 @@
   "use strict";
   const initialized = new WeakSet();
   let serial = 0;
+  function refresh(root) {
+    root.querySelectorAll('input[type="range"]').forEach((control) => {
+      const min = control.min === "" ? 0 : Number(control.min);
+      const max = control.max === "" ? 100 : Number(control.max);
+      const percent = max > min ? (100 * (control.valueAsNumber - min)) / (max - min) : 0;
+      control.style.setProperty("--ta-range-progress", Math.max(0, Math.min(100, percent)) + "%");
+    });
+  }
   function init(root) {
     if (!root || initialized.has(root)) return;
     initialized.add(root);
+    root.querySelectorAll('input[type="checkbox"][data-ta-mixed]').forEach((control) => {
+      control.indeterminate = true;
+    });
+    refresh(root);
+    root.addEventListener("input", () => refresh(root));
+    root.addEventListener("change", () => refresh(root));
+    root.addEventListener("reset", () => setTimeout(() => refresh(root), 0));
+    window.addEventListener("triune-artifact:restored", () => refresh(root));
     root.querySelectorAll("[data-ta-theme]").forEach((control) => {
       control.addEventListener("change", () => {
         root.dataset.theme = control.value;
@@ -106,6 +122,6 @@
       });
     });
   }
-  window.TriuneArtifact = Object.freeze({ init });
+  window.TriuneArtifact = Object.freeze({ init, refresh });
   document.querySelectorAll("[data-ta-init]").forEach(init);
 })();

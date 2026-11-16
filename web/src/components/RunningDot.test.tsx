@@ -17,6 +17,7 @@ describe("RunningDot", () => {
     expect(svg).not.toBeNull();
     expect(svg).not.toHaveClass("animate-spin");
     expect(svg).toHaveClass("size-full");
+    expect(svg).toHaveAttribute("data-icon-size", "container");
   });
 
   it("centers the svg so a CSS-resized glyph still spins around its own center", () => {

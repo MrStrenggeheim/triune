@@ -15141,17 +15141,18 @@ def test_ordinary_human_input_never_arms_system_receipt(tmp_path):
     assert bridge.native_input_receipt_for_item(tmp_path, item) == (None, False)
 
 
-def test_system_origin_identity_survives_existing_message_envelope():
+@pytest.mark.parametrize("kind", ["system", "peer"])
+def test_system_origin_identity_survives_existing_message_envelope(kind):
     from omnigent.native.input_diagnostics import INPUT_FIELDS, input_attributes
     from omnigent.runtime.harnesses._scaffold import MessageEvent
 
-    identity = input_attributes({"input_stable_id": "e" * 32, "communication": {"kind": "system"}})
+    identity = input_attributes({"input_stable_id": "e" * 32, "communication": {"kind": kind}})
     request = MessageEvent(
         type="message", role="user", model="claude-native-ui", content="Saved event", **identity
     ).to_create_request()
     assert input_attributes(request.model_dump(include=set(INPUT_FIELDS))) == {
         "input_stable_id": "e" * 32,
-        "input_origin_kind": "system",
+        "input_origin_kind": kind,
     }
 
 
@@ -15183,3 +15184,157 @@ def test_startup_contract_uses_resolved_chat_and_server_without_environment_defa
         "triune attach-file PATH --session resolved-chat --server https://example.test/prefix"
         in text
     )
+
+
+@pytest.mark.parametrize("echo_first", [False, True])
+def test_peer_receipt_uses_one_use_submission_token_and_survives_restart(
+    tmp_path, echo_first, monkeypatch
+):
+    from dataclasses import replace
+
+    from omnigent.native.input_diagnostics import input_delivery_scope
+
+    bridge = claude_native_bridge
+    bridge.record_hook_event(
+        tmp_path, {"hook_event_name": "SessionStart", "session_id": "native-a"}
+    )
+    attrs = {
+        "input_stable_id": "a" * 32,
+        "delivery_attempt_id": "b" * 32,
+        "communication": {"kind": "peer"},
+    }
+    body = "Peer message from conversation source; message_id=" + "a" * 32 + ".\nExact instruction"
+    with input_delivery_scope(attrs):
+        envelope = bridge._arm_native_input_receipt(tmp_path, body)
+    assert envelope != body
+    _, [echo] = bridge._transcript_items_from_entry(
+        {
+            "type": "user",
+            "uuid": "echo",
+            "sessionId": "native-a",
+            "promptId": "prompt-a",
+            "message": {"role": "user", "content": envelope},
+        },
+        line_number=1,
+        record_offset=None,
+        agent_name="claude-native-ui",
+        current_response_id=None,
+    )
+    if echo_first:
+        assert bridge.apply_native_input_receipt(tmp_path, echo) == (echo, True)
+    token, _ = bridge._split_native_input_envelope(envelope)
+    forged_token = token[:-1] + ("A" if token[-1] != "A" else "B")
+    # Matching body text, a forged token, another session and subagent hooks prove nothing.
+    for prompt, session, agent in [
+        (envelope.replace(token, forged_token, 1), "native-a", None),
+        (body, "native-a", None),
+        (envelope.replace("v1:", "v2:", 1), "native-a", None),
+        (envelope, "native-b", None),
+        (envelope, "native-a", "child"),
+    ]:
+        bridge.record_hook_event(
+            tmp_path,
+            {
+                "hook_event_name": "UserPromptSubmit",
+                "session_id": session,
+                "prompt_id": "unrelated",
+                "prompt": prompt,
+                "agent_id": agent,
+            },
+        )
+        assert bridge.native_input_receipt_for_item(tmp_path, echo) == (None, True)
+    observed = bridge.time.time()
+    monkeypatch.setattr(bridge.time, "time", lambda: observed + 600)
+    bridge.record_hook_event(
+        tmp_path,
+        {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "native-a",
+            "prompt_id": "prompt-a",
+            "prompt": envelope,
+        },
+    )
+    # A new reader uses only durable state, including after runner/forwarder restarts.
+    received, waiting = bridge.apply_native_input_receipt(tmp_path, echo)
+    assert not waiting
+    assert received.input_stable_id == "a" * 32
+    assert received.data["content"] == [{"type": "input_text", "text": body}]
+    assert bridge.apply_native_input_receipt(tmp_path, echo) == (received, False)
+    # Copying a used capability into a new prompt never assigns the original peer ID.
+    bridge.record_hook_event(
+        tmp_path,
+        {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "native-a",
+            "prompt_id": "replayed",
+            "prompt": envelope,
+        },
+    )
+    assert bridge.native_input_receipt_for_item(
+        tmp_path, replace(echo, native_prompt_id="replayed")
+    ) == (None, False)
+    # The next identical instruction receives a distinct capability and cannot consume the old one.
+    with input_delivery_scope(
+        {**attrs, "input_stable_id": "c" * 32, "delivery_attempt_id": "d" * 32}
+    ):
+        newer = bridge._arm_native_input_receipt(tmp_path, body)
+    assert newer != envelope
+    bridge.record_hook_event(
+        tmp_path,
+        {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "native-a",
+            "prompt_id": "replayed",
+            "prompt": envelope,
+        },
+    )
+    assert bridge.native_input_receipt_for_item(
+        tmp_path, replace(echo, native_prompt_id="replayed")
+    ) == (None, False)
+
+
+def test_peer_receipt_generation_invalidates_superseded_attempts_and_requires_identity(tmp_path):
+    from omnigent.native.input_diagnostics import input_delivery_scope
+
+    bridge = claude_native_bridge
+    bridge.record_hook_event(
+        tmp_path, {"hook_event_name": "SessionStart", "session_id": "native-a"}
+    )
+    with input_delivery_scope({"input_stable_id": "a" * 32, "input_origin_kind": "peer"}):
+        with pytest.raises(ValueError, match="delivery attempt"):
+            bridge._arm_native_input_receipt(tmp_path, "Instruction")
+    attrs = {
+        "input_stable_id": "a" * 32,
+        "delivery_attempt_id": "b" * 32,
+        "input_origin_kind": "peer",
+    }
+    with input_delivery_scope(attrs):
+        old = bridge._arm_native_input_receipt(tmp_path, "Instruction")
+        current = bridge._arm_native_input_receipt(tmp_path, "Instruction")
+    bridge.record_hook_event(
+        tmp_path,
+        {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "native-a",
+            "prompt_id": "old",
+            "prompt": old,
+        },
+    )
+    state = json.loads((tmp_path / "state.json").read_text())
+    assert state[bridge._NATIVE_INPUT_PENDING_KEY]["receipt_token"] in current
+    assert not state.get(bridge._NATIVE_INPUT_RECEIPTS_KEY)
+    assert "prompt_hash" not in state[bridge._NATIVE_INPUT_PENDING_KEY]
+
+
+def test_peer_binding_survives_system_receipt_window(tmp_path):
+    bridge = claude_native_bridge
+    state = {
+        bridge._NATIVE_INPUT_TOKENS_KEY: {"native:peer": "used-capability"},
+        bridge._NATIVE_INPUT_RECEIPTS_KEY: {"native:peer": "a" * 32},
+    }
+    for number in range(70):
+        bridge._commit_native_input_receipt(
+            state, {"session_id": "native", "input_id": "b" * 32}, f"system-{number}"
+        )
+    assert state[bridge._NATIVE_INPUT_RECEIPTS_KEY]["native:peer"] == "a" * 32
+    assert len(state[bridge._NATIVE_INPUT_RECEIPTS_KEY]) == 65

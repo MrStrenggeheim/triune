@@ -1,4 +1,5 @@
 // Modified for Triune.
+import { useAgentPresentation } from "@/hooks/useAgentPresentation";
 import {
   lazy,
   Suspense,
@@ -46,7 +47,7 @@ import {
 import { useNativeChildCapabilities } from "@/hooks/useNativeChildCapabilities";
 import { authenticatedFetch } from "@/lib/identity";
 import { apiErrorFromResponse } from "@/lib/sessionsApi";
-import { subagentName, subagentTaskDescription } from "@/lib/subagentActivity";
+import { agentPresentation } from "@/lib/agentPresentation";
 import { useWorkbenchActions } from "@/workbench/WorkbenchContext";
 import { childStatus } from "./subagentStatus";
 import { panelFolderKey, useResourceViewState } from "@/lib/panelFolder";
@@ -500,7 +501,11 @@ function ChatActivityContent({
     if (onOpenAgent) onOpenAgent(child);
     else if (workbench)
       workbench.openView(
-        { kind: "conversation", conversationId: child.id, title: subagentName(child) },
+        {
+          kind: "conversation",
+          conversationId: child.id,
+          title: agentPresentation({ child }).name,
+        },
         { beside: true },
       );
     else window.location.assign(`/c/${encodeURIComponent(child.id)}`);
@@ -865,23 +870,34 @@ function AgentResourceContent({
   href,
 }: AgentResourceRowProps & { canStop: boolean }) {
   const orchestration = useResourceOrchestration(conversationId);
-  const name = subagentName(child);
+  const display = useAgentPresentation(child.id, conversationId, { child });
+  const name = display.name;
   const running = ["launching", "working", "awaiting"].includes(childStatus(child).activity);
   return (
     <ActivityRow
       icon={<BotIcon aria-hidden="true" />}
       title={name}
+      titleDetail={
+        display.task ? (
+          <ConversationScopeContext.Provider value={child.id}>
+            <FilePathAwareMessageResponse
+              mode="static"
+              className="text-xs [&_p]:inline [&_p]:my-0"
+            >{`· ${display.task}`}</FilePathAwareMessageResponse>
+          </ConversationScopeContext.Provider>
+        ) : undefined
+      }
       selected={selected}
       href={href}
       onOpen={onOpen}
-      descriptionText={subagentTaskDescription(child) ?? child.last_message_preview ?? ""}
+      descriptionText={[display.task, display.preview].filter(Boolean).join(" · ")}
       description={
         <ConversationScopeContext.Provider value={child.id}>
           <FilePathAwareMessageResponse
             mode="static"
             className="text-xs leading-4 [&>*]:my-0 [&_p]:my-0"
           >
-            {subagentTaskDescription(child) ?? child.last_message_preview ?? ""}
+            {display.preview ?? "No captured message"}
           </FilePathAwareMessageResponse>
         </ConversationScopeContext.Provider>
       }

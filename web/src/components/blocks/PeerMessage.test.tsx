@@ -92,9 +92,9 @@ describe("trusted peer presentation", () => {
       </QueryClientProvider>,
     );
     await waitFor(() =>
-      expect(screen.getByText("Codex", { selector: "strong" })).toBeInTheDocument(),
+      expect(screen.getByText("Own chat", { selector: "strong" })).toBeInTheDocument(),
     );
-    expect(screen.getByRole("link", { name: "conversation" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "Agent" })).toHaveAttribute(
       "href",
       "/c/implementation",
     );
@@ -133,7 +133,7 @@ describe("trusted peer presentation", () => {
     expect(screen.getByRole("link", { name: "Private reviewer" })).toHaveTextContent(
       "Private reviewer",
     );
-    expect(screen.getByText("James", { selector: "strong" })).toBeInTheDocument();
+    expect(screen.getByText("Private reviewer", { selector: "strong" })).toBeInTheDocument();
     await act(async () => {
       completeRefresh({
         title: "Private reviewer",
@@ -147,7 +147,7 @@ describe("trusted peer presentation", () => {
       await client.invalidateQueries({ queryKey: ["peer-source-label"] });
     });
     await waitFor(() =>
-      expect(screen.getByRole("link", { name: "conversation" })).toHaveTextContent("conversation"),
+      expect(screen.getByRole("link", { name: "Agent" })).toHaveTextContent("Agent"),
     );
     expect(screen.getByText("Agent", { selector: "strong" })).toBeInTheDocument();
     expect(screen.queryByText("James")).not.toBeInTheDocument();
@@ -266,10 +266,10 @@ describe("trusted peer presentation", () => {
   });
 
   it.each([
-    ["Ada", "James", "Codex", "Ada"],
-    [null, "James", "Codex", "James"],
-    [null, null, "Researcher", "Researcher"],
-    [null, null, null, "Agent"],
+    ["Ada", "James", "Codex", "Review fork sync"],
+    [null, "James", "Codex", "Review fork sync"],
+    [null, null, "Researcher", "Review fork sync"],
+    [null, null, null, "Review fork sync"],
   ] as const)(
     "uses recorded identity %s / %s / %s as %s",
     async (sourceAgentName, subAgentName, agentName, expected) => {
@@ -426,7 +426,7 @@ describe("trusted peer presentation", () => {
     expect(getSessionSlim).not.toHaveBeenCalled();
     rendered.rerender(view(true));
     await waitFor(() =>
-      expect(screen.getAllByText("Codex", { selector: "strong" })).toHaveLength(2),
+      expect(screen.getAllByText("Review", { selector: "strong" })).toHaveLength(2),
     );
     expect(getSessionSlim).toHaveBeenCalledTimes(1);
     vi.useFakeTimers();
@@ -444,4 +444,33 @@ describe("trusted peer presentation", () => {
     });
     expect(getSessionSlim).toHaveBeenCalledTimes(1);
   });
+});
+
+it("keeps receipt aliases, queued delivery and exact destination navigation separate from reply-to", () => {
+  render(
+    <MemoryRouter>
+      <ConversationScopeContext.Provider value="review">
+        <PeerMessage
+          communication={{ ...communication, reply_to_message_id: "other-message" }}
+          itemId="outgoing"
+          aliases={["pending-handle"]}
+          relatedItemId="destination-receipt"
+          content={[{ type: "input_text", text: "Exact body" }]}
+        />
+      </ConversationScopeContext.Provider>
+    </MemoryRouter>,
+  );
+  expect(screen.getByRole("status")).toHaveTextContent("Queued");
+  expect(screen.getByTestId("peer-message")).toHaveAttribute(
+    "data-message-aliases",
+    '["pending-handle"]',
+  );
+  expect(screen.getByRole("link", { name: "Agent" })).toHaveAttribute(
+    "href",
+    "/c/implementation?message=destination-receipt",
+  );
+  expect(screen.getByTestId("peer-message")).not.toHaveAttribute(
+    "data-message-aliases",
+    expect.stringContaining("other-message"),
+  );
 });

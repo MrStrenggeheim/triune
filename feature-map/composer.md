@@ -348,6 +348,9 @@ doctor`), the built web UI, and mock replies configured for any journey that
 sends a message. Run e2e tests through the instance:
 
 - Attention shelf and real question/plan forms: `tests/browser_ui/chat/test_triune_next_iteration.py::test_original_composer_shelf_requests_and_counts` covers desktop/mobile and retained drafts.
+- Safe unified folder/file/chat mentions and caret reveal in both ordinary and quoted drafts: `tests/browser_ui/chat/test_current_refinement_iteration.py::test_iteration5_composer_mention_safety_and_local_caret`.
+- Settled shelf auto-hide, recoverable manual visibility and one outer answer focus treatment: `tests/browser_ui/chat/test_current_refinement_iteration.py::test_iteration5_settled_shelf_manual_reveal_and_answer_focus`.
+- Shared header hover/held/open geometry and bounded centered popups: `tests/browser_ui/chat/test_current_refinement_iteration.py::test_iteration5_header_usage_held_paint_and_popup_bounds`.
 - Real Codex and Claude CLI tool execution through the isolated server and browser: `tests/e2e_ui/agents/test_native_capability_shelf.py` covers questions, plans, approvals, live shells and delegation.
 - Direct quote subchat, held host launch, clean drafts and history toggle: `tests/browser_ui/chat/test_workspace_iteration.py::test_quote_subchat_opens_before_launch_and_hides_inherited_history`.
 - Existing destination drafts retain their text before the quote: `tests/browser_ui/chat/test_workspace_iteration.py::test_selected_quote_menu_reuses_app_controls_and_retains_destination_draft`.

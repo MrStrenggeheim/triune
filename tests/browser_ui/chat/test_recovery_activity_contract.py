@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from playwright.sync_api import Page, expect
@@ -207,8 +208,18 @@ def test_child_activity_keeps_one_card_per_id_in_plain_timeline_and_worked_fold(
     second = transcript.locator(
         '[data-testid="subagent-activity"][data-child-session-id="child-two"]'
     )
+
+    def reveal_agent_groups() -> None:
+        for group in transcript.get_by_role(
+            "button", name=re.compile("Started or steered.*subagent")
+        ).all():
+            if group.get_attribute("aria-expanded") == "false":
+                group.click()
+
     for index, item in enumerate(events):
         chat.emit({"event": "response.output_item.done", "data": {"item": item}})
+        # The active tool tail stays plain until the grouping policy folds it.
+        reveal_agent_groups()
         expect(first).to_have_count(1, timeout=10_000)
         expect(cards).to_have_count(2 if index >= 2 else 1)
         header = first.locator("[data-resource-row]")
@@ -244,6 +255,12 @@ def test_child_activity_keeps_one_card_per_id_in_plain_timeline_and_worked_fold(
 
     fold.get_by_role("button", name="Worked", exact=False).click()
     expect(fold).to_have_attribute("data-state", "open")
+    group = fold.get_by_role("button", name=re.compile("Started or steered.*subagent"))
+    expect(group).to_have_count(1)
+    expect(group).to_have_attribute("aria-expanded", "false")
+    expect(first).to_be_hidden()
+    expect(second).to_be_hidden()
+    reveal_agent_groups()
     expect(fold.get_by_test_id("subagent-activity")).to_have_count(2)
     expect(first).to_have_count(1)
     expect(second).to_have_count(1)

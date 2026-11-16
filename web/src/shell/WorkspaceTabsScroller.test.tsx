@@ -182,4 +182,77 @@ describe("WorkspaceTabsScroller", () => {
     resize(250);
     expect(reveal).toHaveBeenCalledWith({ block: "nearest", inline: "nearest" });
   });
+
+  it.each([1, 2, 12])("centers every fixed slot including endpoints for %s images", (count) => {
+    setupGeometry();
+    tabsWidth = count * 84 - 4;
+    vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockReturnValue(80);
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      const viewport = this.closest<HTMLElement>("[data-workspace-tabs-viewport]");
+      const index = Number(this.dataset.slot);
+      const padding = Number.parseFloat(this.parentElement?.style.paddingInline || "0");
+      return {
+        left:
+          this.dataset.slot === undefined ? 10 : 10 + padding + index * 84 - viewport!.scrollLeft,
+        width: this.dataset.slot === undefined ? availableWidth : 80,
+      } as DOMRect;
+    });
+    function Slots({ selected }: { selected: number }) {
+      return (
+        <WorkspaceTabsScroller activeAlignment="center" activeKey={selected}>
+          {Array.from({ length: count }, (_, index) => (
+            <button
+              type="button"
+              key={index}
+              data-slot={index}
+              aria-current={selected === index ? "true" : undefined}
+            >
+              {index}
+            </button>
+          ))}
+        </WorkspaceTabsScroller>
+      );
+    }
+    const { rerender, container } = render(<Slots selected={0} />);
+    const viewport = container.querySelector<HTMLElement>("[data-workspace-tabs-viewport]")!;
+    for (const width of [300, 160, 44, 700]) {
+      resize(width);
+      for (let selected = 0; selected < count; selected++) {
+        rerender(<Slots selected={selected} />);
+        const slot = screen.getByRole("button", { name: String(selected) }).getBoundingClientRect();
+        expect(slot.left + slot.width / 2).toBeCloseTo(10 + width / 2);
+        expect(viewport.scrollLeft).toBeGreaterThanOrEqual(0);
+        expect(viewport.scrollLeft).toBeLessThanOrEqual(
+          Math.max(0, (count - 1) * 84 + Math.max(0, 80 - width)),
+        );
+      }
+    }
+    viewport.scrollLeft = 0;
+    fireEvent.scroll(viewport);
+    expect(viewport.scrollLeft).toBe(0);
+  });
+
+  it.each([200, 500])(
+    "contains wheel events for a gallery of width %s, including nonoverflow",
+    (width) => {
+      setupGeometry();
+      tabsWidth = width;
+      const parentWheel = vi.fn();
+      render(
+        <div onWheel={parentWheel}>
+          <WorkspaceTabsScroller containWheel role="group">
+            <button type="button">Image</button>
+          </WorkspaceTabsScroller>
+        </div>,
+      );
+      const viewport = screen.getByRole("group");
+      expect(fireEvent.wheel(viewport, { deltaY: 30 })).toBe(false);
+      expect(viewport.scrollLeft).toBe(width > 300 ? 30 : 0);
+      expect(parentWheel).not.toHaveBeenCalled();
+      expect(viewport).toHaveStyle({ overscrollBehavior: "contain" });
+      expect(fireEvent.wheel(viewport, { deltaX: 20 })).toBe(width > 300);
+    },
+  );
 });

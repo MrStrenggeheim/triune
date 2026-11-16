@@ -730,3 +730,178 @@ it("reports an exhausted correction budget instead of claiming an unaligned targ
     expect.objectContaining({ action: expect.objectContaining({ label: "Retry" }) }),
   );
 });
+
+it("tracks late target geometry through fonts, image/artifact resize and remount, then stops", async () => {
+  vi.useFakeTimers();
+  let contentTop = 100;
+  Object.defineProperty(Range.prototype, "getBoundingClientRect", {
+    configurable: true,
+    value: () => ({ top: contentTop - root.scrollTop, height: 20 }) as DOMRect,
+  });
+  const cancelPendingScroll = vi.fn();
+  const { rerender } = renderHook(
+    (value) => useChatSearchHighlights({ ...value, cancelPendingScroll }),
+    { initialProps: options },
+  );
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(400);
+  });
+  expect(onResolved).toHaveBeenCalledOnce();
+  expect(cancelPendingScroll).toHaveBeenCalledOnce();
+  for (const shift of [45, 300, 640]) {
+    contentTop += shift;
+    rerender({ ...options, rangeNonce: shift });
+    // oxlint-disable-next-line no-await-in-loop -- Advance each independent late layout change.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(400);
+    });
+    expect(root.scrollTop).toBe(contentTop - 90);
+  }
+  root.innerHTML = "";
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(320);
+  });
+  contentTop += 200;
+  root.innerHTML = markup();
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(400);
+  });
+  expect(root.scrollTop).toBe(contentTop - 90);
+  expect(onResolved).toHaveBeenCalledOnce();
+  expect(highlights.get(CHAT_SEARCH_ACTIVE_HIGHLIGHT)?.ranges[0].startOffset).toBe(8);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(4000);
+  });
+  const calls = scrollBy.mock.calls.length;
+  contentTop += 500;
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1000);
+  });
+  expect(scrollBy).toHaveBeenCalledTimes(calls);
+  expect(vi.getTimerCount()).toBe(0);
+  expect(toast.error).not.toHaveBeenCalled();
+});
+
+it("does not chase tail growth after resolving a clamped visible occurrence", async () => {
+  vi.useFakeTimers();
+  let height = 200;
+  Object.defineProperty(root, "scrollHeight", { configurable: true, get: () => height });
+  renderHook(() => useChatSearchHighlights(options));
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(400);
+  });
+  expect(onResolved).toHaveBeenCalledOnce();
+  height = 8000;
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1200);
+  });
+  expect(root.scrollTop).toBe(0);
+  expect(scrollBy).not.toHaveBeenCalled();
+});
+
+it("yields late corrections to wheel input and lets the newest accepted session own the exact occurrence", async () => {
+  vi.useFakeTimers();
+  let oldTop = 100;
+  Object.defineProperty(Range.prototype, "getBoundingClientRect", {
+    configurable: true,
+    value: function (this: Range) {
+      return { top: (this.startOffset === 3 ? 600 : oldTop) - root.scrollTop, height: 20 };
+    },
+  });
+  const { rerender } = renderHook((value) => useChatSearchHighlights(value), {
+    initialProps: options,
+  });
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(400);
+  });
+  expect(onResolved).toHaveBeenCalledOnce();
+  fireEvent.wheel(root, { deltaY: 120 });
+  root.scrollTop = 777;
+  oldTop += 300;
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(400);
+  });
+  expect(root.scrollTop).toBe(777);
+  const pending = {
+    ...options,
+    ready: false,
+    target: { ...options.target!, requestId: 2, range: { start: 3, end: 7 } },
+  };
+  rerender(pending);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(400);
+  });
+  expect(root.scrollTop).toBe(777);
+  const accepted = {
+    ...pending,
+    conversationId: "destination",
+    ready: true,
+    target: { ...pending.target, conversationId: "destination", requestId: 3 },
+  };
+  rerender(accepted);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(400);
+  });
+  expect(root.scrollTop).toBe(510);
+  expect(onResolved).toHaveBeenCalledTimes(2);
+  expect(onResolved).toHaveBeenLastCalledWith({ target: accepted.target, status: "resolved" });
+  expect(highlights.get(CHAT_SEARCH_ACTIVE_HIGHLIGHT)?.ranges[0].startOffset).toBe(3);
+});
+
+it("aligns a viewport-tall occurrence at its start without an impossible center correction loop", async () => {
+  vi.useFakeTimers();
+  Object.defineProperty(Range.prototype, "getBoundingClientRect", {
+    configurable: true,
+    value: () => ({ top: 500 - root.scrollTop, height: 350 }) as DOMRect,
+  });
+  renderHook(() => useChatSearchHighlights(options));
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(400);
+  });
+  expect(root.scrollTop).toBe(500);
+  expect(scrollBy).toHaveBeenCalledOnce();
+  expect(onResolved).toHaveBeenCalledOnce();
+  expect(toast.error).not.toHaveBeenCalled();
+});
+
+it("tolerates subpixel target measurements without restarting its settling clock", async () => {
+  vi.useFakeTimers();
+  let reads = 0;
+  Object.defineProperty(Range.prototype, "getBoundingClientRect", {
+    configurable: true,
+    value: () =>
+      ({ top: 100 + (reads++ % 2 ? 0.2 : -0.2) - root.scrollTop, height: 20 }) as DOMRect,
+  });
+  renderHook(() => useChatSearchHighlights(options));
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(400);
+  });
+  expect(onResolved).toHaveBeenCalledOnce();
+  expect(root.scrollTop).toBeCloseTo(10, 0);
+  expect(scrollBy).toHaveBeenCalledOnce();
+});
+
+it("reports a late geometry correction that cannot be achieved and stops all positioning work", async () => {
+  vi.useFakeTimers();
+  let contentTop = 100;
+  Object.defineProperty(Range.prototype, "getBoundingClientRect", {
+    configurable: true,
+    value: () => ({ top: contentTop - root.scrollTop, height: 20 }) as DOMRect,
+  });
+  renderHook(() => useChatSearchHighlights(options));
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(400);
+  });
+  expect(onResolved).toHaveBeenCalledOnce();
+  scrollBy.mockImplementation(() => {});
+  contentTop += 300;
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1600);
+  });
+  expect(toast.error).toHaveBeenCalledWith(
+    expect.stringContaining("positioning"),
+    expect.anything(),
+  );
+  expect(vi.getTimerCount()).toBe(0);
+  expect(onResolved).toHaveBeenCalledOnce();
+});

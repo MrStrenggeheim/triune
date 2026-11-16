@@ -4,10 +4,20 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 from playwright.sync_api import Page, expect
 
-from tests.browser_ui.chat.session_contract import ChatSessionContract, message_item
+from tests.browser_ui.chat.session_contract import ChatSessionContract, list_payload, message_item
+from tests.browser_ui.chat.test_unified_workspace import (
+    WorkspaceJourney,
+    _navigate_chat,
+    _view,
+)
+from tests.browser_ui.chat.test_unified_workspace import browser_errors as browser_errors
+from tests.browser_ui.chat.test_unified_workspace import workspace_journey as workspace_journey
 
 
 @pytest.mark.parametrize("width", [1280, 390], ids=["desktop", "phone"])
@@ -83,11 +93,19 @@ def test_search_visible_final_with_folded_narration(
 
 
 def test_search_virtual_reveal_original_source_and_cancel(
-    page: Page, chat_session_contract: ChatSessionContract
+    page: Page,
+    workspace_journey: WorkspaceJourney,
+    browser_errors: list[str],
+    output_path: str,
 ) -> None:
-    """Mount an older turn, open its narration, retain reveal after remount, cancel a jump."""
-    chat = chat_session_contract
+    """Retain exact source navigation through restore, late resize, remount and real input."""
+    chat, other = workspace_journey.chats
     chat.contract.json(f"/v1/sessions/{chat.session_id}/runtime-notices", {"data": []})
+    for session in (chat, other):
+        session.contract.json(
+            f"/v1/sessions/{session.session_id}/resources/environments/default/search",
+            list_payload([]),
+        )
     text = "Final needle then needle."
     narration = "[label](https://example.test/needle)"
     rows = []
@@ -142,7 +160,7 @@ def test_search_virtual_reveal_original_source_and_cancel(
         "/v1/sessions/search/messages", {"data": hits, "has_more": False, "next_cursor": None}
     )
     page.goto(chat.url)
-    composer = page.get_by_label("Message the agent", exact=True)
+    composer = _view(page, "Chat A").get_by_label("Message the agent", exact=True)
     expect(composer).to_be_visible(timeout=20_000)
     composer.fill("Retained virtual-search draft")
     expect(page.locator('[data-message-id="target-turn"]')).to_have_count(0)
@@ -162,33 +180,132 @@ def test_search_virtual_reveal_original_source_and_cancel(
         narration
     )
     expect(page.get_by_test_id("turn-worked-fold")).to_have_attribute("data-state", "open")
-    scroller = page.locator('[role="log"] > div').first
-    scroller.evaluate("el => { el.scrollTop = el.scrollHeight; }")
+    scroller = page.locator(f'[data-conversation-scope="{chat.session_id}"] [role="log"] > div')
+    # A real wheel releases the active reveal before moving its row out of the window.
+    scroller.hover()
+    page.mouse.wheel(0, scroller.evaluate("el => el.scrollHeight"))
     expect(page.locator('[data-message-id="target-turn"]')).to_have_count(0)
     bar.get_by_role("button", name="Next match", exact=True).click()
     _assert_exact_centered(page, "answer", 6)
     expect(page.get_by_test_id("turn-worked-fold")).to_have_attribute("data-state", "open")
+
+    # Warm a different saved anchor before palette navigation reactivates this retained chat.
+    bar.get_by_role("button", name="Close search", exact=True).click()
+    scroller.evaluate("el => { el.scrollTop = el.scrollHeight * 0.72; }")
+    expect(page.locator('[data-message-id="target-turn"]')).to_have_count(0)
+    _navigate_chat(page, other)
+    page.keyboard.press("ControlOrMeta+k")
+    palette = page.get_by_role("dialog", name="Command palette", exact=True)
+    palette.get_by_test_id("command-palette-input").fill("needle")
+    palette.locator('[data-search-result="message"]').filter(has_text=text).click()
+    expect(palette).to_have_count(0)
+    expect(page).to_have_url(chat.url)
+    _assert_exact_centered(page, "answer", 6)
+
+    # In-flow height changes exercise the browser's ResizeObserver and virtual measurements.
+    samples = scroller.evaluate("""scroller => new Promise(resolve => {
+        const owner = scroller.querySelector('[data-search-item-id="answer"]');
+        const spacer = document.createElement('div');
+        spacer.setAttribute('aria-hidden', 'true');
+        spacer.style.height = '0px';
+        owner.prepend(spacer);
+        const samples = [];
+        const start = performance.now();
+        let step = 0;
+        let changedAt = 0;
+        function tick(now) {
+            const elapsed = now - start;
+            if (step < 2 && elapsed >= [450, 1000][step]) {
+                spacer.style.height = `${++step * 120}px`;
+                changedAt = elapsed;
+            }
+            const range = [...(CSS.highlights.get('chat-search-active') ?? [])][0];
+            const rect = range?.getBoundingClientRect();
+            const view = scroller.getBoundingClientRect();
+            const item = range?.startContainer.parentElement.closest('[data-search-item-id]');
+            const body = item?.querySelector('.message-markdown, [data-chat-plain-text]');
+            let offset = null;
+            if (body && range) {
+                const prefix = range.cloneRange(); prefix.selectNodeContents(body);
+                prefix.setEnd(range.startContainer, range.startOffset);
+                offset = prefix.toString().length;
+            }
+            samples.push({elapsed, step, changedAt, offset, item: item?.dataset.searchItemId,
+                text: range?.toString(), connected: !!range?.startContainer.isConnected,
+                scrollTop: scroller.scrollTop,
+                contentTop: rect ? rect.top - view.top + scroller.scrollTop : null,
+                error: rect ? rect.top + rect.height/2 - view.top - view.height/2 : null});
+            if (elapsed < 1800) requestAnimationFrame(tick); else resolve(samples);
+        }
+        requestAnimationFrame(tick);
+    })""")
+    evidence = Path(output_path) / "search-delayed-geometry-restore.json"
+    evidence.parent.mkdir(parents=True, exist_ok=True)
+    evidence.write_text(json.dumps(samples, indent=2) + "\n")
+    for step in range(3):
+        settled = [
+            sample
+            for sample in samples
+            if sample["step"] == step
+            and (step == 0 or sample["elapsed"] - sample["changedAt"] >= 350)
+        ]
+        assert len(settled) >= 3, samples
+        assert all(
+            sample["connected"]
+            and sample["item"] == "answer"
+            and sample["text"] == "needle"
+            and sample["offset"] == 6
+            and sample["error"] is not None
+            and abs(sample["error"]) <= 1
+            for sample in settled
+        ), settled
+        assert (
+            max(sample["scrollTop"] for sample in settled)
+            - min(sample["scrollTop"] for sample in settled)
+            <= 1
+        ), settled
+    assert samples[-1]["contentTop"] - samples[0]["contentTop"] >= 239, samples
+    _assert_exact_centered(page, "answer", 6)
+    query.focus()
+    expect(query).to_be_focused()
     scroller.hover()
+    scroller.evaluate("""el => {
+        el.addEventListener('wheel', event => {
+            el.dataset.searchWheelTrusted = String(event.isTrusted);
+        }, {once: true});
+    }""")
     before_wheel = scroller.evaluate("el => el.scrollTop")
     bar.get_by_role("button", name="Next match", exact=True).evaluate("button => button.click()")
     page.evaluate("""() => new Promise(resolve => {
         requestAnimationFrame(() => requestAnimationFrame(resolve));
     })""")
+    expect(bar.get_by_role("status")).to_have_text("2 of 3")
     page.mouse.wheel(0, 97)
+    expect(scroller).to_have_attribute("data-search-wheel-trusted", "true")
     page.wait_for_function(
         "before => document.querySelector('[role=\"log\"] > div').scrollTop > before + 50",
         arg=before_wheel,
     )
     cancelled_top = scroller.evaluate("el => el.scrollTop")
-    page.wait_for_timeout(500)  # Outlast the bounded measurement/alignment window.
+    page.wait_for_timeout(500)  # Observe cancellation across several alignment polls.
     wheel_drift = abs(scroller.evaluate("el => el.scrollTop") - cancelled_top)
     print(
         f"search actual wheel: delta_px={cancelled_top - before_wheel:.6f}, "
         f"drift_px={wheel_drift:.6f}"
     )
     assert wheel_drift < 1
+    expect(query).to_be_focused()
+    query.press("Enter")
+    expect(bar.get_by_role("status")).to_have_text("3 of 3")
+    query.press("Enter")
+    expect(bar.get_by_role("status")).to_have_text("1 of 3")
+    _assert_exact_centered(page, "answer", 6)
+    expect(query).to_be_focused()
     expect(composer).to_have_value("Retained virtual-search draft")
     expect(bar).not_to_contain_text("unavailable")
+    assert chat.event_posts == []
+    assert other.event_posts == []
+    assert browser_errors == []
 
 
 def _assert_exact_centered(

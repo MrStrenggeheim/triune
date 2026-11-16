@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { useTranscriptDisclosureAnchor } from "@/hooks/useTranscriptDisclosureAnchor";
 import { useWrapPreference } from "@/hooks/useWrapPreference";
 // Tool-call renderer. Renders each call as a single muted-text trigger
@@ -19,7 +20,10 @@ import {
   XCircleIcon,
 } from "lucide-react";
 import type { CSSProperties, ReactNode } from "react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { ChatSearchRevealContext } from "@/lib/chatSearchHighlights";
+import { readSubagentActivity, subagentCardItemIds } from "@/lib/subagentActivity";
+import { SubagentActivityMessage } from "./SubagentActivityMessage";
 import {
   CodeBlock,
   CodeBlockActions,
@@ -265,6 +269,17 @@ export function ToolCard({
 export function ToolGroupSummary({ tools }: { tools: RenderItem[] }) {
   const preserveDisclosure = useTranscriptDisclosureAnchor();
   const label = formatToolRunLabel(tools.map(toolRunCall));
+  const reveal = useContext(ChatSearchRevealContext);
+  const requested = tools.some(
+    (item) =>
+      item.kind === "subagent_activity" &&
+      subagentCardItemIds(item.data).some((id) => reveal?.revealedItems.has(id)),
+  );
+  const revealRevision = requested ? (reveal?.revealRequest?.revision ?? 0) : undefined;
+  const [open, setOpen] = useState(requested);
+  useEffect(() => {
+    if (revealRevision !== undefined) setOpen(true);
+  }, [revealRevision]);
   return (
     // Named `group/tool-summary` so this collapsible only rotates its
     // OWN chevron (line 296 in `ToolTriggerRow` uses an unnamed
@@ -273,7 +288,8 @@ export function ToolGroupSummary({ tools }: { tools: RenderItem[] }) {
     // chevrons of inner tool cards when this outer group is open).
     <Collapsible
       onClickCapture={preserveDisclosure}
-      defaultOpen={false}
+      open={open}
+      onOpenChange={setOpen}
       className="group/tool-summary not-prose w-full"
     >
       <CollapsibleTrigger className="flex min-h-7 w-full cursor-pointer items-center gap-1.5 rounded-sm py-0.5 text-left text-muted-foreground text-chat transition-colors hover:text-foreground">
@@ -282,6 +298,19 @@ export function ToolGroupSummary({ tools }: { tools: RenderItem[] }) {
       </CollapsibleTrigger>
       <CollapsibleContent className="mt-1 space-y-1 border-t border-border/60 pt-1 data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:animate-out data-[state=open]:animate-in">
         {tools.map((item) => {
+          if (item.kind === "subagent_activity") {
+            const resource = item.data.resource as Record<string, unknown> | undefined;
+            return (
+              <SubagentActivityMessage
+                key={
+                  typeof resource?.card_key === "string"
+                    ? resource.card_key
+                    : `activity:${item.itemId}`
+                }
+                data={item.data}
+              />
+            );
+          }
           if (item.kind === "tool") {
             return (
               <ToolCard
@@ -317,6 +346,22 @@ export function ToolGroupSummary({ tools }: { tools: RenderItem[] }) {
 
 /** Tool name + args used to categorize a run item for the summary label. */
 function toolRunCall(item: RenderItem): ToolRunCall {
+  if (item.kind === "subagent_activity") {
+    const activity = readSubagentActivity(item.data);
+    const resource = item.data.resource as Record<string, unknown> | undefined;
+    const status =
+      typeof resource?.card_status === "string" ? resource.card_status : activity?.status;
+    return {
+      name: "subagent_activity",
+      activityKey:
+        typeof resource?.card_key === "string"
+          ? resource.card_key
+          : (activity?.sessionId ?? item.itemId ?? undefined),
+      pending: status
+        ? ["running", "starting", "pending", "queued", "waiting", "busy"].includes(status)
+        : activity?.phase === "delegated",
+    };
+  }
   if (item.kind === "tool") {
     return { name: item.execution.name, args: item.execution.arguments };
   }

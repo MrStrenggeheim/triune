@@ -1,3 +1,4 @@
+# Modified for Triune.
 """Input correlation stays isolated and cannot expose message content."""
 
 import asyncio
@@ -97,3 +98,15 @@ def test_diagnostic_emit_filters_extra_content_and_malformed_fields(
         "reason_code": "completed_without_native_record",
         "rpc_error_code": -32600,
     }
+
+
+@pytest.mark.parametrize("kind", ["system", "peer"])
+def test_application_origin_requires_a_valid_input_identity(kind: str) -> None:
+    assert input_attributes({"input_stable_id": "a" * 32, "communication": {"kind": kind}}) == {
+        "input_stable_id": "a" * 32,
+        "input_origin_kind": kind,
+    }
+    assert "input_origin_kind" not in input_attributes({"communication": {"kind": kind}})
+    assert "input_origin_kind" not in input_attributes(
+        {"input_stable_id": "a" * 32, "communication": {"kind": []}}
+    )

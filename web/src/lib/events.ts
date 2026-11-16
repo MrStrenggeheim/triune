@@ -784,6 +784,7 @@ export interface SessionMcpStartupEvent {
 export interface SessionInputConsumedEvent {
   type: "session_input_consumed";
   itemId: string;
+  responseId?: string;
   /** Item-type discriminator, e.g. `"message"`, `"function_call_output"`. */
   itemType: string;
   /** True when the persisted item is durable hidden context. */
@@ -1022,7 +1023,30 @@ export interface UiOpenFileEvent {
 
 // ── Union type for all events ────────────────────────────
 
-export type StreamEvent =
+export interface SessionSyncEvent {
+  type: "session_sync";
+  phase: "start" | "complete";
+  reset: boolean;
+  lastPosition: number;
+  itemCount: number;
+  lastItemId: string | null;
+  streamEpoch: string;
+  itemRevision?: number;
+  resetRevision?: number;
+}
+
+export interface SessionHeartbeatEvent {
+  type: "session_heartbeat";
+  lastPosition: number;
+  itemCount: number;
+  lastItemId: string | null;
+  streamEpoch: string;
+  reconcileRequired: boolean;
+  itemRevision?: number;
+  resetRevision?: number;
+}
+
+export type StreamEvent = (
   | ResponseCreated
   | ResponseQueued
   | ResponseInProgress
@@ -1083,4 +1107,8 @@ export type StreamEvent =
   | SessionPresenceEvent
   | SessionBtwSidechatEvent
   | BrowserActionRequestEvent
-  | UiOpenFileEvent;
+  | UiOpenFileEvent
+  | SessionSyncEvent
+  | SessionHeartbeatEvent
+  | { type: "session_transport_error"; code: string }
+) & { position?: number; createdAtS?: number; committedItem?: Record<string, unknown> };

@@ -1,15 +1,9 @@
+// Modified for Triune.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/hooks/useScopeCache", () => import("@/test/mockScopeCache"));
 import { SidebarDataProvider } from "@/hooks/useSidebarData";
-// Tests for the sidebar conversation-row quick actions:
-//   1. A desktop quick pin/unpin button (`quick-pin-conversation`) and a
-//      mobile-only kebab Pin item (`pin-conversation`) — two affordances for
-//      the same pin toggle, split by viewport (responsive Tailwind classes).
-//   2. Double-clicking a row to enter inline rename (ConversationRow's
-//      `onDoubleClick`), gated on edit permission.
-// See ConversationRow / ConversationEditRow in Sidebar.tsx.
-
+// Conversation row menu, hover controls and pointer interactions.
 import { useSyncExternalStore } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
@@ -19,6 +13,8 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import type { ServerInfo } from "@/lib/capabilities";
 import type * as IdentityModule from "@/lib/identity";
 import { CapabilitiesProvider } from "@/lib/CapabilitiesContext";
+import { clearSessionDrafts, setSessionDraft } from "@/lib/sessionDrafts";
+import * as toastModule from "@/components/ui/toast";
 import { USER_SESSION_TITLE_MAX_CHARS } from "@/lib/sessionTitles";
 import { sessionActionRestrictions, type SessionActionSource } from "@/lib/sessionCapabilities";
 
@@ -153,7 +149,11 @@ vi.mock("@/lib/identity", async (importOriginal) => ({
 }));
 
 import { type Conversation, useConversations } from "@/hooks/useConversations";
-import { resetReadStateForTests, seedReadState } from "@/hooks/useUnseenConversations";
+import {
+  markConversationUnread,
+  resetReadStateForTests,
+  seedReadState,
+} from "@/hooks/useUnseenConversations";
 import { Sidebar } from "./Sidebar";
 
 const useConvMock = vi.mocked(useConversations);
@@ -269,6 +269,7 @@ beforeEach(() => {
   mocks.isMobile = false;
   useConvMock.mockReset();
   localStorage.clear();
+  clearSessionDrafts();
   // Reset the server pinned set between tests.
   mocks.pinnedStore.set([]);
   // The read-state mirror is module-level (in-memory), so reset it between
@@ -279,29 +280,19 @@ beforeEach(() => {
 
 afterEach(cleanup);
 
-describe("quick pin/unpin hover button", () => {
-  it("keeps the row full-width and the trailing controls inset from the right edge", () => {
-    // The row link is `w-full` (not `w-[calc(100%+1rem)]`) so its highlight
-    // stays inset from the right edge, aligning with the project/folder rows.
-    renderSidebar();
-
-    // Shared controls retain their compact hit areas in a separate flex group.
-    const pin = screen.getByTestId("quick-pin-conversation");
+describe("conversation actions and pin menu", () => {
+  it("keeps a fixed rightmost action target and paints selection across the row", () => {
+    renderSidebar("conv_1");
     const kebab = screen.getByTestId("conversation-actions");
-    expect(pin).toHaveClass("size-6");
-    expect(kebab).toHaveClass("size-6");
-    // Both buttons share spacing and consume width before the title truncates.
-    const controls = pin.parentElement!;
-    expect(controls).toBe(kebab.parentElement);
-    expect(controls).toHaveClass("shrink-0", "flex", "items-center", "gap-0.5");
-    expect(controls).not.toHaveClass("absolute");
-    // The old per-button offsets are gone.
-    expect(pin).not.toHaveClass("right-[30px]", "right-[1.875rem]", "right-[14px]", "absolute");
-    expect(kebab).not.toHaveClass("-right-3", "absolute");
-
+    expect(kebab).toHaveClass("size-6", "shrink-0", "[@media(pointer:coarse)]:size-11");
+    expect(kebab).not.toHaveClass("absolute");
+    expect(kebab.parentElement).toHaveClass("shrink-0", "flex", "items-center");
+    expect(kebab.parentElement!.lastElementChild).toBe(kebab);
+    expect(screen.queryByTestId("quick-pin-conversation")).not.toBeInTheDocument();
     const rowLink = screen.getByRole("link", { name: "My Session" });
-    expect(rowLink).toHaveClass("w-full");
-    expect(rowLink).not.toHaveClass("w-[calc(100%+1rem)]");
+    expect(rowLink).toHaveClass("w-full", "min-w-0", "flex-1");
+    expect(rowLink.closest("li")).toHaveClass("bg-[var(--sidebar-active)]");
+    expect(rowLink).not.toHaveClass("bg-[var(--sidebar-active)]");
   });
 
   it("holds the action group width while the kebab menu is open", () => {
@@ -384,55 +375,34 @@ describe("quick pin/unpin hover button", () => {
     expect(screen.getByTestId("new-project")).toBeInTheDocument();
   });
 
-  it("toggles the pin without opening the kebab menu, moving the row under Pinned", () => {
+  it("pins and unpins through the same desktop menu and persistence", () => {
     renderSidebar();
-
-    // No "Pinned" section to start; the row lives under Recent.
     expect(screen.queryByText("Pinned")).toBeNull();
-    const pinButton = screen.getByTestId("quick-pin-conversation");
-    expect(pinButton).toHaveAttribute("aria-label", "Pin conversation");
-    expect(pinButton).toHaveClass("text-muted-foreground", "hover:text-foreground");
-    expect(pinButton.querySelector("svg")).toHaveClass("size-3.5");
-    expect(pinButton.querySelector("svg")).toHaveAttribute("data-icon-size", "14");
-    const actionsButton = screen.getByTestId("conversation-actions");
-    expect(actionsButton).toHaveClass("text-muted-foreground", "hover:text-foreground");
-    expect(actionsButton.querySelector("svg")).toHaveClass("size-3.5");
-    expect(actionsButton.querySelector("svg")).toHaveAttribute("data-icon-size", "14");
-
-    fireEvent.click(pinButton);
-
-    // The row is now grouped under a "Pinned" header, and the quick button
-    // flips to its unpin affordance — both prove the toggle ran through the
-    // sidebar's pin state (not just a local no-op).
-    const pinnedHeader = screen.getByText("Pinned");
-    const pinnedSection = pinnedHeader.closest("section")!;
-    expect(within(pinnedSection).getByText("My Session")).toBeInTheDocument();
-    expect(screen.getByTestId("quick-pin-conversation")).toHaveAttribute(
-      "aria-label",
-      "Unpin conversation",
-    );
-
-    // Persisted server-side (the `omnigent.pinned` label) so the pin follows the
-    // user across devices — same contract as the kebab's Pin item.
+    fireEvent.pointerDown(screen.getByTestId("conversation-actions"), { button: 0 });
+    const item = screen.getByTestId("pin-conversation");
+    expect(item).not.toHaveClass("md:hidden");
+    fireEvent.click(item);
+    const section = screen.getByText("Pinned").closest("section")!;
+    expect(within(section).getByText("My Session")).toBeInTheDocument();
     expect(mocks.pinnedStore.ids).toContain("conv_1");
-
-    // Clicking again unpins: the Pinned section disappears.
-    fireEvent.click(screen.getByTestId("quick-pin-conversation"));
+    fireEvent.pointerDown(screen.getByTestId("conversation-actions"), { button: 0 });
+    expect(screen.getByTestId("pin-conversation")).toHaveTextContent("Unpin");
+    fireEvent.click(screen.getByTestId("pin-conversation"));
     expect(screen.queryByText("Pinned")).toBeNull();
   });
 
-  it.each([
-    ["quick-pin-conversation", "Pin"],
-    ["quick-archive-conversation", "Archive"],
-  ])("shows the %s action in a styled tooltip on hover", async (testId, label) => {
-    const user = userEvent.setup();
-    renderSidebar();
+  it.each([["quick-archive-conversation", "Archive"]])(
+    "shows the %s action in a styled tooltip on hover",
+    async (testId, label) => {
+      const user = userEvent.setup();
+      renderSidebar();
 
-    await user.hover(screen.getByTestId(testId));
-    const tooltip = await screen.findByRole("tooltip");
-    expect(tooltip).toHaveTextContent(label);
-    expect(tooltip.querySelector("svg")).toBeNull();
-  });
+      await user.hover(screen.getByTestId(testId));
+      const tooltip = await screen.findByRole("tooltip");
+      expect(tooltip).toHaveTextContent(label);
+      expect(tooltip.querySelector("svg")).toBeNull();
+    },
+  );
 
   it("also offers Pin in the kebab menu (mobile affordance) and toggles the same pin state", () => {
     renderSidebar();
@@ -455,43 +425,26 @@ describe("quick pin/unpin hover button", () => {
     expect(mocks.pinnedStore.ids).toContain("conv_1");
   });
 
-  it("splits the two pin affordances by viewport via Tailwind responsive classes", () => {
-    // jsdom doesn't evaluate CSS media queries, so both affordances live in the
-    // DOM regardless of viewport — the mobile/desktop split is purely the
-    // responsive classes. Assert those classes directly: the kebab Pin item is
-    // hidden from `md` up (desktop), and the quick button is hidden below `md`
-    // (mobile) but shown from `md` up. Together they guarantee exactly one pin
-    // affordance is visible at any breakpoint.
+  it.each([false, true])("exposes only the menu pin on mobile=%s", (mobile) => {
+    mocks.isMobile = mobile;
     renderSidebar();
-
-    // Desktop quick button: hidden on mobile, revealed from `md` up. The reveal
-    // uses `md:inline-flex` (not `md:block`) so the button stays a flex
-    // container — see the centering regression test below.
-    const quickButton = screen.getByTestId("quick-pin-conversation");
-    expect(quickButton).toHaveClass("hidden", "md:inline-flex");
-
-    // Kebab Pin item: present in the menu but hidden from `md` up, so it only
-    // surfaces on mobile.
+    expect(screen.queryByTestId("quick-pin-conversation")).toBeNull();
     fireEvent.pointerDown(screen.getByTestId("conversation-actions"), { button: 0 });
-    expect(screen.getByTestId("pin-conversation")).toHaveClass("md:hidden");
+    expect(screen.getByTestId("pin-conversation")).not.toHaveClass("md:hidden");
   });
 
-  it("reveals the quick-pin button without breaking icon centering", () => {
-    // The Button base centers its icon with `inline-flex` + `items-center
-    // justify-center`. The desktop reveal MUST keep a flex display: revealing
-    // it with `md:block` overrode `inline-flex`, made the
-    // centering classes inert, and shoved the pin glyph to the button's
-    // top-left corner (~6px off-center). Guard the display so the reveal
-    // stays flex and the glyph stays centered.
+  it("keeps status in the menu button with a complete accessible description", () => {
+    mockConversations([{ ...CONV, pending_elicitations_count: 3 }]);
     renderSidebar();
-
-    const quickButton = screen.getByTestId("quick-pin-conversation");
-    // The centering classes are present...
-    expect(quickButton).toHaveClass("items-center", "justify-center");
-    // ...and the desktop reveal makes the button a flex container (so those
-    // classes actually take effect), rather than a block (which would not).
-    expect(quickButton).toHaveClass("md:inline-flex");
-    expect(quickButton).not.toHaveClass("md:block");
+    const trigger = screen.getByTestId("conversation-actions");
+    expect(trigger).toHaveAccessibleDescription("3 approval prompts waiting");
+    const badge = within(trigger).getByTestId("session-state-badge");
+    expect(badge).toHaveAttribute("aria-label", "3 approval prompts waiting");
+    expect(badge).not.toHaveTextContent("Needs response");
+    expect(badge).not.toHaveAttribute("data-slot", "tooltip-trigger");
+    expect(trigger).toHaveClass("items-center", "justify-center");
+    fireEvent.pointerDown(trigger, { button: 0, pointerType: "touch" });
+    expect(screen.getByTestId("rename-conversation")).toBeInTheDocument();
   });
 
   it("keeps the row kebab reachable on touch with a desktop focus reveal", () => {
@@ -503,7 +456,9 @@ describe("quick pin/unpin hover button", () => {
     const row = kebab.closest("li")!;
     expect(row.innerHTML).not.toContain("group-focus-within");
     expect(kebab).toHaveClass("focus-visible:ring-3");
-    expect(kebab.parentElement?.className).toContain(":not(:has(:focus-visible))");
+    expect(screen.getByTestId("conversation-indicators").className).toContain(
+      "group-has-[:focus-visible]/conversation:opacity-0",
+    );
     fireEvent.pointerDown(row, { pointerType: "touch", pointerId: 1 });
     expect(row).toHaveAttribute("data-input", "touch");
     expect(screen.getByRole("complementary", { name: "Conversations" })).toHaveAttribute(
@@ -1169,7 +1124,9 @@ describe("mark as unread", () => {
     fireEvent.click(screen.getByTestId("mark-unread-conversation"));
 
     expect(screen.getByText("(unread)")).toBeInTheDocument();
-    expect(screen.getByRole("img", { name: "New messages" })).toBeInTheDocument();
+    expect(screen.getByTestId("conversation-actions")).toHaveAccessibleDescription(
+      expect.stringContaining("New messages"),
+    );
     expect(screen.getByRole("img", { name: "Session running" })).toBeInTheDocument();
 
     // Once the turn finishes (row re-renders as idle), the dot lights — the
@@ -1228,7 +1185,7 @@ describe("right-click context menu", () => {
     );
   });
 
-  it.each(["quick-pin-conversation", "quick-archive-conversation", "conversation-actions"])(
+  it.each(["quick-archive-conversation", "conversation-actions"])(
     "opens the session menu when right-clicking the %s button",
     (testId) => {
       renderSidebar();
@@ -1483,5 +1440,117 @@ describe("peek mode row menu", () => {
     fireEvent.pointerLeave(aside);
     vi.advanceTimersByTime(1000);
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("row Copy link", () => {
+  beforeEach(() => vi.spyOn(toastModule, "showToast").mockReturnValue(1));
+  afterEach(() => vi.mocked(toastModule.showToast).mockRestore());
+  it("copies an inactive row without navigation, sharing or permission changes", async () => {
+    mockConversations([CONV, { ...CONV, id: "other", title: "Other" }]);
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    renderSidebar(CONV.id);
+    fireEvent.contextMenu(screen.getByRole("link", { name: "Other" }));
+    fireEvent.click(screen.getByTestId("copy-conversation-link"));
+    await waitFor(() =>
+      expect(writeText).toHaveBeenCalledExactlyOnceWith(`${window.location.origin}/c/other`),
+    );
+    expect(screen.getByRole("link", { name: "My Session" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    await waitFor(() => expect(toastModule.showToast).toHaveBeenCalledWith("Link copied"));
+    expect(mocks.leave.mutate).not.toHaveBeenCalled();
+  });
+  it("reports copy failure without claiming success", async () => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: vi.fn().mockRejectedValue(new Error("Denied")) },
+    });
+    renderSidebar();
+    fireEvent.pointerDown(screen.getByTestId("conversation-actions"), { button: 0 });
+    fireEvent.click(screen.getByTestId("copy-conversation-link"));
+    await waitFor(() => expect(toastModule.showToast).toHaveBeenCalledWith("Couldn’t copy link"));
+  });
+});
+
+describe("two compact status groups", () => {
+  it.each([
+    {
+      status: "failed" as const,
+      pending: 2,
+      draft: true,
+      unread: true,
+      expected: ["error", "unseen"],
+    },
+    {
+      status: "running" as const,
+      pending: 2,
+      draft: true,
+      unread: true,
+      expected: ["awaiting", "running"],
+    },
+    {
+      status: "running" as const,
+      pending: 0,
+      draft: true,
+      unread: true,
+      expected: ["draft", "running"],
+    },
+    { status: "running" as const, pending: 0, draft: false, unread: true, expected: ["running"] },
+    {
+      status: "idle" as const,
+      pending: 0,
+      draft: true,
+      unread: true,
+      expected: ["draft", "unseen"],
+    },
+    { status: "idle" as const, pending: 0, draft: false, unread: false, expected: [] },
+  ])(
+    "selects $expected without long pills and retains lower facts",
+    ({ status, pending, draft, unread, expected }) => {
+      mockConversations([{ ...CONV, status, pending_elicitations_count: pending }]);
+      if (draft) setSessionDraft(CONV.id, { text: "Unsent work", files: [] });
+      if (unread) markConversationUnread(CONV.id, CONV.updated_at);
+      renderSidebar();
+      const row = screen.getByRole("link", { name: /My Session/ }).closest("li")!;
+      expect(
+        within(row)
+          .queryAllByTestId("session-state-badge")
+          .map((badge) => badge.getAttribute("data-state")),
+      ).toEqual(expected);
+      expect(within(row).queryByText("Needs response")).toBeNull();
+      const menu = within(row).getByTestId("conversation-actions");
+      expect(menu).toHaveClass("size-6", "shrink-0", "[@media(pointer:coarse)]:size-11");
+      expect(menu.querySelector("button, [role=button]")).toBeNull();
+      if (pending)
+        expect(menu).toHaveAccessibleDescription(
+          expect.stringContaining(`${pending} approval prompts waiting`),
+        );
+      if (draft) expect(menu).toHaveAccessibleDescription(expect.stringContaining("Draft"));
+      if (unread) expect(menu).toHaveAccessibleDescription(expect.stringContaining("New messages"));
+      expect(within(row).queryByTestId("conversation-secondary-indicator") !== null).toBe(
+        expected.length === 2,
+      );
+    },
+  );
+
+  it("opens the same menu with one tap on either status and reuses the Archive cell", () => {
+    mocks.isMobile = true;
+    mockConversations([{ ...CONV, status: "running", pending_elicitations_count: 2 }]);
+    renderSidebar(CONV.id);
+    const currentLink = screen.getByRole("link", { name: "My Session" });
+    const status = screen.getByRole("button", { name: "Session status" });
+    const archive = screen.getByTestId("quick-archive-conversation");
+    expect(status.parentElement).toBe(archive.parentElement);
+    expect(status).toHaveAccessibleDescription(
+      expect.stringContaining("2 approval prompts waiting"),
+    );
+    fireEvent.pointerDown(status, { pointerType: "touch", button: 0 });
+    fireEvent.pointerUp(status, { pointerType: "touch", button: 0 });
+    fireEvent.click(status);
+    expect(screen.getByTestId("rename-conversation")).toBeInTheDocument();
+    expect(currentLink).toHaveAttribute("aria-current", "page");
   });
 });

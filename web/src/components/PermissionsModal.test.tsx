@@ -168,7 +168,7 @@ afterEach(cleanup);
 
 describe("PermissionsModal", () => {
   it.each(["General access", "New user permission", "Permission level for bob@example.com"])(
-    "anchors the %s menu below the start of its trigger",
+    "centers the %s menu below its trigger",
     async (label) => {
       listMock.mockResolvedValue([
         { user_id: "bob@example.com", conversation_id: "conv_abc", level: 2 },
@@ -186,7 +186,7 @@ describe("PermissionsModal", () => {
       const menu = await screen.findByRole("listbox");
       await waitFor(() => {
         expect(menu).toHaveAttribute("data-side", "bottom");
-        expect(menu).toHaveAttribute("data-align", "start");
+        expect(menu).toHaveAttribute("data-align", "center");
       });
       expect(within(menu).getByRole("option", { name: "Read" })).toBeInTheDocument();
 

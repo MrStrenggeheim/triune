@@ -16,7 +16,7 @@ export function RunningDot({ className }: { className?: string }) {
         className,
       )}
     >
-      <Loader2Icon className="size-full" />
+      <Loader2Icon data-icon-size="container" className="size-full" />
     </span>
   );
 }

@@ -8,7 +8,8 @@ and the recording protocol for comparing revisions.
 ## Sub-features
 
 - `mermaid-theme`: chat, reasoning, Preview and TipTap diagrams share a resolved Appearance-aware Mermaid base theme before layout.
-  Native semantic shapes remain intact; rounded nodes/actors use 6px, groups 8px and notes 4px from app tokens.
+  Native semantic shapes remain intact; neutral nodes, accent depth washes and contrasting labels follow Appearance tokens.
+  Opaque arrow-label backings follow their enclosing group; group headings paint above arrows, including SVG exports.
   Labels retain a 14px minimum and follow larger UI sizes and the selected font; source, download and fullscreen remain available.
 
 - `copy-source`: the file preview three-dot menu → Copy file content copies the full current Markdown buffer, including unsaved edits; the formatting toolbar retains save/retry but no separate Copy button.

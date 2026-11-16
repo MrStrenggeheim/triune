@@ -944,6 +944,8 @@ class ConversationItem(BaseModel):
     created_at: int
     data: ItemData
     created_by: str | None = None
+    # Canonical order within this conversation; absent for unpersisted legacy entities.
+    position: int | None = Field(default=None, ge=0)
     # In-process signal only (excluded from every dump / API shape): ``True``
     # when an idempotent append found this item already persisted under its
     # ``stable_id``, so the caller can skip a duplicate's side effects.
@@ -998,6 +1000,7 @@ class ConversationItem(BaseModel):
             "type": self.type,
             "status": self.status,
             "created_at": self.created_at,
+            **({"position": self.position} if self.position is not None else {}),
             **self.data.model_dump(exclude_none=True, by_alias=True),
             # Account identity is separate from trusted peer/native authorship.
             # Omit unknown accounts, matching exclude_none above.

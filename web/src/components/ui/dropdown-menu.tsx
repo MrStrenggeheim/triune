@@ -1,13 +1,25 @@
+// Modified for Triune.
 import * as React from "react";
 import * as DropdownMenuPrimitive from "radix-ui/dropdown-menu";
 
 import { getEmbedRoot } from "@/lib/host";
 import { cn } from "@/lib/utils";
+import {
+  AnchoredPopupProvider,
+  usePopupTriggerRef,
+  useAnchoredPopupBounds,
+  usePopupOpenState,
+} from "./anchored-popup";
 import { CheckIcon, ChevronRightIcon } from "lucide-react";
 import { MenuItem } from "./menu-item";
 
 function DropdownMenu({ ...props }: React.ComponentProps<typeof DropdownMenuPrimitive.Root>) {
-  return <DropdownMenuPrimitive.Root data-slot="dropdown-menu" {...props} />;
+  const state = usePopupOpenState(props);
+  return (
+    <AnchoredPopupProvider open={state.open}>
+      <DropdownMenuPrimitive.Root data-slot="dropdown-menu" {...props} {...state} />
+    </AnchoredPopupProvider>
+  );
 }
 
 function DropdownMenuPortal({
@@ -22,23 +34,41 @@ function DropdownMenuPortal({
   );
 }
 
-function DropdownMenuTrigger({
-  ...props
-}: React.ComponentProps<typeof DropdownMenuPrimitive.Trigger>) {
-  return <DropdownMenuPrimitive.Trigger data-slot="dropdown-menu-trigger" {...props} />;
-}
+const DropdownMenuTrigger = React.forwardRef<
+  HTMLButtonElement,
+  React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Trigger>
+>(function DropdownMenuTrigger(props, ref) {
+  const triggerRef = usePopupTriggerRef(ref);
+  return (
+    <DropdownMenuPrimitive.Trigger ref={triggerRef} data-slot="dropdown-menu-trigger" {...props} />
+  );
+});
 
 const DropdownMenuContent = React.forwardRef<
   React.ElementRef<typeof DropdownMenuPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Content>
->(function DropdownMenuContent({ className, align = "start", sideOffset = 4, ...props }, ref) {
+>(function DropdownMenuContent(
+  {
+    className,
+    align = "center",
+    side = "bottom",
+    sideOffset = 4,
+    collisionPadding,
+    style,
+    ...props
+  },
+  ref,
+) {
+  const bounds = useAnchoredPopupBounds(collisionPadding, style);
   return (
     <DropdownMenuPrimitive.Portal container={getEmbedRoot() ?? undefined}>
       <DropdownMenuPrimitive.Content
         ref={ref}
         data-slot="dropdown-menu-content"
         sideOffset={sideOffset}
-        align={align}
+        {...bounds}
+        side={side}
+        align={side === "left" || side === "right" ? align : "center"}
         className={cn(
           "z-50 max-h-(--radix-dropdown-menu-content-available-height) w-max min-w-32 origin-(--radix-dropdown-menu-content-transform-origin) overflow-x-hidden overflow-y-auto whitespace-nowrap rounded-[12px] border border-border bg-popover p-2 text-popover-foreground shadow-menu duration-150 ease-[cubic-bezier(0.16,1,0.3,1)] data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 data-[state=closed]:overflow-hidden data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
           className,

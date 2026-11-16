@@ -1,4 +1,8 @@
 // Modified for Triune.
+import {
+  useDiscardComposerFocus,
+  useRequestedComposerFocus,
+} from "@/workbench/useSessionComposerFocus";
 import { useWorkbench } from "@/workbench/WorkbenchContext";
 import { openDurableSubchat, subchatBoundary } from "@/workbench/durableSubchat";
 import { useScopedInitialPrompt } from "@/workbench/useScopedInitialPrompt";
@@ -1233,6 +1237,8 @@ export function ChatPage({
     }
   }, [newSessionProjectId, newSessionProjectLabel, navigate]);
 
+  useDiscardComposerFocus(urlConvId, Boolean(conversationLoadError));
+
   // Loading + error gates for `/c/:id` hydration. Placed after all hooks so the
   // early return can't change the hook order between renders.
   if (urlConvId) {
@@ -1648,6 +1654,10 @@ const MainAgentSurface = memo(function MainAgentSurfaceImpl({
   // including stopped/resumable sessions, and the connection indicator
   // remains below it for offline sessions.
   const showTerminal = shouldShowTerminalSurface(conversationId, terminalFirst, runnerOnline);
+  useDiscardComposerFocus(
+    conversationId,
+    showTerminal || isComposerReadOnly(permissionLevel, readOnlyReason, sendDisabledReason),
+  );
   useMessageDeepLinkChatView(conversationId);
   const contextSearch = useContextSearch();
   const searchTarget = contextSearch?.highlightTarget;
@@ -2465,6 +2475,8 @@ function ComposerImpl(
 ) {
   const useChatStore = useConversationChatStore();
   const workbench = useWorkbench();
+  const workbenchRef = useRef(workbench);
+  workbenchRef.current = workbench;
   const [subchatBusy, setSubchatBusy] = useState(false);
   const composerMounted = useRef(true);
   useEffect(() => {
@@ -2919,7 +2931,8 @@ function ComposerImpl(
     // this to settle rather than mistaking that for "the user is typing".
     setSettledConversationId(conversationId ?? null);
     draftConversationIdRef.current = conversationId ?? null;
-    if (focusedRef.current && !isMobileRef.current) textareaRef.current?.focus();
+    if (!workbenchRef.current && focusedRef.current && !isMobileRef.current)
+      tailTextareaRef.current?.focus({ preventScroll: true });
 
     if (conversationId) {
       void hydrateSessionDraft(conversationId).then(
@@ -4168,6 +4181,18 @@ function ComposerImpl(
     focusText(id);
     dictation.noteFocus();
   };
+
+  useRequestedComposerFocus(
+    conversationId,
+    tailTextareaRef,
+    focused &&
+      !isMobile &&
+      !(
+        ((disabled || unreachable) && sendDisabledReason === null) ||
+        isReadOnly ||
+        composerLockedByBtw
+      ),
+  );
 
   return (
     <form
