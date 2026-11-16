@@ -102,11 +102,13 @@ The [candidate boundary](docs/custom-fork.md#integration7-candidate) records sco
 
 Approval receipt protocol work, ownerless-model retirement and isolated future branch-query/index work are outside this candidate; no approval delivery is claimed.
 
-## Branch query candidate — 2026-11-16
+## Branch and shell candidate — 2026-11-16
 
 - Add an inverse workspace/key/value label index for canonical branch ancestry and maintain it in existing split databases.
 - Read bounded delegation and branch operands independently, deduplicating canonical edges while preserving explicit incomplete coverage.
 - Preserve session authorization, named read scopes and full-edge semantics; clipped traversal uses deterministic index order.
+- Validate captured shell snapshots off the event loop under the existing merge lock, preserving FIFO ordering, workspace context and exact redacted bytes.
+- Drain cancelled pure validation before releasing that lock, discard its unused result and preserve cancellation and error reporting.
 
 
 [LICENSING.md](LICENSING.md) defines scope and the required notice.

@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 from typing import TYPE_CHECKING
@@ -114,10 +115,26 @@ class SessionShellResources:
             validated.append(row)
         return validated
 
+    async def _validate(self, session_id: str, records: list[object]) -> list[JsonObject]:
+        """Keep the capture lock until cancelled validation finishes without merging it."""
+        if not records:
+            return []
+        worker = asyncio.create_task(asyncio.to_thread(self._validated, session_id, records))
+        try:
+            return await asyncio.shield(worker)
+        except asyncio.CancelledError:
+            while not worker.done():
+                with contextlib.suppress(Exception, asyncio.CancelledError):
+                    await asyncio.shield(worker)
+            # Cancellation wins over an unused validation result or validation error.
+            with contextlib.suppress(Exception, asyncio.CancelledError):
+                worker.result()
+            raise
+
     async def capture(self, session_id: str, records: list[object]) -> list[JsonObject]:
         """Merge bounded evidence atomically; an empty live tally does not erase history."""
-        fresh = self._validated(session_id, records)
         async with self._lock:
+            fresh = await self._validate(session_id, records)
             previous = self._recent.get(session_id)
             if previous is None:
                 previous = []
@@ -132,7 +149,7 @@ class SessionShellResources:
                         stored = json.loads(payload)
                         if not isinstance(stored, list):
                             raise ValueError("A retained shell snapshot must be a list")
-                        previous = self._validated(session_id, stored)
+                        previous = await self._validate(session_id, stored)
             merged = {
                 (row["source"], row["resource_id"]): row
                 for row in previous

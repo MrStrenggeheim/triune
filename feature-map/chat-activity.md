@@ -48,6 +48,7 @@ Preconditions: use the isolated [verification environment](skills/verify-omnigen
 - Queue, attention and child-context shelf backgrounds continue behind both rounded composer corners; their existing 200ms entrance/exit and reduced-motion behavior remain.
 - Captured native output, query identity and read-only side views: `web/src/hooks/useSessionShellResources.test.tsx` and `web/src/workbench/ShellResourceView.test.tsx`.
 - Authenticated provider resources, retained history and targeted control: `tests/server/test_shell_resource_routes.py`, `tests/server/test_shell_resources.py` and `tests/runner/test_native_shell_resources.py`.
+- The shell-resource suites also cover FIFO validation off the event loop, repeated cancellation draining, workspace context and exact redaction through retained-snapshot reloads.
 - Actual native command lifecycle through the isolated browser: `tests/e2e_ui/agents/test_native_capability_shelf.py`.
 - Manually run a command in a shell while leaving the shell open, then end the shell: the command can complete while the shell is still live, and only the shell's actual end supplies its ended state.
 - Typed offline, upstream permission/replica preservation and passive retained reads: `tests/server/test_shell_resource_routes.py`.
