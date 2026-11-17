@@ -5070,7 +5070,7 @@ class SqlAlchemyConversationStore(ConversationStore):
                 # Identity is the sole write. Hold its binding fence through AP commit.
                 assert metadata_fence is not None
                 metadata_session = metadata_fence.enter_context(
-                    self._session_immediate(query_name)
+                    self._session_immediate("recover_claude_native_child_identity")
                 )
                 accepted = bind_metadata(metadata_session, True)
             else:

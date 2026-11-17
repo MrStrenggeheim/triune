@@ -180,3 +180,60 @@ def test_conversation_store_names_create_and_get_queries(
             "omnigent.conversation_store.select_conversation_metadata_by_id",
             "omnigent.conversation_store.select_conversation_labels",
         ]
+
+
+@pytest.mark.parametrize("split", [False, True], ids=["shared", "split"])
+@pytest.mark.parametrize(
+    "operation",
+    [
+        "rebind_codex_native_child_runner",
+        "rebind_claude_native_child_runner",
+        "recover_claude_native_child_identity",
+    ],
+)
+def test_native_child_binding_preserves_semantic_query_names(
+    db_uri: str, tmp_path: Path, split: bool, operation: str
+) -> None:
+    store = SqlAlchemyConversationStore(
+        db_uri, f"sqlite:///{tmp_path}/conversations.db" if split else None
+    )
+    parent = store.create_conversation(agent_id="a" * 32, runner_id="runner")
+    child = store.create_conversation(
+        kind="sub_agent",
+        parent_conversation_id=parent.id,
+        agent_id=parent.agent_id,
+        runner_id=parent.runner_id,
+        title="Explore:native-child",
+    )
+    kwargs = {
+        "parent_id": parent.id,
+        "authenticated_runner_id": parent.runner_id,
+        "expected_child_runner_id": child.runner_id,
+    }
+    if operation == "recover_claude_native_child_identity":
+        kwargs.update(
+            subagent_id="native-child",
+            agent_type="Explore",
+            description="Audit",
+            tool_use_id="call",
+        )
+    else:
+        identity = "codex" if operation == "rebind_codex_native_child_runner" else "claude"
+        store.set_labels(
+            child.id,
+            {
+                "omnigent.wrapper": (
+                    "codex-native-ui-subagent"
+                    if identity == "codex"
+                    else "claude-code-native-ui-subagent"
+                ),
+                f"omnigent.{identity}_native.subagent_"
+                + ("thread_id" if identity == "codex" else "id"): "native-child",
+            },
+        )
+        kwargs["thread_id" if identity == "codex" else "subagent_id"] = "native-child"
+
+    with _capture_application_query_names(store._engine, store._conv_engine) as query_names:
+        assert getattr(store, operation)(child.id, **kwargs)
+    assert query_names
+    assert set(query_names) == {f"omnigent.conversation_store.{operation}"}
