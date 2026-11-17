@@ -1,9 +1,10 @@
+// Modified for Triune.
+import { ContentSkeleton } from "@/components/ui/loading";
 // Triune additions: PolyForm Noncommercial 1.0.0; see LICENSING.md.
 import { useEffect, useRef, type ReactNode } from "react";
 import { queryOptions, useQuery } from "@tanstack/react-query";
 import type { AttachmentPreviewRequest } from "@/components/ChatAttachment";
 import { Button } from "@/components/ui/button";
-import { Spinner } from "@/components/ui/spinner";
 import { authenticatedFetch } from "@/lib/identity";
 import { toast } from "@/lib/notifications";
 import { apiErrorFromResponse } from "@/lib/sessionsApi";
@@ -46,7 +47,7 @@ export function CapturedFileGate({
       toast.error("Could not prepare file", { description: String(capture.error) });
     }
   }, [capture.error]);
-  if (capture.isSuccess) return children;
+  if (capture.isSuccess || capture.data !== undefined) return children;
   return (
     <div className="flex h-full flex-col items-center justify-center gap-2 p-4 text-sm text-muted-foreground">
       {capture.isError ? (
@@ -57,10 +58,7 @@ export function CapturedFileGate({
           </Button>
         </>
       ) : (
-        <div role="status" className="flex items-center gap-2">
-          <Spinner aria-hidden />
-          Preparing file…
-        </div>
+        <ContentSkeleton label="Preparing file…" rows={5} />
       )}
     </div>
   );

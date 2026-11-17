@@ -1,3 +1,4 @@
+import { ContentSkeleton } from "@/components/ui/loading";
 // Modified for Triune.
 import {
   FolderDotIcon,
@@ -1065,10 +1066,7 @@ export function WorkspacePicker({
             data-testid="workspace-picker-listing"
           >
             {navigationPending && (
-              <div className="flex items-center gap-2 px-5 py-3 text-sm text-muted-foreground">
-                <Spinner className="size-4" />
-                Loading folder…
-              </div>
+              <ContentSkeleton label="Loading folder…" rows={3} className="px-5 py-3" />
             )}
             {error !== null && error !== undefined && !navigationPending && (
               <div
@@ -1161,10 +1159,7 @@ export function WorkspacePicker({
                   </span>
                 </label>
                 {worktreesPending && linkedWorktrees.length === 0 && (
-                  <div className="flex items-center gap-2 px-2 py-2 text-sm text-muted-foreground">
-                    <Spinner className="size-4" />
-                    Loading worktrees…
-                  </div>
+                  <ContentSkeleton label="Loading worktrees…" rows={3} className="px-2 py-2" />
                 )}
                 {!worktreesPending && worktreesError && linkedWorktrees.length === 0 && (
                   <div className="px-2 py-2 text-sm text-muted-foreground">

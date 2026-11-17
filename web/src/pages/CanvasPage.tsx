@@ -1,3 +1,5 @@
+// Modified for Triune.
+import { ContentSkeleton } from "@/components/ui/loading";
 import { TooltipButton } from "@/components/ui/tooltip";
 /**
  * Canvas page (``/canvas``) — every top-level session as a draggable card on
@@ -557,7 +559,7 @@ function CanvasSurface({ selectedSessionId }: { selectedSessionId?: string | nul
             </Button>
           </div>
         ) : (
-          <Spinner className="size-5 text-muted-foreground" aria-label="Loading Canvas" />
+          <ContentSkeleton label="Loading Canvas…" rows={6} />
         )}
       </div>
     );

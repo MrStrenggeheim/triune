@@ -1,3 +1,5 @@
+// Modified for Triune.
+import { ContentSkeleton } from "@/components/ui/loading";
 import {
   createContext,
   lazy,
@@ -12,7 +14,6 @@ import {
   type CSSProperties,
   type ReactNode,
 } from "react";
-import { Spinner } from "@/components/ui/spinner";
 import { useIsMobileViewport } from "@/hooks/useIsMobileViewport";
 import { useNavigate, useSearchParams } from "@/lib/routing";
 import { cn } from "@/lib/utils";
@@ -169,7 +170,7 @@ export function CanvasWorkspace({
           <Suspense
             fallback={
               <div className="flex flex-1 items-center justify-center">
-                <Spinner aria-label="Loading Canvas" />
+                <ContentSkeleton label="Loading Canvas…" rows={6} />
               </div>
             }
           >

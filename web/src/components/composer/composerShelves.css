@@ -121,7 +121,14 @@
 }
 
 .resource-popup .density-row {
-  padding: 0;
+  padding: var(--popup-item-gap) var(--popup-item-gap) var(--popup-item-gap) 0;
+}
+
+.resource-popup .resource-text {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--popup-text-gap);
 }
 
 .resource-popup > ul {
@@ -157,12 +164,14 @@
 
 .resource-status {
   display: inline-grid;
+  align-items: center;
   background: transparent;
 }
 
 .resource-status-label,
 .resource-stop-label {
   grid-area: 1 / 1;
+  align-self: center;
   justify-self: end;
 }
 

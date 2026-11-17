@@ -1,3 +1,5 @@
+// Modified for Triune.
+import { ContentSkeleton } from "@/components/ui/loading";
 // Post-setup "Your setup is ready" modal: one tab per harness, showing the
 // credential Omnigent adopted and the MCP servers, skills, and plugins found
 // there. Review only: sessions already load these, so nothing is selected.
@@ -21,7 +23,6 @@ import {
   DialogDescription,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   INVENTORY_HARNESS_IDS,
@@ -299,12 +300,7 @@ function ImportContextBody({
 
   let content: ReactNode;
   if (status === "loading") {
-    content = (
-      <EmptyState>
-        <Spinner aria-hidden="true" className="mx-auto mb-2" />
-        {loadingMessage}
-      </EmptyState>
-    );
+    content = <ContentSkeleton label={loadingMessage} rows={4} className="min-h-48" />;
   } else if (status === "offline") {
     content = <EmptyState>{machine} is offline. Reconnect it to review its imports.</EmptyState>;
   } else if (harnesses.length === 0) {

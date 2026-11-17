@@ -110,7 +110,8 @@ describe("SessionImage (standalone, no host fetcher)", () => {
     expect(img.parentElement?.parentElement).toHaveStyle({ width: "512px" });
     expect(img).toHaveClass("w-full", "h-auto", "max-h-64");
     view.rerender(<SessionImage path="/tall" alt="diagram" />);
-    expect(img.parentElement?.parentElement?.style.width).toBe("");
+    expect(img.parentElement?.parentElement).toHaveStyle({ width: "160px", height: "256px" });
+    expect(screen.getByRole("status", { name: "Loading image…" })).toBeVisible();
     Object.defineProperties(img, { naturalWidth: { value: 600 }, naturalHeight: { value: 1200 } });
     fireEvent.load(img);
     expect(img.parentElement?.parentElement).toHaveStyle({ width: "128px" });
@@ -127,8 +128,8 @@ describe("SessionImage (embedded, host fetcher present)", () => {
     // role="status" placeholder (with spinner), not an <img>.
     authenticatedFetch.mockReturnValue(new Promise(() => {}));
     render(<SessionImage path="/p" alt="pic" />);
-    expect(screen.getByRole("status", { name: "Loading image" })).toBeInTheDocument();
-    expect(screen.getByTestId("spinner")).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "Loading image…" })).toBeInTheDocument();
+    expect(screen.queryByTestId("spinner")).toBeNull();
   });
 
   it("renders the object-URL <img> once the blob loads", async () => {

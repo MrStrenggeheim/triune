@@ -1,3 +1,4 @@
+import { OperationStatus } from "@/components/ui/loading";
 // Modified for Triune.
 import { TooltipButton } from "@/components/ui/tooltip";
 /**
@@ -256,8 +257,8 @@ function SetupStepRow({
               the progress caption — kept next to the install step it describes
               rather than stranded at the bottom of the dialog. */}
           {step.kind === "install" && installing ? (
-            <span className="text-sm text-muted-foreground" data-testid="harness-setup-installing">
-              Installing on {host?.name} — this can take a few minutes for larger agents.
+            <span data-testid="harness-setup-installing">
+              <OperationStatus>Installing on {host?.name}…</OperationStatus>
             </span>
           ) : (
             detail && <span className="text-sm text-muted-foreground">{detail}</span>

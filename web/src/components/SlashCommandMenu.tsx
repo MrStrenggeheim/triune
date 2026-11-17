@@ -1,9 +1,10 @@
+// Modified for Triune.
+import { ContentSkeleton } from "@/components/ui/loading";
 import { TooltipButton } from "@/components/ui/tooltip";
 import { useEffect, useRef } from "react";
 import {
   CircleAlertIcon,
   CommandIcon,
-  LoaderCircleIcon,
   PlugIcon,
   TriangleAlertIcon,
   WandSparklesIcon,
@@ -287,10 +288,9 @@ function McpSignInAction({
       type="button"
       data-testid={`mcp-sign-in-${server.name}`}
       disabled={disabled}
-      className="flex shrink-0 items-center gap-1 rounded-md border border-border px-2 py-0.5 text-xs text-foreground hover:bg-muted disabled:opacity-60 dark:hover:bg-muted/50"
+      className="flex min-w-20 shrink-0 items-center justify-center gap-1 rounded-md border border-border px-2 py-0.5 text-xs text-foreground hover:bg-muted disabled:opacity-60 dark:hover:bg-muted/50"
       onClick={() => onSignIn(server.name)}
     >
-      {signingIn && <LoaderCircleIcon aria-hidden="true" className="size-3 animate-spin" />}
       {signingIn ? "Signing in…" : "Sign in"}
     </TooltipButton>
   );
@@ -551,13 +551,7 @@ export function SlashCommandMenu({
         ))}
         {(skillRows.length > 0 || skillsStatus != null) && sectionHeader("Skills")}
         {skillsStatus === "loading" && (
-          <div
-            role="status"
-            className="flex items-center gap-2 px-1.5 py-1 text-ui text-muted-foreground"
-          >
-            <LoaderCircleIcon aria-hidden="true" className="size-3.5 shrink-0 animate-spin" />
-            Loading skills…
-          </div>
+          <ContentSkeleton label="Loading skills…" rows={2} className="px-1.5 py-1" />
         )}
         {skillsStatus === "error" && (
           <div role="status" className="px-1.5 py-1 text-ui text-muted-foreground">

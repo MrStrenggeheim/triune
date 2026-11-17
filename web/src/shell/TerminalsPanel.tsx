@@ -1,3 +1,5 @@
+// Modified for Triune.
+import { ContentSkeleton } from "@/components/ui/loading";
 import { TooltipButton } from "@/components/ui/tooltip";
 import { usePanelEscapeClose } from "@/hooks/usePanelEscapeClose";
 import { MobileWorkspaceTabs } from "./MobileWorkspace";
@@ -247,7 +249,7 @@ export function TerminalsPanel({
             // across same-shape sessions (e.g. `terminal_claude_main`), so id
             // alone reuses the xterm mount and shows stale scrollback.
             <div key={`${conversationId}:${activeTerminal.id}`} className="flex h-full flex-col">
-              <Suspense fallback={null}>
+              <Suspense fallback={<ContentSkeleton label="Loading terminal…" rows={5} />}>
                 <TerminalView
                   sessionId={conversationId}
                   terminalId={activeTerminal.id}

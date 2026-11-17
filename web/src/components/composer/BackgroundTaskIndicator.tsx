@@ -1,3 +1,4 @@
+import { ContentSkeleton } from "@/components/ui/loading";
 // Modified for Triune.
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -168,6 +169,8 @@ function BackgroundTasksList({
             </li>
           ))}
         </ul>
+      ) : resources.isLoading ? (
+        <ContentSkeleton label="Loading shell details…" rows={3} />
       ) : (
         <p className="density-row text-sm text-muted-foreground">
           {count} background task{count === 1 ? "" : "s"} — details unavailable

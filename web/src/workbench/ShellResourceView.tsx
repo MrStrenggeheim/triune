@@ -1,3 +1,4 @@
+import { ContentSkeleton } from "@/components/ui/loading";
 // Triune additions: PolyForm Noncommercial 1.0.0; see LICENSING.md.
 // Required Notice: Copyright 2026 MrStrenggeheim. Triune (https://github.com/MrStrenggeheim/triune).
 import { RefreshCwIcon } from "lucide-react";
@@ -62,9 +63,12 @@ export function ShellResourceView({
         <HeaderActionButton
           aria-label="Refresh shell output"
           disabled={!active || !validIdentity || resource.isFetching}
+          aria-busy={resource.isFetching || undefined}
           onClick={() => void resource.refetch()}
         >
-          <RefreshCwIcon className="size-3.5" />
+          <RefreshCwIcon
+            className={`size-3.5 ${resource.isFetching ? "animate-spin motion-reduce:animate-none" : ""}`}
+          />
         </HeaderActionButton>
       </header>
       {!validIdentity && !resource.error && (
@@ -77,9 +81,7 @@ export function ShellResourceView({
           Shell output is unavailable. Use Refresh to try again.
         </p>
       ) : resource.isLoading ? (
-        <p role="status" className="p-3 text-sm text-muted-foreground">
-          Loading shell output…
-        </p>
+        <ContentSkeleton label="Loading shell output…" rows={3} />
       ) : (
         <RetainedTerminalOutput terminal={{ output: task?.output ?? "" }} />
       )}

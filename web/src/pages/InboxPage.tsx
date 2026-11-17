@@ -1,3 +1,4 @@
+import { OperationStatus, ContentSkeleton } from "@/components/ui/loading";
 // Modified for Triune.
 import { TooltipButton } from "@/components/ui/tooltip";
 /**
@@ -55,7 +56,6 @@ import {
   CircleCheckIcon,
   HandIcon,
   InboxIcon,
-  Loader2Icon,
   SquarePenIcon,
   type LucideIcon,
 } from "lucide-react";
@@ -656,12 +656,7 @@ export function InboxPage() {
         </div>
       )}
 
-      {assembling && visibleCount === 0 && (
-        <div className="flex items-center gap-2 py-12 text-ui text-muted-foreground">
-          <Loader2Icon className="size-4 animate-spin" />
-          Loading inbox…
-        </div>
-      )}
+      {assembling && visibleCount === 0 && <ContentSkeleton label="Loading inbox…" rows={5} />}
 
       {!assembling && failedSessionCount === 0 && visibleCount === 0 && (
         <div className="flex flex-col items-center gap-2 py-16 text-center">
@@ -684,10 +679,7 @@ export function InboxPage() {
           ...group.entries.map(renderEntry),
         ])}
         {assembling && visibleCount > 0 && (
-          <div className="flex items-center gap-2 py-2 text-sm text-muted-foreground">
-            <Loader2Icon className="size-3.5 animate-spin" />
-            Checking remaining sessions…
-          </div>
+          <OperationStatus className="py-2">Checking remaining sessions…</OperationStatus>
         )}
       </InboxReaderAnchor>
       {hasNextPage && (
@@ -696,9 +688,10 @@ export function InboxPage() {
           disabled={conversationsQuery.isFetching}
           onClick={() => void fetchNextPage()}
           componentId="inbox.load_more"
+          loading={isFetchingNextPage}
           className="mt-4"
         >
-          {isFetchingNextPage ? "Loading…" : "Load more sessions"}
+          Load more sessions
         </Button>
       )}
     </PageScroll>

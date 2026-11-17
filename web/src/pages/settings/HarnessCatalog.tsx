@@ -1,3 +1,5 @@
+// Modified for Triune.
+import { ContentSkeleton } from "@/components/ui/loading";
 import { TooltipButton } from "@/components/ui/tooltip";
 import * as AccordionPrimitive from "radix-ui/accordion";
 import { useMcpServerTools, type McpServerTools } from "@/hooks/useMcpServerTools";
@@ -160,7 +162,7 @@ export function HarnessCatalog({
 
   const ownList = (kind: CatalogKind, count: number, list: ReactNode) => {
     const noun = KINDS.find((k) => k.id === kind)?.noun;
-    if (loading) return <Notice>Loading {noun}…</Notice>;
+    if (loading) return <ContentSkeleton label={`Loading ${noun}…`} rows={4} />;
     if (kind === "mcps" && inventory.mcpUnsupported)
       return <Notice>Please update host {host.name} to list MCP servers.</Notice>;
     if (failed(kind))
@@ -433,7 +435,7 @@ function SkillPage({
       <BackButton label={backLabel} onClick={onBack} />
       <h1 className="settings-page-title truncate text-2xl font-semibold">{name}</h1>
       {query.isPending ? (
-        <Notice>Loading skill contents…</Notice>
+        <ContentSkeleton label="Loading skill contents…" rows={5} />
       ) : query.error ? (
         <Notice>
           {query.error instanceof ApiError && query.error.status === 501

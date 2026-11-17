@@ -1,3 +1,4 @@
+// Modified for Triune.
 import {
   act,
   cleanup,
@@ -162,7 +163,7 @@ describe("VideoPlayer", () => {
     expect(screen.getByRole("button", { name: "Play video: Feature demo" })).toBeVisible();
   });
 
-  it("removes cached chapters on a query error and restores them after recovery", async () => {
+  it("retains loaded chapters during a refresh error and refreshes them after recovery", async () => {
     const data = { encoding: "utf-8", content: "WEBVTT\n" };
     vi.mocked(useFileContent).mockReturnValue({
       data,
@@ -181,10 +182,9 @@ describe("VideoPlayer", () => {
     } as ReturnType<typeof useFileContent>);
     rerender(<VideoPlayer {...props} />);
 
-    expect(screen.queryByRole("group", { name: "Recording actions: Feature demo" })).toBeNull();
-    expect(screen.queryByRole("button", { name: /Open the app/ })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Download recording: Feature demo" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Download video: Feature demo" })).toBeVisible();
+    expect(screen.getByRole("group", { name: "Recording actions: Feature demo" })).toBeVisible();
+    expect(screen.getByRole("button", { name: /Open the app/ })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Download recording: Feature demo" })).toBeVisible();
     expect(container.querySelector("video")).toBe(video);
     expect(video.pause).not.toHaveBeenCalled();
     expect(parseVideoChapters).toHaveBeenCalledOnce();

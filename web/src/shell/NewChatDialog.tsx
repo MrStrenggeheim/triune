@@ -1,3 +1,4 @@
+import { ContentSkeleton, OperationStatus } from "@/components/ui/loading";
 // Modified for Triune.
 import { readDefaultModel, availableDefaultModel } from "@/lib/defaultModelPreferences";
 import { useLoadedConversations } from "@/hooks/useSidebarData";
@@ -512,11 +513,7 @@ function HostOption({
 }
 
 function ConnectingText({ className }: { className?: string }) {
-  return (
-    <span className={className}>
-      Connecting<span className="animate-pulse">…</span>
-    </span>
-  );
+  return <OperationStatus className={className}>Connecting…</OperationStatus>;
 }
 
 /**
@@ -1143,7 +1140,13 @@ function SandboxRepoBranchSelect({
             data-testid="new-chat-landing-repo-branch-search"
           />
           <CommandList>
-            <CommandEmpty>{isPending ? "Loading branches…" : "No branches found."}</CommandEmpty>
+            <CommandEmpty>
+              {isPending ? (
+                <ContentSkeleton label="Loading branches…" rows={3} />
+              ) : (
+                "No branches found."
+              )}
+            </CommandEmpty>
             <CommandGroup>
               <CommandItem
                 value={defaultLabel}
@@ -1335,7 +1338,7 @@ function NewChatPickerLoading({
       data-testid={testId}
       className={cn("flex h-8 items-center px-2 text-muted-foreground md:h-7", className)}
     >
-      <Spinner className="size-4" aria-hidden="true" />
+      <span aria-hidden="true" className="h-4 w-24 rounded bg-muted" />
     </span>
   );
 }
@@ -4114,7 +4117,7 @@ export function NewChatLandingScreen({ embedded }: { embedded?: EmbeddedNewChat 
                 />
               )}
               {pickerModelsLoading && pickerModelOptions.length === 0 && (
-                <div className="px-2 py-1 text-xs text-muted-foreground">Loading models…</div>
+                <ContentSkeleton label="Loading models…" rows={3} />
               )}
               {!pickerModelsLoading && pickerModelOptions.length === 0 && (
                 <div className="whitespace-normal px-2 py-1 text-xs text-muted-foreground">
@@ -6556,7 +6559,13 @@ export function NewChatLandingScreen({ embedded }: { embedded?: EmbeddedNewChat 
             <span className="flex size-4 shrink-0 items-center justify-center">
               <MonitorCloudIcon className="size-3.5 text-muted-foreground" />
             </span>
-            <span>{connectingArca ? "Connecting to Arca…" : "Run on Arca"}</span>
+            <span>
+              {connectingArca ? (
+                <OperationStatus>Connecting to Arca…</OperationStatus>
+              ) : (
+                "Run on Arca"
+              )}
+            </span>
           </DropdownMenuItem>
         )}
         {hasCloudOptions && <DropdownMenuSeparator />}

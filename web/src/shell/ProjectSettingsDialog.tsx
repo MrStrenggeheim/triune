@@ -1,3 +1,5 @@
+// Modified for Triune.
+import { ContentSkeleton } from "@/components/ui/loading";
 import { TooltipButton } from "@/components/ui/tooltip";
 // Project settings dialog: edits the stored defaults (`config`) the new-session
 // composer prefills (host, workspace, agent, worktree and base branch, and a model
@@ -359,7 +361,14 @@ export function ProjectSettingsDialog({
             a starting point you can change per session; leave a field blank for no default.
           </DialogDescription>
         </DialogHeader>
-        <form onSubmit={onSubmit} className="flex flex-col gap-4">
+        {isLoading && !stored && (
+          <ContentSkeleton label="Loading project configuration…" rows={4} />
+        )}
+        <form
+          onSubmit={onSubmit}
+          className="flex flex-col gap-4"
+          aria-busy={isLoading || undefined}
+        >
           <Field label="Host" hint="Where new sessions run by default">
             <Select
               value={hostId}

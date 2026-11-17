@@ -1,3 +1,4 @@
+import { OperationStatus } from "@/components/ui/loading";
 // Modified for Triune.
 import {
   closestCenter,
@@ -202,7 +203,7 @@ function QueuedRow({
         )}
       </div>
       {message.serverState === "saving" && (
-        <span className="shrink-0 text-xs text-muted-foreground">Saving…</span>
+        <OperationStatus className="shrink-0 text-xs">Saving…</OperationStatus>
       )}
       {message.deliveryError && (
         <span

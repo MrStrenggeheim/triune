@@ -1,3 +1,5 @@
+// Modified for Triune.
+import { ContentSkeleton } from "@/components/ui/loading";
 import { useWorkbenchWorkspace, queryIdentity } from "@/lib/workbenchWorkspace";
 // The Summary tab's Labels section: PR label chips and, for editors, a picker over
 // the repository's labels. Pending edits show at once and settle to what the provider reports.
@@ -106,9 +108,7 @@ function PullRequestLabelPicker({
           <CommandInput placeholder="Filter labels…" />
           <CommandList>
             {repoLabels.isPending ? (
-              <p role="status" className="py-6 text-center text-ui text-muted-foreground">
-                Loading labels…
-              </p>
+              <ContentSkeleton label="Loading labels…" rows={3} />
             ) : repoLabels.isError ? (
               <p role="alert" className="px-2 py-6 text-center text-ui text-destructive">
                 {repoLabels.error.message}

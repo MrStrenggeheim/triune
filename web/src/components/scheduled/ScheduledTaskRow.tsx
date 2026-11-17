@@ -1,3 +1,4 @@
+// Modified for Triune.
 // One row in the Tasks list, rendered as a CARD (border + subtle background +
 // rounded corners + internal padding; the list stacks these with a gap). Layout:
 // bold task title on line 1 (+ a small "Paused" pill when paused), a single
@@ -123,10 +124,12 @@ export function ScheduledTaskRow({
             aria-label={`Actions for ${task.name}`}
             data-testid="task-row-menu"
             disabled={busy}
+            loading={busy}
             className={cn(
               "-translate-y-1/2 absolute top-1/2 right-3 transition-opacity",
               "md:opacity-0 md:group-hover:opacity-100 md:group-has-[:focus-visible]:opacity-100",
               "md:aria-expanded:opacity-100",
+              busy && "md:opacity-100",
             )}
           >
             <MoreHorizontalIcon className="size-4" />

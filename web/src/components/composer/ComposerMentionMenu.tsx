@@ -1,3 +1,4 @@
+import { ContentSkeleton } from "@/components/ui/loading";
 // Modified for Triune.
 import { useEffect, useState, useRef, type ComponentProps } from "react";
 import { FileMentionMenu } from "@/components/FileMentionMenu";
@@ -301,11 +302,7 @@ export function ComposerMentionMenu({
           More chats
         </Button>
       )}
-      {loading && !files.loading && (
-        <p role="status" className="p-2 text-sm">
-          Loading…
-        </p>
-      )}
+      {loading && !files.loading && <ContentSkeleton label="Loading mentions…" rows={3} />}
       {error && (
         <p role="alert" className="p-2 text-sm text-destructive">
           {error}

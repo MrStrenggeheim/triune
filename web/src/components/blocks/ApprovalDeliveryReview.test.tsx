@@ -143,7 +143,11 @@ describe("original approval delivery review", () => {
     );
     const view = render(<ApprovalCard {...props} runnerDelivery={delivery} />);
     fireEvent.click(screen.getByRole("button", { name: "Recheck delivery" }));
-    fireEvent.click(screen.getByRole("button", { name: "Checking delivery…" }));
+    expect(screen.getByRole("button", { name: "Recheck delivery" })).toHaveAttribute(
+      "aria-busy",
+      "true",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Recheck delivery" }));
     expect(authenticatedFetch).toHaveBeenCalledTimes(1);
     const signal = vi.mocked(authenticatedFetch).mock.calls[0]![1]!.signal!;
     view.rerender(

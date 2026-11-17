@@ -22,6 +22,41 @@ afterEach(() => {
 });
 
 describe("ApprovalCard — binary approve/reject", () => {
+  it("shows dispatch progress only while an asynchronous decision is being delivered", async () => {
+    let settle!: () => void;
+    const onSubmit = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          settle = resolve;
+        }),
+    );
+    render(
+      <ApprovalCard
+        elicitationId="async-approval"
+        message="Approve this action?"
+        phase="tool_call"
+        policyName="approval"
+        contentPreview=""
+        requestedSchema={{}}
+        status="pending"
+        response={null}
+        onSubmit={onSubmit}
+      />,
+    );
+    const approve = screen.getByRole("button", { name: "Approve" });
+    const reject = screen.getByRole("button", { name: "Reject" });
+    expect(screen.queryByText("Sending decision…")).toBeNull();
+    fireEvent.click(approve);
+    expect(screen.getByText("Sending decision…")).toBeInTheDocument();
+    expect(approve).toBeDisabled();
+    expect(reject).toBeDisabled();
+    fireEvent.click(reject);
+    expect(onSubmit).toHaveBeenCalledExactlyOnceWith("async-approval", "accept");
+    await act(async () => settle());
+    expect(screen.queryByText("Sending decision…")).toBeNull();
+    expect(approve).toBeEnabled();
+  });
+
   it("renders Approve and Reject buttons when requestedSchema has no enum", () => {
     // Policy-ASK and PermissionRequest cards arrive with an empty
     // schema (binary decision). The card should render the

@@ -1,3 +1,4 @@
+// Modified for Triune.
 /**
  * First-run "Create admin" page (shown when ``/v1/info`` reports
  * ``needs_setup``).
@@ -146,11 +147,12 @@ export function SetupPage() {
           )}
 
           <Button
+            loading={submitting}
             type="submit"
             className="w-full"
             disabled={submitting || password.length < MIN_PASSWORD_LENGTH || username.length === 0}
           >
-            {submitting ? "Creating…" : "Create admin"}
+            Create admin
           </Button>
         </form>
       </div>

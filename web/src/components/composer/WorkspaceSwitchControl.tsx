@@ -1,3 +1,5 @@
+// Modified for Triune.
+import { OperationStatus } from "@/components/ui/loading";
 import { useContext, useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "@/lib/routing";
@@ -71,6 +73,7 @@ function WorkspaceSwitchState({
   const [hostTarget, setHostTarget] = useState<{ hostId: string; path: string } | null>(null);
   const { switchHostDisabledReason } = useSessionActionRestrictions(sessionId, { hostId });
   const [checking, setChecking] = useState(false);
+  const [awaitingDecision, setAwaitingDecision] = useState(false);
   const prepareSequence = useRef(0);
   useEffect(
     () => () => {
@@ -285,12 +288,14 @@ function WorkspaceSwitchState({
         return false;
       }
       if (fileContext?.beforeWorkspaceChange) {
+        setAwaitingDecision(true);
         const approved = await new Promise<boolean>((resolve) => {
           fileContext.beforeWorkspaceChange!(
             () => resolve(true),
             () => resolve(false),
           );
         });
+        setAwaitingDecision(false);
         if (!approved) return false;
       }
       if (sequence !== prepareSequence.current) return false;
@@ -303,6 +308,7 @@ function WorkspaceSwitchState({
       toast.error("Could not change workspace", { description: message });
     } finally {
       setChecking(false);
+      setAwaitingDecision(false);
     }
     return false;
   }
@@ -372,12 +378,17 @@ function WorkspaceSwitchState({
           {operation?.blocked ? "Previous folder: " : "Current folder: "}
           {operation?.blocked ? operation.previous_workspace : (query.data?.workspace ?? workspace)}
         </p>
-        {changing && (
+        {awaitingDecision && (
           <p role="status" className="text-sm text-muted-foreground">
+            Review unsaved changes to continue.
+          </p>
+        )}
+        {changing && !awaitingDecision && (
+          <OperationStatus>
             {checking
               ? "Checking folder…"
               : (PHASES[operation?.phase ?? ""] ?? "Changing workspace…")}
-          </p>
+          </OperationStatus>
         )}
         {(error || operation?.error) && (
           <p role="alert" className="text-sm text-destructive">
@@ -396,6 +407,7 @@ function WorkspaceSwitchState({
             type="button"
             variant="outline"
             disabled={changing}
+            loading={changing}
             onClick={() => void change(operation!.previous_workspace, operation!.id)}
           >
             Restore original

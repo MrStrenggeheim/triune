@@ -1,3 +1,4 @@
+import { ContentSkeleton } from "@/components/ui/loading";
 // Modified for Triune.
 // Standalone entry for the Electron server selector V2.
 //
@@ -8,7 +9,6 @@
 
 import { type CSSProperties, useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Spinner } from "./components/ui/spinner";
 import type { Runner } from "./pages/onboarding/RunnerStep";
 import { ServerSelectorV2, type ServerSelectorV2Setup } from "./pages/onboarding/ServerSelectorV2";
 import { maybeMockSetup } from "./pages/onboarding/mockSetup";
@@ -366,7 +366,7 @@ export function BridgeSetupApp() {
           className="grid min-h-screen place-items-center"
           style={{ background: "var(--onboarding-wizard-background)" }}
         >
-          <Spinner className="size-6 text-muted-foreground animate-in fade-in delay-300 fill-mode-backwards" />
+          <ContentSkeleton label="Checking local setup…" className="max-w-xl" rows={5} />
         </div>
       )}
     </>

@@ -1,3 +1,5 @@
+// Modified for Triune.
+import { ContentSkeleton } from "@/components/ui/loading";
 import { TooltipButton } from "@/components/ui/tooltip";
 // Emoji icon picker for projects. Two exports:
 //   - `EmojiPicker`: a themed emoji-mart picker, code-split so its ~600KB
@@ -26,7 +28,9 @@ const loadEmojiData = async () => (await import("@emoji-mart/data")).default;
 export function EmojiPicker({ onSelect }: { onSelect: (native: string) => void }) {
   const mode = useResolvedThemeMode();
   return (
-    <Suspense fallback={<div className="h-[420px] w-[352px]" aria-hidden />}>
+    <Suspense
+      fallback={<ContentSkeleton label="Loading icons…" className="h-[420px] w-[352px]" rows={8} />}
+    >
       <Picker
         data={loadEmojiData}
         onEmojiSelect={(emoji: { native: string }) => onSelect(emoji.native)}

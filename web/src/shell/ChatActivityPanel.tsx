@@ -1,3 +1,4 @@
+import { ContentSkeleton } from "@/components/ui/loading";
 // Modified for Triune.
 import { useAgentPresentation } from "@/hooks/useAgentPresentation";
 import {
@@ -553,11 +554,14 @@ function ChatActivityContent({
                     </li>
                   ))}
                 </ul>
-                {!children.length && (
-                  <p role="status" className="p-2 text-sm text-muted-foreground">
-                    {agents.isLoading ? "Loading agents…" : "No agents in loaded history."}
-                  </p>
-                )}
+                {!children.length &&
+                  (agents.isLoading ? (
+                    <ContentSkeleton label="Loading agents…" rows={3} />
+                  ) : (
+                    <p role="status" className="p-2 text-sm text-muted-foreground">
+                      No agents in loaded history.
+                    </p>
+                  ))}
                 {highlightedAgent &&
                   !children.some((child) => child.id === highlightedAgent) &&
                   !agents.isLoading && (
@@ -592,7 +596,10 @@ function ChatActivityContent({
                     />
                   ))}
                 </ul>
-                {!legacyGroups.length && !resourceShells.length && (
+                {!legacyGroups.length && !resourceShells.length && activity.isLoading && (
+                  <ContentSkeleton label="Loading shells…" rows={3} />
+                )}
+                {!legacyGroups.length && !resourceShells.length && !activity.isLoading && (
                   <p role="status" className="p-2 text-sm text-muted-foreground">
                     {activity.isLoading
                       ? "Loading shells…"
@@ -620,13 +627,7 @@ function ChatActivityContent({
           </>
         )}
         {viewMode === "graph" && active && (
-          <Suspense
-            fallback={
-              <p role="status" className="p-3 text-sm">
-                Loading graph…
-              </p>
-            }
-          >
+          <Suspense fallback={<ContentSkeleton label="Loading graph…" rows={3} />}>
             <SubagentsGraphView conversationId={conversationId} rootSessionId={rootSessionId} />
           </Suspense>
         )}

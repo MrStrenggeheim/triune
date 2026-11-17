@@ -1,3 +1,5 @@
+// Modified for Triune.
+import { ContentSkeleton } from "@/components/ui/loading";
 import { usePanelFolder } from "@/lib/panelFolder";
 import { useWorkbenchWorkspace } from "@/lib/workbenchWorkspace";
 import { ChatActivityPanel, type ChatActivityTerminalTarget } from "./ChatActivityPanel";
@@ -665,7 +667,7 @@ function RailTerminalView({
   }
   return (
     <div key={terminal.id} className="flex h-full min-h-0 flex-col">
-      <Suspense fallback={null}>
+      <Suspense fallback={<ContentSkeleton label="Loading terminal…" rows={5} />}>
         <TerminalView
           sessionId={conversationId}
           terminalId={terminal.id}

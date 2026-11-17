@@ -1,3 +1,4 @@
+import { ContentSkeleton } from "@/components/ui/loading";
 // Modified for Triune.
 import { panelFolderKey, useResourceViewId } from "@/lib/panelFolder";
 import { useWorkbenchWorkspace } from "@/lib/workbenchWorkspace";
@@ -944,7 +945,7 @@ function FolderTreeInner({
   // When a search query is active, render a flat filtered list instead of the tree.
   if (searchQuery.trim().length > 0) {
     if (isSearching && !searchResults) {
-      return <p className="px-2 py-1 text-muted-foreground text-sm">Searching…</p>;
+      return <ContentSkeleton label="Searching folders…" rows={3} />;
     }
     if (isSearchError) {
       return (
@@ -1018,7 +1019,7 @@ function FolderTreeInner({
   }
 
   if (isLoading && !files) {
-    return <p className="px-2 py-1 text-muted-foreground text-sm">Loading…</p>;
+    return <ContentSkeleton label="Loading folders…" rows={3} />;
   }
   if (isError && !files) {
     // Runner not connected. If it went offline after being up (host
@@ -1070,13 +1071,17 @@ function FolderTreeInner({
               )}
             >
               {row.kind === "placeholder" ? (
-                <p
+                <div
                   className="relative py-1 pr-2 text-muted-foreground text-sm"
                   style={{ paddingLeft: `${indentFor(row.depth)}px` }}
                 >
                   <IndentGuides depth={row.depth} />
-                  {row.text}
-                </p>
+                  {row.key.startsWith("loading:") ? (
+                    <ContentSkeleton label={row.text} rows={1} className="p-0" />
+                  ) : (
+                    row.text
+                  )}
+                </div>
               ) : (
                 <TreeNodeRow
                   node={row.node}

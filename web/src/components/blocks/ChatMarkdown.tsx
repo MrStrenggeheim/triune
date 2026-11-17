@@ -1,3 +1,5 @@
+// Modified for Triune.
+import { ContentSkeleton } from "@/components/ui/loading";
 import {
   ChatAttachmentContext,
   ChatAttachment,
@@ -623,7 +625,7 @@ export function FilePathAwareMessageResponse({
           part.kind === "artifact" ? (
             <Suspense
               key={`artifact:${part.offset}`}
-              fallback={<p role="status">Loading artifact…</p>}
+              fallback={<ContentSkeleton label="Loading artifact…" rows={3} />}
             >
               <UploadedArtifact sessionId={sessionId} reference={part.reference} />
             </Suspense>

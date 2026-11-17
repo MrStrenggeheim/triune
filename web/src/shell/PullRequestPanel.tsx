@@ -1,3 +1,4 @@
+import { ContentSkeleton } from "@/components/ui/loading";
 // Modified for Triune.
 import { useScrollRestore } from "./useScrollRestore";
 import {
@@ -57,7 +58,6 @@ import {
   GitBranchIcon,
   GitPullRequestIcon,
   KeyRoundIcon,
-  Loader2Icon,
   type LucideIcon,
   PanelLeftCloseIcon,
   PanelLeftOpenIcon,
@@ -514,10 +514,7 @@ function PullRequestFileSection({
       {collapsed ? null : pureRename ? (
         <div className="p-4 text-ui text-muted-foreground">File renamed without changes.</div>
       ) : !seen ? (
-        <div className="flex items-center justify-center gap-2 p-6 text-ui text-muted-foreground">
-          <Loader2Icon className="size-4 animate-spin" />
-          Loading diff…
-        </div>
+        <ContentSkeleton label="Loading diff…" rows={5} />
       ) : fileDiff && fileDiff.unifiedLineCount > LARGE_DIFF_THRESHOLD && !showLargeDiff ? (
         <div className="flex items-center gap-3 p-4 text-ui text-muted-foreground">
           Large diff — {fileDiff.unifiedLineCount.toLocaleString()} lines
@@ -1627,12 +1624,7 @@ function PullRequestPanelDetails({
   });
   switch (panelState.kind) {
     case "loading":
-      return (
-        <PanelMessage>
-          <Loader2Icon className="size-5 animate-spin" />
-          Loading pull requests…
-        </PanelMessage>
-      );
+      return <ContentSkeleton label="Loading pull requests…" rows={5} />;
     case "runner-offline":
       return (
         <PanelMessage>
@@ -1986,9 +1978,7 @@ function PullRequestPanelDetails({
                   className="absolute inset-y-0 right-0 z-10 w-1 cursor-col-resize transition-colors hover:bg-primary/30 active:bg-primary/50"
                 />
                 {changes.isLoading ? (
-                  <div className="flex items-center justify-center p-4 text-muted-foreground">
-                    <Loader2Icon className="size-4 animate-spin" />
-                  </div>
+                  <ContentSkeleton label="Loading changed files…" rows={4} />
                 ) : changes.error ? (
                   <p className="px-2 py-1 text-ui text-muted-foreground">
                     {changes.error instanceof RunnerOfflineError
@@ -2042,10 +2032,7 @@ function PullRequestPanelDetails({
               ) : files.length === 0 || prDiff.isLoading ? (
                 <PanelMessage>
                   {changes.isLoading || prDiff.isLoading ? (
-                    <>
-                      <Loader2Icon className="size-5 animate-spin" />
-                      Loading changes…
-                    </>
+                    <ContentSkeleton label="Loading changes…" rows={5} />
                   ) : changes.data?.available === false ||
                     changes.data?.has_more ||
                     changes.data?.warning ? (

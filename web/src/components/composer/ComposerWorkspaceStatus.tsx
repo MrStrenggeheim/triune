@@ -1,5 +1,6 @@
+// Modified for Triune.
 import type { ReactNode } from "react";
-import { FolderIcon, GitForkIcon } from "lucide-react";
+import { FolderIcon, GitForkIcon, Loader2Icon } from "lucide-react";
 
 import { COMPOSER_WORKSPACE_COLLAPSED_LABEL_CLASS } from "./ChatComposer";
 import type { ComposerBranchState } from "@/hooks/useComposerGitStatus";
@@ -73,7 +74,8 @@ export function ComposerWorkspaceStatus({
       )}
       {showWorktree ? (
         <WorkspaceStatusItem
-          icon={GitForkIcon}
+          icon={branchState === "loading" ? Loader2Icon : GitForkIcon}
+          pending={branchState === "loading"}
           label={branchText}
           title={
             isWorktree && worktreePath ? `Worktree: ${worktreePath}. ${branchTitle}` : branchTitle
@@ -92,12 +94,14 @@ function WorkspaceStatusItem({
   title,
   ariaLabel,
   testId,
+  pending = false,
 }: {
   icon: typeof FolderIcon;
   label: string;
   title: string;
   ariaLabel: string;
   testId: string;
+  pending?: boolean;
 }) {
   const item = (
     <span
@@ -106,9 +110,13 @@ function WorkspaceStatusItem({
         COMPOSER_CONTROL_TEXT_CLASS,
       )}
       aria-label={ariaLabel}
+      aria-busy={pending || undefined}
       data-testid={testId}
     >
-      <Icon className="size-3.5 shrink-0" aria-hidden />
+      <Icon
+        className={cn("size-3.5 shrink-0", pending && "animate-spin motion-reduce:animate-none")}
+        aria-hidden
+      />
       <span
         data-workspace-collapse-label=""
         className={cn("min-w-0 truncate text-left", COMPOSER_WORKSPACE_COLLAPSED_LABEL_CLASS)}

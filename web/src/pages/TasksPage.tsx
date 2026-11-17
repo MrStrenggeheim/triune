@@ -1,3 +1,5 @@
+// Modified for Triune.
+import { ContentSkeleton } from "@/components/ui/loading";
 import "../listDensity.css";
 import { TooltipButton } from "@/components/ui/tooltip";
 /**
@@ -13,7 +15,7 @@ import { TooltipButton } from "@/components/ui/tooltip";
  */
 
 import { useMemo, useState } from "react";
-import { ClockIcon, Loader2Icon, SearchIcon, TriangleAlertIcon } from "lucide-react";
+import { ClockIcon, SearchIcon, TriangleAlertIcon } from "lucide-react";
 import { PageScroll } from "@/components/PageScroll";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -228,10 +230,7 @@ export function TasksPage() {
           </Button>
         </div>
       ) : isLoading ? (
-        <div className="flex items-center gap-2 py-12 text-ui text-muted-foreground">
-          <Loader2Icon className="size-4 animate-spin" />
-          Loading automations…
-        </div>
+        <ContentSkeleton label="Loading automations…" rows={5} />
       ) : filtered.length === 0 ? (
         <EmptyState
           hasAny={hasAnyTasks}

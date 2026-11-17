@@ -1,3 +1,5 @@
+// Modified for Triune.
+import { ContentSkeleton } from "@/components/ui/loading";
 import {
   useCallback,
   useEffect,
@@ -437,7 +439,7 @@ export function GridWorkspace({
               componentId="grid.open_sidebar"
             />
           )}
-          <h1>{loading ? "Loading grid…" : "Grid unavailable"}</h1>
+          {loading ? <ContentSkeleton label="Loading grid…" rows={6} /> : <h1>Grid unavailable</h1>}
           <p>{message}</p>
           {canReload && <Button onClick={() => window.location.reload()}>Reload</Button>}
           <Button asChild variant="outline">

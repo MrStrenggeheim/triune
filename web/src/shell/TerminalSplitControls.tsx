@@ -1,3 +1,4 @@
+// Modified for Triune.
 // Header split/close controls for the main terminal view (flag-gated, desktop owners).
 
 import { useState, type ReactNode } from "react";
@@ -133,6 +134,7 @@ export function TerminalSplitControls({
             size="icon-xs"
             aria-label="Close pane"
             disabled={deleteTerminal.isPending}
+            loading={deleteTerminal.isPending}
             onClick={closePane}
             className="border-none text-muted-foreground hover:text-foreground"
           >
@@ -178,6 +180,7 @@ function SplitMenu({
             size="icon-xs"
             aria-label={label}
             disabled={disabled}
+            loading={disabled}
             className="border-none text-muted-foreground hover:text-foreground"
           >
             {icon}

@@ -98,10 +98,12 @@ export function ApprovalDeliveryReview({
             <Button
               size="sm"
               disabled={state === "checking"}
+              loading={state === "checking"}
+              aria-label="Recheck delivery"
               onClick={() => void recheck()}
               componentId="approval.recheck_delivery"
             >
-              {state === "checking" ? "Checking delivery…" : "Recheck delivery"}
+              Recheck delivery
             </Button>
           )}
           <Dialog>

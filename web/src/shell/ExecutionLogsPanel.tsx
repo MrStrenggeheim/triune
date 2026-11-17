@@ -1,3 +1,5 @@
+// Modified for Triune.
+import { OperationStatus, ContentSkeleton } from "@/components/ui/loading";
 import { TooltipButton } from "@/components/ui/tooltip";
 import { usePanelEscapeClose } from "@/hooks/usePanelEscapeClose";
 import { MobileWorkspaceTabs } from "./MobileWorkspace";
@@ -289,7 +291,7 @@ function SessionItemsList({ sessionId }: { sessionId: string }) {
   }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
   if (isLoading) {
-    return <div className="text-muted-foreground text-sm">Loading…</div>;
+    return <ContentSkeleton label="Loading execution history…" rows={3} />;
   }
   if (error) {
     return <div className="text-destructive text-sm">Failed to load items: {error.message}</div>;
@@ -307,7 +309,7 @@ function SessionItemsList({ sessionId }: { sessionId: string }) {
       ))}
       {hasNextPage && (
         <div ref={sentinelRef} className="py-2 text-center text-muted-foreground text-sm">
-          {isFetchingNextPage ? "Loading more…" : ""}
+          {isFetchingNextPage ? <OperationStatus>Loading more…</OperationStatus> : null}
         </div>
       )}
     </div>

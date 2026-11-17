@@ -1,3 +1,4 @@
+import { OperationStatus, ContentSkeleton } from "@/components/ui/loading";
 // Modified for Triune.
 
 import { lazy, Suspense, useState } from "react";
@@ -66,7 +67,9 @@ export function RetainedActivityView({
           aria-label="Refresh history"
           onClick={() => void history.refetch()}
         >
-          <RefreshCwIcon className="size-3.5" />
+          <RefreshCwIcon
+            className={`size-3.5 ${history.isFetching ? "animate-spin motion-reduce:animate-none" : ""}`}
+          />
         </TooltipButton>
       </div>
       {history.error ? (
@@ -74,9 +77,7 @@ export function RetainedActivityView({
           {history.error.message}
         </p>
       ) : history.isLoading ? (
-        <p role="status" className="p-3 text-sm">
-          Loading retained output…
-        </p>
+        <ContentSkeleton label="Loading retained output…" rows={3} />
       ) : (
         <RetainedTerminalOutput terminal={{ output }} />
       )}
@@ -173,24 +174,25 @@ function TerminalResourceContent({
         {manual && (
           <div className="workspace-control-header flex items-center gap-2 border-b px-3 text-xs">
             <span className="min-w-0 flex-1 truncate text-muted-foreground">{label}</span>
-            <span role="status">
-              {stopping || stop.isPending
-                ? "Stopping…"
-                : terminal
-                  ? terminalStateLabel(terminal)
-                  : target
-                    ? "Checking shell…"
-                    : "Shell"}
-            </span>
+            {stopping || stop.isPending ? (
+              <OperationStatus>Stopping…</OperationStatus>
+            ) : !terminal && target && detail.isFetching ? (
+              <OperationStatus>Checking shell…</OperationStatus>
+            ) : (
+              <span role="status">{terminal ? terminalStateLabel(terminal) : "Shell"}</span>
+            )}
             {target && (
               <TooltipButton
                 type="button"
                 aria-label="Refresh shell"
+                aria-busy={detail.isFetching || undefined}
                 disabled={detail.isFetching}
                 onClick={() => void detail.refetch()}
                 className="flex size-7 items-center justify-center rounded hover:bg-muted"
               >
-                <RefreshCwIcon className="size-3.5" />
+                <RefreshCwIcon
+                  className={`size-3.5 ${detail.isFetching ? "animate-spin motion-reduce:animate-none" : ""}`}
+                />
               </TooltipButton>
             )}
             {!ended && (
@@ -224,19 +226,15 @@ function TerminalResourceContent({
           ) : retained && terminal ? (
             <RetainedTerminalOutput terminal={terminal} />
           ) : target && !terminal ? (
-            <p role="status" className="p-3 text-sm">
-              {detail.error
-                ? "Shell history is unavailable. Refresh to retry."
-                : "Loading terminal…"}
-            </p>
+            detail.error ? (
+              <p role="status" className="p-3 text-sm">
+                Shell history is unavailable. Refresh to retry.
+              </p>
+            ) : (
+              <ContentSkeleton label="Loading terminal…" rows={5} />
+            )
           ) : (
-            <Suspense
-              fallback={
-                <p role="status" className="p-3 text-sm">
-                  Loading terminal…
-                </p>
-              }
-            >
+            <Suspense fallback={<ContentSkeleton label="Loading terminal…" rows={3} />}>
               <TerminalView
                 workspaceId={target?.id}
                 sessionId={target ? "" : (conversationId ?? "")}

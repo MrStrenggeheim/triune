@@ -1,3 +1,5 @@
+// Modified for Triune.
+import { Spinner } from "@/components/ui/spinner";
 import { TooltipButton } from "@/components/ui/tooltip";
 // Toolbar for the TipTap markdown rich-text editor.
 //
@@ -448,7 +450,7 @@ export function ToolbarPlugin({
           onClick={saveClickable ? handleSave : undefined}
           disabled={!saveClickable}
           className={cn(
-            "flex items-center gap-1 rounded px-2 py-0.5 text-sm transition-colors",
+            "flex min-w-20 items-center gap-1 rounded px-2 py-0.5 text-sm transition-colors",
             saveStatus.tone === "error" &&
               "text-destructive hover:bg-destructive/10 cursor-pointer",
             saveStatus.tone === "offline" && "text-warning cursor-default",
@@ -459,7 +461,16 @@ export function ToolbarPlugin({
             saveStatus.tone === "saved" && "text-muted-foreground cursor-default",
           )}
         >
-          {saveStatus.tone === "saved" && <Check className="size-3.5" />}
+          <span
+            className="inline-flex size-3.5 shrink-0 items-center justify-center"
+            aria-hidden="true"
+          >
+            {isSaving ? (
+              <Spinner className="size-3.5" aria-hidden="true" />
+            ) : saveStatus.tone === "saved" ? (
+              <Check className="size-3.5" />
+            ) : null}
+          </span>
           {saveStatus.label}
         </TooltipButton>
       </div>

@@ -1,3 +1,4 @@
+// Modified for Triune.
 // Onboarding: "Where do you work today?", shown after picking a preset server
 // from the landing. Pick the runner (a remote environment when offered, else
 // this laptop), then install/open.
@@ -114,7 +115,8 @@ export function RunnerStep({
         <OnboardingBackButton onClick={onBack} disabled={connection !== null} />
         <InstallActionButton
           installed={installed}
-          loading={connection !== null}
+          disabled={connection !== null}
+          loading={connection !== null && connection.phase !== "authenticating"}
           onClick={() => onInstall(runner)}
         />
       </OnboardingRail>

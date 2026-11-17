@@ -333,6 +333,7 @@ function WorkspaceSelectionContent({
         <Button
           type="button"
           className="min-h-11 flex-1 md:min-h-9 md:flex-none"
+          loading={confirming}
           disabled={
             busy || confirming || selectedHostId === null || selectedHost?.status === "offline"
           }

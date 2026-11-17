@@ -2,7 +2,7 @@
 // Required Notice: Copyright 2026 MrStrenggeheim. Triune (https://github.com/MrStrenggeheim/triune).
 import { lazy, Suspense, type ComponentProps } from "react";
 import { ChunkLoadErrorBoundary } from "@/components/ChunkLoadErrorBoundary";
-import { Spinner } from "@/components/ui/spinner";
+import { ContentSkeleton } from "@/components/ui/loading";
 
 const PullRequestPanel = lazy(() =>
   import("./PullRequestPanel").then((module) => ({ default: module.PullRequestPanel })),
@@ -15,7 +15,7 @@ export function LazyPullRequestPanel(props: ComponentProps<typeof PullRequestPan
       <Suspense
         fallback={
           <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
-            <Spinner aria-label="Loading pull requests" />
+            <ContentSkeleton label="Loading pull requests…" rows={5} />
           </div>
         }
       >

@@ -1,3 +1,5 @@
+// Modified for Triune.
+import { ContentSkeleton } from "@/components/ui/loading";
 import { useEffect, useState } from "react";
 import {
   CheckIcon,
@@ -328,7 +330,7 @@ function AgentTurnOptions({
       <TurnOptions turns={choices.data?.turns ?? fallback} />
       {choices.isLoading && (
         <SelectItem value="loading" disabled>
-          Loading captured turns…
+          <ContentSkeleton label="Loading captured turns…" rows={1} className="w-40 p-0" />
         </SelectItem>
       )}
       {choices.isError && (

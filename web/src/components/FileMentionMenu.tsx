@@ -1,3 +1,4 @@
+import { ContentSkeleton } from "@/components/ui/loading";
 // Modified for Triune.
 import { TooltipButton } from "@/components/ui/tooltip";
 import { useEffect, useRef } from "react";
@@ -80,7 +81,7 @@ export function FileMentionMenu({
           <span className="shrink-0 text-[10px]">↵ open · ⇥ attach</span>
         </div>
         {rows.length === 0 && loading ? (
-          <div className="px-1.5 py-1 text-ui text-muted-foreground">Loading…</div>
+          <ContentSkeleton label="Loading files…" rows={3} />
         ) : (
           <div ref={listRef} role="listbox" className="max-h-80 overflow-y-auto">
             {rows.map((entry, i) => {

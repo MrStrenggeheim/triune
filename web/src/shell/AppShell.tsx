@@ -1,3 +1,4 @@
+import { ContentSkeleton } from "@/components/ui/loading";
 // Modified for Triune.
 import { RetainedWorkbench } from "@/workbench/RetainedWorkbench";
 import { useContextSearchController } from "@/hooks/useContextSearchController";
@@ -3357,7 +3358,7 @@ export function LegacyAppShell() {
                     </DialogHeader>
                     {activityTerminal && (
                       <div className="min-h-0 flex-1">
-                        <Suspense fallback={null}>
+                        <Suspense fallback={<ContentSkeleton label="Loading terminal…" rows={5} />}>
                           <TerminalView
                             sessionId={activityTerminal.sessionId}
                             terminalId={activityTerminal.terminalId}
@@ -3449,7 +3450,7 @@ export function LegacyAppShell() {
                 {isFeatureEnabled(serverInfo, "arca_shutdown_warnings") && <ArcaShutdownToast />}
                 {/* Dev-only `?import-preview` for the post-setup import modal. */}
                 {ImportContextPreview && (
-                  <Suspense fallback={null}>
+                  <Suspense fallback={<ContentSkeleton label="Loading preview…" rows={3} />}>
                     <ImportContextPreview />
                   </Suspense>
                 )}

@@ -1,3 +1,4 @@
+// Modified for Triune.
 // Structured card for a `sys_advise_models` tool call: the orchestrator
 // asking Intelligent routing to size a planned sub-agent fan-out. Instead of
 // the generic ToolCard's raw-JSON dump, this renders the plan as rows —
@@ -8,7 +9,7 @@
 import { BrainIcon, ChevronRightIcon } from "lucide-react";
 import { useMemo } from "react";
 import { CodeBlock, CodeBlockHeader, CodeBlockTitle } from "@/components/ai-elements/code-block";
-import { Shimmer } from "@/components/ai-elements/shimmer";
+import { ContentSkeleton, OperationStatus } from "@/components/ui/loading";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { shortModelName } from "@/components/CostRoutingControl";
 import type { ToolState } from "@/lib/renderItems";
@@ -120,9 +121,6 @@ interface SmartRoutingCardProps {
   state: ToolState;
 }
 
-/** Shimmer verbs cycled per task row while the router judges (wraps past 4). */
-const ROUTING_VERBS = ["weighing", "matching", "tuning", "sizing up"] as const;
-
 /**
  * Render a `sys_advise_models` call as a Smart-routing plan card.
  *
@@ -172,9 +170,7 @@ export function SmartRoutingCard({ arguments: args, output, state }: SmartRoutin
         <BrainIcon className="size-3.5 shrink-0 text-muted-foreground" />
         <span className="font-medium">Smart routing</span>
         {judging ? (
-          <Shimmer as="span" className="text-sm">
-            {`Weighing ${tasks.length} ${taskNoun}…`}
-          </Shimmer>
+          <OperationStatus>{`Weighing ${tasks.length} ${taskNoun}…`}</OperationStatus>
         ) : (
           <span className="text-muted-foreground">
             {failed ? "· unavailable" : `· sized ${recommendations!.size} ${taskNoun}`}
@@ -195,7 +191,7 @@ export function SmartRoutingCard({ arguments: args, output, state }: SmartRoutin
           {output ?? "No routing decision was recorded for this fan-out."}
         </p>
       ) : (
-        tasks.map((task, i) => {
+        tasks.map((task) => {
           const rec = recommendations?.get(task.title) ?? null;
           return (
             <div key={task.title} className="flex flex-col gap-0.5">
@@ -212,9 +208,11 @@ export function SmartRoutingCard({ arguments: args, output, state }: SmartRoutin
                       {shortModelName(rec.model)}
                     </span>
                   ) : judging ? (
-                    <Shimmer as="span" className="text-sm">
-                      {`${ROUTING_VERBS[i % ROUTING_VERBS.length]}…`}
-                    </Shimmer>
+                    <ContentSkeleton
+                      label={`Choosing a model for ${task.title}…`}
+                      rows={1}
+                      className="w-24 p-0"
+                    />
                   ) : (
                     <span className="text-muted-foreground/60">—</span>
                   )}

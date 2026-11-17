@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { useConversationEntryState } from "@/hooks/useConversationEntryState";
 // xterm.js view bridged to an agent's tmux session over a WebSocket.
 //
@@ -844,10 +845,11 @@ function StatusOverlay({
               variant="secondary"
               onClick={onResume}
               disabled={resumePending}
+              loading={resumePending}
               className="border-zinc-500/50 bg-zinc-100 text-zinc-950 hover:bg-white"
               componentId="diagnostics.terminal.resume"
             >
-              {resumePending ? "Resuming…" : `Resume ${resumeTarget}`}
+              {`Resume ${resumeTarget}`}
             </Button>
           )}
           {resumeError && (

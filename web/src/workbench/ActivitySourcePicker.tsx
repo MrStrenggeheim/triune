@@ -1,3 +1,4 @@
+import { ContentSkeleton, OperationStatus } from "@/components/ui/loading";
 // Modified for Triune.
 import { useEffect, useState } from "react";
 import { CheckIcon, ChevronDownIcon, MessageSquareIcon, MonitorIcon } from "lucide-react";
@@ -154,11 +155,8 @@ export function ActivitySourcePicker({
               </CommandItem>
             </CommandGroup>
             <CommandGroup heading="Chats">
-              {(!settled || chats.isLoading) && (
-                <p role="status" className="px-2 text-sm">
-                  Loading chats…
-                </p>
-              )}
+              {busy && <OperationStatus className="px-2">Selecting source…</OperationStatus>}
+              {(!settled || chats.isLoading) && <ContentSkeleton label="Loading chats…" rows={3} />}
               {chats.error && (
                 <Button variant="ghost" size="sm" onClick={() => void chats.refetch()}>
                   Could not load chats · Retry
@@ -189,6 +187,7 @@ export function ActivitySourcePicker({
                   variant="ghost"
                   size="sm"
                   disabled={chats.isFetchingNextPage}
+                  loading={chats.isFetchingNextPage}
                   onClick={() => void chats.fetchNextPage()}
                 >
                   Load more chats

@@ -1,3 +1,4 @@
+import { ContentSkeleton } from "@/components/ui/loading";
 // Modified for Triune.
 import { useEffect, useRef, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -211,6 +212,7 @@ function HostActivity({
             size="icon-sm"
             aria-label="Refresh host activity"
             disabled={workspaces.isFetching}
+            loading={workspaces.isFetching}
             onClick={() => {
               void hosts.refetch();
               void workspaces.refetch();
@@ -231,9 +233,7 @@ function HostActivity({
           </p>
         )}
         {(hosts.isLoading || workspaces.isLoading) && (
-          <p role="status" className="p-3 text-sm">
-            Loading host activity…
-          </p>
+          <ContentSkeleton label="Loading host activity…" rows={3} />
         )}
         {!authorized && !hosts.isLoading && (
           <p role="status" className="p-3 text-sm text-muted-foreground">

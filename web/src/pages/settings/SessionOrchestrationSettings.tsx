@@ -1,3 +1,5 @@
+// Modified for Triune.
+import { OperationStatus } from "@/components/ui/loading";
 import { useId } from "react";
 import { SettingsGroup } from "@/components/SettingsGroup";
 import { SettingsLabel } from "@/components/SettingsLabel";
@@ -47,9 +49,9 @@ export function SessionOrchestrationSettings() {
           </p>
         )}
         {(preference.isPending || preference.isSaving) && (
-          <p role="status" className="mt-2 text-sm text-muted-foreground">
+          <OperationStatus className="mt-2">
             {preference.isSaving ? "Saving…" : "Loading…"}
-          </p>
+          </OperationStatus>
         )}
         {preference.error && (
           <div className="mt-2 flex items-center gap-2">

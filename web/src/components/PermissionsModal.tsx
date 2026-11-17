@@ -1,3 +1,4 @@
+import { ContentSkeleton } from "@/components/ui/loading";
 // Modified for Triune.
 /**
  * Permissions management modal for a session.
@@ -285,7 +286,7 @@ export function PermissionsModal({
             track's min-content and pushes every row past the dialog edge. */}
         <div className="min-w-0" data-testid="share-grants">
           {isLoading ? (
-            <p className="text-ui text-muted-foreground py-2">Loading…</p>
+            <ContentSkeleton label="Loading permissions…" rows={3} />
           ) : userGrants.length === 0 ? (
             <p className="text-ui text-muted-foreground py-2">No grants yet.</p>
           ) : (

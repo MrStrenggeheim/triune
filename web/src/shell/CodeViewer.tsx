@@ -1,3 +1,4 @@
+import { ContentSkeleton } from "@/components/ui/loading";
 // Modified for Triune.
 import { getFindContext } from "@/lib/findContext";
 import { TooltipButton } from "@/components/ui/tooltip";
@@ -95,11 +96,7 @@ const HtmlCommentViewer = lazy(() =>
 const MermaidPreview = lazy(() =>
   import("./MermaidPreview").then((m) => ({ default: m.MermaidPreview })),
 );
-const VIEWER_LOADING = (
-  <div role="status" className="flex items-center justify-center p-8 text-muted-foreground text-ui">
-    Loading…
-  </div>
-);
+const VIEWER_LOADING = <ContentSkeleton label="Loading file…" rows={3} />;
 
 // react-pdf + pdf.js (worker) is heavy; load it only when a PDF is actually
 // viewed so it never enters the initial bundle.
@@ -183,6 +180,44 @@ const MARKDOWN_REHYPE_PLUGINS: Options["rehypePlugins"] = [
 // after sanitize (React components render the already-sanitized tree), so it
 // adds no attack surface. Only literal integer pixel values are forwarded.
 // Path of the previewed file, so a relative link resolves against its directory.
+/** The browser retains its previous decoded image while a replacement source loads. */
+function MarkdownPreviewImage({
+  onLoad,
+  onError,
+  style,
+  ...props
+}: ComponentPropsWithoutRef<"img">) {
+  const [ready, setReady] = useState(false);
+  const preparing = !!props.src && !ready;
+  return (
+    <span
+      className="relative inline-block max-w-full"
+      aria-busy={preparing || undefined}
+      style={preparing ? { width: style?.width ?? 160, height: style?.height ?? 128 } : undefined}
+    >
+      <img
+        {...props}
+        style={style}
+        onLoad={(event) => {
+          setReady(true);
+          onLoad?.(event);
+        }}
+        onError={(event) => {
+          setReady(true);
+          onError?.(event);
+        }}
+      />
+      {preparing && (
+        <ContentSkeleton
+          label="Loading image…"
+          rows={3}
+          className="pointer-events-none absolute inset-0 bg-muted"
+        />
+      )}
+    </span>
+  );
+}
+
 const MarkdownPreviewPathContext = createContext<string | null>(null);
 
 /**
@@ -269,7 +304,7 @@ const MARKDOWN_COMPONENTS: Components = {
       width: px(width) ?? style?.width,
       height: px(height) ?? style?.height,
     };
-    return <img {...props} style={sized} />;
+    return <MarkdownPreviewImage {...props} style={sized} />;
   },
 };
 
@@ -973,11 +1008,7 @@ function CodeViewerContent({
     );
   }
   if (fileQuery.isLoading) {
-    return (
-      <div className="flex items-center justify-center p-8 text-muted-foreground text-ui">
-        Loading…
-      </div>
-    );
+    return <ContentSkeleton label="Loading file…" rows={3} />;
   }
   if (fileQuery.isError) {
     return (
@@ -992,13 +1023,7 @@ function CodeViewerContent({
   }
   if (fileQuery.data && isPdfFile(path, fileQuery.data.content_type)) {
     return (
-      <Suspense
-        fallback={
-          <div className="flex items-center justify-center p-8 text-muted-foreground text-ui">
-            Loading…
-          </div>
-        }
-      >
+      <Suspense fallback={<ContentSkeleton label="Loading file…" rows={3} />}>
         <PdfViewer
           active={mediaActive}
           data={fileQuery.data}
@@ -1012,13 +1037,7 @@ function CodeViewerContent({
   }
   if (fileQuery.data && isModelFile(path, fileQuery.data.content_type)) {
     return (
-      <Suspense
-        fallback={
-          <div className="flex items-center justify-center p-8 text-muted-foreground text-ui">
-            Loading 3D preview…
-          </div>
-        }
-      >
+      <Suspense fallback={<ContentSkeleton label="Loading 3D preview…" rows={3} />}>
         <ModelViewer data={fileQuery.data} path={path} active={mediaActive} />
       </Suspense>
     );
@@ -1091,13 +1110,7 @@ function CodeViewerContent({
 
   if (showMonaco) {
     return (
-      <Suspense
-        fallback={
-          <div className="flex items-center justify-center p-8 text-muted-foreground text-ui">
-            Loading…
-          </div>
-        }
-      >
+      <Suspense fallback={<ContentSkeleton label="Loading file…" rows={3} />}>
         <MonacoCodeEditor
           key={resourceIdentity}
           position={position}

@@ -1,3 +1,5 @@
+// Modified for Triune.
+import { ContentSkeleton } from "@/components/ui/loading";
 import { TooltipButton } from "@/components/ui/tooltip";
 import { useEffect, useRef, useState } from "react";
 import { FolderIcon, FolderOpenIcon } from "lucide-react";
@@ -344,7 +346,7 @@ export function WorkspacePathField({
               )}
             </>
           )}
-          {showLoading && <div className="px-1.5 py-1 text-sm text-muted-foreground">Loading…</div>}
+          {showLoading && <ContentSkeleton label="Loading folders…" rows={3} />}
         </div>
       )}
     </div>

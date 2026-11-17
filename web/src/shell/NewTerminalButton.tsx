@@ -1,3 +1,5 @@
+// Modified for Triune.
+import { Spinner } from "@/components/ui/spinner";
 import { useWorkbenchWorkspace } from "@/lib/workbenchWorkspace";
 // "+ New shell" affordance shared by the shell surfaces
 // (InlineTerminalsSection, TerminalsPanel, and MainTerminalView's
@@ -108,10 +110,15 @@ export function NewTerminalButton({
         type="button"
         aria-label="New shell"
         disabled={create.isPending}
+        aria-busy={create.isPending || undefined}
         className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-muted-foreground hover:bg-accent/60 hover:text-foreground disabled:cursor-default disabled:opacity-50"
         onClick={onTriggerClick}
       >
-        <PlusIcon className="size-3.5 shrink-0" />
+        {create.isPending ? (
+          <Spinner aria-hidden className="size-3.5 shrink-0" />
+        ) : (
+          <PlusIcon className="size-3.5 shrink-0" />
+        )}
         <span className="text-sm">
           {create.isError ? `Failed: ${create.error.message}` : "New shell"}
         </span>
@@ -121,10 +128,15 @@ export function NewTerminalButton({
         type="button"
         aria-label="New shell"
         disabled={create.isPending}
+        aria-busy={create.isPending || undefined}
         className="cursor-pointer rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:cursor-default disabled:opacity-50"
         onClick={onTriggerClick}
       >
-        <PlusIcon className="size-3.5" />
+        {create.isPending ? (
+          <Spinner aria-hidden className="size-3.5" />
+        ) : (
+          <PlusIcon className="size-3.5" />
+        )}
       </TooltipButton>
     );
 
@@ -177,6 +189,7 @@ export function NewTerminalButton({
         type="button"
         aria-label="Choose shell"
         disabled={create.isPending}
+        aria-busy={create.isPending || undefined}
         className={
           variant === "row"
             ? "flex shrink-0 items-center px-2 py-1.5 text-muted-foreground hover:bg-accent/60 hover:text-foreground disabled:cursor-default disabled:opacity-50"

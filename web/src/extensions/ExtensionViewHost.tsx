@@ -1,6 +1,7 @@
+// Modified for Triune.
+import { ContentSkeleton } from "@/components/ui/loading";
 import { TooltipButton } from "@/components/ui/tooltip";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Spinner } from "@/components/ui/spinner";
 import type { ExtensionCatalogItem, ExtensionPage } from "./types";
 import { buildExtensionDocument, createExtensionNonce, loadExtensionBundle } from "./rpc/host";
 import {
@@ -312,7 +313,7 @@ export function ExtensionViewHost({
       )}
       {status !== "ready" && (
         <div className="extension-view-status absolute inset-x-0 bottom-0 top-14 flex items-center justify-center bg-background md:top-12">
-          <Spinner className="size-5 text-muted-foreground" aria-label="Loading extension" />
+          <ContentSkeleton label="Loading extension…" rows={6} />
         </div>
       )}
     </div>

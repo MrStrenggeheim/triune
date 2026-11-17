@@ -1,3 +1,4 @@
+import { OperationStatus, ContentSkeleton } from "@/components/ui/loading";
 // Modified for Triune.
 import { TooltipButton } from "@/components/ui/tooltip";
 import type React from "react";
@@ -471,7 +472,7 @@ export function CommandPalette({
         }}
         className="pl-6 text-muted-foreground"
       >
-        {group.isFetchingNextPage ? "Loading…" : "Show more"}
+        {group.isFetchingNextPage ? <OperationStatus>Loading more…</OperationStatus> : "Show more"}
       </CommandItem>
     );
 
@@ -642,7 +643,11 @@ export function CommandPalette({
                     }}
                     className="px-2 text-muted-foreground"
                   >
-                    {messageSearch.isFetchingNextPage ? "Loading…" : "Show more"}
+                    {messageSearch.isFetchingNextPage ? (
+                      <OperationStatus>Loading more…</OperationStatus>
+                    ) : (
+                      "Show more"
+                    )}
                   </CommandItem>
                 )}
               </CommandGroup>
@@ -662,11 +667,7 @@ export function CommandPalette({
             )}
             {filesEnabled &&
               (fileSearch.isFetching || fileSearch.isPlaceholderData) &&
-              visibleFiles.length === 0 && (
-                <p role="status" className="px-3 py-2 text-xs text-muted-foreground">
-                  Searching files…
-                </p>
-              )}
+              visibleFiles.length === 0 && <ContentSkeleton label="Searching files…" rows={3} />}
             {(visibleFiles.length > 0 ||
               (!sessionsOnly && target && fileIdentity && onFileSearch && query.trim())) && (
               <CommandGroup heading="Files">

@@ -1,7 +1,7 @@
+import { ContentSkeleton } from "@/components/ui/loading";
 // Modified for Triune.
 import { useEffect, useState } from "react";
 import { ImageIcon } from "lucide-react";
-import { Spinner } from "@/components/ui/spinner";
 import { useMediaBatch, mediaPreviewSize } from "./MediaBatch";
 import { cn } from "@/lib/utils";
 import { withBasePath } from "@/lib/basePath";
@@ -34,12 +34,17 @@ function SessionImagePreview({
   ...props
 }: React.ComponentProps<typeof ZoomableImage>) {
   const { size, onLoad } = useImagePreviewSize(src);
+  const [settledSrc, setSettledSrc] = useState<string | undefined>();
+  const preparing = !!src && settledSrc !== src;
   const batched = useMediaBatch();
   const stage = mediaPreviewSize(size, batched);
   return (
     <div
-      className={cn(PREVIEW_BOX, batched && "max-w-none items-center")}
-      style={{ width: stage?.width, height: batched ? 256 : undefined }}
+      className={cn(PREVIEW_BOX, "relative", batched && "max-w-none items-center")}
+      style={{
+        width: stage?.width ?? (preparing ? 160 : undefined),
+        height: batched || preparing ? 256 : undefined,
+      }}
     >
       <ZoomableImage
         {...props}
@@ -47,8 +52,23 @@ function SessionImagePreview({
         alt={alt}
         className={cn(PREVIEW_IMAGE, className)}
         style={batched ? { width: size?.width, maxWidth: "100%" } : undefined}
-        onLoad={onLoad}
+        onLoad={(event) => {
+          onLoad(event);
+          setSettledSrc(src);
+          props.onLoad?.(event);
+        }}
+        onError={(event) => {
+          setSettledSrc(src);
+          props.onError?.(event);
+        }}
       />
+      {preparing && (
+        <ContentSkeleton
+          label="Loading image…"
+          rows={4}
+          className="pointer-events-none absolute inset-0 bg-muted"
+        />
+      )}
     </div>
   );
 }
@@ -281,15 +301,13 @@ function EmbeddedSessionImage({
   if (state === "loading" || !blobUrl) {
     return (
       <div
-        role="status"
-        aria-label="Loading image"
         className={cn(
           PREVIEW_PLACEHOLDER_BOX,
           "rounded-md border border-border bg-muted text-muted-foreground",
           className,
         )}
       >
-        <Spinner />
+        <ContentSkeleton label="Loading image…" rows={4} />
       </div>
     );
   }

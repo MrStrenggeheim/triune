@@ -1,3 +1,4 @@
+import { OperationStatus, ContentSkeleton } from "@/components/ui/loading";
 // Modified for Triune.
 /**
  * Standalone approval page for URL-mode elicitations.
@@ -61,6 +62,7 @@ export function ApprovePage() {
     elicitationId: string;
   }>();
   const [state, setState] = useState<PageState>({ kind: "loading" });
+  const [sending, setSending] = useState(false);
   const submission = useRef<{ revision: number; pending: boolean; attempt?: string }>({
     revision: 0,
     pending: false,
@@ -137,6 +139,7 @@ export function ApprovePage() {
         attempt: state.kind === "pending" ? state.data.native_delivery?.attempt : undefined,
       };
       submission.current = submitted;
+      setSending(true);
       if (state.kind === "pending" && state.data.native_delivery) {
         setState({
           kind: "pending",
@@ -170,6 +173,7 @@ export function ApprovePage() {
         }
       } finally {
         submitted.pending = false;
+        if (submission.current === submitted) setSending(false);
       }
     },
     [sessionId, elicitationId, state],
@@ -177,11 +181,7 @@ export function ApprovePage() {
 
   return (
     <div className="mx-auto flex min-h-screen max-w-xl items-center justify-center p-6">
-      {state.kind === "loading" && (
-        <Alert className="flex flex-col gap-2 py-4 px-5">
-          <AlertTitle className="text-ui">Loading elicitation…</AlertTitle>
-        </Alert>
-      )}
+      {state.kind === "loading" && <ContentSkeleton label="Loading elicitation…" rows={4} />}
 
       {state.kind === "recovering" && (
         <Alert className="flex flex-col gap-2 py-4 px-5">
@@ -212,7 +212,9 @@ export function ApprovePage() {
       {state.kind === "submitted" && (
         <Alert className="flex flex-col gap-1 border-muted py-4 px-5">
           <AlertTitle className="flex items-center gap-2 text-ui">
-            {state.action === "accept" ? (
+            {sending ? (
+              <OperationStatus>Sending decision…</OperationStatus>
+            ) : state.action === "accept" ? (
               <>
                 <CheckIcon className="size-4 text-success" />
                 Approved
@@ -224,7 +226,9 @@ export function ApprovePage() {
               </>
             )}
           </AlertTitle>
-          <AlertDescription className="text-sm">You can close this page.</AlertDescription>
+          <AlertDescription className="text-sm">
+            {sending ? "Waiting for delivery." : "You can close this page."}
+          </AlertDescription>
         </Alert>
       )}
 

@@ -1,3 +1,4 @@
+import { ContentSkeleton } from "@/components/ui/loading";
 // Modified for Triune; inherited notices remain applicable.
 import {
   ResourceViewIdContext,
@@ -1894,13 +1895,14 @@ function FileViewerBody({
             <span
               ref={toolbarChipRef}
               aria-live="polite"
+              aria-busy={saveStatus === "saving" || undefined}
               title={
                 saveStatus === "offline"
                   ? "Runner offline — your changes will save when it reconnects"
                   : undefined
               }
               className={cn(
-                "mr-1 flex shrink-0 items-center gap-1 whitespace-nowrap text-sm",
+                "mr-1 flex min-w-20 shrink-0 items-center gap-1 whitespace-nowrap text-sm",
                 saveStatus === "error" ? "text-destructive" : "text-muted-foreground",
               )}
             >
@@ -2101,9 +2103,7 @@ function FileViewerBody({
             // wrong content and mis-set EOL (onMount runs once). Once data is
             // present, pass the real before/after through (legitimate nulls and all).
             !diffQuery.data ? (
-              <div className="flex items-center justify-center p-8 text-muted-foreground text-ui">
-                Loading diff…
-              </div>
+              <ContentSkeleton label="Loading diff…" rows={3} />
             ) : "patch" in diffQuery.data && typeof diffQuery.data.patch === "string" ? (
               <CodeBlock
                 code={diffQuery.data.patch}
@@ -2113,13 +2113,7 @@ function FileViewerBody({
             ) : (
               // Keep viewer state on resize without computing the CSS-hidden copy's diff.
               isActiveViewport && (
-                <Suspense
-                  fallback={
-                    <div className="flex items-center justify-center p-8 text-muted-foreground text-ui">
-                      Loading diff…
-                    </div>
-                  }
-                >
+                <Suspense fallback={<ContentSkeleton label="Loading diff…" rows={3} />}>
                   {/* key={path} remounts per file so onMount re-runs (EOL + comment
                   wiring re-applied) and `ready` resets while the new grammar loads. */}
                   <MonacoDiffViewer
@@ -2147,13 +2141,7 @@ function FileViewerBody({
           ) : (
             <FileContentReaderContext.Provider value={registerContentReader}>
               {open && (
-                <Suspense
-                  fallback={
-                    <p role="status" className="p-8 text-muted-foreground text-ui">
-                      Loading file…
-                    </p>
-                  }
-                >
+                <Suspense fallback={<ContentSkeleton label="Loading file…" rows={3} />}>
                   <CodeViewer
                     position={filePosition}
                     conversationId={conversationId}

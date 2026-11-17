@@ -1,3 +1,5 @@
+// Modified for Triune.
+import { ContentSkeleton } from "@/components/ui/loading";
 import { panelFolderKey, useResourceViewId } from "@/lib/panelFolder";
 import { useWorkbenchWorkspace } from "@/lib/workbenchWorkspace";
 import { TooltipButton } from "@/components/ui/tooltip";
@@ -563,11 +565,7 @@ function MonacoCodeEditorInner({
             Failed to load the editor.
           </div>
         )}
-        {!loadError && !ready && (
-          <div className="flex items-center justify-center p-8 text-muted-foreground text-ui">
-            Loading…
-          </div>
-        )}
+        {!loadError && !ready && <ContentSkeleton label="Loading editor…" rows={3} />}
         {!loadError && ready && (
           <Editor
             height="100%"

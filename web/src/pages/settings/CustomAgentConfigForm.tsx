@@ -1,3 +1,5 @@
+// Modified for Triune.
+import { ContentSkeleton } from "@/components/ui/loading";
 import { useEffect, useState } from "react";
 import { toast } from "@/lib/notifications";
 import { TrashIcon } from "lucide-react";
@@ -160,7 +162,7 @@ export function CustomAgentConfigForm({
             </Button>
           </p>
         ) : (
-          <p role="status">Loading configuration…</p>
+          <ContentSkeleton label="Loading configuration…" rows={3} />
         )
       ) : (
         <form
@@ -286,6 +288,7 @@ export function CustomAgentConfigForm({
                 type="button"
                 variant="outline"
                 disabled={busy}
+                loading={reloading}
                 onClick={() => request("reload")}
               >
                 Reload latest

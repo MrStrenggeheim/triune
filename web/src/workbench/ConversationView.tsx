@@ -1,3 +1,4 @@
+import { ContentSkeleton } from "@/components/ui/loading";
 import { conversationDisplayLabel } from "@/shell/sidebarNav";
 // Modified for Triune.
 import { memo, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
@@ -267,11 +268,13 @@ const ConversationViewContent = memo(function ConversationViewContent({
       >
         {parent && <Ancestor id={parent} seen={[conversationId]} />}
         <span className="min-w-0 truncate">
-          {session
-            ? conversationDisplayLabel({ ...session, labels: session.labels ?? {} })
-            : error
-              ? "Conversation unavailable"
-              : "Conversation"}
+          {session ? (
+            conversationDisplayLabel({ ...session, labels: session.labels ?? {} })
+          ) : error ? (
+            "Conversation unavailable"
+          ) : (
+            <ContentSkeleton label="Loading conversation…" rows={1} className="w-32 p-0" />
+          )}
         </span>
       </nav>
       {session && (

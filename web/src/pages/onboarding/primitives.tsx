@@ -1,3 +1,4 @@
+import { OperationStatus } from "@/components/ui/loading";
 // Modified for Triune.
 import { TooltipButton } from "@/components/ui/tooltip";
 import type { ReactNode } from "react";
@@ -75,12 +76,14 @@ export function ConnectStatus({
   const { phase, error } = connection;
   return (
     <>
-      <p role="status" className="mt-2 text-center text-sm text-muted-foreground">
-        {phase === "cancelling"
-          ? "Cancelling…"
-          : phase === "authenticating"
-            ? "Finish signing in in your browser, then come back here."
-            : "Waiting for the server…"}{" "}
+      <p className="mt-2 text-center text-sm text-muted-foreground">
+        {phase === "authenticating" ? (
+          <span role="status">Finish signing in in your browser, then come back here.</span>
+        ) : (
+          <OperationStatus>
+            {phase === "cancelling" ? "Cancelling…" : "Waiting for the server…"}
+          </OperationStatus>
+        )}{" "}
         {onCancel && phase !== "cancelling" && (
           <TooltipButton
             type="button"
@@ -104,15 +107,17 @@ export function InstallActionButton({
   installed,
   startsLocal,
   loading,
+  disabled,
   onClick,
 }: {
   installed?: boolean;
   startsLocal?: boolean;
   loading?: boolean;
+  disabled?: boolean;
   onClick: () => void;
 }) {
   return (
-    <Button size="lg" onClick={onClick} loading={loading}>
+    <Button size="lg" onClick={onClick} loading={loading} disabled={disabled}>
       <InstallActionIcon installed={installed} startsLocal={startsLocal} />
       {installActionLabel(installed, startsLocal)}
     </Button>

@@ -1,3 +1,4 @@
+import { ContentSkeleton } from "@/components/ui/loading";
 // Modified for Triune.
 
 import { useQuery } from "@tanstack/react-query";
@@ -192,11 +193,14 @@ export function TerminalInventoryView({
         <TooltipButton
           type="button"
           aria-label="Refresh shells"
+          aria-busy={inventory.isFetching || undefined}
           disabled={inventory.isFetching}
           onClick={() => void inventory.refetch()}
           className="flex size-7 items-center justify-center rounded hover:bg-muted"
         >
-          <RefreshCwIcon className="size-3.5" />
+          <RefreshCwIcon
+            className={`size-3.5 ${inventory.isFetching ? "animate-spin motion-reduce:animate-none" : ""}`}
+          />
         </TooltipButton>
         <TooltipButton
           type="button"
@@ -214,11 +218,7 @@ export function TerminalInventoryView({
             {shellResourceErrorMessage(inventory.error)}
           </p>
         )}
-        {inventory.isLoading && (
-          <p role="status" className="text-sm">
-            Loading shells…
-          </p>
-        )}
+        {inventory.isLoading && <ContentSkeleton label="Loading shells…" rows={3} />}
         {inventory.data?.available === false && (
           <p role="status" className="text-sm text-muted-foreground">
             Host offline. Showing retained shell records.

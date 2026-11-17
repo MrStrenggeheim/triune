@@ -1,3 +1,5 @@
+// Modified for Triune.
+import { ContentSkeleton } from "@/components/ui/loading";
 import { toast } from "@/lib/notifications";
 import { useEffect, useState } from "react";
 import { PlugIcon } from "lucide-react";
@@ -42,7 +44,7 @@ export function McpRegistryConnections() {
           }}
         />
       ))}
-      {loading && <p className="text-sm text-muted-foreground">Loading MCP services…</p>}
+      {loading && <ContentSkeleton label="Loading MCP services…" rows={3} />}
       {!loading && !services.length && !error && (
         <p className="text-sm text-muted-foreground">
           No managed services are available for your account.
@@ -118,6 +120,7 @@ function ServiceConnection({
             size="sm"
             variant="outline"
             disabled={busy}
+            loading={busy}
             onClick={() =>
               void run(async () => {
                 const result = await registryRequest<{ tools: string[] }>(`/${service.id}/test`, {
@@ -137,6 +140,7 @@ function ServiceConnection({
             size="sm"
             variant="ghost"
             disabled={busy}
+            loading={busy}
             onClick={() =>
               void run(async () => {
                 await registryRequest(`/${service.id}/connection`, { method: "DELETE" });
@@ -175,7 +179,7 @@ function ServiceConnection({
             onChange={(e) => setToken(e.target.value)}
             placeholder="Personal access token"
           />
-          <Button size="sm" disabled={busy || !token.trim()} type="submit">
+          <Button size="sm" disabled={busy || !token.trim()} loading={busy} type="submit">
             Save token
           </Button>
         </form>
@@ -237,7 +241,7 @@ export function McpRegistryPicker({
           </Button>
         </div>
       )}
-      {loading && <p className="px-3 py-2 text-xs text-muted-foreground">Loading MCP services…</p>}
+      {loading && <ContentSkeleton label="Loading MCP services…" rows={3} />}
       {!loading && !error && !services.length && (
         <p className="px-3 py-2 text-xs text-muted-foreground">
           No managed services are available for your account.

@@ -773,8 +773,8 @@ export function BrowserPane({
             <Button variant="outline" onClick={() => setCookiePreview(null)} disabled={cookieBusy}>
               Cancel
             </Button>
-            <Button onClick={handleImportChromeCookies} disabled={cookieBusy}>
-              {cookieBusy ? "Importing…" : "Import cookies"}
+            <Button onClick={handleImportChromeCookies} disabled={cookieBusy} loading={cookieBusy}>
+              Import cookies
             </Button>
           </DialogFooter>
         </DialogContent>

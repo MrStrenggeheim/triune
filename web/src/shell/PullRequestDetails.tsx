@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { useWorkbenchWorkspace, queryIdentity } from "@/lib/workbenchWorkspace";
 // The PR's title (in the panel header) and description (in the Summary tab), each
 // editable in place by editors. The description editor is a raw markdown textarea
@@ -221,9 +222,13 @@ export function PullRequestTitle({
             }}
             className="h-7 min-w-0 flex-1 text-ui font-medium"
           />
-          <Button type="submit" size="xs" disabled={update.isPending || !draft.trim()}>
-            {update.isPending && <Loader2Icon aria-hidden className="size-3 animate-spin" />}
-            {update.isPending ? "Saving…" : "Save"}
+          <Button
+            type="submit"
+            size="xs"
+            disabled={update.isPending || !draft.trim()}
+            loading={update.isPending}
+          >
+            Save
           </Button>
           <Button type="button" size="xs" variant="ghost" onClick={cancel}>
             Cancel
@@ -558,9 +563,13 @@ function PullRequestDescriptionEditor({
         <Button size="xs" variant="ghost" onClick={cancel} disabled={update.isPending}>
           Cancel
         </Button>
-        <Button size="xs" onClick={save} disabled={update.isPending || draft.uploading > 0}>
-          {update.isPending && <Loader2Icon aria-hidden className="size-3 animate-spin" />}
-          {update.isPending ? "Saving…" : "Save"}
+        <Button
+          size="xs"
+          onClick={save}
+          disabled={update.isPending || draft.uploading > 0}
+          loading={update.isPending}
+        >
+          Save
         </Button>
       </div>
     </div>

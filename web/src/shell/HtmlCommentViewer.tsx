@@ -1,3 +1,5 @@
+// Modified for Triune.
+import { ContentSkeleton } from "@/components/ui/loading";
 import { FileSelectionMenu } from "./FileSelectionMenu";
 // Comment-enabled HTML preview: renders agent-generated HTML in the same
 // sandboxed iframe as the read-only preview, but injects a bridge script so
@@ -109,6 +111,7 @@ export function HtmlCommentViewer({
     };
   }, [content, loadBridgeExternally]);
 
+  const [loadedNonce, setLoadedNonce] = useState<string | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const portRef = useRef<MessagePort | null>(null);
   const channelRef = useRef<MessageChannel | null>(null);
@@ -219,6 +222,7 @@ export function HtmlCommentViewer({
   // Parent-initiated handshake on the iframe's load event avoids a ready/listen
   // race and makes the timeout measure the bridge startup, not document parsing.
   const onLoad = () => {
+    setLoadedNonce(nonce);
     const win = iframeRef.current?.contentWindow;
     if (!win) {
       console.warn(
@@ -288,7 +292,16 @@ export function HtmlCommentViewer({
   return (
     <div className="flex h-full flex-col">
       {truncated && <TruncatedBanner />}
-      <div className="min-h-0 flex-1">{preview}</div>
+      <div className="relative min-h-0 flex-1">
+        {preview}
+        {loadedNonce !== nonce && (
+          <ContentSkeleton
+            label="Loading HTML preview…"
+            rows={6}
+            className="pointer-events-none absolute inset-0 bg-background"
+          />
+        )}
+      </div>
       {floating && canEdit && (
         <FileSelectionMenu
           x={floating.x}

@@ -1,3 +1,5 @@
+// Modified for Triune.
+import { ContentSkeleton } from "@/components/ui/loading";
 // The Summary tab's Merge button: its state follows GitHub's mergeStateStatus and
 // auto-merge, and a click opens a confirmation where the merge method can change.
 
@@ -115,11 +117,7 @@ function MergeMethodPicker({
   onChange: (method: PullRequestMergeMethod) => void;
 }) {
   if (options.isPending) {
-    return (
-      <p role="status" className="text-ui text-muted-foreground">
-        Loading merge methods…
-      </p>
-    );
+    return <ContentSkeleton label="Loading merge methods…" rows={3} />;
   }
   if (options.isError) {
     return (

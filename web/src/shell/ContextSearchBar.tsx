@@ -1,3 +1,4 @@
+import { OperationStatus } from "@/components/ui/loading";
 // Modified for Triune.
 import { useRef } from "react";
 import { usePanelEscapeClose } from "@/hooks/usePanelEscapeClose";
@@ -15,6 +16,8 @@ export function ContextSearchBar({ contained = false }: { contained?: boolean })
   });
   if (!search?.open || !search.activeSessionId) return null;
   const count = search.currentOccurrences.length;
+  const searching =
+    !!search.query.trim() && (!search.queryReady || search.activeMessages.isPending);
   const incomplete =
     search.activeMessages.hasNextPage ||
     search.currentOccurrences.some(({ hit }) => hit.text_truncated);
@@ -66,12 +69,12 @@ export function ContextSearchBar({ contained = false }: { contained?: boolean })
         <span className="truncate">{search.query || "Search chats…"}</span>
       </TooltipButton>
       <span
-        role="status"
+        role={searching ? undefined : "status"}
         aria-live="polite"
         aria-atomic="true"
         className="ml-auto shrink-0 px-1 tabular-nums text-muted-foreground"
       >
-        {counter}
+        {searching ? <OperationStatus className="text-xs">Searching…</OperationStatus> : counter}
       </span>
       <TooltipButton
         type="button"

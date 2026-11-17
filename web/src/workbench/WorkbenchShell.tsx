@@ -1,3 +1,4 @@
+import { ContentSkeleton } from "@/components/ui/loading";
 import { conversationDisplayLabel } from "@/shell/sidebarNav";
 // Modified for Triune.
 import { useSettingsNavigationVisibility } from "@/hooks/useSettingsNavigationVisibility";
@@ -220,12 +221,7 @@ function activitySource(
 export function WorkbenchShell({ active = true }: { active?: boolean }) {
   const viewer = useViewerId();
   const ready = useIdentityReady();
-  if (!ready)
-    return (
-      <div role="status" className="p-4 text-sm">
-        Loading workspace…
-      </div>
-    );
+  if (!ready) return <ContentSkeleton label="Loading workspace…" rows={3} />;
   return (
     <WorkbenchShellBody
       key={`${getOmnigentServerIdentity()}:${viewer}`}
@@ -1430,13 +1426,7 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
       else if (view.kind === "automations")
         content = (
           <ChunkLoadErrorBoundary autoReload={false}>
-            <Suspense
-              fallback={
-                <div role="status" className="p-4 text-sm">
-                  Loading automations…
-                </div>
-              }
-            >
+            <Suspense fallback={<ContentSkeleton label="Loading automations…" rows={3} />}>
               <TasksPage />
             </Suspense>
           </ChunkLoadErrorBoundary>
@@ -1952,6 +1942,8 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
 function AgentTerminal({ conversationId, active }: { conversationId: string; active: boolean }) {
   const { terminals, isLoading, error } = useTerminals(conversationId, { workspace: null });
   const terminal = findAgentTerminal(terminals);
+  if (!terminal && isLoading && !error)
+    return <ContentSkeleton label="Loading agent terminal…" rows={5} />;
   if (!terminal)
     return (
       <p role="status" className="p-4 text-sm">

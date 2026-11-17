@@ -1,3 +1,5 @@
+// Modified for Triune.
+import { ContentSkeleton } from "@/components/ui/loading";
 import { panelFolderKey, useResourceViewId } from "@/lib/panelFolder";
 import { useWorkbenchWorkspace } from "@/lib/workbenchWorkspace";
 // Monaco-based diff view for changed files (replaces the @pierre/diffs viewer).
@@ -339,11 +341,7 @@ export function MonacoDiffViewer({
             Failed to load the diff.
           </div>
         )}
-        {!loadError && !ready && (
-          <div className="flex items-center justify-center p-8 text-muted-foreground text-ui">
-            Loading diff…
-          </div>
-        )}
+        {!loadError && !ready && <ContentSkeleton label="Loading diff…" rows={3} />}
         {!loadError && ready && (
           <DiffEditor
             height="100%"

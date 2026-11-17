@@ -1,3 +1,4 @@
+import { ContentSkeleton } from "@/components/ui/loading";
 // Modified for Triune.
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -273,9 +274,14 @@ export function ResumeWithDirectoryDialog({
         </DialogHeader>
 
         {loading ? (
-          <p className="text-sm text-muted-foreground" data-testid="resume-dir-loading">
-            {hasSource ? "Loading the original session's directory…" : "Loading your machines…"}
-          </p>
+          <div data-testid="resume-dir-loading">
+            <ContentSkeleton
+              label={
+                hasSource ? "Loading the original session's directory…" : "Loading your machines…"
+              }
+              rows={3}
+            />
+          </div>
         ) : noOnlineHosts ? (
           <p className="text-sm text-muted-foreground" data-testid="resume-dir-no-hosts">
             None of your machines are online. Start one with{" "}

@@ -1,16 +1,10 @@
 // Modified for Triune.
-import { Spinner } from "@/components/ui/spinner";
+import { ContentSkeleton } from "@/components/ui/loading";
 
 export function PageLoading({ label = "Loading Triune…" }: { label?: string }) {
   return (
-    <div
-      className="flex min-h-screen items-center justify-center gap-3 bg-background text-muted-foreground"
-      role="status"
-      aria-live="polite"
-      aria-busy="true"
-    >
-      <Spinner className="size-5 motion-reduce:animate-none" aria-hidden="true" />
-      <span>{label}</span>
+    <div className="flex min-h-screen flex-col bg-background p-6" aria-busy="true">
+      <ContentSkeleton label={label} rows={6} className="mx-auto max-w-4xl" />
     </div>
   );
 }

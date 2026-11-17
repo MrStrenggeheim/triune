@@ -36,7 +36,8 @@
 import { ApprovalDeliveryReview } from "./ApprovalDeliveryReview";
 import type { RunnerApprovalDelivery } from "@/lib/runnerApprovalDelivery";
 import type { NativePermissionDelivery } from "@/lib/nativePermissionDelivery";
-import { useContext, useState } from "react";
+import { useContext, useRef, useState } from "react";
+import { OperationStatus } from "@/components/ui/loading";
 import {
   CheckIcon,
   ClipboardListIcon,
@@ -118,7 +119,7 @@ export type SubmitApprovalFn = (
   action: "accept" | "decline" | "cancel",
   content?: Record<string, unknown>,
   meta?: Record<string, unknown>,
-) => void;
+) => void | Promise<void>;
 
 /** Sub-agent session behind a prompt mirrored into an ancestor's view. */
 export interface SubagentRequester {
@@ -290,6 +291,8 @@ export function ApprovalCard({
   // the child's elicitation rather than the main conversation's. null (the main
   // transcript) leaves submitApproval on its active-conversation default.
   const scopedConversationId = useContext(ConversationScopeContext);
+  const [dispatching, setDispatching] = useState(false);
+  const dispatchInFlight = useRef(false);
   const submitVerdict: SubmitApprovalFn =
     onSubmit ??
     ((id, action, content, meta) => {
@@ -297,20 +300,37 @@ export function ApprovalCard({
       // Keep the exact call shape for the main chat (no scope); pass the child
       // id only when scoped so a side-chat verdict targets the child.
       if (scopedConversationId) {
-        void store.submitApproval(id, action, content, meta, scopedConversationId);
+        return store.submitApproval(id, action, content, meta, scopedConversationId);
       } else if (meta === undefined) {
-        void store.submitApproval(id, action, content);
+        return store.submitApproval(id, action, content);
       } else {
-        void store.submitApproval(id, action, content, meta);
+        return store.submitApproval(id, action, content, meta);
       }
     });
   const submit: SubmitApprovalFn = (...args) => {
-    if (!nativeDelivery) return submitVerdict(...args);
+    if (dispatchInFlight.current) return undefined;
+    dispatchInFlight.current = true;
     const [id, action, content, meta] = args;
-    submitVerdict(id, action, content, {
-      ...meta,
-      native_delivery_attempt: nativeDelivery.attempt,
-    });
+    try {
+      const result = nativeDelivery
+        ? submitVerdict(id, action, content, {
+            ...meta,
+            native_delivery_attempt: nativeDelivery.attempt,
+          })
+        : submitVerdict(...args);
+      if (result && typeof result.then === "function") {
+        setDispatching(true);
+        return result.finally(() => {
+          dispatchInFlight.current = false;
+          setDispatching(false);
+        });
+      }
+      dispatchInFlight.current = false;
+      return undefined;
+    } catch (error) {
+      dispatchInFlight.current = false;
+      throw error;
+    }
   };
   const submitBinary = (action: "accept" | "decline") => {
     submit(elicitationId, action);
@@ -462,7 +482,11 @@ export function ApprovalCard({
       : `Won't ask again for any ${rememberScope.tool} call for the rest of this session`
     : undefined;
   const binaryButtons = (
-    <div className="flex flex-wrap gap-2 pt-1">
+    <fieldset
+      disabled={dispatching}
+      aria-busy={dispatching || undefined}
+      className="m-0 min-w-0 border-0 p-0 flex flex-wrap gap-2 pt-1"
+    >
       <Button size="sm" onClick={() => submitBinary("accept")} componentId="approval.approve">
         <CheckIcon className="mr-1 size-3.5" />
         Approve
@@ -585,10 +609,15 @@ export function ApprovalCard({
         <XIcon className="mr-1 size-3.5" />
         Reject
       </Button>
-    </div>
+    </fieldset>
   );
   const codexCommandButtons = (
-    <div className="flex flex-wrap items-center gap-2 pt-1" data-testid="codex-command-actions">
+    <fieldset
+      disabled={dispatching}
+      aria-busy={dispatching || undefined}
+      className="m-0 min-w-0 border-0 p-0 flex flex-wrap items-center gap-2 pt-1"
+      data-testid="codex-command-actions"
+    >
       <Button
         size="sm"
         onClick={() => submitBinary("accept")}
@@ -612,7 +641,7 @@ export function ApprovalCard({
         <XIcon className="mr-1 size-3.5" />
         Reject
       </Button>
-    </div>
+    </fieldset>
   );
 
   const requesterLine = requester ? <SubagentRequesterLine {...requester} /> : null;
@@ -952,6 +981,7 @@ export function ApprovalCard({
               : isMultiChoice
                 ? "Choose an option"
                 : "Approval required"}
+        {dispatching && <OperationStatus className="ml-auto">Sending decision…</OperationStatus>}
         {policyLabel && !isAskUserQuestion && !isExitPlanMode && (
           <span className="text-muted-foreground text-sm">· {policyLabel}</span>
         )}

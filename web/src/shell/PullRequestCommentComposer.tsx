@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -75,8 +76,9 @@ export function PullRequestCommentComposer({
           size="sm"
           className="shrink-0"
           disabled={draft.pending || !draft.body.trim() || tooLong}
+          loading={draft.pending}
         >
-          {draft.pending ? "Posting…" : "Post comment"}
+          Post comment
         </Button>
         <p className="min-w-0 truncate text-ui text-muted-foreground" title={account ?? undefined}>
           {account ? `Comment as ${account}` : "Comment using the host’s GitHub account"}

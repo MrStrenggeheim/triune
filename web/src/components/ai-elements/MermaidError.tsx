@@ -1,3 +1,4 @@
+import { ContentSkeleton } from "@/components/ui/loading";
 // Modified for Triune.
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { MermaidErrorComponentProps, MermaidOptions } from "streamdown";
@@ -254,14 +255,7 @@ export function MermaidError({ chart, error }: MermaidErrorComponentProps) {
   const details = useMemo(() => describeMermaidError(chart, error), [chart, error]);
   const escaped = useEscapedRender(details.escaped);
   if (escaped.status === "rendering") {
-    return (
-      <div className="my-4 flex justify-center p-4">
-        <div className="flex items-center space-x-2 text-muted-foreground">
-          <div className="h-4 w-4 animate-spin rounded-full border-current border-b-2" />
-          <span className="text-sm">Loading diagram...</span>
-        </div>
-      </div>
-    );
+    return <ContentSkeleton label="Loading diagram…" className="my-4 min-h-24" rows={4} />;
   }
   if (escaped.status === "rendered") {
     return (

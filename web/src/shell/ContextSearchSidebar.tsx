@@ -1,3 +1,4 @@
+import { OperationStatus } from "@/components/ui/loading";
 // Modified for Triune.
 import { usePanelEscapeClose } from "@/hooks/usePanelEscapeClose";
 import { useEffect, useRef, useState } from "react";
@@ -174,9 +175,7 @@ export function ContextSearchSidebar() {
           <p className="px-2 py-2 text-xs text-muted-foreground">Find messages and chats.</p>
         )}
         {!!search.query.trim() && loading && (
-          <p role="status" className="px-2 py-2 text-xs text-muted-foreground">
-            Searching…
-          </p>
+          <OperationStatus className="px-2 py-2 text-xs">Searching…</OperationStatus>
         )}
         {!!search.settledQuery &&
           search.hits.map((hit) => {
@@ -213,7 +212,11 @@ export function ContextSearchSidebar() {
               void search.messages.fetchNextPage();
             }}
           >
-            {search.messages.isFetchingNextPage ? "Loading…" : "Show more results"}
+            {search.messages.isFetchingNextPage ? (
+              <OperationStatus>Loading more results…</OperationStatus>
+            ) : (
+              "Show more results"
+            )}
           </TooltipButton>
         )}
         {!!search.query.trim() && !loading && !search.hits.length && !search.messages.isError && (

@@ -1,6 +1,8 @@
+// Modified for Triune.
+import { ContentSkeleton } from "@/components/ui/loading";
 import { TooltipButton } from "@/components/ui/tooltip";
 import { useMemo, useState } from "react";
-import { CalendarIcon, Loader2Icon, TriangleAlertIcon } from "lucide-react";
+import { CalendarIcon, TriangleAlertIcon } from "lucide-react";
 import { useOmnigentAnalytics } from "@/lib/analytics";
 import { PageScroll } from "@/components/PageScroll";
 import { CostTimelineChart } from "@/components/usage/CostTimelineChart";
@@ -157,11 +159,7 @@ export function UsagePage() {
           </div>
         )}
 
-        {isLoading && (
-          <div className="flex h-64 items-center justify-center">
-            <Loader2Icon className="h-5 w-5 animate-spin text-muted-foreground" />
-          </div>
-        )}
+        {isLoading && <ContentSkeleton label="Loading usage…" rows={6} className="h-64" />}
 
         {isError && (
           <div className="flex h-64 flex-col items-center justify-center gap-2 text-sm text-muted-foreground">

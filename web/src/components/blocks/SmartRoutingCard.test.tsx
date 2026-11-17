@@ -103,9 +103,12 @@ describe("SmartRoutingCard — judging (in-flight)", () => {
     // while the judge runs.
     expect(card()).toHaveTextContent("review-security");
     expect(card()).toHaveTextContent("→ codex"); // agent hint from args
-    // Per-row shimmer verbs cycle the pool by row index: row 0 → weighing, row 1 → matching.
-    expect(card()).toHaveTextContent("weighing…");
-    expect(card()).toHaveTextContent("matching…");
+    expect(
+      screen.getByRole("status", { name: "Choosing a model for review-security…" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("status", { name: "Choosing a model for refactor-auth…" }),
+    ).toBeVisible();
     // No model pill can exist before the response.
     expect(card().textContent).not.toContain("haiku");
     // Nothing to expand yet.

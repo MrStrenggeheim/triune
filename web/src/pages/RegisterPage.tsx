@@ -157,12 +157,13 @@ export function RegisterPage() {
           )}
 
           <Button
+            loading={submitting}
             type="submit"
             className="w-full"
             disabled={submitting || password.length < MIN_PASSWORD_LENGTH || username.length === 0}
             componentId="register.create_account"
           >
-            {submitting ? "Creating…" : "Create account"}
+            Create account
           </Button>
         </form>
       )}

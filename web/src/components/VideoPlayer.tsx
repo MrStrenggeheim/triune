@@ -1,3 +1,5 @@
+// Modified for Triune.
+import { ContentSkeleton, OperationStatus } from "@/components/ui/loading";
 import { useEffect, useId, useRef, useState } from "react";
 import {
   DownloadIcon,
@@ -8,7 +10,6 @@ import {
   VideoIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Spinner } from "@/components/ui/spinner";
 import { TooltipButton, Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   DropdownMenu,
@@ -50,6 +51,8 @@ function VideoPlayerContent(props: VideoPlayerProps) {
   const [blobSrc, setBlobSrc] = useState<string>();
   const src = requested ? (remoteSrc ?? blobSrc) : undefined;
   const [failed, setFailed] = useState(false);
+  const [frameReady, setFrameReady] = useState(false);
+  const [buffering, setBuffering] = useState(false);
   const [time, setTime] = useState(0);
   const [duration, setDuration] = useState<number | null>(null);
   const [wide, setWide] = useState(false);
@@ -61,17 +64,20 @@ function VideoPlayerContent(props: VideoPlayerProps) {
   const chapterQuery = useFileContent(conversationId, path ? `${path}.chapters.vtt` : null, {
     retry: false,
   });
-  const chapterContent = chapterQuery.isError ? undefined : chapterQuery.data;
+  const chapterContent = chapterQuery.data;
   const [chapters, setChapters] = useState<VideoChapter[]>([]);
   useEffect(() => {
-    setChapters([]);
-    if (chapterContent?.encoding !== "utf-8" || chapterContent.truncated) return;
+    if (chapterQuery.isError) return;
+    if (chapterContent?.encoding !== "utf-8" || chapterContent.truncated) {
+      setChapters([]);
+      return;
+    }
     const controller = new AbortController();
     void parseVideoChapters(chapterContent.content, controller.signal).then((parsed) => {
       if (!controller.signal.aborted) setChapters(parsed);
     });
     return () => controller.abort();
-  }, [chapterContent]);
+  }, [chapterContent, chapterQuery.isError]);
   const activeChapter = chapters.findLastIndex(
     (chapter) => chapter.time <= time && time < chapter.end,
   );
@@ -214,6 +220,9 @@ function VideoPlayerContent(props: VideoPlayerProps) {
               <DownloadIcon className="size-4" />
             </TooltipButton>
           )}
+          {!compact && chapterQuery.isLoading && chapters.length === 0 && (
+            <ContentSkeleton label="Loading recording actions…" rows={2} />
+          )}
           {!compact && chapters.length > 0 && (
             <Tooltip>
               <TooltipTrigger asChild>
@@ -249,39 +258,59 @@ function VideoPlayerContent(props: VideoPlayerProps) {
       >
         <span className="flex min-w-0 flex-col">
           {src && !failed ? (
-            <video
-              ref={videoRef}
-              src={src}
-              aria-label={title}
-              controls
-              playsInline
-              preload="metadata"
-              className={cn(
-                "w-full bg-black object-contain",
-                compact ? "aspect-[16/10]" : "aspect-video max-h-[70vh]",
+            <span className="relative block">
+              <video
+                ref={videoRef}
+                src={src}
+                aria-label={title}
+                controls
+                playsInline
+                preload="auto"
+                className={cn(
+                  "w-full bg-black object-contain",
+                  compact ? "aspect-[16/10]" : "aspect-video max-h-[70vh]",
+                )}
+                onError={() => setFailed(true)}
+                onWaiting={() => setBuffering(true)}
+                onStalled={() => setBuffering(true)}
+                onPlaying={() => setBuffering(false)}
+                onPause={() => setBuffering(false)}
+                onTimeUpdate={(event) => setTime(event.currentTarget.currentTime)}
+                onSeeked={(event) => setTime(event.currentTarget.currentTime)}
+                onDurationChange={(event) => {
+                  if (Number.isFinite(event.currentTarget.duration))
+                    setDuration(event.currentTarget.duration);
+                }}
+                onLoadedMetadata={(event) => {
+                  const video = event.currentTarget;
+                  if (Number.isFinite(video.duration)) setDuration(video.duration);
+                  if (pendingSeek.current !== null) {
+                    video.currentTime = Number.isFinite(video.duration)
+                      ? Math.min(pendingSeek.current, video.duration)
+                      : pendingSeek.current;
+                    pendingSeek.current = null;
+                  }
+                }}
+                onLoadedData={() => {
+                  setFrameReady(true);
+                  setBuffering(false);
+                  // Playback after an async fetch may need a second click on some WebViews.
+                  if (requested) void videoRef.current?.play().catch(() => {});
+                }}
+              />
+              {!frameReady && (
+                <ContentSkeleton
+                  label="Preparing video…"
+                  rows={5}
+                  className="pointer-events-none absolute inset-0 bg-muted"
+                />
               )}
-              onError={() => setFailed(true)}
-              onTimeUpdate={(event) => setTime(event.currentTarget.currentTime)}
-              onSeeked={(event) => setTime(event.currentTarget.currentTime)}
-              onDurationChange={(event) => {
-                if (Number.isFinite(event.currentTarget.duration))
-                  setDuration(event.currentTarget.duration);
-              }}
-              onLoadedMetadata={(event) => {
-                const video = event.currentTarget;
-                if (Number.isFinite(video.duration)) setDuration(video.duration);
-                if (pendingSeek.current !== null) {
-                  video.currentTime = Number.isFinite(video.duration)
-                    ? Math.min(pendingSeek.current, video.duration)
-                    : pendingSeek.current;
-                  pendingSeek.current = null;
-                }
-              }}
-              onLoadedData={() => {
-                // Playback after an async fetch may need a second click on some WebViews.
-                if (requested) void videoRef.current?.play().catch(() => {});
-              }}
-            />
+              {frameReady && buffering && (
+                <OperationStatus className="pointer-events-none absolute left-3 top-3 rounded bg-background px-2 py-1">
+                  Buffering video…
+                </OperationStatus>
+              )}
+            </span>
           ) : (
             <span
               className={cn(
@@ -302,6 +331,8 @@ function VideoPlayerContent(props: VideoPlayerProps) {
                     className="rounded-md border px-3 py-1.5 hover:bg-accent"
                     onClick={() => {
                       setFailed(false);
+                      setFrameReady(false);
+                      setBuffering(false);
                       setRequested(false);
                       setBlobSrc(undefined);
                       setTime(0);
@@ -313,9 +344,7 @@ function VideoPlayerContent(props: VideoPlayerProps) {
                   </TooltipButton>
                 </>
               ) : loading ? (
-                <span role="status" className="flex items-center gap-2">
-                  <Spinner aria-hidden="true" role="presentation" /> Loading video…
-                </span>
+                <ContentSkeleton label="Loading video…" rows={5} />
               ) : (
                 <TooltipButton
                   type="button"
@@ -373,9 +402,9 @@ function VideoPlayerContent(props: VideoPlayerProps) {
                 ))}
               </span>
               {chapterQuery.isFetching && (
-                <span role="status" className="shrink-0 px-3 py-2 text-xs text-muted-foreground">
+                <OperationStatus className="shrink-0 px-3 py-2 text-xs">
                   Updating actions…
-                </span>
+                </OperationStatus>
               )}
             </span>
           </span>

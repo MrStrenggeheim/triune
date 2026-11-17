@@ -1,3 +1,5 @@
+// Modified for Triune.
+import { ContentSkeleton } from "@/components/ui/loading";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "@/lib/routing";
 import { useQueryClient } from "@tanstack/react-query";
@@ -494,9 +496,7 @@ function ForkRunConfig({
             contentClassName={FORK_SELECT_ITEM_SM}
             componentId="fork_session.config.model"
           >
-            {modelsLoading && (
-              <div className="px-2.5 py-1 text-sm text-muted-foreground">Loading models…</div>
-            )}
+            {modelsLoading && <ContentSkeleton label="Loading models…" rows={3} />}
             {!modelsLoading && modelOptions.length === 0 && (
               <div className="px-2.5 py-1 text-sm text-muted-foreground">
                 {selectedHostId === null ? "Select a host to list models" : "Models unavailable"}
@@ -1490,9 +1490,9 @@ function SupportedForkSessionForm({
           <div className="flex flex-col gap-2">
             <span className="text-sm font-medium text-muted-foreground">Host</span>
             {hosts === undefined ? (
-              <p className="text-sm text-muted-foreground" data-testid="fork-session-no-hosts">
-                Loading hosts…
-              </p>
+              <div data-testid="fork-session-no-hosts">
+                <ContentSkeleton label="Loading hosts…" rows={3} />
+              </div>
             ) : onlineHosts.length === 0 && !managedSandboxesEnabled ? (
               // Nothing usable (no hosts, or all offline) and no sandbox to
               // fall back on — show the connect command directly so the user

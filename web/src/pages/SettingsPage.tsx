@@ -1,4 +1,4 @@
-import { ContentSkeleton } from "@/components/ui/loading";
+import { OperationStatus, ContentSkeleton } from "@/components/ui/loading";
 // Modified for Triune.
 import { SidebarServerPicker as ServerConnectionPicker } from "@/shell/SidebarServerPicker";
 import {
@@ -2506,6 +2506,7 @@ function LocalCliSection() {
                       variant="ghost"
                       size="sm"
                       disabled={busy}
+                      loading={busy}
                       onClick={() => void onReset()}
                     >
                       Reset to auto-detected
@@ -2664,7 +2665,7 @@ function UpdatesSection() {
               >
                 Check for updates now
               </Button>
-              {saving && <span className="text-sm text-muted-foreground">Saving…</span>}
+              {saving && <OperationStatus>Saving…</OperationStatus>}
             </div>
           </SettingsGroup>
 
@@ -2870,9 +2871,10 @@ function AccountSection() {
                   disabled={
                     pwBusy || oldPw.length === 0 || newPw.length === 0 || confirmPw.length === 0
                   }
+                  loading={pwBusy}
                   componentId="settings.account.update_password"
                 >
-                  {pwBusy ? "Changing…" : "Change password"}
+                  Change password
                 </Button>
               </DialogFooter>
             </form>
@@ -3529,6 +3531,7 @@ function ArchivedRow({
             aria-label="Delete session"
             data-testid="delete-archived"
             disabled={busy}
+            loading={del.isPending}
             onClick={() => setDeleteOpen(true)}
           >
             <Trash2Icon className="size-4 text-destructive" />
@@ -3543,6 +3546,7 @@ function ArchivedRow({
             className="gap-1.5 dark:bg-secondary dark:hover:bg-secondary/80"
             data-testid="unarchive-conversation"
             disabled={busy}
+            loading={archive.isPending}
             onClick={() =>
               archive.mutate(
                 { id: conversation.id, archived: false },
@@ -3572,6 +3576,7 @@ function ArchivedRow({
             <Button
               variant="destructive"
               disabled={del.isPending}
+              loading={del.isPending}
               onClick={() => {
                 del.mutate({ id: conversation.id });
                 setDeleteOpen(false);

@@ -1,3 +1,4 @@
+import { ContentSkeleton, OperationStatus } from "@/components/ui/loading";
 // Modified for Triune.
 import { TooltipButton } from "@/components/ui/tooltip";
 import { useFileContentReader } from "./FileContentReader";
@@ -532,6 +533,7 @@ function MarkdownRichTextViewerInner({
           }
         }}
       >
+        {!editor && <ContentSkeleton label="Preparing editor…" rows={6} />}
         <EditorContent
           editor={editor}
           className="outline-none max-w-none text-ui text-foreground [&_*::selection]:bg-blue-300/40 [&_*::selection]:text-foreground [&::selection]:bg-blue-300/40 [&::selection]:text-foreground tiptap-md-content"
@@ -579,8 +581,12 @@ function MarkdownRichTextViewerInner({
       {canEdit && isDirty && !hasExternalUpdate && !saveDisabled && (
         <div className="absolute bottom-0 left-0 right-0 z-10 flex items-center gap-1.5 border-t border-border bg-muted/50 px-4 py-1.5 text-sm text-muted-foreground backdrop-blur-sm">
           <MessageSquareOffIcon className="size-3.5 shrink-0" />
-          {writeFile.isPending ? "Saving…" : "Unsaved changes —"} commenting is available once
-          saved.
+          {writeFile.isPending ? (
+            <OperationStatus>Saving…</OperationStatus>
+          ) : (
+            "Unsaved changes —"
+          )}{" "}
+          commenting is available once saved.
         </div>
       )}
       <MarkdownCommentPlugin

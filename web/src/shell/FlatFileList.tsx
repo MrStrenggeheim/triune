@@ -1,3 +1,5 @@
+// Modified for Triune.
+import { ContentSkeleton } from "@/components/ui/loading";
 import {
   relativizeToWorkspace,
   RunnerOfflineError,
@@ -230,7 +232,7 @@ export function FlatFileList({
   );
   useExplorerTree(explorerEntries);
   if (isLoading && !files) {
-    return <p className="px-2 py-1 text-muted-foreground text-sm">Loading…</p>;
+    return <ContentSkeleton label="Loading files…" rows={3} />;
   }
   if (isError && !files) {
     // Runner not connected. If it went offline after being up (host

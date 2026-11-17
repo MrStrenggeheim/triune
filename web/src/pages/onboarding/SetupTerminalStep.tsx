@@ -1,3 +1,4 @@
+import { OperationStatus } from "@/components/ui/loading";
 // Modified for Triune.
 // Onboarding step: run the install + start/connect sequence, shown as a small
 // terminal-styled status log. When the CLI isn't installed yet, an install
@@ -138,13 +139,6 @@ export function SetupTerminalStep({
   // Cycle "." → ".." → "..." on the in-progress title so a slow install/start
   // still reads as alive.
   const inProgress = phase === "installing" || phase === "running";
-  const [dots, setDots] = useState(1);
-  useEffect(() => {
-    if (!inProgress) return;
-    setDots(1);
-    const timer = setInterval(() => setDots((n) => (n % 3) + 1), 400);
-    return () => clearInterval(timer);
-  }, [inProgress]);
 
   const streamed = lines.length > 0;
   const baseLabel =
@@ -155,7 +149,7 @@ export function SetupTerminalStep({
         : phase === "installing"
           ? "Installing the Triune CLI"
           : runningLabel;
-  const phaseLabel = inProgress ? `${baseLabel}${".".repeat(dots)}` : baseLabel;
+  const phaseLabel = baseLabel;
   const pendingHint = phase === "installing" ? "Installing the CLI…" : runningHint;
   // Coarse progress over real milestones: warmup → install output → server
   // starting → done; without an install, the run's first output and the server
@@ -171,12 +165,14 @@ export function SetupTerminalStep({
 
   return (
     <div className="flex h-full flex-col px-2 pb-1 pt-4">
-      <div className="mb-2 text-sm font-medium text-foreground">{phaseLabel}</div>
+      <div className="mb-2 text-sm font-medium text-foreground">
+        {inProgress ? <OperationStatus>{phaseLabel}</OperationStatus> : phaseLabel}
+      </div>
       <div className="mb-3 h-[6px] w-full overflow-hidden rounded-full bg-foreground/[0.06]">
         <div
           className={`h-full rounded-full transition-all duration-300 ease-linear ${
             phase === "failed" ? "bg-destructive/60" : "bg-foreground/25"
-          } ${inProgress ? "animate-pulse" : ""}`}
+          } ${inProgress ? "animate-pulse motion-reduce:animate-none" : ""}`}
           style={{ width: `${progress}%` }}
         />
       </div>
@@ -193,7 +189,7 @@ export function SetupTerminalStep({
             <LogLine key={i} text={line} />
           ))
         ) : (
-          <div className="text-foreground/25">{pendingHint}</div>
+          <div className="text-muted-foreground">{pendingHint}</div>
         )}
         {phase === "ready" && (
           <div className="text-[rgb(34,197,94)]">

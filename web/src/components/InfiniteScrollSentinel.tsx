@@ -1,6 +1,6 @@
-import { TooltipButton } from "@/components/ui/tooltip";
+// Modified for Triune.
+import { Button } from "@/components/ui/button";
 import { useCallback, useContext, useEffect, useRef, useState, type RefObject } from "react";
-import { Loader2Icon } from "lucide-react";
 import { SidebarConfigContext } from "@/lib/sidebarConfig";
 import { cn } from "@/lib/utils";
 
@@ -71,24 +71,20 @@ export function InfiniteScrollSentinel({
   }, [hasMore, budget, limit, load, scrollRoot, revision, scopeKey]);
   if (!hasMore) return null;
   return (
-    <TooltipButton
+    <Button
+      variant="ghost"
+      size="sm"
+      loading={isFetching}
       ref={ref}
       type="button"
       disabled={isFetching}
       onClick={() => load(false)}
       className={cn(
-        "flex w-full cursor-pointer items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-muted-foreground text-sm hover:bg-muted disabled:pointer-events-none disabled:opacity-50",
+        "h-auto flex w-full cursor-pointer items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-muted-foreground text-sm hover:bg-muted disabled:pointer-events-none disabled:opacity-50",
         indent && "pl-5",
       )}
     >
-      {isFetching ? (
-        <>
-          <Loader2Icon className="size-3 animate-spin" />
-          Loading…
-        </>
-      ) : (
-        "Load more"
-      )}
-    </TooltipButton>
+      Load more
+    </Button>
   );
 }

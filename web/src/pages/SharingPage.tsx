@@ -1,3 +1,5 @@
+// Modified for Triune.
+import { ContentSkeleton, OperationStatus } from "@/components/ui/loading";
 /**
  * Admin session-sharing settings page (``/settings/sharing``). Rendered as a
  * Settings sub-category, alongside Members and Policies.
@@ -119,11 +121,7 @@ export function SharingPage() {
   }, [isSingleUser]);
 
   if (!isSingleUser && meIsAdmin === null) {
-    return (
-      <div className="flex min-h-full items-center justify-center text-ui text-muted-foreground">
-        Loading...
-      </div>
-    );
+    return <ContentSkeleton label="Loading sharing settings…" rows={3} />;
   }
 
   if (!isSingleUser && meIsAdmin === false) {
@@ -192,7 +190,7 @@ export function SharingPage() {
         </div>
 
         {isLoading || current === undefined ? (
-          <p className="text-ui text-muted-foreground">Loading…</p>
+          <ContentSkeleton label="Loading sharing settings…" rows={3} />
         ) : (
           <>
             {!editable && (
@@ -200,6 +198,7 @@ export function SharingPage() {
                 The sharing mode is managed by this deployment and can't be changed here.
               </p>
             )}
+            {setMode.isPending && <OperationStatus>Saving sharing settings…</OperationStatus>}
             <div className="flex flex-col gap-6">
               <SettingsGroup title="Sharing mode" testId="settings-group-sharing-mode">
                 <div className="flex flex-col gap-3 md:flex-row-reverse md:items-start md:gap-6">

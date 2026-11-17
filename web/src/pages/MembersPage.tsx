@@ -1,3 +1,5 @@
+// Modified for Triune.
+import { ContentSkeleton } from "@/components/ui/loading";
 /**
  * Admin members management page (``/settings/members``; the legacy
  * ``/members`` path redirects here). Rendered as a Settings sub-category.
@@ -125,11 +127,7 @@ export function MembersPage() {
   // AppShell's outlet container governs height — we're a child view,
   // not a full-page replacement.
   if (meIsAdmin === null) {
-    return (
-      <div className="flex min-h-full items-center justify-center text-ui text-muted-foreground">
-        Loading…
-      </div>
-    );
+    return <ContentSkeleton label="Loading members…" rows={3} />;
   }
 
   // Non-admin: hard stop. Server would also 403, this is just UX.
@@ -216,6 +214,9 @@ export function MembersPage() {
         </div>
       )}
 
+      {users === null && loadError === null && (
+        <ContentSkeleton label="Loading member list…" rows={5} />
+      )}
       {users !== null && users.length > 0 && (
         <div className="overflow-hidden rounded-md border border-border">
           <table className="w-full text-ui">

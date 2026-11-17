@@ -1,3 +1,5 @@
+// Modified for Triune.
+import { OperationStatus } from "@/components/ui/loading";
 import { useState } from "react";
 import { SettingsLabel } from "@/components/SettingsLabel";
 import { RoutingModelSelect, MODEL_SELECT_DEFAULT } from "@/components/HarnessConfigControls";
@@ -94,9 +96,7 @@ export function DefaultModelSettings() {
         </div>
       )}
       {catalog.isFetching && (
-        <p role="status" className="text-xs text-muted-foreground">
-          Loading model catalog…
-        </p>
+        <OperationStatus className="text-xs">Loading model catalog…</OperationStatus>
       )}
       {(catalog.error || !models.length) && (
         <p role="status" className="text-xs text-muted-foreground">

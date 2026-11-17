@@ -1,3 +1,5 @@
+// Modified for Triune.
+import { ContentSkeleton } from "@/components/ui/loading";
 import { toast } from "@/lib/notifications";
 import { useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -755,7 +757,7 @@ function HarnessWarning({
 function StartupSettings({ host, harness }: { host: Host; harness: string }) {
   const { data, error, isPending } = useHarnessStartup(host.host_id, harness);
   if (error instanceof ApiError && error.status === 404) return null;
-  if (isPending) return <p className="text-ui text-muted-foreground">Loading launch settings…</p>;
+  if (isPending) return <ContentSkeleton label="Loading launch settings…" rows={3} />;
   if (error || !data) {
     return (
       <p className="text-ui text-muted-foreground">

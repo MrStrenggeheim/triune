@@ -511,8 +511,8 @@ export function ServerSelectStep({
               Back
             </Button>
             <Button
-              disabled={selected === null}
-              loading={connection !== null}
+              disabled={selected === null || connection !== null}
+              loading={connection !== null && connection.phase !== "authenticating"}
               onClick={join}
               size="lg"
             >

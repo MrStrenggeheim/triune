@@ -1,3 +1,5 @@
+// Modified for Triune.
+import { ContentSkeleton } from "@/components/ui/loading";
 import { useWorkbenchWorkspace, queryIdentity } from "@/lib/workbenchWorkspace";
 // The Summary tab's Reviewers section: each reviewer's review state and, for editors,
 // a picker that requests reviews. An edit shows as in progress until the provider answers.
@@ -267,9 +269,7 @@ function PullRequestReviewerPicker({
               </CommandGroup>
             )}
             {candidates.isPending ? (
-              <p role="status" className="py-6 text-center text-ui text-muted-foreground">
-                Loading reviewers…
-              </p>
+              <ContentSkeleton label="Loading reviewers…" rows={3} />
             ) : candidates.isError ? (
               <p role="alert" className="px-2 py-6 text-center text-ui text-destructive">
                 {candidates.error.message}

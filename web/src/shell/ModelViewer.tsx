@@ -1,3 +1,4 @@
+import { ContentSkeleton } from "@/components/ui/loading";
 // Modified for Triune.
 // Interactive 3D preview for STL / 3MF / OBJ files.
 //
@@ -233,6 +234,7 @@ export function ModelViewer({
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [errored, setErrored] = useState(false);
+  const [ready, setReady] = useState(false);
   const activeRef = useRef(active);
   activeRef.current = active;
   const [opened, setOpened] = useState(active);
@@ -283,6 +285,7 @@ export function ModelViewer({
     }
 
     setErrored(false);
+    setReady(false);
 
     let disposed = false;
     const res: SceneResources = {
@@ -393,6 +396,7 @@ export function ModelViewer({
           }
         };
         res.setActive(activeRef.current);
+        if (!disposed) setReady(true);
       })
       .catch(() => {
         fail();
@@ -421,6 +425,13 @@ export function ModelViewer({
         aria-label={`3D preview of ${filename}`}
         className="absolute inset-0 cursor-grab active:cursor-grabbing"
       />
+      {!ready && !errored && (
+        <ContentSkeleton
+          label="Preparing 3D preview…"
+          rows={6}
+          className="absolute inset-0 bg-background"
+        />
+      )}
       {errored && (
         <div className="absolute inset-0 flex items-center justify-center bg-background/80 p-8 text-center text-muted-foreground text-ui">
           {errorMessage}

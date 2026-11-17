@@ -1,3 +1,5 @@
+// Modified for Triune.
+import { ContentSkeleton } from "@/components/ui/loading";
 import { TooltipButton } from "@/components/ui/tooltip";
 // Subagents tab content for the right-side rail. Renders the session
 // tree under the root conversation — a "main" link back to the root,
@@ -109,9 +111,7 @@ export function SubagentsPanel({
     return (
       <div className={panelClass}>
         {header}
-        <div className="flex flex-1 items-center justify-center px-4 py-8 text-center text-sm text-muted-foreground">
-          Loading…
-        </div>
+        <ContentSkeleton label="Loading agents…" rows={3} />
       </div>
     );
   }
@@ -131,13 +131,7 @@ export function SubagentsPanel({
       <div className={panelClass}>
         {header}
         <div className={cn("flex min-h-0 flex-1 flex-col", embedded && "h-96 flex-none")}>
-          <Suspense
-            fallback={
-              <div className="flex h-full flex-1 items-center justify-center text-sm text-muted-foreground">
-                Loading graph…
-              </div>
-            }
-          >
+          <Suspense fallback={<ContentSkeleton label="Loading graph…" rows={3} />}>
             <SubagentsGraphView conversationId={conversationId} rootSessionId={rootSessionId} />
           </Suspense>
         </div>

@@ -1,3 +1,5 @@
+// Modified for Triune.
+import { Spinner } from "@/components/ui/spinner";
 import { useTranscriptDisclosureAnchor } from "@/hooks/useTranscriptDisclosureAnchor";
 ("use client");
 
@@ -138,7 +140,11 @@ export const ReasoningTrigger = memo(
 
     const label = (
       <>
-        <SparklesIcon className="size-3.5 shrink-0" />
+        {isStreaming ? (
+          <Spinner className="size-3.5 shrink-0" aria-hidden="true" role="presentation" />
+        ) : (
+          <SparklesIcon className="size-3.5 shrink-0" />
+        )}
         <span className="min-w-0 flex-1 truncate">{getThinkingMessage(isStreaming, duration)}</span>
         {expandable && (
           <ChevronRightIcon

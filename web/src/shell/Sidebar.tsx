@@ -1739,15 +1739,7 @@ function ProjectFolder({
         footer={
           loadingFirstPage ? (
             <div className="pl-6">
-              <p
-                className={cn(
-                  SIDEBAR_ROW,
-                  "density-row",
-                  "flex w-full flex-col justify-center text-left text-muted-foreground",
-                )}
-              >
-                Loading…
-              </p>
+              <ContentSkeleton label="Loading sessions…" rows={3} />
             </div>
           ) : (
             <InfiniteScrollSentinel
@@ -2757,9 +2749,7 @@ function ConversationList({
       </TooltipButton>
     </p>
   ) : conversationsQuery.isLoading ? (
-    <p role="status" className="px-2 py-1 text-muted-foreground text-sm">
-      Loading…
-    </p>
+    <ContentSkeleton label="Loading sessions…" rows={3} />
   ) : undefined;
   const showShared = activeTab === "shared";
   // The Shared section replaces Sessions on the Shared filter (release-flagged).

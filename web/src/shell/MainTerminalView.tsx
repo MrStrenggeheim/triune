@@ -1,3 +1,5 @@
+// Modified for Triune.
+import { ContentSkeleton } from "@/components/ui/loading";
 import { TooltipButton } from "@/components/ui/tooltip";
 // Inline terminal renderer for terminal-first sessions. Replaces the
 // chat conversation + composer when the user picks "Terminal" in the
@@ -401,7 +403,7 @@ export function MainTerminalView({
                     onFocusCapture={split ? () => focusPane(pane.key) : undefined}
                   >
                     {terminal ? (
-                      <Suspense fallback={null}>
+                      <Suspense fallback={<ContentSkeleton label="Loading terminal…" rows={5} />}>
                         <TerminalView
                           sessionId={conversationId}
                           terminalId={terminal.id}

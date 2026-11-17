@@ -1171,6 +1171,7 @@ export function ExplorerActionsProvider({
             </Button>
             <Button
               disabled={busy}
+              loading={busy}
               onClick={() =>
                 void run(async () => {
                   if (!pasteConflict) return;
@@ -1238,8 +1239,8 @@ export function ExplorerActionsProvider({
             <Button variant="outline" disabled={busy} onClick={() => setDialog(null)}>
               Cancel
             </Button>
-            <Button disabled={busy} onClick={() => void run(applyDialog)}>
-              {busy ? "Working…" : dialog?.kind === "trash" ? "Move to trash" : "Apply"}
+            <Button disabled={busy} loading={busy} onClick={() => void run(applyDialog)}>
+              {dialog?.kind === "trash" ? "Move to trash" : "Apply"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1317,7 +1318,11 @@ export function ExplorerActionsProvider({
             <Button variant="outline" onClick={() => setUpload(null)}>
               Cancel
             </Button>
-            <Button disabled={busy || !writable} onClick={() => void run(startUpload)}>
+            <Button
+              disabled={busy || !writable}
+              loading={busy}
+              onClick={() => void run(startUpload)}
+            >
               Upload
             </Button>
           </DialogFooter>

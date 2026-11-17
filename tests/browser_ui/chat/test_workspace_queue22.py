@@ -144,6 +144,6 @@ def test_footer_settings_tab_geometry_and_notification_disclosure(
     page.clock.resume()
     settings = _navigation(page).get_by_test_id("settings-button")
     settings.click()
-    expect(page).to_have_url(browser_contract.base_url + "/settings")
+    expect(page).to_have_url(browser_contract.base_url + "/settings/general")
     _capture(page, output_path, "sidebar-settings-navigation")
     assert browser_errors == []

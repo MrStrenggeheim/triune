@@ -1,3 +1,5 @@
+// Modified for Triune.
+import { ContentSkeleton } from "@/components/ui/loading";
 import { TooltipButton } from "@/components/ui/tooltip";
 /**
  * Admin default-policies management page (``/settings/policies``; the legacy
@@ -432,7 +434,7 @@ export function PoliciesPage() {
   // / login_url:null shape) is NOT single-user and keeps its admin gate.
   const isSingleUser = isSingleUserMode(info);
   const [meIsAdmin, setMeIsAdmin] = useState<boolean | null>(null);
-  const { data: policies = [], refetch } = useDefaultPolicies();
+  const { data: policies = [], refetch, isLoading: policiesLoading } = useDefaultPolicies();
   const { data: registry = [] } = usePolicyRegistry();
   const updatePolicy = useUpdateDefaultPolicy();
   const deletePolicy = useDeleteDefaultPolicy();
@@ -460,11 +462,7 @@ export function PoliciesPage() {
   }, [isSingleUser]);
 
   if (!isSingleUser && meIsAdmin === null) {
-    return (
-      <div className="flex min-h-full items-center justify-center text-ui text-muted-foreground">
-        Loading...
-      </div>
-    );
+    return <ContentSkeleton label="Loading policies…" rows={3} />;
   }
 
   if (!isSingleUser && meIsAdmin === false) {
@@ -508,6 +506,7 @@ export function PoliciesPage() {
         </Button>
       </div>
 
+      {policiesLoading && <ContentSkeleton label="Loading policy list…" rows={5} />}
       {policies.length > 0 && (
         <div className="flex flex-col gap-3">
           {policies.map((p) => {
@@ -597,7 +596,7 @@ export function PoliciesPage() {
         </div>
       )}
 
-      {policies.length === 0 && (
+      {!policiesLoading && policies.length === 0 && (
         <p className="text-ui text-muted-foreground">
           No global policies configured. Add one to apply it to all sessions.
         </p>

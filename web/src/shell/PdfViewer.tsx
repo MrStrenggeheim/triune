@@ -1,3 +1,4 @@
+import { ContentSkeleton } from "@/components/ui/loading";
 // Modified for Triune.
 import { FileSelectionMenu } from "./FileSelectionMenu";
 // Render a PDF file inline via react-pdf (pdf.js). Mirrors ImageViewer's blob
@@ -367,7 +368,7 @@ export function PdfViewer({
             file={pdfFile}
             onLoadSuccess={(doc) => setNumPages(doc.numPages)}
             onLoadError={() => setErrored(true)}
-            loading={centered("Loading PDF…")}
+            loading={<ContentSkeleton label="Loading PDF…" rows={8} className="min-h-64" />}
             error={centered("Unable to render PDF.", "error")}
             className="flex flex-col items-center gap-4"
           >
@@ -399,7 +400,13 @@ export function PdfViewer({
                       }));
                     }}
                     className="shadow-md"
-                    loading=""
+                    loading={
+                      <ContentSkeleton
+                        label={`Rendering page ${pageNumber}…`}
+                        rows={6}
+                        className="min-h-64"
+                      />
+                    }
                   >
                     <PdfCommentHighlights
                       page={pageNumber}

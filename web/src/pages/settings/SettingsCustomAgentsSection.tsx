@@ -1,3 +1,5 @@
+// Modified for Triune.
+import { ContentSkeleton } from "@/components/ui/loading";
 import { useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { BotIcon, PlusIcon, SearchIcon, TrashIcon } from "lucide-react";
@@ -140,11 +142,13 @@ export function SettingsCustomAgentsSection() {
         ) : (
           <>
             <h1 className="mb-6 text-2xl font-semibold">Custom agent</h1>
-            <p className="text-ui text-muted-foreground">
-              {detail.isPending
-                ? "Loading agent…"
-                : "Agent not found. It may have been removed or belong to another user."}
-            </p>
+            {detail.isPending ? (
+              <ContentSkeleton label="Loading agent…" rows={3} />
+            ) : (
+              <p className="text-ui text-muted-foreground">
+                Agent not found. It may have been removed or belong to another user.
+              </p>
+            )}
           </>
         )}
       </div>
@@ -303,7 +307,7 @@ function ListStatus({
   emptyText: string;
 }) {
   const client = useQueryClient();
-  if (query.isPending) return <p className="py-4 text-ui text-muted-foreground">Loading agents…</p>;
+  if (query.isPending) return <ContentSkeleton label="Loading agents…" rows={3} />;
   if (query.isError)
     return (
       <p role="alert" className="py-4 text-ui">

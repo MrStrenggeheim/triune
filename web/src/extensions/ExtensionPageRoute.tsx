@@ -1,4 +1,5 @@
-import { Spinner } from "@/components/ui/spinner";
+// Modified for Triune.
+import { ContentSkeleton } from "@/components/ui/loading";
 import { useParams } from "@/lib/routing";
 import { NotFoundPage } from "@/pages/NotFoundPage";
 import { resolveExtensionPage } from "./catalog";
@@ -16,7 +17,7 @@ export function ExtensionPageRoute() {
     return (
       <div className="flex h-full min-h-0 w-full flex-col overflow-hidden pt-14 md:pt-12">
         <div className="flex min-h-0 flex-1 items-center justify-center">
-          <Spinner className="size-5 text-muted-foreground" aria-label="Loading extension" />
+          <ContentSkeleton label="Loading extension…" rows={6} />
         </div>
       </div>
     );

@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { useTranscriptDisclosureAnchor } from "@/hooks/useTranscriptDisclosureAnchor";
 import { TooltipButton } from "@/components/ui/tooltip";
 // Inline status indicators for non-tool, non-text, non-reasoning blocks.
@@ -645,12 +646,13 @@ export function ErrorBanner({
               variant="outline"
               size="xs"
               disabled={signInBusy}
+              loading={signInBusy}
               onClick={() => void openSignIn()}
               style={{ fontSize: "var(--text-13, 13px)" }}
               className="h-6 gap-1 rounded-[var(--control-radius,var(--radius-lg))] px-2 leading-5"
             >
               <ExternalLinkIcon className="size-3.5" aria-hidden="true" />
-              {signInBusy ? "Fetching link…" : "Open sign-in link"}
+              Open sign-in link
             </Button>
             {signInCode ? (
               <Button
@@ -909,8 +911,11 @@ export function RetryIndicator({
   delaySeconds,
 }: RetryIndicatorProps) {
   return (
-    <div className="flex items-center gap-2 text-muted-foreground text-sm">
-      <RotateCcwIcon className="size-3" />
+    <div role="status" className="flex items-center gap-2 text-muted-foreground text-sm">
+      <RotateCcwIcon
+        className="size-3 shrink-0 origin-center animate-spin motion-reduce:animate-none"
+        aria-hidden="true"
+      />
       <span>
         Retrying {source} · attempt {attempt}/{maxAttempts}
         {delaySeconds > 0 ? ` · waiting ${delaySeconds.toFixed(1)}s` : ""}
