@@ -1,3 +1,4 @@
+// Modified for Triune.
 import {
   isThemePalette,
   PALETTE_TOKEN_CSS_NAMES,
@@ -486,29 +487,15 @@ export function customThemeSwatches(theme: CustomTheme): {
   light: PaletteSwatch;
   dark: PaletteSwatch;
 } {
-  const normalized = normalizeTheme(theme) ?? DEFAULT_CUSTOM_THEME;
-  const palette =
-    PALETTES.find((candidate) => candidate.id === normalized.basePalette) ?? PALETTES[0];
-  const reference = generateCustomTheme(createCustomThemeFromPalette(palette));
-  const current = generateCustomTheme({ ...normalized, translucentSidebar: false });
-
-  const swatch = (
-    base: PaletteSwatch,
-    referenceVariant: GeneratedThemeVariant,
-    currentVariant: GeneratedThemeVariant,
-  ): PaletteSwatch => ({
-    bg: rebaseColor(base.bg, referenceVariant.background, currentVariant.background),
-    card: rebaseColor(base.card, referenceVariant.cardSolid, currentVariant.cardSolid),
-    accent:
-      currentVariant.primary === referenceVariant.primary ? base.accent : currentVariant.primary,
-    border: rebaseColor(base.border, referenceVariant.border, currentVariant.border),
-    text: rebaseColor(base.text, referenceVariant.foreground, currentVariant.foreground),
+  const variants = deriveCustomTheme(theme);
+  const swatch = (variant: DerivedThemeVariant): PaletteSwatch => ({
+    bg: variant.background,
+    card: variant.card,
+    accent: variant.primary,
+    border: variant.border,
+    text: variant.foreground,
   });
-
-  return {
-    light: swatch(palette.light, reference.light, current.light),
-    dark: swatch(palette.dark, reference.dark, current.dark),
-  };
+  return { light: swatch(variants.light), dark: swatch(variants.dark) };
 }
 
 export function applyCustomTheme(theme: CustomTheme): void {

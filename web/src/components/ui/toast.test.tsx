@@ -208,7 +208,9 @@ describe("shared notifications", () => {
       const preview = screen.getByRole("region", { name: "Notifications" });
       const top = rowTop + height + gap;
       expect(preview.style.top).toContain(`${top}px`);
-      expect(preview.style.maxHeight).toContain(`${top}px`);
+      expect(preview.style.getPropertyValue("--notification-available-height")).toContain(
+        `${top}px`,
+      );
       expect(preview).toHaveStyle({ width: "320px" });
       await act(async () => {
         rowTop += 20;
@@ -427,4 +429,40 @@ describe("shared notifications", () => {
     expect(screen.queryByText("Project saved")).toBeNull();
     expect(screen.getByText("Uploading files")).toBeInTheDocument();
   });
+});
+
+it("collapses only overflowing feed descriptions and keeps actions independent of disclosure", () => {
+  vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockImplementation(function (
+    this: HTMLElement,
+  ) {
+    return this.classList.contains("notification-description-text") ? 80 : 0;
+  });
+  const computed = window.getComputedStyle;
+  vi.spyOn(window, "getComputedStyle").mockImplementation((element, pseudo) => {
+    const style = computed(element, pseudo);
+    if (element.classList.contains("notification-description-text"))
+      Object.defineProperty(style, "lineHeight", { value: "20px" });
+    return style;
+  });
+  mount();
+  const restore = vi.fn();
+  act(() =>
+    toast("Archived chats", {
+      description: "Long retained description of the archived conversations.",
+      action: { label: "Restore", onClick: restore },
+    }),
+  );
+  expect(screen.queryByRole("button", { name: "more" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Notifications" }));
+  const more = screen.getByRole("button", { name: "more" });
+  expect(more).toHaveAttribute("aria-expanded", "false");
+  fireEvent.click(more);
+  const less = screen.getByRole("button", { name: "less" });
+  expect(less).toBe(more);
+  expect(less).toHaveAttribute("aria-expanded", "true");
+  expect(restore).not.toHaveBeenCalled();
+  fireEvent.click(less);
+  expect(more).toHaveAttribute("aria-expanded", "false");
+  fireEvent.click(screen.getByRole("button", { name: "Restore" }));
+  expect(restore).toHaveBeenCalledOnce();
 });

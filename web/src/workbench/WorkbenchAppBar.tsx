@@ -1,7 +1,6 @@
 // Modified for Triune.
-import { PlusIcon, SearchIcon, SettingsIcon, type LucideIcon } from "lucide-react";
+import { PlusIcon, SearchIcon, type LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { HeaderActionButton } from "@/components/HeaderActionButton";
 import { MOD_KEY } from "@/components/KeyboardShortcut";
 import { NotificationBell } from "@/components/NotificationCenter";
 import { OpenViewMenu } from "./OpenViewMenu";
@@ -22,13 +21,12 @@ export function WorkbenchAppBar({
   sidebarOpen,
   onToggleSidebar,
   onSearch,
-  onSettings,
   openActions,
 }: {
   sidebarOpen: boolean;
   onToggleSidebar: () => void;
   onSearch: () => void;
-  onSettings: () => void;
+  onSettings?: () => void;
   openActions: WorkbenchOpenAction[];
 }) {
   const appName = useAppName();
@@ -95,15 +93,12 @@ export function WorkbenchAppBar({
         >
           <OpenViewMenu actions={openActions}>
             <Button ref={openButton} variant="default" size="sm" aria-label="Open view">
-              <PlusIcon data-icon="inline-start" />
+              <PlusIcon data-icon="inline-start" strokeWidth={2.5} />
               <span className="hidden md:inline">Open</span>
             </Button>
           </OpenViewMenu>
         </div>
         <NotificationBell />
-        <HeaderActionButton aria-label="Settings" onClick={onSettings}>
-          <SettingsIcon className="size-4" />
-        </HeaderActionButton>
       </div>
     </header>
   );

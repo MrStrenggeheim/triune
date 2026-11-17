@@ -1,3 +1,4 @@
+import { conversationDisplayLabel } from "@/shell/sidebarNav";
 // Modified for Triune.
 import { memo, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
 import { ChevronRightIcon, ShareIcon, InfoIcon, GitForkIcon, SquareIcon } from "lucide-react";
@@ -63,9 +64,9 @@ function Ancestor({ id, seen }: { id: string; seen: string[] }) {
         className="min-w-0 max-w-32 truncate text-muted-foreground hover:text-foreground"
         onClick={() => workbench?.openConversation(id, { mode: "tab" })}
         {...middleClickHandlers(() => workbench?.openConversation(id, { mode: "tab" }))}
-        tooltip={session.title || "Conversation"}
+        tooltip={conversationDisplayLabel({ ...session, labels: session.labels ?? {} })}
       >
-        {session.title || "Conversation"}
+        {conversationDisplayLabel({ ...session, labels: session.labels ?? {} })}
       </TooltipButton>
       <ChevronRightIcon className="size-3 shrink-0 text-muted-foreground" />
     </>
@@ -266,7 +267,11 @@ const ConversationViewContent = memo(function ConversationViewContent({
       >
         {parent && <Ancestor id={parent} seen={[conversationId]} />}
         <span className="min-w-0 truncate">
-          {session?.title || (error ? "Conversation unavailable" : "Conversation")}
+          {session
+            ? conversationDisplayLabel({ ...session, labels: session.labels ?? {} })
+            : error
+              ? "Conversation unavailable"
+              : "Conversation"}
         </span>
       </nav>
       {session && (

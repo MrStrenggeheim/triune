@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { FileIcon } from "lucide-react";
@@ -29,6 +30,8 @@ it("reuses the small leading-icon button without forcing a large mobile face and
   );
   const icon = button.querySelector("svg")!;
   expect(icon).toHaveAttribute("data-icon", "inline-start");
+  expect(icon).toHaveAttribute("stroke-width", "2.5");
+  expect(screen.queryByRole("button", { name: "Settings" })).toBeNull();
   expect(icon).not.toHaveAttribute("data-icon-size");
   expect(icon).not.toHaveClass("size-4", "p-0");
   fireEvent.pointerDown(button, { button: 0, pointerType: "mouse", ctrlKey: false });

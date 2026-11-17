@@ -1,3 +1,4 @@
+import { ContentSkeleton } from "@/components/ui/loading";
 // Modified for Triune.
 import { SidebarServerPicker as ServerConnectionPicker } from "@/shell/SidebarServerPicker";
 import {
@@ -341,7 +342,7 @@ export function SettingsPage() {
   // read-only under OIDC (no password actions).
   const content =
     section === "members" || section === "policies" || section === "sharing" ? (
-      <Suspense fallback={null}>
+      <Suspense fallback={<ContentSkeleton label="Loading settings…" rows={5} />}>
         {section === "members" ? (
           <MembersPage />
         ) : section === "policies" ? (
@@ -369,11 +370,11 @@ export function SettingsPage() {
           <Section title="MCP">
             {info !== "loading" && info.enabled_connections?.includes("mcp") ? (
               <McpRegistryConnections />
+            ) : info === "loading" ? (
+              <ContentSkeleton label="Loading MCP services…" />
             ) : (
               <p className="text-sm text-muted-foreground">
-                {info === "loading"
-                  ? "Loading MCP services…"
-                  : "MCP services are not configured on this server."}
+                MCP services are not configured on this server.
               </p>
             )}
           </Section>
@@ -1334,6 +1335,7 @@ function IntegrationsSection() {
       description="External accounts your sandboxes use on your behalf."
     >
       <SettingsGroup title="Connections" testId="settings-group-integrations">
+        {info === "loading" && <ContentSkeleton label="Loading connections…" />}
         {providers.map((provider, index) => {
           const Panel = CONNECTION_PANELS[provider];
           return Panel ? (
@@ -1394,7 +1396,7 @@ function GithubIntegrationControl() {
   const returnTo = `${window.location.pathname}${window.location.search}`;
 
   if (status === "loading") {
-    return <p className="text-sm text-muted-foreground">Checking…</p>;
+    return <ContentSkeleton label="Checking connection…" rows={2} />;
   }
   if (status === null) {
     return <p className="text-sm text-muted-foreground">GitHub status is unavailable.</p>;
@@ -1420,6 +1422,7 @@ function GithubIntegrationControl() {
               size="sm"
               className="h-9"
               disabled={busy}
+              loading={busy}
               data-testid="github-disconnect"
               onClick={() => void onDisconnect()}
             >
@@ -1575,7 +1578,7 @@ function DatabricksIntegrationControl() {
     return null;
   }
   if (status === "loading") {
-    return <p className="text-sm text-muted-foreground">Checking…</p>;
+    return <ContentSkeleton label="Checking connection…" rows={2} />;
   }
   if (status === null) {
     return <p className="text-sm text-muted-foreground">Databricks status is unavailable.</p>;
@@ -1601,6 +1604,7 @@ function DatabricksIntegrationControl() {
               size="sm"
               className="h-9"
               disabled={busy}
+              loading={busy}
               data-testid="databricks-disconnect"
               onClick={() => void onDisconnect()}
             >
@@ -2430,7 +2434,7 @@ function LocalCliSection() {
     return (
       <Section title="Local CLI">
         <SettingsGroup title="CLI status">
-          <p className="text-ui text-muted-foreground">Checking…</p>
+          <ContentSkeleton label="Checking CLI status…" rows={2} />
         </SettingsGroup>
       </Section>
     );
@@ -2596,7 +2600,7 @@ function UpdatesSection() {
     return (
       <Section title="Updates">
         <SettingsGroup title="Preferences">
-          <p className="text-ui text-muted-foreground">Checking…</p>
+          <ContentSkeleton label="Loading update preferences…" rows={2} />
         </SettingsGroup>
       </Section>
     );
@@ -3233,7 +3237,7 @@ function ArchivedSection() {
       )}
 
       {listQuery.isLoading ? (
-        <p className="text-ui text-muted-foreground">Loading…</p>
+        <ContentSkeleton label="Loading archived sessions…" rows={4} />
       ) : archived.length === 0 && !listQuery.hasNextPage ? (
         // Definitive empty only when there are no archived rows AND no further
         // pages to fetch.
@@ -3287,9 +3291,10 @@ function ArchivedSection() {
                 size="sm"
                 data-testid="archived-load-more"
                 disabled={listQuery.isFetchingNextPage}
+                loading={listQuery.isFetchingNextPage}
                 onClick={() => void listQuery.fetchNextPage()}
               >
-                {listQuery.isFetchingNextPage ? "Loading…" : "Load more"}
+                Load more
               </Button>
             </div>
           )}

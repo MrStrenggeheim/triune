@@ -2981,6 +2981,7 @@ export function LegacyAppShell() {
                   {isMacElectronShell() && !inSettings && (
                     <div className="electron-sidebar-header-actions">
                       <SidebarHeaderActions
+                        compact
                         // Real docked state — NOT `|| sidebarPeek`. During a peek the
                         // sidebar isn't pinned open, and `onToggle` below pins it open
                         // (the else branch, since sidebarOpen is false), so the button
@@ -3078,6 +3079,16 @@ export function LegacyAppShell() {
                           onOpenSidebar={handleSidebarOpen}
                           isChildSession={isChildSession}
                           subAgentName={activeSession?.subAgentName ?? null}
+                          childConversationTitle={
+                            activeConv
+                              ? conversationDisplayLabel(activeConv)
+                              : activeSession
+                                ? conversationDisplayLabel({
+                                    ...activeSession,
+                                    labels: activeSession.labels ?? {},
+                                  })
+                                : null
+                          }
                           conversationId={conversationId}
                           permissionLevel={permissionLevel}
                           actionConversation={actionConversation}

@@ -75,6 +75,8 @@ interface ChatHeaderProps {
    * Add-Agent child bound to its own agent).
    */
   subAgentName?: string | null;
+  /** Resolved child chat name, shared with tabs and sidebar. */
+  childConversationTitle?: string | null;
   /** Active session id, or undefined on the landing composer. */
   conversationId: string | undefined;
   /** Effective access to the active session. */
@@ -263,6 +265,7 @@ export function ChatHeader({
   settingsMode = false,
   isChildSession,
   subAgentName,
+  childConversationTitle,
   conversationId,
   permissionLevel,
   actionConversation = null,
@@ -429,6 +432,7 @@ export function ChatHeader({
               titleLinkTo={titleLinkTo}
               isChildSession={isChildSession}
               subAgentName={subAgentName}
+              childConversationTitle={childConversationTitle}
               boundAgent={boundAgent}
               wrapperLabel={wrapperLabel}
               actions={isMobile ? undefined : (conversationMenu ?? undefined)}

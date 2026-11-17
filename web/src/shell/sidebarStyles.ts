@@ -14,7 +14,7 @@ export const SIDEBAR_TREE_GUIDE =
   "pointer-events-none absolute top-0 bottom-0 w-px bg-muted-foreground/50";
 
 /** Share the list density's gaps within and around persistent row indicators. */
-export const SIDEBAR_INDICATOR_GAP = "gap-[var(--list-row-gap)]";
+export const SIDEBAR_INDICATOR_GAP = "gap-[calc(var(--list-gap)*2)]";
 
 /** A disclosure needs feedback above the row's chrome-hover surface. */
 export const SIDEBAR_DISCLOSURE_HOVER =

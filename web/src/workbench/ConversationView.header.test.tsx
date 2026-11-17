@@ -11,14 +11,19 @@ import { addDockView, createDockLayout, resizeDockSplit, type DockView } from ".
 import { WorkbenchProvider } from "./WorkbenchContext";
 import { CapturedFileActions } from "./CapturedFileActions";
 
+const sessionDisplay = vi.hoisted(() => ({
+  title: "Chat A" as string | null,
+  labels: {} as Record<string, string>,
+}));
+
 vi.mock("./ScopedConversationSurface", () => ({ ScopedConversationSurface: () => null }));
 vi.mock("@/hooks/useSession", () => ({
   useSession: () => ({
     session: {
       id: "chat",
-      title: "Chat A",
+      title: sessionDisplay.title,
       status: "idle",
-      labels: {},
+      labels: sessionDisplay.labels,
       createdAt: 1,
       permissionLevel: 4,
       agentId: "agent",
@@ -55,6 +60,8 @@ vi.mock("@/components/PermissionsModal", () => ({
 vi.mock("./viewCommands", () => ({ useViewCommands: () => {} }));
 
 afterEach(() => {
+  sessionDisplay.title = "Chat A";
+  sessionDisplay.labels = {};
   cleanup();
   document.body.innerHTML = "";
 });
@@ -221,4 +228,18 @@ it("keeps hidden assistant bubbles and resources at zero commits for an unrelate
   rerender(view());
   expect(resourceRender).not.toHaveBeenCalled();
   expect(committed).not.toHaveBeenCalled();
+});
+
+it("uses the shared chat display fallback instead of a generic label or internal identity", () => {
+  sessionDisplay.title = null;
+  sessionDisplay.labels = { "omnigent.wrapper": "codex-native-ui" };
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={client}>
+      <ConversationView conversationId="chat" />
+    </QueryClientProvider>,
+  );
+  expect(screen.getByRole("navigation", { name: "Conversation ancestry" })).toHaveTextContent(
+    "Codex",
+  );
 });

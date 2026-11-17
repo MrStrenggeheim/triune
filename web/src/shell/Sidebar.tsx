@@ -1,3 +1,4 @@
+import { ContentSkeleton } from "@/components/ui/loading";
 import { copySessionLink } from "@/lib/sessionShareLink";
 import { middleClickHandlers } from "@/lib/middleClick";
 // Modified for Triune.
@@ -1209,6 +1210,7 @@ function SidebarImpl({
             keep their place when the sidebar collapses or peeks. Everywhere
             else this is the only copy. */}
                 <SidebarHeaderActions
+                  compact
                   showToggle={false}
                   showSearch={false}
                   expanded={!peek}
@@ -1415,9 +1417,7 @@ function SidebarImpl({
                 )}
               </div>
 
-              {/* Wrapper (not the `aside`) anchors the floating Settings button:
-          absolute-positioning inside the aside would place it in the native
-          safe-area padding, under the home indicator. */}
+              {/* Keep the list scrollable above the persistent footer. */}
               <div className="relative flex min-h-0 flex-1 flex-col">
                 <div
                   aria-hidden="true"
@@ -1433,11 +1433,7 @@ function SidebarImpl({
                   onScroll={(event) => {
                     setHasScrolled(event.currentTarget.scrollTop > 0);
                   }}
-                  // max-md:pb-16 is the floating Settings chip's clearance: the
-                  // chip is a non-scrolling sibling pinned bottom-right, so
-                  // without a gutter the last row's always-visible kebab parks
-                  // underneath it and can't be tapped.
-                  className="relative flex-1 overflow-y-auto px-2 pt-4 pb-3 max-md:pb-16"
+                  className="relative flex-1 overflow-y-auto px-2 pt-4 pb-3"
                 >
                   <GridSidebar onNavigate={onNavClick} />
                   {sidebarData.identityReady ? (
@@ -1464,27 +1460,22 @@ function SidebarImpl({
                       getVisibleIdsRef={getVisibleIdsRef}
                     />
                   ) : (
-                    <p role="status" className="px-2 py-1 text-muted-foreground text-sm">
-                      Loading sessions…
-                    </p>
+                    <ContentSkeleton label="Loading sessions…" rows={5} className="px-2 py-1" />
                   )}
                 </nav>
-                {/* Mobile: Settings floats over the bottom of the session list, with
-          Search floating at the top of the header row — the two icons the
-          drawer keeps once the collapse toggle is gone. */}
-                {!workbench && (
-                  <SidebarSettingsButton
-                    testId="sidebar-settings-float"
-                    className="absolute right-3 bottom-3 md:hidden"
-                  />
-                )}
               </div>
 
               {/* Native-shell server picker, pinned below the scrolling session
           list. Self-hiding: renders nothing outside a shell with the picker
           bridge (see SidebarServerPicker), so browsers keep an unchanged
           sidebar that ends with the list. */}
-              {!workbench && <SidebarServerPicker />}
+              <div
+                className="flex shrink-0 items-center px-3 py-[var(--list-gap)]"
+                data-testid="sidebar-settings-footer"
+              >
+                <SidebarSettingsButton />
+              </div>
+              <SidebarServerPicker />
             </div>
           </>
         )}
@@ -5555,7 +5546,6 @@ function ConversationRowImpl({
                   <SessionUpdatedLabel updatedAt={conversation.updated_at} />
                 </span>
               )}
-              {treeControl}
               {(firstStatus || isOwner) && (
                 <div
                   className={cn(
@@ -5660,16 +5650,14 @@ function ConversationRowImpl({
                         SIDEBAR_STATUS_VISUAL,
                       )}
                     >
-                      {menuStatus ? (
+                      {menuStatus && (
                         <SessionStateBadge state={menuStatus} compact tooltip={false} />
-                      ) : (
-                        <MoreHorizontalIcon className="size-3.5" data-icon-size="14" />
                       )}
                     </span>
                     <span
                       aria-hidden
                       className={cn(
-                        "pointer-events-none absolute inset-0 flex items-center justify-center opacity-0",
+                        "pointer-events-none absolute inset-0 flex items-center justify-center opacity-0 [@media(pointer:coarse)]:opacity-100",
                         SIDEBAR_MENU_VISUAL,
                       )}
                     >
@@ -5685,6 +5673,17 @@ function ConversationRowImpl({
                   />
                 </DropdownMenuContent>
               </DropdownMenu>
+              {treeControl && (
+                <span
+                  className={cn(
+                    "flex shrink-0 opacity-0 pointer-events-none [@media(pointer:coarse)]:opacity-100 [@media(pointer:coarse)]:pointer-events-auto",
+                    SIDEBAR_MENU_VISUAL,
+                    "group-has-[:focus-visible]/conversation:pointer-events-auto group-data-[menu-open]/conversation:pointer-events-auto [@media((hover:hover)_and_(pointer:fine))]:group-[[data-input=mouse]:hover]/conversation:pointer-events-auto",
+                  )}
+                >
+                  {treeControl}
+                </span>
+              )}
             </div>
           </ContextMenuTrigger>
           <ContextMenuContent className="min-w-44">

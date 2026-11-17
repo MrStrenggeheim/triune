@@ -171,9 +171,7 @@ def test_startup_restores_owner_and_respects_explicit_destinations(
 
     _navigate_chat(page, first)
     expect(composer).to_have_value("Iteration 6 retained owner draft")
-    page.get_by_role("banner", name="Application").get_by_role(
-        "button", name="Settings", exact=True
-    ).click()
+    _navigation(page).get_by_test_id("settings-button").click()
     if appearance[0] == "phone":
         page.get_by_role("combobox", name="Settings section", exact=True).click()
         page.get_by_role("option", name="Appearance", exact=True).click()

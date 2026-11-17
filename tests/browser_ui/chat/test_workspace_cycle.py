@@ -149,12 +149,11 @@ def test_search_trigger_and_popup_share_the_application_center(
         assert abs(trigger_bounds["x"] + trigger_bounds["width"] / 2 - center) < 1
         open_button = app.get_by_role("button", name="Open view", exact=True)
         open_bounds = open_button.bounding_box()
-        settings_bounds = app.get_by_role("button", name="Settings", exact=True).bounding_box()
+        expect(app.get_by_role("button", name="Settings", exact=True)).to_have_count(0)
         bell_bounds = app.get_by_role("button", name="Notifications", exact=True).bounding_box()
-        assert open_bounds and settings_bounds and bell_bounds
+        assert open_bounds and bell_bounds
         if width >= 768:
             assert abs(open_bounds["x"] - trigger_bounds["x"] - trigger_bounds["width"] - 8) < 1
-        assert open_bounds["x"] + open_bounds["width"] < settings_bounds["x"]
         assert open_bounds["x"] + open_bounds["width"] <= bell_bounds["x"] - 4
         assert trigger_bounds["width"] >= 28
         if width == 390 and density == "compact":

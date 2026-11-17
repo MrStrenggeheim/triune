@@ -282,7 +282,7 @@ export const PALETTES: readonly PaletteMeta[] = [
   },
   {
     id: "omni",
-    label: "Triune",
+    label: "Omnigent",
     blurb: "The signature pink brand look.",
     light: {
       bg: "#fdf7fb",

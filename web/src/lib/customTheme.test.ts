@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { afterEach, describe, expect, it } from "vitest";
 import {
   applyCustomTheme,
@@ -185,10 +186,19 @@ describe("customTheme", () => {
     expect(variants.dark.sidebarActiveForeground).toBe(variants.dark.sidebarForeground);
   });
 
-  it.each(PALETTES)("keeps the exact $label preview at contrast 50", (palette) => {
-    const swatches = customThemeSwatches(createCustomThemeFromPalette(palette));
-
-    expect(swatches).toEqual({ light: palette.light, dark: palette.dark });
+  it.each(PALETTES)("previews the actual $label custom tokens", (palette) => {
+    const theme = createCustomThemeFromPalette(palette);
+    const swatches = customThemeSwatches(theme);
+    const variants = deriveCustomTheme(theme);
+    for (const mode of ["light", "dark"] as const) {
+      expect(swatches[mode]).toEqual({
+        bg: variants[mode].background,
+        card: variants[mode].card,
+        accent: variants[mode].primary,
+        border: variants[mode].border,
+        text: variants[mode].foreground,
+      });
+    }
   });
 
   it("shows explicitly customized accents in the preview", () => {

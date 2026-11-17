@@ -400,19 +400,23 @@ export function NotificationToasts(_props: ToasterProps) {
       role="region"
       aria-label="Notifications"
       aria-live="polite"
-      className="pointer-events-auto fixed z-[70] flex flex-col gap-[var(--list-row-gap)] overflow-y-auto overscroll-contain p-px"
-      style={{
-        ...bounds.style,
-        display: centerOpen || (!required.length && !ordinary.length) ? "none" : undefined,
-        top,
-        right: anchorBounds
-          ? `clamp(${right}, ${anchorBounds.right}px, calc(100vw - ${style.width}px - ${left}))`
-          : right,
-        maxHeight: `max(0px, calc(var(--omnigent-viewport-height, 100dvh) - ${top} - max(${bounds.collisionPadding.bottom}px, var(--omnigent-inset-bottom, 0px))))`,
-      }}
+      className="pointer-events-auto fixed z-[70] flex flex-col"
+      style={
+        {
+          ...bounds.style,
+          display: centerOpen || (!required.length && !ordinary.length) ? "none" : undefined,
+          top,
+          right: anchorBounds
+            ? `clamp(${right}, ${anchorBounds.right}px, calc(100vw - ${style.width}px - ${left}))`
+            : right,
+          "--notification-available-height": `max(0px, calc(var(--omnigent-viewport-height, 100dvh) - ${top} - max(${bounds.collisionPadding.bottom}px, var(--omnigent-inset-bottom, 0px))))`,
+        } as CSSProperties
+      }
     >
-      {!centerOpen && required.map((entry) => <NotificationCard key={entry.id} entry={entry} />)}
-      {!centerOpen && ordinary.map((entry) => <NotificationCard key={entry.id} entry={entry} />)}
+      <div className="notification-toast-scroll">
+        {!centerOpen && required.map((entry) => <NotificationCard key={entry.id} entry={entry} />)}
+        {!centerOpen && ordinary.map((entry) => <NotificationCard key={entry.id} entry={entry} />)}
+      </div>
     </aside>
   );
 }

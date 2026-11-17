@@ -1,3 +1,4 @@
+import { conversationDisplayLabel } from "@/shell/sidebarNav";
 // Modified for Triune.
 import { useSettingsNavigationVisibility } from "@/hooks/useSettingsNavigationVisibility";
 import { useSettingsRoute } from "@/shell/settingsNav";
@@ -383,7 +384,7 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
     () =>
       new Map(
         conversations?.pages.flatMap((page) =>
-          page.data.map((row) => [row.id, row.title || "Conversation"] as const),
+          page.data.map((row) => [row.id, conversationDisplayLabel(row)] as const),
         ),
       ),
     [conversations],

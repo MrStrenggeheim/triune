@@ -1,7 +1,8 @@
 // Modified for Triune.
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { CheckIcon, CircleAlertIcon, InfoIcon, Loader2Icon } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { buttonLabel } from "@/components/ui/tooltip";
 import { CloseButton } from "@/components/CloseButton";
 import { cn } from "@/lib/utils";
 import { absoluteTime, relativeTime } from "@/lib/relativeTime";
@@ -16,6 +17,61 @@ import "./notifications.css";
 
 function content(value: NotificationEntry["title"]): ReactNode {
   return typeof value === "function" ? value() : value;
+}
+
+/** Keep rich description content intact while reserving the last-line disclosure slot. */
+function NotificationDescription({
+  children,
+  collapsible,
+}: {
+  children: ReactNode;
+  collapsible: boolean;
+}) {
+  const id = useId();
+  const text = useRef<HTMLDivElement>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [overflows, setOverflows] = useState(false);
+  useLayoutEffect(() => {
+    const element = text.current;
+    if (!element || !collapsible) return;
+    const measure = () => {
+      const lineHeight = Number.parseFloat(getComputedStyle(element).lineHeight);
+      setOverflows(Number.isFinite(lineHeight) && element.scrollHeight > lineHeight * 2 + 1);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [children, collapsible]);
+  const disclosure = collapsible && overflows;
+  return (
+    <div
+      className="notification-description text-sm leading-5 text-muted-foreground"
+      data-expanded={(disclosure && expanded) || undefined}
+      data-collapsible={collapsible || undefined}
+    >
+      <div id={id} ref={text} className="notification-description-text">
+        {children}
+        {disclosure && expanded && (
+          <span className="notification-description-disclosure-space" aria-hidden="true" />
+        )}
+      </div>
+      {disclosure && (
+        <span className="notification-description-disclosure">
+          {!expanded && <span aria-hidden="true">... </span>}
+          <button
+            type="button"
+            className="cursor-pointer text-primary underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-ring rounded-sm"
+            aria-expanded={expanded}
+            aria-controls={id}
+            onClick={() => setExpanded((value) => !value)}
+          >
+            {expanded ? "less" : "more"}
+          </button>
+        </span>
+      )}
+    </div>
+  );
 }
 
 /** The same presentation is used in the popup stack and notification history. */
@@ -59,6 +115,8 @@ export function NotificationCard({
           size="xs"
           variant="outline"
           disabled={entry.actionPending}
+          loading={entry.actionPending}
+          aria-label={buttonLabel(value.label)}
           onClick={(event) => void runNotificationAction(entry.id, kind, event)}
         >
           {value.label}
@@ -102,9 +160,9 @@ export function NotificationCard({
           <div className="notification-title font-medium leading-5">{content(entry.title)}</div>
         )}
         {entry.description && (
-          <div className="notification-description text-sm leading-5 text-muted-foreground">
+          <NotificationDescription collapsible={history}>
             {content(entry.description)}
-          </div>
+          </NotificationDescription>
         )}
         {entry.jsx}
       </div>

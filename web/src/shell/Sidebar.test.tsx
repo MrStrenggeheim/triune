@@ -398,7 +398,7 @@ describe("Sidebar scroll divider", () => {
     fireEvent.scroll(screen.getByRole("navigation"), { target: { scrollTop: 100 } });
     expect(screen.getByTestId("sidebar-scroll-divider")).toHaveClass("opacity-100");
 
-    fireEvent.click(screen.getByTestId("sidebar-settings-float"));
+    fireEvent.click(screen.getByTestId("settings-button"));
     expect(screen.queryByTestId("sidebar-scroll-divider")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("link", { name: /back/i }));
@@ -590,7 +590,8 @@ describe("Sidebar session list", () => {
     renderSidebar();
     const scroller = screen.getByLabelText("Conversations").querySelector("nav")!;
     const divider = screen.getByTestId("sidebar-scroll-divider");
-    expect(scroller).toHaveClass("overflow-y-auto", "px-2", "max-md:pb-16");
+    expect(scroller).toHaveClass("overflow-y-auto", "px-2");
+    expect(scroller).not.toHaveClass("max-md:pb-16");
     expect(scroller).toHaveAttribute("data-scrollbar", "hidden");
     expect(divider).toHaveClass("opacity-0");
     fireEvent.scroll(scroller, { target: { scrollTop: 40 } });
@@ -912,13 +913,16 @@ describe("Sidebar session list", () => {
     );
   });
 
-  it("keeps compact Settings without sidebar Search or a duplicate collapse control", () => {
+  it("keeps Settings in the fixed footer without duplicate header controls", () => {
     mockConversations(THREE_TYPE_CONVERSATIONS);
     renderSidebar();
 
     const headerActions = screen.getByTestId("sidebar-header-actions");
     expect(within(headerActions).queryByTestId("sidebar-search-button")).toBeNull();
-    const settings = screen.getByTestId("settings-button");
+    const settings = within(screen.getByTestId("sidebar-settings-footer")).getByTestId(
+      "settings-button",
+    );
+    expect(within(headerActions).queryByRole("link", { name: "Settings" })).toBeNull();
 
     expect(settings).toHaveAttribute("aria-label", "Settings");
     expect(settings).toHaveAttribute("data-size", "icon-xs");

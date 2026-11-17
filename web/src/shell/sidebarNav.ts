@@ -1,3 +1,4 @@
+// Modified for Triune.
 import type { Conversation, SessionSortBy } from "@/hooks/useConversations";
 import { nativeCodingAgentForWrapper, WRAPPER_LABEL_KEY } from "@/lib/nativeCodingAgents";
 import { getOptimisticTitle } from "@/lib/optimisticTitles";
@@ -131,11 +132,11 @@ export type ConversationIconKind =
 // shown in the sidebar row and as the browser tab title fallback.
 export const UNTITLED_CONVERSATION_LABEL = "New session";
 
-function wrapperLabel(conversation: Conversation): string | undefined {
+function wrapperLabel(conversation: Pick<Conversation, "labels">): string | undefined {
   return conversation.labels?.[WRAPPER_LABEL_KEY];
 }
 
-function nativeWrapperLabel(conversation: Conversation): string | null {
+function nativeWrapperLabel(conversation: Pick<Conversation, "labels">): string | null {
   const wrapper = wrapperLabel(conversation);
   return nativeCodingAgentForWrapper(wrapper)?.displayName ?? null;
 }
@@ -187,7 +188,9 @@ export function sessionBelongsToProject(
   );
 }
 
-export function conversationDisplayLabel(conversation: Conversation): string {
+export function conversationDisplayLabel(
+  conversation: Pick<Conversation, "id" | "title" | "labels">,
+): string {
   if (conversation.title) return conversation.title;
   // Just-created session: its first prompt stands in until a real title lands.
   const optimistic = getOptimisticTitle(conversation.id);

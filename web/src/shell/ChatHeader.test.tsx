@@ -68,6 +68,7 @@ function renderHeader(props: {
   sidebarOpen: boolean;
   isChildSession?: boolean;
   subAgentName?: string | null;
+  childConversationTitle?: string | null;
   conversationId?: string;
   actionConversation?: Conversation | null;
   conversationTitle?: string | null;
@@ -132,6 +133,7 @@ function renderHeader(props: {
               settingsMode={props.settingsMode}
               isChildSession={props.isChildSession ?? false}
               subAgentName={props.subAgentName ?? null}
+              childConversationTitle={props.childConversationTitle}
               // Defaults to no active session: PresenceAvatars / AgentInfoButton /
               // right-panel toggle / rail entries all gate on conversationId and
               // stay unmounted, isolating the left-slot affordances under test.
@@ -494,6 +496,26 @@ describe("ChatHeader — conversation breadcrumb", () => {
     });
     expect(screen.getByText("Claude Code")).toBeInTheDocument();
     expect(screen.queryByText("claude-native-ui")).toBeNull();
+  });
+
+  it("uses the child's resolved chat name before provider or agent-role fallbacks", () => {
+    renderHeader({
+      sidebarOpen: true,
+      conversationId: "child-9",
+      isChildSession: true,
+      childConversationTitle: "Review module",
+      subAgentName: "general-purpose",
+      conversationTitle: "Parent work",
+      titleLinkTo: "/c/parent-123",
+      boundAgent: { id: "a1", name: "claude-native-ui" },
+      wrapperLabel: "claude-code-native-ui-subagent",
+    });
+    expect(screen.getByText("Review module")).toBeInTheDocument();
+    expect(screen.queryByText("general-purpose")).toBeNull();
+    expect(screen.getByRole("link", { name: "Parent work" })).toHaveAttribute(
+      "href",
+      "/c/parent-123",
+    );
   });
 
   it("prefers the vendor product name over sub_agent_name on a native sub-agent", () => {

@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { BotIcon, ChevronLeftIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { Link } from "@/lib/routing";
@@ -34,6 +35,7 @@ export function ConversationBreadcrumb({
   titleLinkTo,
   isChildSession,
   subAgentName,
+  childConversationTitle,
   boundAgent,
   wrapperLabel,
   actions,
@@ -72,6 +74,8 @@ export function ConversationBreadcrumb({
    * `boundAgent.name`, which for such children is the *parent* bundle's row.
    */
   subAgentName?: string | null;
+  /** Resolved display name of the child conversation, independent of its agent role. */
+  childConversationTitle?: string | null;
   /** The bound agent — names the sub-agent segment. */
   boundAgent: Agent | undefined;
   /** The session's `omnigent.wrapper` label — names a native sub-agent's vendor. */
@@ -90,7 +94,8 @@ export function ConversationBreadcrumb({
   // parent. `boundAgent.name` remains the fallback for the Add-Agent flow,
   // where the child is bound to its own agent and `sub_agent_name` is null.
   const subAgentSegment = isChildSession
-    ? (nativeCodingAgentForSubagentWrapper(wrapperLabel)?.displayName ??
+    ? ((childConversationTitle?.trim() || null) ??
+      nativeCodingAgentForSubagentWrapper(wrapperLabel)?.displayName ??
       (subAgentName?.trim() || null) ??
       nativeCodingAgentForAgentName(boundAgent?.name)?.displayName ??
       boundAgent?.name ??

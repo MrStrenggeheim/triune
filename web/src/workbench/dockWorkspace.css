@@ -228,6 +228,8 @@
 
 .dock-tab-group {
   --dock-close-target: 24px;
+  --dock-tab-inset: calc((var(--dock-header-height) - var(--dock-close-target)) / 2);
+  --dock-tab-gap: calc(var(--list-gap) * 2);
   position: relative;
   display: flex;
   flex: 0 1 auto;
@@ -236,7 +238,7 @@
   align-items: center;
   /* Balance the header's bottom divider when centering its controls. */
   padding-top: 1px;
-  padding-right: calc((var(--dock-header-height) - var(--dock-close-target)) / 2);
+  padding-right: var(--dock-tab-inset);
 }
 .dock-tab-end {
   position: relative;
@@ -256,7 +258,9 @@
 }
 .dock-tab {
   height: 100%;
-  padding-right: 6px;
+  padding-left: var(--dock-tab-inset);
+  padding-right: var(--dock-tab-gap);
+  gap: var(--dock-tab-gap);
   background: transparent;
 }
 .dock-tab-group:has([aria-selected="true"]) {
@@ -277,7 +281,7 @@
 }
 .dock-tab-pin {
   position: absolute;
-  left: 20px;
+  left: calc(var(--dock-tab-inset) + var(--dock-close-target) / 2);
   top: 50%;
   transform: translate(-50%, -50%);
   display: flex;
@@ -294,6 +298,10 @@
 .dock-tab-type-icon {
   display: flex;
   flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: var(--dock-close-target);
+  height: var(--dock-close-target);
 }
 .dock-tab-group[data-pinned="true"] .dock-tab-type-icon {
   color: var(--primary);

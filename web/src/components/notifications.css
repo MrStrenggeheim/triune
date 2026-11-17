@@ -93,3 +93,36 @@
     min-inline-size: 44px;
   }
 }
+
+.notification-description[data-collapsible] {
+  position: relative;
+  display: block;
+}
+.notification-description[data-collapsible]:not([data-expanded]) .notification-description-text {
+  max-height: 2lh;
+  overflow: hidden;
+}
+.notification-description-disclosure {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 3.5em;
+  padding-left: 0.25em;
+  text-align: right;
+  background: var(--popover);
+}
+.notification-description-disclosure-space {
+  display: inline-block;
+  width: 3.5em;
+}
+.notification-toast-scroll {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  gap: var(--list-row-gap);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  margin: -16px;
+  padding: 16px;
+  max-height: calc(var(--notification-available-height) + 32px);
+}

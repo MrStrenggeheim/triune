@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -249,4 +250,12 @@ describe("LoginPage forced re-auth (?reauth=1)", () => {
     await waitFor(() => expect(hrefWrites.length).toBeGreaterThan(0));
     expect(hrefWrites[0]).toBe("/oauth/device?user_code=ABCD");
   });
+});
+
+it("keeps regular sign-in focused on credentials without first-install instructions", async () => {
+  vi.mocked(accountsApi.getMe).mockResolvedValueOnce(null);
+  renderLoginAt("/");
+  expect(await screen.findByRole("button", { name: "Sign in" })).toBeInTheDocument();
+  expect(screen.queryByText(/On a fresh install/)).toBeNull();
+  expect(screen.queryByText(/OMNIGENT_ACCOUNTS_INIT_ADMIN_PASSWORD/)).toBeNull();
 });

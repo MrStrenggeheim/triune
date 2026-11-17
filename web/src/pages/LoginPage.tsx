@@ -1,3 +1,4 @@
+// Modified for Triune.
 /**
  * The sign-in page for the ``accounts`` auth provider.
  *
@@ -161,10 +162,6 @@ export function LoginPage() {
             disabled={submitting}
             required
           />
-          <p className="text-sm text-muted-foreground">
-            On a fresh install your username is your machine login (the output of{" "}
-            <code className="font-mono">whoami</code>), unless an admin set a different one.
-          </p>
         </div>
 
         <div className="space-y-1.5">
@@ -195,21 +192,13 @@ export function LoginPage() {
           type="submit"
           className="w-full"
           disabled={submitting || password.length === 0}
+          loading={submitting}
+          aria-label="Sign in"
           componentId="login.sign_in"
         >
-          {submitting ? "Signing in…" : "Sign in"}
+          Sign in
         </Button>
       </form>
-
-      <p className="text-center text-sm text-muted-foreground">
-        On a fresh install you set the first admin's password yourself — no credential is
-        auto-generated. A brand-new instance shows a Create-admin form instead of this one; the
-        password can also be pre-seeded with{" "}
-        <code className="rounded bg-muted px-1 py-0.5 font-mono">
-          OMNIGENT_ACCOUNTS_INIT_ADMIN_PASSWORD
-        </code>
-        .
-      </p>
     </>
   );
 
