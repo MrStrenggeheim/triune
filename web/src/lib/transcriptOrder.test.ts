@@ -7,6 +7,7 @@ import {
   replaceNativePreviewContent,
   orderTranscriptBlocks,
   projectPendingTranscript,
+  projectionStructureStamp,
   transcriptIndex,
   type TranscriptAnchor,
 } from "./transcriptOrder";
@@ -31,7 +32,7 @@ const preview = (id: string): TextDone => ({
 });
 
 describe("canonical order and provisional placement", () => {
-  it("reuses immutable indexes only for content changes to an already placed native preview", () => {
+  it("reuses immutable indexes and discovery stamps only for placed native preview content", () => {
     const history = itemsToBlocks([
       item("a1", 0),
       {
@@ -50,6 +51,10 @@ describe("canonical order and provisional placement", () => {
       { blocks: [...history, preview("answer")], pendingUserMessages: [] },
     ).blocks;
     const oldIndex = transcriptIndex(placed);
+    const oldStamp = projectionStructureStamp(placed);
+    expect(projectionStructureStamp(placed)).toBe(oldStamp);
+    expect(Object.isFrozen(oldStamp)).toBe(true);
+    expect(Reflect.ownKeys(oldStamp)).toEqual([]);
     const oldEntries = [...oldIndex.items];
     const oldTools = [...oldIndex.tools];
     const original = placed.at(-1)! as TextDone;
@@ -72,6 +77,7 @@ describe("canonical order and provisional placement", () => {
     expect(next.at(-1)!.ctx).toBe(original.ctx);
     expect(original.fullText).toBe("answer");
     expect(transcriptIndex(next)).toBe(oldIndex);
+    expect(projectionStructureStamp(next)).toBe(oldStamp);
     expect([...oldIndex.items]).toEqual(oldEntries);
     expect([...oldIndex.tools]).toEqual(oldTools);
     expect(oldIndex.tools.get("call-id")).toBe(1);
@@ -80,6 +86,7 @@ describe("canonical order and provisional placement", () => {
       { blocks: [...next, ...itemsToBlocks([item("a2", 2)])], pendingUserMessages: [] },
     ).blocks;
     expect(transcriptIndex(appended)).not.toBe(oldIndex);
+    expect(projectionStructureStamp(appended)).not.toBe(oldStamp);
     expect(transcriptIndex(appended).items.get("a2")).toBeDefined();
     expect(oldIndex.items.has("a2")).toBe(false);
     expect(replaceNativePreviewContent(appended, { base: next, changes })).toBeNull();
@@ -96,8 +103,30 @@ describe("canonical order and provisional placement", () => {
       { blocks: [...committed, ...unplaced], pendingUserMessages: [] },
     ).blocks;
     const stale = { base: placed, changes: new Map([[1, changes.get(0)!]]) };
-    expect(replaceNativePreviewContent(placed.slice(), stale)).toBeNull();
+    const copied = placed.slice();
+    const stamp = projectionStructureStamp(placed);
+    expect(replaceNativePreviewContent(copied, stale)).toBeNull();
+    expect(projectionStructureStamp(copied)).not.toBe(stamp);
     expect(replaceNativePreviewContent(placed, { base: placed, changes: new Map() })).toBeNull();
+    expect(projectionStructureStamp(placed)).toBe(stamp);
+  });
+
+  it("gives filtered, pending-projected and general replacement arrays their own discovery stamp", () => {
+    const blocks = itemsToBlocks([item("a1", 0), item("a2", 1)]);
+    const stamp = projectionStructureStamp(blocks);
+    const pending = projectPendingTranscript(
+      blocks,
+      [{ tempId: "pending", position: 2, content: [{ type: "input_text", text: "Next" }] }],
+      null,
+    );
+    const edited = blocks.map((block, at) =>
+      at === 0 && block.type === "text_done" ? { ...block, fullText: "Edited" } : block,
+    );
+    for (const general of [blocks.slice(), blocks.filter((_, at) => at > 0), pending, edited]) {
+      expect(projectionStructureStamp(general)).not.toBe(stamp);
+      expect(projectionStructureStamp(general)).toBe(projectionStructureStamp(general));
+    }
+    expect(projectPendingTranscript(blocks, [], null)).toBe(blocks);
   });
 
   it("keeps canonical order when an identified live record still lacks its saved position", () => {

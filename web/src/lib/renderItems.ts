@@ -1,6 +1,6 @@
 // Modified for Triune; inherited notices remain applicable.
 import { canonicalSubagentCards } from "./subagentActivity";
-import type { TranscriptAnchor } from "./transcriptOrder";
+import { projectionStructureStamp, type TranscriptAnchor } from "./transcriptOrder";
 import { messageInputKind, type MessageCommunication } from "./messageCommunication";
 import type { ChatAttachmentContent } from "./chatAttachments";
 import type { NativePermissionDelivery } from "./nativePermissionDelivery";
@@ -381,6 +381,11 @@ export interface BubbleCache {
   lastBubbleStart: number;
   lastBubbleCount: number;
   supersededChips: ReadonlySet<number>;
+  analysis: {
+    stamp: object;
+    superseded: ReadonlySet<number>;
+    cards: ReadonlyMap<string, Record<string, unknown>>;
+  } | null;
 }
 
 const cardBlocks = new WeakMap<AnyBlock, { data: Record<string, unknown>; block: AnyBlock }>();
@@ -398,6 +403,7 @@ export function createBubbleCache(): BubbleCache {
     lastBubbleStart: -1,
     lastBubbleCount: 1,
     supersededChips: new Set<number>(),
+    analysis: null,
   };
 }
 
@@ -478,8 +484,12 @@ export function buildBubbles(
   // chip and the turn chip that repeats it verbatim are one verdict however far
   // apart they landed, and whether the pair is still visible decides whether the
   // cached prefix may be reused at all.
-  const superseded = supersededRoutingChips(blocks);
-  const cards = canonicalSubagentCards(blocks);
+  const stamp = cache === undefined ? null : projectionStructureStamp(inputBlocks);
+  const previousAnalysis = cache?.analysis;
+  const { superseded, cards } =
+    previousAnalysis && previousAnalysis.stamp === stamp
+      ? previousAnalysis
+      : { superseded: supersededRoutingChips(blocks), cards: canonicalSubagentCards(blocks) };
   if (cards.size) {
     blocks = blocks.flatMap((block) => {
       const card = block.ctx.itemId ? cards.get(block.ctx.itemId) : undefined;
@@ -553,6 +563,7 @@ export function buildBubbles(
     cache.lastBubbleStart = rest.lastBubbleStart;
     cache.lastBubbleCount = rest.lastBubbleCount;
     cache.supersededChips = superseded;
+    cache.analysis = stamp === null ? null : { stamp, superseded, cards };
     return cache.bubbles;
   }
 
@@ -575,6 +586,7 @@ export function buildBubbles(
   cache.lastBubbleStart = full.lastBubbleStart;
   cache.lastBubbleCount = full.lastBubbleCount;
   cache.supersededChips = superseded;
+  cache.analysis = stamp === null ? null : { stamp, superseded, cards };
   return cache.bubbles;
 }
 

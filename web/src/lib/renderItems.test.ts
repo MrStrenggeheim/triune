@@ -12,6 +12,12 @@ import { BlockStream } from "./blockStream";
 import type { ConversationItem, MessageItem } from "./conversationItems";
 import type { StreamEvent } from "./events";
 import { itemsToBlocks } from "./itemsToBlocks";
+import {
+  replaceNativePreviewContent,
+  projectionStructureStamp,
+  transcriptIndex,
+} from "./transcriptOrder";
+import { subagentCardMessages } from "./subagentActivity";
 import { chatSearchSources } from "./chatSearchHighlights";
 import {
   type RoutingDecisionWire,
@@ -3917,6 +3923,165 @@ describe("buildBubbles — incremental reuse cache", () => {
   function chunk(responseId: string, text: string): AnyBlock {
     return { type: "text_chunk", ctx: ctx({ itemId: null, responseId }), text };
   }
+
+  it("reuses analysis across actual native content replacements and skipped frames, not lifecycle", () => {
+    const cache = createBubbleCache();
+    const skipped = createBubbleCache();
+    const preview = doneBlock("live:preview", "resp_2", "Partial");
+    preview.ctx.anchor = { afterItemId: "u2", afterPosition: 2, sequence: 1 };
+    let blocks = [
+      userBlock("u1", "resp_1"),
+      doneBlock("a1", "resp_1", "Done"),
+      userBlock("u2", "resp_2"),
+      {
+        type: "tool_group" as const,
+        ctx: ctx({ itemId: "call", responseId: "resp_2" }),
+        executions: [mkExec("Read", "call")],
+        iteration: 0,
+      },
+      preview,
+    ];
+    const original = blocks;
+    const originalIndex = transcriptIndex(original);
+    const first = buildBubbles(blocks, null, cache, [], true);
+    buildBubbles(blocks, null, skipped, [], true);
+    const analysis = cache.analysis!;
+    const skippedCards = skipped.analysis!.cards;
+    const contents = [
+      {
+        fullText: "Partial 😀 [source](https://example.invalid)",
+        hasCodeBlocks: false,
+        streamIndex: 1,
+      },
+      {
+        fullText: "```ts\nconst n = 1;",
+        hasCodeBlocks: true,
+        streamIndex: 3,
+        previewInterrupted: true,
+      },
+      {
+        fullText: "```ts\nconst n = 1;\n```",
+        hasCodeBlocks: true,
+        streamIndex: 4,
+        previewInterrupted: false,
+      },
+    ];
+    for (const content of contents) {
+      blocks = replaceNativePreviewContent(blocks, {
+        base: blocks,
+        changes: new Map([[blocks.length - 1, content]]),
+      })!;
+      const bubbles = buildBubbles(blocks, null, cache, [], true);
+      expect(bubbles).toEqual(buildBubbles(blocks, null, undefined, [], true));
+      expect(bubbles[0]).toBe(first[0]);
+      expect(cache.analysis?.cards).toBe(analysis.cards);
+      expect(cache.analysis?.superseded).toBe(analysis.superseded);
+      expect(cache.analysis?.stamp).toBe(analysis.stamp);
+    }
+    expect(buildBubbles(blocks, null, skipped, [], true)).toEqual(
+      buildBubbles(blocks, null, undefined, [], true),
+    );
+    expect(skipped.analysis?.cards).toBe(skippedCards);
+    for (const [active, interrupted, running] of [
+      [null, [], false],
+      [{ responseId: "resp_2", state: "streaming", error: null }, [], true],
+      [{ responseId: "resp_2", state: "cancelled", error: null }, [], false],
+      [null, ["resp_2"], false],
+    ] as const) {
+      expect(buildBubbles(blocks, active, cache, interrupted, running)).toEqual(
+        buildBubbles(blocks, active, undefined, interrupted, running),
+      );
+      expect(cache.analysis?.cards).toBe(analysis.cards);
+    }
+    expect(original.at(-1)).toBe(preview);
+    expect(preview).toMatchObject({ fullText: "Partial", ctx: blocks.at(-1)!.ctx });
+    expect(transcriptIndex(original)).toBe(originalIndex);
+    expect(transcriptIndex(blocks)).toBe(originalIndex);
+  });
+
+  it("invalidates discovery for backdated cards, routing verdicts and general source changes", () => {
+    const cache = createBubbleCache();
+    const activity = (
+      id: string,
+      phase: "delegated" | "returned",
+      resource: Record<string, unknown>,
+    ) =>
+      itemsToBlocks([
+        {
+          id,
+          type: "resource_event",
+          response_id: "activity",
+          status: "completed",
+          resource_type: "session",
+          resource_id: "child",
+          event_type: `session.subagent.${phase}`,
+          resource: { dispatch_id: "dispatch", ...resource },
+        } as ConversationItem,
+      ])[0]!;
+    const preview = doneBlock("live:preview", "live:preview", "Partial");
+    preview.ctx.anchor = { afterItemId: "u2", afterPosition: 2, sequence: 1 };
+    let blocks = [
+      routingDecisionBlock(ctx({ itemId: "create" }), { routing: { scope: "session" } }),
+      activity("spawn", "delegated", { task_input: "Instruction" }),
+      activity("returned", "returned", {
+        result_text: "Old final",
+        result_finality: "final_answer",
+        turn_id: "turn",
+      }),
+      userBlock("u1", "resp_1"),
+      doneBlock("a1", "resp_1", "Done"),
+      userBlock("u2", "resp_2"),
+      preview,
+    ];
+    const check = (next: AnyBlock[]) => {
+      const previous = cache.analysis;
+      blocks = next;
+      const bubbles = buildBubbles(blocks, null, cache);
+      expect(bubbles).toEqual(buildBubbles(blocks, null));
+      expect(cache.analysis?.stamp).toBe(projectionStructureStamp(blocks));
+      if (previous) {
+        expect(cache.analysis?.stamp).not.toBe(previous.stamp);
+        expect(cache.analysis?.cards).not.toBe(previous.cards);
+        expect(cache.analysis?.superseded).not.toBe(previous.superseded);
+      }
+      expect(cache.analysis?.cards.get("spawn")).toBe(cache.analysis?.cards.get("returned"));
+      expect(transcriptIndex(blocks).items.has("returned")).toBe(true);
+      expect(transcriptIndex(cache.blocks!).items.has("returned")).toBe(false);
+      return bubbles;
+    };
+    check(blocks);
+    const index = transcriptIndex(blocks);
+    const oldReturn = blocks[2]!;
+    const enriched = activity("returned", "returned", {
+      result_text: "Enriched final",
+      result_finality: "final_answer",
+      turn_id: "turn",
+    });
+    enriched.ctx = oldReturn.ctx;
+    check(blocks.map((block) => (block === oldReturn ? enriched : block)));
+    expect(
+      subagentCardMessages(cache.analysis!.cards.get("spawn")!).map((message) => message.text),
+    ).toContain("Enriched final");
+    expect(oldReturn).toMatchObject({ data: { resource: { result_text: "Old final" } } });
+    expect(index.items.get("returned")).toBe(2);
+    const chips = check([
+      ...blocks,
+      routingDecisionBlock(ctx({ itemId: "turn" }), { routing: { scope: "turn" } }),
+    ]);
+    expect(
+      chips.filter((bubble) => bubble.kind === "routing_decision").map((bubble) => bubble.itemId),
+    ).toEqual(["turn"]);
+    check([
+      ...blocks,
+      activity("steering", "delegated", { dispatch_id: "steering", task_input: "Next task" }),
+    ]);
+    expect(cache.analysis!.cards.get("steering")).toBe(cache.analysis!.cards.get("spawn"));
+    check(blocks.slice());
+    check([
+      ...blocks.filter((block) => block.ctx.itemId !== "live:preview"),
+      doneBlock("final", "resp_2", "Final"),
+    ]);
+  });
 
   it("reuses finalized bubbles by reference while the active bubble grows", () => {
     const cache = createBubbleCache();

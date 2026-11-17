@@ -19,6 +19,7 @@ Conversation and tool views share resizable, dockable panes while keeping their 
 - `conditional-loading`: PR surfaces share a lazy implementation; docked Automations loads its scheduling code on first use while preserving resident view state.
 - `local-load-recovery`: failed first imports show the shared local error with manual Refresh, preserving unrelated composer and dirty editor nodes without automatic navigation.
 - `native-stream-content`: typed updates of placed native previews retain canonical placement and immutable lookup indexes; structural and final changes still normalize through the general path.
+- `transcript-discovery`: certified native preview replacements reuse per-surface routing/card analysis; general edits invalidate it, retaining cold-output and lifecycle equivalence checks in `renderItems.test.ts`.
 
 ## How to get to it (user POV)
 

@@ -32,6 +32,17 @@ interface BlockIndex {
   readonly tools: ReadonlyMap<string, number>;
 }
 const indexes = new WeakMap<AnyBlock[], BlockIndex>();
+const projectionStructureStamps = new WeakMap<AnyBlock[], object>();
+
+/** Only validated native-preview content replacements share discovery inputs. */
+export function projectionStructureStamp(blocks: AnyBlock[]): object {
+  let stamp = projectionStructureStamps.get(blocks);
+  if (!stamp) {
+    stamp = Object.freeze({});
+    projectionStructureStamps.set(blocks, stamp);
+  }
+  return stamp;
+}
 
 /** Scoped to one immutable conversation array; no cross-viewer identity cache. */
 export function transcriptIndex(blocks: AnyBlock[]): BlockIndex {
@@ -88,6 +99,7 @@ export function replaceNativePreviewContent(
     };
   }
   indexes.set(next, transcriptIndex(current));
+  projectionStructureStamps.set(next, projectionStructureStamp(current));
   return next;
 }
 

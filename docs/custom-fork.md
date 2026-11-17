@@ -306,3 +306,12 @@ Its injected 80 ms SQLite-delay control reduces the heartbeat pause from 84.7 to
 Migration `pq1a2b3c4d5e` follows `ad1b2c3d4e5f`; existing split conversation databases ensure the same index at startup.
 The synthetic 30,000-row store probe avoids the previous full-history scan; index storage and write maintenance are the tradeoff.
 Evidence: `artifacts/overnight-20261116/{stream-content/HANDOFF.md,title-routing/handoff.json,pending-query/implementation-manifest.json,stability11}`.
+
+## Transcript discovery reuse
+
+`PROJECTION-ANALYSIS-12` reuses routing-chip and subagent-card discovery across certified native-preview content replacements.
+Each immutable raw transcript array receives an opaque structure stamp; only the validated content helper propagates it, and the stamp retains no source-array or parent links.
+Per-surface bubble caches reuse discovery only, while structural changes receive fresh stamps and cacheless projection remains a cold oracle.
+An eight-update, 261-block warmed probe reduces 6,264 repeated discovery visits to zero after initial analysis, with identical output and positive invalidation checks.
+Canonical filtering, prefix/lifecycle guards, continued-turn marking and source-array copies retain their existing work; no bounded whole-rendering or production latency claim follows.
+Evidence: `artifacts/overnight-20261116/projection-analysis/{comparison.json,candidate-files.json}` and `stability12/`.
