@@ -685,7 +685,7 @@ function isElAtBottom(el: HTMLElement): boolean {
   return el.scrollHeight - el.clientHeight - el.scrollTop <= BOTTOM_EPSILON_PX;
 }
 
-export function VirtualBubbleList({
+export const VirtualBubbleList = memo(function VirtualBubbleList({
   bubbles,
   scrollEl,
   lastAssistantIndex,
@@ -1371,6 +1371,6 @@ export function VirtualBubbleList({
       })}
     </div>
   );
-}
+});
 
 export const Transcript = memo(TranscriptImpl);

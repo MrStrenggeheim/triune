@@ -15,7 +15,7 @@ Conversation and tool views share resizable, dockable panes while keeping their 
 - `navigation`: global commands, contextual find, explicit conversation sources and mobile view switching retain existing workflows.
 - `appearance`: shared content surfaces, primary bottom tab strips, consistent switches and list density follow `design-system/triune/MASTER.md`.
 - `migration`: existing conversation, file and shell references remain accessible without starting or stopping resources.
-- `retained-performance`: the [integration7 delivery](../docs/custom-fork.md#integration7-delivery) keeps visible observation stable through focus changes, batches title saves and retains tab geometry observers.
+- `retained-performance`: the [integration7 delivery](../docs/custom-fork.md#integration7-delivery) keeps visible observation stable through focus changes, batches title saves and retains tab geometry observers; unchanged transcript lists also skip parent focus renders.
 
 ## How to get to it (user POV)
 

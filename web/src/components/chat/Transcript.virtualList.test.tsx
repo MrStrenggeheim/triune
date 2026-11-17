@@ -12,6 +12,8 @@ import type { AnyBlock } from "@/lib/blocks";
 import type { ConversationBranch } from "@/lib/conversationBranches";
 import type { Bubble } from "@/lib/renderItems";
 import { useChatStore } from "@/store/chatStore";
+import * as chatStore from "@/store/chatStore";
+import { conversationRegistry } from "@/store/conversationRegistry";
 import * as scopedChat from "@/workbench/ScopedChatStore";
 import { Conversation, ConversationContent } from "@/components/ai-elements/conversation";
 import {
@@ -689,3 +691,115 @@ it.each(["reader", "wheel", "search", "library"] as const)(
     }
   },
 );
+
+it("keeps unchanged transcript lists resident across focus changes and scopes native find", () => {
+  vi.spyOn(chatStore, "ensureConversationStreamed").mockResolvedValue();
+  const ids = ["focus-list-a", "focus-list-b"];
+  const controllers = ids.map(() => new AbortController());
+  for (const [index, id] of ids.entries()) {
+    conversationRegistry.acquire(id).setState({
+      blocks: [
+        {
+          type: "user_message",
+          userAuthored: true,
+          ctx: { itemId: id, responseId: id, agent: null, depth: 0, turn: 0, timestamp: 0 },
+          content: [{ type: "input_text", text: `Preserved **${id}**` }],
+        },
+      ],
+      loadingConversation: false,
+      sessionStatus: "idle",
+      abortController: controllers[index],
+    });
+  }
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const transcripts = ids.map((id) => (
+    <Transcript
+      key={id}
+      hostId={null}
+      setConversationEl={() => {}}
+      containerEl={null}
+      scroller={null}
+      setScroller={() => {}}
+      sendScrollNonce={0}
+      hasMoreHistory={false}
+      loadingMoreHistory={false}
+      isMobileViewport={false}
+      showsWorking={false}
+      agentsError={null}
+      sandboxLaunching={false}
+      spacerMeasureRef={{ current: null }}
+    />
+  ));
+  const panes = (focused: number) => (
+    <QueryClientProvider client={client}>
+      <MemoryRouter>
+        {ids.map((id, index) => (
+          <scopedChat.ScopedChatStoreProvider
+            key={id}
+            conversationId={id}
+            visible
+            focused={index === focused}
+          >
+            {transcripts[index]}
+          </scopedChat.ScopedChatStoreProvider>
+        ))}
+      </MemoryRouter>
+    </QueryClientProvider>
+  );
+  const view = render(panes(0));
+  try {
+    expect(view.container.querySelectorAll('[data-index="0"]')).toHaveLength(2);
+    const renders = vi.mocked(useVirtualizer).mock.calls.length;
+    const streamEnsures = vi.mocked(chatStore.ensureConversationStreamed).mock.calls.length;
+    for (let index = 0; index < 6; index++) view.rerender(panes((index + 1) % 2));
+    expect(vi.mocked(useVirtualizer).mock.calls.length - renders).toBe(0);
+    expect(vi.mocked(chatStore.ensureConversationStreamed).mock.calls.length).toBe(streamEnsures);
+    expect(controllers.every((controller) => !controller.signal.aborted)).toBe(true);
+    expect(ids.map((id) => conversationRegistry.isVisible(id))).toEqual([true, true]);
+    expect(ids.map((id) => conversationRegistry.isFocused(id))).toEqual([true, false]);
+    const scopes = ids.map((id) =>
+      view.container.querySelector(`[data-conversation-scope="${id}"]`)!,
+    );
+    const scroll = vi.spyOn(Element.prototype, "scrollIntoView");
+    fireEvent.keyDown(window, { key: "ArrowUp", ctrlKey: true, altKey: true });
+    expect(scroll).toHaveBeenCalledOnce();
+    expect(scopes[0].contains(scroll.mock.contexts.at(-1) as Node)).toBe(true);
+    fireEvent.keyDown(window, { key: "f", ctrlKey: true });
+    expect(scopes[0].querySelector('[data-index="0"]')).toBeNull();
+    expect(scopes[1].querySelector('[data-index="0"]')).not.toBeNull();
+    view.rerender(panes(1));
+    scroll.mockClear();
+    fireEvent.keyDown(window, { key: "ArrowUp", ctrlKey: true, altKey: true });
+    expect(scroll).toHaveBeenCalledOnce();
+    expect(scopes[1].contains(scroll.mock.contexts.at(-1) as Node)).toBe(true);
+    fireEvent.keyDown(window, { key: "f", ctrlKey: true });
+    expect(scopes[1].querySelector('[data-index="0"]')).toBeNull();
+    expect(scopes[0]).toHaveTextContent("Preserved focus-list-a");
+    expect(scopes[1]).toHaveTextContent("Preserved focus-list-b");
+    const entry = conversationRegistry.peek(ids[1])!;
+    act(() =>
+      entry.setState({
+        blocks: [
+          {
+            type: "user_message",
+            userAuthored: true,
+            ctx: {
+              itemId: ids[1],
+              responseId: ids[1],
+              agent: null,
+              depth: 0,
+              turn: 0,
+              timestamp: 0,
+            },
+            content: [{ type: "input_text", text: "Updated transcript still renders" }],
+          },
+        ],
+      }),
+    );
+    expect(scopes[1]).toHaveTextContent("Updated transcript still renders");
+  } finally {
+    view.unmount();
+    conversationRegistry.clear();
+    client.clear();
+  }
+});
