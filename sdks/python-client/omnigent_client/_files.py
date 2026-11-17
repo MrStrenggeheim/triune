@@ -1,15 +1,76 @@
 """Session-scoped files namespace — upload, list, get, delete."""
 
+# Modified for Triune: stream disk downloads with atomic publication and cleanup.
+
 from __future__ import annotations
 
+import asyncio
 import mimetypes
+import os
 import pathlib
+import stat
+import uuid
+from collections.abc import AsyncIterator, Coroutine
 from urllib.parse import quote
 
 import httpx
 
 from ._errors import raise_for_status, require_json_object, response_body
 from ._types import File, PaginatedList
+
+
+def _download_destination_mode(path: pathlib.Path) -> int | None:
+    """Reject final-path symlinks, including dangling ones, without following them."""
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return None
+    if stat.S_ISLNK(info.st_mode):
+        raise ValueError(f"Download destination must not be a symlink: {path}")
+    return stat.S_IMODE(info.st_mode) if stat.S_ISREG(info.st_mode) else None
+
+
+class _DownloadIO:
+    """Drain in-flight I/O and preserve cancellation through subsequent cleanup."""
+
+    def __init__(self) -> None:
+        self.cancelled: asyncio.CancelledError | None = None
+
+    async def finish(self, operation: Coroutine[object, object, object]) -> None:
+        task = asyncio.create_task(operation)
+        while True:
+            try:
+                await asyncio.shield(task)
+                break
+            except asyncio.CancelledError as exc:
+                self.cancelled = exc
+                if task.cancelled():
+                    raise
+            except Exception as exc:
+                if self.cancelled is not None:
+                    raise self.cancelled from exc
+                raise
+        if self.cancelled is not None:
+            raise self.cancelled
+
+
+class _DownloadStream(httpx.AsyncByteStream):
+    """Protect closure both at HTTPX iterator exhaustion and on context exit."""
+
+    def __init__(self, stream: httpx.AsyncByteStream, io: _DownloadIO) -> None:
+        self._stream = stream
+        self._io = io
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        try:
+            async for chunk in self._stream:
+                yield chunk
+        except asyncio.CancelledError as exc:
+            self._io.cancelled = exc
+            raise
+
+    async def aclose(self) -> None:
+        await self._io.finish(self._stream.aclose())
 
 
 class FilesNamespace:
@@ -216,16 +277,66 @@ class SessionFilesNamespace:
 
     async def download(self, file_id: str, to_path: str | pathlib.Path) -> pathlib.Path:
         """
-        Download file content and write it to disk.
+        Stream file content to a sibling temporary file, then replace the destination.
+
+        Final-path symlinks (including dangling ones) are rejected before download
+        and checked again before publication.
+        Failures or cancellation before replacement leave the destination intact.
+        Existing regular-file permissions are preserved; new files use the current umask.
+        Replacement temporary files are private from creation through transfer.
+        Atomic replacement creates a new inode, so other hard links and already-open
+        readers retain the old contents; ownership and other metadata are not copied.
+        Parent directories follow normal filesystem path resolution.
 
         :param file_id: Server-issued file id, e.g. ``"file_abc123"``.
         :param to_path: Local output path, e.g. ``"./out/report.pdf"``.
         :returns: The path that was written.
         """
-        content = await self.get_content(file_id)
         path = pathlib.Path(to_path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(content)
+        destination_mode = _download_destination_mode(path)
+        io = _DownloadIO()
+        temporary: pathlib.Path | None = None
+        try:
+            async with self._http.stream(
+                "GET",
+                f"{self._path}/{quote(file_id, safe='')}/content",
+                timeout=30.0,
+            ) as resp:
+                assert isinstance(resp.stream, httpx.AsyncByteStream)
+                resp.stream = _DownloadStream(resp.stream, io)
+                if resp.status_code >= 400:
+                    await resp.aread()
+                    raise_for_status(resp.status_code, response_body(resp))
+                path.parent.mkdir(parents=True, exist_ok=True)
+                candidate = path.parent / f".omnigent-download-{uuid.uuid4().hex}.tmp"
+                descriptor = os.open(
+                    candidate,
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                    0o600 if destination_mode is not None else 0o666,
+                )
+                temporary = candidate
+                try:
+                    output = os.fdopen(descriptor, "wb")
+                except BaseException:
+                    os.close(descriptor)
+                    raise
+                try:
+                    async for chunk in resp.aiter_bytes(chunk_size=64 * 1024):
+                        await io.finish(asyncio.to_thread(output.write, chunk))
+                finally:
+                    await io.finish(asyncio.to_thread(output.close))
+            mode = _download_destination_mode(path)
+            if mode is not None:
+                temporary.chmod(mode)
+            temporary.replace(path)
+        finally:
+            if temporary is not None:
+                try:
+                    temporary.unlink(missing_ok=True)
+                except OSError as exc:
+                    if io.cancelled is not None:
+                        raise io.cancelled from exc
+                    raise
         return path
 
     async def delete(self, file_id: str) -> None:
