@@ -139,10 +139,11 @@ def build_question_receipt_payload(
     if not questions:
         return None
 
+    receipt_request = _receipt_request(params, has_secret_questions=has_secret_questions)
     identity = {
         "session_id": session_id,
         "elicitation_id": elicitation_id,
-        "request": params,
+        "request": receipt_request,
     }
     digest = hashlib.sha256(_canonical_json(identity).encode()).hexdigest()
     source = {
@@ -177,7 +178,7 @@ def build_question_receipt_payload(
         "questions": questions,
         "action": action,
         "source": source,
-        "request": _receipt_request(params, has_secret_questions=has_secret_questions),
+        "request": receipt_request,
     }
 
 

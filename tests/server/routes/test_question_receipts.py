@@ -300,6 +300,36 @@ def test_secret_answers_and_defaults_are_absent_from_receipt_history(
     assert result["content"]["credential"] == secret_answer
 
 
+@pytest.mark.parametrize("preview_only", [False, True])
+def test_secret_defaults_do_not_affect_receipt_identity(preview_only: bool) -> None:
+    submission_ids = []
+    for secret_default in ("first-default-secret", "second-default-secret"):
+        request = {
+            "questions": [
+                {
+                    "id": "credential",
+                    "question": "Credential?",
+                    "isSecret": True,
+                    "textInput": {"default": secret_default},
+                }
+            ]
+        }
+        params: dict[str, Any] = {
+            "tool_name": "AskUserQuestion",
+            "content_preview": f"AskUserQuestion({json.dumps(request)})",
+        }
+        if not preview_only:
+            params["ask_user_question"] = request
+        payload = build_question_receipt_payload(
+            "session-1", "elicit-secret", params, {"action": "decline"}
+        )
+        assert payload is not None
+        submission_ids.append(payload["submission_id"])
+        assert secret_default not in json.dumps(payload)
+        assert request["questions"][0]["textInput"]["default"] == secret_default
+    assert submission_ids[0] == submission_ids[1]
+
+
 @pytest.mark.asyncio
 async def test_record_persists_resource_event_and_returns_wire_item() -> None:
     store = Mock()
