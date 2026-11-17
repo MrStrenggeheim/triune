@@ -21,6 +21,7 @@ See [contributor setup](../CONTRIBUTING.md#development-setup) when changing code
 | --- | --- |
 | Docked views, per-chat layouts and pins | [Unified workspace](../feature-map/unified-workspace.md) |
 | Composer and model controls | [Composer](../feature-map/composer.md) |
+| Markdown editor mount lifecycle | [Markdown editor](../feature-map/markdown-editor.md) |
 | Feature verification entry points | [Feature map](../feature-map/README.md) |
 | Shared appearance and interaction rules | [Design system](../design-system/triune/MASTER.md) |
 

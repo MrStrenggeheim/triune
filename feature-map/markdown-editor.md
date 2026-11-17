@@ -21,6 +21,8 @@ and the recording protocol for comparing revisions.
 - `review`: rendered Preview, Edit and Source selections use a shared Add comment / Ask in chat menu; comments anchor to source offsets and annotation quotes preserve the file/workspace provenance.
 - `responsive`: desktop and mobile show the file and retain edits and drafts.
 - `load`: fixed mixed-content documents expose parsing and rendering costs.
+  TipTap is created after React commits so a delayed render cannot destroy its view before plugins attach.
+  The workspace component suite covers the timer boundary with editable and read-only documents.
 - `offline`: unsaved edits remain guarded when the workspace cannot save.
 - `large-files`: files above 1 MiB open as editable source; truncated files
   remain read-only, with full-file download available.

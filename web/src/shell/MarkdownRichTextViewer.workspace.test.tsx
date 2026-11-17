@@ -13,6 +13,8 @@ import { followLinkWithPopupFallback } from "@/lib/openLinkInApp";
 import { fetchFileContent } from "@/hooks/useFileContent";
 
 const state = vi.hoisted(() => ({
+  expireBeforeCommit: false,
+  canEdit: true,
   editors: [] as Editor[],
   available: false,
   chat: { conversationId: "chat-a", sessionStatus: "idle" },
@@ -24,12 +26,16 @@ vi.mock("@tiptap/react", async (importOriginal) => {
     ...real,
     useEditor: (...args: Parameters<typeof real.useEditor>) => {
       const editor = real.useEditor(...args);
-      if (editor && !state.editors.includes(editor)) state.editors.push(editor);
+      if (editor && !state.editors.includes(editor)) {
+        state.editors.push(editor);
+        // React can yield between rendering a large document and committing effects.
+        if (state.expireBeforeCommit) vi.advanceTimersByTime(2);
+      }
       return editor;
     },
   };
 });
-vi.mock("@/hooks/usePermissions", () => ({ useCanEdit: () => true }));
+vi.mock("@/hooks/usePermissions", () => ({ useCanEdit: () => state.canEdit }));
 vi.mock("@/hooks/useWorkspaceChangedFiles", async (importOriginal) => ({
   ...(await importOriginal<typeof WorkspaceChangedFiles>()),
   useSessionActive: () => false,
@@ -54,10 +60,10 @@ vi.mock("./MarkdownEditorToolbar", () => ({
     </button>
   ),
 }));
+
 vi.mock("./MarkdownCommentPlugin", () => ({ MarkdownCommentPlugin: () => null }));
 vi.mock("./MarkdownSearchBar", () => ({ MarkdownSearchBar: () => null }));
 vi.mock("./MarkdownLinkBubble", () => ({ MarkdownLinkBubble: () => null }));
-vi.mock("./TableBubbleMenu", () => ({ TableHandles: () => null }));
 
 const workspaceA: WorkbenchWorkspace = {
   id: "workspace-a",
@@ -107,6 +113,8 @@ async function liveEditor() {
 }
 
 beforeEach(() => {
+  state.expireBeforeCommit = false;
+  state.canEdit = true;
   state.editors = [];
   state.available = false;
   state.chat = { conversationId: "chat-a", sessionStatus: "idle" };
@@ -141,6 +149,30 @@ afterEach(() => {
 });
 
 describe("Markdown workspace editor identity", () => {
+  it.each([true, false])(
+    "mounts past TipTap's destruction timer with edit permission %s",
+    async (canEdit) => {
+      state.canEdit = canEdit;
+      vi.useFakeTimers();
+      state.expireBeforeCommit = true;
+      try {
+        const { element } = makeView();
+        const view = render(element("chat-a", workspaceA));
+        await act(async () => {
+          vi.advanceTimersByTime(5);
+        });
+        const editor = state.editors.find((candidate) => !candidate.isDestroyed);
+        expect(editor).toBeDefined();
+        expect(view.container.querySelector(".tiptap")).toBe(editor!.view.dom);
+        expect(editor!.getText()).toContain("Initial paragraph.");
+        expect(editor!.isEditable).toBe(canEdit);
+        expect(editor!.isFocused).toBe(false);
+      } finally {
+        cleanup();
+        vi.useRealTimers();
+      }
+    },
+  );
   it("retains the actual TipTap draft, selection and dirty state across a chat change", async () => {
     const { element, onDirtyChange } = makeView();
     const view = render(element("chat-a", workspaceA));

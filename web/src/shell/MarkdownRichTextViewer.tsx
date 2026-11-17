@@ -353,6 +353,8 @@ function MarkdownRichTextViewerInner({
   );
 
   const editor = useEditor({
+    // Create after commit so a concurrent render cannot outlive TipTap's mount timer.
+    immediatelyRender: false,
     extensions,
     // contentType: 'markdown' tells @tiptap/markdown to parse the content
     // string as markdown rather than treating it as HTML/JSON.
