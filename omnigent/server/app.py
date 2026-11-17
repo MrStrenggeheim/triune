@@ -1693,6 +1693,8 @@ def create_app(
         conversation_store,
         RunnerBackgroundTitleGenerator(runner_router),
         additional_instructions=title_instructions,
+        runner_router=runner_router,
+        permission_store=permission_store,
     )
     # Shared between the host tunnel (which records ``host.runner_exited``
     # reports from daemons) and the runner status endpoint (which surfaces
@@ -4222,6 +4224,7 @@ def create_app(
 
         if tunnel_registry.get(runner_id) is not connection:
             return
+        background_title_coordinator.runner_connected(connection)
         _logger.info(
             "Runner connected",
             extra=debug_event("runner_connected", runner_id=runner_id),

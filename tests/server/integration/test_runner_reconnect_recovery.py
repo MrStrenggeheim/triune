@@ -537,3 +537,44 @@ async def test_root_recovery_failure_is_quiet_only_after_tunnel_replacement(
             assert transport_warnings
         else:
             assert errors
+
+
+@pytest.mark.parametrize("kind", ["title", "summary"])
+async def test_verified_tunnel_reconnect_releases_one_offline_title_attempt(
+    app: FastAPI,
+    agent: Agent,
+    monkeypatch: pytest.MonkeyPatch,
+    kind: str,
+) -> None:
+    conv = _create_session(app, agent.id, title="Seed")
+    coordinator = app.state.background_title_coordinator
+    store = app.state.runner_router._conversation_store
+    posts: list[str] = []
+
+    def schedule() -> None:
+        if kind == "summary":
+            coordinator.schedule_task_summary(session_id=conv.id, prompt="Original task")
+        else:
+            coordinator.schedule(
+                session_id=conv.id, prompt="Original task", expected_seed_title="Seed"
+            )
+
+    async def respond(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/background-title"):
+            posts.append(request.url.path)
+            return httpx.Response(200, json={"status": "generated", "title": "Recovered title"})
+        return httpx.Response(201, json={})
+
+    schedule()
+    await coordinator.wait_for_idle()
+    assert posts == []
+    for _ in range(3):
+        async with _recover(app, monkeypatch, respond) as (_, finished):
+            await asyncio.wait_for(finished.wait(), budget(5))
+            for _ in range(3):
+                schedule()
+                coordinator.runner_connected(app.state.tunnel_registry.get(_RUNNER_ID))
+            await coordinator.wait_for_idle()
+        assert len(posts) == 1
+    current = store.get_conversation(conv.id)
+    assert (current.title if kind == "title" else current.task_summary) == "Recovered title"

@@ -10,6 +10,7 @@ tunnel.
 from __future__ import annotations
 
 import threading
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -68,6 +69,18 @@ class RoutedRunner:
 
     runner_id: str
     client: httpx.AsyncClient
+
+
+class BoundRunnerOffline(OmnigentError):
+    """An existing binding was offline before a client or request was dispatched."""
+
+    def __init__(self, conversation: Conversation, *, observed_at: float) -> None:
+        super().__init__(
+            f"runner {conversation.runner_id!r} is offline for conversation {conversation.id!r}",
+            code=ErrorCode.RUNNER_UNAVAILABLE,
+        )
+        self.runner_id = conversation.runner_id
+        self.observed_at = observed_at
 
 
 def routing_host_id(
@@ -290,11 +303,15 @@ class RunnerRouter:
         conv = self._conversation_store.get_conversation(conversation_id)
         if conv is None or not conv.runner_id:
             return None
+        observed_at = time.monotonic()
         session = self._registry.get(conv.runner_id)
         if session is None:
+            code = self._runner_absent_code(routing_host_id(conv, self._conversation_store))
+            if code == ErrorCode.RUNNER_UNAVAILABLE:
+                raise BoundRunnerOffline(conv, observed_at=observed_at)
             raise OmnigentError(
                 f"runner {conv.runner_id!r} is offline for conversation {conversation_id!r}",
-                code=self._runner_absent_code(routing_host_id(conv, self._conversation_store)),
+                code=code,
             )
         return RoutedRunner(
             runner_id=conv.runner_id,
@@ -310,6 +327,10 @@ class RunnerRouter:
         :returns: ``True`` when the registry has a live session.
         """
         return self._registry.get(runner_id) is not None
+
+    def runner_connection(self, runner_id: str) -> RunnerSession | None:
+        """Return the authoritative local tunnel generation, without probing a host."""
+        return self._registry.get(runner_id)
 
     def require_mcp_registry_support(self, conversation: Conversation) -> None:
         """Validate the connected runner before sending it a registry-backed agent."""

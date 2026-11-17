@@ -1,14 +1,28 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 import time
 import uuid
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
+from typing import cast
+from unittest.mock import AsyncMock
 
+import httpx
 import pytest
 
 from omnigent.db.db_models import current_workspace_id, workspace_scope
 from omnigent.runner.background_titles.service import FOLLOW_USER_LANGUAGE_TITLE_INSTRUCTION
+from omnigent.runner.routing import BoundRunnerOffline, RunnerRouter
+from omnigent.runner.transports.ws_tunnel.frames import HelloFrame
+from omnigent.runner.transports.ws_tunnel.registry import (
+    RunnerSession,
+    TunnelRegistry,
+    WebSocketLike,
+)
+from omnigent.server.accounts_store import SqlAlchemyAccountStore
 from omnigent.server.background_session_titles import (
     BACKGROUND_SESSION_TITLES_HEADER,
     BACKGROUND_TITLE_MAX_CHARS,
@@ -22,6 +36,7 @@ from omnigent.server.background_session_titles import (
 )
 from omnigent.server.schemas import SessionEventInput
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
+from omnigent.stores.permission_store.sqlalchemy_store import SqlAlchemyPermissionStore
 
 pytestmark = pytest.mark.asyncio
 
@@ -706,7 +721,7 @@ async def test_task_summary_attempt_cache_is_bounded(
     for prompt in ("first", "second", "first", "third", "first", "second"):
         coordinator.schedule_task_summary(session_id="child", prompt=prompt)
         await coordinator.wait_for_idle()
-        assert len(coordinator._task_summary_attempts) <= 2
+        assert len(coordinator._attempts) <= 2
 
     assert calls == ["first", "second", "third", "second"]
 
@@ -810,3 +825,387 @@ async def test_seed_polling_is_bounded_by_generation_slots(db_uri: str) -> None:
 
     release.set()
     await coordinator.wait_for_idle()
+
+
+@dataclass
+class _TitleRetryCase:
+    store: SqlAlchemyConversationStore
+    registry: TunnelRegistry
+    router: RunnerRouter
+    coordinator: BackgroundSessionTitleCoordinator
+    session_id: str
+    posts: list[httpx.Request]
+
+    def schedule(self, kind: str = "title", *, prompt: str = "Original task") -> None:
+        if kind == "summary":
+            self.coordinator.schedule_task_summary(session_id=self.session_id, prompt=prompt)
+        else:
+            self.coordinator.schedule(
+                session_id=self.session_id, prompt=prompt, expected_seed_title="Seed"
+            )
+
+    def connect(self, owner: str | None = None) -> RunnerSession:
+        return self.registry.register(
+            "title-retry-runner",
+            cast(WebSocketLike, AsyncMock()),
+            HelloFrame(runner_version="test", frame_protocol_version=1),
+            owner=owner,
+        )
+
+
+@pytest.fixture
+async def title_retry(db_uri: str) -> AsyncIterator[_TitleRetryCase]:
+    store = SqlAlchemyConversationStore(db_uri)
+    conv = store.create_conversation(title="Seed", runner_id="title-retry-runner")
+    registry = TunnelRegistry()
+    router = RunnerRouter(registry=registry, conversation_store=store)
+    posts: list[httpx.Request] = []
+
+    async def respond(request: httpx.Request) -> httpx.Response:
+        posts.append(request)
+        return httpx.Response(200, json={"status": "generated", "title": "Recovered title"})
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(respond), base_url="http://runner"
+    ) as client:
+        router._clients["title-retry-runner"] = client
+        coordinator = BackgroundSessionTitleCoordinator(
+            store,
+            RunnerBackgroundTitleGenerator(router),
+            runner_router=router,
+        )
+        yield _TitleRetryCase(store, registry, router, coordinator, conv.id, posts)
+        await coordinator.shutdown()
+
+
+@pytest.mark.parametrize("kind", ["title", "summary"])
+async def test_offline_title_gets_one_attempt_only_after_confirmed_connect(
+    title_retry: _TitleRetryCase,
+    kind: str,
+) -> None:
+    case = title_retry
+    for _ in range(3):
+        case.schedule(kind)
+        await case.coordinator.wait_for_idle()
+    assert case.posts == []
+    connection = case.connect()
+    # Registry/presence alone cannot release the optional inference.
+    case.schedule(kind)
+    await case.coordinator.wait_for_idle()
+    assert case.posts == []
+    for _ in range(3):
+        case.coordinator.runner_connected(connection)
+        case.schedule(kind)
+    await case.coordinator.wait_for_idle()
+    assert len(case.posts) == 1
+    conv = case.store.get_conversation(case.session_id)
+    assert (conv.title if kind == "title" else conv.task_summary) == "Recovered title"
+    for _ in range(3):
+        case.coordinator.runner_connected(case.connect())
+        case.schedule(kind)
+        await case.coordinator.wait_for_idle()
+    assert len(case.posts) == 1
+
+
+@pytest.mark.parametrize(
+    "outcome", ["success", "model_error", "timeout", "invalid", "offline_text"]
+)
+async def test_online_title_outcomes_never_arm_reconnect_retry(
+    title_retry: _TitleRetryCase,
+    monkeypatch: pytest.MonkeyPatch,
+    outcome: str,
+) -> None:
+    case = title_retry
+    case.coordinator.runner_connected(case.connect())
+    client = case.router._clients["title-retry-runner"]
+    if outcome == "success":
+        post = AsyncMock(wraps=client.post)
+    elif outcome == "invalid":
+        post = AsyncMock(
+            return_value=httpx.Response(
+                200,
+                json={"status": "generated", "title": "x"},
+                request=httpx.Request("POST", "http://runner"),
+            )
+        )
+    else:
+        error = (
+            TimeoutError()
+            if outcome == "timeout"
+            else RuntimeError(
+                "bound runner is offline" if outcome == "offline_text" else "model error"
+            )
+        )
+        post = AsyncMock(side_effect=error)
+    monkeypatch.setattr(client, "post", post)
+    case.schedule()
+    await case.coordinator.wait_for_idle()
+    for _ in range(3):
+        case.coordinator.runner_connected(case.connect())
+        case.schedule()
+        await case.coordinator.wait_for_idle()
+    assert post.await_count == 1
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "binding",
+        "title",
+        "summary",
+        "deleted",
+        "owner",
+        "access",
+        "account",
+        "inherited_access",
+        "request",
+        "model",
+    ],
+)
+@pytest.mark.parametrize("kind", ["title", "summary"])
+async def test_offline_title_refuses_changed_identity(
+    title_retry: _TitleRetryCase,
+    db_uri: str,
+    change: str,
+    kind: str,
+) -> None:
+    case = title_retry
+    permissions = SqlAlchemyPermissionStore(db_uri)
+    permissions.ensure_user("owner")
+    permission_session_id = case.session_id
+    if change == "inherited_access":
+        parent = case.store.create_conversation(title="Parent")
+        child = case.store.create_conversation(
+            title="Seed", runner_id="title-retry-runner", parent_conversation_id=parent.id
+        )
+        case.session_id = child.id
+        permission_session_id = parent.id
+    permissions.grant("owner", permission_session_id, 3)
+    case.coordinator._permission_store = permissions
+    case.schedule(kind)
+    await case.coordinator.wait_for_idle()
+    if change == "binding":
+        case.store.replace_runner_id(case.session_id, "another-runner")
+    elif change == "title":
+        case.store.rename_conversation_if_title_matches(case.session_id, "Seed", "Manual title")
+    elif change == "summary":
+        case.store.set_task_summary(case.session_id, "New task")
+    elif change == "deleted":
+        await case.store.delete_conversation(case.session_id)
+    elif change == "owner":
+        permissions.revoke("owner", case.session_id)
+    elif change in {"access", "inherited_access"}:
+        permissions.grant("owner", permission_session_id, 1)
+    elif change == "account":
+        accounts = SqlAlchemyAccountStore(db_uri)
+        assert accounts.delete_user("owner")
+        accounts.create_user_with_password("owner", "replacement-test-password-hash")
+        permissions.grant("owner", case.session_id, 3)
+    elif change == "request":
+        case.schedule(kind, prompt="New task")
+        await case.coordinator.wait_for_idle()
+    else:
+        case.store.update_conversation(case.session_id, model_override="changed")
+    case.coordinator.runner_connected(case.connect(owner="owner"))
+    await case.coordinator.wait_for_idle()
+    if change == "request":
+        assert [json.loads(post.content)["prompt"] for post in case.posts] == ["New task"]
+    else:
+        assert case.posts == []
+
+
+async def test_replaced_connection_callback_cannot_release_offline_title(
+    title_retry: _TitleRetryCase,
+) -> None:
+    case = title_retry
+    case.schedule()
+    await case.coordinator.wait_for_idle()
+    stale = case.connect()
+    current = case.connect()
+    case.coordinator.runner_connected(stale)
+    await case.coordinator.wait_for_idle()
+    assert case.posts == []
+    case.coordinator.runner_connected(current)
+    await case.coordinator.wait_for_idle()
+    assert len(case.posts) == 1
+
+
+async def test_failed_reconnect_attempt_does_not_refresh_retry_budget(
+    title_retry: _TitleRetryCase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = title_retry
+    case.schedule("summary")
+    await case.coordinator.wait_for_idle()
+    client = case.router._clients["title-retry-runner"]
+    post = AsyncMock(side_effect=TimeoutError("ambiguous handoff"))
+    monkeypatch.setattr(client, "post", post)
+    for _ in range(3):
+        case.coordinator.runner_connected(case.connect())
+        case.schedule("summary")
+        await case.coordinator.wait_for_idle()
+    assert post.await_count == 1
+
+
+async def test_confirmed_connect_racing_offline_exception_delivery_still_retries_once(
+    title_retry: _TitleRetryCase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = title_retry
+    lookup = case.router.client_for_existing_conversation
+    seen = asyncio.Event()
+    release = threading.Event()
+    loop = asyncio.get_running_loop()
+
+    def delayed_lookup(session_id: str):
+        try:
+            return lookup(session_id)
+        except BoundRunnerOffline:
+            loop.call_soon_threadsafe(seen.set)
+            assert release.wait(5)
+            raise
+
+    monkeypatch.setattr(case.router, "client_for_existing_conversation", delayed_lookup)
+    case.schedule()
+    try:
+        await asyncio.wait_for(seen.wait(), 5)
+        case.coordinator.runner_connected(case.connect())
+    finally:
+        release.set()
+    await case.coordinator.wait_for_idle()
+    assert len(case.posts) == 1
+
+
+@pytest.mark.parametrize("change", ["binding", "title", "owner", "generation"])
+async def test_retry_revalidates_after_routing_before_post(
+    title_retry: _TitleRetryCase,
+    monkeypatch: pytest.MonkeyPatch,
+    change: str,
+) -> None:
+    case = title_retry
+    if change == "owner":
+        permissions = SqlAlchemyPermissionStore(case.store.storage_location)
+        permissions.ensure_user("owner")
+        permissions.grant("owner", case.session_id, 3)
+        case.coordinator._permission_store = permissions
+    case.schedule()
+    await case.coordinator.wait_for_idle()
+    lookup = case.router.client_for_existing_conversation
+    loop = asyncio.get_running_loop()
+    replaced = threading.Event()
+
+    def change_generation() -> None:
+        case.connect()
+        replaced.set()
+
+    def changed_lookup(session_id: str):
+        routed = lookup(session_id)
+        if change == "binding":
+            case.store.replace_runner_id(session_id, "another-runner")
+        elif change == "title":
+            case.store.rename_conversation_if_title_matches(session_id, "Seed", "Manual title")
+        elif change == "owner":
+            assert case.coordinator._permission_store is not None
+            case.coordinator._permission_store.revoke("owner", session_id)
+        else:
+            loop.call_soon_threadsafe(change_generation)
+            assert replaced.wait(5)
+        return routed
+
+    monkeypatch.setattr(case.router, "client_for_existing_conversation", changed_lookup)
+    case.coordinator.runner_connected(case.connect(owner="owner"))
+    await case.coordinator.wait_for_idle()
+    assert case.posts == []
+
+
+@pytest.mark.parametrize("queued", [False, True])
+async def test_observed_optout_cancels_offline_title_retry(
+    title_retry: _TitleRetryCase, queued: bool
+) -> None:
+    case = title_retry
+    case.schedule()
+    await case.coordinator.wait_for_idle()
+    case.coordinator._generation_slots = asyncio.Semaphore(1)
+    connection = case.connect()
+    async with case.coordinator._generation_slots:
+        if queued:
+            case.coordinator.runner_connected(connection)
+            await asyncio.sleep(0)
+        assert (
+            prepare_background_session_title(
+                coordinator=case.coordinator,
+                conversation=case.store.get_conversation(case.session_id),
+                event=SessionEventInput(type="message", data={"role": "user", "content": []}),
+                enabled=False,
+            )
+            is None
+        )
+    case.coordinator.runner_connected(connection)
+    await case.coordinator.wait_for_idle()
+    assert case.posts == []
+
+
+@pytest.mark.parametrize("kind", ["title", "summary"])
+async def test_queued_retry_rejects_replaced_generation_without_rearming(
+    title_retry: _TitleRetryCase, kind: str
+) -> None:
+    case = title_retry
+    case.schedule(kind)
+    await case.coordinator.wait_for_idle()
+    case.coordinator._generation_slots = asyncio.Semaphore(1)
+    async with case.coordinator._generation_slots:
+        case.coordinator.runner_connected(case.connect())
+        await asyncio.sleep(0)
+        current = case.connect()
+    await case.coordinator.wait_for_idle()
+    for _ in range(3):
+        case.coordinator.runner_connected(current)
+        case.schedule(kind)
+        await case.coordinator.wait_for_idle()
+    assert case.posts == []
+
+
+async def test_offline_retry_is_workspace_scoped(title_retry: _TitleRetryCase) -> None:
+    case = title_retry
+    for workspace in (0, 11):
+        with workspace_scope(workspace):
+            if workspace:
+                case.store.create_conversation(
+                    conversation_id=case.session_id, title="Seed", runner_id="title-retry-runner"
+                )
+            case.schedule()
+            await case.coordinator.wait_for_idle()
+    connection = case.connect()
+    with workspace_scope(22):
+        case.coordinator.runner_connected(connection)
+        await case.coordinator.wait_for_idle()
+    assert case.posts == []
+    for workspace in (0, 11):
+        with workspace_scope(workspace):
+            assert case.store.get_conversation(case.session_id).title == "Seed"
+            case.coordinator.runner_connected(connection)
+            await case.coordinator.wait_for_idle()
+            assert case.store.get_conversation(case.session_id).title == "Recovered title"
+    assert len(case.posts) == 2
+
+
+async def test_offline_retry_cache_stays_bounded(
+    title_retry: _TitleRetryCase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = title_retry
+    monkeypatch.setattr(
+        "omnigent.server.background_session_titles._TASK_SUMMARY_ATTEMPT_CACHE_SIZE", 2
+    )
+    case.coordinator = BackgroundSessionTitleCoordinator(
+        case.store,
+        RunnerBackgroundTitleGenerator(case.router),
+        runner_router=case.router,
+    )
+    for prompt in ("first", "second", "third"):
+        case.schedule("summary", prompt=prompt)
+        await case.coordinator.wait_for_idle()
+        assert len(case.coordinator._attempts) <= 2
+    case.coordinator.runner_connected(case.connect())
+    await case.coordinator.wait_for_idle()
+    assert [json.loads(post.content)["prompt"] for post in case.posts] == ["third"]
