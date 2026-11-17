@@ -417,7 +417,9 @@ def test_uploaded_artifact_fence_retains_appearance_state_and_originals(
     expect(page.get_by_role("tab", name=title, exact=True)).to_have_count(1)
     docked = _view(page, title).locator("[data-triune-artifact]")
     expect(docked).to_have_attribute("data-triune-artifact", f"{chat.session_id}:{file_id}")
-    expect(docked.locator(":scope > header").get_by_role("button")).to_have_count(3)
+    expect(docked.locator(":scope > header")).to_have_count(0)
+    preview_header = _view(page, title).locator("section > header")
+    expect(preview_header.get_by_role("button", name="Source", exact=True)).to_be_visible()
     expect(docked.get_by_role("button", name="Expand artifact", exact=True)).to_have_count(0)
     expect(docked).to_have_css("max-height", "none")
     docked_inner = docked.locator("iframe").content_frame.frame_locator("iframe")
@@ -425,7 +427,7 @@ def test_uploaded_artifact_fence_retains_appearance_state_and_originals(
     expect(docked_inner.get_by_label("Artifact draft")).to_have_value(
         "Draft survives Appearance and reload"
     )
-    docked.get_by_role("button", name="Source", exact=True).click()
+    preview_header.get_by_role("button", name="Source", exact=True).click()
     expect(docked.get_by_role("button", name="Toggle word wrap", exact=True)).to_have_attribute(
         "aria-pressed", "false"
     )

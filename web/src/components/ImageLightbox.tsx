@@ -30,6 +30,7 @@ import { gallerySwipe, type GalleryImage } from "./imageGallery";
 import { authenticatedFetch } from "@/lib/identity";
 import { downloadBlob } from "@/lib/explorerOperations";
 import { toast } from "@/lib/notifications";
+import { ContentSkeleton } from "@/components/ui/loading";
 
 // Zoom bounds and step for the lightbox viewer. 1 = fit-to-viewport.
 const MIN_ZOOM = 1;
@@ -52,7 +53,7 @@ const PreviewControl = React.forwardRef<
     <Control
       type="button"
       variant="ghost"
-      size="icon-sm"
+      size="icon"
       {...props}
       ref={ref}
       className={cn(
@@ -501,8 +502,12 @@ function ZoomViewer({
     }
   };
 
-  const onStageClick = () => {
+  const onStageClick = (event: React.MouseEvent<HTMLDivElement>) => {
     if (pannedRef.current) return;
+    if (event.target === event.currentTarget) {
+      onClose();
+      return;
+    }
     // The two clicks of a double-click cancel, leaving chrome unchanged.
     onToggleControls();
   };
@@ -541,9 +546,7 @@ function ZoomViewer({
           }}
         />
         {!display.src && !display.error && (
-          <p role="status" className={cn("rounded-md px-3 py-2 text-sm", PREVIEW_CONTROL_SURFACE)}>
-            Loading image…
-          </p>
+          <ContentSkeleton label="Loading image…" className="max-w-sm" />
         )}
         {display.error && (
           <p role="alert" className={cn("rounded-md px-3 py-2 text-sm", PREVIEW_CONTROL_SURFACE)}>
@@ -554,17 +557,17 @@ function ZoomViewer({
       <div hidden={!controlsVisible}>
         <div
           style={{
-            bottom: "calc(6.5rem + var(--omnigent-safe-bottom, 0px))",
+            top: "calc(0.75rem + var(--omnigent-safe-top, 0px))",
           }}
           className={cn(
-            "absolute left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-full p-1",
+            "absolute left-1/2 flex h-10 -translate-x-1/2 items-center gap-0 rounded-md md:h-8 [@media(any-pointer:coarse)]:h-11",
             PREVIEW_CONTROL_SURFACE,
           )}
         >
           <PreviewControl
             grouped
             variant="ghost"
-            size="icon-sm"
+            size="icon"
             aria-label="Zoom out"
             disabled={zoom <= MIN_ZOOM}
             onClick={() => applyZoom(zoom - ZOOM_STEP * 2)}
@@ -576,7 +579,7 @@ function ZoomViewer({
             type="button"
             aria-label="Reset zoom"
             size="sm"
-            className="min-w-[3ch] cursor-pointer text-center text-sm tabular-nums text-muted-foreground hover:text-foreground"
+            className="h-10 min-w-[3ch] cursor-pointer text-center text-sm tabular-nums text-muted-foreground hover:text-foreground md:h-8"
             onClick={resetView}
           >
             {Math.round(zoom * 100)}%
@@ -584,7 +587,7 @@ function ZoomViewer({
           <PreviewControl
             grouped
             variant="ghost"
-            size="icon-sm"
+            size="icon"
             aria-label="Zoom in"
             disabled={zoom >= MAX_ZOOM}
             onClick={() => applyZoom(zoom + ZOOM_STEP * 2)}
@@ -733,7 +736,7 @@ export function ImageLightboxProvider({ children }: { children: React.ReactNode 
           {/* Dark backdrop — dims the whole page to focus on the preview. */}
           <DialogPrimitive.Overlay
             className={cn(
-              "fixed inset-0 z-[60] bg-black/80 duration-150 ease-[cubic-bezier(0.16,1,0.3,1)]",
+              "fixed inset-0 z-[60] bg-background/70 backdrop-blur-md duration-150 ease-[cubic-bezier(0.16,1,0.3,1)]",
               "data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
               "motion-reduce:animate-none motion-reduce:transition-none",
             )}
@@ -752,6 +755,15 @@ export function ImageLightboxProvider({ children }: { children: React.ReactNode 
             )}
             // The image carries its own description; the title is for a11y only.
             aria-describedby={undefined}
+            onClick={(event) => {
+              const target = event.target;
+              if (
+                !suppressClick.current &&
+                target instanceof Element &&
+                !target.closest("button, img, a, [role=alert], [role=status]")
+              )
+                close();
+            }}
             onInteractOutside={(e) => e.preventDefault()}
             onKeyDown={(event) => {
               if (
@@ -840,7 +852,10 @@ export function ImageLightboxProvider({ children }: { children: React.ReactNode 
                   <>
                     <p
                       aria-hidden="true"
-                      className={cn("rounded-md px-2 text-xs", PREVIEW_CONTROL_SURFACE)}
+                      className={cn(
+                        "rounded-md px-1.5 text-[10px] leading-4",
+                        PREVIEW_CONTROL_SURFACE,
+                      )}
                     >
                       {selected + 1} / {images.length}
                     </p>
@@ -851,7 +866,8 @@ export function ImageLightboxProvider({ children }: { children: React.ReactNode 
                       activeAlignment="center"
                       activeKey={images[selected]?.id}
                       containWheel
-                      className="w-full"
+                      data-scrollbar="hidden"
+                      className="gallery-thumbnail-roll w-full"
                       contentClassName="gap-1"
                     >
                       {images.map((entry, index) => (

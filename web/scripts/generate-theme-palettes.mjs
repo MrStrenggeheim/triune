@@ -252,6 +252,8 @@ const manifest = {
     entry: "window.TriuneArtifact.init(root)",
     automatic_mount: "[data-ta-init]",
     network: "none",
+    available_height:
+      "TriuneArtifact.maximumBodyHeight / --ta-max-body-height; listen for triune-artifact:layout; undefined outside an inline host",
   },
   native_behavior: {
     supported: [

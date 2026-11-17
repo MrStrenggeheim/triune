@@ -246,7 +246,7 @@ describe("implicit captured file references", () => {
       "original-item",
       { openAttachment },
     );
-    const chip = await screen.findByRole("button", { name: "guide.txt" });
+    const chip = await screen.findByRole("button", { name: "the file" });
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(fetchMock).toHaveBeenCalledWith(
       metadataUrl,
@@ -303,7 +303,11 @@ describe("implicit captured file references", () => {
         "original-item",
         { openAttachment },
       );
-      fireEvent.click(await screen.findByRole("button", { name: "guide.txt" }));
+      fireEvent.click(
+        await screen.findByRole("button", {
+          name: markdown.includes("[") ? "the file" : "guide.txt",
+        }),
+      );
       expect(openAttachment).toHaveBeenCalledWith(
         expect.objectContaining({
           sessionId: "conv_1",
@@ -420,7 +424,15 @@ describe("implicit captured file references", () => {
     const client = renderMarkdown(markdown, [], FILE_VIEWER_WITH_SESSION, "captured-item");
     await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
     await waitFor(() => expect(client.isFetching()).toBe(0));
-    expect(screen.getByText("/projects/frontend").tagName).toBe("CODE");
+    expect(
+      screen.getByText(
+        markdown.includes("[")
+          ? kind === "directory"
+            ? "the folder"
+            : "the file"
+          : "/projects/frontend",
+      ).tagName,
+    ).toBe("CODE");
     expect(screen.queryByRole("button")).toBeNull();
     expect(screen.queryByRole("alert")).toBeNull();
     expect(toast.error).not.toHaveBeenCalled();
@@ -444,7 +456,7 @@ describe("implicit captured file references", () => {
     );
     await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
     await waitFor(() => expect(client.isFetching()).toBe(0));
-    expect(screen.getByText("/projects/frontend").tagName).toBe("CODE");
+    expect(screen.getByText("Open file").tagName).toBe("CODE");
     expect(screen.queryByRole("button")).toBeNull();
     expect(screen.queryByRole("alert")).toBeNull();
     expect(toastMock).not.toHaveBeenCalled();
@@ -466,8 +478,9 @@ describe("markdown links to workspace files", () => {
         contentType: "text/markdown",
       });
       renderMarkdown(markdown, [], FILE_VIEWER_WITH_SESSION, "original-item");
-      const chip = await screen.findByRole("button", { name: "AGENTS.md" });
-      expect(chip).toHaveTextContent(/^AGENTS\.md$/);
+      const caption = markdown.includes("[") ? "Read the instructions" : "AGENTS.md";
+      const chip = await screen.findByRole("button", { name: caption });
+      expect(chip).toHaveTextContent(caption);
       expect(chip.querySelectorAll("svg")).toHaveLength(1);
       expect(fetchMock).toHaveBeenCalledOnce();
       expect(fetchMock).toHaveBeenCalledWith(
@@ -504,7 +517,9 @@ describe("markdown links to workspace files", () => {
       "original-item",
       { openAttachment },
     );
-    const chip = await screen.findByRole("button", { name: "stored.pdf" });
+    const chip = await screen.findByRole("button", { name: "the report" });
+    fireEvent.focus(chip);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("stored.pdf");
     expect(chip).toHaveClass("inline-flex", "align-baseline");
     expect(screen.queryByRole("button", { name: "Download stored.pdf" })).toBeNull();
     expect(fetchMock).toHaveBeenCalledOnce();
@@ -518,7 +533,7 @@ describe("markdown links to workspace files", () => {
         sessionId: "conv_1",
         itemId: "original-item",
         filename: "stored.pdf",
-        attachment: { file_id: "original-file", filename: "the report" },
+        attachment: { file_id: "original-file" },
       }),
       { placement: "default" },
     );
@@ -887,21 +902,21 @@ describe("file link labels", () => {
     expect(screen.getByText("docs/ghost.md").tagName).toBe("CODE");
   });
 
-  it("shortens markdown link text that spells out the linked path", () => {
+  it("preserves markdown link text that spells out the linked path", () => {
     renderMarkdown("[docs/notes.md:12](docs/notes.md#L12)", ["docs/notes.md"]);
 
     const link = screen.getByRole("button", { name: "docs/notes.md:12" });
-    expect(link).toHaveTextContent(/^notes\.md$/);
+    expect(link).toHaveTextContent(link.getAttribute("aria-label")!);
     expect(link).not.toHaveAttribute("title");
     fireEvent.click(link);
     expect(openFile).toHaveBeenCalledWith("docs/notes.md", { line: 12 });
   });
 
-  it("shortens a path label without a position on a link to a cited line", () => {
+  it("preserves a path label without a position on a link to a cited line", () => {
     renderMarkdown("[docs/notes.md](docs/notes.md#L12)", ["docs/notes.md"]);
 
     const link = screen.getByRole("button", { name: "docs/notes.md" });
-    expect(link).toHaveTextContent(/^notes\.md$/);
+    expect(link).toHaveTextContent(link.getAttribute("aria-label")!);
     fireEvent.click(link);
     expect(openFile).toHaveBeenCalledWith("docs/notes.md", { line: 12 });
   });
@@ -916,16 +931,13 @@ describe("file link labels", () => {
       "[docs/notes.md:12:5](docs/notes.md#L12C9)",
       "docs/notes.md:12:5",
     ],
-  ])(
-    "shows the target filename while retaining %s as its accessible label",
-    (_label, markdown, text) => {
-      renderMarkdown(markdown, ["docs/notes.md"]);
+  ])("preserves %s visibly and accessibly", (_label, markdown, text) => {
+    renderMarkdown(markdown, ["docs/notes.md"]);
 
-      const link = screen.getByRole("button", { name: text });
-      expect(link).toHaveTextContent(/^notes\.md$/);
-      expect(link).toHaveAttribute("aria-label", text);
-    },
-  );
+    const link = screen.getByRole("button", { name: text });
+    expect(link).toHaveTextContent(link.getAttribute("aria-label")!);
+    expect(link).toHaveAttribute("aria-label", text);
+  });
 });
 
 // Files OUTSIDE the workspace root. The FileViewer and filesystem API open

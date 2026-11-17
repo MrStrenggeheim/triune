@@ -1,5 +1,7 @@
 // Modified for Triune.
 import { useMediaBatch, mediaPreviewSize } from "./MediaBatch";
+import "./chatAttachment.css";
+import { PreviewHeaderContext } from "./PreviewHeaderContext";
 import { parseSessionFileSource } from "@/lib/remoteImagePolicy";
 import { normalizeAttachmentContent, type ChatAttachmentContent } from "@/lib/chatAttachments";
 import {
@@ -16,9 +18,12 @@ import {
   type ReactNode,
 } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { createPortal } from "react-dom";
+import { ContentSkeleton } from "@/components/ui/loading";
 import { fetchChatFileLocation } from "@/lib/chatFileReferences";
 import {
   CopyIcon,
+  CodeIcon,
   DownloadIcon,
   FolderOpenIcon,
   Loader2Icon,
@@ -26,6 +31,9 @@ import {
   PanelRightIcon,
   PanelsTopLeftIcon,
   ScanEyeIcon,
+  EyeIcon,
+  ZoomInIcon,
+  ZoomOutIcon,
 } from "lucide-react";
 import { authenticatedFetch } from "@/lib/identity";
 import { apiErrorFromResponse } from "@/lib/sessionsApi";
@@ -218,6 +226,7 @@ export function FilePreviewMenu({
 export function InlineFileReference({
   path,
   filename = path.split(/[\\/]/).at(-1) || "Attachment",
+  children,
   mimeType,
   className,
   contextRelative = false,
@@ -241,7 +250,7 @@ export function InlineFileReference({
           )}
         >
           <WorkspaceFileIcon path={filename} mimeType={mimeType} className="self-center" />
-          <span className="truncate leading-normal">{filename}</span>
+          <span className="truncate leading-normal">{children ?? filename}</span>
         </TooltipButton>
       </TooltipTrigger>
       <TooltipContent className="break-all">{path}</TooltipContent>
@@ -401,6 +410,7 @@ export function ChatAttachment({
   reference,
   itemId,
   compact = false,
+  label,
   unresolvedFallback,
 }: {
   sessionId: string | null;
@@ -408,6 +418,8 @@ export function ChatAttachment({
   reference?: string;
   itemId?: string | null;
   compact?: boolean;
+  /** Preserve an authored Markdown caption independently of captured file metadata. */
+  label?: ReactNode;
   /** Implicit prose stays unchanged until its captured reference resolves to a file. */
   unresolvedFallback?: ReactNode;
 }) {
@@ -500,7 +512,7 @@ export function ChatAttachment({
     }
   }, [compact, error, open, menuOpen, filename]);
   if (liveReference && location.data?.kind !== "file" && location.data?.kind !== "captured")
-    return unresolvedFallback ?? <InlinePathCode>{reference}</InlinePathCode>;
+    return unresolvedFallback ?? <InlinePathCode>{label ?? reference}</InlinePathCode>;
   if (unresolvedFallback !== undefined && !location.data && !content.data)
     return unresolvedFallback;
   return (
@@ -574,19 +586,21 @@ export function ChatAttachment({
           {compact ? (
             <InlineFileReference
               contextRelative
-              path={reference ?? filenameHint}
+              path={reference ?? filename}
               filename={filename}
               mimeType={metadata.data?.metadata.content_type}
               onClick={openPreview}
-            />
+            >
+              {label}
+            </InlineFileReference>
           ) : (
             <span
               className={cn(
-                "flex min-w-0 items-center gap-2 rounded-b-lg p-3",
+                "chat-attachment-footer flex min-w-0 items-center rounded-b-lg",
                 batched && "flex-wrap",
               )}
             >
-              <span className="flex h-9 w-8 shrink-0 items-center justify-center rounded-md bg-muted">
+              <span className="chat-attachment-file-icon flex shrink-0 items-center justify-center rounded-md bg-muted">
                 <WorkspaceFileIcon
                   path={filename}
                   mimeType={metadata.data?.metadata.content_type}
@@ -626,10 +640,12 @@ export function ChatAttachment({
                     </TooltipTrigger>
                     <TooltipContent className="break-all">{details}</TooltipContent>
                   </Tooltip>
-                  {size && <span className="shrink-0">{size}</span>}
                 </span>
               </span>
               <span className="flex shrink-0 items-center gap-0.5">
+                {size && (
+                  <span className="mr-1 shrink-0 text-xs text-muted-foreground">{size}</span>
+                )}
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button
@@ -721,6 +737,9 @@ export function ChatAttachment({
 /** Docked and fallback previews share the captured-byte loader and browser viewers. */
 export function AttachmentPreviewView({ request }: { request: AttachmentPreviewRequest }) {
   const resource = useAttachmentResource(request, { preview: true });
+  const [headerTarget, setHeaderTarget] = useState<HTMLDivElement | null>(null);
+  const isHtml =
+    /\.html?$/i.test(resource.filename) || /^text\/html/.test(resource.content.data?.type ?? "");
   return (
     <section
       className="flex h-full min-h-0 min-w-0 flex-col"
@@ -728,14 +747,17 @@ export function AttachmentPreviewView({ request }: { request: AttachmentPreviewR
     >
       <header className="workspace-control-header flex min-w-0 shrink-0 items-center gap-2 border-b border-border px-3">
         <span className="min-w-0 flex-1 truncate text-sm font-medium">{resource.filename}</span>
-        <AttachmentPreviewActions request={request} resource={resource} header />
+        <div ref={setHeaderTarget} className="flex shrink-0 items-center gap-1" />
+        {!isHtml && <AttachmentPreviewActions request={request} resource={resource} header />}
       </header>
       <div className="min-h-0 flex-1 overflow-auto p-3">
-        <AttachmentPreviewBody
-          resource={resource}
-          request={request}
-          sessionId={request.sessionId}
-        />
+        <PreviewHeaderContext.Provider value={headerTarget}>
+          <AttachmentPreviewBody
+            resource={resource}
+            request={request}
+            sessionId={request.sessionId}
+          />
+        </PreviewHeaderContext.Provider>
       </div>
     </section>
   );
@@ -773,21 +795,6 @@ function AttachmentPreviewActions({
   const Action = header ? HeaderActionButton : Button;
   return (
     <div className="flex shrink-0 flex-wrap items-center gap-1">
-      {canReveal && (
-        <Action
-          type="button"
-          variant="ghost"
-          size={header ? "icon-xs" : "sm"}
-          aria-label="Reveal in Explorer"
-          onClick={() => {
-            if (context.canRevealAttachment?.(request) !== false)
-              void context.revealAttachment?.(request);
-          }}
-        >
-          <FolderOpenIcon />
-          {!header && "Reveal in Explorer"}
-        </Action>
-      )}
       <Action
         type="button"
         variant="ghost"
@@ -799,6 +806,39 @@ function AttachmentPreviewActions({
         <DownloadIcon />
         {!header && "Download original"}
       </Action>
+      {header && (
+        <FilePreviewMenu
+          dropdown
+          actions={{
+            path: request.reference,
+            download: resource.available ? () => void resource.download() : undefined,
+            reveal: canReveal
+              ? () => {
+                  if (context.canRevealAttachment?.(request) !== false)
+                    void context.revealAttachment?.(request);
+                }
+              : undefined,
+          }}
+        >
+          <HeaderActionButton aria-label="More preview actions" tooltip={false}>
+            <MoreHorizontalIcon />
+          </HeaderActionButton>
+        </FilePreviewMenu>
+      )}
+      {!header && canReveal && (
+        <Action
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={() => {
+            if (context.canRevealAttachment?.(request) !== false)
+              void context.revealAttachment?.(request);
+          }}
+        >
+          <FolderOpenIcon />
+          Reveal in Explorer
+        </Action>
+      )}
     </div>
   );
 }
@@ -813,7 +853,7 @@ function AttachmentPreviewBody({
   sessionId: string;
 }) {
   const { content, error, blobUrl, filename } = resource;
-  if (content.isFetching) return <p role="status">Loading file…</p>;
+  if (content.isFetching && !content.data) return <ContentSkeleton label="Loading file…" />;
   if (error)
     return (
       <div role="alert">
@@ -888,9 +928,7 @@ export function AttachmentPreview({
     };
   }, [blob, isText, html]);
   if (blob.type.startsWith("image/") || /\.(svg|png|jpe?g|webp|avif|gif)$/i.test(filename))
-    return (
-      <ZoomableImage src={url} alt={filename} className="max-h-[65dvh] max-w-full object-contain" />
-    );
+    return <AttachmentImagePreview url={url} filename={filename} blob={blob} />;
   if (blob.type.startsWith("audio/"))
     return (
       <audio
@@ -911,7 +949,7 @@ export function AttachmentPreview({
     );
   if (blob.type === "application/pdf" || /\.pdf$/i.test(filename))
     return (
-      <Suspense fallback={<p>Loading PDF…</p>}>
+      <Suspense fallback={<ContentSkeleton label="Loading PDF…" />}>
         <AttachmentPdf blob={blob} filename={filename} sessionId={sessionId} />
       </Suspense>
     );
@@ -921,14 +959,27 @@ export function AttachmentPreview({
         Preview is unavailable for this format. Download the original to open it.
       </p>
     );
-  if (text === undefined) return <p role="status">Loading text…</p>;
+  if (text === undefined) return <ContentSkeleton label="Loading text…" />;
   if (html)
     return (
-      <Suspense fallback={<p role="status">Preparing artifact…</p>}>
+      <Suspense fallback={<ContentSkeleton label="Preparing artifact…" />}>
         <ArtifactFrame
           html={text}
           identity={artifactIdentity ?? `${sessionId}:${filename}`}
           title={filename}
+          onDownloadOriginal={() => downloadBlob(blob, filename)}
+          onRevealInExplorer={
+            request?.itemId &&
+            request.reference &&
+            !parseSessionFileSource(request.reference) &&
+            previewContext.revealAttachment &&
+            previewContext.canRevealAttachment?.(request) !== false
+              ? () => {
+                  if (previewContext.canRevealAttachment?.(request) !== false)
+                    void previewContext.revealAttachment?.(request);
+                }
+              : undefined
+          }
           onOpenTab={
             canOpenTab
               ? () => previewContext.openAttachment?.(request!, { placement: "tab" })
@@ -951,13 +1002,84 @@ export function AttachmentPreview({
         </p>
       )}
       {markdown && !source ? (
-        <Suspense fallback={<p>Loading Markdown…</p>}>
+        <Suspense fallback={<ContentSkeleton label="Loading Markdown…" />}>
           <MarkdownPreview content={text} path={null} tocOpen={false} onTocOpenChange={() => {}} />
         </Suspense>
       ) : (
         <CodeBlock code={text} language={lang} wrap />
       )}
     </div>
+  );
+}
+
+function AttachmentImagePreview({
+  url,
+  filename,
+  blob,
+}: {
+  url: string;
+  filename: string;
+  blob: Blob;
+}) {
+  const headerTarget = useContext(PreviewHeaderContext);
+  const [zoom, setZoom] = useState(1);
+  const [source, setSource] = useState(false);
+  const [svgSource, setSvgSource] = useState<string>();
+  const svg = blob.type === "image/svg+xml" || /\.svg$/i.test(filename);
+  useEffect(() => {
+    if (!svg || !headerTarget) return;
+    let active = true;
+    void blob.text().then((text) => {
+      if (active) setSvgSource(text);
+    });
+    return () => {
+      active = false;
+    };
+  }, [blob, svg, headerTarget]);
+  return (
+    <>
+      {headerTarget &&
+        createPortal(
+          <>
+            {svg && (
+              <HeaderActionButton
+                aria-label={source ? "Preview" : "Source"}
+                onClick={() => setSource(!source)}
+              >
+                {source ? <EyeIcon /> : <CodeIcon />}
+              </HeaderActionButton>
+            )}
+            <HeaderActionButton
+              aria-label="Zoom out"
+              disabled={zoom <= 1}
+              onClick={() => setZoom((value) => Math.max(1, value - 0.5))}
+            >
+              <ZoomOutIcon />
+            </HeaderActionButton>
+            <Button variant="ghost" size="sm" aria-label="Fit image" onClick={() => setZoom(1)}>
+              {zoom === 1 ? "Fit" : `${Math.round(zoom * 100)}%`}
+            </Button>
+            <HeaderActionButton
+              aria-label="Zoom in"
+              disabled={zoom >= 8}
+              onClick={() => setZoom((value) => Math.min(8, value + 0.5))}
+            >
+              <ZoomInIcon />
+            </HeaderActionButton>
+          </>,
+          headerTarget,
+        )}
+      {source ? (
+        <CodeBlock code={svgSource ?? ""} language="xml" wrap />
+      ) : (
+        <ZoomableImage
+          src={url}
+          alt={filename}
+          className="max-h-[65dvh] max-w-full object-contain"
+          style={{ zoom }}
+        />
+      )}
+    </>
   );
 }
 function AttachmentPdf({

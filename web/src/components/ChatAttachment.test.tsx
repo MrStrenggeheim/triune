@@ -106,6 +106,44 @@ it("loads images through authenticated storage URLs and downloads the original",
   );
 });
 
+it("moves artifact actions into the dedicated header and retains both download meanings", async () => {
+  const html = '<main class="ta-root">Original source</main>';
+  const view = mount("tool.html", "text/html", html);
+  view.showPreview({
+    sessionId: "original-chat",
+    attachment: { file_id: "file-id", filename: "tool.html" },
+  });
+  const frame = await screen.findByTitle("tool.html");
+  const section = screen.getByRole("region", { name: "Preview tool.html" });
+  expect(section.querySelectorAll("header")).toHaveLength(1);
+  const header = section.querySelector("header")!;
+  expect(within(header).getByRole("button", { name: "Source" })).toBeVisible();
+  fireEvent.click(within(header).getByRole("button", { name: "Source" }));
+  expect(frame).not.toBeVisible();
+  fireEvent.click(within(header).getByRole("button", { name: "Download artifact" }));
+  expect(await mocks.download.mock.calls.at(-1)![0].text()).toContain("data-triune-kit-embedded");
+  await userEvent.setup().click(within(header).getByRole("button", { name: "More" }));
+  await userEvent.setup().click(screen.getByRole("menuitem", { name: "Download original" }));
+  expect(await mocks.download.mock.calls.at(-1)![0].text()).toBe(html);
+});
+
+it("keeps image fit and zoom in the dedicated header", async () => {
+  const view = mount("photo.png", "image/png", "image-bytes");
+  view.showPreview({
+    sessionId: "original-chat",
+    attachment: { file_id: "file-id", filename: "photo.png" },
+  });
+  const img = await screen.findByRole("img", { name: "photo.png" });
+  const section = screen.getByRole("region", { name: "Preview photo.png" });
+  expect(section.querySelectorAll("header")).toHaveLength(1);
+  fireEvent.click(
+    within(section.querySelector("header")!).getByRole("button", { name: "Zoom in" }),
+  );
+  expect(img.style.zoom).toBe("1.5");
+  fireEvent.click(screen.getByRole("button", { name: "Fit image" }));
+  expect(img.style.zoom).toBe("1");
+});
+
 it.each([
   [1600, 800, 512],
   [600, 1200, 128],
@@ -406,13 +444,15 @@ it.each([true, false])(
     );
     showPreview(request);
     await waitFor(() => expect(screen.getByRole("region")).toHaveTextContent("Historical bytes"));
-    const reveal = screen.queryByRole("button", { name: "Reveal in Explorer" });
+    await userEvent.setup().click(screen.getByRole("button", { name: "More preview actions" }));
+    const reveal = screen.queryByRole("menuitem", { name: "Reveal in Explorer" });
     if (allowed) {
       expect(reveal).toBeInTheDocument();
       fireEvent.click(reveal!);
       expect(revealAttachment).toHaveBeenCalledWith(request);
       canRevealAttachment.mockReturnValue(false);
-      fireEvent.click(reveal!);
+      await userEvent.setup().click(screen.getByRole("button", { name: "More preview actions" }));
+      fireEvent.click(screen.getByRole("menuitem", { name: "Reveal in Explorer" }));
       expect(revealAttachment).toHaveBeenCalledOnce();
     } else expect(reveal).toBeNull();
   },
@@ -436,7 +476,9 @@ it("delegates Reveal to the async origin lookup without requiring a synchronous 
     { revealAttachment },
   );
   showPreview(request);
-  fireEvent.click(await screen.findByRole("button", { name: "Reveal in Explorer" }));
+  await waitFor(() => expect(screen.getByRole("region")).toHaveTextContent("Historical bytes"));
+  await userEvent.setup().click(screen.getByRole("button", { name: "More preview actions" }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Reveal in Explorer" }));
   expect(revealAttachment).toHaveBeenCalledWith(request);
 });
 
@@ -684,9 +726,9 @@ it("joins image edges to the unchanged footer and keeps original transparent byt
   expect(card).toHaveStyle({ width: "calc(512px + 2px)" });
   expect(card).not.toHaveClass("p-3", "gap-2");
   expect(img.parentElement?.parentElement).toHaveClass("rounded-t-lg");
-  expect(screen.getByRole("button", { name: "transparent.png" }).closest("span.p-3")).toHaveClass(
-    "rounded-b-lg",
-  );
+  expect(
+    screen.getByRole("button", { name: "transparent.png" }).closest(".chat-attachment-footer"),
+  ).toHaveClass("rounded-b-lg");
   fireEvent.click(screen.getByRole("button", { name: "Download transparent.png" }));
   await waitFor(() => expect(mocks.download).toHaveBeenCalledOnce());
   expect(await mocks.download.mock.calls[0][0].text()).toBe("transparent-original-bytes");
@@ -715,8 +757,8 @@ it.each([
     const title = screen.getByRole("button", { name: "portrait.png" });
     expect(title.parentElement).toHaveClass("basis-32");
     const footer = title.parentElement!.parentElement!;
-    expect(footer).toHaveClass("flex-wrap", "items-center", "p-3");
-    expect(footer.querySelector("span.h-9.w-8")).toBeInTheDocument();
+    expect(footer).toHaveClass("flex-wrap", "items-center", "chat-attachment-footer");
+    expect(footer.querySelector(".chat-attachment-file-icon")).toBeInTheDocument();
     const download = within(footer).getByRole("button", { name: "Download portrait.png" });
     expect(download).toHaveAttribute("data-size", "icon-xs");
     expect(

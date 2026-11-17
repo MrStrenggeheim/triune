@@ -9,8 +9,8 @@
       "sha256": "b4878bcc5c3cacf236107493440866e78f23d97d0e4bd9ac9c3f0df60e0f7d74"
     },
     "triune-artifact.js": {
-      "bytes": 5131,
-      "sha256": "3ce379eb682d14e211ff3eaa5239e4b05f47333538dc6b6203dec81c3b40220e",
+      "bytes": 5240,
+      "sha256": "b1e125a85b68d1dc3d16da3b90f25fd27e2b5aac55c5ab52b47db2142ba60970",
       "optional": true
     },
     "triune-icons.svg": {
@@ -28,7 +28,8 @@
     "external_cdns": false,
     "entry": "window.TriuneArtifact.init(root)",
     "automatic_mount": "[data-ta-init]",
-    "network": "none"
+    "network": "none",
+    "available_height": "TriuneArtifact.maximumBodyHeight / --ta-max-body-height; listen for triune-artifact:layout; undefined outside an inline host"
   },
   "native_behavior": {
     "supported": [

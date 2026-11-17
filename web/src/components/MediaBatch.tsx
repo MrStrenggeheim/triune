@@ -70,6 +70,8 @@ export function MediaBatchItems<T>({
   renderItem: (item: T, index: number) => ReactNode;
   isVisual?: (item: T) => boolean;
 }) {
+  const batched = useMediaBatch();
+  if (batched) return items.map(renderItem);
   let index = 0;
   return groupAdjacentMedia(items, isVisual).map((group) => {
     const start = index;

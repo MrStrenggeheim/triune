@@ -73,6 +73,8 @@ it("binds state and size messages to the actual frame/channel and restores state
   expect(frame.style.height).toBe("360px");
   message(frame.contentWindow, { type: "triune-artifact:resize", channel, height: 800 });
   expect(frame.style.height).toBe("800px");
+  message(frame.contentWindow, { type: "triune-artifact:resize", channel, height: 80 });
+  expect(frame.style.height).toBe("80px");
   message(frame.contentWindow, {
     type: "triune-artifact:state",
     channel,

@@ -128,13 +128,10 @@ describe("content overlay visibility and gesture isolation", () => {
     return { previewImg, stage };
   }
 
-  it("toggles controls on a stage click without closing", () => {
+  it("closes on an empty backdrop click", () => {
     const { stage } = openPreview();
     fireEvent.click(stage);
-    expect(screen.getByRole("dialog")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Close" })).toBeNull();
-    fireEvent.click(stage);
-    expect(screen.getByRole("button", { name: "Close" })).toBeVisible();
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("toggles the same controls when clicking image content", () => {
@@ -153,7 +150,7 @@ describe("content overlay visibility and gesture isolation", () => {
   it("toggles controls on a plain click while zoomed in", () => {
     const { stage } = openPreview();
     fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
-    fireEvent.click(stage);
+    fireEvent.click(stage.querySelector("img")!);
     expect(screen.queryByRole("button", { name: "Close" })).toBeNull();
     expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
@@ -185,7 +182,7 @@ describe("content overlay visibility and gesture isolation", () => {
 
     fireEvent.pointerDown(stage, { isPrimary: true, pointerId: 2, clientX: 50, clientY: 50 });
     fireEvent.pointerUp(stage, { pointerId: 2, clientX: 50, clientY: 50 });
-    fireEvent.click(stage);
+    fireEvent.click(stage.querySelector("img")!);
 
     expect(screen.queryByRole("button", { name: "Close" })).toBeNull();
     expect(screen.getByRole("dialog")).toBeInTheDocument();
@@ -309,16 +306,16 @@ describe("whole-chat lightbox gallery", () => {
 
   it("preserves hidden controls across selection and reveals them from keyboard navigation", async () => {
     const dialog = await openGallery();
-    fireEvent.click(screen.getByTestId("lightbox-stage"));
+    fireEvent.click(screen.getByTestId("lightbox-stage").querySelector("img")!);
     expect(document.activeElement).toBe(dialog);
     expect(screen.queryByRole("button", { name: "Next image" })).toBeNull();
     fireEvent.keyDown(dialog, { key: "ArrowRight" });
     expect(screen.getByText("3 / 3")).toBeVisible();
-    fireEvent.click(screen.getByTestId("lightbox-stage"));
+    fireEvent.click(screen.getByTestId("lightbox-stage").querySelector("img")!);
     expect(screen.queryByRole("button", { name: "Close" })).toBeNull();
     fireEvent.keyDown(dialog, { key: "Tab" });
     expect(screen.getByRole("button", { name: "Close" })).toBeVisible();
-    fireEvent.click(screen.getByTestId("lightbox-stage"));
+    fireEvent.click(screen.getByTestId("lightbox-stage").querySelector("img")!);
     fireEvent.keyDown(dialog, { key: "Escape" });
     expect(screen.queryByRole("dialog")).toBeNull();
   });
@@ -326,10 +323,10 @@ describe("whole-chat lightbox gallery", () => {
   it("keeps chrome hidden through swipe selection and its release click", async () => {
     await openGallery();
     const stage = screen.getByTestId("lightbox-stage");
-    fireEvent.click(stage);
+    fireEvent.click(stage.querySelector("img")!);
     fireEvent.pointerDown(stage, { isPrimary: true, pointerId: 1, clientX: 200, clientY: 100 });
     fireEvent.pointerUp(stage, { pointerId: 1, clientX: 100, clientY: 100 });
-    fireEvent.click(screen.getByTestId("lightbox-stage"));
+    fireEvent.click(screen.getByTestId("lightbox-stage").querySelector("img")!);
     expect(screen.getByRole("status")).toHaveTextContent("Image 3 of 3");
     expect(screen.queryByRole("button", { name: "Close" })).toBeNull();
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Tab" });
@@ -340,8 +337,8 @@ describe("whole-chat lightbox gallery", () => {
     await openGallery();
     const stage = screen.getByTestId("lightbox-stage");
     expect(stage).toHaveStyle({ cursor: "default" });
-    fireEvent.click(stage, { detail: 1 });
-    fireEvent.click(stage, { detail: 2 });
+    fireEvent.click(stage.querySelector("img")!, { detail: 1 });
+    fireEvent.click(stage.querySelector("img")!, { detail: 2 });
     fireEvent.doubleClick(stage);
     expect(screen.getByRole("button", { name: "Reset zoom" })).toHaveTextContent("200%");
     const roll = screen.getByRole("group", { name: "Chat images" });
@@ -597,7 +594,7 @@ describe("whole-chat lightbox gallery", () => {
     fireEvent.pointerDown(stage, { isPrimary: true, pointerId: 2, clientX: 200, clientY: 100 });
     fireEvent.pointerMove(stage, { pointerId: 2, clientX: 100, clientY: 100 });
     fireEvent.pointerUp(stage, { pointerId: 2, clientX: 100, clientY: 100 });
-    fireEvent.click(screen.getByTestId("lightbox-stage"));
+    fireEvent.click(screen.getByTestId("lightbox-stage").querySelector("img")!);
     expect(screen.getByRole("dialog")).toBeInTheDocument();
     expect(screen.getByText("3 / 3")).toBeInTheDocument();
   });

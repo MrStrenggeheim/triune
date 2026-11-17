@@ -122,6 +122,12 @@
       });
     });
   }
-  window.TriuneArtifact = Object.freeze({ init, refresh });
+  window.TriuneArtifact = Object.freeze({
+    init,
+    refresh,
+    get maximumBodyHeight() {
+      return window.TriuneArtifactLayout?.maximumBodyHeight;
+    },
+  });
   document.querySelectorAll("[data-ta-init]").forEach(init);
 })();

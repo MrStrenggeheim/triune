@@ -1,0 +1,10 @@
+/* Required Notice: Copyright 2026 MrStrenggeheim. Triune (https://github.com/MrStrenggeheim/triune). */
+.chat-attachment-footer {
+  padding: calc(var(--list-gap, 4px) + 8px);
+  gap: calc(var(--list-gap, 4px) * 2);
+}
+
+.chat-attachment-file-icon {
+  height: calc(var(--list-gap, 4px) * 4 + 20px);
+  width: calc(var(--list-gap, 4px) * 2 + 24px);
+}

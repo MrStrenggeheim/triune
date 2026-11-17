@@ -29,6 +29,7 @@ export interface ArtifactUpdateMessage {
   theme?: ArtifactTheme;
   active?: boolean;
   state?: unknown;
+  maximumBodyHeight?: number;
 }
 
 export type ArtifactChildMessage =
@@ -240,11 +241,22 @@ function innerBridge(channel: string, initialState: unknown, initialActive: bool
     }
   });
 
+  let maximumBodyHeight;
+  window.TriuneArtifactLayout = Object.freeze({
+    get maximumBodyHeight() { return maximumBodyHeight; }
+  });
   addEventListener("message", event => {
     const message = event.data;
     if (event.source !== parent || !message || message.channel !== channel ||
         message.type !== "triune-artifact:update") return;
     applyTheme(message.theme);
+    if (typeof message.maximumBodyHeight === "number" && Number.isFinite(message.maximumBodyHeight)) {
+      const bodyStyle = getComputedStyle(document.body);
+      const padding = parseFloat(bodyStyle.paddingTop) + parseFloat(bodyStyle.paddingBottom);
+      maximumBodyHeight = Math.max(0, message.maximumBodyHeight - (padding || 0));
+      document.documentElement.style.setProperty("--ta-max-body-height", maximumBodyHeight + "px");
+      dispatchEvent(new CustomEvent("triune-artifact:layout", { detail: { maximumBodyHeight } }));
+    }
     if ("state" in message) restore(message.state);
     if ("active" in message) setActive(message.active);
   });
@@ -256,11 +268,14 @@ function innerBridge(channel: string, initialState: unknown, initialActive: bool
   const ready = () => {
     document.documentElement.toggleAttribute("data-ta-inactive", !active);
     restore(initialState);
-    const reportSize = () => post({
-      type: "triune-artifact:resize",
-      height: Math.min(maxHeight, Math.max(0, Math.ceil(document.documentElement.scrollHeight)))
-    });
-    new ResizeObserver(reportSize).observe(document.documentElement);
+    const reportSize = () => {
+      const body = document.body;
+      const style = getComputedStyle(body);
+      const margins = parseFloat(style.marginTop) + parseFloat(style.marginBottom);
+      post({ type: "triune-artifact:resize", height: Math.min(maxHeight, Math.max(0,
+        Math.ceil(Math.max(body.scrollHeight, body.getBoundingClientRect().height) + (margins || 0)))) });
+    };
+    new ResizeObserver(reportSize).observe(document.body);
     reportSize();
     post({ type: "triune-artifact:ready" });
   };

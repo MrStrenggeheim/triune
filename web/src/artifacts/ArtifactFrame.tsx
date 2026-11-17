@@ -1,9 +1,13 @@
 // Required Notice: Copyright 2026 MrStrenggeheim. Triune (https://github.com/MrStrenggeheim/triune).
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { PreviewHeaderContext } from "@/components/PreviewHeaderContext";
+import { ContentSkeleton } from "@/components/ui/loading";
 import {
   CodeIcon,
   DownloadIcon,
   ExternalLinkIcon,
+  FolderOpenIcon,
   MoreHorizontalIcon,
   MaximizeIcon,
   PanelsTopLeftIcon,
@@ -61,6 +65,8 @@ export function ArtifactFrame({
   title,
   onOpenTab,
   inline = false,
+  onDownloadOriginal,
+  onRevealInExplorer,
 }: {
   html: string;
   identity: string;
@@ -68,7 +74,10 @@ export function ArtifactFrame({
   onOpenTab?: () => void;
   /** In-chat embeds use the owning view cap; standalone previews keep their full area. */
   inline?: boolean;
+  onDownloadOriginal?: () => void;
+  onRevealInExplorer?: () => void;
 }) {
+  const headerTarget = useContext(PreviewHeaderContext);
   const viewerId = useViewerId();
   const chatVisible = useConversationChatVisible();
   const themeMode = useResolvedThemeMode();
@@ -77,7 +86,12 @@ export function ArtifactFrame({
   const currentTheme = useRef<ArtifactTheme | undefined>(undefined);
   const container = useRef<HTMLDivElement>(null);
   const frame = useRef<HTMLIFrameElement>(null);
-  const boundaryStyle = useInlinePreviewBoundary(container, inline);
+  const header = useRef<HTMLElement>(null);
+  const [maximumHeight, setMaximumHeight] = useState<number>();
+  const [maximumBodyHeight, setMaximumBodyHeight] = useState<number>();
+  const bodyHeightRef = useRef<number | undefined>(undefined);
+  bodyHeightRef.current = maximumBodyHeight;
+  const boundaryStyle = useInlinePreviewBoundary(container, inline, setMaximumHeight);
   const documentIdentity = useMemo(
     () => ({ html, identity, viewerId, channel: crypto.randomUUID() }),
     [html, identity, viewerId],
@@ -96,6 +110,23 @@ export function ArtifactFrame({
     ? `omnigent:artifact-state:1:${JSON.stringify([location.origin, withBasePath("/"), viewerId, identity])}`
     : null;
   const persistenceWarning = useRef(false);
+
+  useLayoutEffect(() => {
+    const node = container.current;
+    if (!node || !inline || maximumHeight === undefined) return;
+    const measure = () => {
+      const style = getComputedStyle(node);
+      const border = parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth);
+      setMaximumBodyHeight(
+        Math.max(0, maximumHeight - (header.current?.offsetHeight ?? 0) - (border || 0)),
+      );
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    if (header.current) observer.observe(header.current);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [maximumHeight, inline]);
 
   useEffect(() => {
     const node = container.current;
@@ -128,6 +159,7 @@ export function ArtifactFrame({
           channel,
           theme: currentTheme.current,
           active: activeRef.current,
+          maximumBodyHeight: bodyHeightRef.current,
         },
         "*",
       );
@@ -146,7 +178,7 @@ export function ArtifactFrame({
         value.height >= 0 &&
         value.height <= 4096
       )
-        setHeight(Math.max(240, Math.min(1024, value.height)));
+        setHeight(Math.max(1, Math.min(4096, value.height)));
       if (value.type === "triune-artifact:state") {
         const serialized = serializeArtifactState(value.value);
         if (!serialized) return;
@@ -198,7 +230,7 @@ export function ArtifactFrame({
 
   useEffect(() => {
     container.current?.dispatchEvent(new Event("triune-artifact:update"));
-  }, [active, themeMode]);
+  }, [active, themeMode, maximumBodyHeight]);
 
   function completeDocument() {
     return buildArtifactDocument(html, {
@@ -221,82 +253,100 @@ export function ArtifactFrame({
       toast.error("The artifact window was blocked. Allow popups and retry.");
   }
 
+  const actions = (
+    <>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <HeaderActionButton
+            aria-label="Source"
+            aria-pressed={source}
+            onClick={() => setSource(!source)}
+          >
+            <CodeIcon />
+          </HeaderActionButton>
+        </TooltipTrigger>
+        <TooltipContent>Show artifact source</TooltipContent>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <HeaderActionButton
+            aria-label="Download artifact"
+            disabled={!documentHtml}
+            onClick={() => {
+              downloadBlob(
+                new Blob([completeDocument()], { type: "text/html;charset=utf-8" }),
+                /\.html?$/i.test(title) ? title : `${title}.html`,
+              );
+            }}
+          >
+            <DownloadIcon />
+          </HeaderActionButton>
+        </TooltipTrigger>
+        <TooltipContent>Download artifact</TooltipContent>
+      </Tooltip>
+      {inline && (
+        <HeaderActionButton
+          aria-label="Expand artifact"
+          tooltip="Expand artifact"
+          disabled={!documentHtml}
+          onClick={onOpenTab ?? openWindow}
+        >
+          <MaximizeIcon />
+        </HeaderActionButton>
+      )}
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <HeaderActionButton aria-label="More" tooltip={false}>
+            <MoreHorizontalIcon />
+          </HeaderActionButton>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          {onDownloadOriginal && (
+            <DropdownMenuItem onSelect={onDownloadOriginal}>
+              <DownloadIcon /> Download original
+            </DropdownMenuItem>
+          )}
+          {onRevealInExplorer && (
+            <DropdownMenuItem onSelect={onRevealInExplorer}>
+              <FolderOpenIcon /> Reveal in Explorer
+            </DropdownMenuItem>
+          )}
+          <DropdownMenuItem disabled={!onOpenTab} onSelect={onOpenTab}>
+            <PanelsTopLeftIcon /> Open in tab
+          </DropdownMenuItem>
+          <DropdownMenuItem disabled={!documentHtml} onSelect={openWindow}>
+            <ExternalLinkIcon /> Open in new window
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </>
+  );
   return (
     <div
       ref={container}
-      className="not-prose flex min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border border-border bg-background"
+      className={`not-prose flex min-h-0 min-w-0 flex-col overflow-hidden bg-background ${headerTarget ? "h-full" : "rounded-lg border border-border"}`}
       style={boundaryStyle}
       data-triune-artifact={identity}
       data-inline-preview={inline || undefined}
     >
-      <header className="flex min-h-10 shrink-0 items-center gap-2 border-b border-border px-2">
-        <span className="min-w-0 flex-1 truncate text-sm">{title}</span>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <HeaderActionButton
-              aria-label="Source"
-              aria-pressed={source}
-              onClick={() => setSource(!source)}
-            >
-              <CodeIcon />
-            </HeaderActionButton>
-          </TooltipTrigger>
-          <TooltipContent>Show artifact source</TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <HeaderActionButton
-              aria-label="Download artifact"
-              disabled={!documentHtml}
-              onClick={() => {
-                downloadBlob(
-                  new Blob([completeDocument()], { type: "text/html;charset=utf-8" }),
-                  /\.html?$/i.test(title) ? title : `${title}.html`,
-                );
-              }}
-            >
-              <DownloadIcon />
-            </HeaderActionButton>
-          </TooltipTrigger>
-          <TooltipContent>Download artifact</TooltipContent>
-        </Tooltip>
-        {inline && (
-          <HeaderActionButton
-            aria-label="Expand artifact"
-            tooltip="Expand artifact"
-            disabled={!documentHtml}
-            onClick={onOpenTab ?? openWindow}
-          >
-            <MaximizeIcon />
-          </HeaderActionButton>
-        )}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <HeaderActionButton aria-label="More" tooltip={false}>
-              <MoreHorizontalIcon />
-            </HeaderActionButton>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem disabled={!onOpenTab} onSelect={onOpenTab}>
-              <PanelsTopLeftIcon /> Open in tab
-            </DropdownMenuItem>
-            <DropdownMenuItem disabled={!documentHtml} onSelect={openWindow}>
-              <ExternalLinkIcon /> Open in new window
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </header>
+      {headerTarget ? (
+        createPortal(actions, headerTarget)
+      ) : (
+        <header
+          ref={header}
+          className="flex min-h-10 shrink-0 items-center gap-2 border-b border-border px-2"
+        >
+          <span className="min-w-0 flex-1 truncate text-sm">{title}</span>
+          {actions}
+        </header>
+      )}
       <div
         className="min-h-0 overflow-auto overscroll-contain"
         role="region"
         aria-label={`${title} preview`}
         tabIndex={0}
       >
-        {!documentHtml && (
-          <p role="status" className="p-3 text-sm text-muted-foreground">
-            Preparing artifact…
-          </p>
-        )}
+        {!documentHtml && <ContentSkeleton label="Preparing artifact…" />}
         {documentHtml && (
           <iframe
             ref={frame}

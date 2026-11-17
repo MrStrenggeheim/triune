@@ -96,6 +96,14 @@ TriuneArtifactState.set({count:9})">Tail action</button>
     page.evaluate(
         "frame.contentWindow.postMessage({type:'triune-artifact:update',channel:'boundary-test',active:true,theme:{mode:'dark',density:'compact',variables:{'--ta-font':'monospace','--ta-ui':'17px'}}},'*')"
     )
+    page.evaluate(
+        "frame.contentWindow.postMessage({type:'triune-artifact:update',channel:'boundary-test',maximumBodyHeight:280},'*')"
+    )
+    artifact.wait_for_function("TriuneArtifactLayout.maximumBodyHeight === 280")
+    assert (
+        artifact.locator("html").evaluate("n=>n.style.getPropertyValue('--ta-max-body-height')")
+        == "280px"
+    )
     artifact.wait_for_function("before=>ticks>before", arg=ticks)
     expect(inner.locator("main")).to_have_attribute("data-theme", "dark")
     assert artifact.locator("main").evaluate("n=>n.style.getPropertyValue('--ta-ui')") == "17px"

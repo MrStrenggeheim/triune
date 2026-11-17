@@ -269,17 +269,18 @@ function WorkspaceFileLink({
       return (
         <ChatAttachment
           compact
+          label={children}
           sessionId={attachmentScope.sessionId}
           itemId={attachmentScope.itemId}
           attachment={{
             file_id: stored.fileId,
-            filename: typeof children === "string" ? children : undefined,
           }}
         />
       );
     return (
       <ChatAttachment
         compact
+        label={children}
         sessionId={attachmentScope.sessionId}
         itemId={attachmentScope.itemId}
         reference={splitWorkspaceFileCitation(path).path}
@@ -412,7 +413,9 @@ function WorkspaceFileLink({
               openWorkspaceFile();
             }
           }}
-        />
+        >
+          {children}
+        </InlineFileReference>
       </span>
     </FileLinkContextMenu>
   );

@@ -23,6 +23,7 @@ const VIEWPORT_CAP =
 export function useInlinePreviewBoundary(
   ref: RefObject<HTMLElement | null>,
   inline: boolean,
+  onHeight?: (height: number) => void,
 ): CSSProperties | undefined {
   const [height, setHeight] = useState<number>();
   useLayoutEffect(() => {
@@ -38,7 +39,10 @@ export function useInlinePreviewBoundary(
       const bounds = view?.getBoundingClientRect() ?? { top, bottom: top + visibleHeight };
       const next = inlinePreviewHeight(bounds, top, visibleHeight);
       // Retained hidden views have no geometry; keep their last usable boundary.
-      if (next > 0) setHeight(next);
+      if (next > 0) {
+        setHeight(next);
+        onHeight?.(next);
+      }
     };
     measure();
     const observer = new ResizeObserver(measure);
@@ -52,7 +56,7 @@ export function useInlinePreviewBoundary(
       viewport?.removeEventListener("resize", measure);
       viewport?.removeEventListener("scroll", measure);
     };
-  }, [ref, inline]);
+  }, [ref, inline, onHeight]);
   return inline
     ? { maxHeight: height ? `min(${height}px, ${VIEWPORT_CAP})` : VIEWPORT_CAP }
     : undefined;
