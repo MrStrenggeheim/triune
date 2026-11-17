@@ -120,6 +120,7 @@ from omnigent.stores.conversation_store import (
     PENDING_INPUT_RESPONSE_ID,
     PINNED_LABEL_KEY,
     PROJECT_LABEL_KEY,
+    SIDE_CHAT_LABEL_KEY,
     ConversationAlreadyExistsError,
     ConversationNotFoundError,
     ConversationStore,
@@ -1714,6 +1715,10 @@ class SqlAlchemyConversationStore(ConversationStore):
         stable_updates = dict(updates)
 
         def write(session: Session) -> None:
+            # Serialize even inserts of absent native identity markers against
+            # child rebinding and deletion, using their same stable row lock.
+            if self._supports_for_update:
+                self._lock_conversation(session, conversation_id)
             _upsert_labels(session, conversation_id, stable_updates, stamp)
 
         run_write_transaction(self._conv_session_immediate, "set_labels", write)
@@ -3579,6 +3584,8 @@ class SqlAlchemyConversationStore(ConversationStore):
         """
 
         def write(session: Session) -> None:
+            if self._supports_for_update:
+                self._lock_conversation(session, conversation_id)
             session.execute(
                 delete(SqlConversationLabel).where(
                     SqlConversationLabel.workspace_id == current_workspace_id(),
@@ -4881,6 +4888,85 @@ class SqlAlchemyConversationStore(ConversationStore):
                 )
             labels = _fetch_labels(ap_sess, conversation_id)
         return _to_conversation(ap_row, meta, labels)
+
+    def rebind_codex_native_child_runner(
+        self,
+        conversation_id: str,
+        *,
+        parent_id: str,
+        thread_id: str,
+        authenticated_runner_id: str | None,
+        expected_child_runner_id: str | None,
+    ) -> bool:
+        """Hold native identity locks across the atomic parent/child binding check."""
+        from omnigent.harnesses.codex_native.side_chat import is_side_chat_child
+
+        if authenticated_runner_id == "" or not thread_id or conversation_id == parent_id:
+            return False
+        workspace_id = current_workspace_id()
+
+        def bind_metadata(session: Session) -> bool:
+            query = (
+                select(SqlConversationMetadata)
+                .where(
+                    SqlConversationMetadata.workspace_id == workspace_id,
+                    SqlConversationMetadata.id.in_([parent_id, conversation_id]),
+                )
+                .order_by(SqlConversationMetadata.id)
+            )
+            if self._meta_supports_for_update:
+                query = query.with_for_update()
+            rows = {row.id: row for row in session.scalars(query)}
+            parent = rows.get(parent_id)
+            child = rows.get(conversation_id)
+            if (
+                parent is None
+                or child is None
+                or parent.runner_id != authenticated_runner_id
+                or child.runner_id != expected_child_runner_id
+                or child.kind != encode_conversation_kind("sub_agent")
+                or child.host_id is not None
+            ):
+                return False
+            if authenticated_runner_id is None:
+                # Legacy unbound registrations carry no runner authority.
+                return child.runner_id is None
+            child.runner_id = authenticated_runner_id
+            return True
+
+        def check_identity(session: Session) -> bool:
+            query = select(SqlConversation).where(
+                SqlConversation.workspace_id == workspace_id,
+                SqlConversation.id == conversation_id,
+            )
+            label_query = select(SqlConversationLabel).where(
+                SqlConversationLabel.workspace_id == workspace_id,
+                SqlConversationLabel.conversation_id == conversation_id,
+            )
+            if self._supports_for_update:
+                query = query.with_for_update()
+            child = session.scalar(query)
+            labels = {row.key: row.value for row in session.scalars(label_query)}
+            if (
+                child is None
+                or child.parent_conversation_id != parent_id
+                or labels.get(WRAPPER_LABEL_KEY) != "codex-native-ui-subagent"
+                or labels.get("omnigent.codex_native.subagent_thread_id") != thread_id
+                or labels.get(SIDE_CHAT_LABEL_KEY)
+                or is_side_chat_child(labels)
+            ):
+                return False
+            if self._conv_engine is self._engine:
+                return bind_metadata(session)
+            # Only metadata is written. Keep the AP identity locks until its
+            # binding transaction commits so split stores retain the same gate.
+            return run_write_transaction(
+                self._session_immediate, "rebind_codex_native_child_runner", bind_metadata
+            )
+
+        return run_write_transaction(
+            self._conv_session_immediate, "rebind_codex_native_child_runner", check_identity
+        )
 
     def clear_runner_id(self, conversation_id: str) -> Conversation:
         """
@@ -6319,6 +6405,18 @@ class SqlAlchemyConversationStore(ConversationStore):
             subtree_ids = [
                 cast(str, result[0]) for result in ap_sess.execute(select(cte.c.id)).fetchall()
             ]
+            if self._supports_for_update:
+                # All label writers and native rebinding take conversation
+                # locks first. Lock the whole subtree in a stable order.
+                ap_sess.execute(
+                    select(SqlConversation.id)
+                    .where(
+                        SqlConversation.workspace_id == current_workspace_id(),
+                        SqlConversation.id.in_(subtree_ids),
+                    )
+                    .order_by(SqlConversation.id)
+                    .with_for_update()
+                ).all()
             delete_fts_by_conversation_ids(ap_sess, list(subtree_ids))
             ap_sess.execute(
                 delete(SqlConversationItem).where(

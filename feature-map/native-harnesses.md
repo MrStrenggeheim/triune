@@ -946,6 +946,10 @@ checks do not prove live providers, browser rendering or thought-signature parit
 
 ## Gotchas
 
+- Re-registering a reused ordinary Codex child after parent runner replacement reconciles only its binding, using the parent's trusted current runner and exact persisted thread identity.
+  `tests/server/routes/test_sessions_background_task_status.py` covers restored shell observation and stale/unrelated/owner-only rejection; `test_subagent_activity.py` covers the shared/split atomic identity checks.
+  The child's conversation, dispatch, finality and transcript records remain the same; broad transcript completeness is a separate claim.
+
 - A registered UI catalog is discovery, not an execution grant or proof that an already-running process received new startup text.
 - Kimi templates that deliberately omit `${plugin_sections}` and `${base_prompt}` opt out of plugin instructions; do not silently rewrite those templates.
 - Inline HTML uses a completed `triune-artifact` fence containing an authorized uploaded `file_id`; unsupported clients retain the ordinary file-link fallback.

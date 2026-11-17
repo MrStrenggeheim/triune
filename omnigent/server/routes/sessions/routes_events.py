@@ -2981,6 +2981,9 @@ def register_events_routes(
                 conv,
                 body,
                 conversation_store,
+                authenticated_parent_runner_id=(
+                    conv.runner_id if _has_bound_runner_authority(request, conv) else None
+                ),
                 background_title_coordinator=(
                     background_title_coordinator
                     if background_session_titles_enabled(request.headers)

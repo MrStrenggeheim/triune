@@ -2,11 +2,17 @@
 
 """Lifecycle notices remain named, ordered, and idempotent across native delivery races."""
 
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
+from pathlib import Path
+from threading import Event
 from typing import Any
 from unittest.mock import Mock
 
 import pytest
-from sqlalchemy import event
+from sqlalchemy import Select, event
+from sqlalchemy.dialects import postgresql
 
 from omnigent.entities import MessageData, NewConversationItem
 from omnigent.native.child_metadata import child_metadata, display_task_summary
@@ -17,6 +23,271 @@ from omnigent.server.routes._sessions.orchestration import (
 from omnigent.server.schemas import SessionEventInput
 from omnigent.server.subagent_activity import delegation_message_item, record_subagent_activity
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
+
+
+@pytest.mark.parametrize("split", [False, True], ids=["shared", "split"])
+@pytest.mark.parametrize(
+    "change",
+    [
+        "none",
+        "parent-runner",
+        "child-runner",
+        "null-child",
+        "null-child-race",
+        "parent",
+        "thread",
+        "wrapper",
+        "side-chat",
+        "kind",
+        "host",
+    ],
+)
+def test_native_child_rebind_compares_fresh_identity_and_both_bindings(
+    db_uri: str, tmp_path: Path, split: bool, change: str
+) -> None:
+    store = SqlAlchemyConversationStore(
+        db_uri, f"sqlite:///{tmp_path}/conversations.db" if split else None
+    )
+    parent = store.create_conversation(runner_id="runner-b")
+    labels = {
+        "omnigent.wrapper": "codex-native-ui-subagent",
+        "omnigent.codex_native.subagent_thread_id": "thread-child",
+    }
+    child = store.create_conversation(
+        kind="default" if change == "kind" else "sub_agent",
+        parent_conversation_id=parent.id,
+        runner_id="runner-a",
+        labels=labels,
+        host_id="1" * 32 if change == "host" else None,
+        workspace="/workspace" if change == "host" else None,
+    )
+    expected_runner = child.runner_id
+    if change == "parent-runner":
+        store.replace_runner_id(parent.id, "runner-c")
+    elif change == "child-runner":
+        store.replace_runner_id(child.id, "runner-c")
+    elif change == "null-child":
+        store.clear_runner_id(child.id)
+        expected_runner = None
+    elif change == "null-child-race":
+        expected_runner = None
+        store.replace_runner_id(child.id, "runner-c")
+    elif change == "parent":
+        parent = store.create_conversation(runner_id="runner-b")
+    elif change == "thread":
+        store.set_labels(child.id, {"omnigent.codex_native.subagent_thread_id": "other-thread"})
+    elif change == "wrapper":
+        store.set_labels(child.id, {"omnigent.wrapper": "claude-code-native-ui-subagent"})
+    elif change == "side-chat":
+        store.set_labels(child.id, {"omnigent.codex_native.agent_nickname": "Side chat"})
+    before = store.get_conversation(child.id)
+    assert before is not None
+    accepted = store.rebind_codex_native_child_runner(
+        child.id,
+        parent_id=parent.id,
+        thread_id="thread-child",
+        authenticated_runner_id="runner-b",
+        expected_child_runner_id=expected_runner,
+    )
+    assert accepted is (change in {"none", "null-child"})
+    assert store.get_conversation(child.id) == (
+        replace(before, runner_id="runner-b") if accepted else before
+    )
+
+
+@pytest.mark.parametrize("split", [False, True], ids=["shared", "split"])
+def test_native_child_rebind_holds_parent_binding_until_commit(
+    db_uri: str, tmp_path: Path, split: bool
+) -> None:
+    store = SqlAlchemyConversationStore(
+        db_uri, f"sqlite:///{tmp_path}/conversations.db" if split else None
+    )
+    parent = store.create_conversation(runner_id="runner-b")
+    child = store.create_conversation(
+        kind="sub_agent",
+        parent_conversation_id=parent.id,
+        runner_id="runner-a",
+        labels={
+            "omnigent.wrapper": "codex-native-ui-subagent",
+            "omnigent.codex_native.subagent_thread_id": "thread-child",
+        },
+    )
+    binding_read, release, contender_started = Event(), Event(), Event()
+
+    def hold_binding_read(conn, cursor, statement, parameters, context, executemany):
+        if "FROM omnigent_conversation_metadata" in statement and not binding_read.is_set():
+            binding_read.set()
+            assert release.wait(5), "binding transaction was not released"
+
+    def observe_contender(conn, cursor, statement, parameters, context, executemany):
+        if binding_read.is_set() and statement == "BEGIN IMMEDIATE":
+            contender_started.set()
+
+    event.listen(store._engine, "after_cursor_execute", hold_binding_read)
+    event.listen(store._engine, "before_cursor_execute", observe_contender)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            repair = pool.submit(
+                store.rebind_codex_native_child_runner,
+                child.id,
+                parent_id=parent.id,
+                thread_id="thread-child",
+                authenticated_runner_id="runner-b",
+                expected_child_runner_id="runner-a",
+            )
+            try:
+                assert binding_read.wait(5)
+                contender = pool.submit(store.replace_runner_id, parent.id, "runner-c")
+                assert contender_started.wait(5)
+                assert not contender.done()
+            finally:
+                release.set()
+            assert repair.result(timeout=5)
+            assert contender.result(timeout=5).runner_id == "runner-c"
+    finally:
+        release.set()
+        event.remove(store._engine, "after_cursor_execute", hold_binding_read)
+        event.remove(store._engine, "before_cursor_execute", observe_contender)
+    assert store.get_conversation(child.id).runner_id == "runner-b"
+
+
+@pytest.mark.parametrize("split", [False, True], ids=["shared", "split"])
+@pytest.mark.parametrize("writer", ["side-chat", "nickname", "delete"])
+def test_native_child_identity_writer_waits_for_binding_commit(
+    db_uri: str, tmp_path: Path, split: bool, writer: str
+) -> None:
+    store = SqlAlchemyConversationStore(
+        db_uri, f"sqlite:///{tmp_path}/conversations.db" if split else None
+    )
+    parent = store.create_conversation(runner_id="runner-b")
+    child = store.create_conversation(
+        kind="sub_agent",
+        parent_conversation_id=parent.id,
+        runner_id="runner-a",
+        labels={
+            "omnigent.wrapper": "codex-native-ui-subagent",
+            "omnigent.codex_native.subagent_thread_id": "thread-child",
+        },
+    )
+    binding_read, release, writer_started = Event(), Event(), Event()
+    key = "omnigent.side_chat" if writer == "side-chat" else "omnigent.codex_native.agent_nickname"
+
+    def hold_binding(conn, cursor, statement, parameters, context, executemany):
+        if "FROM omnigent_conversation_metadata" in statement and not binding_read.is_set():
+            binding_read.set()
+            assert release.wait(5)
+
+    def observe_writer(conn, cursor, statement, parameters, context, executemany):
+        if binding_read.is_set() and statement == "BEGIN IMMEDIATE":
+            writer_started.set()
+
+    def write_identity():
+        if writer == "delete":
+            return asyncio.run(store.delete_conversation(child.id))
+        store.set_labels(child.id, {key: "1" if writer == "side-chat" else "Side chat"})
+        return True
+
+    event.listen(store._engine, "after_cursor_execute", hold_binding)
+    event.listen(store._conv_engine, "before_cursor_execute", observe_writer)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            repair = pool.submit(
+                store.rebind_codex_native_child_runner,
+                child.id,
+                parent_id=parent.id,
+                thread_id="thread-child",
+                authenticated_runner_id="runner-b",
+                expected_child_runner_id="runner-a",
+            )
+            try:
+                assert binding_read.wait(5)
+                pending_writer = pool.submit(write_identity)
+                assert writer_started.wait(5)
+                assert not pending_writer.done()
+            finally:
+                release.set()
+            assert repair.result(timeout=5)
+            assert pending_writer.result(timeout=5)
+    finally:
+        release.set()
+        event.remove(store._engine, "after_cursor_execute", hold_binding)
+        event.remove(store._conv_engine, "before_cursor_execute", observe_writer)
+    after = store.get_conversation(child.id)
+    if writer == "delete":
+        assert after is None
+        assert not store.rebind_codex_native_child_runner(
+            child.id,
+            parent_id=parent.id,
+            thread_id="thread-child",
+            authenticated_runner_id="runner-b",
+            expected_child_runner_id="runner-b",
+        )
+    else:
+        assert after.runner_id == "runner-b"
+        identity_key = (
+            "omnigent.side_chat"
+            if writer == "side-chat"
+            else "omnigent.codex_native.agent_nickname"
+        )
+        assert after.labels[identity_key] == ("1" if writer == "side-chat" else "Side chat")
+
+
+@pytest.mark.parametrize("split", [False, True], ids=["shared", "split"])
+@pytest.mark.parametrize("operation", ["set-label", "delete-label", "rebind", "delete-session"])
+def test_native_identity_operations_use_conversation_first_postgresql_lock_order(
+    db_uri: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, split: bool, operation: str
+) -> None:
+    store = SqlAlchemyConversationStore(
+        db_uri, f"sqlite:///{tmp_path}/conversations.db" if split else None
+    )
+    parent = store.create_conversation(runner_id="runner-b")
+    child = store.create_conversation(
+        kind="sub_agent",
+        parent_conversation_id=parent.id,
+        runner_id="runner-a",
+        labels={
+            "omnigent.wrapper": "codex-native-ui-subagent",
+            "omnigent.codex_native.subagent_thread_id": "thread-child",
+        },
+    )
+    # Exercise the row-lock branches and inspect their PostgreSQL SQL, while
+    # the fixture's real SQLite transaction still owns execution and cleanup.
+    monkeypatch.setattr(store, "_supports_for_update", True)
+    monkeypatch.setattr(store, "_meta_supports_for_update", True)
+    statements = []
+
+    def record(conn, statement, multiparams, params, execution_options):
+        dialect = postgresql.dialect() if isinstance(statement, Select) else conn.dialect
+        statements.append(str(statement.compile(dialect=dialect)))
+
+    event.listen(store._conv_engine, "before_execute", record)
+    try:
+        if operation == "set-label":
+            store.set_labels(child.id, {"omnigent.side_chat": "1"})
+        elif operation == "delete-label":
+            store.delete_label(child.id, "omnigent.side_chat")
+        elif operation == "delete-session":
+            assert asyncio.run(store.delete_conversation(parent.id))
+        else:
+            assert store.rebind_codex_native_child_runner(
+                child.id,
+                parent_id=parent.id,
+                thread_id="thread-child",
+                authenticated_runner_id="runner-b",
+                expected_child_runner_id="runner-a",
+            )
+    finally:
+        event.remove(store._conv_engine, "before_execute", record)
+    lock = next(
+        i
+        for i, sql in enumerate(statements)
+        if "FROM conversations" in sql and "FOR UPDATE" in sql
+    )
+    label_access = next(i for i, sql in enumerate(statements) if "conversation_labels" in sql)
+    assert lock < label_access
+    assert not any("FROM conversation_labels" in sql and "FOR UPDATE" in sql for sql in statements)
+    if operation == "delete-session":
+        assert "ORDER BY conversations.id" in statements[lock]
 
 
 @pytest.mark.parametrize("explicit_turn", [False, True])
@@ -783,6 +1054,31 @@ async def test_native_registration_persists_each_full_handoff_once_without_call_
     assert child.labels["omnigent.codex_native.collab_tool_call_id"] == "spawn-second"
     assert child.labels["omnigent.codex_native.task_name"] == "second_assignment"
     assert activities()[0].data.resource == first_snapshot
+
+    store.replace_runner_id(child_id, "runner-before-restart")
+    parent = store.replace_runner_id(parent.id, "runner-after-restart")
+    store.set_labels(child_id, {"omnigent.subagent.completed_dispatch_id": "spawn-second"})
+    store.set_session_live_status(child_id, "idle")
+    before_replay = store.get_conversation(child_id)
+    items_before = {
+        sid: [row.model_dump() for row in store.list_items(sid).data]
+        for sid in (parent.id, child_id)
+    }
+    # A historical registration must reconcile its inherited binding before
+    # the existing old-dispatch replay return, without reactivating that task.
+    assert (
+        await _persist_external_codex_subagent_start(
+            parent.id, parent, first, store, authenticated_parent_runner_id="runner-after-restart"
+        )
+        == child_id
+    )
+    assert store.get_conversation(child_id) == replace(
+        before_replay, runner_id="runner-after-restart"
+    )
+    assert {
+        sid: [row.model_dump() for row in store.list_items(sid).data]
+        for sid in (parent.id, child_id)
+    } == items_before
 
 
 @pytest.mark.asyncio

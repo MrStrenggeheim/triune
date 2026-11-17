@@ -315,3 +315,12 @@ Per-surface bubble caches reuse discovery only, while structural changes receive
 An eight-update, 261-block warmed probe reduces 6,264 repeated discovery visits to zero after initial analysis, with identical output and positive invalidation checks.
 Canonical filtering, prefix/lifecycle guards, continued-turn marking and source-array copies retain their existing work; no bounded whole-rendering or production latency claim follows.
 Evidence: `artifacts/overnight-20261116/projection-analysis/{comparison.json,candidate-files.json}` and `stability12/`.
+
+## Reused native child runner ownership
+
+`CHILD-RUNNER-13` reconciles an existing Codex child's runner binding when its current parent runner registers the same native thread again.
+The registration must carry trusted authority for the parent's current binding; the store checks the persisted parent/thread identity and unchanged child binding before writing only the runner field.
+Ordinary native children retain their conversation, dispatch and transcript identity; side chats and independently hosted children do not acquire this shared-runner authority.
+The existing exact-runner checks still gate shell observations and provenance-bearing events.
+This repairs reused-child shell inventory after parent runner replacement; it does not infer general transcript completeness or repair historical rows by guessing identity.
+Source, authorization/concurrency evidence and activation are recorded separately in `artifacts/overnight-20261116/{event-rejections,stability13}`.

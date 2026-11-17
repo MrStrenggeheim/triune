@@ -2926,6 +2926,7 @@ async def _persist_external_codex_subagent_start(
     conversation_store: ConversationStore,
     *,
     background_title_coordinator: BackgroundSessionTitleCoordinator | None = None,
+    authenticated_parent_runner_id: str | None = None,
 ) -> str:
     """
     Mint or update a child Conversation for a Codex AgentControl sub-agent.
@@ -2959,6 +2960,20 @@ async def _persist_external_codex_subagent_start(
     existing = await asyncio.to_thread(
         _find_codex_native_subagent_child, conversation_store, parent_id, thread_id
     )
+    if existing is not None:
+        if not await asyncio.to_thread(
+            conversation_store.rebind_codex_native_child_runner,
+            existing.id,
+            parent_id=parent_id,
+            thread_id=thread_id,
+            authenticated_runner_id=authenticated_parent_runner_id,
+            expected_child_runner_id=existing.runner_id,
+        ):
+            raise OmnigentError(
+                "Native child registration requires the current parent runner "
+                "and unchanged child binding",
+                code=ErrorCode.FORBIDDEN,
+            )
     labels = _codex_subagent_labels_from_body(thread_id, body)
     task_name = body.data.get("task_name")
     if isinstance(task_name, str) and task_name.strip():

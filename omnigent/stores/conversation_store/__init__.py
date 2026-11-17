@@ -1780,6 +1780,26 @@ class ConversationStore(ABC):
         ...
 
     @abstractmethod
+    def rebind_codex_native_child_runner(
+        self,
+        conversation_id: str,
+        *,
+        parent_id: str,
+        thread_id: str,
+        authenticated_runner_id: str | None,
+        expected_child_runner_id: str | None,
+    ) -> bool:
+        """Reconcile an ordinary native child's inherited runner without changing its task.
+
+        The caller must derive ``authenticated_runner_id`` from trusted request
+        authority. Lock the persisted child/thread/parent identity while atomically
+        checking the current parent and expected child bindings, including in split
+        storage. Return False on a mismatch; change only the child's runner_id.
+        None can validate a still-unbound parent and child without changing either.
+        """
+        ...
+
+    @abstractmethod
     def clear_runner_id(self, conversation_id: str) -> Conversation:
         """
         Null out ``conversations.runner_id``.

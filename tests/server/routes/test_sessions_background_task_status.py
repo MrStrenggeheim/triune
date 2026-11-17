@@ -26,6 +26,8 @@ import pytest
 from pydantic import TypeAdapter
 
 from omnigent.debug_logging import record_to_row
+from omnigent.entities import MessageData, NewConversationItem
+from omnigent.entities.communication import MessageCommunication
 from omnigent.runner.identity import RUNNER_TUNNEL_TOKEN_HEADER, token_bound_runner_id
 from omnigent.runtime import session_stream
 from omnigent.server.auth import LEVEL_EDIT, LEVEL_OWNER, LEVEL_READ
@@ -40,6 +42,7 @@ from omnigent.server.routes.sessions import (
     _session_status_with_child_rollup,
 )
 from omnigent.server.schemas import BackgroundTaskInfo, ErrorDetail, ServerStreamEvent
+from omnigent.server.subagent_activity import record_subagent_activity
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
 from omnigent.stores.permission_store.sqlalchemy_store import SqlAlchemyPermissionStore
 from tests.debug_log_helpers import capture_debug_rows
@@ -216,6 +219,107 @@ def test_idle_with_positive_count_sets_sticky_tally_but_list_stays_idle() -> Non
     _publish_status(_SID, "idle", background_task_count=2)
     assert _sessions_mod._session_background_task_count_cache.get(_SID) == 2
     assert _session_status_with_child_rollup(_SID, []) == "idle"
+
+
+@pytest.mark.parametrize("sender", ["current", "stale", "unrelated", "owner-only"])
+async def test_reregistered_native_child_keeps_history_and_accepts_current_shells(
+    client: httpx.AsyncClient, db_uri: str, session_id: str, sender: str
+) -> None:
+    store = SqlAlchemyConversationStore(db_uri)
+    old_runner = token_bound_runner_id("parent-before-restart")
+    new_runner = token_bound_runner_id("parent-after-restart")
+    store.replace_runner_id(session_id, old_runner)
+    registration = {
+        "type": "external_codex_subagent_start",
+        "data": {"thread_id": "native-child-thread", "tool_call_id": "spawn-1", "prompt": "Audit"},
+    }
+    created = await client.post(
+        f"/v1/sessions/{session_id}/events",
+        json=registration,
+        headers={RUNNER_TUNNEL_TOKEN_HEADER: "parent-before-restart"},
+    )
+    assert created.status_code == 202, created.text
+    child_id = created.json()["child_session_id"]
+    store.append(
+        child_id,
+        [
+            NewConversationItem(
+                type="message",
+                stable_id="b" * 32,
+                response_id="saved-receipt",
+                data=MessageData(
+                    role="user",
+                    content=[{"type": "input_text", "text": "Received assignment"}],
+                    communication=MessageCommunication(
+                        kind="peer",
+                        message_id="saved-receipt",
+                        source_conversation_id=session_id,
+                        destination_conversation_id=child_id,
+                        task_id="spawn-1",
+                        delivery_state="confirmed",
+                        receipt="model_consumed",
+                    ),
+                ),
+            )
+        ],
+    )
+    store.append(
+        child_id,
+        [
+            NewConversationItem(
+                type="message",
+                stable_id="a" * 32,
+                response_id="native-turn",
+                data=MessageData(
+                    role="assistant",
+                    agent="codex-native-ui",
+                    phase="final_answer",
+                    content=[{"type": "output_text", "text": "Done"}],
+                ),
+            )
+        ],
+    )
+    await record_subagent_activity(child_id, "returned", store, turn_id="native-turn")
+    store.set_session_live_status(child_id, "idle")
+    before = store.get_conversation(child_id)
+    receipt_before = store.get_item(child_id, "b" * 32).data.communication.model_dump()
+    items_before = {
+        sid: [item.model_dump() for item in store.list_items(sid).data]
+        for sid in (session_id, child_id)
+    }
+    store.replace_runner_id(session_id, new_runner)
+    token = {
+        "current": "parent-after-restart",
+        "stale": "parent-before-restart",
+        "unrelated": "unrelated-runner",
+        "owner-only": None,
+    }[sender]
+    headers = {RUNNER_TUNNEL_TOKEN_HEADER: token} if token else {}
+    # A body claim must never supply the authority missing from the request.
+    registration["data"]["runner_id"] = new_runner
+    registered = await client.post(
+        f"/v1/sessions/{session_id}/events", json=registration, headers=headers
+    )
+    assert registered.status_code == (202 if sender == "current" else 403), registered.text
+    after = store.get_conversation(child_id)
+    assert after.runner_id == (new_runner if sender == "current" else old_runner)
+    assert after.labels == before.labels
+    assert after.live_status == before.live_status
+    assert after.updated_at == before.updated_at
+    assert store.get_item(child_id, "b" * 32).data.communication.model_dump() == receipt_before
+    assert {
+        sid: [item.model_dump() for item in store.list_items(sid).data]
+        for sid in (session_id, child_id)
+    } == items_before
+    shell = await client.post(
+        f"/v1/sessions/{child_id}/events",
+        headers={RUNNER_TUNNEL_TOKEN_HEADER: "parent-after-restart"},
+        json={
+            "type": "external_session_background_tasks",
+            "data": {"background_task_count": 0, "background_tasks": [], "shell_resources": []},
+        },
+    )
+    assert shell.status_code == (202 if sender == "current" else 403), shell.text
 
 
 def test_trailing_idle_without_count_leaves_tally_sticky() -> None:
