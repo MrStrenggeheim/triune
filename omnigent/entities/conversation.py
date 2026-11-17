@@ -299,6 +299,17 @@ class StartupInputOptions(BaseModel):
     background_titles_enabled: bool = False
 
 
+class ExecutionObservation(BaseModel):
+    """Model metadata from an actual provider record, never current configuration."""
+
+    model: str = Field(min_length=1, max_length=256)
+    effort: str | None = Field(default=None, max_length=64, exclude_if=lambda value: value is None)
+    source: Literal["codex_turn_context", "claude_response"]
+    turn_id: str | None = Field(
+        default=None, max_length=256, exclude_if=lambda value: value is None
+    )
+
+
 class MessageData(BaseModel):
     """
     Data for a message item (user or assistant).
@@ -336,6 +347,9 @@ class MessageData(BaseModel):
     )
     process_receipt: bool = Field(default=False, exclude_if=lambda value: value is False)
     source_call_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    execution: ExecutionObservation | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @field_validator("phase", mode="before")
     @classmethod

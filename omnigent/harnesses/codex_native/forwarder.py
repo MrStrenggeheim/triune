@@ -581,6 +581,8 @@ class _CodexForwarderState:
     # can skip re-reading the bridge file for the life of the session.
     mcp_startup_settled: bool = False
     command_processes: CodexCommandProcesses = field(default_factory=CodexCommandProcesses)
+    rollout_path: Path | None = None
+    execution_by_turn: dict[str, _JsonObject] = field(default_factory=dict)
 
     def note_resume_response(self, response: CodexMessage) -> None:
         """
@@ -594,6 +596,9 @@ class _CodexForwarderState:
             return
         self._note_model_fields(result)
         self._note_approval_mode_fields(result)
+        thread = result.get("thread")
+        if isinstance(thread, dict) and isinstance(thread.get("path"), str):
+            self.rollout_path = Path(thread["path"])
         # Do NOT seed ``posted_model`` here. Omnigent must learn the session's
         # ACTUAL model — including the spawn default — because the cost-budget
         # gate resolves the model as ``conv.model_override or spec.llm.model``,
@@ -5609,7 +5614,24 @@ async def _handle_completed_item_inner(
         # bubbles. Recover and post the turn's user message first so it
         # always takes the earlier position.
         await _ensure_user_message_posted(client, session_id, params, forwarder_state)
-        await _post_agent_message(client, session_id, params, item, source_id=source_id)
+        execution = None
+        if forwarder_state is not None and turn_id and forwarder_state.rollout_path is not None:
+            from omnigent.native.execution_observation import codex_turn_execution
+
+            execution = forwarder_state.execution_by_turn.get(turn_id)
+            if execution is None:
+                execution = await asyncio.to_thread(
+                    codex_turn_execution, forwarder_state.rollout_path, turn_id
+                )
+                if execution is not None:
+                    forwarder_state.execution_by_turn[turn_id] = execution
+                    if len(forwarder_state.execution_by_turn) > 64:
+                        forwarder_state.execution_by_turn.pop(
+                            next(iter(forwarder_state.execution_by_turn))
+                        )
+        await _post_agent_message(
+            client, session_id, params, item, source_id=source_id, execution=execution
+        )
         return
     if item_type == "plan":
         await _post_plan_item(client, session_id, params, item, source_id=source_id)
@@ -6169,6 +6191,13 @@ async def _apply_child_resume(
         child_thread_id=child_thread_id,
         response=response,
     )
+    result = response.get("result")
+    thread = result.get("thread") if isinstance(result, dict) else None
+    if isinstance(thread, dict) and thread.get("id") == child_thread_id:
+        stream = forwarder_state.child_stream(client, child_thread_id, child_session_id)
+        path = thread.get("path")
+        if isinstance(path, str) and path:
+            stream.state.rollout_path = Path(path)
     # Seed the session model (sub-agents inherit it) so replayed child token
     # usage is priced into the child's total_cost_usd — see _SessionUsageCoalescer.
     usage_coalescer = _SessionUsageCoalescer(client, child_session_id, model=forwarder_state.model)
@@ -6692,6 +6721,7 @@ async def _post_agent_message(
     item: _JsonObject,
     *,
     source_id: str | None = None,
+    execution: _JsonObject | None = None,
 ) -> bool:
     """
     Persist a Codex assistant message observed from the TUI/app-server.
@@ -6714,6 +6744,7 @@ async def _post_agent_message(
             "role": "assistant",
             "agent": _AGENT_NAME,
             "phase": item.get("phase"),
+            **({"execution": execution} if execution is not None else {}),
             "content": [{"type": "output_text", "text": text}],
         },
         response_id=_response_id(params),

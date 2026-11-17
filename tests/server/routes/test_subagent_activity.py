@@ -831,6 +831,12 @@ async def test_reused_managed_child_keeps_each_dispatch_input_and_result(db_uri:
                         phase="final_answer",
                         agent="researcher",
                         content=[{"type": "output_text", "text": f"Result {index}"}],
+                        execution={
+                            "model": f"observed-model-{index}",
+                            "effort": "low",
+                            "source": "codex_turn_context",
+                            "turn_id": f"native-{index}",
+                        },
                     ),
                 )
             ],
@@ -847,6 +853,9 @@ async def test_reused_managed_child_keeps_each_dispatch_input_and_result(db_uri:
             assert activity.data.resource["task_input"] == requests[index].data.content[0]["text"]
             assert activity.data.resource["task_input_ref"]["item_id"] == requests[index].id
         assert returned.data.resource["result_text"] == f"Result {index}"
+        assert returned.data.resource["execution"]["model"] == f"observed-model-{index}"
+        assert returned.data.resource["execution"]["response_id"] == f"answer-{index}"
+        assert returned.data.resource["execution"]["source_ref"]["conversation_id"] == child.id
 
 
 @pytest.mark.parametrize("wrapper", ["codex-native-ui", "claude-code-native-ui"])

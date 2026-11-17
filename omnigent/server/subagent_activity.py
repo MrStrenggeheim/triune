@@ -349,6 +349,25 @@ def _dispatch_metadata(
     )
     rows = list(_recorded_items(store, child.id))
     report = _turn_report(rows, child.id, turn_id) if returned else {}
+    observation = next(
+        (
+            row
+            for row in rows
+            if turn_id
+            and row.response_id == turn_id
+            and isinstance(row.data, MessageData)
+            and row.data.role == "assistant"
+            and row.data.execution is not None
+        ),
+        None,
+    )
+    if observation is not None and isinstance(observation.data, MessageData):
+        assert observation.data.execution is not None
+        report["execution"] = {
+            **observation.data.execution.model_dump(exclude_none=True),
+            "response_id": observation.response_id,
+            "source_ref": {"conversation_id": child.id, "item_id": observation.id},
+        }
     if returned and turn_id and child.parent_conversation_id:
         prior = _returned_activity(
             store,
@@ -364,6 +383,11 @@ def _dispatch_metadata(
         ):
             captured = _refresh_native_identity(metadata, prior.data.resource)
             _refresh_task_input(captured, store)
+            if (
+                isinstance(captured.get("execution"), dict)
+                and captured["execution"].get("response_id") != turn_id
+            ):
+                captured.pop("execution")
             return {**captured, **report}
 
     saved_dispatch = child.labels.get("omnigent.subagent.dispatch_id")
@@ -491,6 +515,11 @@ def _dispatch_metadata(
     metadata.setdefault("dispatch_id", turn_id or child.id)
     if turn_id:
         metadata["turn_id"] = turn_id
+    if (
+        isinstance(metadata.get("execution"), dict)
+        and metadata["execution"].get("response_id") != turn_id
+    ):
+        metadata.pop("execution")
     return {**metadata, **report}
 
 
@@ -991,6 +1020,15 @@ async def record_claude_subagent_return(
                         turn_id=item.response_id,
                         status=prior.data.resource.get("status"),
                     )
+                elif isinstance(item.data, MessageData) and item.data.execution is not None:
+                    from omnigent.server.routes._sessions.common import (
+                        _session_active_response_cache,
+                    )
+
+                    if _session_active_response_cache.get(child.id) == item.response_id:
+                        await record_subagent_activity(
+                            child.id, "delegated", store, turn_id=item.response_id
+                        )
         await _record_claude_subagent_return(parent_id, item, store)
     except Exception:  # optional correlation must not interrupt transcript delivery
         _logger.warning("Could not match Claude subagent result in %s", parent_id, exc_info=True)

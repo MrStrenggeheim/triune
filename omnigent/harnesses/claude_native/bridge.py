@@ -10215,6 +10215,9 @@ def _assistant_transcript_items_from_entry(
         isinstance(block, dict) and block.get("type") == "tool_use" for block in content
     )
     phase = None
+    from omnigent.native.execution_observation import claude_execution
+
+    execution = claude_execution(message) if not is_api_error else None
     if not is_api_error:
         if stop_reason in ("end_turn", "stop_sequence") and not has_tool_use:
             phase = "final_answer"
@@ -10231,6 +10234,7 @@ def _assistant_transcript_items_from_entry(
                     response_id=response_id,
                     text=content,
                     phase=phase,
+                    execution=execution,
                     is_api_error=is_api_error,
                     failure_context=(
                         claude_failure_context(entry, error_text=content) if is_api_error else None
@@ -10263,6 +10267,7 @@ def _assistant_transcript_items_from_entry(
                         response_id=response_id,
                         text=text,
                         phase=phase,
+                        execution=execution,
                         is_api_error=is_api_error,
                         failure_context=(
                             claude_failure_context(entry, error_text=text)
@@ -10442,6 +10447,7 @@ def _assistant_message_item(
     response_id: str,
     text: str,
     phase: str | None = None,
+    execution: _JsonObject | None = None,
     is_api_error: bool = False,
     failure_context: FailureContext | None = None,
 ) -> ClaudeTranscriptItem:
@@ -10468,6 +10474,7 @@ def _assistant_message_item(
             "role": "assistant",
             "agent": agent_name,
             **({"phase": phase} if phase is not None else {}),
+            **({"execution": execution} if execution is not None else {}),
             "content": [
                 {"type": "output_text", "text": _display_text(text, is_api_error=is_api_error)}
             ],
