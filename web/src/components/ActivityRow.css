@@ -52,33 +52,12 @@
 
 @container (max-width: 480px) {
   .activity-message-header {
-    display: grid;
-    grid-template-columns: 32px minmax(0, 1fr);
-    column-gap: 6px;
-    row-gap: 0;
-    align-items: center;
+    gap: 6px;
   }
-
-  .activity-message-header > .resource-icon {
-    grid-column: 1;
-    grid-row: 1;
+  .activity-message-header .resource-status-text {
+    display: none;
   }
-
-  .activity-message-text {
-    grid-column: 2;
-    grid-row: 1;
-  }
-
-  .activity-message-header > .activity-status-slot {
-    grid-column: 1 / -1;
-    grid-row: 2;
-    justify-self: start;
-  }
-
   .activity-message-header > .resource-actions {
-    grid-column: 1 / -1;
-    grid-row: 2;
-    justify-self: end;
     gap: 0;
   }
 }

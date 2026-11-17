@@ -112,6 +112,27 @@ afterEach(() => {
 });
 
 describe("side-chat working indicator", () => {
+  it.each([false, true])("groups unread inputs below working (full-session: %s)", (fullSession) => {
+    const entry = conversationRegistry.acquire(childId);
+    const pending = ["first", "second"].map((tempId) => ({
+      tempId,
+      sentMidTurn: true,
+      content: [{ type: "input_text" as const, text: tempId }],
+    }));
+    entry.setState({ pendingUserMessages: pending });
+    renderPane(<SideChatPane childId={childId} fullSession={fullSession} />);
+    const group = screen.getByTestId("awaiting-agent-messages");
+    expect(screen.getAllByTestId("message-awaiting-agent")).toHaveLength(1);
+    expect(
+      screen.getByTestId("working-indicator").compareDocumentPosition(group) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(group.querySelectorAll('[data-role="user"]')).toHaveLength(2);
+    act(() => entry.setState({ pendingUserMessages: [pending[1]!] }));
+    expect(group.querySelectorAll('[data-role="user"]')).toHaveLength(1);
+    act(() => entry.setState({ pendingUserMessages: [] }));
+    expect(screen.queryByTestId("message-awaiting-agent")).not.toBeInTheDocument();
+  });
   it("shows the full session history and live state without exposing a read-only composer", () => {
     const entry = conversationRegistry.acquire(childId);
     entry.setState({ sessionHarness: "openai-agents", loadingConversation: true });

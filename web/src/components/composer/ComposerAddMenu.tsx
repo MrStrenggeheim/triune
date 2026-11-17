@@ -1,5 +1,6 @@
 // Modified for Triune.
 import { useRef, useState } from "react";
+import { useMenuInputIntent } from "@/hooks/useMenuInputIntent";
 import {
   FolderIcon,
   LightbulbIcon,
@@ -62,6 +63,7 @@ export function ComposerAddMenu({
   onProjectSelect?: (name: string) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const { pointerInteraction, setPointerInteraction } = useMenuInputIntent(open);
   const [showProjects, setShowProjects] = useState(false);
   const pendingGoalRef = useRef(false);
 
@@ -78,7 +80,10 @@ export function ComposerAddMenu({
           type="button"
           size="icon"
           variant="ghost"
-          className="size-8 rounded-lg data-[state=open]:bg-muted data-[state=open]:text-foreground md:size-7"
+          className="size-8 rounded-lg data-[state=open]:bg-muted data-[state=open]:text-foreground data-[pointer-interaction=true]:focus-visible:ring-0 data-[pointer-interaction=true]:focus-visible:border-transparent md:size-7"
+          data-pointer-interaction={pointerInteraction || undefined}
+          onPointerDownCapture={() => setPointerInteraction(true)}
+          onKeyDownCapture={() => setPointerInteraction(false)}
           disabled={disabled}
           aria-label="Add"
           title="Add"
@@ -93,6 +98,9 @@ export function ComposerAddMenu({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent
+        onPointerDownCapture={() => setPointerInteraction(true)}
+        onKeyDownCapture={() => setPointerInteraction(false)}
+        onPointerDownOutside={() => setPointerInteraction(true)}
         onCloseAutoFocus={() => {
           if (pendingGoalRef.current) {
             pendingGoalRef.current = false;

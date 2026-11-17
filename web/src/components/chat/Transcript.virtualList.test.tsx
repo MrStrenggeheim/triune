@@ -52,6 +52,87 @@ const assistantBubble: Extract<Bubble, { kind: "assistant" }> = {
   items: [{ kind: "text", itemId: "assistant-1", text: "hello back", final: true }],
 };
 
+it.each([false, true])(
+  "groups unread inputs and promotes exact receipts (native find: %s)",
+  (nativeFind) => {
+    const previous = useChatStore.getState();
+    const pending = ["first", "second"].map((tempId) => ({
+      tempId,
+      itemId: tempId,
+      sentMidTurn: true,
+      content: [{ type: "input_text" as const, text: "Repeated follow-up" }],
+    }));
+    const committed = (id: string): AnyBlock => ({
+      type: "user_message",
+      userAuthored: true,
+      content: pending[0]!.content,
+      ctx: { itemId: id, responseId: "turn", agent: null, depth: 0, turn: 0, timestamp: 0 },
+    });
+    useChatStore.setState({
+      conversationId: "pending-group-test",
+      blocks: [],
+      pendingUserMessages: pending,
+      activeResponse: null,
+      sessionStatus: "running",
+    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    try {
+      render(
+        <QueryClientProvider client={client}>
+          <MemoryRouter>
+            <Transcript
+              hostId={null}
+              setConversationEl={() => {}}
+              containerEl={null}
+              scroller={null}
+              setScroller={() => {}}
+              sendScrollNonce={0}
+              hasMoreHistory={false}
+              loadingMoreHistory={false}
+              isMobileViewport
+              showsWorking
+              agentsError={null}
+              sandboxLaunching={false}
+              spacerMeasureRef={{ current: null }}
+            />
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+      if (nativeFind) fireEvent.keyDown(window, { key: "f", ctrlKey: true });
+      const indicator = screen.getByTestId("working-indicator");
+      const group = screen.getByTestId("awaiting-agent-messages");
+      expect(
+        indicator.compareDocumentPosition(group) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+      expect(screen.getAllByTestId("message-awaiting-agent")).toHaveLength(1);
+      expect(group.querySelectorAll('[data-role="user"]')).toHaveLength(2);
+      act(() =>
+        useChatStore.setState({
+          blocks: [committed("second")],
+          pendingUserMessages: [pending[0]!],
+        }),
+      );
+      expect(
+        document.querySelector('[data-message-id="second"]')!.compareDocumentPosition(indicator) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+      expect(group.querySelector('[data-role="user"]')).toHaveAttribute("data-message-id", "first");
+      act(() =>
+        useChatStore.setState({
+          blocks: [committed("second"), committed("first")],
+          pendingUserMessages: [],
+        }),
+      );
+      expect(screen.queryByTestId("awaiting-agent-messages")).not.toBeInTheDocument();
+      expect(screen.getAllByTestId("message-bubble")).toHaveLength(2);
+    } finally {
+      cleanup();
+      useChatStore.setState(previous);
+      client.clear();
+    }
+  },
+);
+
 it("folds only opted-in subchat history and preserves child messages across disclosure", () => {
   const branch: ConversationBranch = {
     source_conversation_id: "parent",

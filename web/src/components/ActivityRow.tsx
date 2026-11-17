@@ -21,6 +21,12 @@ import { toast } from "@/lib/notifications";
 import { Link } from "@/lib/routing";
 import "@/components/composer/composerShelves.css";
 import "./ActivityRow.css";
+import ReactMarkdown from "react-markdown";
+
+function InlinePreviewText({ children }: { children?: ReactNode }) {
+  return <span>{children}</span>;
+}
+const PREVIEW_COMPONENTS = { p: InlinePreviewText, a: InlinePreviewText };
 
 /** Shared unboxed activity disclosure for messages, agents and shell history. */
 export function ActivityRow({
@@ -185,7 +191,18 @@ export function ActivityRow({
             className={`resource-description min-w-0 ${message ? "line-clamp-1 text-sm text-foreground [&_p]:my-0" : "truncate text-xs text-muted-foreground"}`}
             title={descriptionText ?? (typeof description === "string" ? description : undefined)}
           >
-            {summary ?? description ?? preview ?? "\u00a0"}
+            {typeof (summary ?? description ?? preview) === "string" ? (
+              <ReactMarkdown
+                skipHtml
+                allowedElements={["p", "strong", "em", "code", "del", "a"]}
+                unwrapDisallowed
+                components={PREVIEW_COMPONENTS}
+              >
+                {String(summary ?? description ?? preview)}
+              </ReactMarkdown>
+            ) : (
+              (summary ?? description ?? preview ?? "\u00a0")
+            )}
           </div>
         )}
       </div>

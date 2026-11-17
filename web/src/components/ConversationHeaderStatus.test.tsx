@@ -107,6 +107,29 @@ it("keeps Usage reachable without Notices and separates context, accounting and 
   expect(screen.getAllByText(/Reported reset /)).toHaveLength(1);
 });
 
+it("refreshes stale observations on open and reuses fresh data on immediate reopen", async () => {
+  const refreshUsage = vi.fn().mockResolvedValue(undefined);
+  const original = useChatStore.getState().refreshSessionUsage;
+  useChatStore.setState({ refreshSessionUsage: refreshUsage });
+  try {
+    render(<ConversationHeaderStatus conversationId="header-chat" />, { wrapper });
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+    await act(async () =>
+      client.invalidateQueries({ queryKey: ["runtime-notices"], refetchType: "none" }),
+    );
+    fetch.mockResolvedValue(Response.json({ data: [], quotas: [{ ...quota, used_percent: 45 }] }));
+    fireEvent.click(screen.getByRole("button", { name: "Usage" }));
+    await waitFor(() => expect(screen.getByText("45% used")).toBeVisible());
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(refreshUsage).toHaveBeenCalledWith("header-chat");
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    fireEvent.click(screen.getByRole("button", { name: "Usage" }));
+    expect(fetch).toHaveBeenCalledTimes(2);
+  } finally {
+    useChatStore.setState({ refreshSessionUsage: original });
+  }
+});
+
 it("does not relabel Kiro credits as dollars or invent missing context capacity", () => {
   render(
     <ConversationUsageContent

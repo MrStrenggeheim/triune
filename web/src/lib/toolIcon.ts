@@ -14,6 +14,7 @@ import {
   FileText,
   Globe,
   Inbox,
+  Image,
   ListTodo,
   type LucideIcon,
   Monitor,
@@ -23,7 +24,7 @@ import {
   Timer,
   Wrench,
 } from "lucide-react";
-import { isShellTool } from "@/lib/toolTitle";
+import { isShellTool, stripOmnigentPrefix, TOOL_CATEGORIES } from "@/lib/toolTitle";
 
 /**
  * @param name - the tool name as it arrives in the call (e.g.
@@ -35,21 +36,28 @@ export function iconForTool(name: string, nativeToolType?: string): LucideIcon {
   if (nativeToolType !== undefined) {
     return NATIVE_ICONS[nativeToolType] ?? Wrench;
   }
+  const toolName = stripOmnigentPrefix(name);
+  const category = TOOL_CATEGORIES[toolName];
+  if (category === "read" || category === "edit") return FileText;
+  if (category === "list") return FileSearchCorner;
+  if (category === "search") return /web/i.test(toolName) ? Globe : FileSearchCorner;
+  if (category === "agent") return Bot;
   // Order matters: more specific names (`sys_terminal_close`,
   // `sys_session_close`) must match before the broader category prefix.
-  if (isShellTool(name)) return Terminal;
-  if (/^sys_os_(read|write|edit)$/.test(name)) return FileText;
-  if (name === "sys_terminal_close") return Ban;
-  if (name.startsWith("sys_terminal_")) return Terminal;
-  if (name === "sys_session_close") return Ban;
-  if (name.startsWith("sys_session_")) return Bot;
-  if (name === "sys_call_async") return Send;
-  if (name === "sys_read_inbox") return Inbox;
-  if (name === "list_tasks") return ListTodo;
-  if (name.startsWith("sys_cancel_")) return Ban;
-  if (name === "sys_timer_set") return Timer;
-  if (name === "sys_timer_cancel") return Ban;
-  if (name === "web_search" || name === "web_fetch") return Globe;
+  if (isShellTool(toolName)) return Terminal;
+  if (/^sys_os_(read|write|edit)$/.test(toolName)) return FileText;
+  if (toolName === "sys_terminal_close") return Ban;
+  if (toolName.startsWith("sys_terminal_")) return Terminal;
+  if (toolName === "sys_session_close") return Ban;
+  if (toolName.startsWith("sys_session_")) return Bot;
+  if (toolName === "sys_call_async") return Send;
+  if (toolName === "sys_read_inbox") return Inbox;
+  if (toolName === "list_tasks") return ListTodo;
+  if (toolName.startsWith("sys_cancel_")) return Ban;
+  if (toolName === "sys_timer_set") return Timer;
+  if (toolName === "sys_timer_cancel") return Ban;
+  if (toolName === "view_image" || toolName === "generate_image") return Image;
+  if (toolName.startsWith("mcp__")) return Plug;
   return Wrench;
 }
 

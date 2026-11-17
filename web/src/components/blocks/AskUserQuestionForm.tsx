@@ -8,6 +8,7 @@ import type { ClaudeQuestion } from "@/lib/askUserQuestion";
 import { cn } from "@/lib/utils";
 import { CONTROL_WITHIN_FOCUS_CLASS } from "@/lib/designContract";
 import { selectionCardClass } from "@/components/ui/selection-card";
+import { QuestionMarkdown } from "./QuestionMarkdown";
 import { readResourceViewState, writeResourceViewState } from "@/lib/resourceViewStorage";
 
 /**
@@ -269,7 +270,7 @@ export function AskUserQuestionForm({
             presentation === "popup" ? "font-semibold" : "font-medium",
           )}
         >
-          {current.question}
+          <QuestionMarkdown>{current.question}</QuestionMarkdown>
         </legend>
         <div className="flex flex-col gap-2">
           {current.options.map((opt) => {
@@ -289,7 +290,9 @@ export function AskUserQuestionForm({
                   <span className="flex min-w-0 flex-col break-words">
                     <span>{opt.label}</span>
                     {opt.description && (
-                      <span className="text-muted-foreground text-sm">{opt.description}</span>
+                      <span className="text-muted-foreground text-sm">
+                        <QuestionMarkdown>{opt.description}</QuestionMarkdown>
+                      </span>
                     )}
                   </span>
                 </label>
@@ -310,7 +313,9 @@ export function AskUserQuestionForm({
                 <span className="flex min-w-0 flex-col break-words">
                   <span>{opt.label}</span>
                   {opt.description && (
-                    <span className="text-muted-foreground text-sm">{opt.description}</span>
+                    <span className="text-muted-foreground text-sm">
+                      <QuestionMarkdown>{opt.description}</QuestionMarkdown>
+                    </span>
                   )}
                 </span>
               </label>

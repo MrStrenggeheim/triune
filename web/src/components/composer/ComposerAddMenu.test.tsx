@@ -4,6 +4,16 @@ import { ComposerAddMenu } from "./ComposerAddMenu";
 
 afterEach(cleanup);
 
+it("clears pointer-restored focus styling when keyboard interaction resumes", () => {
+  render(<ComposerAddMenu disabled={false} onAttach={vi.fn()} planActive={false} />);
+  const trigger = screen.getByRole("button", { name: "Add" });
+  fireEvent.pointerDown(trigger, { button: 0, pointerType: "mouse", ctrlKey: false });
+  expect(trigger).toHaveAttribute("data-pointer-interaction", "true");
+  fireEvent.keyDown(document.body, { key: "Escape" });
+  fireEvent.keyDown(document.body, { key: "Tab" });
+  expect(trigger).not.toHaveAttribute("data-pointer-interaction");
+});
+
 it("uses the shared centered composer bounds and retains attachment/plan actions without submitting", () => {
   const onAttach = vi.fn(),
     onPlan = vi.fn(),

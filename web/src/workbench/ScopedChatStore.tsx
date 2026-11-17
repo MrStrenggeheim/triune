@@ -161,11 +161,13 @@ export function ScopedChatStoreProvider({
   useEffect(() => {
     const release = conversationRegistry.retain(conversationId, visible, false);
     refreshConversationObservationPriority();
-    if (visible && !metadataLoading) void ensureConversationStreamed(conversationId);
     return () => {
       release();
       refreshConversationObservationPriority();
     };
+  }, [conversationId, visible]);
+  useEffect(() => {
+    if (visible && !metadataLoading) void ensureConversationStreamed(conversationId);
   }, [conversationId, visible, metadataLoading]);
   return (
     <ScopedChatStoreContext.Provider value={store}>

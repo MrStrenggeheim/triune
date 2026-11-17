@@ -75,6 +75,8 @@ import {
   LatestTurnSpacer,
   ScrollToBottomOnSend,
   WorkingIndicator,
+  AwaitingAgentMessages,
+  partitionAwaitingAgentBubbles,
   bubbleKey,
   buildPendingBubbles,
   collectPendingElicitations,
@@ -311,8 +313,11 @@ function TranscriptImpl({
     );
   }, [conversationId, blocks, expandedHistoryId, currentReveal, searchTarget, readerScope, viewId]);
 
-  const streamBubbles = useMemo(
-    () => (pendingElicitations.length === 0 ? bubbles : stripPendingElicitations(bubbles)),
+  const { streamBubbles, awaitingAgentBubbles } = useMemo(
+    () =>
+      partitionAwaitingAgentBubbles(
+        pendingElicitations.length === 0 ? bubbles : stripPendingElicitations(bubbles),
+      ),
     [bubbles, pendingElicitations.length],
   );
   const committedUserIds = useMemo(() => {
@@ -571,6 +576,7 @@ function TranscriptImpl({
                 />
                 {/* Working… shimmer, lit for the whole busy turn. */}
                 {showWorkingIndicator && <WorkingIndicator />}
+                <AwaitingAgentMessages bubbles={awaitingAgentBubbles} />
                 {/* Managed-sandbox stage cue; only when Working is absent. */}
                 {!showWorkingIndicator && <RunnerStartingIndicator variant="row" />}
                 {/* MCP-server startup band (codex-native); clears once the

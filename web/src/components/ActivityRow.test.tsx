@@ -37,7 +37,9 @@ it("keeps actions outside the opening target and leaves unsupported status inert
   expect(screen.queryByRole("button", { name: /Actions/ })).toBeNull();
   fireEvent.click(screen.getByText("Recorded output"));
   expect(open).toHaveBeenCalledOnce();
-  expect(screen.getByText("Recorded output")).toHaveClass("truncate");
+  expect(screen.getByText("Recorded output").closest(".resource-description")).toHaveClass(
+    "truncate",
+  );
   expect(screen.getByRole("button", { name: "Exact resource" }).querySelector("button")).toBeNull();
 });
 

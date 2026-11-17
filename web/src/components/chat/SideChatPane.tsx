@@ -17,6 +17,7 @@ import {
   type KeyboardEvent,
 } from "react";
 import { MessagesSquareIcon, TriangleAlertIcon } from "lucide-react";
+import { ContentSkeleton } from "@/components/ui/loading";
 import { toast } from "@/lib/notifications";
 import { useQueryClient } from "@tanstack/react-query";
 import { getCurrentAuthorId } from "@/lib/identity";
@@ -30,6 +31,8 @@ import {
 import {
   BubbleView,
   WorkingIndicator,
+  AwaitingAgentMessages,
+  partitionAwaitingAgentBubbles,
   bubbleKey,
   buildPendingBubbles,
   computeIsWorking,
@@ -283,7 +286,11 @@ export function SideChatPane({
     sessionStatus,
   ]);
 
-  const lastAssistantIndex = liveCandidateAssistantIndex(bubbles);
+  const { streamBubbles, awaitingAgentBubbles } = useMemo(
+    () => partitionAwaitingAgentBubbles(bubbles),
+    [bubbles],
+  );
+  const lastAssistantIndex = liveCandidateAssistantIndex(streamBubbles);
   const showsWorking =
     (!readOnly || fullSession) &&
     (starting || computeIsTurnActive(sessionStatus, state.status === "streaming"));
@@ -367,9 +374,7 @@ export function SideChatPane({
               </Button>
             </div>
           ) : fullSession && loadingConversation && bubbles.length === 0 ? (
-            <p role="status" className="m-auto text-sm text-muted-foreground">
-              Loading session…
-            </p>
+            <ContentSkeleton label="Loading session" className="m-auto" />
           ) : isEmpty ? (
             <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
               <MessagesSquareIcon className="size-6 text-muted-foreground" />
@@ -382,7 +387,7 @@ export function SideChatPane({
             </div>
           ) : (
             <div className="flex flex-col gap-4">
-              {bubbles.map((bubble, index) => (
+              {streamBubbles.map((bubble, index) => (
                 <BubbleView
                   key={bubbleKey(bubble)}
                   bubble={bubble}
@@ -392,6 +397,7 @@ export function SideChatPane({
                 />
               ))}
               {shouldShowWorkingIndicator(showsWorking, bubbles) && <WorkingIndicator />}
+              <AwaitingAgentMessages bubbles={awaitingAgentBubbles} />
               <div ref={bottomRef} />
             </div>
           )}

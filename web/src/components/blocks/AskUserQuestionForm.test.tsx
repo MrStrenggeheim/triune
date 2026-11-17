@@ -5,6 +5,8 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ClaudeQuestion } from "@/lib/askUserQuestion";
 import { AskUserQuestionForm } from "./AskUserQuestionForm";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter } from "react-router-dom";
 
 afterEach(cleanup);
 
@@ -14,6 +16,38 @@ const questions: ClaudeQuestion[] = [
 ];
 
 describe("question submissions", () => {
+  it("renders question Markdown and opens description links without selecting or submitting", () => {
+    const submit = vi.fn();
+    const client = new QueryClient();
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <AskUserQuestionForm
+            questions={[
+              {
+                id: "links",
+                question: "Read **this** first",
+                options: [{ label: "A", description: "See [reference](https://example.com)" }],
+                multiSelect: false,
+              },
+            ]}
+            onSubmit={submit}
+            onReject={vi.fn()}
+          />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    expect(screen.getByTestId("ask-user-question-section")).not.toHaveTextContent("**this**");
+    expect(screen.getByText("this")).toBeVisible();
+    const link = screen.getByRole("link", { name: "reference" });
+    expect(link).toHaveAttribute("href", "https://example.com/");
+    fireEvent.click(link);
+    expect(screen.getByRole("radio", { name: /A/ })).not.toBeChecked();
+    expect(submit).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("radio", { name: /A/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Submit/ }));
+    expect(submit).toHaveBeenCalledWith({ links: "A" });
+  });
   it("skips without submitting and preserves choices and custom drafts across navigation and refresh", () => {
     const onSubmit = vi.fn();
     const onReject = vi.fn();

@@ -4,6 +4,7 @@ import {
   transcriptDisclosureItemKey,
 } from "@/lib/transcriptReaderCheckpoint";
 import { useTranscriptDisclosureAnchor } from "@/hooks/useTranscriptDisclosureAnchor";
+import { useInlinePreviewBoundary } from "@/artifacts/inlinePreviewBoundary";
 import { useWrapPreference } from "@/hooks/useWrapPreference";
 // Tool-call renderer. Renders each call as a single muted-text trigger
 // line (status icon + truncated `name(argsSummary)`); clicking expands an
@@ -24,7 +25,15 @@ import {
   XCircleIcon,
 } from "lucide-react";
 import type { CSSProperties, ReactNode } from "react";
-import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { ChatSearchRevealContext } from "@/lib/chatSearchHighlights";
 import { readSubagentActivity, subagentCardItemIds } from "@/lib/subagentActivity";
 import { SubagentActivityMessage } from "./SubagentActivityMessage";
@@ -250,12 +259,7 @@ export function ToolCard({
           />
         ) : (
           <>
-            <CodePanel
-              title="Parameters"
-              text={inputJson}
-              copyText={inputJson}
-              copyLabel="Copy parameters"
-            />
+            <OutputSection title="Parameters" output={inputJson} />
             {formattedOutput !== null && <OutputSection output={formattedOutput} />}
             {formattedOutput === null && state === "input-available" && (
               <ToolPendingOutput duration={displayDuration} />
@@ -419,13 +423,8 @@ function ToolTriggerRow({
   /** When set, the body text (e.g. file path) is rendered as a clickable link. */
   onBodyClick?: () => void;
 }) {
-  const tooltip =
-    title.verb && title.body ? `${title.verb} ${title.body}` : (title.verb ?? title.body);
   return (
-    <CollapsibleTrigger
-      title={tooltip}
-      className="flex min-h-7 w-full cursor-pointer items-center gap-1.5 rounded-sm py-0.5 text-left text-muted-foreground text-chat transition-colors hover:text-foreground"
-    >
+    <CollapsibleTrigger className="flex min-h-7 w-full cursor-pointer items-center gap-1.5 rounded-sm py-0.5 text-left text-muted-foreground text-chat transition-colors hover:text-foreground">
       <StatusIcon name={name} nativeToolType={nativeToolType} state={state} />
       <span className="min-w-0 flex-1 truncate">
         {title.verb !== null && <span className="font-semibold text-foreground">{title.verb}</span>}
@@ -566,65 +565,77 @@ function ShellTerminalPanel({
         className="@container/shell"
         style={pinnedScheme === undefined ? undefined : terminalSurfaceStyle(terminalIsDark)}
       >
-        {cwd !== null && (
-          // On a narrow card the folder takes its own line and the actions wrap below
-          // it, left-aligned with the text.
-          <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 px-3 pt-1.5">
-            <span
-              className="min-w-0 truncate font-mono text-muted-foreground text-xs @max-[480px]/shell:basis-full"
-              title={cwd}
-            >
-              {cwd}
-            </span>
-            {actions}
-          </div>
-        )}
-        {/* The `$` prompt is a pseudo-element so selecting or copying the command skips it. */}
-        <div className={SHELL_COMMAND_LINES_CLASS} style={SHELL_PROMPT_STYLE}>
-          <CodeBlockContent
-            code={command}
-            language="bash"
-            wrap={wrap}
-            colorScheme={pinnedScheme}
-            className={cn(
-              TERMINAL_PRE_CLASS,
-              actionsBesideCommand && wrap ? "pt-2 pb-1 @max-[480px]/shell:pt-1" : "pt-1 pb-1",
-            )}
-            leading={
-              actionsBesideCommand ? (
-                <div
-                  className={
-                    wrap
-                      ? "float-right mt-1.5 mr-3 -mb-1 ml-2 @max-[480px]/shell:float-none @max-[480px]/shell:m-0 @max-[480px]/shell:flex @max-[480px]/shell:px-3 @max-[480px]/shell:pt-1.5"
-                      : "sticky left-0 flex justify-end px-3 pt-1.5 @max-[480px]/shell:justify-start"
-                  }
-                >
+        <OutputSection
+          output={command}
+          title="Command"
+          renderPanel={(text) => (
+            <>
+              {cwd !== null && (
+                // On a narrow card the folder takes its own line and the actions wrap below
+                // it, left-aligned with the text.
+                <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 px-3 pt-1.5">
+                  <span
+                    className="min-w-0 truncate font-mono text-muted-foreground text-xs @max-[480px]/shell:basis-full"
+                    title={cwd}
+                  >
+                    {cwd}
+                  </span>
                   {actions}
                 </div>
-              ) : undefined
-            }
-          />
-        </div>
+              )}
+              {/* The `$` prompt is a pseudo-element so selecting or copying the command skips it. */}
+              <div className={SHELL_COMMAND_LINES_CLASS} style={SHELL_PROMPT_STYLE}>
+                <CodeBlockContent
+                  code={text}
+                  language="bash"
+                  wrap={wrap}
+                  colorScheme={pinnedScheme}
+                  className={cn(
+                    TERMINAL_PRE_CLASS,
+                    actionsBesideCommand && wrap
+                      ? "pt-2 pb-1 @max-[480px]/shell:pt-1"
+                      : "pt-1 pb-1",
+                  )}
+                  leading={
+                    actionsBesideCommand ? (
+                      <div
+                        className={
+                          wrap
+                            ? "float-right mt-1.5 mr-3 -mb-1 ml-2 @max-[480px]/shell:float-none @max-[480px]/shell:m-0 @max-[480px]/shell:flex @max-[480px]/shell:px-3 @max-[480px]/shell:pt-1.5"
+                            : "sticky left-0 flex justify-end px-3 pt-1.5 @max-[480px]/shell:justify-start"
+                        }
+                      >
+                        {actions}
+                      </div>
+                    ) : undefined
+                  }
+                />
+              </div>
+            </>
+          )}
+        />
         {hasOutput && (
           <div className="border-t border-border/60 pt-1" data-tool-section="output">
-            <div className="flex items-center justify-between px-3 text-xs text-muted-foreground">
-              <span>Output</span>
-              <WrapTextButton
-                onToggle={() => setOutputWrap((value) => !value)}
-                wrap={outputWrap}
-                kind="output"
-              />
-            </div>
             <OutputSection
               output={parsed.text}
               renderPanel={(text) => (
-                <CodeBlockContent
-                  code={dropTrailingPartialEscape(text)}
-                  language="ansi"
-                  wrap={outputWrap}
-                  colorScheme={pinnedScheme}
-                  className={cn(TERMINAL_PRE_CLASS, "pt-0 pb-2")}
-                />
+                <>
+                  <div className="flex items-center justify-between px-3 text-xs text-muted-foreground">
+                    <span>Output</span>
+                    <WrapTextButton
+                      onToggle={() => setOutputWrap((value) => !value)}
+                      wrap={outputWrap}
+                      kind="output"
+                    />
+                  </div>
+                  <CodeBlockContent
+                    code={dropTrailingPartialEscape(text)}
+                    language="ansi"
+                    wrap={outputWrap}
+                    colorScheme={pinnedScheme}
+                    className={cn(TERMINAL_PRE_CLASS, "pt-0 pb-2")}
+                  />
+                </>
               )}
             />
           </div>
@@ -641,12 +652,7 @@ function ShellTerminalPanel({
       </CodeBlockContainer>
       {showRaw && (
         <>
-          <CodePanel
-            title="Parameters"
-            text={inputJson}
-            copyText={inputJson}
-            copyLabel="Copy parameters"
-          />
+          <OutputSection title="Parameters" output={inputJson} />
           {rawOutput !== null && (
             <OutputSection
               output={rawOutput}
@@ -810,32 +816,76 @@ function OutputSection({
   output,
   renderPanel,
   language,
+  title = "Output",
 }: {
   output: string;
-  /** Renders the (possibly truncated) text; defaults to a titled Output panel. */
   renderPanel?: (text: string) => ReactNode;
-  /** Highlighting for the default Output panel; JSON unless set. */
   language?: CodeLanguage;
+  title?: string;
 }) {
   const preserveDisclosure = useTranscriptDisclosureAnchor();
   const [isExpanded, setIsExpanded] = useState(false);
-  useEffect(() => setIsExpanded(false), [output]);
-
+  const [overflows, setOverflows] = useState(false);
+  const container = useRef<HTMLDivElement>(null);
+  const body = useRef<HTMLDivElement>(null);
+  const content = useRef<HTMLDivElement>(null);
+  const boundary = useInlinePreviewBoundary(container, true);
+  const [expandedHeight, setExpandedHeight] = useState<number>();
   const collapsedPreview = useMemo(() => getOutputPreview(output), [output]);
   const preview = useMemo(() => getOutputPreview(output, isExpanded), [output, isExpanded]);
-  const canExpand = collapsedPreview.isTruncated;
-
+  useLayoutEffect(() => {
+    const measure = () => {
+      if (!isExpanded && body.current && content.current)
+        setOverflows(content.current.scrollHeight > body.current.clientHeight + 1);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    if (body.current) observer.observe(body.current);
+    if (content.current) observer.observe(content.current);
+    return () => observer.disconnect();
+  }, [output, isExpanded]);
+  const canExpand = collapsedPreview.isTruncated || overflows || isExpanded;
   return (
-    <div className="space-y-2" onClickCapture={preserveDisclosure}>
+    <div
+      ref={container}
+      data-tool-reading-box
+      className="relative flex min-h-0 flex-col overflow-hidden rounded-md"
+      style={{
+        maxHeight: `min(320px, ${boundary?.maxHeight ?? "60dvh"})`,
+        height: isExpanded ? expandedHeight : undefined,
+      }}
+      onClickCapture={preserveDisclosure}
+    >
+      <div ref={body} className={cn("min-h-0", isExpanded ? "overflow-auto" : "overflow-hidden")}>
+        <div ref={content}>
+          {renderPanel ? (
+            renderPanel(preview.text)
+          ) : (
+            <CodePanel
+              title={title}
+              text={preview.text}
+              copyText={output}
+              copyLabel={`Copy ${title.toLowerCase()}`}
+              language={language}
+            />
+          )}
+        </div>
+      </div>
       {canExpand && (
-        <div className="flex flex-col gap-2 py-1 text-muted-foreground text-sm sm:flex-row sm:items-center sm:justify-between">
+        <div className="relative flex shrink-0 items-center gap-2 bg-background px-2 py-1 text-xs text-muted-foreground">
+          {!isExpanded && (
+            <div className="pointer-events-none absolute inset-x-0 bottom-full h-8 bg-gradient-to-t from-background to-transparent" />
+          )}
           <Button
-            className="w-fit"
+            className="shrink-0"
             aria-expanded={isExpanded}
-            onClick={() => setIsExpanded((value) => !value)}
             size="xs"
             type="button"
             variant="ghost"
+            onClick={() => {
+              if (!isExpanded) setExpandedHeight(container.current?.getBoundingClientRect().height);
+              setIsExpanded((value) => !value);
+            }}
             componentId="diagnostics.tool.toggle_expanded"
           >
             {isExpanded ? (
@@ -845,35 +895,15 @@ function OutputSection({
             )}
             {isExpanded ? "Collapse" : "Expand"}
           </Button>
-          <span className="min-w-0">
-            {isExpanded ? "Showing full output" : "Previewing output"} (
-            {formatOutputStats(isExpanded ? preview : collapsedPreview)})
+          <span className="min-w-0 truncate">
+            {isExpanded
+              ? `${output.length.toLocaleString()} characters`
+              : collapsedPreview.hiddenCharCount
+                ? `${collapsedPreview.hiddenCharCount.toLocaleString()} characters omitted`
+                : `${collapsedPreview.lineCount.toLocaleString()} lines`}
           </span>
         </div>
       )}
-      <div
-        className={cn(
-          "relative rounded-md",
-          canExpand && !isExpanded && "max-h-80 overflow-hidden",
-          // overflow-auto (vs overflow-y-auto) keeps long single-line output from blowing out the bubble width.
-          (!canExpand || isExpanded) && "max-h-[36rem] overflow-auto",
-        )}
-      >
-        {renderPanel ? (
-          renderPanel(preview.text)
-        ) : (
-          <CodePanel
-            title="Output"
-            text={preview.text}
-            copyText={output}
-            copyLabel="Copy output"
-            language={language}
-          />
-        )}
-        {canExpand && !isExpanded && (
-          <div className="pointer-events-none absolute inset-x-px bottom-px h-16 rounded-b-md bg-gradient-to-t from-background to-transparent" />
-        )}
-      </div>
     </div>
   );
 }
@@ -993,27 +1023,4 @@ function getNowSeconds(): number {
     return performance.now() / 1000;
   }
   return Date.now() / 1000;
-}
-
-function formatOutputStats(preview: OutputPreview): string {
-  if (!preview.isTruncated) {
-    return `${formatCount(preview.lineCount, "line")} / ${formatCount(preview.charCount, "char")}`;
-  }
-
-  const hidden: string[] = [];
-  if (preview.hiddenLineCount > 0) {
-    hidden.push(`${formatCount(preview.hiddenLineCount, "line")} hidden`);
-  }
-  if (preview.hiddenCharCount > 0) {
-    hidden.push(`${formatCount(preview.hiddenCharCount, "char")} hidden`);
-  }
-
-  return `${formatCount(preview.shownLineCount, "line")} / ${formatCount(
-    preview.shownCharCount,
-    "char",
-  )} shown; ${hidden.join(", ")}`;
-}
-
-function formatCount(count: number, unit: string): string {
-  return `${count.toLocaleString()} ${unit}${count === 1 ? "" : "s"}`;
 }

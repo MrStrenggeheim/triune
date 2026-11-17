@@ -357,7 +357,7 @@ function TooltipContent({
         className={cn(
           "z-50 w-fit max-w-[272px] origin-(--radix-tooltip-content-transform-origin)",
           className,
-          "rounded-[7px] border border-[#e2e2e8] bg-white px-[11px] py-[9px] text-[13px] leading-[1.45] font-medium text-[#30303a] shadow-[0_3px_12px_#2020300d] **:data-[slot=kbd]:min-w-[19px] **:data-[slot=kbd]:h-[20px] **:data-[slot=kbd]:w-auto **:data-[slot=kbd]:rounded-[3px] **:data-[slot=kbd]:border-[#e5e5eb] **:data-[slot=kbd]:bg-[#fafafb] **:data-[slot=kbd]:text-[11px] **:data-[slot=kbd]:font-normal **:data-[slot=kbd]:text-[#767680] data-[state=delayed-open]:animate-in data-[state=delayed-open]:fade-in-0 data-[state=delayed-open]:zoom-in-95 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+          "rounded-[7px] border border-[#e2e2e8] bg-white px-[11px] py-[9px] text-[13px] leading-[1.45] font-normal text-[#30303a] shadow-[0_3px_12px_#2020300d] **:data-[slot=kbd]:min-w-[19px] **:data-[slot=kbd]:h-[20px] **:data-[slot=kbd]:w-auto **:data-[slot=kbd]:rounded-[3px] **:data-[slot=kbd]:border-[#e5e5eb] **:data-[slot=kbd]:bg-[#fafafb] **:data-[slot=kbd]:text-[11px] **:data-[slot=kbd]:font-normal **:data-[slot=kbd]:text-[#767680] data-[state=delayed-open]:animate-in data-[state=delayed-open]:fade-in-0 data-[state=delayed-open]:zoom-in-95 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
         )}
         {...props}
         style={{

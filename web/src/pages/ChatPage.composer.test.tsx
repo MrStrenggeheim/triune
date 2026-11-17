@@ -2837,7 +2837,7 @@ describe("Composer shared visible controls", () => {
       }
       expect(chip).toBeDisabled();
       expect(chip).not.toHaveAttribute("title");
-      expect(chip).toHaveAccessibleName("Next-turn permissions: Next turn: Ask for approval");
+      expect(chip).toHaveAccessibleName("Permission mode: Ask for approval");
       await userEvent.hover(chip);
       expect(await screen.findByRole("tooltip")).toHaveTextContent(
         "Only the session owner can change the permission mode",

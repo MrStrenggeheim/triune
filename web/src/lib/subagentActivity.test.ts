@@ -34,6 +34,30 @@ const child = (fields: Partial<ChildSessionInfo>): ChildSessionInfo => ({
   ...fields,
 });
 
+it("uses only observed execution metadata and omits unknown profiles", () => {
+  const base = {
+    type: "resource_event",
+    resource_type: "session",
+    resource_id: "child",
+    event_type: "session.subagent.delegated",
+  };
+  expect(
+    readSubagentActivity({
+      ...base,
+      resource: {
+        execution: { model: "gpt-6.1-sol", effort: "low", source: "codex_turn_context" },
+      },
+    })?.execution,
+  ).toEqual({ model: "gpt-6.1-sol", effort: "low" });
+  expect(
+    readSubagentActivity({
+      ...base,
+      resource: { execution: { model: "parent-model", source: "configured" } },
+    })?.execution,
+  ).toBeUndefined();
+  expect(readSubagentActivity({ ...base, resource: {} })?.execution).toBeUndefined();
+});
+
 it.each([
   ["orchestration_header_intake", "Orchestration header intake"],
   ["native_delegation_intake", "Native delegation intake"],

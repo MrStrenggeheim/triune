@@ -214,9 +214,9 @@ function Task({
       data-message-aliases={JSON.stringify(subagentCardItemIds(data))}
     >
       <SubagentTaskRow
-        keepSummaryWhenExpanded={canonical}
         searchItemIds={subagentCardItemIds(data)}
         agentName={name}
+        execution={activity.execution}
         description={task ? shortTaskText(task, 80) : "Delegated task"}
         status={status ?? subagentEventStatus(activity)}
         action={action}

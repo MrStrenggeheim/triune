@@ -125,7 +125,10 @@ const Button = React.forwardRef<
       onClick={handleClick}
       {...props}
       type={props.type ?? (asChild ? undefined : "submit")}
-      aria-label={props["aria-label"] ?? (buttonLabel(children) ? undefined : title)}
+      aria-label={
+        props["aria-label"] ??
+        (showLoading ? buttonLabel(children) || title : buttonLabel(children) ? undefined : title)
+      }
     >
       {showLoading ? (
         <>

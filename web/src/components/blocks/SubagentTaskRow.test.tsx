@@ -3,9 +3,22 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, expect, it } from "vitest";
 import type { AgentActivity } from "@/shell/subagentStatus";
-import { SubagentTaskStatus } from "./SubagentTaskRow";
+import { SubagentTaskRow, SubagentTaskStatus } from "./SubagentTaskRow";
 
 afterEach(cleanup);
+it("shows captured execution beside the task and omits absent metadata", () => {
+  const props = {
+    agentName: "Reviewer",
+    description: "Inspect changes",
+    status: { activity: "working" as const, label: "Running" },
+  };
+  const view = render(
+    <SubagentTaskRow {...props} execution={{ model: "gpt-6.1-sol", effort: "low" }} />,
+  );
+  expect(screen.getByTestId("agent-execution")).toHaveTextContent("gpt-6.1-sol · Low");
+  view.rerender(<SubagentTaskRow {...props} />);
+  expect(screen.queryByTestId("agent-execution")).not.toBeInTheDocument();
+});
 it.each([
   ["working", "Working", "Running", "bg-session-active/10"],
   ["launching", "Launching", "Launching", "bg-session-active/10"],

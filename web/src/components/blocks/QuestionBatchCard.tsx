@@ -13,6 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import type { ClaudeQuestion } from "@/lib/askUserQuestion";
 import type { ElicitationBlock } from "@/lib/blocks";
 import { questionAnswer } from "@/lib/questionBatches";
+import { QuestionMarkdown } from "./QuestionMarkdown";
 import { QuestionPaginator } from "./QuestionPaginator";
 
 export function QuestionBatchCard({
@@ -86,7 +87,9 @@ export function QuestionBatchCard({
               {current.header}
             </Badge>
           )}
-          <span className="min-w-0 truncate text-muted-foreground">{current.question}</span>
+          <span className="min-w-0 truncate text-muted-foreground">
+            <QuestionMarkdown>{current.question}</QuestionMarkdown>
+          </span>
         </>
       }
       summary={pending ? "" : <span className="text-foreground">{answer}</span>}

@@ -147,6 +147,10 @@ describe("Button loading state", () => {
     // spinner would shrink the button to the spinner's width and shift
     // neighbouring buttons, which is exactly the bug this prop fixes.
     render(<Button loading>Update goal</Button>);
+    expect(screen.getByRole("button", { name: "Update goal" })).toHaveAttribute(
+      "aria-busy",
+      "true",
+    );
     expect(screen.getByText("Update goal")).toBeInTheDocument();
     expect(screen.getByRole("status", { name: "Loading" })).toBeInTheDocument();
   });

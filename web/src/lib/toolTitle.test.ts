@@ -23,10 +23,11 @@ describe("formatToolTitle", () => {
       body: "ls -la",
       isShellCommand: true,
     });
-    // Other prefixed tools keep their existing fallback title.
+    // Registered prefixed tools share their semantic title.
     expect(formatToolTitle("mcp__omnigent__sys_os_read", { path: "a.py" }, "path=a.py")).toEqual({
-      verb: null,
-      body: "mcp__omnigent__sys_os_read(path=a.py)",
+      verb: "Read",
+      body: "a.py",
+      filePath: "a.py",
     });
   });
 
@@ -270,9 +271,7 @@ describe("formatToolRunLabel", () => {
         { name: "subagent_activity", activityKey: "parent:child", pending: true },
         { name: "subagent_activity", activityKey: "parent:child", pending: true },
       ]),
-    ).toBe(
-      "Ran 3 shell commands, listed 1 directory, started or steered 1 subagent (1 in progress)",
-    );
+    ).toBe("Ran 3 shell commands, listed 1 directory, 1 subagent");
   });
   const call = (name: string, args?: Record<string, unknown>) => ({ name, args });
 

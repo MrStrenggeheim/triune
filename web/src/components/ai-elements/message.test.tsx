@@ -329,6 +329,21 @@ it("preserves ordinary code fences in reasoning", () => {
 });
 
 describe("MessageResponse table fullscreen", () => {
+  it.each(["static", "streaming"] as const)(
+    "renders bold punctuation in %s tables and after finalization",
+    (mode) => {
+      const markdown =
+        "| Punctuation | Meaning |\n| --- | --- |\n| **,** | comma |\n| **:** | colon |";
+      const view = render(<MessageResponse mode={mode}>{markdown}</MessageResponse>);
+      expect(screen.getByRole("table")).toHaveTextContent(",");
+      expect(screen.getByRole("table")).not.toHaveTextContent("**");
+      expect(
+        view.container.querySelectorAll('[data-streamdown="strong"], strong').length,
+      ).toBeGreaterThanOrEqual(2);
+      view.rerender(<MessageResponse mode="static">{markdown}</MessageResponse>);
+      expect(screen.getByRole("table")).not.toHaveTextContent("**");
+    },
+  );
   const tableMarkdown = "| Name | Value |\n| --- | --- |\n| Alpha | One |";
 
   it("opens inside the embed root and closes from the fullscreen control", async () => {

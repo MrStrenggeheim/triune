@@ -15,8 +15,10 @@ import {
 } from "./ScopedChatStore";
 
 const originalActions = useChatStore.getState();
+const metadata = vi.hoisted(() => ({ loading: false }));
 
 beforeEach(() => {
+  metadata.loading = false;
   conversationRegistry.clear();
   useChatStore.setState({ ...originalActions, conversationId: "primary" });
 });
@@ -28,6 +30,44 @@ afterEach(() => {
 });
 
 describe("scoped chat store", () => {
+  it("keeps a root-opened binding when initial metadata becomes ready", () => {
+    metadata.loading = true;
+    const entry = conversationRegistry.acquire("initial");
+    const ensure = vi
+      .spyOn(chatStore, "ensureConversationStreamed")
+      .mockImplementation(async () => {
+        if (!entry.getState().abortController)
+          entry.setState({ abortController: new AbortController() });
+      });
+    const view = render(
+      <ScopedChatStoreProvider conversationId="initial" visible focused>
+        <span>Initial reader</span>
+      </ScopedChatStoreProvider>,
+    );
+    expect(ensure).not.toHaveBeenCalled();
+    const controller = new AbortController();
+    const draft = { conversationId: "initial", text: "Keep draft", files: [] };
+    // The standalone root switch opens the session before shared metadata settles.
+    act(() =>
+      entry.setState({
+        abortController: controller,
+        failedSendDraft: draft,
+        oldestItemId: "anchor",
+      }),
+    );
+    metadata.loading = false;
+    view.rerender(
+      <ScopedChatStoreProvider conversationId="initial" visible focused>
+        <span>Initial reader</span>
+      </ScopedChatStoreProvider>,
+    );
+    expect(controller.signal.aborted).toBe(false);
+    expect(entry.getState().abortController).toBe(controller);
+    expect(ensure).toHaveBeenCalledOnce();
+    expect(entry.getState()).toMatchObject({ failedSendDraft: draft, oldestItemId: "anchor" });
+    view.unmount();
+    expect(controller.signal.aborted).toBe(true);
+  });
   it("changes focused send ownership without rebinding continuously visible panes", () => {
     const aborted = vi.fn();
     const ensure = vi
@@ -380,4 +420,4 @@ describe("scoped chat store", () => {
 });
 
 // These scenarios start after viewer discovery; startup ordering uses the real hook in chatStore.test.ts.
-vi.mock("@/hooks/useSession", () => ({ useSession: () => ({ isLoading: false }) }));
+vi.mock("@/hooks/useSession", () => ({ useSession: () => ({ isLoading: metadata.loading }) }));

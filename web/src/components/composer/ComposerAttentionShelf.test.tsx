@@ -79,6 +79,44 @@ function openShelf() {
   );
 }
 
+it("keeps an active goal alone visible and orders it after Plan", () => {
+  const goal = {
+    objective: "Finish the release",
+    status: "active",
+    tokenBudget: null,
+    tokensUsed: 0,
+    timeUsedSeconds: 0,
+    createdAt: null,
+    updatedAt: null,
+  };
+  const onOpen = vi.fn();
+  const view = render(
+    <MemoryRouter>
+      <ComposerAttentionShelf goal={goal} onOpenGoal={onOpen} />
+    </MemoryRouter>,
+  );
+  const trigger = screen.getByTestId("composer-goal-mode");
+  expect(trigger).toBeVisible();
+  fireEvent.click(trigger);
+  expect(onOpen).toHaveBeenCalledOnce();
+  act(() =>
+    useChatStore.setState({
+      todos: [{ content: "Verify", status: "in_progress", activeForm: "Verifying" }],
+    }),
+  );
+  expect(
+    screen
+      .getByRole("button", { name: "Plan: 0 of 1 completed" })
+      .compareDocumentPosition(trigger) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  view.rerender(
+    <MemoryRouter>
+      <ComposerAttentionShelf goal={{ ...goal, status: "complete" }} />
+    </MemoryRouter>,
+  );
+  expect(screen.getByTestId("composer-goal-mode")).toBeVisible();
+});
+
 it("separates questions and permissions and reuses the existing answer form", async () => {
   useChatStore.setState({ blocks: [request("ask", true), request("permission")] });
   openShelf();

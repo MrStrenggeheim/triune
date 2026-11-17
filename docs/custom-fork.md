@@ -60,6 +60,14 @@ Before submitting a change, run the relevant existing checks and the required Gi
 
 ## Durable inputs and interactive outputs
 
+Unread native follow-ups share one hint below the working indicator and return to ordinary transcript order on exact consumption receipts.
+Permission controls retain their selected mode label; only a running Codex turn adds a short next-turn note in hover and menu guidance.
+The Goal control follows Plan in the attention shelf, and an active goal keeps that shelf available.
+Tool readers cap input/output boxes at 320px or the smaller owning-view allowance, retaining expansion and full copying across updates.
+Notification feed descriptions expand from two lines; preview footers follow Comfortable/Compact density, and dedicated previews reuse one type-aware header.
+The packaged runtime tool catalog centralizes selection guidance, actual availability and filesystem-scope distinctions across supported harness delivery channels.
+Native input and upload receipts retain observed identities and turn ownership; child execution metadata comes only from actual native records.
+
 Composer drafts retain their text, attached bytes and captured context across reloads in viewer-scoped browser storage.
 Accepted follow-ups use a durable server queue and dispatch in order after eligible turn completion, including with every browser/app closed.
 Failed delivery, changed execution scope and revoked access require review; queued drafts and files stay private until their original author dispatches them.

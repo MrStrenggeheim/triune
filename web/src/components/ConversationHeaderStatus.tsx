@@ -281,6 +281,7 @@ function UsagePopover({
   quotas,
   error,
   onRefresh,
+  onOpen,
   refreshing,
 }: {
   conversationId: string;
@@ -289,6 +290,7 @@ function UsagePopover({
   quotas: RuntimeQuota[];
   error: boolean;
   onRefresh: () => void;
+  onOpen: () => void;
   refreshing: boolean;
 }) {
   const [open, setOpen] = useState(false);
@@ -309,7 +311,13 @@ function UsagePopover({
     state.conversationId === conversationId ? state.sessionUsageByModel : null,
   );
   return (
-    <Popover open={active && open} onOpenChange={setOpen}>
+    <Popover
+      open={active && open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (next) onOpen();
+      }}
+    >
       <PopoverTrigger asChild>
         <HeaderActionButton aria-label="Usage">
           <GaugeIcon className="size-4" />
@@ -360,6 +368,22 @@ export function ConversationHeaderStatus({
 }) {
   const readable = permissionLevel == null || permissionLevel >= 1;
   const observations = useRuntimeNotices(conversationId, active && readable);
+  const useStore = useConversationChatStore();
+  const [usageError, setUsageError] = useState(false);
+  const [usageRefreshing, setUsageRefreshing] = useState(false);
+  useEffect(() => setUsageError(false), [conversationId]);
+  const refreshUsage = () => {
+    if (usageRefreshing) return;
+    setUsageRefreshing(true);
+    void useStore
+      .getState()
+      .refreshSessionUsage(conversationId)
+      .then(
+        () => setUsageError(false),
+        () => setUsageError(true),
+      )
+      .finally(() => setUsageRefreshing(false));
+  };
   if (!readable || observations.accessDenied) return null;
   return (
     <>
@@ -376,9 +400,16 @@ export function ConversationHeaderStatus({
         active={active}
         harness={harness}
         quotas={observations.quotas}
-        error={!!observations.error}
-        onRefresh={() => void observations.refetch()}
-        refreshing={observations.isFetching}
+        error={!!observations.error || usageError}
+        onOpen={() => {
+          if (observations.isStale && !observations.isFetching) void observations.refetch();
+          refreshUsage();
+        }}
+        onRefresh={() => {
+          void observations.refetch();
+          refreshUsage();
+        }}
+        refreshing={observations.isFetching || usageRefreshing}
       />
     </>
   );

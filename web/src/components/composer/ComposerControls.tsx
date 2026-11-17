@@ -156,6 +156,7 @@ export function ComposerPermissionPicker({
   label,
   value,
   description,
+  appliesNextTurn = false,
   harness,
   selectedValue,
   options,
@@ -170,6 +171,7 @@ export function ComposerPermissionPicker({
   label: string;
   value: string;
   description?: string;
+  appliesNextTurn?: boolean;
   harness?: string | null;
   selectedValue?: string | null;
   options: readonly { value: string; label: string }[];
@@ -183,7 +185,7 @@ export function ComposerPermissionPicker({
   onSelect: (value: string) => void;
   testIdPrefix?: string;
 }) {
-  const help = `${label}: ${value}${description ? `. ${description}` : ""}`;
+  const help = `${label}: ${value}`;
   return (
     <DropdownMenu>
       <DisabledActionTooltip reason={disabled ? disabledReason : undefined} label={help}>
@@ -198,7 +200,13 @@ export function ComposerPermissionPicker({
               loading && "disabled:opacity-100",
             )}
             aria-label={`${label}: ${value}`}
-            title={disabled && disabledReason ? disabledReason : help}
+            tooltip={disabled && disabledReason ? disabledReason : help}
+            tooltipDescription={
+              <span className="flex flex-col gap-1">
+                {appliesNextTurn && <span>Only applies next turn</span>}
+                {description && <span>{description}</span>}
+              </span>
+            }
             data-testid={`${testIdPrefix}-permission-chip`}
             data-permission-concept={permissionModeConcept(harness, selectedValue)}
           >
@@ -228,11 +236,8 @@ export function ComposerPermissionPicker({
           }
         }}
       >
-        <div className="px-2 py-1 text-xs text-muted-foreground">{label}</div>
-        {description && (
-          <p className="max-w-72 px-2 pb-2 text-xs whitespace-normal break-words text-muted-foreground">
-            {description}
-          </p>
+        {appliesNextTurn && (
+          <div className="px-2 py-1 text-xs text-muted-foreground">Only applies next turn</div>
         )}
         <DropdownMenuRadioGroup value={selectedValue ?? undefined} onValueChange={onSelect}>
           {options.map((option) => (
@@ -262,13 +267,13 @@ export function ComposerConfigTooltipRows({
   rows: readonly { label: string; value: string }[];
 }) {
   return (
-    <>
+    <span className="flex flex-col gap-0.5">
       {rows.map((row) => (
         <span key={row.label}>
           <span className="font-semibold">{row.label}:</span> {row.value}
         </span>
       ))}
-    </>
+    </span>
   );
 }
 

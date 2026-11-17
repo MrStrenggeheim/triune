@@ -94,6 +94,38 @@ describe("getOutputPreview", () => {
 });
 
 describe("ToolCard rendering", () => {
+  it("keeps expanded output readable across streamed updates and caps parameters too", () => {
+    const output = "line\n".repeat(100);
+    const props = {
+      name: "read",
+      arguments: { path: "test.txt", detail: "input\n".repeat(100) },
+      output,
+      state: "output-available" as const,
+    };
+    const view = renderCard(props);
+    fireEvent.click(
+      view.container.querySelector<HTMLElement>('[data-slot="collapsible-trigger"]')!,
+    );
+    expect(view.container.querySelectorAll("[data-tool-reading-box]")).toHaveLength(2);
+    const expands = screen.getAllByRole("button", { name: "Expand" });
+    fireEvent.click(expands.at(-1)!);
+    expect(screen.getByRole("button", { name: "Collapse" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    view.rerender(
+      createElement(
+        TooltipProvider,
+        null,
+        createElement(ToolCard, { ...props, output: output + "tail" }),
+      ),
+    );
+    expect(screen.getByRole("button", { name: "Collapse" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    expect(view.container.textContent).toContain("tail");
+  });
   it("renders the tool title and duration in the collapsed trigger row", () => {
     // WHY: the trigger row is the always-visible summary; an unknown tool name
     // falls back to `name(argsSummary)`, and a completed duration renders.
@@ -255,7 +287,7 @@ describe("ToolCard shell terminal panel", () => {
     const trigger = container.querySelector<HTMLElement>('[data-slot="collapsible-trigger"]')!;
     expect(trigger).not.toHaveAttribute("title");
     fireEvent.focus(trigger);
-    expect(screen.getByRole("tooltip")).toHaveTextContent("pnpm install");
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
     expect(trigger.textContent).toBe("pnpm install");
 
     expand(container);

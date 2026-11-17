@@ -236,6 +236,7 @@ interface SessionResponseWire {
    */
   pending_inputs?: {
     pending_id: string;
+    sent_mid_turn?: boolean;
     item_id?: string;
     created_at?: number;
     position?: number;
@@ -387,6 +388,7 @@ function sessionFromWire(wire: SessionResponseWire, recordRouting = true): Sessi
       const communication = readMessageCommunication(p.communication);
       return {
         pendingId: p.pending_id,
+        ...(p.sent_mid_turn === true ? { sentMidTurn: true } : {}),
         ...(typeof p.item_id === "string" ? { itemId: p.item_id } : {}),
         ...(typeof p.created_at === "number" && Number.isFinite(p.created_at)
           ? { createdAtS: p.created_at }

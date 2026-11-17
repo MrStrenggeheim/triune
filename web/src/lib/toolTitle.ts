@@ -174,6 +174,10 @@ const FORMATTERS: Record<string, ArgFormatter> = {
     const cmd = asString(args.command);
     return shellTitle(cmd === null ? null : unwrapShellCommand(cmd));
   },
+  exec_command: (args) => shellTitle(asString(args.cmd) ?? asString(args.command)),
+  write_stdin: () => verbOnly("Read shell output"),
+  view_image: (args) => withPath("View image", args.path),
+  generate_image: () => verbOnly("Generate image"),
   apply_patch: (args) => {
     const changes = Array.isArray(args.changes) ? args.changes : null;
     if (changes === null || changes.length === 0) return null;
@@ -218,8 +222,7 @@ export function formatToolTitle(
   argsSummary?: string,
 ): ToolTitle {
   // Prefixed omnigent shell tools get the same `$ command` row as their panel.
-  const formatter =
-    FORMATTERS[name] ?? (isShellTool(name) ? FORMATTERS[stripOmnigentPrefix(name)] : undefined);
+  const formatter = FORMATTERS[stripOmnigentPrefix(name)];
   if (formatter !== undefined) {
     const title = formatter(args);
     if (title !== null && (title.verb !== null || title.body.length > 0)) {
@@ -238,7 +241,7 @@ export function formatToolTitle(
  * command is a bare `ls` re-categorize as directory listings, matching
  * the Claude Code TUI's step summaries.
  */
-type RunCategory = "shell" | "list" | "read" | "edit" | "search" | "agent";
+export type RunCategory = "shell" | "list" | "read" | "edit" | "search" | "agent";
 
 /** One tool call in a folded run: its name plus (optional) arguments. */
 export interface ToolRunCall {
@@ -248,12 +251,14 @@ export interface ToolRunCall {
   pending?: boolean;
 }
 
-const RUN_CATEGORIES: Record<string, RunCategory> = {
+export const TOOL_CATEGORIES: Record<string, RunCategory> = {
   subagent_activity: "agent",
   Bash: "shell",
   sys_os_shell: "shell",
   shell: "shell",
   local_shell: "shell",
+  exec_command: "shell",
+  write_stdin: "shell",
   bash: "shell",
   Read: "read",
   sys_os_read: "read",
@@ -272,6 +277,8 @@ const RUN_CATEGORIES: Record<string, RunCategory> = {
   Glob: "search",
   WebSearch: "search",
   web_search: "search",
+  WebFetch: "search",
+  web_fetch: "search",
   grep: "search",
   glob: "search",
   list: "list",
@@ -300,11 +307,11 @@ function runPhrase(category: RunCategory, n: number): string {
     case "search":
       return `ran ${n} search${n === 1 ? "" : "es"}`;
     case "agent":
-      return `started or steered ${n} subagent${s}`;
+      return `${n} subagent${s}`;
   }
 }
 
-function stripOmnigentPrefix(name: string): string {
+export function stripOmnigentPrefix(name: string): string {
   return name.startsWith("mcp__omnigent__") ? name.slice("mcp__omnigent__".length) : name;
 }
 
@@ -344,7 +351,7 @@ function decodeShellWord(text: string): string | null {
 
 /** Whether `name` is a shell-command tool in any harness (Bash, shell, sys_os_shell...). */
 export function isShellTool(name: string): boolean {
-  return RUN_CATEGORIES[stripOmnigentPrefix(name)] === "shell";
+  return TOOL_CATEGORIES[stripOmnigentPrefix(name)] === "shell";
 }
 
 /** A shell tool call: the command line it ran and how its output is shaped. */
@@ -412,7 +419,7 @@ export function shellCommandPreview(script: string): { firstLine: string; moreLi
 
 function categorizeCall(call: ToolRunCall): RunCategory | "other" {
   const name = stripOmnigentPrefix(call.name);
-  const category = RUN_CATEGORIES[name] ?? "other";
+  const category = TOOL_CATEGORIES[name] ?? "other";
   if (category === "shell") {
     const raw = typeof call.args?.command === "string" ? call.args.command : "";
     const command = unwrapShellCommand(raw);
@@ -431,11 +438,9 @@ function categorizeCall(call: ToolRunCall): RunCategory | "other" {
 export function formatToolRunLabel(calls: ToolRunCall[]): string {
   const counts = new Map<RunCategory | "other", number>();
   const agents = new Set<string>();
-  const pendingAgents = new Set<string>();
   for (const call of calls) {
     const category = categorizeCall(call);
     if (category === "agent" && call.activityKey) {
-      if (call.pending) pendingAgents.add(call.activityKey);
       if (agents.has(call.activityKey)) continue;
       agents.add(call.activityKey);
     }
@@ -454,8 +459,7 @@ export function formatToolRunLabel(calls: ToolRunCall[]): string {
     phrases.push(`called ${other} other tool${other === 1 ? "" : "s"}`);
   }
   const label = phrases.join(", ");
-  const pending = pendingAgents.size ? ` (${pendingAgents.size} in progress)` : "";
-  return label.charAt(0).toUpperCase() + label.slice(1) + pending;
+  return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
 function asString(v: unknown): string | null {

@@ -36,7 +36,7 @@ import type { SessionStatus } from "@/lib/types";
 import type { ActiveResponse } from "@/store/types";
 import { cn } from "@/lib/utils";
 import { ChatSearchRevealContext } from "@/lib/chatSearchHighlights";
-import { MediaBatchItems } from "@/components/MediaBatch";
+import { MediaBatch, MediaBatchItems, isVisualAttachment } from "@/components/MediaBatch";
 import { FilePathAwareMessageResponse } from "./ChatMarkdown";
 import { ElicitationCard } from "./ApprovalCard";
 import { ReasoningView } from "./ReasoningView";
@@ -414,6 +414,36 @@ function renderSequence(
 
   for (let i = 0; i < items.length; i += 1) {
     const item = items[i]!;
+
+    const visualOnly = (candidate: RenderItem) =>
+      candidate.kind === "text" &&
+      !candidate.text.trim() &&
+      !!candidate.attachments?.length &&
+      candidate.attachments.every(isVisualAttachment);
+    if (visualOnly(item) && items[i + 1] && visualOnly(items[i + 1]!)) {
+      const start = i;
+      const previews: ReactNode[] = [];
+      while (i < items.length && visualOnly(items[i]!)) {
+        previews.push(
+          renderItem(
+            items[i]!,
+            indexBase + i,
+            false,
+            false,
+            suppressReasoningDuration,
+            false,
+            onRetryError,
+          ),
+        );
+        i++;
+      }
+      i--;
+      rendered.push(
+        <MediaBatch key={`media:${keyFor(item, indexBase + start)}`}>{previews}</MediaBatch>,
+      );
+      previousRenderedItemWasText = false;
+      continue;
+    }
 
     if (isToolItem(item)) {
       // Consume contiguous run of tool / native_tool items.

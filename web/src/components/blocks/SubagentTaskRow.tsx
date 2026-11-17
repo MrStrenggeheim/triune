@@ -15,6 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import type { AgentStatus } from "@/shell/subagentStatus";
 import { cn } from "@/lib/utils";
 import { formatSubagentTask } from "@/lib/subagentActivity";
+import { formatStatusModelLabel, formatStatusEffortLabel } from "@/lib/composerModelLabel";
 
 export function SubagentTaskStatus({ status, label }: { status: AgentStatus; label?: string }) {
   const running = status.activity === "working" || status.activity === "launching";
@@ -64,6 +65,7 @@ export function SubagentTaskRow({
   preview,
   children,
   keepSummaryWhenExpanded,
+  execution,
 }: {
   searchItemIds?: readonly string[];
   agentName: string;
@@ -73,8 +75,14 @@ export function SubagentTaskRow({
   preview?: string;
   children?: ReactNode;
   keepSummaryWhenExpanded?: boolean;
+  execution?: { model: string; effort: string | null };
 }) {
   const label = formatSubagentTask(description);
+  const executionLabel = execution
+    ? [formatStatusModelLabel(execution.model), formatStatusEffortLabel(execution.effort)]
+        .filter(Boolean)
+        .join(" · ")
+    : null;
   return (
     <ActivityRow
       searchItemIds={searchItemIds}
@@ -85,6 +93,15 @@ export function SubagentTaskRow({
         <>
           <strong className="shrink-0 font-semibold">{agentName}</strong>{" "}
           <span className="truncate">· {label}</span>
+          {executionLabel && (
+            <span
+              className="min-w-0 max-w-[45%] shrink truncate text-xs font-normal text-muted-foreground"
+              title={executionLabel}
+              data-testid="agent-execution"
+            >
+              {executionLabel}
+            </span>
+          )}
         </>
       }
       preview={preview}

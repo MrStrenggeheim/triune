@@ -1,4 +1,5 @@
 import { useTranscriptDisclosureAnchor } from "@/hooks/useTranscriptDisclosureAnchor";
+import { markInputLifecycle } from "@/lib/inputDiagnostics";
 // Modified for Triune.
 import { useWorkbenchActions } from "@/workbench/WorkbenchContext";
 import { useConversationChatStore, useConversationChatVisible } from "@/workbench/ScopedChatStore";
@@ -29,7 +30,6 @@ import {
   Link2Icon,
   Loader2Icon,
   SplitIcon,
-  XIcon,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -555,6 +555,43 @@ export function isSystemBubble(bubble: Bubble): boolean {
   return kind === "system" || kind === "external";
 }
 
+/** Unconsumed human follow-ups have a presentation group, not a new stored order. */
+export function partitionAwaitingAgentBubbles(bubbles: Bubble[]) {
+  const awaitingAgentBubbles: Bubble[] = [];
+  const streamBubbles: Bubble[] = [];
+  for (const bubble of bubbles) {
+    const awaiting =
+      bubble.kind === "user" &&
+      bubble.pending &&
+      bubble.awaitingAgent &&
+      messageInputKind(
+        bubble.communication,
+        bubble.userAuthored || bubble.shellCommand !== undefined,
+        bubble.isMeta,
+      ) === "human";
+    (awaiting ? awaitingAgentBubbles : streamBubbles).push(bubble);
+  }
+  return { streamBubbles, awaitingAgentBubbles };
+}
+
+export function AwaitingAgentMessages({ bubbles }: { bubbles: Bubble[] }) {
+  if (!bubbles.length) return null;
+  return (
+    <div className="flex w-full flex-col gap-2" data-testid="awaiting-agent-messages">
+      <div
+        className="ml-auto flex max-w-[95%] items-center gap-1 text-[11px] leading-4 text-muted-foreground"
+        data-testid="message-awaiting-agent"
+      >
+        <ClockIcon size={12} className="shrink-0" aria-hidden />
+        The agent will read this after its current step
+      </div>
+      {bubbles.map((bubble) => (
+        <BubbleView key={bubbleKey(bubble)} bubble={bubble} />
+      ))}
+    </div>
+  );
+}
+
 function CompactionLoadingIndicator({ createdAtS }: { createdAtS?: number }) {
   const [elapsed, setElapsed] = useState(0);
 
@@ -767,6 +804,9 @@ function UserBubble({
   const sessionId = useScopedConversationId();
   // Author labels only matter once the session is shared with someone else.
   const isSessionShared = useContext(SessionSharedContext);
+  useLayoutEffect(() => {
+    markInputLifecycle("rendered", { conversationId: sessionId, itemId: bubble.itemId });
+  }, [sessionId, bubble.itemId, bubble.pending]);
   // - input_image: `imagePreview` picks the variant — an uploaded file, an
   //   imported inline data URI, an in-flight upload chip, or a placeholder
   //   for a block carrying neither.
@@ -961,16 +1001,6 @@ function UserBubble({
           )}
         </MessageContent>
       </div>
-      {/* Always visible: a mid-turn message can wait minutes behind a long tool call. */}
-      {bubble.pending && bubble.awaitingAgent && (
-        <div
-          className="flex items-center gap-1 pt-1 text-[11px] leading-4 text-muted-foreground"
-          data-testid="message-awaiting-agent"
-        >
-          <ClockIcon size={12} aria-hidden />
-          The agent will read this after its current step
-        </div>
-      )}
       {origin !== "system" && (
         <MessageFooter
           text={text}
@@ -1159,7 +1189,10 @@ function AssistantBubble({
   // thread-level card, not an assistant reply, so it takes the "error" role; a
   // failed turn that still produced tool or reasoning output keeps the assistant role.
   const errorNotice = hasError && bubble.items.every((it) => it.kind === "error");
-  const spansFullColumn = isWide || hasError;
+  const spansFullColumn =
+    isWide ||
+    hasError ||
+    bubble.items.some((item) => item.kind === "tool" || item.kind === "native_tool");
   const hasSubagentNotice = bubble.items.some((it) => it.kind === "subagent_activity");
   const activityOnly =
     hasSubagentNotice && bubble.items.every((it) => it.kind === "subagent_activity");
@@ -1207,13 +1240,9 @@ function AssistantBubble({
           />
         </MessageContent>
         {bubble.lifecycle === "cancelled" && (
-          <p
-            className="mt-1 flex items-center gap-1 text-sm text-muted-foreground"
-            data-testid="assistant-interrupted-indicator"
-          >
-            <XIcon className="size-3" aria-hidden="true" />
-            <span>Interrupted</span>
-          </p>
+          <div data-testid="assistant-interrupted-indicator">
+            <SystemMessageView message={{ kind: "interrupted", label: "Interrupted", body: "" }} />
+          </div>
         )}
         {/* Skip fold-only and error-only bubbles. Order: actions, then timestamp. */}
         {!foldOnly && !errorOnly && !activityOnly && !questionBatchOnly && (

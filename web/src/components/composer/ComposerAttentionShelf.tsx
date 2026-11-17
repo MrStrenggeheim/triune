@@ -17,6 +17,8 @@ import { ComposerShelf } from "./ComposerShelf";
 import { useChildSessions } from "@/hooks/useChildSessions";
 import { childStatus } from "@/shell/subagentStatus";
 import { useComposerShelfVisibility } from "./ComposerShelfVisibility";
+import { GoalStatusPill } from "@/components/goal";
+import type { Goal } from "@/lib/goalApi";
 
 export function isQuestionRequest(block: ElicitationBlock): boolean {
   if (block.codexCommand || block.exitPlanMode) return false;
@@ -29,7 +31,13 @@ export function isQuestionRequest(block: ElicitationBlock): boolean {
 }
 
 /** Original composer tray, with the existing request forms and task popovers. */
-export function ComposerAttentionShelf() {
+export function ComposerAttentionShelf({
+  goal = null,
+  onOpenGoal,
+}: {
+  goal?: Goal | null;
+  onOpenGoal?: () => void;
+}) {
   const useChatStore = useConversationChatStore();
   const conversationId = useChatStore((state) => state.conversationId);
   const backgroundCount = useChatStore((state) => state.backgroundTaskCount);
@@ -52,13 +60,15 @@ export function ComposerAttentionShelf() {
   const { visible, planRequest } = useComposerShelfVisibility({
     conversationId,
     active:
+      goal?.status === "active" ||
       pending.length > 0 ||
       completed < todos.length ||
       backgroundCount > 0 ||
       children.some((child) =>
         ["launching", "working", "awaiting", "disconnected"].includes(childStatus(child).activity),
       ),
-    hasContent: pending.length > 0 || todos.length > 0 || backgroundCount > 0 || hasAgents,
+    hasContent:
+      pending.length > 0 || todos.length > 0 || backgroundCount > 0 || hasAgents || goal !== null,
     hasPlan: todos.length > 0,
     requiredIds: pending.map(
       (block) => `${block.targetSessionId ?? conversationId}:${block.elicitationId}`,
@@ -106,7 +116,9 @@ export function ComposerAttentionShelf() {
       key={conversationId}
       retainContent={false}
       present={visible}
-      keepMounted={pending.length > 0 || todos.length > 0 || backgroundCount > 0 || hasAgents}
+      keepMounted={
+        pending.length > 0 || todos.length > 0 || backgroundCount > 0 || hasAgents || goal !== null
+      }
     >
       <ComposerWorkspaceBar
         shelfInset
@@ -229,6 +241,7 @@ export function ComposerAttentionShelf() {
             </PopoverContent>
           </Popover>
         )}
+        {goal && <GoalStatusPill goal={goal} onOpen={onOpenGoal} />}
       </ComposerWorkspaceBar>
     </ComposerShelf>
   );

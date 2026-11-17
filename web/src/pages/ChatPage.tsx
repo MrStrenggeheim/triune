@@ -42,7 +42,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { BotIcon, WandSparklesIcon, FileTextIcon, Loader2Icon, XIcon } from "lucide-react";
+import { BotIcon, WandSparklesIcon, FileTextIcon, XIcon } from "lucide-react";
 import { TooltipButton, Tooltip, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   composerSendShortcutKeys,
@@ -60,6 +60,7 @@ import {
 import { ComposerMentionChips } from "@/components/composer/ComposerMentionChips";
 import { ComposerAddMenu } from "@/components/composer/ComposerAddMenu";
 import { ComposerAttentionShelf } from "@/components/composer/ComposerAttentionShelf";
+import { ContentSkeleton } from "@/components/ui/loading";
 import { ReplyDraftBlocks } from "@/components/composer/ReplyDraftBlocks";
 import {
   ComposerPermissionPicker,
@@ -307,7 +308,7 @@ import { isCodexNativeSession } from "@/lib/codexPlanMode";
 import { isPermissionModeCycleKey, nextCycledPermissionMode } from "@/lib/permissionModeCycle";
 import { getCliServerUrl } from "@/lib/host";
 import { useOmnigentAnalytics } from "@/lib/analyticsEmit";
-import { GoalDialog, CommandGoalDialog, GoalStatusPill, useGoalState } from "@/components/goal";
+import { GoalDialog, CommandGoalDialog, useGoalState } from "@/components/goal";
 import { useIsCoarsePointer } from "@/hooks/useIsCoarsePointer";
 import { useIsMobileViewport } from "@/hooks/useIsMobileViewport";
 import { ConnectionIndicator } from "./ChatIndicators";
@@ -1939,6 +1940,7 @@ const MainAgentSurface = memo(function MainAgentSurfaceImpl({
             />
           )}
 
+          <ConnectionIndicator liveness={liveness} onShowReconnectHelp={onShowReconnectHelp} />
           <Composer
             ref={composerRef}
             disabled={disabled}
@@ -1987,11 +1989,6 @@ const MainAgentSurface = memo(function MainAgentSurfaceImpl({
             wrapperLabel={wrapperLabel}
             onViewportShrinkPinScroll={pinScrollOnComposerGrowth}
           />
-
-          {/* Reconnect-or-fork banner when unreachable, nothing otherwise.
-          Sits below the composer so its position is consistent with the
-          terminal view. */}
-          <ConnectionIndicator liveness={liveness} onShowReconnectHelp={onShowReconnectHelp} />
         </>
       )}
     </>
@@ -2000,10 +1997,11 @@ const MainAgentSurface = memo(function MainAgentSurfaceImpl({
 
 function HydratingPlaceholder() {
   return (
-    <div className="flex flex-1 items-center justify-center gap-2 text-muted-foreground text-ui">
-      <Loader2Icon className="size-4 animate-spin" />
-      Loading conversation…
-    </div>
+    <ContentSkeleton
+      label="Loading conversation"
+      className="mx-auto max-w-3xl flex-1 pt-20"
+      rows={5}
+    />
   );
 }
 
@@ -2385,7 +2383,7 @@ function SubagentComposerTray({ label }: { label: string }) {
   return (
     <div
       data-testid="composer-subagent-tray"
-      className="composer-subagent-surface mx-3 flex items-center gap-1.5 rounded-t-2xl px-4 py-1.5 text-sm text-brand-accent"
+      className="composer-subagent-surface flex min-h-6 items-center gap-1.5 text-sm text-brand-accent"
     >
       <BotIcon className="size-3.5 shrink-0" aria-hidden="true" />
       {/* truncate so a long sub-agent name never wraps the tray to two rows */}
@@ -4250,7 +4248,7 @@ function ComposerImpl(
         <ComposerShelf key={conversationId} present={!!subAgentLabel}>
           <SubagentComposerTray label={subAgentLabel ?? ""} />
         </ComposerShelf>
-        <ComposerAttentionShelf />
+        <ComposerAttentionShelf goal={goal} onOpenGoal={() => setGoalDialogOpen(true)} />
       </div>
       <ChatComposer
         keyboard={{ submitWithModEnter, preventsKeyboardSubmit }}
@@ -4603,17 +4601,13 @@ function ComposerImpl(
               </div>
               {(showClaudePermissionMode || showCodexApprovalMode) && (
                 <ComposerPermissionPicker
-                  label={showCodexApprovalMode ? "Next-turn permissions" : "Permission mode"}
-                  value={
-                    showCodexApprovalMode
-                      ? `Next turn: ${permissionLabel || "Unknown"}`
-                      : permissionLabel || "Permission mode"
-                  }
+                  label="Permission mode"
+                  value={permissionLabel || "Permission mode"}
                   description={
-                    showCodexApprovalMode
-                      ? "Native execution on subsequent turns; shows the last native-observed setting. Current work keeps its permissions; use Stop separately for urgent restrictions. Triune action policies, including scheduled tasks, still apply."
-                      : undefined
+                    permissionOptions.find((option) => option.value === selectedPermissionMode)
+                      ?.description
                   }
+                  appliesNextTurn={showCodexApprovalMode && isWorking}
                   harness={sessionHarness}
                   selectedValue={selectedPermissionMode}
                   options={permissionOptions}
@@ -4633,9 +4627,7 @@ function ComposerImpl(
               <div
                 data-testid="composer-task-indicators"
                 className="flex shrink-0 items-center gap-0 empty:hidden"
-              >
-                {goal && <GoalStatusPill goal={goal} onOpen={() => setGoalDialogOpen(true)} />}
-              </div>
+              ></div>
               <div className="flex min-w-0 items-center rounded-lg">
                 <SessionHarnessPicker
                   busy={configBusy}

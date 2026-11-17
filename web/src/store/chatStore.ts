@@ -8,6 +8,7 @@ import {
 import { insertRecoveredBlocks } from "./recoveryPlacement";
 import { TranscriptReplay, upsertCanonicalItem } from "./transcriptReplay";
 import { pendingPeerReceiptPlacement, projectPeerReceipts } from "@/lib/peerMessagePlacement";
+import { markInputLifecycle } from "@/lib/inputDiagnostics";
 import {
   sessionUpdatesSocket,
   isRetryableTranscriptError,
@@ -1440,6 +1441,7 @@ export interface ChatActions {
    * snapshot. No-ops for inactive or missing conversations.
    */
   refreshSessionState: (conversationId?: string) => Promise<void>;
+  refreshSessionUsage: (conversationId?: string) => Promise<void>;
   /** Dismiss the too-many-tabs banner for the current over-budget episode. */
   dismissStreamBudgetBanner: () => void;
   /** Hide the launch's `action_required` banner while the launch keeps asking for *details*. */
@@ -1470,6 +1472,7 @@ conversationRegistry.subscribeDisposed((id) => streamEventRevisions.delete(id));
 
 // Reconnects share a binding; only one usage request may hydrate it at a time.
 const sessionUsageHydrations = new WeakSet<AbortController>();
+const sessionUsageHydrationTimes = new WeakMap<AbortController, number>();
 const sessionUsageRevisions = new WeakMap<ConversationEntry, { cost: number; models: number }>();
 
 // Snapshot reconciliation must teach the already-running stream pump which
@@ -3238,6 +3241,11 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
     // target afterward would leak the message into the now-active session.
     // An explicit pin (navigate-first background POST) wins over the visible id.
     const submitConversationId = pinnedId ?? get().conversationId;
+    markInputLifecycle("submitted", {
+      conversationId: submitConversationId,
+      stableId,
+      itemId: tempId,
+    });
     // Only the composer on screen takes back a send cut off by a reload (see
     // `unsentSendToRestore`); a side chat posts to its child beside the parent.
     const sentOnScreen = pinnedId === null || pinnedId === get().conversationId;
@@ -3371,6 +3379,12 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
           return patch;
         });
       } else {
+        markInputLifecycle("accepted", {
+          conversationId: sessionId,
+          stableId,
+          pendingId: postResult.pendingId,
+          itemId: postResult.itemId,
+        });
         // POST accepted: the server can now account for this message
         // (native: pending_inputs replay until the round-trip commits it;
         // non-native: already persisted). Mark the bubble settled — that is
@@ -4049,6 +4063,11 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
       refreshState: true,
       applyBindingPatch: true,
     });
+  },
+
+  refreshSessionUsage: async (conversationId) => {
+    const id = conversationId ?? get().conversationId;
+    if (id) await hydrateSessionUsage(id, true);
   },
 
   setEffort: async (effort, targetId) => {
@@ -5760,6 +5779,7 @@ async function bindStream(
       // keeping both would double-render and strand one of them.
       const toPending = (p: PendingInput): PendingUserMessage => ({
         tempId: p.pendingId,
+        ...(p.sentMidTurn ? { sentMidTurn: true } : {}),
         ...(p.itemId ? { itemId: p.itemId } : {}),
         ...(p.position !== undefined ? { position: p.position } : {}),
         content: p.content,
@@ -5884,7 +5904,7 @@ async function bindStream(
 }
 
 /** Hydrate display-only subtree totals without delaying session reconciliation. */
-async function hydrateSessionUsage(id: string): Promise<void> {
+async function hydrateSessionUsage(id: string, reportFailure = false): Promise<void> {
   const entry = conversationRegistry.peek(id);
   const before = entry?.getState();
   const controller = before?.abortController;
@@ -5898,6 +5918,8 @@ async function hydrateSessionUsage(id: string): Promise<void> {
   ) {
     return;
   }
+  if (reportFailure && Date.now() - (sessionUsageHydrationTimes.get(controller) ?? 0) < 5000)
+    return;
   sessionUsageHydrations.add(controller);
   const revisionsBeforeFetch = sessionUsageRevisions.get(entry) ?? { cost: 0, models: 0 };
   try {
@@ -5911,6 +5933,7 @@ async function hydrateSessionUsage(id: string): Promise<void> {
       return;
     }
     const revisions = sessionUsageRevisions.get(entry) ?? { cost: 0, models: 0 };
+    sessionUsageHydrationTimes.set(controller, Date.now());
     // A live cost/model update during the read wins independently for each field.
     entrySetter(entry)((state) => ({
       ...(revisions.cost === revisionsBeforeFetch.cost &&
@@ -5922,8 +5945,9 @@ async function hydrateSessionUsage(id: string): Promise<void> {
         ? { sessionUsageByModel: usage.usageByModel ?? state.sessionUsageByModel }
         : {}),
     }));
-  } catch {
+  } catch (error) {
     // Usage is optional display data; retain known totals or leave them unknown.
+    if (reportFailure) throw error;
   } finally {
     sessionUsageHydrations.delete(controller);
   }
@@ -6679,6 +6703,7 @@ function reconcilePendingMessages(
       candidates[at] = {
         ...message!,
         pendingId: input.pendingId,
+        ...(input.sentMidTurn ? { sentMidTurn: true } : {}),
         ...(input.itemId ? { itemId: input.itemId } : {}),
         ...(input.position !== undefined ? { position: input.position } : {}),
         content: input.content,
@@ -6688,6 +6713,7 @@ function reconcilePendingMessages(
     } else {
       candidates.push({
         tempId: input.pendingId,
+        ...(input.sentMidTurn ? { sentMidTurn: true } : {}),
         pendingId: input.pendingId,
         ...(input.itemId ? { itemId: input.itemId } : {}),
         ...(input.position !== undefined ? { position: input.position } : {}),
@@ -10322,6 +10348,11 @@ export function handleSessionEvent(event: StreamEvent, streamConversationId?: st
       return;
     }
     case "session_input_consumed":
+      markInputLifecycle("consumed", {
+        conversationId: sourceConversationId,
+        pendingId: event.clearedPendingId ?? undefined,
+        itemId: event.itemId,
+      });
       if (serverOwnsMessageQueue() && sourceConversationId)
         void refreshServerQueue(sourceConversationId);
       acknowledgeSelectedQueueSend(sourceConversationId, event);

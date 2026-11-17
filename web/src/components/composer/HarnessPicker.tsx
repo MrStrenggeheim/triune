@@ -1,3 +1,4 @@
+import { useMenuInputIntent } from "@/hooks/useMenuInputIntent";
 import {
   type ComponentProps,
   type KeyboardEvent,
@@ -215,18 +216,11 @@ export function HarnessPicker({
   const previewActive = useRef(previewOnly);
   previewActive.current = previewOnly;
   // Programmatic focus can retain :focus-visible during pointer-only interaction.
-  const [pointerInteraction, setPointerInteraction] = useState(false);
+  const { pointerInteraction, setPointerInteraction } = useMenuInputIntent(open);
   const [hasMenuInteraction, setHasMenuInteraction] = useState(false);
   useEffect(() => {
     if (!open) setHasMenuInteraction(false);
   }, [open]);
-  useEffect(() => {
-    if (open || !pointerInteraction) return;
-    // Outside dismissal can leave focus elsewhere before Tab returns to the trigger.
-    const onKeyDown = () => setPointerInteraction(false);
-    document.addEventListener("keydown", onKeyDown, true);
-    return () => document.removeEventListener("keydown", onKeyDown, true);
-  }, [open, pointerInteraction]);
   const interaction = useMemo(
     () => ({
       pointerInteraction,
@@ -244,7 +238,14 @@ export function HarnessPicker({
         onOpenChange(false);
       },
     }),
-    [open, pointerInteraction, hasMenuInteraction, onOpenChange, onDismissCyclePreview],
+    [
+      open,
+      pointerInteraction,
+      hasMenuInteraction,
+      onOpenChange,
+      onDismissCyclePreview,
+      setPointerInteraction,
+    ],
   );
   const menuTrigger = (
     <DropdownMenuTrigger asChild>

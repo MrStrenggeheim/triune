@@ -1,5 +1,13 @@
 # Composer
 
+November 17 refinements keep the selected permission-mode caption stable through idle/running changes.
+While running, its hover and dropdown add only “Only applies next turn”; the original mode guidance stays in the hover.
+An active Goal appears after Plan in the attention shelf, including when it is the shelf's only resource.
+Unread native follow-ups sit below the working indicator under one shared hint, then return above it on individual consumption receipts.
+The header Usage menu refreshes stale observations/accounting on opening while retaining current values.
+Compiled transition checks: `tests/browser_ui/chat/test_transcript_queue22.py` covers desktop/phone pending receipts, reload and permission captions, plus fixed-height tool expansion.
+Component checks: `ConversationHeaderStatus.test.tsx`, `ComposerAttentionShelf.test.tsx`, `ComposerControls.test.tsx`, `Transcript.virtualList.test.tsx` and `SideChatPane.test.tsx` cover the shared owners and native-find path.
+
 The composer is where a user writes a message and chooses how the agent runs
 it. It appears in two places that look alike but are separate surfaces: the
 in-session composer at the bottom of a chat, and the new-session composer on

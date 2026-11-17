@@ -15,6 +15,7 @@ export interface SubagentResultPart {
 }
 
 export interface SubagentActivity {
+  execution?: { model: string; effort: string | null };
   phase: "delegated" | "returned";
   sessionId: string;
   title: string;
@@ -162,6 +163,14 @@ export function readSubagentActivity(item: Record<string, unknown>): SubagentAct
       : {};
   const title = fields.title;
   const status = fields.status;
+  const execution =
+    fields.execution && typeof fields.execution === "object"
+      ? (fields.execution as Record<string, unknown>)
+      : null;
+  const observedModel =
+    execution && ["codex_turn_context", "claude_response"].includes(String(execution.source))
+      ? text(execution.model)
+      : null;
   const resultParts = Array.isArray(fields.result_parts)
     ? fields.result_parts.flatMap((value) => {
         const ref = itemRef(value);
@@ -171,6 +180,9 @@ export function readSubagentActivity(item: Record<string, unknown>): SubagentAct
     : [];
   return {
     phase,
+    ...(observedModel
+      ? { execution: { model: observedModel, effort: text(execution?.effort) } }
+      : {}),
     sessionId,
     title: typeof title === "string" && title.trim() ? title : "Sub-agent",
     status: typeof status === "string" ? status : null,
