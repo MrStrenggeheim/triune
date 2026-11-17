@@ -61,6 +61,31 @@ describe("ChunkLoadErrorBoundary", () => {
     expect(reload).toHaveBeenCalledOnce();
   });
 
+  it("keeps sibling drafts mounted when a view requires manual recovery", async () => {
+    const View = lazy(() => Promise.reject(chunkError));
+    render(
+      <StrictMode>
+        <input aria-label="Unsaved draft" defaultValue="" />
+        <ChunkLoadErrorBoundary autoReload={false}>
+          <Suspense fallback={<p>Loading</p>}>
+            <View />
+          </Suspense>
+        </ChunkLoadErrorBoundary>
+      </StrictMode>,
+    );
+    const draft = screen.getByRole("textbox", { name: "Unsaved draft" });
+    fireEvent.change(draft, { target: { value: "Keep these unsaved bytes" } });
+
+    await screen.findByRole("alert");
+
+    expect(screen.getByRole("textbox", { name: "Unsaved draft" })).toBe(draft);
+    expect(draft).toHaveValue("Keep these unsaved bytes");
+    expect(reload).not.toHaveBeenCalled();
+    expect(sessionStorage.getItem("omnigent:chunk-reload-at")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Refresh page" }));
+    expect(reload).toHaveBeenCalledOnce();
+  });
+
   it("shows a manual retry if the reloaded page still cannot load its chunk", async () => {
     renderFailedImport();
     await screen.findByRole("alert");

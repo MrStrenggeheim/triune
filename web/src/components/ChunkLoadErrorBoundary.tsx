@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 
 /** Suspense handles pending imports; rejected lazy imports need a fresh document. */
 export class ChunkLoadErrorBoundary extends Component<
-  { children: ReactNode },
+  { children: ReactNode; autoReload?: boolean },
   { failed: boolean }
 > {
   override state = { failed: false };
@@ -15,7 +15,7 @@ export class ChunkLoadErrorBoundary extends Component<
   }
 
   override componentDidCatch() {
-    reloadAfterChunkError();
+    if (this.props.autoReload !== false) reloadAfterChunkError();
   }
 
   override render() {
