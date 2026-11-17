@@ -23,8 +23,20 @@ def record_tail_geometry(page: Page, *, scroll_to_bottom: bool = True) -> dict:
             .find(node => node.getBoundingClientRect().height > 0);
           const scroller = log.firstElementChild;
           if (scrollToBottom) scroller.scrollTop = scroller.scrollHeight;
-          await new Promise(resolve =>
-            requestAnimationFrame(() => requestAnimationFrame(resolve)));
+          const ledger = [];
+          const deadline = performance.now() + 2000;
+          let previous = '', stable = 0, settled = false, frame = 0;
+          while (performance.now() < deadline) {
+            await new Promise(requestAnimationFrame);
+            frame++;
+            const dimensions = [scroller.scrollHeight, scroller.clientHeight, scroller.scrollTop];
+            const key = JSON.stringify(dimensions);
+            const distance = dimensions[0] - dimensions[1] - dimensions[2];
+            stable = key === previous ? stable + 1 : 0;
+            if (key !== previous) ledger.push({frame,dimensions,distance});
+            previous = key;
+            if (stable >= 6 && distance <= 2) { settled = true; break; }
+          }
           const content = scroller.firstElementChild;
           const selector = '[data-testid="message-bubble"], [data-testid="working-indicator"]';
           const items = [...content.querySelectorAll(selector)]
@@ -39,6 +51,7 @@ def record_tail_geometry(page: Page, *, scroll_to_bottom: bool = True) -> dict:
           const shelf = document.querySelector('[data-testid="composer-attention-shelf"]');
           const tail = content.lastElementChild;
           return {item,body,viewport,padding,composer:rect(composer),shelf:rect(shelf),
+            settled,frame,ledger,
             contentExcess:body.bottom-padding-item.bottom,
             viewportGap:viewport.bottom-item.bottom,
             scrollRange:scroller.scrollHeight-scroller.clientHeight,
@@ -142,6 +155,7 @@ def test_tail_spacing_survives_pending_reload_and_completion(
         ):
             page.get_by_role("button", name="Send", exact=True).click()
         expect(page.locator('[data-role="user"]').filter(has_text=text)).to_have_count(1)
+        pending[-1]["item_id"] = chat.event_posts[-1]["body"]["data"]["stable_id"]
     capture("pending")
     chat.update_session(pending_inputs=pending)
     page.reload()
@@ -151,9 +165,9 @@ def test_tail_spacing_survives_pending_reload_and_completion(
     ).to_have_count(1)
     capture("reload-running")
     consumed = []
-    for index, item in enumerate(pending, 1):
+    for item in pending:
         saved = message_item(
-            f"spacing-consumed-{index}",
+            item["item_id"],
             "user",
             item["content"][0]["text"],
             response_id="spacing-turn",
@@ -191,12 +205,13 @@ def test_tail_spacing_survives_pending_reload_and_completion(
     capture("complete")
     page.reload()
     chat.wait_for_stream()
-    expect(page.locator('[data-message-id="spacing-consumed-2"]')).to_have_count(1)
+    expect(page.locator(f'[data-message-id="{pending[-1]["item_id"]}"]')).to_have_count(1)
     capture("reload-complete")
     composer.fill("\n".join(f"Draft line {index}" for index in range(12)))
     capture("resized-composer", scroll=False)
     page.screenshot(path=str(artifacts / "tail-complete.png"), full_page=True)
     for phase, geometry in measurements.items():
+        assert geometry["settled"], (phase, geometry["ledger"])
         assert geometry["contentExcess"] == pytest.approx(0, abs=1), (phase, geometry)
         assert geometry["viewportGap"] == pytest.approx(geometry["padding"], abs=2), (
             phase,

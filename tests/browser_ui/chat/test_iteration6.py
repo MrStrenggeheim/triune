@@ -486,9 +486,10 @@ def _agent_popup_geometry(
     first = journey.chats[0]
     _evidence(output_path, "fixture-progress", {"action": "seed agent popup"})
     child = _seed_agent_popup(journey, contract)
-    # Changes detaches this chat; an old mock socket may stay connected until heartbeat.
+    # Phone layout hides the old pane; desktop can retain its live membership.
     before_generation = first.stream.connection_generation
-    first.wait_for_stream(timeout=8)
+    if page.viewport_size["width"] < 768 or not first.stream.connected:
+        first.wait_for_stream(timeout=8)
     _evidence(
         output_path,
         "agents-stream-ready",

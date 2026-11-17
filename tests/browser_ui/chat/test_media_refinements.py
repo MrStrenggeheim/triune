@@ -32,7 +32,7 @@ def test_preview_footer_density_and_gallery_controls(
         )
         chat.contract.route(
             chat.contract._matcher(route + "/content"),
-            lambda request, data=png: request.fulfill(body=data, content_type="image/png"),
+            lambda route, _request, data=png: route.fulfill(body=data, content_type="image/png"),
         )
         item["content"].append({"type": "input_image", "file_id": name, "filename": f"{name}.png"})
     chat.set_items([item])

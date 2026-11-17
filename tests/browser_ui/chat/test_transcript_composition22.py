@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -69,7 +70,7 @@ def test_media_slots_agent_bar_and_table_survive_reload(
         )
         chat.contract.route(
             chat.contract._matcher(resource + "/content"),
-            lambda route, data=body, content_type=mime: route.fulfill(
+            lambda route, _request, data=body, content_type=mime: route.fulfill(
                 body=data, content_type=content_type
             ),
         )
@@ -125,12 +126,14 @@ def test_media_slots_agent_bar_and_table_survive_reload(
     assert first["x"] + first["width"] <= second["x"] + 1
     expect(page.get_by_role("table").locator('[data-streamdown="strong"],strong')).to_have_count(2)
     expect(page.get_by_role("table")).not_to_contain_text("**")
-    worked = page.get_by_text("Worked", exact=True)
-    if worked.count():
-        worked.click()
-    summary = page.get_by_text("Ran 1 shell command, 1 subagent", exact=True)
-    if summary.count():
-        summary.click()
+    for fold in page.get_by_role("button", name="Worked", exact=True).all():
+        if fold.get_attribute("aria-expanded") != "true":
+            fold.click()
+    for summary in page.get_by_role(
+        "button", name=re.compile(r"^(Ran 1 shell command(?:, 1 subagent)?|1 subagent)$")
+    ).all():
+        if summary.get_attribute("aria-expanded") != "true":
+            summary.click()
     tool = page.locator('[data-slot="collapsible-trigger"]').filter(has_text="printf audit")
     expect(tool).to_have_count(1)
     card = page.get_by_test_id("subagent-activity")

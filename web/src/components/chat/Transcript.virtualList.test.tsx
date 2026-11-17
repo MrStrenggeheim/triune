@@ -4,6 +4,8 @@ import {
   readTranscriptReaderCheckpoint,
   rememberTranscriptReaderCheckpoint,
   setTranscriptReaderHydrator,
+  TranscriptReaderContext,
+  transcriptReaderScope,
   type TranscriptReaderRestoreRequest,
 } from "@/lib/transcriptReaderCheckpoint";
 import { ResourceViewIdContext } from "@/lib/panelFolder";
@@ -24,6 +26,8 @@ import * as chatStore from "@/store/chatStore";
 import { conversationRegistry } from "@/store/conversationRegistry";
 import * as scopedChat from "@/workbench/ScopedChatStore";
 import { Conversation, ConversationContent } from "@/components/ai-elements/conversation";
+import { ConversationScopeContext } from "./conversationScope";
+import { AwaitingAgentMessages, BubbleView } from "./chatBubbleParts";
 import {
   isNativeFindShortcut,
   Transcript,
@@ -52,6 +56,60 @@ const assistantBubble: Extract<Bubble, { kind: "assistant" }> = {
   error: null,
   items: [{ kind: "text", itemId: "assistant-1", text: "hello back", final: true }],
 };
+
+it("keeps child prompt disclosure in its own checkpoint while reparenting", () => {
+  const client = new QueryClient();
+  const parentOwner = Object.freeze({
+    conversationId: "prompt-parent",
+    viewId: "prompt-parent",
+    scope: transcriptReaderScope(),
+  });
+  const pendingBubble: Extract<Bubble, { kind: "user" }> = {
+    kind: "user",
+    itemId: "child-pending",
+    userAuthored: true,
+    pending: true,
+    awaitingAgent: true,
+    content: [{ type: "input_text", text: "Child prompt ".repeat(1100) }],
+  };
+  const view = (waiting: boolean) => (
+    <QueryClientProvider client={client}>
+      <MemoryRouter>
+        <TranscriptReaderContext.Provider value={parentOwner}>
+          <ConversationScopeContext.Provider value="prompt-child">
+            {waiting ? (
+              <AwaitingAgentMessages bubbles={[pendingBubble]} />
+            ) : (
+              <div>
+                <BubbleView
+                  bubble={{
+                    ...pendingBubble,
+                    itemId: "child-canonical",
+                    stableKey: "child-pending",
+                    pending: false,
+                  }}
+                />
+              </div>
+            )}
+          </ConversationScopeContext.Provider>
+        </TranscriptReaderContext.Provider>
+      </MemoryRouter>
+    </QueryClientProvider>
+  );
+  try {
+    const rendered = render(view(true));
+    fireEvent.click(screen.getByRole("button", { name: /Show full prompt/ }));
+    expect(
+      Object.values(readTranscriptReaderCheckpoint("prompt-child")?.disclosures ?? {}),
+    ).toContainEqual({ open: true });
+    expect(readTranscriptReaderCheckpoint("prompt-parent")?.disclosures).toBeUndefined();
+    rendered.rerender(view(false));
+    expect(screen.getByRole("button", { name: "Collapse prompt" })).toBeVisible();
+  } finally {
+    cleanup();
+    client.clear();
+  }
+});
 
 it.each([false, true])(
   "groups unread inputs and promotes exact receipts (native find: %s)",
@@ -200,6 +258,86 @@ it.each(["completed", "working", "pending"] as const)(
         else if (phase === "working") expect(tail).toBe(screen.getByTestId("working-indicator"));
         else expect(tail).toContainElement(screen.getByText("Bottom message"));
       }
+    } finally {
+      cleanup();
+      useChatStore.setState(previous);
+      client.clear();
+    }
+  },
+);
+
+it.each([false, true])(
+  "retains an expanded pending prompt after consumption (native find: %s)",
+  (nativeFind) => {
+    const previous = useChatStore.getState();
+    const content = [
+      {
+        type: "input_text" as const,
+        text: "Long prompt ".repeat(1100) + "Visible final sentence.",
+      },
+    ];
+    useChatStore.setState({
+      conversationId: `expanded-pending-${nativeFind}`,
+      blocks: [],
+      activeResponse: null,
+      sessionStatus: "running",
+      pendingUserMessages: [
+        { tempId: "pending-long", stableId: "canonical-long", sentMidTurn: true, content },
+      ],
+    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    try {
+      render(
+        <QueryClientProvider client={client}>
+          <MemoryRouter>
+            <Transcript
+              hostId={null}
+              setConversationEl={() => {}}
+              containerEl={null}
+              scroller={null}
+              setScroller={() => {}}
+              sendScrollNonce={0}
+              hasMoreHistory={false}
+              loadingMoreHistory={false}
+              isMobileViewport
+              showsWorking
+              agentsError={null}
+              sandboxLaunching={false}
+              spacerMeasureRef={{ current: null }}
+            />
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+      if (nativeFind) fireEvent.keyDown(window, { key: "f", ctrlKey: true });
+      fireEvent.click(screen.getByRole("button", { name: /Show full prompt/ }));
+      expect(screen.getByRole("button", { name: "Collapse prompt" })).toBeVisible();
+      expect(screen.getByTestId("awaiting-agent-messages")).toHaveTextContent(
+        "Visible final sentence.",
+      );
+      act(() =>
+        useChatStore.setState({
+          pendingUserMessages: [],
+          blocks: [
+            {
+              type: "user_message",
+              userAuthored: true,
+              stableKey: "pending-long",
+              content,
+              ctx: {
+                itemId: "canonical-long",
+                responseId: "turn",
+                agent: null,
+                depth: 0,
+                turn: 0,
+                timestamp: 0,
+              },
+            },
+          ],
+        }),
+      );
+      expect(screen.queryByTestId("awaiting-agent-messages")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Collapse prompt" })).toBeVisible();
+      expect(screen.getByTestId("message-bubble")).toHaveTextContent("Visible final sentence.");
     } finally {
       cleanup();
       useChatStore.setState(previous);

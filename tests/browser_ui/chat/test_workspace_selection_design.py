@@ -13,7 +13,7 @@ import pytest
 from playwright.sync_api import Locator, Page, Request, Route, expect
 
 from tests.browser_ui.chat.session_contract import list_payload, message_item
-from tests.browser_ui.chat.test_iteration6 import _navigation
+from tests.browser_ui.chat.test_iteration6 import _close_phone_navigation, _navigation
 from tests.browser_ui.chat.test_unified_workspace import (
     WorkspaceJourney,
     _capture,
@@ -31,14 +31,13 @@ from tests.browser_ui.conftest import BrowserContract
 
 
 def _close_navigation(page: Page) -> None:
-    scrim = page.get_by_test_id("sidebar-scrim")
-    if scrim.is_visible() and scrim.get_attribute("aria-hidden") == "false":
-        scrim.click(position={"x": page.viewport_size["width"] - 4, "y": 150})
-        expect(page.get_by_role("button", name="Open navigation", exact=True)).to_be_visible()
-        return
     close = page.get_by_role("button", name="Close navigation", exact=True)
     if close.is_visible():
-        close.click()
+        if page.viewport_size["width"] < 768:
+            expect(page.get_by_test_id("sidebar-scrim")).to_have_attribute("tabindex", "0")
+            _close_phone_navigation(page)
+        else:
+            close.click()
     expect(page.get_by_role("button", name="Open navigation", exact=True)).to_be_visible()
 
 
@@ -278,11 +277,7 @@ def test_uploaded_artifact_fence_retains_appearance_state_and_originals(
 
     _close_navigation(page)
     _navigation(page).get_by_test_id("settings-button").click()
-    if width < 768:
-        page.get_by_role("combobox", name="Settings section", exact=True).click()
-        page.get_by_role("option", name="Appearance", exact=True).click()
-    else:
-        page.get_by_test_id("settings-nav-appearance").click()
+    page.get_by_test_id("settings-nav-appearance").click()
     expect(outer).to_be_hidden()
     page.get_by_test_id("ui-font-family-input").fill("Georgia")
     size = page.get_by_test_id("ui-font-size-input")
@@ -770,6 +765,7 @@ def test_settings_from_closed_navigation_retains_draft_and_approved_chrome(
             expect(page.get_by_test_id("settings-nav-general")).to_be_in_viewport()
             expect(page.get_by_test_id("settings-nav-appearance")).to_be_in_viewport()
         else:
+            _close_navigation(page)
             chooser = page.get_by_role("combobox", name="Settings section", exact=True)
             expect(chooser).to_be_in_viewport()
             chooser.click()
@@ -798,7 +794,13 @@ def test_settings_from_closed_navigation_retains_draft_and_approved_chrome(
         page.go_back()
         expect(page).to_have_url(chat.url)
         expect(composer).to_have_value("Draft survives settings on desktop and phone")
-        expect(page.get_by_role("button", name="Open navigation", exact=True)).to_be_visible()
+        expect(
+            page.get_by_role(
+                "button",
+                name="Close navigation" if name == "desktop" else "Open navigation",
+                exact=True,
+            )
+        ).to_be_visible()
         _capture(page, output_path, f"{name}-draft-after-settings")
     assert chat.event_posts == []
     assert browser_errors == []

@@ -185,7 +185,7 @@ export function ComposerPermissionPicker({
   onSelect: (value: string) => void;
   testIdPrefix?: string;
 }) {
-  const help = `${label}: ${value}`;
+  const help = value === label ? label : `${label}: ${value}`;
   return (
     <DropdownMenu>
       <DisabledActionTooltip reason={disabled ? disabledReason : undefined} label={help}>
@@ -199,7 +199,7 @@ export function ComposerPermissionPicker({
               COMPOSER_CONTROL_TEXT_CLASS,
               loading && "disabled:opacity-100",
             )}
-            aria-label={`${label}: ${value}`}
+            aria-label={help}
             tooltip={disabled && disabledReason ? disabledReason : help}
             tooltipDescription={
               <span className="flex flex-col gap-1">

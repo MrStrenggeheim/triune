@@ -1446,7 +1446,7 @@ export const VirtualBubbleList = memo(function VirtualBubbleList({
   return (
     <div
       ref={wrapperRef}
-      className="flex w-full flex-col"
+      className="flex w-full flex-col transition-none"
       style={{
         rowGap: ROW_GAP_PX,
         paddingTop: firstItem ? firstItem.start - scrollMargin : 0,

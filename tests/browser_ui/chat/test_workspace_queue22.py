@@ -19,6 +19,20 @@ from tests.browser_ui.conftest import BrowserContract
 pytestmark = pytest.mark.timeout(90)
 
 
+def _set_density(page: Page, density: str) -> None:
+    """Publish the preference so shell restoration cannot race geometry measurements."""
+    page.evaluate(
+        """async value => {
+          localStorage.setItem('omnigent:list-density', value);
+          document.documentElement.dataset.listDensity = value;
+          window.dispatchEvent(new Event('omnigent:list-density-change'));
+          await new Promise(resolve =>
+            requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        }""",
+        density,
+    )
+
+
 def test_footer_settings_tab_geometry_and_notification_disclosure(
     page: Page,
     workspace_journey: WorkspaceJourney,
@@ -47,7 +61,7 @@ def test_footer_settings_tab_geometry_and_notification_disclosure(
         "stroke-width", "2.5"
     )
     for density in ("comfortable", "compact"):
-        page.evaluate("value => document.documentElement.dataset.listDensity = value", density)
+        _set_density(page, density)
         tab = page.locator(".dock-tab-group").first
         icon = box(tab.locator(".dock-tab-type-icon"))
         close = box(tab.locator(".dock-tab-close"))
@@ -63,7 +77,7 @@ def test_footer_settings_tab_geometry_and_notification_disclosure(
                 icon["x"] + icon["width"] / 2, abs=1
             )
         _capture(page, output_path, f"tab-{density}")
-    page.evaluate("value => document.documentElement.dataset.listDensity = value", appearance[2])
+    _set_density(page, appearance[2])
     navigation = _navigation(page)
     settings = navigation.get_by_test_id("settings-button")
     expect(settings).to_be_visible()
@@ -121,6 +135,8 @@ def test_footer_settings_tab_geometry_and_notification_disclosure(
     expect(more).to_be_visible()
     line_height = paragraph.evaluate("element => parseFloat(getComputedStyle(element).lineHeight)")
     collapsed = box(paragraph)
+    suffix = box(paragraph.locator(".notification-description-disclosure"))
+    assert suffix["height"] == pytest.approx(line_height, abs=1)
     assert collapsed["height"] == pytest.approx(line_height * 2, abs=1)
     more_box = box(more)
     assert more_box["y"] >= collapsed["y"] + line_height - 1

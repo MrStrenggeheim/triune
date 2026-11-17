@@ -106,16 +106,18 @@
   position: absolute;
   right: 0;
   bottom: 0;
-  width: 3.5em;
+  width: 5.5em;
   padding-left: 0.25em;
   text-align: right;
+  white-space: nowrap;
   background: var(--popover);
 }
 .notification-description-disclosure-space {
   display: inline-block;
-  width: 3.5em;
+  width: 5.5em;
 }
 .notification-toast-scroll {
+  pointer-events: none;
   display: flex;
   min-height: 0;
   flex-direction: column;
@@ -125,4 +127,8 @@
   margin: -16px;
   padding: 16px;
   max-height: calc(var(--notification-available-height) + 32px);
+}
+
+.notification-toast-scroll > * {
+  pointer-events: auto;
 }

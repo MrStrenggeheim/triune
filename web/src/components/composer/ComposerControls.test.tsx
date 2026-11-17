@@ -237,7 +237,7 @@ describe("shared composer controls", () => {
         onSelect={vi.fn()}
       />,
     );
-    fireEvent.keyDown(screen.getByRole("button", { name: "Permission mode: Permission mode" }), {
+    fireEvent.keyDown(screen.getByRole("button", { name: "Permission mode" }), {
       key: "ArrowDown",
     });
     for (const mode of ["default", "auto"]) {

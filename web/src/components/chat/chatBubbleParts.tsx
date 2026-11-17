@@ -1,4 +1,10 @@
 import { useTranscriptDisclosureAnchor } from "@/hooks/useTranscriptDisclosureAnchor";
+import { useResourceViewId } from "@/lib/panelFolder";
+import {
+  TranscriptReaderContext,
+  transcriptReaderScope,
+  useTranscriptDisclosureState,
+} from "@/lib/transcriptReaderCheckpoint";
 import { markInputLifecycle } from "@/lib/inputDiagnostics";
 import { ContentSkeleton, OperationStatus } from "@/components/ui/loading";
 // Modified for Triune.
@@ -17,6 +23,7 @@ import {
   useContext,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -807,13 +814,32 @@ function SystemBubble({ bubble }: { bubble: Extract<Bubble, { kind: "user" }> })
   );
 }
 
-function UserBubble({
-  bubble,
-  origin,
-}: {
+interface UserBubbleProps {
   bubble: Extract<Bubble, { kind: "user" }>;
   origin: "human" | "system" | "external";
-}) {
+}
+
+function UserBubble(props: UserBubbleProps) {
+  const inherited = useContext(TranscriptReaderContext);
+  const defaultConversationId = useScopedConversationId();
+  const scopedConversationId = useContext(ConversationScopeContext);
+  const conversationId = scopedConversationId ?? inherited?.conversationId ?? defaultConversationId;
+  const viewId = useResourceViewId() ?? conversationId ?? undefined;
+  const scope = transcriptReaderScope();
+  // Side-chat panes share the same checkpoint owner even without a Transcript wrapper.
+  const owner = useMemo(
+    () =>
+      inherited?.conversationId === conversationId ? inherited : { conversationId, viewId, scope },
+    [inherited, conversationId, viewId, scope],
+  );
+  return (
+    <TranscriptReaderContext.Provider value={owner}>
+      <UserBubbleContent {...props} />
+    </TranscriptReaderContext.Provider>
+  );
+}
+
+function UserBubbleContent({ bubble, origin }: UserBubbleProps) {
   const preserveDisclosure = useTranscriptDisclosureAnchor();
   const human = origin === "human";
   const useChatStore = useConversationChatStore();
@@ -849,7 +875,10 @@ function UserBubble({
   // Collapse long prompts by default to avoid expensive Markdown parsing and
   // a large DOM for text the user hasn't asked to read yet.
   const isLong = origin !== "system" && text.length > COLLAPSE_THRESHOLD;
-  const [isCollapsed, setIsCollapsed] = useState(isLong && !searchExpanded);
+  // Optimistic pend_N keys can repeat after reload; keep their choices document-local.
+  const promptKey = `prompt:${bubbleKey(bubble)}${bubble.pending || bubble.stableKey ? `:${performance.timeOrigin}` : ""}`;
+  const [savedOpen, rememberOpen] = useTranscriptDisclosureState(promptKey);
+  const [isCollapsed, setIsCollapsed] = useState(isLong && !(savedOpen ?? searchExpanded));
   useLayoutEffect(() => {
     if (searchExpanded) setIsCollapsed(false);
   }, [searchExpanded]);
@@ -944,7 +973,10 @@ function UserBubble({
                 <TooltipButton
                   type="button"
                   aria-expanded={!isCollapsed}
-                  onClick={() => setIsCollapsed((c) => !c)}
+                  onClick={() => {
+                    setIsCollapsed(!isCollapsed);
+                    rememberOpen(isCollapsed);
+                  }}
                   className="mt-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
                 >
                   {isCollapsed

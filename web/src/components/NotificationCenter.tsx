@@ -400,7 +400,7 @@ export function NotificationToasts(_props: ToasterProps) {
       role="region"
       aria-label="Notifications"
       aria-live="polite"
-      className="pointer-events-auto fixed z-[70] flex flex-col"
+      className="pointer-events-none fixed z-[70] flex flex-col"
       style={
         {
           ...bounds.style,

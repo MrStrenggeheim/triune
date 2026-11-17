@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -70,6 +71,7 @@ def test_pending_group_receipts_and_permission_copy(
     menu = page.get_by_test_id("composer-permission-menu")
     expect(menu.get_by_text("Only applies next turn", exact=True)).to_be_visible()
     page.keyboard.press("Escape")
+    stable_ids = []
     for index in (1, 2):
         chat.event_ack = {"queued": True, "pending_id": f"pending-{index}"}
         composer.fill(text)
@@ -77,6 +79,8 @@ def test_pending_group_receipts_and_permission_copy(
             lambda response: response.url.endswith(f"/{chat.session_id}/events")
         ):
             page.get_by_role("button", name="Send", exact=True).click()
+        stable_ids.append(chat.event_posts[-1]["body"]["data"]["stable_id"])
+    assert len(set(stable_ids)) == 2
     group = page.get_by_test_id("awaiting-agent-messages")
     users = group.locator('[data-role="user"]')
     hint = page.get_by_test_id("message-awaiting-agent")
@@ -100,6 +104,7 @@ def test_pending_group_receipts_and_permission_copy(
     pending = [
         {
             "pending_id": f"pending-{index}",
+            "item_id": stable_ids[index - 1],
             "sent_mid_turn": True,
             "content": [{"type": "input_text", "text": text}],
         }
@@ -111,7 +116,7 @@ def test_pending_group_receipts_and_permission_copy(
     expect(users).to_have_count(2)
     committed = []
     for index in (1, 2):
-        item = message_item(f"consumed-{index}", "user", text, response_id="busy-turn")
+        item = message_item(stable_ids[index - 1], "user", text, response_id="busy-turn")
         committed.append(item)
         chat.emit(
             {
@@ -131,7 +136,7 @@ def test_pending_group_receipts_and_permission_copy(
                 },
             }
         )
-        consumed = page.locator(f'[data-message-id="consumed-{index}"]')
+        consumed = page.locator(f'[data-message-id="{stable_ids[index - 1]}"]')
         expect(consumed).to_be_visible()
         expect(users).to_have_count(2 - index)
         bounds = consumed.bounding_box()
@@ -183,20 +188,30 @@ def test_tool_readers_stay_capped_after_expansion(
     worked = page.get_by_text("Worked", exact=True)
     if worked.count():
         worked.click()
+    group = page.get_by_text("Ran 1 shell command", exact=True)
+    if group.count():
+        group.click()
     trigger = page.locator('[data-slot="collapsible-trigger"]').filter(has_text=command)
     expect(trigger).to_have_count(1)
     trigger.click()
     expand = page.get_by_role("button", name="Expand", exact=True)
     expect(expand).to_have_count(1)
-    box = expand.locator("xpath=ancestor::*[@data-tool-reading-box]")
+    box = page.locator("[data-tool-reading-box]").last
     before = box.bounding_box()
     assert before is not None and before["height"] <= 321
+    expect(box.get_by_text(re.compile(r"[1-9][0-9,]* characters hidden"))).to_be_visible()
     expand.click()
     expect(page.get_by_role("button", name="Collapse", exact=True)).to_be_visible()
     after = box.bounding_box()
     assert after is not None and after["height"] == pytest.approx(before["height"], abs=1)
     scroll = box.locator("div.overflow-auto").first
     scroll.evaluate("node => node.scrollTop = node.scrollHeight")
-    expect(box.get_by_text("Line 149", exact=False)).to_be_visible()
+    last_line = box.get_by_text("Line 149", exact=False)
+    expect(last_line).to_be_visible()
+    assert scroll.evaluate("node => node.scrollTop > 0")
+    last_bounds, viewport = last_line.bounding_box(), scroll.bounding_box()
+    assert last_bounds is not None and viewport is not None
+    assert last_bounds["y"] >= viewport["y"] - 1
+    assert last_bounds["y"] + last_bounds["height"] <= viewport["y"] + viewport["height"] + 1
     Path(output_path).mkdir(parents=True, exist_ok=True)
     page.screenshot(path=str(Path(output_path) / "tool-expanded.png"), full_page=True)
