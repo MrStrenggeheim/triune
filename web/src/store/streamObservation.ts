@@ -4,13 +4,14 @@ import type { StreamSlot } from "./streamSlots";
 
 export const STREAM_SLOT_RETRY_MS = 1000;
 export const STREAM_SNAPSHOT_INTERVAL_MS = 5000;
+export const STREAM_SNAPSHOT_TIMEOUT_MS = 15_000;
 
 interface ObservationOptions {
   signal: AbortSignal;
   initialSlot?: StreamSlot;
   acquire: () => Promise<StreamSlot | null>;
   pump: (controller: AbortController, resumed: boolean) => Promise<void>;
-  catchUp: () => Promise<void>;
+  catchUp: (signal: AbortSignal) => Promise<void>;
   priority?: () => number;
   /** Tests and embedded hosts can supply their own document/focus state. */
   document?: Document;
@@ -26,19 +27,48 @@ const observers = new Set<Observer>();
 const snapshotWaiters: (() => void)[] = [];
 let activeSnapshots = 0;
 
-async function snapshotTurn(run: () => Promise<void>): Promise<void> {
-  if (activeSnapshots >= 2)
-    await new Promise<void>((resolve) => {
-      snapshotWaiters.push(resolve);
-    });
-  else activeSnapshots++;
-  try {
-    await run();
-  } finally {
-    const next = snapshotWaiters.shift();
-    if (next) next();
-    else activeSnapshots--;
-  }
+function snapshotTurn(signal: AbortSignal, run: () => Promise<void>): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    let cancelled = false;
+    const cancel = () => {
+      cancelled = true;
+      const index = snapshotWaiters.indexOf(start);
+      if (index >= 0) snapshotWaiters.splice(index, 1);
+      signal.removeEventListener("abort", cancel);
+      resolve();
+    };
+    const start = () => {
+      activeSnapshots++;
+      void Promise.resolve()
+        .then(async () => {
+          if (!signal.aborted) await run();
+        })
+        .then(resolve, (error: unknown) => {
+          if (!cancelled) reject(error);
+          else if (!(
+            typeof error === "object" &&
+            error !== null &&
+            "name" in error &&
+            error.name === "AbortError"
+          )) {
+            console.warn("Conversation snapshot failed after cancellation", error);
+          }
+        })
+        .finally(() => {
+          signal.removeEventListener("abort", cancel);
+          // Cancellation releases the observer immediately, but actual work keeps its slot.
+          activeSnapshots--;
+          snapshotWaiters.shift()?.();
+        });
+    };
+    if (signal.aborted) {
+      resolve();
+      return;
+    }
+    signal.addEventListener("abort", cancel, { once: true });
+    if (activeSnapshots >= 2) snapshotWaiters.push(start);
+    else start();
+  });
 }
 
 /** Pane focus changes can reclaim a lower-priority observation without rebinding its model. */
@@ -55,6 +85,8 @@ export async function observeConversationStream(options: ObservationOptions): Pr
   // Non-browser hosts have no window-focus contract (including jsdom).
   if (typeof navigator === "undefined" || !navigator.locks) focused = true;
   let attempt: AbortController | null = null;
+  let snapshot: AbortController | null = null;
+  let snapshotPriority = 0;
   let wake: (() => void) | undefined;
   let lastCatchUp = Date.now();
   let resumed = false;
@@ -68,12 +100,14 @@ export async function observeConversationStream(options: ObservationOptions): Pr
     );
   const changed = () => {
     if (!visible() || !focused || higherPriorityWaiting()) attempt?.abort();
+    if (!visible() || priority() > snapshotPriority) snapshot?.abort();
     wake?.();
   };
   const observer: Observer = { priority, waiting: true, changed };
   observers.add(observer);
   const focus = () => {
     focused = true;
+    snapshot?.abort();
     changed();
   };
   const blur = () => {
@@ -82,6 +116,7 @@ export async function observeConversationStream(options: ObservationOptions): Pr
   };
   const abort = () => {
     attempt?.abort();
+    snapshot?.abort();
     wake?.();
   };
   const pause = () =>
@@ -138,12 +173,24 @@ export async function observeConversationStream(options: ObservationOptions): Pr
         !options.signal.aborted &&
         Date.now() - lastCatchUp >= STREAM_SNAPSHOT_INTERVAL_MS
       ) {
-        // Serialized with the next retry; an exhausted budget never strands a pane.
         lastCatchUp = Date.now();
-        await snapshotTurn(async () => {
-          if (visible() && !options.signal.aborted) await options.catchUp();
-        });
+        const controller = new AbortController();
+        snapshot = controller;
+        snapshotPriority = priority();
+        const timeout = setTimeout(() => {
+          console.warn("Conversation snapshot timed out; observation will retry");
+          controller.abort();
+        }, STREAM_SNAPSHOT_TIMEOUT_MS);
+        try {
+          await snapshotTurn(controller.signal, async () => {
+            if (visible() && !options.signal.aborted) await options.catchUp(controller.signal);
+          });
+        } finally {
+          clearTimeout(timeout);
+          snapshot = null;
+        }
         resumed = true;
+        if (controller.signal.aborted) continue;
       }
       await pause();
     }

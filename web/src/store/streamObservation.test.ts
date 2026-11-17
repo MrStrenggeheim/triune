@@ -4,6 +4,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import {
   observeConversationStream,
   STREAM_SNAPSHOT_INTERVAL_MS,
+  STREAM_SNAPSHOT_TIMEOUT_MS,
   refreshConversationObservationPriority,
 } from "./streamObservation";
 import { getStreamSlotManager, resetStreamSlotManager } from "./streamSlots";
@@ -14,6 +15,7 @@ afterEach(async () => {
   await vi.advanceTimersByTimeAsync(0);
   vi.useRealTimers();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
   resetStreamSlotManager();
 });
 
@@ -39,10 +41,10 @@ function observe(
   page: ReturnType<typeof browserPage>,
   acquire: Parameters<typeof observeConversationStream>[0]["acquire"],
   priority = () => 1,
+  catchUp = vi.fn(async (_signal: AbortSignal) => {}),
 ) {
   const binding = new AbortController();
   controllers.push(binding);
-  const catchUp = vi.fn(async () => {});
   const pump = vi.fn(
     (controller: AbortController, _resumed: boolean) =>
       new Promise<void>((resolve) => {
@@ -203,4 +205,209 @@ it("limits snapshot work to two jobs and gives every queued visible pane a turn"
   }
   expect([...started].sort()).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
   expect(peak).toBe(2);
+});
+
+it("preempts a pending fallback on focus without waiting for its resolution", async () => {
+  vi.useFakeTimers();
+  vi.stubGlobal("navigator", { locks: {} });
+  const page = browserPage();
+  let finish!: () => void;
+  const catchUp = vi.fn(
+    (_signal: AbortSignal) =>
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const pane = observe(page, oneSlot(), () => 1, catchUp);
+  await vi.advanceTimersByTimeAsync(0);
+  page.window.dispatchEvent(new Event("blur"));
+  await vi.advanceTimersByTimeAsync(STREAM_SNAPSHOT_INTERVAL_MS);
+  expect(catchUp).toHaveBeenCalledTimes(1);
+  const snapshotSignal = catchUp.mock.calls[0]![0];
+  page.window.dispatchEvent(new Event("focus"));
+  await vi.advanceTimersByTimeAsync(0);
+  expect(snapshotSignal.aborted).toBe(true);
+  expect(pane.pump).toHaveBeenCalledTimes(2);
+  finish();
+  await vi.advanceTimersByTimeAsync(STREAM_SNAPSHOT_INTERVAL_MS);
+  expect(pane.pump).toHaveBeenCalledTimes(2);
+  expect(pane.pump.mock.calls[1]![0].signal.aborted).toBe(false);
+  pane.binding.abort();
+  await pane.done;
+});
+
+it.each(["focus", "hide", "dispose"] as const)(
+  "cancels queued fallback on %s without overadmitting unfinished work",
+  async (action) => {
+    vi.useFakeTimers();
+    vi.stubGlobal("navigator", { locks: {} });
+    const finish: (() => void)[] = [];
+    const panes = Array.from({ length: 3 }, () => {
+      const page = browserPage();
+      const catchUp = vi.fn(
+        (_signal: AbortSignal) =>
+          new Promise<void>((resolve) => {
+            finish.push(resolve);
+          }),
+      );
+      return { page, ...observe(page, oneSlot(), () => 1, catchUp) };
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    for (const pane of panes) pane.page.window.dispatchEvent(new Event("blur"));
+    await vi.advanceTimersByTimeAsync(STREAM_SNAPSHOT_INTERVAL_MS);
+    expect(finish).toHaveLength(2);
+    if (action === "focus") panes[2]!.page.window.dispatchEvent(new Event("focus"));
+    else if (action === "hide") panes[2]!.page.show(false);
+    else panes[2]!.binding.abort();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(panes[2]!.pump).toHaveBeenCalledTimes(action === "focus" ? 2 : 1);
+    expect(panes[2]!.catchUp).not.toHaveBeenCalled();
+    for (const pane of panes) pane.binding.abort();
+    await Promise.all(panes.map((pane) => pane.done));
+
+    const nextPage = browserPage();
+    const next = observe(nextPage, async () => null);
+    await vi.advanceTimersByTimeAsync(STREAM_SNAPSHOT_INTERVAL_MS);
+    expect(next.catchUp).not.toHaveBeenCalled();
+    finish.shift()!();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(next.catchUp).toHaveBeenCalledTimes(1);
+    finish.shift()!();
+    await vi.advanceTimersByTimeAsync(0);
+    next.binding.abort();
+    await next.done;
+    expect(panes[2]!.catchUp).not.toHaveBeenCalled();
+  },
+);
+
+it("aborts timed-out snapshot IO and retries observation with a fresh signal", async () => {
+  vi.useFakeTimers();
+  const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const catchUp = vi.fn(
+    (signal: AbortSignal) =>
+      new Promise<void>((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), {
+          once: true,
+        });
+      }),
+  );
+  const acquire = vi.fn(async () => null);
+  const pane = observe(browserPage(), acquire, () => 1, catchUp);
+  await vi.advanceTimersByTimeAsync(STREAM_SNAPSHOT_INTERVAL_MS);
+  const firstSignal = catchUp.mock.calls[0]![0];
+  const acquisitions = acquire.mock.calls.length;
+  await vi.advanceTimersByTimeAsync(STREAM_SNAPSHOT_TIMEOUT_MS);
+  expect(firstSignal.aborted).toBe(true);
+  expect(acquire.mock.calls.length).toBeGreaterThan(acquisitions);
+  expect(catchUp).toHaveBeenCalledTimes(2);
+  expect(catchUp.mock.calls[1]![0]).not.toBe(firstSignal);
+  expect(catchUp.mock.calls[1]![0].aborted).toBe(false);
+  expect(warning).toHaveBeenCalledExactlyOnceWith(
+    "Conversation snapshot timed out; observation will retry",
+  );
+  pane.binding.abort();
+  await pane.done;
+});
+
+it("aborts running fallback on hide and resumes immediately when shown", async () => {
+  vi.useFakeTimers();
+  let available = false;
+  const slot = oneSlot();
+  const page = browserPage();
+  const catchUp = vi.fn(
+    (signal: AbortSignal) =>
+      new Promise<void>((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), {
+          once: true,
+        });
+      }),
+  );
+  const pane = observe(
+    page,
+    () => (available ? slot() : Promise.resolve(null)),
+    () => 1,
+    catchUp,
+  );
+  await vi.advanceTimersByTimeAsync(STREAM_SNAPSHOT_INTERVAL_MS);
+  page.show(false);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(catchUp.mock.calls[0]![0].aborted).toBe(true);
+  available = true;
+  page.show(true);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(pane.pump).toHaveBeenCalledTimes(1);
+  pane.binding.abort();
+  await pane.done;
+});
+
+it("reports unexpected late snapshot failure after cancellation", async () => {
+  vi.useFakeTimers();
+  const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+  let fail!: (error: Error) => void;
+  const catchUp = vi.fn(
+    (_signal: AbortSignal) =>
+      new Promise<void>((_resolve, reject) => {
+        fail = reject;
+      }),
+  );
+  const pane = observe(
+    browserPage(),
+    async () => null,
+    () => 1,
+    catchUp,
+  );
+  await vi.advanceTimersByTimeAsync(STREAM_SNAPSHOT_INTERVAL_MS);
+  pane.binding.abort();
+  await pane.done;
+  const error = new Error("snapshot failed");
+  fail(error);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(warning).toHaveBeenCalledExactlyOnceWith(
+    "Conversation snapshot failed after cancellation",
+    error,
+  );
+});
+
+it("preempts fallback when its pane gains stream priority", async () => {
+  vi.useFakeTimers();
+  const page = browserPage();
+  const acquire = oneSlot();
+  let selected = "a";
+  const a = observe(page, acquire, () => (selected === "a" ? 2 : 1));
+  let finish!: () => void;
+  const catchUp = vi.fn(
+    (_signal: AbortSignal) =>
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const b = observe(page, acquire, () => (selected === "b" ? 2 : 1), catchUp);
+  await vi.advanceTimersByTimeAsync(STREAM_SNAPSHOT_INTERVAL_MS);
+  expect(catchUp).toHaveBeenCalledTimes(1);
+  selected = "b";
+  refreshConversationObservationPriority();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(catchUp.mock.calls[0]![0].aborted).toBe(true);
+  expect(b.pump).toHaveBeenCalledTimes(1);
+  finish();
+  a.binding.abort();
+  b.binding.abort();
+  await Promise.all([a.done, b.done]);
+});
+
+it("propagates an unexpected active snapshot failure", async () => {
+  vi.useFakeTimers();
+  const error = new Error("snapshot failed");
+  const catchUp = vi.fn(async (_signal: AbortSignal) => {
+    throw error;
+  });
+  const pane = observe(
+    browserPage(),
+    async () => null,
+    () => 1,
+    catchUp,
+  );
+  const rejected = expect(pane.done).rejects.toBe(error);
+  await vi.advanceTimersByTimeAsync(STREAM_SNAPSHOT_INTERVAL_MS);
+  await rejected;
 });

@@ -108,6 +108,7 @@ class _TranscriptSocket:
                     "reset_revision": 0,
                     "stream_epoch": "overnight-browser-epoch",
                 }
+                self.event(sid, {"type": "session.heartbeat", **boundary}, socket=socket)
                 for phase in ("start", "complete"):
                     self.event(
                         sid,

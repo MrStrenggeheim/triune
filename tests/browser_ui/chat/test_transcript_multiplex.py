@@ -26,6 +26,98 @@ from tests.browser_ui.chat.test_unified_workspace import (
 from tests.browser_ui.conftest import BrowserContract
 
 
+@pytest.mark.parametrize("width", [1440, 390], ids=["desktop", "phone"])
+def test_readiness_heartbeat_waits_for_history_then_displays_live_progress(
+    page: Page,
+    workspace_journey: WorkspaceJourney,
+    browser_contract: BrowserContract,
+    browser_errors: list[str],
+    width: int,
+) -> None:
+    """A delayed initial replay must keep its subscription after the ready heartbeat."""
+    chat = workspace_journey.chats[0]
+    saved = {
+        **message_item("ready-saved", "assistant", "Saved reply", response_id="ready-turn"),
+        "position": 0,
+        "phase": "final_answer",
+    }
+    chat.set_items([saved])
+    sockets: list[WebSocketRoute] = []
+    subscriptions: list[dict] = []
+    boundary = {
+        "conversation_id": chat.session_id,
+        "last_position": 0,
+        "last_item_id": saved["id"],
+        "item_count": 1,
+        "item_revision": 1,
+        "reset_revision": 0,
+        "stream_epoch": "ready-first-browser",
+    }
+
+    def event(payload: dict) -> None:
+        sockets[-1].send(
+            json.dumps({"type": "session.event", "session_id": chat.session_id, "event": payload})
+        )
+
+    def attach(socket: WebSocketRoute) -> None:
+        sockets.append(socket)
+
+        def received(raw: str | bytes) -> None:
+            command = json.loads(raw)
+            if command.get("type") == "subscribe":
+                subscriptions.append(command)
+                event({"type": "session.heartbeat", **boundary})
+
+        socket.on_message(received)
+        socket.send(json.dumps({"type": "capabilities", "transcript_stream": 1}))
+
+    browser_contract.websocket("**/v1/sessions/updates*", attach)
+    page.add_init_script("""(() => {
+      window.__readyHeartbeatCount = 0;
+      const Original = window.WebSocket;
+      window.WebSocket = class extends Original {
+        constructor(...args) {
+          super(...args);
+          this.addEventListener('message', event => {
+            if (typeof event.data !== 'string') return;
+            const frame = JSON.parse(event.data);
+            if (frame.type === 'session.event' && frame.event?.type === 'session.heartbeat')
+              window.__readyHeartbeatCount++;
+          });
+        }
+      };
+    })()""")
+    page.set_viewport_size({"width": width, "height": 844 if width == 390 else 1000})
+    page.goto(chat.url)
+    page.wait_for_function("window.__readyHeartbeatCount > 0")
+    # Hold replay after readiness, allowing the client to process that frame alone.
+    page.wait_for_timeout(250)
+    assert len(subscriptions) == 1
+    event({"type": "session.sync", "phase": "start", "reset": True, **boundary})
+    event({"type": "response.output_item.done", "item": saved})
+    event({"type": "session.sync", "phase": "complete", "reset": True, **boundary})
+    view = _view(page, "Chat A")
+    expect(view.get_by_text("Saved reply", exact=True)).to_be_visible()
+    composer = view.get_by_label("Message the agent", exact=True)
+    composer.fill("Preserve my draft")
+    for position in (1, 2):
+        live = {
+            **message_item(
+                f"ready-live-{position}",
+                "assistant",
+                f"Live progress {position}",
+                response_id=f"ready-live-turn-{position}",
+            ),
+            "position": position,
+            "phase": "commentary",
+        }
+        event({"type": "response.output_item.done", "item": live})
+        expect(view.get_by_text(f"Live progress {position}", exact=True)).to_be_visible()
+    assert len(subscriptions) == 1
+    expect(composer).to_have_value("Preserve my draft")
+    assert browser_errors == []
+
+
 @pytest.mark.parametrize(
     ("arrival", "input_order", "echo_type"),
     [
@@ -106,6 +198,7 @@ def test_shared_transcript_orders_and_recovers_without_reloading(
                 session_id = message["session_id"]
                 assert session_id in chats
                 state = boundary(session_id)
+                event(session_id, {"type": "session.heartbeat", **state})
                 event(
                     session_id, {"type": "session.sync", "phase": "start", "reset": True, **state}
                 )
@@ -545,6 +638,14 @@ def test_bounded_initial_history_preserves_an_older_reader_window(
                     {
                         "type": "session.event",
                         "session_id": other.session_id,
+                        "event": {"type": "session.heartbeat", **other_boundary},
+                    },
+                )
+                send_message(
+                    socket,
+                    {
+                        "type": "session.event",
+                        "session_id": other.session_id,
                         "event": {
                             **other_boundary,
                             "type": "session.sync",
@@ -576,6 +677,7 @@ def test_bounded_initial_history_preserves_an_older_reader_window(
                 )
                 return
             subscriptions.append(message)
+            send_event(socket, {"type": "session.heartbeat", **checkpoint()})
             if (
                 message.get("after_position") == items[-1]["position"]
                 and message.get("after_revision") == revision

@@ -120,6 +120,7 @@ import {
   revealConversationHistoryPosition,
 } from "./chatStore";
 import { conversationRegistry } from "./conversationRegistry";
+import * as streamObservation from "./streamObservation";
 import { markSessionCreated, resetInteractionTelemetryForTests } from "./interactionTelemetry";
 import {
   resetStreamSlotManager,
@@ -14733,6 +14734,131 @@ describe("chatStore — startStreamPump reconnect loop", () => {
     await loop;
   });
 
+  it.each([
+    ["multiplex", false],
+    ["multiplex", true],
+    ["windowed-sse", false],
+    ["windowed-sse", true],
+    ["legacy-sse", false],
+    ["legacy-sse", true],
+  ] as const)(
+    "finishes requested sync after readiness heartbeats (%s, saved item %s)",
+    async (transport, hasItem) => {
+      const id = "ready-heartbeat";
+      const item = { ...assistantMessage("saved", "Saved answer"), position: 0 };
+      seedSession(id, hasItem ? [item] : []);
+      const checkpoint = {
+        reset: true,
+        stream_epoch: "ready-epoch",
+        item_revision: 0,
+        reset_revision: 0,
+        item_count: hasItem ? 1 : 0,
+        last_position: hasItem ? 0 : -1,
+        last_item_id: hasItem ? item.id : null,
+      };
+      const opens: { sink: StreamSink; signal: AbortSignal; position?: number }[] = [];
+      const response = (signal: AbortSignal, position?: number) => {
+        const sink = pushableStream();
+        let closed = false;
+        const close = sink.close;
+        sink.close = () => {
+          if (closed) return;
+          closed = true;
+          close();
+        };
+        signal.addEventListener("abort", sink.close, { once: true });
+        opens.push({ sink, signal, position });
+        return new Response(sink.stream, { headers: { "Content-Type": "text/event-stream" } });
+      };
+      const support = vi
+        .spyOn(sessionUpdatesSocket, "supportsTranscripts")
+        .mockReturnValue(transport === "multiplex");
+      const windows = vi
+        .spyOn(sessionUpdatesSocket, "supportsTranscriptWindows")
+        .mockReturnValue(transport !== "legacy-sse");
+      const shared = vi
+        .spyOn(sessionUpdatesSocket, "openTranscript")
+        .mockImplementation(async (_id, signal, cursor) => response(signal, cursor.after_position));
+      const normalFetch = fetchMock.getMockImplementation()!;
+      fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input), "http://test.local");
+        if (url.pathname === `/v1/sessions/${id}/stream`) {
+          const position = url.searchParams.get("after_position");
+          return Promise.resolve(
+            response(init!.signal!, position === null ? undefined : Number(position)),
+          );
+        }
+        return normalFetch(input, init);
+      });
+      const controller = new AbortController();
+      useChatStore.setState({ conversationId: id, abortController: controller });
+      const loop = startStreamPump(id, controller, setState, getState);
+      const sync = (boundary = checkpoint) => {
+        const sink = opens.at(-1)!.sink;
+        sink.push(sse("session.sync", { ...boundary, phase: "start" }));
+        if (hasItem) sink.push(sse("response.output_item.done", { item }));
+        sink.push(sse("session.sync", { ...boundary, phase: "complete" }));
+      };
+      try {
+        await vi.advanceTimersByTimeAsync(0);
+        opens[0]!.sink.push(sse("session.heartbeat", checkpoint));
+        await vi.advanceTimersByTimeAsync(50);
+        if (transport === "legacy-sse") {
+          // A cursorless compatibility stream still negotiates its first replay.
+          expect(opens).toHaveLength(2);
+          expect(opens[0]!.signal.aborted).toBe(true);
+          expect(opens[1]!.position).toBe(-1);
+          opens[1]!.sink.push(sse("session.heartbeat", checkpoint));
+          await vi.advanceTimersByTimeAsync(50);
+        } else {
+          expect(opens).toHaveLength(1);
+        }
+        expect(opens.at(-1)!.signal.aborted).toBe(false);
+        expect(getState().transcriptCheckpoint).toBeNull();
+        sync();
+        await vi.advanceTimersByTimeAsync(50);
+        expect(getState().transcriptCheckpoint?.cursor).toMatchObject({
+          after_position: checkpoint.last_position,
+          stream_epoch: checkpoint.stream_epoch,
+        });
+        expect(getState().blocks.map((block) => block.ctx.itemId)).toEqual(
+          hasItem ? [item.id] : [],
+        );
+
+        // A retained cursor also waits for the server's reset after an epoch change.
+        const beforeReconnect = opens.length;
+        opens.at(-1)!.sink.close();
+        await vi.advanceTimersByTimeAsync(50);
+        expect(opens).toHaveLength(beforeReconnect + 1);
+        expect(opens.at(-1)!.position).toBe(checkpoint.last_position);
+        const restarted = { ...checkpoint, stream_epoch: "restarted-epoch" };
+        opens.at(-1)!.sink.push(sse("session.heartbeat", restarted));
+        await vi.advanceTimersByTimeAsync(50);
+        expect(opens).toHaveLength(beforeReconnect + 1);
+        expect(opens.at(-1)!.signal.aborted).toBe(false);
+        sync(restarted);
+        await vi.advanceTimersByTimeAsync(50);
+        expect(getState().transcriptCheckpoint?.cursor.stream_epoch).toBe("restarted-epoch");
+
+        // A later live checkpoint gap must still trigger exactly one recovery.
+        opens
+          .at(-1)!
+          .sink.push(
+            sse("session.heartbeat", { ...restarted, last_position: checkpoint.last_position + 1 }),
+          );
+        await vi.advanceTimersByTimeAsync(50);
+        expect(opens).toHaveLength(beforeReconnect + 2);
+      } finally {
+        controller.abort();
+        await vi.advanceTimersByTimeAsync(6000);
+        await loop;
+        shared.mockRestore();
+        support.mockRestore();
+        windows.mockRestore();
+      }
+    },
+  );
+
   it.each([true, false])(
     "backs off rejected multiplex subscriptions until canonical synchronization succeeds (reset=%s)",
     async (reset) => {
@@ -24212,6 +24338,11 @@ it.each([
         this.emit({
           type: "session.event",
           session_id: frame.session_id,
+          event: { ...boundary, type: "session.heartbeat", reconcile_required: false },
+        });
+        this.emit({
+          type: "session.event",
+          session_id: frame.session_id,
           event: { ...boundary, phase: "start" },
         });
         for (const item of unchanged ? [] : items) {
@@ -25328,3 +25459,245 @@ it("pages for the exact reader ID even when position extent already covers it", 
     pager.mockRestore();
   }
 });
+
+describe("chatStore — cancellable observation backfill", () => {
+  async function setup(id: string) {
+    let catchUp!: (signal: AbortSignal) => Promise<void>;
+    const observer = vi
+      .spyOn(streamObservation, "observeConversationStream")
+      .mockImplementation((options) => {
+        catchUp = options.catchUp;
+        return new Promise<void>((resolve) => {
+          options.signal.addEventListener("abort", () => resolve(), { once: true });
+        });
+      });
+    onTestFinished(() => observer.mockRestore());
+    const anchor = userMessage("cancellable-anchor", "retained anchor");
+    seedSession(id, [anchor]);
+    await useChatStore.getState().switchTo(id);
+    const entry = conversationRegistry.peek(id)!;
+    expect(entry.getState().blocks.map((block) => block.ctx.itemId)).toEqual([anchor.id]);
+    return { catchUp, entry, anchor };
+  }
+
+  it.each(["snapshot", "binding"] as const)(
+    "passes %s cancellation to owned metadata and history requests",
+    async (owner) => {
+      const id = `backfill-cancel-${owner}`;
+      const { catchUp, entry } = await setup(id);
+      const before = entry.getState().blocks;
+      const requests: AbortSignal[] = [];
+      fetchMock.mockImplementation((input, init) => {
+        if (String(input).startsWith(`/v1/sessions/${id}`)) {
+          const signal = init!.signal as AbortSignal;
+          requests.push(signal);
+          return new Promise<Response>((_resolve, reject) => {
+            signal.addEventListener(
+              "abort",
+              () => reject(new DOMException("cancelled", "AbortError")),
+              { once: true },
+            );
+          });
+        }
+        return defaultFetchHandler(input, init);
+      });
+      const snapshot = new AbortController();
+      const running = catchUp(snapshot.signal);
+      await vi.waitFor(() => expect(requests).toHaveLength(2));
+      if (owner === "snapshot") snapshot.abort();
+      else entry.getState().abortController!.abort();
+      await running;
+      expect(requests.every((signal) => signal.aborted)).toBe(true);
+      expect(entry.getState().blocks).toBe(before);
+    },
+  );
+
+  it("fences late cancelled metadata and blocks without deleting the replacement job", async () => {
+    const id = "backfill-late-cancel";
+    const { catchUp, entry, anchor } = await setup(id);
+    const cached = client.getQueryData(["session", id]);
+    const host = getSessionHost(id);
+    const before = entry.getState().blocks;
+    const held: {
+      input: RequestInfo | URL;
+      init?: RequestInit;
+      finish: (response: Response) => void;
+    }[] = [];
+    fetchMock.mockImplementation((input, init) => {
+      if (String(input).startsWith(`/v1/sessions/${id}`))
+        return new Promise<Response>((finish) => {
+          held.push({ input, init, finish });
+        });
+      return defaultFetchHandler(input, init);
+    });
+    const cancelled = new AbortController();
+    const oldJob = catchUp(cancelled.signal);
+    await vi.waitFor(() => expect(held).toHaveLength(2));
+    cancelled.abort();
+    let oldSettled = false;
+    void oldJob.then(() => {
+      oldSettled = true;
+    });
+    await tick();
+    expect(oldSettled).toBe(false); // Physical requests still own their scheduler slot.
+    const replacement = new AbortController();
+    const nextJob = catchUp(replacement.signal);
+    await vi.waitFor(() => expect(held).toHaveLength(4));
+    const obsolete = assistantMessage("obsolete", "must not publish");
+    await Promise.all(
+      held.slice(0, 2).map(async (request) => {
+        const original = await defaultFetchHandler(request.input, request.init).json();
+        request.finish(
+          mockResponse(
+            String(request.input).includes("/items?")
+              ? { data: [obsolete], has_more: false }
+              : { ...original, host_id: "obsolete-host", title: "obsolete metadata" },
+          ),
+        );
+      }),
+    );
+    await oldJob;
+    expect(entry.getState().blocks).toBe(before);
+    expect(getSessionHost(id)).toBe(host);
+    expect(client.getQueryData(["session", id])).toBe(cached);
+    const joined = catchUp(new AbortController().signal);
+    await tick();
+    expect(held).toHaveLength(4);
+    const recovered = assistantMessage("recovered", "healthy replacement");
+    seedSessionItems(id, [anchor, recovered]);
+    for (const request of held.slice(2))
+      request.finish(defaultFetchHandler(request.input, request.init));
+    await Promise.all([nextJob, joined]);
+    expect(entry.getState().blocks.map((block) => block.ctx.itemId)).toEqual([
+      anchor.id,
+      recovered.id,
+    ]);
+  });
+
+  it("cancels older-page backfill and permits a fresh healthy reconciliation", async () => {
+    const id = "backfill-page-cancel";
+    const { catchUp, entry, anchor } = await setup(id);
+    const before = entry.getState().blocks;
+    const gap = Array.from({ length: SESSION_HISTORY_PAGE_SIZE + 5 }, (_, index) =>
+      assistantMessage(`gap-${index}`, "saved"),
+    );
+    seedSessionItems(id, [anchor, ...gap]);
+    let pageSignal: AbortSignal | undefined;
+    fetchMock.mockImplementation((input, init) => {
+      if (String(input).includes(`/sessions/${id}/items?`) && String(input).includes("after=")) {
+        pageSignal = init!.signal as AbortSignal;
+        return new Promise<Response>((_resolve, reject) => {
+          pageSignal!.addEventListener(
+            "abort",
+            () => reject(new DOMException("cancelled", "AbortError")),
+            { once: true },
+          );
+        });
+      }
+      return defaultFetchHandler(input, init);
+    });
+    const snapshot = new AbortController();
+    const running = catchUp(snapshot.signal);
+    await vi.waitFor(() => expect(pageSignal).toBeDefined());
+    snapshot.abort();
+    await running;
+    expect(pageSignal!.aborted).toBe(true);
+    expect(entry.getState().blocks).toBe(before);
+    fetchMock.mockImplementation(defaultFetchHandler);
+    await catchUp(new AbortController().signal);
+    expect(entry.getState().blocks.map((block) => block.ctx.itemId)).toEqual(
+      [anchor, ...gap].map((item) => item.id),
+    );
+  });
+
+  it("reports genuine snapshot failures and retries successfully on the next pass", async () => {
+    const id = "backfill-failure-retry";
+    const { catchUp, entry, anchor } = await setup(id);
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    onTestFinished(() => warning.mockRestore());
+    let siblingSignal: AbortSignal | undefined;
+    fetchMock.mockImplementation((input, init) => {
+      if (String(input).includes(`/sessions/${id}/items?`)) {
+        siblingSignal = init!.signal as AbortSignal;
+        return new Promise<Response>((_resolve, reject) => {
+          siblingSignal!.addEventListener(
+            "abort",
+            () => reject(new DOMException("cancelled", "AbortError")),
+            { once: true },
+          );
+        });
+      }
+      if (String(input).startsWith(`/v1/sessions/${id}?`))
+        return mockResponse({}, { ok: false, status: 503 });
+      return defaultFetchHandler(input, init);
+    });
+    await catchUp(new AbortController().signal);
+    expect(siblingSignal?.aborted).toBe(true);
+    expect(warning).toHaveBeenCalledWith(
+      `Session ${id}: history reconciliation failed`,
+      expect.any(Error),
+    );
+    fetchMock.mockImplementation(defaultFetchHandler);
+    const recovered = assistantMessage("after-failure", "healthy snapshot");
+    seedSessionItems(id, [anchor, recovered]);
+    await catchUp(new AbortController().signal);
+    expect(entry.getState().blocks.map((block) => block.ctx.itemId)).toEqual([
+      anchor.id,
+      recovered.id,
+    ]);
+  });
+});
+
+it.each(["observation abort", "transport drop"] as const)(
+  "cancels pending reconnect snapshot requests after %s",
+  async (cause) => {
+    const id = "reconnect-owned-cancellation";
+    const binding = new AbortController();
+    const observation = new AbortController();
+    const anchor = userMessage("owned-anchor", "retained");
+    seedSession(id, [anchor]);
+    const { set, get } = bindConversationForTest(id, {
+      abortController: binding,
+      blocks: itemsToBlocks([anchor]),
+    });
+    const signals: AbortSignal[] = [];
+    const sinks: StreamSink[] = [];
+    fetchMock.mockImplementation((input, init) => {
+      const url = String(input);
+      if (url.endsWith(`/sessions/${id}/stream`)) {
+        const sink = pushableStream();
+        sinks.push(sink);
+        return mockResponse(null, { bodyStream: sink.stream });
+      }
+      if (url.startsWith(`/v1/sessions/${id}`)) {
+        const signal = init!.signal as AbortSignal;
+        signals.push(signal);
+        return new Promise<Response>((_resolve, reject) => {
+          signal.addEventListener(
+            "abort",
+            () => reject(new DOMException("cancelled", "AbortError")),
+            { once: true },
+          );
+        });
+      }
+      return defaultFetchHandler(input, init);
+    });
+    const pumping = startStreamPump(id, binding, set, get, new Set(), true, observation);
+    await vi.waitFor(() => expect(signals).toHaveLength(2));
+    if (cause === "observation abort") {
+      observation.abort();
+      expect(signals.every((signal) => signal.aborted)).toBe(true);
+      sinks[0]!.close(); // Mock bodies have no fetch-abort plumbing.
+    } else {
+      sinks[0]!.error();
+      await vi.waitFor(() =>
+        expect(signals.slice(0, 2).every((signal) => signal.aborted)).toBe(true),
+      );
+      observation.abort();
+      if (sinks.length > 1) sinks.at(-1)!.close();
+    }
+    await pumping;
+    expect(get().blocks.map((block) => block.ctx.itemId)).toEqual([anchor.id]);
+    expect(binding.signal.aborted).toBe(false);
+  },
+);

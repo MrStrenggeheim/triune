@@ -5602,7 +5602,8 @@ async function bindStream(
           observation,
           initialStreamOpened,
         ),
-      catchUp: () => reconcileOnReconnect(id, set, get, ignoredNativeMessageIds, true),
+      catchUp: (signal) =>
+        reconcileOnReconnect(id, set, get, ignoredNativeMessageIds, true, false, undefined, signal),
     }).finally(() => {
       initialStreamOpened();
       controller.signal.removeEventListener("abort", initialStreamOpened);
@@ -6510,6 +6511,7 @@ async function rehydrateWindowOnReconnect(
   ignoredNativeMessageIds: Set<string>,
   launchBeforeFetch: ConversationState["mcpStartupLaunch"] | undefined,
   todosBeforeFetch: ConversationState["todos"],
+  signal: AbortSignal,
 ): Promise<void> {
   // Pinned at entry (still the caller's generation — its guards just passed).
   const generation = get().historyGeneration;
@@ -6521,6 +6523,7 @@ async function rehydrateWindowOnReconnect(
     get().historyWindowRestorePosition,
   );
   const stale = () =>
+    signal.aborted ||
     isConversationDisposed(id) ||
     controller?.signal.aborted === true ||
     get().abortController !== controller ||
@@ -6529,7 +6532,7 @@ async function rehydrateWindowOnReconnect(
     get().historyGeneration !== generation;
   let fresh: SessionItemsPage;
   try {
-    fresh = await fetchSessionItemsPage(id, { limit: INITIAL_WINDOW_ITEMS });
+    fresh = await fetchSessionItemsPage(id, { limit: INITIAL_WINDOW_ITEMS, signal });
     if (stale()) return;
     // Legacy recovery must refresh the reader's expanded extent, not shrink it.
     /* oxlint-disable no-await-in-loop */
@@ -6540,21 +6543,18 @@ async function rehydrateWindowOnReconnect(
       const older = await fetchSessionItemsPage(id, {
         olderThan: before,
         limit: SESSION_HISTORY_PAGE_SIZE,
+        signal,
       });
+      if (stale()) return;
       if (!older.items.length || older.items[0]!.id === before) return;
       fresh = { ...fresh, items: [...older.items, ...fresh.items], hasMore: older.hasMore };
     }
     /* oxlint-enable no-await-in-loop */
-  } catch {
-    return;
+  } catch (error) {
+    if (stale()) return;
+    throw error;
   }
-  if (
-    isConversationDisposed(id) ||
-    controller?.signal.aborted ||
-    get().abortController !== controller ||
-    get().historyGeneration !== generation
-  )
-    return;
+  if (stale()) return;
   if (controller) transcriptCursors.delete(controller);
   const snapshotNativeMessageIds = nativeCompletedMessageIds(fresh.items);
   snapshotNativeMessageIds.forEach((messageId) => ignoredNativeMessageIds.add(messageId));
@@ -6808,7 +6808,34 @@ function scheduleCompletionRecovery(
   })();
 }
 
-const reconnectReconciliations = new WeakMap<AbortController, Promise<void>>();
+interface ReconnectReconciliation {
+  controller: AbortController;
+  promise: Promise<void>;
+  cancel: () => void;
+}
+const reconnectReconciliations = new WeakMap<AbortController, ReconnectReconciliation>();
+
+/** Stop waiting on shared bootstrap metadata without cancelling another view's query. */
+function awaitReconnectBootstrap<T>(request: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const abort = () => {
+      signal.removeEventListener("abort", abort);
+      reject(new DOMException("Reconciliation cancelled", "AbortError"));
+    };
+    signal.addEventListener("abort", abort, { once: true });
+    request.then(
+      (value) => {
+        signal.removeEventListener("abort", abort);
+        resolve(value);
+      },
+      (error: unknown) => {
+        signal.removeEventListener("abort", abort);
+        reject(error);
+      },
+    );
+    if (signal.aborted) abort();
+  });
+}
 const snapshotBackfills = new WeakMap<
   AbortController,
   {
@@ -6831,10 +6858,24 @@ function reconcileOnReconnect(
   bounded = false,
   itemsOnly = false,
   bootstrap?: BootstrapMetadata,
+  signal?: AbortSignal,
 ): Promise<void> {
-  const controller = get().abortController;
-  const existing = controller && reconnectReconciliations.get(controller);
-  if (existing) return existing;
+  const binding = get().abortController;
+  if (binding?.signal.aborted || signal?.aborted) return Promise.resolve();
+  const existing = binding && reconnectReconciliations.get(binding);
+  if (existing && !existing.controller.signal.aborted) {
+    if (!signal) return existing.promise;
+    signal.addEventListener("abort", existing.cancel, { once: true });
+    return existing.promise.finally(() => signal.removeEventListener("abort", existing.cancel));
+  }
+  const controller = new AbortController();
+  const cancel = () => {
+    controller.abort();
+    if (binding && reconnectReconciliations.get(binding)?.controller === controller)
+      snapshotBackfills.delete(binding);
+  };
+  const owners = [binding?.signal, signal].filter((owner): owner is AbortSignal => Boolean(owner));
+  for (const owner of owners) owner.addEventListener("abort", cancel, { once: true });
   const reconciliation = backfillOnReconnect(
     id,
     set,
@@ -6843,10 +6884,20 @@ function reconcileOnReconnect(
     bounded,
     itemsOnly,
     bootstrap,
-  ).finally(() => {
-    if (controller) reconnectReconciliations.delete(controller);
-  });
-  if (controller) reconnectReconciliations.set(controller, reconciliation);
+    controller.signal,
+    cancel,
+  )
+    .catch((error: unknown) => {
+      if (!controller.signal.aborted)
+        console.warn(`Session ${id}: history reconciliation failed`, error);
+    })
+    .finally(() => {
+      for (const owner of owners) owner.removeEventListener("abort", cancel);
+      if (binding && reconnectReconciliations.get(binding)?.controller === controller)
+        reconnectReconciliations.delete(binding);
+    });
+  if (binding)
+    reconnectReconciliations.set(binding, { controller, promise: reconciliation, cancel });
   return reconciliation;
 }
 
@@ -6857,7 +6908,9 @@ async function backfillOnReconnect(
   ignoredNativeMessageIds: Set<string> = new Set<string>(),
   bounded = false,
   itemsOnly = false,
-  bootstrap?: BootstrapMetadata,
+  bootstrap: BootstrapMetadata | undefined,
+  signal: AbortSignal,
+  cancel: () => void,
 ): Promise<void> {
   if (queryClient === null) return;
   const bindingController = get().abortController;
@@ -6884,30 +6937,47 @@ async function backfillOnReconnect(
   // A window reset mid-fetch (A→B→A revisit, rebind) defeats the id check alone.
   const generation = get().historyGeneration;
   const routing = sessionRoutingSnapshot(id);
+  const readerScope = transcriptReaderScope();
+  const entry = conversationRegistry.peek(id);
+  const cacheBeforeFetch = queryClient.getQueryData(["session", id]);
   const stale = (): boolean =>
+    signal.aborted ||
     isConversationDisposed(id) ||
+    conversationRegistry.peek(id) !== entry ||
+    transcriptReaderScope() !== readerScope ||
     bindingController?.signal.aborted === true ||
     get().abortController !== bindingController ||
     get().historyGeneration !== generation ||
     sessionRoutingSnapshot(id) !== routing ||
     (itemsOnly && get().activeResponse !== responseBeforeFetch);
-  let session: Session;
-  let page: SessionItemsPage;
-  try {
-    [session, page] = await Promise.all([
-      bootstrap?.session ??
-        queryClient.fetchQuery({
-          queryKey: ["session", id],
-          queryFn: () => getSessionSlim(id),
-          staleTime: 0,
-          retry: false,
-        }),
-      fetchSessionItemsPage(id),
-    ]);
-  } catch {
-    return;
-  }
+  const stopSiblingOnFailure = <T>(request: Promise<T>): Promise<T> =>
+    request.catch((error: unknown) => {
+      if (!signal.aborted) {
+        if (!stale()) console.warn(`Session ${id}: history reconciliation failed`, error);
+        cancel();
+      }
+      throw error;
+    });
+  // Keep owned requests accounted for until both have actually settled.
+  const [metadata, history] = await Promise.allSettled([
+    stopSiblingOnFailure(
+      bootstrap
+        ? awaitReconnectBootstrap(bootstrap.session, signal)
+        : getSessionSlim(id, {
+            signal,
+            routingGuard: { isCurrent: () => !stale(), onApplied: () => {} },
+          }),
+    ),
+    stopSiblingOnFailure(fetchSessionItemsPage(id, { signal })),
+  ]);
   if (stale()) return;
+  if (metadata.status === "rejected") throw metadata.reason;
+  if (history.status === "rejected") throw history.reason;
+  const session = metadata.value;
+  const page = history.value;
+  // Reconciliation owns this read, not another view's shared metadata query.
+  if (!bootstrap && queryClient.getQueryData(["session", id]) === cacheBeforeFetch)
+    queryClient.setQueryData(["session", id], session);
   if (session.usageIncluded === false) void hydrateSessionUsage(id);
 
   // Page backwards until the fetched window reaches the pre-gap transcript
@@ -6928,7 +6998,8 @@ async function backfillOnReconnect(
       const progress = await backfill.reader.read(
         page,
         preGapIds,
-        (cursor) => fetchSessionItemsPage(id, { olderThan: cursor, limit: INITIAL_WINDOW_ITEMS }),
+        (cursor) =>
+          fetchSessionItemsPage(id, { olderThan: cursor, limit: INITIAL_WINDOW_ITEMS, signal }),
         () => !stale(),
         RECONNECT_BACKFILL_MAX_PAGES,
       );
@@ -6941,8 +7012,9 @@ async function backfillOnReconnect(
       items = progress.items;
       hasMore = progress.hasMore;
       covered = true;
-    } catch {
-      return;
+    } catch (error) {
+      if (stale()) return;
+      throw error;
     }
   }
   // Each page starts before the cursor returned by the prior page.
@@ -6954,6 +7026,7 @@ async function backfillOnReconnect(
     try {
       usedLargePages ||= fetched >= RECONNECT_BACKFILL_MAX_PAGES;
       older = await fetchSessionItemsPage(id, {
+        signal,
         olderThan: cursor,
         // Long gaps use larger pages rather than discarding the reader's
         // already-loaded history when the small-page budget is exhausted.
@@ -6963,8 +7036,9 @@ async function backfillOnReconnect(
       // A cursor whose item was deleted can never be paged past. Stop the
       // backfill with the gap still uncovered so the full rehydrate below
       // runs, instead of leaving items no path can fetch.
+      if (stale()) return;
       if (isStaleCursorError(error)) break;
-      return;
+      throw error;
     }
     if (stale()) return;
     items = [...older.items, ...items];
@@ -6977,14 +7051,16 @@ async function backfillOnReconnect(
     // A long backfill can outlive a final native commit whose live frame was
     // missed; refresh its tail once without replacing the retained window.
     try {
-      const latest = await fetchSessionItemsPage(id, { limit: INITIAL_WINDOW_ITEMS });
+      const latest = await fetchSessionItemsPage(id, { limit: INITIAL_WINDOW_ITEMS, signal });
       if (stale()) return;
       const seen = new Set(items.map((item) => item.id));
       items = [...items, ...latest.items.filter((item) => !seen.has(item.id))];
-    } catch {
-      return;
+    } catch (error) {
+      if (stale()) return;
+      throw error;
     }
   }
+  if (stale()) return;
   const firstOverlap = items.findIndex((item) => preGapIds.has(item.id));
   if (firstOverlap > 0) items = items.slice(firstOverlap);
   const snapshotNativeMessageIds = nativeCompletedMessageIds(items);
@@ -7000,6 +7076,7 @@ async function backfillOnReconnect(
       ignoredNativeMessageIds,
       launchBeforeFetch,
       todosBeforeFetch,
+      signal,
     );
     return;
   }
@@ -7465,6 +7542,7 @@ export async function startStreamPump(
       try {
         const idle = presenceIdle.idleNow();
         let streamRes: Response;
+        let expectsInitialSync = false;
         try {
           const retained = get().transcriptCheckpoint;
           if (retained?.scope === transcriptCursorScope(id)) {
@@ -7489,6 +7567,10 @@ export async function startStreamPump(
             ? await sessionUpdatesSocket.openTranscript(id, attempt.signal, cursor, idle)
             : null;
           if (shared) multiplexedAttempts.add(attempt);
+          expectsInitialSync =
+            shared !== null ||
+            sessionUpdatesSocket.supportsTranscriptWindows() ||
+            transcriptCursors.has(controller);
           streamRes =
             shared ??
             (await openSessionStream(id, attempt.signal, {
@@ -7638,9 +7720,26 @@ export async function startStreamPump(
           () => {
             failedOpens = 0;
           },
+          expectsInitialSync,
         );
         if (reconnecting && !multiplexedAttempts.has(attempt)) {
-          await reconcileOnReconnect(id, set, get, ignoredNativeMessageIds);
+          // A transport drop must also release its pending snapshot reads.
+          void pumpPromise.then(
+            (reason) => {
+              if (reason === "dropped" || reason === "aborted") attempt.abort();
+            },
+            () => attempt.abort(),
+          );
+          await reconcileOnReconnect(
+            id,
+            set,
+            get,
+            ignoredNativeMessageIds,
+            false,
+            false,
+            undefined,
+            attempt.signal,
+          );
           // reconcileOnReconnect can read a stale "running" when the server
           // just restarted and hasn't reprocessed the turn's completion yet,
           // stranding the tab on "Working…" until the 60s periodic reconcile.
@@ -8233,6 +8332,7 @@ export async function pumpStreamEvents(
   requestResume?: (retry?: boolean) => void,
   nativeReplayPrefixes: ReadonlyMap<string, string> = new Map(),
   onSyncComplete?: () => void,
+  expectsInitialSync = false,
 ): Promise<StreamEndReason> {
   const stream = new BlockStream();
   const sseResult: SseStreamResult = { sawDone: false };
@@ -8259,6 +8359,7 @@ export async function pumpStreamEvents(
   const seenItemIds = new Set<string>();
   const completedPreviewIds = new Map<string, string>();
   const replay = new TranscriptReplay();
+  let awaitingSync = expectsInitialSync;
   let resumeRequested = false;
   const nativeMessagesSeen = new Set<string>();
   const previewToRetire = (block: AnyBlock, blocks: AnyBlock[]): AnyBlock | undefined => {
@@ -8324,7 +8425,10 @@ export async function pumpStreamEvents(
           replay.accept(event, get().blocks);
           return false;
         }
-        if (event.type === "session_heartbeat" && !resumeRequested) {
+        if (event.type === "session_sync" && event.phase === "start") awaitingSync = true;
+        // The ready heartbeat precedes the requested replay; only a completed
+        // sync makes its advertised checkpoint comparable with our cursor.
+        if (event.type === "session_heartbeat" && !resumeRequested && !awaitingSync) {
           const cursor = transcriptCursors.get(get().abortController ?? controller);
           if (!cursor) {
             // An additive checkpoint negotiates recovery on an SSE compatibility connection.
@@ -8372,6 +8476,7 @@ export async function pumpStreamEvents(
             requestResume?.(true);
             return false;
           }
+          awaitingSync = false;
           transcriptCursors.set(get().abortController ?? controller, {
             after_position: event.lastPosition,
             after_revision: event.itemRevision,

@@ -201,6 +201,8 @@ Compare the same two/four/twelve-chat scenarios when measuring latency; browser/
 - Native child input and steering require current runtime capabilities, independently of transcript readability.
 - Visible chats share one tab-level transcript socket when supported; hidden chats retain state and resume from completed position/revision checkpoints.
 - Rejected multiplex subscriptions back off until validated synchronization completes; reconnect tests cover invalid replay and cancellation during the delay.
+- Initial readiness heartbeats preserve the requested history replay; saved history and subsequent live progress appear without repeated subscriptions or page refreshes.
+- Returning focus cancels fallback history reads and resumes observation; hidden/disposed readers cancel their snapshots, and remaining fallback jobs have a fifteen-second deadline.
 - Pending input replay matches accepted identities before legacy fallback, preserving repeated sends, attachment-only startup input and attributed peer messages through cold load and reconnect.
 - Older servers and deployments using host routing retain the authorized per-session SSE path.
 - Orchestration rows open resources in tabs, with no redundant Open button; graph remains available without internal history-coverage or Messages entries.
@@ -213,6 +215,7 @@ Attribution and file boundaries: `tests/server/integration/test_session_orchestr
 
 ### Canonical transcript and navigation acceptance
 
+- `tests/browser_ui/chat/test_transcript_multiplex.py::test_readiness_heartbeat_waits_for_history_then_displays_live_progress` delays replay after the real readiness heartbeat on desktop and phone, then checks one subscription, successive live updates and retained draft text.
 - `tests/browser_ui/chat/test_transcript_multiplex.py` opens two chats on one socket, delivers a preview or committed answer before its user echo, and compares the settled transcript with reload.
 - The same journey exercises position/revision recovery after missed old-item updates and removals while preserving an unsent draft.
 - It also checks optimistic/native input identity across acknowledgement, canonical replay and missing consumed receipts; intentional identical sends remain distinct after reload.
