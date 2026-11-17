@@ -182,6 +182,43 @@ describe("OverlayScrollbars", () => {
     expect(container.querySelector("[data-overlay-scrollbar]")).toBeNull();
   });
 
+  it.each([true, false])(
+    "keeps scrollbar portals outside ProseMirror DOM (editable %s)",
+    (editable) => {
+      const { container } = render(
+        <>
+          <OverlayScrollbars />
+          <section data-test-surface style={{ overflowY: "auto" }}>
+            <div
+              className="tiptap ProseMirror"
+              contentEditable={editable}
+              suppressContentEditableWarning
+            >
+              <div className="tableWrapper" data-test-surface style={{ overflowX: "auto" }}>
+                <table>
+                  <tbody>
+                    <tr>
+                      <td>Table content</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <pre data-test-surface style={{ overflowX: "auto" }}>
+                Code content
+              </pre>
+            </div>
+          </section>
+        </>,
+      );
+      const editor = container.querySelector(".ProseMirror")!;
+      expect(editor.querySelector("[data-overlay-scrollbar]")).toBeNull();
+      expect(editor.querySelector("[data-overlay-scroll-surface]")).toBeNull();
+      expect(editor.children).toHaveLength(2);
+      expect(container.querySelector("section")).toHaveAttribute("data-overlay-scroll-surface");
+      expect(container.querySelector("[data-overlay-scrollbar]")).not.toBeNull();
+    },
+  );
+
   it("discovers new portal surfaces and removes layers for disconnected surfaces", async () => {
     render(<OverlayScrollbars />);
     const portal = document.createElement("section");

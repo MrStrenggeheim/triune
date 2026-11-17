@@ -7,6 +7,8 @@ import { getEmbedRoot } from "@/lib/host";
 const EXCLUDED = [
   ".monaco-editor",
   ".monaco-diff-editor",
+  // ProseMirror owns these children and removes foreign scrollbar portals.
+  ".ProseMirror",
   ".xterm",
   ".transcript-hide-native-scrollbar",
   "[data-transcript-scrollbar]",

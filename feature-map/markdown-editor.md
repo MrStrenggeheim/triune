@@ -23,6 +23,7 @@ and the recording protocol for comparing revisions.
 - `load`: fixed mixed-content documents expose parsing and rendering costs.
   TipTap is created after React commits so a delayed render cannot destroy its view before plugins attach.
   The workspace component suite covers the timer boundary with editable and read-only documents.
+  Global overlay-scrollbar discovery excludes ProseMirror-managed contents so scrollbar portals cannot conflict with editor DOM reconciliation; the surrounding file scroller retains its shared overlay.
 - `offline`: unsaved edits remain guarded when the workspace cannot save.
 - `large-files`: files above 1 MiB open as editable source; truncated files
   remain read-only, with full-file download available.
