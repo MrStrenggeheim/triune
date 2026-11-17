@@ -170,6 +170,9 @@ def test_fifty_layouts_retire_while_preserving_draft_and_editor_undo(
         page.get_by_role("region", name="Chat search").get_by_label(
             "Search chats", exact=True
         ).fill("needle")
+        page.get_by_role("region", name="Chat search").get_by_role(
+            "button", name=re.compile(r"^Chat B: Assistant")
+        ).click()
         original = reader_view.locator(
             '[data-search-item-id="reader-work-12"] [data-chat-plain-text]'
         )
@@ -293,6 +296,7 @@ def test_fifty_layouts_retire_while_preserving_draft_and_editor_undo(
         expect(_view(page, "Chat A").get_by_label("Message the agent")).to_have_value(
             "Draft retained after fifty layouts"
         )
+        page.get_by_role("tab", name="notes.py", exact=True).click()
         expect(editor).to_be_visible()
         assert editor.evaluate("el => el === window.__protectedRetiredEditor")
         expect(editor.locator(".view-line").filter(has_text="retained_delta = 42")).to_be_visible()

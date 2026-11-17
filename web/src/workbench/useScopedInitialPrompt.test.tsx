@@ -64,3 +64,6 @@ it("pins initial skills and waits for an agent without consuming them early", ()
     pinnedConversationId: "first",
   });
 });
+
+// These scenarios start after metadata discovery; startup ordering uses real hooks in chatStore.test.ts.
+vi.mock("@/hooks/useSession", () => ({ useSession: () => ({ isLoading: false }) }));

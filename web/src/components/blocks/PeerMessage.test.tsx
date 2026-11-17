@@ -474,3 +474,6 @@ it("keeps receipt aliases, queued delivery and exact destination navigation sepa
     expect.stringContaining("other-message"),
   );
 });
+
+// Peer label scenarios start with settled metadata; startup uses the real hook in chatStore.test.ts.
+vi.mock("@/hooks/useSession", () => ({ useSession: () => ({ isLoading: false }) }));

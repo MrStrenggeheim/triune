@@ -19,7 +19,14 @@
 import * as serverCapabilities from "@/lib/capabilities";
 import type * as IdentityModule from "@/lib/identity";
 
-import { type InfiniteData, QueryClient, QueryObserver } from "@tanstack/react-query";
+import { createElement, type ReactNode } from "react";
+import { renderHook, cleanup } from "@testing-library/react";
+import {
+  type InfiniteData,
+  QueryClient,
+  QueryClientProvider,
+  QueryObserver,
+} from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { toast } from "@/lib/notifications";
 import type { Conversation, ConversationsPage } from "@/hooks/useConversations";
@@ -56,9 +63,11 @@ import {
   getCurrentAuthorId,
   getCurrentUserId,
   subscribeIdentity,
+  resolveIdentity,
   setSessionHostResolver,
 } from "@/lib/identity";
-import { prefetchSessionHostChain } from "@/hooks/useSession";
+import { ScopedChatStoreProvider, useConversationChatStore } from "@/workbench/ScopedChatStore";
+import { useSession, prefetchSessionHostChain } from "@/hooks/useSession";
 import { PRESENCE_IDLE_AFTER_MS } from "@/lib/presenceIdle";
 import { getSessionHost, setSessionHost, setSessionParent } from "@/lib/sessionHost";
 import {
@@ -139,6 +148,7 @@ vi.mock("@/lib/identity", async (importOriginal) => {
     getCurrentAuthorId: vi.fn<() => string | null>(() => null),
     getCurrentUserId: vi.fn<() => string | null>(() => null),
     subscribeIdentity: vi.fn(actual.subscribeIdentity),
+    resolveIdentity: vi.fn(actual.resolveIdentity),
   };
 });
 
@@ -540,6 +550,7 @@ function makeFakeSlotManager(
 }
 
 beforeEach(() => {
+  vi.mocked(resolveIdentity).mockResolvedValue(null);
   // This suite's default router models the legacy SSE server; WS boundaries have their own fake socket cases.
   vi.stubGlobal("WebSocket", undefined);
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -23841,6 +23852,91 @@ describe("canonical transcript event-script equivalence", () => {
     },
   );
 });
+
+it.each([
+  ["startup-host", "local"],
+  [null, "local"],
+  ["startup-host", null],
+  [null, null],
+])(
+  "waits for identity and shared metadata before scoped establishment (host %s, viewer %s)",
+  async (host, viewer) => {
+    const id = "startup-scoped-provider";
+    seedSession(id, [assistantMessage("scoped", "Scoped startup answer")]);
+    const base = fetchMock.getMockImplementation()!;
+    const wire = { id, agent_id: "agent_xyz", status: "idle", host_id: host };
+    let finishMetadata!: (response: Response) => void;
+    let firstMetadata = true;
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).split("?")[0] === `/v1/sessions/${id}`) {
+        if (firstMetadata) {
+          firstMetadata = false;
+          return new Promise<Response>((resolve) => {
+            finishMetadata = resolve;
+          });
+        }
+        return Promise.resolve(mockResponse(wire));
+      }
+      return base(input, init);
+    });
+    setSessionHost(id, null);
+    setSessionDraft(id, { text: "Keep startup draft", files: [] });
+    let finishIdentity!: (viewer: string | null) => void;
+    vi.mocked(resolveIdentity).mockReturnValueOnce(
+      new Promise((resolve) => {
+        finishIdentity = resolve;
+      }),
+    );
+    // Both hook and provider join the same pending identity discovery.
+    const identity = resolveIdentity();
+    vi.mocked(resolveIdentity).mockReturnValue(identity);
+    setSessionHostResolver((sessionId, options) =>
+      prefetchSessionHostChain(client, sessionId, options),
+    );
+    onTestFinished(() => {
+      cleanup();
+      setSessionHostResolver(null);
+    });
+    const { result } = renderHook(
+      () => {
+        const session = useSession(id);
+        const store = useConversationChatStore();
+        return { session, state: store((state) => state) };
+      },
+      {
+        wrapper: ({ children }: { children: ReactNode }) =>
+          createElement(
+            QueryClientProvider,
+            { client },
+            createElement(
+              ScopedChatStoreProvider,
+              { conversationId: id, focused: true } as Parameters<
+                typeof ScopedChatStoreProvider
+              >[0],
+              children,
+            ),
+          ),
+      },
+    );
+    await tick();
+    expect(
+      fetchMock.mock.calls.filter(([url]) => String(url).includes(`/v1/sessions/${id}`)),
+    ).toEqual([]);
+    vi.mocked(getCurrentUserId).mockReturnValue(viewer);
+    finishIdentity(viewer);
+    await vi.waitFor(() => expect(finishMetadata).toBeTypeOf("function"));
+    expect(conversationRegistry.peek(id)?.getState().abortController).toBeFalsy();
+    // The normal session list learns the same routing while metadata is pending.
+    setSessionHost(id, host);
+    finishMetadata(mockResponse(wire));
+    await vi.waitFor(() => expect(result.current.state.loadingConversation).toBe(false));
+    expect(result.current.state.conversationLoadError).toBeNull();
+    expect(result.current.session.session?.hostId).toBe(host);
+    expect(getSessionHost(id)).toBe(host);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes(`${id}/stream`))).toBe(true);
+    expect(getSessionDraft(id)?.text).toBe("Keep startup draft");
+  },
+);
 
 it.each([
   "cancelled",

@@ -11,6 +11,7 @@
 // Reading it from the single-fetch snapshot instead means the rail
 // gets the user's actual level for any conversation they navigate to.
 
+import { useIdentityReady } from "./useViewerId";
 import { type QueryClient, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { SessionHostResolveOptions } from "@/lib/identity";
 import {
@@ -61,17 +62,18 @@ interface UseSessionResult {
  */
 export function useSession(conversationId: string | null | undefined): UseSessionResult {
   // Empty IDs have no session owner; `temp:*` IDs only identify client-side drafts.
+  const identityReady = useIdentityReady();
   const serverId = !conversationId || isTempConvId(conversationId) ? null : conversationId;
   const { data, isLoading, error } = useQuery({
     queryKey: serverId ? ["session", serverId] : ["session", null],
     queryFn: () => getSessionSlim(serverId as string, { refreshState: true }),
-    enabled: serverId !== null,
+    enabled: identityReady && serverId !== null,
     staleTime: Infinity,
     retry: false,
   });
   return {
     session: data ?? null,
-    isLoading,
+    isLoading: serverId !== null && (!identityReady || isLoading),
     error: (error as Error | null) ?? null,
   };
 }

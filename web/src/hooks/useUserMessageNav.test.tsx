@@ -256,3 +256,6 @@ describe("useUserMessageNav", () => {
     expect(useChatStore.getState().flashItemId).toBe(null);
   });
 });
+
+// These scenarios start after metadata discovery; startup ordering uses real hooks in chatStore.test.ts.
+vi.mock("@/hooks/useSession", () => ({ useSession: () => ({ isLoading: false }) }));

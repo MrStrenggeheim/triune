@@ -8,6 +8,7 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
+import { useSession } from "@/hooks/useSession";
 import { useStore, type StoreApi, type UseBoundStore } from "zustand";
 import { shallow } from "zustand/vanilla/shallow";
 import {
@@ -145,6 +146,7 @@ export function ScopedChatStoreProvider({
   visible?: boolean;
   children: ReactNode;
 }) {
+  const { isLoading: metadataLoading } = useSession(visible ? conversationId : null);
   const store = useMemo(() => createScopedChatStore(conversationId), [conversationId]);
   const root = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
@@ -159,12 +161,12 @@ export function ScopedChatStoreProvider({
   useEffect(() => {
     const release = conversationRegistry.retain(conversationId, visible, false);
     refreshConversationObservationPriority();
-    if (visible) void ensureConversationStreamed(conversationId);
+    if (visible && !metadataLoading) void ensureConversationStreamed(conversationId);
     return () => {
       release();
       refreshConversationObservationPriority();
     };
-  }, [conversationId, visible]);
+  }, [conversationId, visible, metadataLoading]);
   return (
     <ScopedChatStoreContext.Provider value={store}>
       <ScopedChatVisibleContext.Provider value={visible}>

@@ -328,3 +328,6 @@ describe("prefetchSessionHostChain", () => {
     expect(getSessionHost("boundary_0")).toBe("host_at_budget");
   });
 });
+
+// These scenarios start after viewer discovery; startup ordering uses the real hook in chatStore.test.ts.
+vi.mock("@/hooks/useViewerId", () => ({ useIdentityReady: () => true }));

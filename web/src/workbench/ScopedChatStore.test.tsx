@@ -378,3 +378,6 @@ describe("scoped chat store", () => {
     expect(store.getState().conversationId).toBe("first");
   });
 });
+
+// These scenarios start after viewer discovery; startup ordering uses the real hook in chatStore.test.ts.
+vi.mock("@/hooks/useSession", () => ({ useSession: () => ({ isLoading: false }) }));
