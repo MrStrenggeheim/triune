@@ -113,6 +113,55 @@ describe("one shortcut dispatcher", () => {
     expect(dispatchShortcut(altGraph)).toBe(false);
     expect(close).toHaveBeenCalledTimes(1);
   });
+  it.each(["composer", "preview choice"])(
+    "allows successive model and effort shortcuts from the cycle preview with focus on %s",
+    (focus) => {
+      document.body.innerHTML = `<textarea></textarea>
+        <div role="menu" data-state="open" data-cycle-preview><button>Model</button></div>`;
+      document.querySelector<HTMLElement>(focus === "composer" ? "textarea" : "button")!.focus();
+      const model = vi.fn();
+      const effort = vi.fn();
+      cleanups.push(
+        registerShortcutHandlers({ "cycle-model": model, "cycle-effort": effort }, environment),
+      );
+      for (const code of ["KeyM", "KeyM", "KeyE", "KeyE"])
+        expect(press({ code, ctrlKey: true, altKey: true }).defaultPrevented).toBe(true);
+      expect(model).toHaveBeenCalledTimes(2);
+      expect(effort).toHaveBeenCalledTimes(2);
+    },
+  );
+  it.each(["dialog", "alertdialog", "menu"])(
+    "keeps an open %s above a cycle preview blocking shortcuts even while the composer has focus",
+    (role) => {
+      document.body.innerHTML = `<textarea></textarea>
+        <div role="menu" data-state="open" data-cycle-preview></div>
+        <div role="${role}" data-state="open"></div>`;
+      document.querySelector("textarea")!.focus();
+      const run = vi.fn();
+      cleanups.push(
+        registerShortcutHandlers({ "cycle-model": run, "cycle-effort": run }, environment),
+      );
+      for (const code of ["KeyM", "KeyE"])
+        expect(press({ code, ctrlKey: true, altKey: true }).defaultPrevented).toBe(false);
+      expect(run).not.toHaveBeenCalled();
+    },
+  );
+  it.each(["dialog", "alertdialog", "menu"])(
+    "preserves the focused %s ancestor guard around a cycle preview without an open-state attribute",
+    (role) => {
+      document.body.innerHTML = `<div role="${role}">
+        <div role="menu" data-state="open" data-cycle-preview><button>Model</button></div>
+        </div>`;
+      document.querySelector("button")!.focus();
+      const run = vi.fn();
+      cleanups.push(
+        registerShortcutHandlers({ "cycle-model": run, "cycle-effort": run }, environment),
+      );
+      for (const code of ["KeyM", "KeyE"])
+        expect(press({ code, ctrlKey: true, altKey: true }).defaultPrevented).toBe(false);
+      expect(run).not.toHaveBeenCalled();
+    },
+  );
   it("leaves zoom and Ctrl+Tab untouched and pauses background execution while recording", () => {
     const run = vi.fn();
     cleanups.push(registerShortcutHandlers({ "next-session": run, "new-view": run }, environment));

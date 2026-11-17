@@ -317,6 +317,7 @@ export function HarnessPicker({
           avoidCollisions
           className={cn(HARNESS_MENU_CLASS_NAME, COMPOSER_HARNESS_MENU_SIZE, contentClassName)}
           data-testid={testId}
+          data-cycle-preview={previewOnly ? "" : undefined}
           onPointerDownOutside={interaction.onPointerInteraction}
           onInitialSelectionFocus={previewOnly ? undefined : onInitialSelectionFocus}
           onOpenAutoFocus={(event) => {

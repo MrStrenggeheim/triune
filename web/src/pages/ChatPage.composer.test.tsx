@@ -6682,10 +6682,10 @@ describe("Composer config gear", () => {
         for (const model of ["opus", "sonnet", "sonnet_5"]) {
           act(() => vi.advanceTimersByTime(500));
           cycle();
-          expect(screen.getByTestId(`composer-agent-model-${model}`)).toHaveAttribute(
-            "aria-checked",
-            "true",
-          );
+          expect(
+            screen.getByTestId(`composer-agent-model-${model}`),
+            `Preview after cycling to ${model}`,
+          ).toHaveAttribute("aria-checked", "true");
           expect(setModel).not.toHaveBeenCalled();
           expect(setEffort).not.toHaveBeenCalled();
         }
@@ -8285,7 +8285,7 @@ describe("Workbench durable composer subchats", () => {
     expect(fetch.mock.calls[1][0]).toBe("/v1/sessions/durable-source/fork");
     expect(fetch.mock.calls[1][1]?.method).toBe("POST");
     expect(JSON.parse(String(fetch.mock.calls[1][1]?.body))).toEqual({
-      title: "Subchat",
+      durable_subchat: true,
       up_to_item_id: "captured-source-item",
     });
     expect(textarea()).toHaveValue("/side investigate this");
@@ -8399,7 +8399,7 @@ describe("Workbench durable composer subchats", () => {
       "/v1/hosts/durable-host/runners",
     ]);
     expect(JSON.parse(String(fetch.mock.calls[1][1]?.body))).toEqual({
-      title: "Subchat",
+      durable_subchat: true,
       up_to_item_id: "captured-source-item",
     });
     expect(JSON.parse(String(fetch.mock.calls[2][1]?.body))).toEqual({

@@ -70,9 +70,11 @@ export function shortcutSurface(): Surface {
   )
     return "palette";
   if (
-    focused?.closest('[role="dialog"], [role="alertdialog"], [role="menu"]') ||
+    focused?.closest(
+      '[role="dialog"], [role="alertdialog"], [role="menu"]:not([data-cycle-preview])',
+    ) ||
     document.querySelector(
-      '[role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"], [role="menu"][data-state="open"]',
+      '[role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"], [role="menu"][data-state="open"]:not([data-cycle-preview])',
     )
   )
     return "modal";
