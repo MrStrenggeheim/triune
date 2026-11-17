@@ -207,13 +207,13 @@ Acceptance is mapped in [Unified workspace](../feature-map/unified-workspace.md)
 Nine unique iteration6 browser cases and two separate transcript-sync cases passed across retained candidates; overlapping source checks are not additional unique coverage.
 Native-inset emulation and Chromium touch injection do not establish physical iOS/Android, keyboard or installed-PWA behavior.
 
-## Integration7 candidate
+## Integration7 delivery
 
 The following eleven items activated as `0.20.0-5638ac603960` from source `5638ac603960f19ce0012dccae8b29352b4bf539`.
 Activation at 23:46 UTC verified both service interpreters, all 635 tested/package assets and restoration of three active runtimes.
 Evidence: `artifacts/overnight-20261116/activation.json`, `verification-summary.json` and `loading-audit/candidate2-cold-comparison.json`.
 
-| Request | Candidate behavior |
+| Request | Delivered behavior |
 | --- | --- |
 | `LIST-REFETCH-7` | Batch affected list query keys for child sort updates; retain broad reconciliation for root sorts and structural membership changes. |
 | `LIST-COST-7` | Omit compressed execution-only fields from list, watched-row and descendant reads; normal session reads retain full state and authorization. |
@@ -236,4 +236,26 @@ The parent owns the combined build, browser acceptance and release checks.
 - Deferred Mermaid loading shifts cost to first use; engine-load failure retains the existing error/source UI, with recovery verified after asset restoration and reload only.
 - Ownerless transcript-model retirement remains an open decision; saved layouts, reader state, drafts, send state and editor/terminal ownership retain their existing protection.
 - `APPROVAL-RECEIPT-7` is excluded: exact-request consumption and durable acknowledgment across restart remain under review.
-- Future branch-query/index changes remain isolated and outside this candidate.
+- Branch-query/index changes delivered separately in stability8 below.
+
+## Stability8 delivery
+
+Release `0.20.0-7f207db84d8a` activated on 2026-11-17 at 00:03:01 UTC with 635 exact UI assets and three restored runtimes.
+`BRANCH-QUERY-8` adds the covering label index and bounded inverse-branch reads; installed SQLite revision `bq1a2b3c4d5e` and the index were verified.
+`SHELL-VALIDATION-8` runs pure shell validation off the event loop while preserving capture ordering, cancellation and both redaction passes.
+The 55 branch and 42 shell checks passed before packaging; bounded timing and thread samples establish no general production speedup or hard GIL limit.
+Evidence: `artifacts/overnight-20261116/stability8/{verification-summary.json,activation.json,installed-index.json}`.
+
+## Receipt privacy follow-up
+
+New question receipt IDs derive from the sanitized request, excluding secret defaults from persisted digests as well as receipt text.
+Structured and legacy-preview cases preserve provider-bound data; existing saved receipts are unchanged.
+This correction is independent of the unfinished `APPROVAL-RECEIPT-7` delivery protocol.
+
+## Native ingestion metadata follow-up
+
+`NATIVE-INGEST-9` uses fresh light metadata for message resource provenance and optional subagent-return ancestry checks.
+Full session reads and each original authorization/binding check remain; no request-wide conversation cache or native transport batching is added.
+The synthetic 20-item probes retain identical receipts, item hashes, positions and SQL counts while reducing unused execution decoding.
+Alternating point-read CPU controls show the clearest benefit with large policy metadata and a small overhead for empty state; no production latency claim is made.
+Evidence: `artifacts/overnight-20261116/native-ingest/{HANDOFF.txt,measured-merits.json}`.

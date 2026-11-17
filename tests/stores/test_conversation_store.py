@@ -18,7 +18,7 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
 from omnigent.db.compression import CompressedText
-from omnigent.db.db_models import SqlConversationMetadata
+from omnigent.db.db_models import SqlConversationMetadata, SqlHost, workspace_scope
 from omnigent.db.utils import get_or_create_engine
 from omnigent.entities import (
     CompactionData,
@@ -43,6 +43,7 @@ from omnigent.stores.conversation_store.sqlalchemy_store import (
     SqlAlchemyConversationStore,
 )
 from omnigent.stores.host_store import HostStore
+from omnigent.stores.permission_store.sqlalchemy_store import SqlAlchemyPermissionStore
 
 # ── CRUD ──────────────────────────────────────────────
 
@@ -389,11 +390,13 @@ def test_summary_reads_skip_execution_columns_without_losing_metadata(
         assert full.inference_snapshot == {"catalog": ["synthetic"]}
         assert full.terminal_launch_args == ["--synthetic"]
         full_query_count = len(statements)
+        full_select_count = sum(sql.lstrip().startswith("SELECT") for sql in statements)
         decoded.clear()
         statements.clear()
         light = read(include_execution_state=False)
         assert decoded == []
-        assert len(statements) == full_query_count
+        assert len(statements) <= full_query_count
+        assert sum(sql.lstrip().startswith("SELECT") for sql in statements) == full_select_count
         metadata_sql = next(
             sql for sql in statements if "FROM omnigent_conversation_metadata" in sql
         )
@@ -864,6 +867,98 @@ def test_append_and_list_items(conversation_store: SqlAlchemyConversationStore) 
     assert len(page.data) == 2
     assert page.data[0].data.role == "user"
     assert page.data[1].data.role == "assistant"
+
+
+@pytest.mark.parametrize("store_fixture", ["conversation_store", "split_db_conversation_store"])
+def test_append_reads_fresh_resource_scope_without_execution_state(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch, store_fixture: str
+) -> None:
+    import omnigent.stores.conversation_store.sqlalchemy_store as store_module
+
+    store = request.getfixturevalue(store_fixture)
+    hosts = HostStore(store.storage_location)
+    permissions = SqlAlchemyPermissionStore(store.storage_location)
+    decoded = []
+    original_decode = store_module._decode_session_state
+
+    def decode(value):
+        decoded.append(value)
+        return original_decode(value)
+
+    monkeypatch.setattr(store_module, "_decode_session_state", decode)
+    for workspace_id in (0, 91):
+        with workspace_scope(workspace_id):
+            permissions.ensure_user(RESERVED_USER_LOCAL)
+            host = hosts.upsert_on_connect("d" * 32, "scope-host", RESERVED_USER_LOCAL)
+            conv = store.create_conversation(
+                conversation_id="e" * 32,
+                host_id=host.host_id,
+                workspace=f"/workspace/{workspace_id}",
+                runner_id=f"runner-{workspace_id}",
+            )
+            store.set_session_state(conv.id, {"policy": "x" * 32768})
+            for revision in (0, 1):
+                if revision:
+                    store.set_host_id(conv.id, host.host_id, f"/workspace/{workspace_id}/new")
+                    store.clear_runner_id(conv.id)
+                    assert store.set_runner_id(conv.id, f"runner-new-{workspace_id}")
+                    with store._engine.begin() as conn:
+                        conn.execute(
+                            update(SqlHost)
+                            .where(
+                                SqlHost.workspace_id == workspace_id,
+                                SqlHost.host_id == host.host_id,
+                            )
+                            .values(created_at=host.created_at + 1)
+                        )
+                current = store.get_conversation(conv.id)
+                current_host = hosts.get_host(host.host_id)
+                assert current is not None and current_host is not None
+                decoded.clear()
+                [saved] = store.append(
+                    conv.id,
+                    [
+                        NewConversationItem(
+                            type="message",
+                            response_id="scope",
+                            data=MessageData(role="assistant", agent="synthetic", content=[]),
+                        )
+                    ],
+                )
+                assert decoded == []
+                generation = (
+                    f"{current_host.created_at}:{current_host.account_generation or 'external'}"
+                )
+                assert saved.data.resource_scope == {
+                    "host_id": host.host_id,
+                    "workspace": current.workspace,
+                    "runner_id": current.runner_id,
+                    "generation": generation,
+                }
+                assert store.get_conversation(conv.id).session_state == {"policy": "x" * 32768}
+
+
+@pytest.mark.parametrize("store_fixture", ["conversation_store", "split_db_conversation_store"])
+def test_append_without_metadata_keeps_an_empty_resource_scope(
+    request: pytest.FixtureRequest, store_fixture: str
+) -> None:
+    from sqlalchemy import delete
+
+    store = request.getfixturevalue(store_fixture)
+    conv = store.create_conversation()
+    with store._engine.begin() as conn:
+        conn.execute(delete(SqlConversationMetadata).where(SqlConversationMetadata.id == conv.id))
+    [saved] = store.append(
+        conv.id,
+        [
+            NewConversationItem(
+                type="message",
+                response_id="scope",
+                data=MessageData(role="assistant", agent="synthetic", content=[]),
+            )
+        ],
+    )
+    assert saved.data.resource_scope is None
 
 
 def test_append_records_human_author_attribution(

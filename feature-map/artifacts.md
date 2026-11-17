@@ -87,7 +87,7 @@ Source checks: `web/src/artifacts/kit/formControls.test.ts` and `test_kit_native
 
 ### Integration7 Mermaid loading candidate
 
-Adjacent Mermaid previews defer their engine until first diagram rendering in the [integration7 source candidate](../docs/custom-fork.md#integration7-candidate).
+Adjacent Mermaid previews defer their engine until first diagram rendering in the [integration7 delivery](../docs/custom-fork.md#integration7-delivery).
 HTML artifact isolation, kit injection and document restoration retain their existing owners.
 Checks: `web/src/components/ai-elements/mermaidTheme.test.tsx`, `web/src/components/ai-elements/mermaidPresentation.test.ts`, `web/src/components/ai-elements/MermaidError.test.tsx` and `web/src/shell/MermaidPreview.theme.test.tsx`.
 Built-SPA entry points and failed-chunk recovery: `tests/browser_ui/files/test_mermaid_lazy_loading.py`.

@@ -98,6 +98,11 @@ class _RecordingStore:
             self.get_calls.append(session_id)
         return self._conv
 
+    def get_conversations(
+        self, session_ids: list[str], *, include_execution_state: bool = True
+    ) -> dict[str, Conversation]:
+        return {self._conv.id: self._conv} if self._conv.id in session_ids else {}
+
     def get_item(self, session_id: str, item_id: str) -> ConversationItem | None:
         """This double models dedup at append time only; nothing is ever found."""
         del session_id, item_id

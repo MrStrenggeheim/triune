@@ -163,6 +163,9 @@ _EXECUTION_METADATA_COLUMNS = (
     SqlConversationMetadata.inference_snapshot,
     SqlConversationMetadata.terminal_launch_args,
 )
+_LIGHT_METADATA_OPTIONS = tuple(
+    defer(column, raiseload=True) for column in _EXECUTION_METADATA_COLUMNS
+)
 
 
 def _runtime_notices_state(value: str | None) -> dict[str, Any]:
@@ -1028,7 +1031,9 @@ class SqlAlchemyConversationStore(ConversationStore):
         )
         ensure_fts_table(self._conv_engine)
 
-    def _get_meta(self, conversation_id: str) -> SqlConversationMetadata | None:
+    def _get_meta(
+        self, conversation_id: str, *, include_execution_state: bool = True
+    ) -> SqlConversationMetadata | None:
         """
         Fetch the metadata row for a conversation from the Omnigent DB.
 
@@ -1040,7 +1045,9 @@ class SqlAlchemyConversationStore(ConversationStore):
         """
         with self._session("select_conversation_metadata_by_id") as meta_sess:
             return meta_sess.get(
-                SqlConversationMetadata, (current_workspace_id(), conversation_id)
+                SqlConversationMetadata,
+                (current_workspace_id(), conversation_id),
+                options=None if include_execution_state else _LIGHT_METADATA_OPTIONS,
             )
 
     def _lock_conversation(self, session: Session, conversation_id: str) -> None:
@@ -1344,12 +1351,22 @@ class SqlAlchemyConversationStore(ConversationStore):
         :returns: The :class:`Conversation` if found, otherwise
             ``None``.
         """
+        return self._get_conversation(conversation_id, include_execution_state=True)
+
+    def _get_conversation(
+        self, conversation_id: str, *, include_execution_state: bool
+    ) -> Conversation | None:
         with shared_read_scope(), self._conv_session("select_conversation_by_id") as session:
             row = session.get(SqlConversation, (current_workspace_id(), conversation_id))
             if row is None:
                 return None
-            meta = self._get_meta(conversation_id)
-            return _to_conversation(row, meta, _fetch_labels(session, conversation_id))
+            meta = self._get_meta(conversation_id, include_execution_state=include_execution_state)
+            return _to_conversation(
+                row,
+                meta,
+                _fetch_labels(session, conversation_id),
+                include_execution_state=include_execution_state,
+            )
 
     def find_conversation_by_external_session_id(
         self,
@@ -1496,6 +1513,9 @@ class SqlAlchemyConversationStore(ConversationStore):
         if not conversation_ids:
             return {}
         unique_ids = list(set(conversation_ids))
+        if not include_execution_state and len(unique_ids) == 1:
+            conversation = self._get_conversation(unique_ids[0], include_execution_state=False)
+            return {conversation.id: conversation} if conversation is not None else {}
         with self._conv_session("get_conversations") as session:
             rows = list(
                 session.execute(
@@ -3139,7 +3159,9 @@ class SqlAlchemyConversationStore(ConversationStore):
         from omnigent.stores.host_store import HostStore
 
         if any(isinstance(item.data, MessageData) for item in items):
-            conversation = self.get_conversation(conversation_id)
+            conversation = self.get_conversations(
+                [conversation_id], include_execution_state=False
+            ).get(conversation_id)
             if conversation is not None:
                 host = (
                     HostStore(self.storage_location).get_host(conversation.host_id)

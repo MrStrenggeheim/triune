@@ -948,6 +948,15 @@ async def record_native_subagent_dispatch(
     )
 
 
+def _read_return_conversation(
+    store: ConversationStore, conversation_id: str
+) -> Conversation | None:
+    """Read current ancestry and labels without loading execution state."""
+    return store.get_conversations([conversation_id], include_execution_state=False).get(
+        conversation_id
+    )
+
+
 async def record_claude_subagent_return(
     parent_id: str,
     item: NewConversationItem | ConversationItem,
@@ -960,7 +969,7 @@ async def record_claude_subagent_return(
             isinstance(item.data, ResourceEventData)
             and item.data.event_type == "session.subagent.result"
         ):
-            child = await asyncio.to_thread(store.get_conversation, parent_id)
+            child = await asyncio.to_thread(_read_return_conversation, store, parent_id)
             if child is not None and child.parent_conversation_id is not None:
                 prior = await asyncio.to_thread(
                     _returned_activity,

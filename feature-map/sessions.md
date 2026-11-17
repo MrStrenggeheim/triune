@@ -819,9 +819,9 @@ plain `uv run pytest`, which starts a private server for the test.
   `web/src/shell/Sidebar.test.tsx` ("sidebar_grouping_ui release flag") check
   that the flag-off sidebar ignores stored view options.
 
-### Integration7 list candidate
+### Integration7 list delivery
 
-The [candidate boundary](../docs/custom-fork.md#integration7-candidate) records applied source, the verified live baseline and remaining release checks.
+The [delivery evidence](../docs/custom-fork.md#integration7-delivery) records the activated source and its verification limits.
 Cache reconciliation: `web/src/hooks/SessionUpdatesProvider.test.tsx` and `web/src/lib/sessionListCache.test.ts`.
 Lightweight authorized reads: `tests/stores/test_conversation_store.py`, `tests/server/test_descendant_activity.py` and `tests/server/routes/test_session_updates_ws.py`.
 
@@ -836,6 +836,8 @@ The PostgreSQL cases check SQL generation and retry behavior with mocks; they do
 
 Root sort and structural changes retain broad reconciliation; affected slow reads may still cancel and restart.
 Bounded synthetic query/decode counts do not establish a production p95 or endpoint speedup.
+Native message provenance and return-correlation reads also omit unused execution fields while retaining fresh scope, tenant, access and runner checks.
+`tests/server/routes/test_native_ingest_metadata.py` covers mutations across awaits; store scope tests cover single/split databases and host generations.
 
 ## Gotchas
 

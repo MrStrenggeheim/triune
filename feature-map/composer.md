@@ -162,7 +162,7 @@ and steers messages while the agent is busy.
   Send now interrupts the turn and compacts. During compaction, queued messages
   wait in the web queue; immediate sends are retained by the Pi integration.
 - `draft-persistence`: unsent text survives arriving messages and prompts.
-  The [integration7 candidate](../docs/custom-fork.md#integration7-candidate) preserves unread storage after failed hydration, merges unrelated entry changes and retains edits/files under their captured account/server owner.
+  The [integration7 delivery](../docs/custom-fork.md#integration7-delivery) preserves unread storage after failed hydration, merges unrelated entry changes and retains edits/files under their captured account/server owner.
 - `queue-lifecycle-candidate`: integration7 rejects superseded turn-status updates and retires empty queue observers while retaining active compaction and durable shutdown recovery.
 - `delivered-send-recovery`: a sent message stays out of the composer when its
   HTTP acknowledgement is lost. Delivery during draft restoration clears the
@@ -718,7 +718,7 @@ Other connection providers alone do not enable the managed MCP picker.
 
 ### Integration7 persistence and queued-input candidate
 
-The [candidate boundary](../docs/custom-fork.md#integration7-candidate) records applied source separately from release activation.
+The [delivery evidence](../docs/custom-fork.md#integration7-delivery) records the activated source and its verification limits.
 Storage checks: `web/src/lib/queuedMessagePersistence.test.ts`, `web/src/lib/sessionDrafts.test.ts`, `web/src/store/chatStore.test.ts` and `web/src/shell/NewChatDialog.flow.test.tsx`.
 Lifecycle and observer checks: `tests/server/integration/test_message_queue.py` and `tests/server/integration/test_managed_startup_inputs.py`.
 
@@ -735,11 +735,12 @@ There is no new cross-tab live refresh or cross-device synchronization.
 
 ## Gotchas
 
-- [Iteration6 activation and browser evidence](../docs/custom-fork.md#iteration6-source-status) are recorded separately from the unactivated integration7 candidate.
+- [Iteration6 activation and browser evidence](../docs/custom-fork.md#iteration6-source-status) are recorded separately from the delivered integration7 improvements.
 - Mobile main and side-chat composers use an 8px Comfortable/4px Compact bottom gutter; the shell owns safe-area clearance once.
 - Header/shelf popups match the outer row-edge gap to the visible control inset on their actual opening side, including after collision flips.
 - Questions submit and decline whole elicitation batches; navigation and choice selection never submit independently.
 - Secret answers reach the provider unchanged, but canonical receipt history records only answered/redacted state and never saves secret drafts locally.
+- Question receipt identities use the sanitized request, so secret defaults influence neither stored text nor submission digests.
 - Receipt and echo correlation require trusted submission identity; matching answer text or a repeated `question_0` key is insufficient.
 
 - The Arclet dbcert preflight needs both the updated desktop shell and web UI,
