@@ -390,13 +390,14 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
   );
   const titlesRef = useRef(titles);
   titlesRef.current = titles;
+  const { updateConversationTitles } = dock;
   useEffect(() => {
     try {
-      dockRef.current.updateConversationTitles(titles);
+      updateConversationTitles(titles);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not update chat title");
     }
-  }, [dock.retainedViews, titles]);
+  }, [dock.retainedViews, updateConversationTitles, titles]);
   const lastConversationRef = useRef(lastConversation);
   lastConversationRef.current = lastConversation;
 

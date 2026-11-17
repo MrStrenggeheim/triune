@@ -393,7 +393,8 @@ export function useDockLayout({
     (id: string) => commit((state) => unpinDockView(state, id)),
     [commit],
   );
-  const state = current.current.state;
+  // The commit ref can lead a pending React update; render its state snapshot.
+  const state = session.state;
   const layout = layoutFor(state);
   const retainedViews = useMemo(() => retainedDockViews(state), [state]);
   return {
@@ -405,7 +406,7 @@ export function useDockLayout({
     pinnedViewIds: state.pins.views.map((view) => view.id),
     activeConversationId: state.activeConversationId,
     hasChatLayout: state.chats.some((chat) => chat.conversationId === state.activeConversationId),
-    error: current.current.error,
+    error: session.error,
     setLayout,
     addView,
     focusView,
