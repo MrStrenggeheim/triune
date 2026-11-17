@@ -512,7 +512,7 @@ describe("ChatHeader — conversation breadcrumb", () => {
     });
     expect(screen.getByText("Review module")).toBeInTheDocument();
     expect(screen.queryByText("general-purpose")).toBeNull();
-    expect(screen.getByRole("link", { name: "Parent work" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "Back to parent session" })).toHaveAttribute(
       "href",
       "/c/parent-123",
     );

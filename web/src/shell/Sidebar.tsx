@@ -5657,7 +5657,8 @@ function ConversationRowImpl({
                     <span
                       aria-hidden
                       className={cn(
-                        "pointer-events-none absolute inset-0 flex items-center justify-center opacity-0 [@media(pointer:coarse)]:opacity-100",
+                        "pointer-events-none absolute inset-0 flex items-center justify-center opacity-0",
+                        !menuStatus && "[@media(pointer:coarse)]:opacity-100",
                         SIDEBAR_MENU_VISUAL,
                       )}
                     >

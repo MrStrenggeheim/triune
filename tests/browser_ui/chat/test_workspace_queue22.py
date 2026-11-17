@@ -36,6 +36,9 @@ def test_footer_settings_tab_geometry_and_notification_disclosure(
                 "for checking the full notification paragraph"
             )
         )
+    second.update_session(
+        branch={"source_conversation_id": first.session_id, "reference_only": True}
+    )
     page.goto(first.url)
     expect(page.get_by_label("Message the agent").first).to_be_visible()
     app = page.get_by_role("banner", name="Application")
@@ -65,6 +68,27 @@ def test_footer_settings_tab_geometry_and_notification_disclosure(
     settings = navigation.get_by_test_id("settings-button")
     expect(settings).to_be_visible()
     assert not settings.evaluate("element => element.closest('nav')")
+    parent_row = navigation.locator(f'[data-sidebar-session-id="{first.session_id}"]')
+    expander = parent_row.get_by_role(
+        "button", name="Expand subchats of " + first.session_snapshot()["title"], exact=True
+    )
+    if appearance[0] == "desktop":
+        page.mouse.move(0, 0)
+        before = box(expander)
+        expect(
+            parent_row.locator('[data-testid="conversation-actions"] > [aria-hidden]')
+        ).to_have_css("opacity", "0")
+        parent_row.hover()
+        archive = box(parent_row.get_by_test_id("quick-archive-conversation"))
+        more_action = box(parent_row.get_by_test_id("conversation-actions"))
+        child_action = box(expander)
+        assert archive["x"] < more_action["x"] < child_action["x"]
+        assert child_action["x"] == pytest.approx(before["x"], abs=1)
+        expected_gap = 8 if appearance[2] == "comfortable" else 4
+        assert more_action["x"] - archive["x"] - archive["width"] == pytest.approx(
+            expected_gap, abs=1
+        )
+    expander.click()
     page.clock.pause_at(page.evaluate("Date.now() + 1000"))
     for chat in (second, first):
         row = navigation.locator(f'[data-sidebar-session-id="{chat.session_id}"]')
