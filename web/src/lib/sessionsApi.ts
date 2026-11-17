@@ -16,9 +16,18 @@ import { CODEX_NEXT_TURN_PROTOCOL, CODEX_NEXT_TURN_PATH } from "./codexApprovalM
 import type { ConversationItem } from "./conversationItems";
 import type { MessageContentBlock } from "./blocks";
 import type { McpServerStartup } from "./events";
-import { authenticatedFetch } from "./identity";
+import { authenticatedFetch, getCurrentUserId } from "./identity";
+import { getBasePath } from "./basePath";
+import { getOmnigentServerIdentity, getOmnigentHostConfig } from "./host";
 import { isAndroidShell, isElectronShell, isIOSShell } from "@/lib/nativeBridge";
-import { sessionRoutingHostId, setSessionHost, setSessionParent } from "./sessionHost";
+import {
+  sessionRoutingHostId,
+  setSessionHost,
+  setSessionParent,
+  sessionRoutingSnapshot,
+  type SessionRoutingGuard,
+  type SessionRoutingReceipt,
+} from "./sessionHost";
 import { backgroundSessionTitlesRequestHeaders } from "./backgroundSessionTitlesPreferences";
 import { parseBackgroundTasks } from "./sse";
 import { readMessageCommunication } from "./messageCommunication";
@@ -326,12 +335,14 @@ function usageByModelFromWire(
   return out;
 }
 
-function sessionFromWire(wire: SessionResponseWire): Session {
+function sessionFromWire(wire: SessionResponseWire, recordRouting = true): Session {
   // Record the session's host so slice-key routing (turn dispatch, terminal
   // attach) can pin to the replica holding that host's runner tunnel; a
   // sub-agent child inherits its parent's through the recorded parent link.
-  setSessionHost(wire.id, sessionRoutingHostId(wire.host_id, wire.labels));
-  setSessionParent(wire.id, wire.parent_session_id, wire.labels);
+  if (recordRouting) {
+    setSessionHost(wire.id, sessionRoutingHostId(wire.host_id, wire.labels));
+    setSessionParent(wire.id, wire.parent_session_id, wire.labels);
+  }
   return {
     id: wire.id,
     branch: wire.branch ?? null,
@@ -1254,12 +1265,45 @@ export interface GetSessionSlimOptions {
   refreshState?: boolean;
   /** Cancel this request when the owning operation ends or times out. */
   signal?: AbortSignal;
+  /** Fence bootstrap routing publication against a changed binding or authority. */
+  routingGuard?: SessionRoutingGuard;
+}
+
+const routingReceipts = new WeakMap<Session, SessionRoutingReceipt>();
+
+export function sessionMetadataAuthority(): string {
+  return JSON.stringify([getOmnigentServerIdentity(), getBasePath(), getCurrentUserId()]);
+}
+
+/** Adopt only the routing publication belonging to this shared metadata result. */
+export function applySessionMetadataRouting(session: Session, guard: SessionRoutingGuard): boolean {
+  const receipt = routingReceipts.get(session);
+  if (
+    !receipt ||
+    receipt.authority !== sessionMetadataAuthority() ||
+    receipt.fetcher !== getOmnigentHostConfig().fetcher
+  )
+    return false;
+  if (receipt.applied) {
+    guard.onApplied(receipt);
+    return guard.isCurrent();
+  }
+  if (!guard.isCurrent() || receipt.before !== sessionRoutingSnapshot(session.id)) return false;
+  setSessionHost(session.id, sessionRoutingHostId(session.hostId, session.labels));
+  setSessionParent(session.id, session.parentSessionId, session.labels);
+  receipt.after = sessionRoutingSnapshot(session.id);
+  receipt.applied = true;
+  guard.onApplied();
+  return guard.isCurrent();
 }
 
 export async function getSessionSlim(
   sessionId: string,
   options: GetSessionSlimOptions = {},
 ): Promise<Session> {
+  const authority = sessionMetadataAuthority();
+  const fetcher = getOmnigentHostConfig().fetcher;
+  const before = sessionRoutingSnapshot(sessionId);
   const params = new URLSearchParams({
     include_items: "false",
     include_liveness: "false",
@@ -1270,7 +1314,25 @@ export async function getSessionSlim(
     `/v1/sessions/${encodeURIComponent(sessionId)}?${params.toString()}`,
     { signal: options.signal },
   );
-  return sessionFromWire(await readJsonOrThrow<SessionResponseWire>(res));
+  const wire = await readJsonOrThrow<SessionResponseWire>(res);
+  const recordRouting =
+    wire.id === sessionId &&
+    sessionMetadataAuthority() === authority &&
+    getOmnigentHostConfig().fetcher === fetcher &&
+    sessionRoutingSnapshot(sessionId) === before &&
+    !options.signal?.aborted &&
+    (!options.routingGuard || options.routingGuard.isCurrent());
+  const session = sessionFromWire(wire, recordRouting);
+  const receipt = {
+    authority,
+    before,
+    after: sessionRoutingSnapshot(sessionId),
+    applied: recordRouting,
+    fetcher,
+  };
+  routingReceipts.set(session, receipt);
+  if (recordRouting) options.routingGuard?.onApplied();
+  return session;
 }
 
 export interface SessionSignInLink {

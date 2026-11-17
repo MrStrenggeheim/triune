@@ -52,7 +52,13 @@ import {
   promoteSessionDraft,
   setSessionDraft,
 } from "@/lib/sessionDrafts";
-import { getCurrentAuthorId, getCurrentUserId, subscribeIdentity } from "@/lib/identity";
+import {
+  getCurrentAuthorId,
+  getCurrentUserId,
+  subscribeIdentity,
+  setSessionHostResolver,
+} from "@/lib/identity";
+import { prefetchSessionHostChain } from "@/hooks/useSession";
 import { PRESENCE_IDLE_AFTER_MS } from "@/lib/presenceIdle";
 import { getSessionHost, setSessionHost, setSessionParent } from "@/lib/sessionHost";
 import {
@@ -2726,7 +2732,7 @@ describe("chatStore — send (first-send ordering)", () => {
     expect(calls[0]).toEqual({ url: "/v1/sessions", method: "POST" });
     expect(calls[1]).toEqual({ url: "/v1/runners", method: "GET" });
     expect(calls[2]).toEqual({ url: "/v1/sessions/conv_new", method: "PATCH" });
-    expect(calls[3]?.url).toBe("/v1/sessions/conv_new/stream");
+    const streamIndex = calls.findIndex((call) => call.url === "/v1/sessions/conv_new/stream");
     const metadataIndex = calls.findIndex(
       (call) => call.url.split("?")[0] === "/v1/sessions/conv_new" && call.method === "GET",
     );
@@ -2736,8 +2742,9 @@ describe("chatStore — send (first-send ordering)", () => {
     const eventIndex = calls.findIndex(
       (call) => call.url === "/v1/sessions/conv_new/events" && call.method === "POST",
     );
-    expect(metadataIndex).toBeGreaterThan(3);
-    expect(itemsIndex).toBeGreaterThan(3);
+    expect(metadataIndex).toBe(3);
+    expect(streamIndex).toBeGreaterThan(metadataIndex);
+    expect(itemsIndex).toBeGreaterThan(streamIndex);
     expect(eventIndex).toBeGreaterThan(Math.max(metadataIndex, itemsIndex));
 
     // POST /v1/sessions body: durable agent_id (NOT name) + empty initial_items.
@@ -3121,10 +3128,8 @@ describe("chatStore — send (first-send ordering)", () => {
       url: String(u),
       method: (init as RequestInit | undefined)?.method ?? "GET",
     }));
-    // Order: open stream → metadata/items hydration → POST event.
-    // Asserting position (not just presence) is the proof that the
-    // rebind happened BEFORE the POST.
-    expect(calls[0]?.url).toBe("/v1/sessions/conv_existing/stream");
+    // Resolve routing metadata, then register the stream before history and send.
+    const streamIndex = calls.findIndex((call) => call.url === "/v1/sessions/conv_existing/stream");
     const metadataIndex = calls.findIndex(
       (call) => call.url.split("?")[0] === "/v1/sessions/conv_existing" && call.method === "GET",
     );
@@ -3134,8 +3139,9 @@ describe("chatStore — send (first-send ordering)", () => {
     const eventIndex = calls.findIndex(
       (call) => call.url === "/v1/sessions/conv_existing/events" && call.method === "POST",
     );
-    expect(metadataIndex).toBeGreaterThan(0);
-    expect(itemsIndex).toBeGreaterThan(0);
+    expect(metadataIndex).toBe(0);
+    expect(streamIndex).toBeGreaterThan(metadataIndex);
+    expect(itemsIndex).toBeGreaterThan(streamIndex);
     expect(eventIndex).toBeGreaterThan(Math.max(metadataIndex, itemsIndex));
 
     // The optimistic bubble survives — the POST succeeded.
@@ -3149,6 +3155,9 @@ describe("chatStore — send (first-send ordering)", () => {
     // left two subscribers on one entry, so any delta with no item id to dedupe
     // on (live claude-native text) applied twice.
     seedSession("conv_two_subs", []);
+    // Known routing still opens before the independently failing hydration.
+    setSessionHost("conv_two_subs", "known-host");
+    onTestFinished(() => setSessionHost("conv_two_subs", null));
     let failSnapshot = true;
     const openedStreams: AbortSignal[] = [];
     fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
@@ -16952,6 +16961,117 @@ describe("chatStore — startStreamPump reconnect loop", () => {
       vi.unstubAllEnvs();
     });
 
+    it.each(["host", "parent"])(
+      "keeps an actual binding writable after a live %s routing change",
+      async (change) => {
+        workspaceMode();
+        const id = `bound-rekey-${change}`;
+        const parent = `${id}-parent`;
+        const before = userMessage("bound-before", "Before routing changed");
+        seedSession(id, [before]);
+        const extras = new Map<string, Record<string, unknown>>([[id, { host_id: null }]]);
+        const route = routeKeyedStreamOpens({ snapshotExtras: extras });
+        setSessionDraft(id, { text: "Keep live routing draft", files: [] });
+        try {
+          await useChatStore.getState().switchTo(id);
+          await drainAsync(20);
+          const controller = conversationRegistry.peek(id)!.getState().abortController!;
+          expect(route.opens).toHaveLength(1);
+          // Re-publishing equal hints and identity must not invalidate the binding.
+          setSessionHost(id, null);
+          setSessionParent(id, null);
+          setOmnigentHostConfig({});
+          route.sinks[0]!.push(runningStatus(id));
+          await drainAsync(10);
+          expect(conversationRegistry.peek(id)!.getState().sessionStatus).toBe("running");
+          expect(route.opens).toHaveLength(1);
+          const committed = userMessage("bound-after", "After routing changed");
+          seedSessionItems(id, [before, committed]);
+          if (change === "host") {
+            extras.set(id, { host_id: "host_b" });
+            setSessionHost(id, "host_b");
+          } else {
+            extras.set(id, { host_id: null, parent_session_id: parent });
+            setSessionHost(parent, "host_b");
+            setSessionParent(id, parent);
+          }
+          await drainAsync(50);
+          expect(route.opens).toHaveLength(2);
+          expect(route.opens[1]!.headers.get(SLICE_KEY)).toBe("host_b");
+          expect(route.opens[0]!.aborted).toBe(true);
+          expect(
+            conversationRegistry
+              .peek(id)!
+              .getState()
+              .blocks.map((b) => b.ctx.itemId),
+          ).toEqual([before.id, committed.id]);
+          route.sinks[1]!.push(runningStatus(id));
+          await drainAsync(20);
+          expect(conversationRegistry.peek(id)!.getState().sessionStatus).toBe("running");
+          expect(conversationRegistry.peek(id)!.getState().abortController).toBe(controller);
+          expect(controller.signal.aborted).toBe(false);
+          expect(getSessionDraft(id)?.text).toBe("Keep live routing draft");
+        } finally {
+          releaseConversation(id);
+          await drainAsync(2);
+          setSessionHost(id, null);
+          setSessionParent(id, null);
+          setSessionHost(parent, null);
+        }
+      },
+    );
+
+    it("discards an old bootstrap history read while a rekeyed binding remains writable", async () => {
+      workspaceMode();
+      const id = "bound-rekey-pending-history";
+      const obsolete = userMessage("obsolete-bootstrap", "Must stay absent");
+      const committed = userMessage("current-host", "Current host history");
+      seedSession(id, [obsolete]);
+      const extras = new Map<string, Record<string, unknown>>([[id, { host_id: null }]]);
+      const route = routeKeyedStreamOpens({ snapshotExtras: extras });
+      const base = fetchMock.getMockImplementation()!;
+      let finish!: (response: Response) => void;
+      let first = true;
+      fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+        if (
+          first &&
+          new URL(String(input), "http://test.local").pathname === `/v1/sessions/${id}/items`
+        ) {
+          first = false;
+          return new Promise<Response>((resolve) => {
+            finish = resolve;
+          });
+        }
+        return base(input, init);
+      });
+      try {
+        const binding = useChatStore.getState().switchTo(id);
+        await drainAsync(20);
+        expect(finish).toBeDefined();
+        const controller = conversationRegistry.peek(id)!.getState().abortController!;
+        seedSessionItems(id, [committed]);
+        extras.set(id, { host_id: "host_b" });
+        setSessionHost(id, "host_b");
+        await drainAsync(50);
+        expect(route.opens).toHaveLength(2);
+        route.sinks[1]!.push(runningStatus(id));
+        await drainAsync(10);
+        finish(mockResponse({ object: "list", data: [obsolete], has_more: false }));
+        await binding;
+        const state = conversationRegistry.peek(id)!.getState();
+        expect(state.blocks.map((b) => b.ctx.itemId)).toEqual([committed.id]);
+        expect(state.sessionStatus).toBe("running");
+        expect(state.loadingConversation).toBe(false);
+        expect(state.conversationLoadError).toBeNull();
+        expect(state.abortController).toBe(controller);
+        expect(controller.signal.aborted).toBe(false);
+      } finally {
+        releaseConversation(id);
+        await drainAsync(2);
+        setSessionHost(id, null);
+      }
+    });
+
     it("re-keys a healthy hostless stream once the session's routing host is learned", async () => {
       workspaceMode();
       const id = "conv_rekey_learned";
@@ -23722,11 +23842,219 @@ describe("canonical transcript event-script equivalence", () => {
   );
 });
 
-it.each([false, true])(
-  "binds independent conversation stores through one negotiated tab socket without SSE (windowed %s)",
-  async (windowed) => {
+it.each([
+  "cancelled",
+  "replaced",
+  "viewer changed",
+  "server changed",
+  "forbidden",
+  "base path changed",
+  "host changed",
+  "parent changed",
+  "routing ABA",
+  "newer binding",
+])("does not open a transcript or read history after bootstrap metadata is %s", async (outcome) => {
+  const id = `bootstrap-${outcome.replaceAll(" ", "-")}`;
+  seedSession(id, []);
+  setSessionHost(id, null);
+  let resolve!: (response: Response) => void;
+  const pending = new Promise<Response>((finish) => {
+    resolve = finish;
+  });
+  const base = fetchMock.getMockImplementation()!;
+  let first = true;
+  fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+    if (first && String(input).split("?")[0] === `/v1/sessions/${id}`) {
+      first = false;
+      return pending;
+    }
+    return base(input, init);
+  });
+  setSessionDraft(id, { text: "Keep cancelled reader draft", files: [] });
+  const binding = useChatStore.getState().switchTo(id);
+  await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
+  const oldEntry = conversationRegistry.peek(id)!;
+  if (outcome === "cancelled") oldEntry.getState().abortController!.abort();
+  if (outcome === "replaced") {
+    releaseConversation(id);
+    conversationRegistry.acquire(id).setState({ oldestItemId: "replacement-anchor" });
+  }
+  if (outcome === "viewer changed") vi.mocked(getCurrentUserId).mockReturnValue("other-viewer");
+  const previousBase = window.__OMNIGENT_BASE_PATH__;
+  if (outcome === "server changed") setOmnigentHostConfig({ serverIdentity: "replacement-server" });
+  if (outcome === "base path changed") window.__OMNIGENT_BASE_PATH__ = "/new-authority";
+  if (outcome === "host changed") setSessionHost(id, "newer-host");
+  if (outcome === "parent changed") {
+    setSessionHost("new-parent", "newer-host");
+    setSessionParent(id, "new-parent");
+  }
+  if (outcome === "routing ABA") {
+    setSessionHost(id, "transient-host");
+    setSessionHost(id, null);
+  }
+  const newer = new AbortController();
+  if (outcome === "newer binding")
+    oldEntry.setState({ abortController: newer, loadingConversation: true });
+  resolve(
+    outcome === "forbidden"
+      ? mockResponse({}, { ok: false, status: 403 })
+      : mockResponse({ id, agent_id: "agent_xyz", status: "idle", host_id: "resolved-host" }),
+  );
+  await binding;
+  window.__OMNIGENT_BASE_PATH__ = previousBase;
+  if (outcome === "server changed") setOmnigentHostConfig({});
+  const paths = fetchMock.mock.calls.map(([url]) => String(url).split("?")[0]);
+  expect(paths).not.toContain(`/v1/sessions/${id}/stream`);
+  expect(paths).not.toContain(`/v1/sessions/${id}/items`);
+  if (outcome === "host changed" || outcome === "parent changed")
+    expect(getSessionHost(id)).toBe("newer-host");
+  if (
+    ["routing ABA", "base path changed", "viewer changed", "server changed", "cancelled"].includes(
+      outcome,
+    )
+  )
+    expect(getSessionHost(id)).toBeNull();
+  if (outcome === "newer binding") {
+    expect(oldEntry.getState()).toMatchObject({
+      abortController: newer,
+      loadingConversation: true,
+    });
+    expect(newer.signal.aborted).toBe(false);
+  } else if (outcome !== "replaced") {
+    expect(oldEntry.getState()).toMatchObject({
+      loadingConversation: false,
+      abortController: null,
+    });
+  }
+  if (outcome === "forbidden") expect(oldEntry.getState().conversationLoadError).not.toBeNull();
+  if (outcome === "cancelled") {
+    await ensureConversationStreamed(id);
+    expect(oldEntry.getState().loadingConversation).toBe(false);
+    expect(oldEntry.getState().abortController?.signal.aborted).toBe(false);
+    expect(
+      fetchMock.mock.calls.filter(
+        ([url]) => String(url).split("?")[0] === `/v1/sessions/${id}/stream`,
+      ),
+    ).toHaveLength(1);
+    expect(getSessionDraft(id)?.text).toBe("Keep cancelled reader draft");
+  }
+  if (outcome === "replaced")
+    expect(conversationRegistry.peek(id)!.getState().oldestItemId).toBe("replacement-anchor");
+  releaseConversation(id);
+  setSessionHost(id, null);
+  setSessionParent(id, null);
+  setSessionHost("new-parent", null);
+  vi.mocked(getCurrentUserId).mockReturnValue(null);
+});
+
+it.each([false, true, "cancel and retry"])(
+  "fences an ancestor metadata read without duplicating bootstrap (routing changed %s)",
+  async (changed) => {
+    const id = `bootstrap-child-${String(changed).replaceAll(" ", "-")}`;
+    const parent = `bootstrap-parent-${String(changed).replaceAll(" ", "-")}`;
+    seedSession(id, []);
+    vi.stubEnv("VITE_OMNIGENT_HOST_ROUTING", "true");
+    setSessionHostResolver((sessionId, options) =>
+      prefetchSessionHostChain(client, sessionId, options),
+    );
+    let finishParent!: (response: Response) => void;
+    const parentRead = new Promise<Response>((resolve) => {
+      finishParent = resolve;
+    });
+    const base = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input).split("?")[0];
+      if (path === `/v1/sessions/${id}`)
+        return mockResponse({
+          id,
+          agent_id: "agent_xyz",
+          status: "idle",
+          parent_session_id: parent,
+        });
+      if (path === `/v1/sessions/${parent}`) return parentRead;
+      return base(input, init);
+    });
+    try {
+      const binding = useChatStore.getState().switchTo(id);
+      await vi.waitFor(() =>
+        expect(
+          fetchMock.mock.calls.some(
+            ([url]) => String(url).split("?")[0] === `/v1/sessions/${parent}`,
+          ),
+        ).toBe(true),
+      );
+      let retry: Promise<void> | undefined;
+      if (changed === true) setSessionHost(parent, "newer-parent-host");
+      if (changed === "cancel and retry") {
+        setSessionDraft(id, { text: "Keep ancestor retry draft", files: [] });
+        conversationRegistry.peek(id)!.getState().abortController!.abort();
+        retry = ensureConversationStreamed(id);
+        await vi.waitFor(() =>
+          expect(
+            fetchMock.mock.calls.filter(
+              ([url]) => String(url).split("?")[0] === `/v1/sessions/${id}`,
+            ),
+          ).toHaveLength(2),
+        );
+      }
+      finishParent(
+        mockResponse({
+          id: parent,
+          agent_id: "agent_xyz",
+          status: "idle",
+          host_id: "resolved-parent-host",
+        }),
+      );
+      await Promise.all([binding, retry]);
+      expect(getSessionHost(id)).toBe(
+        changed === true ? "newer-parent-host" : "resolved-parent-host",
+      );
+      if (changed === "cancel and retry")
+        expect(getSessionDraft(id)?.text).toBe("Keep ancestor retry draft");
+      expect(
+        fetchMock.mock.calls.filter(([url]) => String(url).split("?")[0] === `/v1/sessions/${id}`),
+      ).toHaveLength(changed === "cancel and retry" ? 2 : 1);
+      expect(
+        fetchMock.mock.calls.filter(
+          ([url]) => String(url).split("?")[0] === `/v1/sessions/${parent}`,
+        ),
+      ).toHaveLength(1);
+      expect(
+        fetchMock.mock.calls.filter(
+          ([url]) => String(url).split("?")[0] === `/v1/sessions/${id}/stream`,
+        ),
+      ).toHaveLength(changed === true ? 0 : 1);
+      if (changed === true)
+        expect(conversationRegistry.peek(id)!.getState()).toMatchObject({
+          loadingConversation: false,
+          abortController: null,
+        });
+    } finally {
+      releaseConversation(id);
+      setSessionParent(id, null);
+      setSessionHost(parent, null);
+      setSessionHostResolver(null);
+      vi.unstubAllEnvs();
+    }
+  },
+);
+
+it.each([
+  [false, false, false],
+  [true, false, false],
+  [true, true, false],
+  [true, true, true, false],
+  [true, true, false, true],
+])(
+  "binds independent conversation stores through one negotiated tab socket without SSE (windowed %s, bootstrap host %s, parent routed %s, shared metadata %s)",
+  async (windowed, bootstrapHost, parentRouted, sharedMetadata = false) => {
     vi.useFakeTimers();
     vi.mocked(getCurrentUserId).mockReturnValue(null);
+    rememberTranscriptReaderCheckpoint("mux-one", {
+      loadedMinPosition: undefined,
+      firstItemId: undefined,
+    });
+    if (parentRouted) setSessionHost("mux-parent", "bootstrap-host");
     class TranscriptSocket {
       static OPEN = 1;
       static revision = 0;
@@ -23825,8 +24153,70 @@ it.each([false, true])(
       : [];
     seedSession("mux-one", saved);
     seedSession("mux-two", []);
+    const metadata = {
+      id: "mux-one",
+      agent_id: "agent_xyz",
+      status: "idle",
+      created_at: 0,
+      host_id: parentRouted ? null : "bootstrap-host",
+      parent_session_id: parentRouted ? "mux-parent" : null,
+    };
+    let resolveMetadata!: (response: Response) => void;
+    if (bootstrapHost) {
+      setSessionHost("mux-one", null);
+      const base = fetchMock.getMockImplementation()!;
+      let first = true;
+      fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+        const path = new URL(String(input), "http://test.local").pathname;
+        if (first && path === "/v1/sessions/mux-one") {
+          first = false;
+          return new Promise<Response>((resolve) => {
+            resolveMetadata = resolve;
+          });
+        }
+        if (path === "/v1/sessions/mux-one/items") {
+          expect(
+            TranscriptSocket.instances[0]!.sent.some(
+              (frame) => frame.type === "subscribe" && frame.session_id === "mux-one",
+            ),
+          ).toBe(true);
+        }
+        if (path === "/v1/sessions/mux-one") return mockResponse(metadata);
+        return base(input, init);
+      });
+    }
     try {
-      await useChatStore.getState().switchTo("mux-one");
+      const sharedRead = sharedMetadata
+        ? client.fetchQuery({
+            queryKey: ["session", "mux-one"],
+            queryFn: () => getSessionSlim("mux-one"),
+          })
+        : undefined;
+      const binding = useChatStore.getState().switchTo("mux-one");
+      if (bootstrapHost) {
+        await vi.advanceTimersByTimeAsync(10);
+        expect(getSessionHost("mux-one")).toBeNull();
+        expect(
+          TranscriptSocket.instances
+            .flatMap((socket) => socket.sent)
+            .filter((frame) => frame.type === "subscribe"),
+        ).toEqual([]);
+        expect(
+          fetchMock.mock.calls.filter(([url]) => String(url).includes("mux-one/items")),
+        ).toEqual([]);
+        resolveMetadata(mockResponse(metadata));
+      }
+      await binding;
+      await sharedRead;
+      if (bootstrapHost) {
+        expect(getSessionHost("mux-one")).toBe("bootstrap-host");
+        expect(
+          fetchMock.mock.calls.filter(
+            ([url]) =>
+              new URL(String(url), "http://test.local").pathname === "/v1/sessions/mux-one",
+          ),
+        ).toHaveLength(1);
+      }
       await ensureConversationStreamed("mux-two");
       await vi.advanceTimersByTimeAsync(50);
       const socket = TranscriptSocket.instances[0]!;
@@ -23874,6 +24264,9 @@ it.each([false, true])(
       /* oxlint-enable no-await-in-loop */
       expect(fetchMock).not.toHaveBeenCalled();
       expect(socket.sent.filter((frame) => frame.type === "subscribe")).toHaveLength(2);
+      const subscriptionsBeforeDetach = socket.sent.filter(
+        (frame) => frame.type === "subscribe" && frame.session_id === "mux-one",
+      ).length;
       const historyFramesBeforeDetach = socket.historyFrames;
       const retainedCheckpoint = conversationRegistry
         .peek("mux-one")!
@@ -23888,6 +24281,9 @@ it.each([false, true])(
           .at(-1),
       ).toMatchObject(retainedCheckpoint!.cursor);
       expect(socket.historyFrames).toBe(historyFramesBeforeDetach);
+      expect(
+        socket.sent.filter((frame) => frame.type === "subscribe" && frame.session_id === "mux-one"),
+      ).toHaveLength(subscriptionsBeforeDetach + 1);
       expect(fetchMock).not.toHaveBeenCalled();
       if (windowed) {
         await useChatStore.getState().loadMoreHistory("mux-one");
@@ -24006,6 +24402,11 @@ it.each([false, true])(
       sessionUpdatesSocket.stop();
       await vi.advanceTimersByTimeAsync(1);
       vi.mocked(getCurrentUserId).mockReturnValue(null);
+      if (bootstrapHost) setSessionHost("mux-one", null);
+      if (parentRouted) {
+        setSessionParent("mux-one", null);
+        setSessionHost("mux-parent", null);
+      }
     }
   },
 );

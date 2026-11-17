@@ -20,7 +20,7 @@ import {
   setSessionHost,
   setSessionParent,
 } from "@/lib/sessionHost";
-import { getSessionSlim } from "@/lib/sessionsApi";
+import { getSessionSlim, applySessionMetadataRouting } from "@/lib/sessionsApi";
 import { isTempConvId } from "@/lib/tempConversationId";
 import type { Session } from "@/lib/types";
 
@@ -194,7 +194,7 @@ export async function prefetchSessionHostChain(
     const hopId: string = id;
     const queryOptions = {
       queryKey: ["session", hopId],
-      queryFn: () => getSessionSlim(hopId),
+      queryFn: () => getSessionSlim(hopId, { routingGuard: options.routingGuard }),
       staleTime: options.force ? 0 : Infinity,
       retry: false,
     };
@@ -210,10 +210,13 @@ export async function prefetchSessionHostChain(
     // Each hop's id comes from the previous snapshot, so the chain is serial.
     // oxlint-disable-next-line no-await-in-loop
     const session: Session = await queryClient.fetchQuery(queryOptions);
+    if (options.routingGuard && !applySessionMetadataRouting(session, options.routingGuard)) return;
     // `sessionFromWire` records these on a live fetch; re-record so a cached
     // snapshot seeds the map the same way.
-    setSessionHost(session.id, sessionRoutingHostId(session.hostId, session.labels));
-    setSessionParent(session.id, session.parentSessionId, session.labels);
+    if (!options.routingGuard) {
+      setSessionHost(session.id, sessionRoutingHostId(session.hostId, session.labels));
+      setSessionParent(session.id, session.parentSessionId, session.labels);
+    }
     id = getSessionParent(session.id);
   }
 }

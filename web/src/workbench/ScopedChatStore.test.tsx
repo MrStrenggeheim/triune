@@ -1,4 +1,5 @@
 // Modified for Triune.
+import { useEffect } from "react";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useChatStore } from "@/store/chatStore";
@@ -131,6 +132,53 @@ describe("scoped chat store", () => {
     });
     view.unmount();
     expect(resumed.signal.aborted).toBe(true);
+  });
+
+  it("leaves route-driven observation establishment to the provider after visibility cleanup", () => {
+    const entry = conversationRegistry.acquire("reader");
+    const draft = { conversationId: "reader", text: "Retained draft", files: [] };
+    entry.setState({ failedSendDraft: draft, oldestItemId: "older-anchor" });
+    const opened: AbortController[] = [];
+    const ensure = vi
+      .spyOn(chatStore, "ensureConversationStreamed")
+      .mockImplementation(async () => {
+        if (entry.getState().abortController) return;
+        const controller = new AbortController();
+        opened.push(controller);
+        entry.setState({ abortController: controller });
+      });
+    function RouteEffect({ pathname }: { pathname: string }) {
+      const store = useConversationChatStore();
+      useEffect(() => {
+        void store.getState().switchTo("reader");
+      }, [pathname, store]);
+      return null;
+    }
+    function Reader({ visible, pathname }: { visible: boolean; pathname: string }) {
+      return (
+        <ScopedChatStoreProvider conversationId="reader" visible={visible} focused={visible}>
+          <RouteEffect pathname={pathname} />
+        </ScopedChatStoreProvider>
+      );
+    }
+    const view = render(<Reader visible pathname="/a" />);
+    expect(opened).toHaveLength(1);
+    view.rerender(<Reader visible={false} pathname="/b" />);
+    expect(opened[0]!.signal.aborted).toBe(true);
+    ensure.mockClear();
+    const beforeReveal = opened.length;
+    // The hidden child's URL effect runs before its provider is revealed.
+    view.rerender(<Reader visible={false} pathname="/a" />);
+    expect(ensure).not.toHaveBeenCalled();
+    view.rerender(<Reader visible pathname="/a" />);
+    expect(opened).toHaveLength(beforeReveal + 1);
+    expect(opened.at(-1)!.signal.aborted).toBe(false);
+    expect(entry.getState()).toMatchObject({
+      failedSendDraft: draft,
+      oldestItemId: "older-anchor",
+    });
+    view.unmount();
+    expect(opened.at(-1)!.signal.aborted).toBe(true);
   });
 
   it("detaches when a remembered layout hides while preserving its scoped state", () => {

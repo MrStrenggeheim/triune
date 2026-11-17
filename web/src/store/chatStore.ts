@@ -70,6 +70,8 @@ import {
   bindOnlyOnlineRunner,
   createSession,
   getSessionSlim,
+  sessionMetadataAuthority,
+  applySessionMetadataRouting,
   getSessionUsage,
   fetchSessionItemsPage,
   HOST_OFFLINE_CODE,
@@ -172,7 +174,12 @@ import {
   onResponseEnd,
   onResponseStart,
 } from "./interactionTelemetry";
-import { getSessionHost, subscribeSessionHostChanges } from "@/lib/sessionHost";
+import {
+  getSessionHost,
+  subscribeSessionHostChanges,
+  sessionRoutingSnapshot,
+  type SessionRoutingGuard,
+} from "@/lib/sessionHost";
 import { taskNotificationMarkerContent, withoutAttachedMarkers } from "@/lib/systemMessage";
 import {
   isNativeTerminalSession as isNativeTerminalSessionFn,
@@ -5427,6 +5434,9 @@ async function bindStream(
   hydratePending = false,
 ): Promise<void> {
   const readerScope = transcriptReaderScope();
+  const authority = sessionMetadataAuthority();
+  const fetcher = getOmnigentHostConfig().fetcher;
+  let expectedRouting = sessionRoutingSnapshot(id);
   const boundEntry = conversationRegistry.peek(id);
   const savedMinimum = readTranscriptReaderCheckpoint(id)?.loadedMinPosition;
   if (savedMinimum !== undefined) restoreConversationHistoryExtent(id, savedMinimum);
@@ -5434,90 +5444,157 @@ async function bindStream(
   get().abortController?.abort();
   const controller = new AbortController();
   write({ abortController: controller });
-  const current = () =>
-    !controller.signal.aborted &&
-    !isConversationDisposed(id) &&
+  const stateBeforeFetch = get();
+  const cursorBeforeFetch = transcriptCursors.get(controller);
+  const launchBeforeFetch = mcpStartupBeforeSnapshot(id, stateBeforeFetch);
+  const ownsBinding = () =>
+    !boundEntry?.disposed &&
     conversationRegistry.peek(id) === boundEntry &&
-    transcriptReaderScope() === readerScope &&
     get().abortController === controller;
+  const sameAuthority = () =>
+    transcriptReaderScope() === readerScope &&
+    sessionMetadataAuthority() === authority &&
+    getOmnigentHostConfig().fetcher === fetcher;
+  const current = () => !controller.signal.aborted && ownsBinding() && sameAuthority();
+  // Routing fences bootstrap publication; established attempts own live routing.
+  const bootstrapCurrent = () => current() && sessionRoutingSnapshot(id) === expectedRouting;
+  const settleBinding = () => {
+    if (ownsBinding()) write({ abortController: null, loadingConversation: false });
+    controller.abort();
+  };
+  controller.signal.addEventListener("abort", settleBinding, { once: true });
+  const routingGuard: SessionRoutingGuard = {
+    isCurrent: bootstrapCurrent,
+    onApplied: (receipt) => {
+      if (!ownsBinding() || controller.signal.aborted || !sameAuthority()) return;
+      const routing = sessionRoutingSnapshot(id);
+      if (
+        !receipt ||
+        (receipt.authority === authority &&
+          receipt.fetcher === fetcher &&
+          receipt.before === expectedRouting &&
+          receipt.after === routing)
+      )
+        expectedRouting = routing;
+    },
+  };
   const set: Setter = (patch) => {
     if (current()) write(patch);
   };
   const ignoredNativeMessageIds = new Set<string>();
   nativePreviewTombstonesByController.set(controller, ignoredNativeMessageIds);
-  // Opening a conversation URL with no session list loaded yet leaves the
-  // session→host map empty, so the SSE stream
-  // (and every host-scoped request) would open UNKEYED and route to the default
-  // replica — NOT the one holding this session's runner tunnel. The live tail
-  // then subscribes to the wrong replica's event bus and silently delivers
-  // nothing (the server swallows the miss; there's no 503 to trigger the keyless
-  // retry). When sharded (a host fetcher is wired), resolve the session's host_id
-  // FIRST (one fast metadata GET that populates the map via sessionFromWire) so
-  // the stream keys correctly. Best-effort: a failed resolve falls through to the
-  // unkeyed open (no worse than pre-fix). Re-apply after every resync, see
-  // agentbricks/mas/.claude/skills/sync-omnigents/SKILL.md.
-  if (getOmnigentHostConfig().fetcher && getSessionHost(id) === null) {
-    try {
-      // Prefer the registered resolver: it walks a hostless sub-agent child up
-      // to its host-bound ancestor. Without one, the bare snapshot still seeds
-      // a top-level session's own host.
-      await (resolveSessionHost(id) ?? getSessionSlim(id));
-    } catch {
-      // Best-effort: a failed resolve (bad id, transient) falls through to the
-      // unkeyed open; the snapshot fetch surfaces the real error.
+  let bootstrapSnapshot: Promise<Session> | undefined;
+  const readBootstrapSnapshot = () => {
+    if (queryClient === null) throw new Error("chatStore.bindStream: queryClient not initialized");
+    return (bootstrapSnapshot ??= queryClient
+      .fetchQuery({
+        queryKey: ["session", id],
+        queryFn: () => getSessionSlim(id, { refreshState: true, routingGuard }),
+        staleTime: 0,
+        retry: false,
+      })
+      .then((session) => {
+        if (!applySessionMetadataRouting(session, routingGuard) || !bootstrapCurrent())
+          throw Object.assign(new Error("Session metadata binding changed"), {
+            name: "AbortError",
+          });
+        return session;
+      }));
+  };
+  let observing = false;
+  let multiplexed = false;
+  let hasSlot = false;
+  let initialStreamOpened!: () => void;
+  const initialStreamReady = new Promise<void>((resolve) => {
+    initialStreamOpened = resolve;
+  });
+  controller.signal.addEventListener("abort", initialStreamOpened, { once: true });
+  try {
+    // Resolve metadata before a replay captures its scope, including standalone
+    // cold opens. The same snapshot hydrates bootstrap after subscription.
+    if (
+      getSessionHost(id) === null &&
+      get().transcriptCheckpoint?.scope !== transcriptCursorScope(id)
+    ) {
+      try {
+        await readBootstrapSnapshot();
+        if (!bootstrapCurrent()) return settleBinding();
+        // The registered resolver reuses this cached child metadata and walks
+        // any still-unresolved ancestors before the pump captures its host.
+        const routing = resolveSessionHost(id, { routingGuard });
+        if (routing) await routing;
+      } catch (err) {
+        if (bootstrapCurrent()) {
+          set({
+            loadingConversation: false,
+            conversationLoadError: err instanceof Error ? err : new Error(String(err)),
+          });
+        }
+        return;
+      }
+      if (!bootstrapCurrent()) return settleBinding();
     }
-    // Liveness, not the visible id: a background bind must survive a switch away
-    // (that is the whole feature). Only a dispose (evicted) bails — and then the
-    // slot taken above has to go back to the origin.
-    if (!current()) {
+
+    const mayObserve =
+      typeof document === "undefined" ||
+      (document.visibilityState !== "hidden" && (!navigator.locks || document.hasFocus()));
+    if (typeof WebSocket !== "undefined") observeTranscriptCapabilities();
+    multiplexed =
+      typeof WebSocket !== "undefined"
+        ? await sessionUpdatesSocket.negotiateTranscript(controller.signal)
+        : false;
+    hasSlot = mayObserve && (multiplexed || (await acquireStreamSlot(id, controller.signal)));
+    const initialSlot = hasSlot ? heldStreamSlots.get(id) : undefined;
+    if (!bootstrapCurrent()) {
+      if (initialSlot && heldStreamSlots.get(id) === initialSlot) releaseStreamSlot(id);
       return;
     }
-  }
+    const observationSlot = (slot: StreamSlot): StreamSlot => ({
+      release: async () => {
+        if (heldStreamSlots.get(id) === slot) heldStreamSlots.delete(id);
+        await slot.release();
+      },
+    });
 
-  const mayObserve =
-    typeof document === "undefined" ||
-    (document.visibilityState !== "hidden" && (!navigator.locks || document.hasFocus()));
-  if (typeof WebSocket !== "undefined") observeTranscriptCapabilities();
-  const multiplexed =
-    typeof WebSocket !== "undefined"
-      ? await sessionUpdatesSocket.negotiateTranscript(controller.signal)
-      : false;
-  const hasSlot = mayObserve && (multiplexed || (await acquireStreamSlot(id, controller.signal)));
-  const initialSlot = hasSlot ? heldStreamSlots.get(id) : undefined;
-  if (!current()) {
-    if (initialSlot && heldStreamSlots.get(id) === initialSlot) releaseStreamSlot(id);
-    return;
-  }
-  const observationSlot = (slot: StreamSlot): StreamSlot => ({
-    release: async () => {
-      if (heldStreamSlots.get(id) === slot) heldStreamSlots.delete(id);
-      await slot.release();
-    },
-  });
+    // The binding and retained model outlive individual observation attempts.
+    // A hidden browser releases its lock; visible over-budget panes use the same
+    // bounded replay and exact-input dedupe as reconnects.
+    void observeConversationStream({
+      signal: controller.signal,
+      initialSlot: initialSlot
+        ? observationSlot(initialSlot)
+        : multiplexed && mayObserve
+          ? { release: async () => {} }
+          : undefined,
+      priority: () => (conversationRegistry.isFocused(id) ? 2 : 1),
+      acquire: async () => {
+        if (sessionUpdatesSocket.supportsTranscripts()) return { release: async () => {} };
+        if (!(await acquireStreamSlot(id, controller.signal))) return null;
+        return observationSlot(heldStreamSlots.get(id)!);
+      },
+      pump: (observation, resumed) =>
+        startStreamPump(
+          id,
+          controller,
+          set,
+          get,
+          ignoredNativeMessageIds,
+          resumed,
+          observation,
+          initialStreamOpened,
+        ),
+      catchUp: () => reconcileOnReconnect(id, set, get, ignoredNativeMessageIds, true),
+    }).finally(() => {
+      initialStreamOpened();
+      controller.signal.removeEventListener("abort", initialStreamOpened);
+      if (current()) set({ abortController: null });
+      controller.abort();
+    });
 
-  // The binding and retained model outlive individual observation attempts.
-  // A hidden browser releases its lock; visible over-budget panes use the same
-  // bounded replay and exact-input dedupe as reconnects.
-  void observeConversationStream({
-    signal: controller.signal,
-    initialSlot: initialSlot
-      ? observationSlot(initialSlot)
-      : multiplexed && mayObserve
-        ? { release: async () => {} }
-        : undefined,
-    priority: () => (conversationRegistry.isFocused(id) ? 2 : 1),
-    acquire: async () => {
-      if (sessionUpdatesSocket.supportsTranscripts()) return { release: async () => {} };
-      if (!(await acquireStreamSlot(id, controller.signal))) return null;
-      return observationSlot(heldStreamSlots.get(id)!);
-    },
-    pump: (observation, resumed) =>
-      startStreamPump(id, controller, set, get, ignoredNativeMessageIds, resumed, observation),
-    catchUp: () => reconcileOnReconnect(id, set, get, ignoredNativeMessageIds, true),
-  }).finally(() => {
-    if (current()) set({ abortController: null });
-    controller.abort();
-  });
+    observing = true;
+  } finally {
+    if (!observing) settleBinding();
+  }
 
   // Background tabs can miss the `response.elicitation_resolved` SSE event
   // (browser throttling), so a pending ApprovalCard that was answered on
@@ -5548,9 +5625,12 @@ async function bindStream(
   if (queryClient === null) {
     throw new Error("chatStore.bindStream: queryClient not initialized");
   }
-  const stateBeforeFetch = get();
-  const cursorBeforeFetch = transcriptCursors.get(controller);
-  const launchBeforeFetch = mcpStartupBeforeSnapshot(id, stateBeforeFetch);
+  // A negotiated subscription must register before the authoritative item read.
+  if (multiplexed && hasSlot) await initialStreamReady;
+  if (!current()) return settleBinding();
+  const snapshotSet: Setter = (patch) => {
+    if (bootstrapCurrent()) set(patch);
+  };
   try {
     if (multiplexed && stateBeforeFetch.transcriptCheckpoint?.scope === transcriptCursorScope(id)) {
       set({ loadingConversation: false });
@@ -5559,7 +5639,21 @@ async function bindStream(
     if (stateBeforeFetch.blocks.length > 0) {
       // Reobserve the existing window without clearing older loaded pages or
       // replaying a send/scroll intent through a loading-state remount.
-      await reconcileOnReconnect(id, set, get, ignoredNativeMessageIds, !hasSlot);
+      await reconcileOnReconnect(
+        id,
+        snapshotSet,
+        get,
+        ignoredNativeMessageIds,
+        !hasSlot,
+        false,
+        bootstrapSnapshot
+          ? {
+              session: bootstrapSnapshot,
+              todosBeforeFetch: stateBeforeFetch.todos,
+              launchBeforeFetch,
+            }
+          : undefined,
+      );
       set({ loadingConversation: false });
       return;
     }
@@ -5567,15 +5661,14 @@ async function bindStream(
     // stays still — rather than a small page followed by background growth
     // the reader sees as the transcript shifting seconds after it settled.
     const [session, page] = await Promise.all([
-      queryClient.fetchQuery({
-        queryKey: ["session", id],
-        queryFn: () => getSessionSlim(id, { refreshState: true }),
-        staleTime: 0,
-        retry: false,
-      }),
+      readBootstrapSnapshot(),
       fetchSessionItemsPage(id, { limit: INITIAL_WINDOW_ITEMS }),
     ]);
-    if (!current()) return;
+    if (!current()) return settleBinding();
+    if (!bootstrapCurrent()) {
+      set({ loadingConversation: false });
+      return;
+    }
     const canonicalReplayWon = transcriptCursors.get(controller) !== cursorBeforeFetch;
     const items = canonicalReplayWon ? [] : page.items;
     const snapshotNativeMessageIds = nativeCompletedMessageIds(items);
@@ -5597,7 +5690,7 @@ async function bindStream(
     const pendingElicitationBlocks = pendingElicitationBlocksFromSnapshot(session);
     const oldestItemId = items[0]?.id ?? null;
     const unsentDraft = hydratePending ? unsentSendToRestore(id, items) : null;
-    set((state) => {
+    snapshotSet((state) => {
       const currentBlocks = refreshItemPositions(
         withoutNativePreviews(state.blocks, snapshotNativeMessageIds),
         snapshotBlocks,
@@ -5778,7 +5871,11 @@ async function bindStream(
     if (session.usageIncluded === false) void hydrateSessionUsage(id);
     racedNativeModelOptions.delete(id);
   } catch (err) {
-    if (isConversationDisposed(id)) return;
+    if (!current()) return settleBinding();
+    if (!bootstrapCurrent()) {
+      set({ loadingConversation: false });
+      return;
+    }
     set({
       loadingConversation: false,
       conversationLoadError: err instanceof Error ? err : new Error(String(err)),
@@ -6694,6 +6791,12 @@ const snapshotBackfills = new WeakMap<
   }
 >();
 
+interface BootstrapMetadata {
+  session: Promise<Session>;
+  todosBeforeFetch: ConversationState["todos"];
+  launchBeforeFetch: ConversationState["mcpStartupLaunch"] | undefined;
+}
+
 function reconcileOnReconnect(
   id: string,
   set: Setter,
@@ -6701,6 +6804,7 @@ function reconcileOnReconnect(
   ignoredNativeMessageIds: Set<string> = new Set<string>(),
   bounded = false,
   itemsOnly = false,
+  bootstrap?: BootstrapMetadata,
 ): Promise<void> {
   const controller = get().abortController;
   const existing = controller && reconnectReconciliations.get(controller);
@@ -6712,6 +6816,7 @@ function reconcileOnReconnect(
     ignoredNativeMessageIds,
     bounded,
     itemsOnly,
+    bootstrap,
   ).finally(() => {
     if (controller) reconnectReconciliations.delete(controller);
   });
@@ -6726,11 +6831,14 @@ async function backfillOnReconnect(
   ignoredNativeMessageIds: Set<string> = new Set<string>(),
   bounded = false,
   itemsOnly = false,
+  bootstrap?: BootstrapMetadata,
 ): Promise<void> {
   if (queryClient === null) return;
   const bindingController = get().abortController;
-  const launchBeforeFetch = mcpStartupBeforeSnapshot(id, get());
-  const todosBeforeFetch = get().todos;
+  const launchBeforeFetch = bootstrap
+    ? bootstrap.launchBeforeFetch
+    : mcpStartupBeforeSnapshot(id, get());
+  const todosBeforeFetch = bootstrap ? bootstrap.todosBeforeFetch : get().todos;
   const blocksBeforeFetch = get().blocks;
   const responseBeforeFetch = get().activeResponse;
   if (!bounded && bindingController) snapshotBackfills.delete(bindingController);
@@ -6749,22 +6857,25 @@ async function backfillOnReconnect(
   const preGapElicitations = captureElicitationIdsByStatus(get().blocks);
   // A window reset mid-fetch (A→B→A revisit, rebind) defeats the id check alone.
   const generation = get().historyGeneration;
+  const routing = sessionRoutingSnapshot(id);
   const stale = (): boolean =>
     isConversationDisposed(id) ||
     bindingController?.signal.aborted === true ||
     get().abortController !== bindingController ||
     get().historyGeneration !== generation ||
+    sessionRoutingSnapshot(id) !== routing ||
     (itemsOnly && get().activeResponse !== responseBeforeFetch);
   let session: Session;
   let page: SessionItemsPage;
   try {
     [session, page] = await Promise.all([
-      queryClient.fetchQuery({
-        queryKey: ["session", id],
-        queryFn: () => getSessionSlim(id),
-        staleTime: 0,
-        retry: false,
-      }),
+      bootstrap?.session ??
+        queryClient.fetchQuery({
+          queryKey: ["session", id],
+          queryFn: () => getSessionSlim(id),
+          staleTime: 0,
+          retry: false,
+        }),
       fetchSessionItemsPage(id),
     ]);
   } catch {
@@ -7225,6 +7336,7 @@ export async function startStreamPump(
   ignoredNativeMessageIds: Set<string> = new Set<string>(),
   reconcileFirstOpen = false,
   observationController: AbortController = controller,
+  onStreamOpened?: () => void,
 ): Promise<void> {
   nativePreviewTombstonesByController.set(controller, ignoredNativeMessageIds);
   let reconcileAfterSlotWait = reconcileFirstOpen;
@@ -7382,6 +7494,7 @@ export async function startStreamPump(
           continue;
         }
 
+        onStreamOpened?.();
         if (observationController.signal.aborted || isConversationDisposed(id)) break;
         if (!streamRes.ok || !streamRes.body) {
           // Release the unconsumed error-response body so the underlying fetch

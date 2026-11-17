@@ -15,6 +15,40 @@
 // local session, leaving routing to the default.
 
 const _sessionHosts = new Map<string, string>();
+const routingVersions = new Map<string, number>();
+let routingVersion = 0;
+
+export interface SessionRoutingReceipt {
+  authority: string;
+  before: string;
+  after: string;
+  applied: boolean;
+  fetcher: unknown;
+}
+
+/** Guard metadata publication without cancelling another reader's shared fetch. */
+export interface SessionRoutingGuard {
+  isCurrent: () => boolean;
+  onApplied: (receipt?: SessionRoutingReceipt) => void;
+}
+
+/** Include ancestor identities and revisions so transient routing changes invalidate reads. */
+export function sessionRoutingSnapshot(sessionId: string): string {
+  const chain: unknown[] = [];
+  const visited = new Set<string>();
+  let id: string | null = sessionId;
+  while (id !== null && !visited.has(id)) {
+    visited.add(id);
+    chain.push([
+      id,
+      _sessionHosts.get(id) ?? null,
+      _sessionParents.get(id) ?? null,
+      routingVersions.get(id) ?? 0,
+    ]);
+    id = _sessionParents.get(id) ?? null;
+  }
+  return JSON.stringify(chain);
+}
 const _hostChangeListeners = new Set<() => void>();
 
 /** Subscribe to host/parent changes so live streams can recheck their effective host. */
@@ -41,6 +75,7 @@ export function setSessionHost(sessionId: string, hostId: string | null | undefi
   } else {
     _sessionHosts.delete(sessionId);
   }
+  routingVersions.set(sessionId, ++routingVersion);
   notifySessionHostChanges();
 }
 
@@ -91,6 +126,7 @@ export function setSessionParent(
   } else {
     _sessionParents.delete(sessionId);
   }
+  routingVersions.set(sessionId, ++routingVersion);
   notifySessionHostChanges();
 }
 

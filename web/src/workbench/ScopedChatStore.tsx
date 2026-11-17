@@ -43,7 +43,8 @@ export function createScopedChatStore(conversationId: string): BoundChatStore {
       root().submitApproval(elicitationId, action, content, meta, conversationId),
     switchTo: async (id) => {
       if (id !== conversationId) throw new Error("A scoped chat cannot change its conversation");
-      await ensureConversationStreamed(conversationId);
+      // The provider establishes observation after its previous visibility lease
+      // is released; a child's route effect must not bind ahead of that cleanup.
     },
     stop: () => root().stop(conversationId),
     setEffort: (effort) => root().setEffort(effort, conversationId),

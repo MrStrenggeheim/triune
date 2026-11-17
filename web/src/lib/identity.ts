@@ -29,6 +29,7 @@ import {
   isHostKeyless,
   markHostKeyless,
   modalHostId,
+  type SessionRoutingGuard,
 } from "@/lib/sessionHost";
 
 // Single-user sentinel from `GET /v1/me` (server's RESERVED_USER_LOCAL);
@@ -118,6 +119,7 @@ function hostScopeForUrl(url: string): UrlHostScope {
 
 /** Options for resolving a session's routing host. */
 export interface SessionHostResolveOptions {
+  routingGuard?: SessionRoutingGuard;
   /** Refresh a hostless snapshot after a managed host has been assigned. */
   force?: boolean;
 }
@@ -181,6 +183,11 @@ export function resolveSessionHost(
     (isDatabricksWorkspace() ? options.force === true : isHostRoutingEnabled());
   if (_sessionHostResolver === null || !canResolve) return null;
   if (getSessionHost(sessionId) !== null) return null;
+  // Guarded bindings share QueryClient reads, not another binding's fence.
+  if (options.routingGuard) {
+    if (!options.routingGuard.isCurrent()) return null;
+    return _sessionHostResolver(sessionId, options).catch(() => undefined);
+  }
   const refresh = _hostRefreshInFlight.get(sessionId);
   if (refresh !== undefined) return refresh;
   if (!options.force && _hostResolveAttempted.has(sessionId)) return null;

@@ -34,7 +34,7 @@ import {
   setCodexNextTurnPermissions,
 } from "./sessionsApi";
 import { BACKGROUND_SESSION_TITLES_STORAGE_KEY } from "./backgroundSessionTitlesPreferences";
-import { getSessionHost, setSessionHost } from "./sessionHost";
+import { getSessionHost, setSessionHost, setSessionParent } from "./sessionHost";
 import type { SessionEventInput } from "./types";
 
 function mockJsonResponse(
@@ -1221,6 +1221,41 @@ describe("getSession", () => {
     expect(session.totalCostUsd).toBeNull();
     expect(session.usageByModel).toBeNull();
   });
+
+  it.each(["host", "parent", "base path"])(
+    "does not publish stale getSessionSlim routing after a %s change",
+    async (change) => {
+      const id = `routing-fence-${change.replaceAll(" ", "-")}`;
+      const oldBase = window.__OMNIGENT_BASE_PATH__;
+      let finish!: (response: Response) => void;
+      fetchMock.mockReturnValueOnce(
+        new Promise<Response>((resolve) => {
+          finish = resolve;
+        }),
+      );
+      const read = getSessionSlim(id);
+      if (change === "host") setSessionHost(id, "newer-host");
+      if (change === "parent") {
+        setSessionHost("fence-parent", "newer-host");
+        setSessionParent(id, "fence-parent");
+      }
+      if (change === "base path") window.__OMNIGENT_BASE_PATH__ = "/other-server";
+      try {
+        finish(
+          mockJsonResponse({ id, agent_id: "agent_xyz", status: "idle", host_id: "stale-host" }),
+        );
+        const metadata = await read;
+        // Shared readers may use the result; stale routing publication stays fenced.
+        expect(metadata.hostId).toBe("stale-host");
+        expect(getSessionHost(id)).toBe(change === "base path" ? null : "newer-host");
+      } finally {
+        window.__OMNIGENT_BASE_PATH__ = oldBase;
+        setSessionHost(id, null);
+        setSessionParent(id, null);
+        setSessionHost("fence-parent", null);
+      }
+    },
+  );
 
   it("getSessionSlim can request a runner-backed state refresh", async () => {
     fetchMock.mockResolvedValueOnce(
