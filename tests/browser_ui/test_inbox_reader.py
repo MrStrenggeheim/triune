@@ -83,7 +83,7 @@ def test_inbox_immediate_insert_keeps_reader(
         )
         browser_contract.json(f"/v1/sessions/{row['id']}/comments", [])
     sockets: list[WebSocketRoute] = []
-    browser_contract.websocket("**/v1/sessions/updates*", sockets.append)
+    browser_contract.websocket("**/v1/sessions/updates*", lambda socket: sockets.append(socket))
     page.goto(appearance_url + "/inbox")
     field = page.get_by_role("textbox", name=re.compile("Branch"))
     expect(field).to_be_visible()

@@ -5,6 +5,7 @@ import json
 import re
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 from playwright.sync_api import Page, Route, expect
@@ -65,6 +66,19 @@ def test_fifty_layouts_retire_while_preserving_draft_and_editor_undo(
             for position, item in reversed(list(enumerate(reader_items)))
         ]
     )
+
+    def reader_page(request):
+        query = parse_qs(urlparse(request.url).query)
+        limit = int(query.get("limit", ["100"])[0])
+        remaining = reader._items
+        cursor = query.get("after", [None])[0]
+        if cursor:
+            position = next(item["position"] for item in remaining if item["id"] == cursor)
+            remaining = [item for item in remaining if item["position"] < position]
+        selected = remaining[:limit]
+        return {**list_payload(selected), "has_more": len(remaining) > len(selected)}
+
+    browser_contract.json(f"/v1/sessions/{reader.session_id}/items", reader_page)
     page.add_init_script("localStorage.setItem('omnigent:fold-assistant-narration', 'true')")
     with ExitStack() as stack:
         for index in range(2, 50):
@@ -235,18 +249,27 @@ def test_fifty_layouts_retire_while_preserving_draft_and_editor_undo(
         # A held canonical read distinguishes real model retirement from a hidden warm DOM.
         expect(reader_view).to_have_count(0)
         held: list[Route] = []
+        reader_released = False
+
+        def hold_reader(route: Route) -> None:
+            if reader_released:
+                route.fallback()
+            else:
+                held.append(route)
+
         browser_contract.route(
             re.compile(
                 rf"^{re.escape(reader.base_url)}/v1/sessions/{reader.session_id}/items(?:\?.*)?$"
             ),
-            lambda route: held.append(route),
+            hold_reader,
         )
         with page.expect_request(re.compile(rf"/v1/sessions/{reader.session_id}/items(?:\?.*)?$")):
             _navigate_chat(page, reader)
         expect(anchor).to_have_count(0)
         assert held, "An evicted reader must fetch canonical history"
+        reader_released = True
         for route in held:
-            route.fulfill(json=list_payload(reader._items))
+            route.fulfill(json=reader_page(route.request))
         expect(original).to_have_text(source, timeout=15_000)
         expect(fold).to_have_attribute("data-state", "open")
         page.wait_for_function(
