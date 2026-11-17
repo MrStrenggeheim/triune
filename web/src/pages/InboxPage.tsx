@@ -12,8 +12,8 @@ import { TooltipButton } from "@/components/ui/tooltip";
  *   same caches used by the sidebar and its badge.
  * - Each session's snapshot (`GET /v1/sessions/{id}`) already replays
  *   the full pending `response.elicitation_request` event dicts; the
- *   per-session query key includes the row's count so a count change
- *   pushed over the socket refetches exactly that session.
+ *   per-session query key stays stable while row changes pushed over
+ *   the socket invalidate exactly that session.
  * - Cards are the same `ApprovalCard` the chat renders, with a local
  *   submit handler (the chat store is single-conversation, so the
  *   inbox posts the verdict itself via `approve()` — same endpoint).
@@ -45,7 +45,7 @@ import { TooltipButton } from "@/components/ui/tooltip";
 
 import type { Query } from "@tanstack/react-query";
 import type { Session } from "@/lib/types";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Component, createRef, useEffect, useRef, useState, type ReactNode } from "react";
 import { useQueries, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangleIcon,
@@ -61,6 +61,12 @@ import {
 } from "lucide-react";
 import { ApprovalCard, type SubmitApprovalFn } from "@/components/blocks/ApprovalCard";
 import { ElicitationMessage } from "@/components/blocks/ElicitationMessage";
+import {
+  captureTranscriptViewSnapshot,
+  resolveTranscriptViewOffset,
+  type TranscriptViewSnapshot,
+} from "@/components/chat/Transcript";
+import { hasTranscriptScrollOwner } from "@/hooks/useTranscriptDisclosureAnchor";
 import { PageScroll } from "@/components/PageScroll";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -90,7 +96,7 @@ import { latestOutputPreview } from "@/lib/lastAssistantText";
 import { relativeTime } from "@/lib/relativeTime";
 import { Link } from "@/lib/routing";
 import { useOmnigentAnalytics } from "@/lib/analytics";
-import { approve, fetchSessionItemsPage, getSession } from "@/lib/sessionsApi";
+import { ApiError, approve, fetchSessionItemsPage, getSession } from "@/lib/sessionsApi";
 import { userColor, userInitials } from "@/lib/userBadge";
 import { cn } from "@/lib/utils";
 import { conversationDisplayLabel, getConversationAgentType } from "@/shell/sidebarNav";
@@ -137,6 +143,10 @@ type InboxEntry =
   | { kind: "comment"; key: string; at: number; item: CommentInboxItem }
   | { kind: "unread"; key: string; at: number; item: UnreadInboxItem };
 
+function approvalKey(item: InboxItem) {
+  return JSON.stringify(["approval", item.resolveSessionId, item.elicitation.elicitationId]);
+}
+
 const TILE_TONES = {
   yellow: "bg-status-yellow/12 text-status-yellow",
   gray: "bg-status-gray/12 text-status-gray",
@@ -161,23 +171,39 @@ export function InboxPage() {
   const [responded, setResponded] = useState<RespondedMap>({});
   const pendingSubmissions = useRef(new Map<string, RespondedMap[string]>());
   // Manual expand/collapse toggles keyed by entry key. Anything not in
-  // the map falls back to the default: expanded only for the newest
-  // approval. Keying by id (not index) keeps a user's explicit toggles
+  // the map falls back to the initial automatic expansion. Keying by id (not index) keeps a user's explicit toggles
   // stable when new items shift positions.
   const [expandedOverrides, setExpandedOverrides] = useState<Record<string, boolean>>({});
 
   const { hasNextPage, isFetchingNextPage, fetchNextPage } = conversationsQuery;
   const rows = allRows.filter((c) => (c.pending_elicitations_count ?? 0) > 0);
 
-  // One snapshot fetch per session that reports pending prompts. The
-  // count rides in the query key, so the WS count patch (new prompt,
-  // resolved-elsewhere prompt) naturally triggers a refetch; a row
-  // dropping to zero falls out of `rows` and its query is dropped.
-  // `retry: 1` absorbs a transient blip without hammering a down
-  // server; persistent failures surface in the error banner below.
+  // Keep confirmed prompts mounted during refresh; row changes invalidate
+  // the stable session query rather than replacing its cache identity.
+  const previousSnapshotRows = useRef(new Map<string, string>());
+  const snapshotRowsKey = JSON.stringify(
+    rows.map((row) => [row.id, row.pending_elicitations_count, row.updated_at]),
+  );
+  useEffect(() => {
+    const next = new Map<string, string>();
+    for (const [id, count, updatedAt] of JSON.parse(snapshotRowsKey) as [
+      string,
+      number,
+      number,
+    ][]) {
+      const version = JSON.stringify([count, updatedAt]);
+      const previous = previousSnapshotRows.current.get(id);
+      next.set(id, version);
+      if (previous !== undefined && previous !== version) {
+        void queryClient.invalidateQueries({ queryKey: ["inbox-elicitations", id] });
+      }
+    }
+    previousSnapshotRows.current = next;
+  }, [snapshotRowsKey, queryClient]);
+
   const snapshotQueries = useQueries({
     queries: rows.map((row) => ({
-      queryKey: ["inbox-elicitations", row.id, row.pending_elicitations_count, row.updated_at],
+      queryKey: ["inbox-elicitations", row.id],
       queryFn: () => getSession(row.id),
       retry: 1,
       // The count and snapshot can disagree briefly while a native request re-parks.
@@ -194,8 +220,13 @@ export function InboxPage() {
 
   const sources: InboxSource[] = [];
   rows.forEach((row, i) => {
-    const snapshot = snapshotQueries[i]?.data;
-    if (snapshot) sources.push({ row, pendingElicitations: snapshot.pendingElicitations ?? [] });
+    const query = snapshotQueries[i];
+    const snapshot = query?.data;
+    // A transient refresh failure retains the draft; revoked/deleted access does not.
+    const inaccessible =
+      query?.error instanceof ApiError && [401, 403, 404].includes(query.error.status);
+    if (snapshot && !inaccessible)
+      sources.push({ row, pendingElicitations: snapshot.pendingElicitations ?? [] });
   });
   const items = collectInboxItems(sources);
 
@@ -242,7 +273,7 @@ export function InboxPage() {
   const groups = groupInboxEntries<InboxEntry>([
     ...visibleApprovals.map((item) => ({
       kind: "approval" as const,
-      key: `approval:${item.elicitation.elicitationId}`,
+      key: approvalKey(item),
       at: item.row.updated_at,
       item,
     })),
@@ -259,7 +290,11 @@ export function InboxPage() {
       item,
     })),
   ]);
-  const defaultExpandedKey = items[0] && `approval:${items[0].elicitation.elicitationId}`;
+  const [automaticExpandedKey, setAutomaticExpandedKey] = useState<string | undefined>();
+  const defaultExpandedKey = items.some((item) => approvalKey(item) === automaticExpandedKey)
+    ? automaticExpandedKey
+    : items[0] && approvalKey(items[0]);
+  if (defaultExpandedKey !== automaticExpandedKey) setAutomaticExpandedKey(defaultExpandedKey);
 
   // A newer delivery attempt supersedes optimistic sending, even if the
   // old POST is still in flight. Other prompts retain their refresh behavior.
@@ -274,16 +309,17 @@ export function InboxPage() {
     setResponded((prev) => {
       if (Object.keys(prev).length === 0) return prev;
       const stale = items
-        .filter(({ elicitation }) => {
-          const verdict = prev[elicitation.elicitationId];
+        .filter((item) => {
+          const { elicitation } = item;
+          const verdict = prev[approvalKey(item)];
           return (
             verdict &&
             (elicitation.nativeDelivery
               ? verdict.attempt !== elicitation.nativeDelivery.attempt
-              : !pendingSubmissions.current.has(elicitation.elicitationId))
+              : !pendingSubmissions.current.has(approvalKey(item)))
           );
         })
-        .map(({ elicitation }) => elicitation.elicitationId);
+        .map(approvalKey);
       if (stale.length === 0) return prev;
       return Object.fromEntries(Object.entries(prev).filter(([id]) => !stale.includes(id)));
     });
@@ -309,8 +345,9 @@ export function InboxPage() {
   // count (and the sidebar badge) drop without waiting for the socket.
   const makeSubmit = (item: InboxItem): SubmitApprovalFn => {
     return (elicitationId, action, content, meta) => {
+      const key = approvalKey(item);
       const attempt = item.elicitation.nativeDelivery?.attempt;
-      const previous = pendingSubmissions.current.get(elicitationId);
+      const previous = pendingSubmissions.current.get(key);
       if (previous && previous.attempt === attempt) return;
       const verdict = {
         action,
@@ -318,32 +355,30 @@ export function InboxPage() {
         ...(content === undefined ? {} : { content }),
         ...(meta === undefined ? {} : { _meta: meta }),
       };
-      pendingSubmissions.current.set(elicitationId, verdict);
-      setResponded((prev) => ({ ...prev, [elicitationId]: verdict }));
+      pendingSubmissions.current.set(key, verdict);
+      setResponded((prev) => ({ ...prev, [key]: verdict }));
       void approve(item.resolveSessionId, elicitationId, {
         action,
         ...(content === undefined ? {} : { content }),
         ...(meta === undefined ? {} : { _meta: meta }),
       }).then(
         () => {
-          if (pendingSubmissions.current.get(elicitationId) !== verdict) return;
-          pendingSubmissions.current.delete(elicitationId);
+          if (pendingSubmissions.current.get(key) !== verdict) return;
+          pendingSubmissions.current.delete(key);
           void queryClient.invalidateQueries({ queryKey: ["conversations"] });
-          if (item.elicitation.nativeDelivery) {
-            const queryKey = ["inbox-elicitations", item.row.id];
-            void queryClient
-              .cancelQueries({ queryKey })
-              .then(() => queryClient.invalidateQueries({ queryKey }));
-          }
+          const queryKey = ["inbox-elicitations", item.row.id];
+          void queryClient
+            .cancelQueries({ queryKey })
+            .then(() => queryClient.invalidateQueries({ queryKey }));
         },
         () => {
-          if (pendingSubmissions.current.get(elicitationId) !== verdict) return;
-          pendingSubmissions.current.delete(elicitationId);
+          if (pendingSubmissions.current.get(key) !== verdict) return;
+          pendingSubmissions.current.delete(key);
           // Roll back to pending so the buttons reappear and the user
           // can retry — same recovery the chat store uses.
           setResponded((prev) => {
-            if (prev[elicitationId] !== verdict) return prev;
-            const { [elicitationId]: _respondedVerdict, ...pendingVerdicts } = prev;
+            if (prev[key] !== verdict) return prev;
+            const { [key]: _respondedVerdict, ...pendingVerdicts } = prev;
             return pendingVerdicts;
           });
         },
@@ -362,7 +397,7 @@ export function InboxPage() {
     if (entry.kind === "approval") {
       const { item } = entry;
       const elicitationId = item.elicitation.elicitationId;
-      const optimistic = responded[elicitationId];
+      const optimistic = responded[entry.key];
       const verdict =
         optimistic?.attempt === item.elicitation.nativeDelivery?.attempt ? optimistic : undefined;
       // Same display mapping the sidebar uses: native-wrapper sessions read
@@ -372,6 +407,7 @@ export function InboxPage() {
       return (
         <InboxCard
           key={entry.key}
+          entryKey={entry.key}
           testId="inbox-item"
           tile={<KindTile icon={HandIcon} tone="yellow" />}
           kindLabel={item.elicitation.askUserQuestion ? "Question" : "Approval needed"}
@@ -448,6 +484,7 @@ export function InboxPage() {
       return (
         <InboxCard
           key={entry.key}
+          entryKey={entry.key}
           testId="inbox-comment"
           tile={
             // The author's avatar pill (same deterministic initials + color
@@ -513,6 +550,7 @@ export function InboxPage() {
     return (
       <InboxCard
         key={entry.key}
+        entryKey={entry.key}
         testId="inbox-unread"
         dataKind={item.kind}
         tile={
@@ -635,20 +673,23 @@ export function InboxPage() {
         </div>
       )}
 
-      <div className="flex flex-col gap-4">
-        {groups.map((group) => (
-          <section key={group.label} aria-label={group.label} className="flex flex-col gap-2">
-            <h2 className="px-3 py-1.5 text-sm font-normal text-muted-foreground">{group.label}</h2>
-            {group.entries.map(renderEntry)}
-          </section>
-        ))}
+      <InboxReaderAnchor>
+        {groups.flatMap((group) => [
+          <h2
+            key={`group:${group.label}`}
+            className="mt-2 px-3 py-1.5 text-sm font-normal text-muted-foreground first:mt-0"
+          >
+            {group.label}
+          </h2>,
+          ...group.entries.map(renderEntry),
+        ])}
         {assembling && visibleCount > 0 && (
           <div className="flex items-center gap-2 py-2 text-sm text-muted-foreground">
             <Loader2Icon className="size-3.5 animate-spin" />
             Checking remaining sessions…
           </div>
         )}
-      </div>
+      </InboxReaderAnchor>
       {hasNextPage && (
         <Button
           variant="outline"
@@ -671,6 +712,7 @@ export function InboxPage() {
  */
 function InboxCard({
   testId,
+  entryKey,
   dataKind,
   tile,
   kindLabel,
@@ -683,6 +725,7 @@ function InboxCard({
   children,
 }: {
   testId: string;
+  entryKey: string;
   dataKind?: string;
   tile: ReactNode;
   kindLabel: string;
@@ -698,6 +741,7 @@ function InboxCard({
   return (
     <div
       data-testid={testId}
+      data-inbox-key={entryKey}
       data-kind={dataKind}
       data-expanded={expanded}
       className={cn(
@@ -773,4 +817,78 @@ function SessionLine({ title, detail }: { title: string; detail?: string }) {
 
 function InboxActions({ children }: { children: ReactNode }) {
   return <div className="flex items-center justify-end gap-1 pt-0.5">{children}</div>;
+}
+
+// Capture in the pre-mutation lifecycle: user scrolls during a background
+// fetch are already included, and no deferred restore can fight later input.
+class InboxReaderAnchor extends Component<{ children: ReactNode }> {
+  private root = createRef<HTMLDivElement>();
+
+  override getSnapshotBeforeUpdate() {
+    const root = this.root.current;
+    const scroller = root?.closest<HTMLElement>(".overflow-y-auto");
+    if (!root || !scroller || hasTranscriptScrollOwner(scroller)) return null;
+    const top = scroller.getBoundingClientRect().top;
+    const anchor = [...root.querySelectorAll<HTMLElement>("[data-inbox-key]")].find(
+      (element) => element.getBoundingClientRect().bottom > top,
+    );
+    const focused =
+      document.activeElement instanceof HTMLElement &&
+      this.root.current?.contains(document.activeElement)
+        ? document.activeElement
+        : null;
+    const selection =
+      focused instanceof HTMLInputElement || focused instanceof HTMLTextAreaElement
+        ? ([focused.selectionStart, focused.selectionEnd, focused.selectionDirection] as const)
+        : null;
+    const snapshot = captureTranscriptViewSnapshot({
+      atBottom: false,
+      scrollTop: scroller.scrollTop,
+      anchor: anchor
+        ? {
+            key: anchor.dataset.inboxKey!,
+            start: anchor.getBoundingClientRect().top - top + scroller.scrollTop,
+          }
+        : undefined,
+    }) as Exclude<TranscriptViewSnapshot, { atBottom: true }>;
+    return { scroller, scrollTop: scroller.scrollTop, snapshot, focused, selection };
+  }
+
+  override componentDidUpdate(
+    _previousProps: Readonly<{ children: ReactNode }>,
+    _previousState: Readonly<unknown>,
+    captured: ReturnType<InboxReaderAnchor["getSnapshotBeforeUpdate"]>,
+  ) {
+    if (!captured) return;
+    const { scroller, scrollTop, snapshot, focused, selection } = captured;
+    // Moving an existing DOM node can blur it in browsers, even with stable keys.
+    if (focused?.isConnected && document.activeElement === document.body) {
+      focused.focus({ preventScroll: true });
+      if (
+        selection &&
+        selection[0] !== null &&
+        selection[1] !== null &&
+        (focused instanceof HTMLInputElement || focused instanceof HTMLTextAreaElement)
+      ) {
+        focused.setSelectionRange(selection[0], selection[1], selection[2] ?? undefined);
+      }
+    }
+    if (scroller.scrollTop !== scrollTop || hasTranscriptScrollOwner(scroller)) return;
+    const top = scroller.getBoundingClientRect().top;
+    const target = resolveTranscriptViewOffset(snapshot, (key) => {
+      const anchor = [
+        ...(this.root.current?.querySelectorAll<HTMLElement>("[data-inbox-key]") ?? []),
+      ].find((element) => element.dataset.inboxKey === key);
+      return anchor ? anchor.getBoundingClientRect().top - top + scroller.scrollTop : undefined;
+    });
+    if (Math.abs(target - scroller.scrollTop) > 0.5) scroller.scrollTop = target;
+  }
+
+  override render() {
+    return (
+      <div ref={this.root} className="flex flex-col gap-2">
+        {this.props.children}
+      </div>
+    );
+  }
 }

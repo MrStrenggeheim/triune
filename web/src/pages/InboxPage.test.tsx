@@ -41,7 +41,13 @@ vi.mock("@/components/blocks/ApprovalCard", async (importActual) => {
   const actual = await importActual<typeof approvalCard>();
   return {
     ApprovalCard: (props: ComponentProps<typeof actual.ApprovalCard>) => {
-      if (props.nativeDelivery || props.runnerDelivery || props.permissionDirectories)
+      const properties = props.requestedSchema?.properties;
+      if (
+        props.nativeDelivery ||
+        props.runnerDelivery ||
+        props.permissionDirectories ||
+        (properties && typeof properties === "object" && "branch" in properties)
+      )
         return <actual.ApprovalCard {...props} />;
       const { elicitationId, message, status, allowAutoMode, onSubmit, requester } = props;
       return (
@@ -74,7 +80,8 @@ vi.mock("@/hooks/useConversations", async (importActual) => ({
   useConversations: vi.fn(),
 }));
 vi.mock("@/hooks/useCommentInbox", () => ({ useCommentInbox: vi.fn() }));
-vi.mock("@/lib/sessionsApi", () => ({
+vi.mock("@/lib/sessionsApi", async (importActual) => ({
+  ApiError: (await importActual<typeof sessionsApi>()).ApiError,
   getSession: vi.fn(),
   approve: vi.fn(),
   fetchSessionItemsPage: vi.fn(),
@@ -129,15 +136,18 @@ function commentInboxStub(overrides: Partial<CommentInbox> = {}): CommentInbox {
 function renderPage(
   queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } }),
 ) {
-  // Fresh client per render so cached queries never leak between tests.
-  return render(
+  return render(pageTree(queryClient));
+}
+
+function pageTree(queryClient: QueryClient) {
+  return (
     <QueryClientProvider client={queryClient}>
       <SidebarDataProvider>
         <MemoryRouter>
           <InboxPage />
         </MemoryRouter>
       </SidebarDataProvider>
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
 }
 
@@ -702,10 +712,11 @@ describe("InboxPage recency groups", () => {
     renderPage();
 
     await screen.findByTestId("inbox-item");
-    const regions = screen.getAllByRole("region");
-    expect(regions.map((r) => r.getAttribute("aria-label"))).toEqual(["Just now", "This week"]);
-    expect(within(regions[0]).getByTestId("inbox-unread")).toBeInTheDocument();
-    expect(within(regions[1]).getByTestId("inbox-item")).toHaveAttribute("data-expanded", "true");
+    const headings = screen.getAllByRole("heading", { level: 2 });
+    expect(headings.map((heading) => heading.textContent)).toEqual(["Just now", "This week"]);
+    expect(headings[0].nextElementSibling).toBe(screen.getByTestId("inbox-unread"));
+    expect(headings[1].nextElementSibling).toBe(screen.getByTestId("inbox-item"));
+    expect(screen.getByTestId("inbox-item")).toHaveAttribute("data-expanded", "true");
     // The header pill totals every kind; its label spells out the breakdown.
     expect(screen.getByText("1 approval · 1 unread")).toBeInTheDocument();
   });
@@ -911,4 +922,206 @@ it("uses shared delivery review in the Inbox and rechecks the original session w
   } finally {
     recheck.mockReset();
   }
+});
+
+describe("InboxPage active schema answer", () => {
+  const now = new Date("2026-11-17T11:00:00Z").getTime();
+  const snapshot = (id = "eli_1") =>
+    ({
+      pendingElicitations: [
+        rawElicitation(id, "Choose branch", {
+          requestedSchema: {
+            type: "object",
+            properties: { branch: { type: "string", title: "Branch" } },
+            required: ["branch"],
+          },
+        }),
+      ],
+    }) as unknown as Awaited<ReturnType<typeof sessionsApi.getSession>>;
+
+  async function start(explicit = false) {
+    const row = conversation({ updated_at: now / 1000 - 30 });
+    vi.mocked(conversationsHook.useConversations).mockReturnValue(conversationsStub([row]));
+    vi.mocked(sessionsApi.getSession).mockResolvedValue(snapshot());
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const view = renderPage(client);
+    await screen.findByRole("textbox", { name: /Branch/ });
+    if (explicit) {
+      const toggle = screen.getByRole("button", { name: "Approval needed: My Session" });
+      fireEvent.click(toggle);
+      fireEvent.click(toggle);
+    }
+    const input = screen.getByRole("textbox", { name: /Branch/ }) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "owner draft" } });
+    input.focus();
+    input.setSelectionRange(2, 5);
+    const card = screen.getByTestId("inbox-item");
+    const scrollOwner = view.container.firstElementChild as HTMLElement;
+    scrollOwner.scrollTop = 123;
+    return { row, client, view, input, card, scrollOwner };
+  }
+  function expectRetained(state: Awaited<ReturnType<typeof start>>) {
+    expect(screen.getByRole("textbox", { name: /Branch/ })).toBe(state.input);
+    expect(state.input).toHaveValue("owner draft");
+    expect(document.activeElement).toBe(state.input);
+    expect([state.input.selectionStart, state.input.selectionEnd]).toEqual([2, 5]);
+    expect(state.input.closest('[data-testid="inbox-item"]')).toBe(state.card);
+    expect(state.view.container.firstElementChild).toBe(state.scrollOwner);
+    expect(sessionsApi.approve).not.toHaveBeenCalled();
+  }
+  it("retains the real form through timestamp/count invalidation and same-key refresh", async () => {
+    const state = await start();
+    try {
+      // Each patch must settle before exercising the next refresh boundary.
+      /* eslint-disable no-await-in-loop */
+      for (const patch of [
+        { updated_at: state.row.updated_at + 1 },
+        { pending_elicitations_count: 2 },
+      ]) {
+        let release!: (value: ReturnType<typeof snapshot>) => void;
+        vi.mocked(sessionsApi.getSession).mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              release = resolve;
+            }),
+        );
+        const calls = vi.mocked(sessionsApi.getSession).mock.calls.length;
+        Object.assign(state.row, patch);
+        vi.mocked(conversationsHook.useConversations).mockReturnValue(
+          conversationsStub([{ ...state.row }]),
+        );
+        state.view.rerender(pageTree(state.client));
+        await waitFor(() => expect(sessionsApi.getSession).toHaveBeenCalledTimes(calls + 1));
+        expect(state.client.getQueryState(["inbox-elicitations", state.row.id])?.fetchStatus).toBe(
+          "fetching",
+        );
+        expectRetained(state);
+        await act(async () => {
+          release(snapshot());
+        });
+        await waitFor(() => expect(state.client.isFetching()).toBe(0));
+        expectRetained(state);
+      }
+      /* eslint-enable no-await-in-loop */
+      await act(async () => {
+        await state.client.invalidateQueries({ queryKey: ["inbox-elicitations"] });
+      });
+      expectRetained(state);
+    } finally {
+      state.client.clear();
+    }
+  });
+  it("retains the real form when its recency group changes", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(now);
+    const state = await start();
+    try {
+      expect(screen.getByRole("heading", { name: "Just now" })).toBeVisible();
+      vi.setSystemTime(now + 3600_000);
+      state.view.rerender(pageTree(state.client));
+      expect(screen.getByRole("heading", { name: "Earlier today" })).toBeVisible();
+      expectRetained(state);
+    } finally {
+      state.client.clear();
+      vi.useRealTimers();
+    }
+  });
+  it.each(["automatic", "explicit", "user-scroll"])(
+    "immediately inserts and reorders with a stable %s reader",
+    async (mode) => {
+      const state = await start(mode === "explicit");
+      const geometry = vi
+        .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+        .mockImplementation(function (this: HTMLElement) {
+          const cards = screen.queryAllByTestId("inbox-item");
+          const index = cards.indexOf(this);
+          const top = index < 0 ? 0 : 100 + index * 200 - state.scrollOwner.scrollTop;
+          return {
+            top,
+            bottom: top + 200,
+            left: 0,
+            right: 600,
+            width: 600,
+            height: 200,
+            x: 0,
+            y: top,
+            toJSON: () => ({}),
+          };
+        });
+      try {
+        let release!: (value: ReturnType<typeof snapshot>) => void;
+        vi.mocked(sessionsApi.getSession).mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              release = resolve;
+            }),
+        );
+        const newer = conversation({ id: "sess_2", updated_at: state.row.updated_at + 1 });
+        vi.mocked(conversationsHook.useConversations).mockReturnValue(
+          conversationsStub([newer, state.row]),
+        );
+        state.view.rerender(pageTree(state.client));
+        if (mode === "user-scroll") {
+          state.scrollOwner.scrollTop = 151;
+          fireEvent.scroll(state.scrollOwner);
+        }
+        const offset = state.card.getBoundingClientRect().top;
+        await act(async () => {
+          release(snapshot("eli_2"));
+        });
+        await waitFor(() => expect(screen.getAllByTestId("inbox-item")).toHaveLength(2));
+        expectRetained(state);
+        expect(state.scrollOwner.scrollTop).toBe(mode === "user-scroll" ? 351 : 323);
+        expect(state.card.getBoundingClientRect().top).toBe(offset);
+        // Reordering updates the existing card under the same parent.
+        vi.mocked(conversationsHook.useConversations).mockReturnValue(
+          conversationsStub([{ ...state.row, updated_at: newer.updated_at + 1 }, newer]),
+        );
+        state.view.rerender(pageTree(state.client));
+        expectRetained(state);
+        expect(state.card.getBoundingClientRect().top).toBe(offset);
+        expect(screen.getAllByTestId("inbox-item")[1]).toHaveAttribute("data-expanded", "false");
+      } finally {
+        geometry.mockRestore();
+        state.client.clear();
+      }
+    },
+  );
+  it.each(["elicitation", "session", "resolved", "removed", 401, 403, 404] as const)(
+    "clears the draft at a %s boundary",
+    async (boundary) => {
+      const state = await start();
+      try {
+        if (boundary === "removed" || boundary === "session") {
+          vi.mocked(conversationsHook.useConversations).mockReturnValue(
+            conversationsStub(
+              boundary === "removed" ? [] : [{ ...state.row, id: "different-session" }],
+            ),
+          );
+          state.view.rerender(pageTree(state.client));
+        } else {
+          if (typeof boundary === "number")
+            vi.mocked(sessionsApi.getSession).mockRejectedValue(
+              new sessionsApi.ApiError("No access", boundary, null),
+            );
+          else
+            vi.mocked(sessionsApi.getSession).mockResolvedValue(
+              boundary === "resolved"
+                ? { ...snapshot(), pendingElicitations: [] }
+                : snapshot("eli_2"),
+            );
+          await act(async () => {
+            await state.client.refetchQueries({ queryKey: ["inbox-elicitations"] });
+          });
+        }
+        await waitFor(() => expect(state.input.isConnected).toBe(false));
+        if (boundary === "session" || boundary === "elicitation")
+          expect(await screen.findByRole("textbox", { name: /Branch/ })).toHaveValue("");
+        else expect(screen.queryByRole("textbox", { name: /Branch/ })).not.toBeInTheDocument();
+        expect(sessionsApi.approve).not.toHaveBeenCalled();
+      } finally {
+        state.client.clear();
+      }
+    },
+  );
 });
