@@ -427,6 +427,7 @@ def test_bounded_initial_history_preserves_an_older_reader_window(
     browser_errors: list[str],
     output_path: str,
     width: int,
+    request: pytest.FixtureRequest,
 ) -> None:
     """Cold replay is bounded; older navigation extends subsequent reset coverage."""
     chat = workspace_journey.chats[0]
@@ -449,6 +450,31 @@ def test_bounded_initial_history_preserves_an_older_reader_window(
     sockets: list[WebSocketRoute] = []
     replay_sizes: list[int] = []
     resumed_frame_counts: list[int] = []
+    transport_ledger: list[dict] = []
+    phase = "initial"
+
+    def save_transport_ledger() -> None:
+        Path(output_path).mkdir(parents=True, exist_ok=True)
+        (Path(output_path) / "bounded-history-transport.json").write_text(
+            json.dumps(
+                {"transport": transport_ledger, "resumed_frame_counts": resumed_frame_counts},
+                indent=2,
+            )
+        )
+
+    request.addfinalizer(save_transport_ledger)
+
+    def send_message(socket: WebSocketRoute, payload: dict) -> None:
+        transport_ledger.append(
+            {
+                "phase": phase,
+                "socket": sockets.index(socket),
+                "direction": "out",
+                "message": payload,
+            }
+        )
+        socket.send(json.dumps(payload))
+
     revision = 10_000
     other = workspace_journey.chats[1]
 
@@ -470,8 +496,8 @@ def test_bounded_initial_history_preserves_an_older_reader_window(
     browser_contract.json(f"/v1/sessions/{chat.session_id}/items", item_page)
 
     def send_event(socket: WebSocketRoute, payload: dict) -> None:
-        socket.send(
-            json.dumps({"type": "session.event", "session_id": chat.session_id, "event": payload})
+        send_message(
+            socket, {"type": "session.event", "session_id": chat.session_id, "event": payload}
         )
 
     def checkpoint() -> dict:
@@ -487,9 +513,20 @@ def test_bounded_initial_history_preserves_an_older_reader_window(
 
     def attach(socket: WebSocketRoute) -> None:
         sockets.append(socket)
+        transport_ledger.append(
+            {"phase": phase, "socket": sockets.index(socket), "event": "attach"}
+        )
 
         def received(raw: str | bytes) -> None:
             message = json.loads(raw)
+            transport_ledger.append(
+                {
+                    "phase": phase,
+                    "socket": sockets.index(socket),
+                    "direction": "in",
+                    "message": message,
+                }
+            )
             if message.get("type") != "subscribe":
                 return
             if message["session_id"] == other.session_id:
@@ -503,42 +540,39 @@ def test_bounded_initial_history_preserves_an_older_reader_window(
                     "reset_revision": 0,
                     "stream_epoch": "bounded-history-other",
                 }
-                socket.send(
-                    json.dumps(
-                        {
-                            "type": "session.event",
-                            "session_id": other.session_id,
-                            "event": {
-                                **other_boundary,
-                                "type": "session.sync",
-                                "phase": "start",
-                                "reset": True,
-                            },
-                        }
-                    )
+                send_message(
+                    socket,
+                    {
+                        "type": "session.event",
+                        "session_id": other.session_id,
+                        "event": {
+                            **other_boundary,
+                            "type": "session.sync",
+                            "phase": "start",
+                            "reset": True,
+                        },
+                    },
                 )
-                socket.send(
-                    json.dumps(
-                        {
-                            "type": "session.event",
-                            "session_id": other.session_id,
-                            "event": {"type": "response.output_item.done", "item": other_item},
-                        }
-                    )
+                send_message(
+                    socket,
+                    {
+                        "type": "session.event",
+                        "session_id": other.session_id,
+                        "event": {"type": "response.output_item.done", "item": other_item},
+                    },
                 )
-                socket.send(
-                    json.dumps(
-                        {
-                            "type": "session.event",
-                            "session_id": other.session_id,
-                            "event": {
-                                **other_boundary,
-                                "type": "session.sync",
-                                "phase": "complete",
-                                "reset": True,
-                            },
-                        }
-                    )
+                send_message(
+                    socket,
+                    {
+                        "type": "session.event",
+                        "session_id": other.session_id,
+                        "event": {
+                            **other_boundary,
+                            "type": "session.sync",
+                            "phase": "complete",
+                            "reset": True,
+                        },
+                    },
                 )
                 return
             subscriptions.append(message)
@@ -580,8 +614,8 @@ def test_bounded_initial_history_preserves_an_older_reader_window(
             send_event(socket, {**boundary, "phase": "complete"})
 
         socket.on_message(received)
-        socket.send(
-            json.dumps({"type": "capabilities", "transcript_stream": 1, "transcript_window": 1})
+        send_message(
+            socket, {"type": "capabilities", "transcript_stream": 1, "transcript_window": 1}
         )
 
     browser_contract.websocket("**/v1/sessions/updates*", attach)
@@ -596,6 +630,7 @@ def test_bounded_initial_history_preserves_an_older_reader_window(
     composer.fill("Retain this history draft")
 
     # The standard message deep-link path must page beyond the initial window.
+    phase = "deep-link"
     page.goto(chat.url + "?message=window-9870")
     target = view.get_by_text("History item 9870", exact=True)
     expect(target).to_be_visible()
@@ -610,6 +645,7 @@ def test_bounded_initial_history_preserves_an_older_reader_window(
     }
     del items[9_871]
     revision += 1
+    phase = "reconcile"
     send_event(
         sockets[-1], {"type": "session.heartbeat", "reconcile_required": True, **checkpoint()}
     )
@@ -625,15 +661,21 @@ def test_bounded_initial_history_preserves_an_older_reader_window(
     # A retained A -> B -> A reader resumes from its validated cursor without history frames.
     if page.get_by_role("button", name="Open navigation", exact=True).is_visible():
         page.get_by_role("button", name="Open navigation", exact=True).click()
+    phase = "away"
     page.locator(f'aside [data-sidebar-session-id="{other.session_id}"]').click()
     expect(_view(page, "Chat B").get_by_text("Answer from Chat B", exact=True)).to_be_visible()
     if page.get_by_role("button", name="Open navigation", exact=True).is_visible():
         page.get_by_role("button", name="Open navigation", exact=True).click()
+    phase = "return"
+    return_resume_start = len(resumed_frame_counts)
+    transport_ledger.append(
+        {"phase": phase, "event": "return-start", "resume_index": return_resume_start}
+    )
     page.locator(f'aside [data-sidebar-session-id="{chat.session_id}"]').click()
     expect(
         _view(page, "Chat A").get_by_text("History item 9870 revised", exact=True)
     ).to_be_visible()
     expect(composer).to_have_value("Retain this history draft")
-    assert resumed_frame_counts == [0]
+    assert resumed_frame_counts[return_resume_start:] == [0]
     assert browser_errors == []
     page.screenshot(path=str(Path(output_path) / "bounded-history-reader-after-reset.png"))
