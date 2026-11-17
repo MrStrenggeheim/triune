@@ -213,6 +213,7 @@ function PeerMessageContent({
                 <Badge
                   variant={communication.delivery_state === "failed" ? "destructive" : "secondary"}
                   role="status"
+                  aria-label={deliveryLabel}
                   className="w-fit text-xs font-normal"
                 >
                   {communication.delivery_state === "confirmed" ? (
@@ -222,7 +223,7 @@ function PeerMessageContent({
                   ) : (
                     <ClockIcon aria-hidden="true" />
                   )}
-                  {deliveryLabel}
+                  <span className="resource-status-text">{deliveryLabel}</span>
                 </Badge>
               }
               icon={

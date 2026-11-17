@@ -365,7 +365,9 @@ describe("trusted peer presentation", () => {
     );
     const client = queryClient();
     const rendered = render(view("implementation"));
-    expect(screen.getByText("this report")).toHaveAttribute("data-streamdown", "strong");
+    expect(screen.getByText("this report").tagName).toBe("STRONG");
+    expect(fetch).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Expand activity" }));
     const url =
       "/v1/sessions/implementation/attachments/references/captured-item/metadata?path=%2Foriginal%2Fworkspace%2Fguide.txt";
     await waitFor(() =>
