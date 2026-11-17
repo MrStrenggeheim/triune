@@ -1800,6 +1800,45 @@ class ConversationStore(ABC):
         ...
 
     @abstractmethod
+    def rebind_claude_native_child_runner(
+        self,
+        conversation_id: str,
+        *,
+        parent_id: str,
+        subagent_id: str,
+        authenticated_runner_id: str | None,
+        expected_child_runner_id: str | None,
+    ) -> bool:
+        """Reconcile an ordinary Claude child under the same atomic binding contract.
+
+        Require its exact persisted Claude wrapper, subagent ID and parent while
+        checking trusted current-parent authority and the expected child binding.
+        Change only runner_id; None validates only a still-unbound parent and child.
+        """
+        ...
+
+    @abstractmethod
+    def recover_claude_native_child_identity(
+        self,
+        conversation_id: str,
+        *,
+        parent_id: str,
+        subagent_id: str,
+        agent_type: str,
+        description: str,
+        tool_use_id: str,
+        authenticated_runner_id: str | None,
+        expected_child_runner_id: str | None,
+    ) -> bool:
+        """Validate a Claude collision before stamping an interrupted creation's identity.
+
+        Completely unlabeled rows require the exact saved parent/title/agent and
+        matching parent/child runner bindings; recovery assigns no runner.
+        Already labeled rows must satisfy the ordinary Claude rebind contract.
+        """
+        ...
+
+    @abstractmethod
     def clear_runner_id(self, conversation_id: str) -> Conversation:
         """
         Null out ``conversations.runner_id``.

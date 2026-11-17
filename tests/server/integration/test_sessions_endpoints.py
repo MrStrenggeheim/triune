@@ -2236,8 +2236,15 @@ async def test_external_subagent_start_is_idempotent_on_subagent_id(
     assert len(children) == 1
 
 
+@pytest.mark.parametrize(
+    "recovery",
+    ["unbound", "current", "stale-child", "side-chat", "foreign-wrapper", "identity-race"],
+)
 async def test_external_subagent_start_adopts_unlabeled_title_collision(
     client: httpx.AsyncClient,
+    db_uri: str,
+    monkeypatch: pytest.MonkeyPatch,
+    recovery: str,
 ) -> None:
     """
     Redelivery adopts (and heals) an existing child row that carries the
@@ -2275,6 +2282,32 @@ async def test_external_subagent_start_adopts_unlabeled_title_collision(
     assert seeded.status_code == 201, seeded.text
     seeded_id = seeded.json()["id"]
 
+    from omnigent.runner.identity import RUNNER_TUNNEL_TOKEN_HEADER, token_bound_runner_id
+
+    store = SqlAlchemyConversationStore(db_uri)
+    headers = {}
+    if recovery != "unbound":
+        current = token_bound_runner_id("collision-current")
+        store.replace_runner_id(parent["id"], current)
+        store.replace_runner_id(
+            seeded_id, current if recovery != "stale-child" else "older-runner"
+        )
+        headers[RUNNER_TUNNEL_TOKEN_HEADER] = "collision-current"
+    if recovery == "side-chat":
+        store.set_labels(seeded_id, {"omnigent.side_chat": "1"})
+    elif recovery == "foreign-wrapper":
+        store.set_labels(seeded_id, {"omnigent.wrapper": "codex-native-ui-subagent"})
+    elif recovery == "identity-race":
+        original = SqlAlchemyConversationStore.recover_claude_native_child_identity
+
+        def change_identity(self, conversation_id, **kwargs):
+            store.set_labels(conversation_id, {"omnigent.side_chat": "1"})
+            return original(self, conversation_id, **kwargs)
+
+        monkeypatch.setattr(
+            SqlAlchemyConversationStore, "recover_claude_native_child_identity", change_identity
+        )
+    before = store.get_conversation(seeded_id)
     payload = {
         "type": "external_subagent_start",
         "data": {
@@ -2284,7 +2317,18 @@ async def test_external_subagent_start_adopts_unlabeled_title_collision(
             "tool_use_id": "toolu_016PwCnwmHv8h7kVpWLVd9YX",
         },
     }
-    resp = await client.post(f"/v1/sessions/{parent['id']}/events", json=payload)
+    resp = await client.post(f"/v1/sessions/{parent['id']}/events", json=payload, headers=headers)
+    if recovery not in {"unbound", "current"}:
+        assert resp.status_code == 403, resp.text
+        after = store.get_conversation(seeded_id)
+        assert after.runner_id == before.runner_id
+        assert after.labels == (
+            before.labels if recovery != "identity-race" else {"omnigent.side_chat": "1"}
+        )
+        assert store.list_items(parent["id"]).data == []
+        assert store.list_items(seeded_id).data == []
+        return
+    assert store.get_conversation(seeded_id).runner_id == before.runner_id
     # 200/202, NOT 500 — the duplicate-title collision must be adopted,
     # not escape as an unhandled NameAlreadyExistsError.
     assert resp.status_code in (200, 202), f"unexpected status {resp.status_code}: {resp.text}"
@@ -2301,7 +2345,7 @@ async def test_external_subagent_start_adopts_unlabeled_title_collision(
     assert child["labels"]["omnigent.claude_native.description"] == "Trace the auth flow"
 
     # Redelivery now takes the label-lookup path to the same id.
-    again = await client.post(f"/v1/sessions/{parent['id']}/events", json=payload)
+    again = await client.post(f"/v1/sessions/{parent['id']}/events", json=payload, headers=headers)
     assert again.json()["child_session_id"] == seeded_id
 
 

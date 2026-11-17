@@ -467,10 +467,50 @@ async def test_post_event_rejects_client_supplied_created_by(
     assert resp.status_code == 403, resp.text
 
 
+@pytest.fixture(params=["codex", "claude"])
+def native_registration(request: pytest.FixtureRequest) -> dict[str, Any]:
+    from omnigent.server.routes._sessions import helpers, orchestration
+
+    if request.param == "codex":
+        return {
+            "labels": {
+                "omnigent.wrapper": "codex-native-ui-subagent",
+                "omnigent.codex_native.subagent_thread_id": "native-thread",
+            },
+            "event": {
+                "type": "external_codex_subagent_start",
+                "data": {"thread_id": "native-thread"},
+            },
+            "lookup_module": orchestration,
+            "lookup_name": "_find_codex_native_subagent_child",
+            "rebind_name": "rebind_codex_native_child_runner",
+            "identity_label": "omnigent.codex_native.subagent_thread_id",
+        }
+    return {
+        "labels": {
+            "omnigent.wrapper": "claude-code-native-ui-subagent",
+            "omnigent.claude_native.subagent_id": "native-thread",
+        },
+        "event": {
+            "type": "external_subagent_start",
+            "data": {
+                "subagent_id": "native-thread",
+                "agent_type": "Explore",
+                "description": "Audit",
+                "tool_use_id": "native-call",
+            },
+        },
+        "lookup_module": helpers,
+        "lookup_name": "_find_claude_native_subagent_child",
+        "rebind_name": "rebind_claude_native_child_runner",
+        "identity_label": "omnigent.claude_native.subagent_id",
+    }
+
+
 @pytest.mark.parametrize("auth_app", [frozenset({"global-native"})], indirect=True)
 @pytest.mark.parametrize("sender", ["current", "stale", "unrelated", "owner-only", "global-only"])
 async def test_native_child_registration_and_provenance_use_runner_authority(
-    auth_client: httpx.AsyncClient, db_uri: str, sender: str
+    auth_client: httpx.AsyncClient, db_uri: str, sender: str, native_registration: dict[str, Any]
 ) -> None:
     agent = await create_test_agent(auth_client, user="owner@example.com")
     store = SqlAlchemyConversationStore(db_uri)
@@ -482,10 +522,7 @@ async def test_native_child_registration_and_provenance_use_runner_authority(
         parent_conversation_id=parent.id,
         agent_id=agent["id"],
         runner_id=old_runner,
-        labels={
-            "omnigent.wrapper": "codex-native-ui-subagent",
-            "omnigent.codex_native.subagent_thread_id": "native-thread",
-        },
+        labels=native_registration["labels"],
     )
     permissions = SqlAlchemyPermissionStore(db_uri)
     for actor, level in (("owner@example.com", LEVEL_OWNER), ("editor@example.com", LEVEL_EDIT)):
@@ -508,9 +545,9 @@ async def test_native_child_registration_and_provenance_use_runner_authority(
         f"/v1/sessions/{parent.id}/events",
         headers=headers,
         json={
-            "type": "external_codex_subagent_start",
+            **native_registration["event"],
             "data": {
-                "thread_id": "native-thread",
+                **native_registration["event"]["data"],
                 "runner_id": current_runner,
                 "authenticated_parent_runner_id": current_runner,
             },
@@ -522,7 +559,8 @@ async def test_native_child_registration_and_provenance_use_runner_authority(
     )
     # After the valid repair, owners and previous runner secrets still cannot
     # forge native-authored transcript provenance.
-    store.replace_runner_id(child.id, current_runner)
+    if sender != "current":
+        store.replace_runner_id(child.id, current_runner)
     posted = await auth_client.post(
         f"/v1/sessions/{child.id}/events",
         headers=headers,
@@ -543,10 +581,11 @@ async def test_native_child_registration_and_provenance_use_runner_authority(
 
 
 async def test_native_child_registration_rechecks_prefetched_unbound_parent(
-    auth_client: httpx.AsyncClient, db_uri: str, monkeypatch: pytest.MonkeyPatch
+    auth_client: httpx.AsyncClient,
+    db_uri: str,
+    monkeypatch: pytest.MonkeyPatch,
+    native_registration: dict[str, Any],
 ) -> None:
-    from omnigent.server.routes._sessions import orchestration
-
     agent = await create_test_agent(auth_client, user="owner@example.com")
     store = SqlAlchemyConversationStore(db_uri)
     parent = store.create_conversation(agent_id=agent["id"])
@@ -554,30 +593,31 @@ async def test_native_child_registration_rechecks_prefetched_unbound_parent(
         kind="sub_agent",
         parent_conversation_id=parent.id,
         agent_id=agent["id"],
-        labels={
-            "omnigent.wrapper": "codex-native-ui-subagent",
-            "omnigent.codex_native.subagent_thread_id": "native-thread",
-        },
+        labels=native_registration["labels"],
     )
     permissions = SqlAlchemyPermissionStore(db_uri)
     permissions.ensure_user("owner@example.com")
     for sid in (parent.id, child.id):
         permissions.grant("owner@example.com", sid, LEVEL_OWNER)
-    original = orchestration._find_codex_native_subagent_child
+    original = getattr(native_registration["lookup_module"], native_registration["lookup_name"])
 
     def bind_during_lookup(conversation_store, parent_id, thread_id):
         found = original(conversation_store, parent_id, thread_id)
         store.replace_runner_id(parent.id, token_bound_runner_id("newly-bound-parent"))
         return found
 
-    monkeypatch.setattr(orchestration, "_find_codex_native_subagent_child", bind_during_lookup)
+    monkeypatch.setattr(
+        native_registration["lookup_module"],
+        native_registration["lookup_name"],
+        bind_during_lookup,
+    )
     response = await auth_client.post(
         f"/v1/sessions/{parent.id}/events",
         headers={
             "X-Forwarded-Email": "owner@example.com",
             RUNNER_TUNNEL_TOKEN_HEADER: "newly-bound-parent",
         },
-        json={"type": "external_codex_subagent_start", "data": {"thread_id": "native-thread"}},
+        json=native_registration["event"],
     )
     assert response.status_code == 403, response.text
     assert store.get_conversation(child.id) == child
@@ -587,7 +627,11 @@ async def test_native_child_registration_rechecks_prefetched_unbound_parent(
 
 @pytest.mark.parametrize("changed", ["parent", "child", "thread", "side-chat"])
 async def test_native_child_registration_refuses_binding_or_identity_races(
-    auth_client: httpx.AsyncClient, db_uri: str, monkeypatch: pytest.MonkeyPatch, changed: str
+    auth_client: httpx.AsyncClient,
+    db_uri: str,
+    monkeypatch: pytest.MonkeyPatch,
+    changed: str,
+    native_registration: dict[str, Any],
 ) -> None:
     agent = await create_test_agent(auth_client, user="owner@example.com")
     store = SqlAlchemyConversationStore(db_uri)
@@ -599,16 +643,13 @@ async def test_native_child_registration_refuses_binding_or_identity_races(
         parent_conversation_id=parent.id,
         agent_id=agent["id"],
         runner_id="old-runner",
-        labels={
-            "omnigent.wrapper": "codex-native-ui-subagent",
-            "omnigent.codex_native.subagent_thread_id": "native-thread",
-        },
+        labels=native_registration["labels"],
     )
     permissions = SqlAlchemyPermissionStore(db_uri)
     permissions.ensure_user("owner@example.com")
     for sid in (parent.id, child.id):
         permissions.grant("owner@example.com", sid, LEVEL_OWNER)
-    original = SqlAlchemyConversationStore.rebind_codex_native_child_runner
+    original = getattr(SqlAlchemyConversationStore, native_registration["rebind_name"])
 
     def race(self, conversation_id, **kwargs):
         if changed in {"parent", "child"}:
@@ -617,7 +658,7 @@ async def test_native_child_registration_refuses_binding_or_identity_races(
             store.set_labels(
                 child.id,
                 {
-                    "omnigent.codex_native.subagent_thread_id"
+                    native_registration["identity_label"]
                     if changed == "thread"
                     else "omnigent.codex_native.agent_nickname": "different-thread"
                     if changed == "thread"
@@ -626,14 +667,14 @@ async def test_native_child_registration_refuses_binding_or_identity_races(
             )
         return original(self, conversation_id, **kwargs)
 
-    monkeypatch.setattr(SqlAlchemyConversationStore, "rebind_codex_native_child_runner", race)
+    monkeypatch.setattr(SqlAlchemyConversationStore, native_registration["rebind_name"], race)
     response = await auth_client.post(
         f"/v1/sessions/{parent.id}/events",
         headers={
             "X-Forwarded-Email": "owner@example.com",
             RUNNER_TUNNEL_TOKEN_HEADER: "current-native",
         },
-        json={"type": "external_codex_subagent_start", "data": {"thread_id": "native-thread"}},
+        json=native_registration["event"],
     )
     assert response.status_code == 403, response.text
     assert store.get_conversation(child.id).runner_id == (

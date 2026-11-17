@@ -946,7 +946,7 @@ checks do not prove live providers, browser rendering or thought-signature parit
 
 ## Gotchas
 
-- Re-registering a reused ordinary Codex child after parent runner replacement reconciles only its binding, using the parent's trusted current runner and exact persisted thread identity.
+- Re-registering a reused ordinary Codex or Claude child after parent runner replacement reconciles only its binding, using the parent's trusted current runner and exact persisted native identity.
   `tests/server/routes/test_sessions_background_task_status.py` covers restored shell observation and stale/unrelated/owner-only rejection; `test_subagent_activity.py` covers the shared/split atomic identity checks.
   The child's conversation, dispatch, finality and transcript records remain the same; broad transcript completeness is a separate claim.
 

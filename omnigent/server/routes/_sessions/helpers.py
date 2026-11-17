@@ -3791,6 +3791,8 @@ async def _persist_external_subagent_start(
     parent_conv: Conversation,
     body: SessionEventInput,
     conversation_store: ConversationStore,
+    *,
+    authenticated_parent_runner_id: str | None = None,
 ) -> str:
     """
     Mint a child :class:`Conversation` row for a claude-native
@@ -3878,6 +3880,19 @@ async def _persist_external_subagent_start(
         subagent_id,
     )
     if existing is not None:
+        if not await asyncio.to_thread(
+            conversation_store.rebind_claude_native_child_runner,
+            existing.id,
+            parent_id=parent_id,
+            subagent_id=subagent_id,
+            authenticated_runner_id=authenticated_parent_runner_id,
+            expected_child_runner_id=existing.runner_id,
+        ):
+            raise OmnigentError(
+                "Native child registration requires the current parent runner "
+                "and unchanged child binding",
+                code=ErrorCode.FORBIDDEN,
+            )
         from omnigent.server.subagent_activity import record_subagent_activity
 
         await record_subagent_activity(
@@ -3935,7 +3950,22 @@ async def _persist_external_subagent_start(
         )
         if adopted is None:
             raise
-        await asyncio.to_thread(conversation_store.set_labels, adopted.id, labels)
+        if not await asyncio.to_thread(
+            conversation_store.recover_claude_native_child_identity,
+            adopted.id,
+            parent_id=parent_id,
+            subagent_id=subagent_id,
+            agent_type=agent_type,
+            description=description,
+            tool_use_id=tool_use_id,
+            authenticated_runner_id=authenticated_parent_runner_id,
+            expected_child_runner_id=adopted.runner_id,
+        ):
+            raise OmnigentError(
+                "Native child recovery requires unchanged ordinary Claude identity "
+                "and current parent runner authority",
+                code=ErrorCode.FORBIDDEN,
+            ) from None
         # The POST that created this orphan died before reaching the
         # ``session.created`` publish below, so live clients (the web
         # Subagents rail) have never heard about the child — emit it now.

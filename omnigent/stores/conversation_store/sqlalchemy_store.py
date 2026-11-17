@@ -7,10 +7,10 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
-from collections.abc import Mapping
-from contextlib import nullcontext, suppress
+from collections.abc import Iterator, Mapping
+from contextlib import ExitStack, contextmanager, nullcontext, suppress
 from pathlib import PureWindowsPath
-from typing import Any, Protocol, cast
+from typing import Any, Literal, Protocol, cast
 
 from sqlalchemy import (
     ColumnElement,
@@ -4900,14 +4900,99 @@ class SqlAlchemyConversationStore(ConversationStore):
         authenticated_runner_id: str | None,
         expected_child_runner_id: str | None,
     ) -> bool:
+        """Reconcile an ordinary Codex child using its exact persisted thread identity."""
+        return self._rebind_native_child_runner(
+            conversation_id,
+            parent_id=parent_id,
+            native_id=thread_id,
+            identity="codex",
+            authenticated_runner_id=authenticated_runner_id,
+            expected_child_runner_id=expected_child_runner_id,
+        )
+
+    def rebind_claude_native_child_runner(
+        self,
+        conversation_id: str,
+        *,
+        parent_id: str,
+        subagent_id: str,
+        authenticated_runner_id: str | None,
+        expected_child_runner_id: str | None,
+    ) -> bool:
+        """Reconcile an ordinary Claude child using its exact persisted subagent identity."""
+        return self._rebind_native_child_runner(
+            conversation_id,
+            parent_id=parent_id,
+            native_id=subagent_id,
+            identity="claude",
+            authenticated_runner_id=authenticated_runner_id,
+            expected_child_runner_id=expected_child_runner_id,
+        )
+
+    def recover_claude_native_child_identity(
+        self,
+        conversation_id: str,
+        *,
+        parent_id: str,
+        subagent_id: str,
+        agent_type: str,
+        description: str,
+        tool_use_id: str,
+        authenticated_runner_id: str | None,
+        expected_child_runner_id: str | None,
+    ) -> bool:
+        """Recover only an unchanged unlabeled creation; never infer runner ownership."""
+        return self._rebind_native_child_runner(
+            conversation_id,
+            parent_id=parent_id,
+            native_id=subagent_id,
+            identity="claude",
+            authenticated_runner_id=authenticated_runner_id,
+            expected_child_runner_id=expected_child_runner_id,
+            claude_recovery=(
+                f"{agent_type}:{subagent_id}",
+                {
+                    WRAPPER_LABEL_KEY: "claude-code-native-ui-subagent",
+                    "omnigent.claude_native.subagent_id": subagent_id,
+                    "omnigent.claude_native.tool_use_id": tool_use_id,
+                    "omnigent.claude_native.description": description,
+                },
+            ),
+        )
+
+    def _rebind_native_child_runner(
+        self,
+        conversation_id: str,
+        *,
+        parent_id: str,
+        native_id: str,
+        identity: Literal["codex", "claude"],
+        authenticated_runner_id: str | None,
+        expected_child_runner_id: str | None,
+        claude_recovery: tuple[str, dict[str, str]] | None = None,
+    ) -> bool:
         """Hold native identity locks across the atomic parent/child binding check."""
         from omnigent.harnesses.codex_native.side_chat import is_side_chat_child
 
-        if authenticated_runner_id == "" or not thread_id or conversation_id == parent_id:
+        if authenticated_runner_id == "" or not native_id or conversation_id == parent_id:
             return False
+        if identity == "codex":
+            wrapper = "codex-native-ui-subagent"
+            native_id_label = "omnigent.codex_native.subagent_thread_id"
+        elif identity == "claude":
+            wrapper = "claude-code-native-ui-subagent"
+            native_id_label = "omnigent.claude_native.subagent_id"
+        else:
+            return False
+        query_name = (
+            "recover_claude_native_child_identity"
+            if claude_recovery is not None
+            else f"rebind_{identity}_native_child_runner"
+        )
         workspace_id = current_workspace_id()
+        metadata_fence: ExitStack | None = None
 
-        def bind_metadata(session: Session) -> bool:
+        def bind_metadata(session: Session, recovering_unlabeled: bool) -> bool:
             query = (
                 select(SqlConversationMetadata)
                 .where(
@@ -4930,6 +5015,9 @@ class SqlAlchemyConversationStore(ConversationStore):
                 or child.host_id is not None
             ):
                 return False
+            if recovering_unlabeled:
+                # Missing identity can be recovered only without assigning a runner.
+                return child.runner_id == parent.runner_id
             if authenticated_runner_id is None:
                 # Legacy unbound registrations carry no runner authority.
                 return child.runner_id is None
@@ -4939,36 +5027,82 @@ class SqlAlchemyConversationStore(ConversationStore):
         def check_identity(session: Session) -> bool:
             query = select(SqlConversation).where(
                 SqlConversation.workspace_id == workspace_id,
-                SqlConversation.id == conversation_id,
+                SqlConversation.id.in_([parent_id, conversation_id])
+                if claude_recovery is not None
+                else SqlConversation.id == conversation_id,
             )
             label_query = select(SqlConversationLabel).where(
                 SqlConversationLabel.workspace_id == workspace_id,
                 SqlConversationLabel.conversation_id == conversation_id,
             )
             if self._supports_for_update:
-                query = query.with_for_update()
-            child = session.scalar(query)
+                query = query.order_by(SqlConversation.id).with_for_update()
+            rows = {row.id: row for row in session.scalars(query)}
+            child = rows.get(conversation_id)
+            parent = rows.get(parent_id)
             labels = {row.key: row.value for row in session.scalars(label_query)}
+            recovering_unlabeled = (
+                claude_recovery is not None
+                and not labels
+                and child is not None
+                and child.title == claude_recovery[0]
+                and parent is not None
+                and child.agent_id is not None
+                and child.agent_id == parent.agent_id
+            )
             if (
                 child is None
                 or child.parent_conversation_id != parent_id
-                or labels.get(WRAPPER_LABEL_KEY) != "codex-native-ui-subagent"
-                or labels.get("omnigent.codex_native.subagent_thread_id") != thread_id
+                or (
+                    not recovering_unlabeled
+                    and (
+                        labels.get(WRAPPER_LABEL_KEY) != wrapper
+                        or labels.get(native_id_label) != native_id
+                    )
+                )
                 or labels.get(SIDE_CHAT_LABEL_KEY)
                 or is_side_chat_child(labels)
             ):
                 return False
             if self._conv_engine is self._engine:
-                return bind_metadata(session)
-            # Only metadata is written. Keep the AP identity locks until its
-            # binding transaction commits so split stores retain the same gate.
-            return run_write_transaction(
-                self._session_immediate, "rebind_codex_native_child_runner", bind_metadata
-            )
+                accepted = bind_metadata(session, recovering_unlabeled)
+            elif recovering_unlabeled:
+                # Identity is the sole write. Hold its binding fence through AP commit.
+                assert metadata_fence is not None
+                metadata_session = metadata_fence.enter_context(
+                    self._session_immediate(query_name)
+                )
+                accepted = bind_metadata(metadata_session, True)
+            else:
+                # Keep the AP identity locks until metadata commits in split stores.
+                accepted = run_write_transaction(
+                    self._session_immediate,
+                    query_name,
+                    lambda metadata_session: bind_metadata(metadata_session, recovering_unlabeled),
+                )
+            if accepted and recovering_unlabeled and claude_recovery is not None:
+                _upsert_labels(session, conversation_id, claude_recovery[1], now_epoch())
+            return accepted
 
-        return run_write_transaction(
-            self._conv_session_immediate, "rebind_codex_native_child_runner", check_identity
-        )
+        if claude_recovery is not None and self._conv_engine is not self._engine:
+            conversation_sessions = self._conv_session_immediate
+
+            class RecoverySessions:
+                engine = conversation_sessions.engine
+                query_name_prefix = conversation_sessions.query_name_prefix
+
+                @contextmanager
+                def __call__(self, query_name: str) -> Iterator[Session]:
+                    nonlocal metadata_fence
+                    # Each retry releases both transactions before reacquiring identity.
+                    with (
+                        ExitStack() as metadata_fence,
+                        conversation_sessions(query_name) as session,
+                    ):
+                        yield session
+
+            return run_write_transaction(RecoverySessions(), query_name, check_identity)
+        return run_write_transaction(self._conv_session_immediate, query_name, check_identity)
 
     def clear_runner_id(self, conversation_id: str) -> Conversation:
         """

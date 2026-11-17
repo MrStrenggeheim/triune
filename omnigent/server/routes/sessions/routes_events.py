@@ -2960,6 +2960,9 @@ def register_events_routes(
                 conv,
                 body,
                 conversation_store,
+                authenticated_parent_runner_id=(
+                    conv.runner_id if _has_bound_runner_authority(request, conv) else None
+                ),
             )
             # Returned to the claude-native forwarder so it can address
             # subsequent ``external_conversation_item`` /

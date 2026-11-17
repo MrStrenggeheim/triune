@@ -221,9 +221,10 @@ def test_idle_with_positive_count_sets_sticky_tally_but_list_stays_idle() -> Non
     assert _session_status_with_child_rollup(_SID, []) == "idle"
 
 
+@pytest.mark.parametrize("native", ["codex", "claude"])
 @pytest.mark.parametrize("sender", ["current", "stale", "unrelated", "owner-only"])
 async def test_reregistered_native_child_keeps_history_and_accepts_current_shells(
-    client: httpx.AsyncClient, db_uri: str, session_id: str, sender: str
+    client: httpx.AsyncClient, db_uri: str, session_id: str, sender: str, native: str
 ) -> None:
     store = SqlAlchemyConversationStore(db_uri)
     old_runner = token_bound_runner_id("parent-before-restart")
@@ -233,6 +234,16 @@ async def test_reregistered_native_child_keeps_history_and_accepts_current_shell
         "type": "external_codex_subagent_start",
         "data": {"thread_id": "native-child-thread", "tool_call_id": "spawn-1", "prompt": "Audit"},
     }
+    if native == "claude":
+        registration = {
+            "type": "external_subagent_start",
+            "data": {
+                "subagent_id": "native-child-thread",
+                "agent_type": "Explore",
+                "tool_use_id": "spawn-1",
+                "description": "Audit",
+            },
+        }
     created = await client.post(
         f"/v1/sessions/{session_id}/events",
         json=registration,
@@ -320,6 +331,23 @@ async def test_reregistered_native_child_keeps_history_and_accepts_current_shell
         },
     )
     assert shell.status_code == (202 if sender == "current" else 403), shell.text
+    provenance = await client.post(
+        f"/v1/sessions/{child_id}/events",
+        headers={RUNNER_TUNNEL_TOKEN_HEADER: "parent-after-restart"},
+        json={
+            "type": "external_conversation_item",
+            "data": {
+                "source_id": "new-native-input",
+                "item_type": "message",
+                "item_data": {
+                    "role": "user",
+                    "user_authored": True,
+                    "content": [{"type": "input_text", "text": "Native input"}],
+                },
+            },
+        },
+    )
+    assert provenance.status_code == (202 if sender == "current" else 403), provenance.text
 
 
 def test_trailing_idle_without_count_leaves_tally_sticky() -> None:
