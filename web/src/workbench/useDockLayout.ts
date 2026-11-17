@@ -1,5 +1,6 @@
+import { conversationRegistry, type ConversationRegistry } from "@/store/conversationRegistry";
 // Modified for Triune.
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   addDockView,
   closeDockView,
@@ -42,6 +43,8 @@ export interface UseDockLayoutOptions {
   /** null disables persistence; undefined uses localStorage. */
   storage?: DockStorage | null;
   onBeforeClose?: DockCloseGuard;
+  /** Only closed Undo views own heavy history; saved inactive layouts own metadata. */
+  undoViews?: readonly DockView[];
 }
 
 function asError(error: unknown): Error {
@@ -78,14 +81,56 @@ function loadSession(
   };
 }
 
+/** Acquire replacements before releasing old owners; saved layouts remain metadata only. */
+export function useDockHistoryOwners(
+  views: readonly DockView[],
+  scopeKey: string,
+  registry: ConversationRegistry = conversationRegistry,
+): void {
+  const leases = useRef(new Map<string, () => void>());
+  useLayoutEffect(() => {
+    const ids = new Set(
+      views.flatMap((view) =>
+        typeof view.resource.conversationId === "string" ? [view.resource.conversationId] : [],
+      ),
+    );
+    for (const id of ids) {
+      const key = JSON.stringify([scopeKey, id]);
+      if (!leases.current.has(key)) leases.current.set(key, registry.retainHistory(id));
+    }
+  }, [views, scopeKey, registry]);
+  // Reopened children acquire mounted leases in passive effects before their parent releases Undo.
+  useEffect(() => {
+    const ids = new Set(views.map((view) => view.resource.conversationId));
+    for (const [key, release] of leases.current) {
+      const [scope, id] = JSON.parse(key) as [string, string];
+      if (scope !== scopeKey || !ids.has(id)) {
+        release();
+        leases.current.delete(key);
+      }
+    }
+    registry.trimCleanHistory();
+  }, [views, scopeKey, registry]);
+  useLayoutEffect(
+    () => () => {
+      for (const release of leases.current.values()) release();
+      leases.current.clear();
+    },
+    [registry],
+  );
+}
+const NO_UNDO_VIEWS: readonly DockView[] = [];
+
 /** Scope changes reset synchronously so one account never renders another's views. */
 export function useDockLayout({
   scope,
   initialLayout,
   storage,
   onBeforeClose,
+  undoViews = NO_UNDO_VIEWS,
 }: UseDockLayoutOptions) {
   const scopeKey = dockStorageKey(scope);
+  useDockHistoryOwners(undoViews, scopeKey);
   const [session, setSession] = useState(() => loadSession(scopeKey, initialLayout, storage));
   // Renders can lag behind commits; only commits and scope resets advance this ref.
   const current = useRef(session);
@@ -355,6 +400,8 @@ export function useDockLayout({
     scopeKey,
     layout,
     retainedViews,
+    // Saved layouts own resource/reader metadata, not all loaded blocks.
+    savedConversationIds: state.chats.map((chat) => chat.conversationId),
     pinnedViewIds: state.pins.views.map((view) => view.id),
     activeConversationId: state.activeConversationId,
     hasChatLayout: state.chats.some((chat) => chat.conversationId === state.activeConversationId),

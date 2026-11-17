@@ -1,4 +1,11 @@
 // Modified for Triune.
+import {
+  readTranscriptReaderCheckpoint,
+  rememberTranscriptReaderCheckpoint,
+  setTranscriptReaderHydrator,
+  type TranscriptReaderRestoreRequest,
+} from "@/lib/transcriptReaderCheckpoint";
+import { ResourceViewIdContext } from "@/lib/panelFolder";
 import { createRef } from "react";
 import type * as ReactVirtualModule from "@tanstack/react-virtual";
 import type { StickToBottomContext } from "use-stick-to-bottom";
@@ -240,6 +247,23 @@ it("restores a retained reader anchor after hidden clamping, without accepting h
   vi.useFakeTimers();
   const visible = vi.spyOn(scopedChat, "useConversationChatVisible").mockReturnValue(true);
   const id = "hidden-reader-anchor";
+  const entry = conversationRegistry.acquire(id);
+  entry.setState({
+    historyGeneration: 1,
+    hasMoreHistory: false,
+    blocks: Array.from({ length: 8 }, (_, index) => ({
+      type: "user_message" as const,
+      ctx: {
+        itemId: `retained-${index}`,
+        responseId: `retained-${index}`,
+        agent: null,
+        depth: 0,
+        turn: 0,
+        timestamp: 0,
+      },
+      content: [{ type: "input_text" as const, text: "hello" }],
+    })),
+  });
   useChatStore.setState({ conversationId: id });
   const scrollEl = document.createElement("div");
   Object.defineProperties(scrollEl, {
@@ -265,6 +289,9 @@ it("restores a retained reader anchor after hidden clamping, without accepting h
   fireEvent.scroll(scrollEl);
   visible.mockReturnValue(true);
   view.rerender(tree());
+  await act(async () => {
+    await Promise.resolve();
+  });
   expect(scrollEl.scrollTop).toBe(333);
   fireEvent.wheel(scrollEl);
   scrollEl.scrollTop = 420;
@@ -273,6 +300,7 @@ it("restores a retained reader anchor after hidden clamping, without accepting h
     await vi.advanceTimersByTimeAsync(64);
   });
   expect(scrollEl.scrollTop).toBe(420);
+  conversationRegistry.release(id);
 });
 
 it.each([false, true])(
@@ -692,7 +720,8 @@ it.each(["reader", "wheel", "search", "library"] as const)(
   },
 );
 
-it("keeps unchanged transcript lists resident across focus changes and scopes native find", () => {
+it("keeps unchanged transcript lists resident across focus changes and scopes native find", async () => {
+  vi.useFakeTimers();
   vi.spyOn(chatStore, "ensureConversationStreamed").mockResolvedValue();
   const ids = ["focus-list-a", "focus-list-b"];
   const controllers = ids.map(() => new AbortController());
@@ -797,9 +826,204 @@ it("keeps unchanged transcript lists resident across focus changes and scopes na
       }),
     );
     expect(scopes[1]).toHaveTextContent("Updated transcript still renders");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1200);
+    });
   } finally {
     view.unmount();
     conversationRegistry.clear();
     client.clear();
+  }
+});
+
+it.each(["false", "reject", "cancel", "dispose"] as const)(
+  "releases reader alignment after hydration %s",
+  async (outcome) => {
+    vi.useFakeTimers();
+    const id = `hydration-${outcome}`;
+    useChatStore.setState({ conversationId: id });
+    rememberTranscriptReaderCheckpoint(id, {
+      snapshot: {
+        atBottom: false,
+        anchorKey: "user:user-1",
+        anchorItemId: "user-1",
+        anchorOffset: -123,
+        fallbackOffset: 123,
+      },
+      loadedMinPosition: 0,
+    });
+    const scrollEl = document.createElement("div");
+    Object.defineProperties(scrollEl, {
+      scrollTop: { configurable: true, writable: true, value: 0 },
+      clientHeight: { configurable: true, value: 500 },
+      scrollHeight: { configurable: true, value: 2000 },
+    });
+    let resolve!: (ready: boolean) => void;
+    let reject!: (error: Error) => void;
+    const hydration = new Promise<boolean>((yes, no) => {
+      resolve = yes;
+      reject = no;
+    });
+    const handler = vi.fn((_request: TranscriptReaderRestoreRequest) => hydration);
+    const release = setTranscriptReaderHydrator(handler);
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const view = render(list(false, scrollEl, vi.fn(), false, [bubble], id));
+    try {
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(handler).toHaveBeenCalledTimes(1);
+      const signal = handler.mock.calls[0]![0]?.signal;
+      await act(async () => {
+        if (outcome === "dispose") view.unmount();
+        else if (outcome === "cancel") fireEvent.wheel(scrollEl);
+        else if (outcome === "reject") reject(new Error("hydration failed"));
+        else resolve(false);
+      });
+      expect(signal?.aborted).toBe(true);
+      scrollEl.scrollTop = 456;
+      fireEvent.scroll(scrollEl);
+      if (outcome !== "dispose")
+        expect(readTranscriptReaderCheckpoint(id)?.snapshot).toMatchObject({ fallbackOffset: 456 });
+      await act(async () => {
+        resolve(true);
+        await vi.advanceTimersByTimeAsync(1200);
+      });
+      expect(scrollEl.scrollTop).toBe(456);
+      expect(errors).toHaveBeenCalledTimes(outcome === "reject" ? 1 : 0);
+    } finally {
+      view.unmount();
+      release();
+    }
+  },
+);
+
+it("restores search original-source choices when canonical text arrives after reopening", async () => {
+  const id = "delayed-original-reader";
+  const source = "[label](https://example.test/needle)";
+  rememberTranscriptReaderCheckpoint(id, {
+    originalItemIds: ["source-item"],
+    revealedItemIds: ["source-item"],
+  });
+  useChatStore.setState({
+    conversationId: id,
+    blocks: [],
+    pendingUserMessages: [],
+    activeResponse: null,
+    sessionStatus: "idle",
+  });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const tree = (
+    <QueryClientProvider client={client}>
+      <MemoryRouter>
+        <Transcript
+          hostId={null}
+          setConversationEl={() => {}}
+          containerEl={null}
+          scroller={null}
+          setScroller={() => {}}
+          sendScrollNonce={0}
+          hasMoreHistory={false}
+          loadingMoreHistory={false}
+          isMobileViewport
+          showsWorking={false}
+          agentsError={null}
+          sandboxLaunching={false}
+          spacerMeasureRef={{ current: null }}
+        />
+      </MemoryRouter>
+    </QueryClientProvider>
+  );
+  const view = render(tree);
+  try {
+    expect(readTranscriptReaderCheckpoint(id)?.originalItemIds).toEqual(["source-item"]);
+    act(() =>
+      useChatStore.setState({
+        blocks: [
+          {
+            type: "text_done",
+            ctx: {
+              itemId: "source-item",
+              position: 0,
+              responseId: "source-response",
+              agent: null,
+              depth: 0,
+              turn: 0,
+              timestamp: 0,
+            },
+            fullText: source,
+            hasCodeBlocks: false,
+            phase: "final_answer",
+          },
+        ],
+      }),
+    );
+    await waitFor(() =>
+      expect(
+        view.container.querySelector('[data-search-item-id="source-item"] [data-chat-plain-text]'),
+      ).toHaveTextContent(source),
+    );
+    expect(readTranscriptReaderCheckpoint(id)?.originalItemIds).toEqual(["source-item"]);
+  } finally {
+    view.unmount();
+    client.clear();
+  }
+});
+
+it("restores the actual reader offset under a new view ID after the last mounted and Undo owners expire", async () => {
+  vi.useFakeTimers();
+  const id = "reader-after-undo-expiry";
+  useChatStore.setState({ conversationId: id });
+  const oldEntry = conversationRegistry.peek(id)!;
+  const releaseUndo = conversationRegistry.retainHistory(id);
+  const bubbles = Array.from({ length: 8 }, (_, index) => ({
+    ...bubble,
+    itemId: `expiry-${index}`,
+  }));
+  const surface = () => {
+    const element = document.createElement("div");
+    Object.defineProperties(element, {
+      scrollTop: { configurable: true, writable: true, value: 0 },
+      clientHeight: { configurable: true, value: 500 },
+      scrollHeight: { configurable: true, value: 2000 },
+    });
+    return element;
+  };
+  const tree = (viewId: string, element: HTMLElement) => (
+    <ResourceViewIdContext.Provider value={viewId}>
+      {list(false, element, vi.fn(), false, bubbles, id)}
+    </ResourceViewIdContext.Provider>
+  );
+  const oldSurface = surface();
+  const old = render(tree("expired-view", oldSurface));
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(64);
+  });
+  oldSurface.scrollTop = 333;
+  fireEvent.scroll(oldSurface);
+  const saved = readTranscriptReaderCheckpoint(id, "expired-view")!.snapshot;
+  old.unmount();
+  conversationRegistry.setActive(null);
+  for (let i = 0; i < 100; i++) conversationRegistry.acquire(`expiry-pressure-${i}`);
+  expect(oldEntry.disposed).toBe(false);
+  releaseUndo();
+  await act(async () => {
+    await Promise.resolve();
+  });
+  expect(oldEntry.disposed).toBe(true);
+  useChatStore.setState({ conversationId: null });
+  useChatStore.setState({ conversationId: id });
+  const nextSurface = surface();
+  const next = render(tree("new-view-id", nextSurface));
+  try {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(64);
+    });
+    expect(nextSurface.scrollTop).toBe(333);
+    expect(readTranscriptReaderCheckpoint(id, "new-view-id")?.snapshot).toEqual(saved);
+    expect(conversationRegistry.peek(id)).not.toBe(oldEntry);
+  } finally {
+    next.unmount();
+    conversationRegistry.clear();
   }
 });

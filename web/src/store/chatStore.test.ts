@@ -33,6 +33,10 @@ import type {
   UserMessageBlock,
 } from "@/lib/blocks";
 import type { ConversationItem, MessageItem } from "@/lib/conversationItems";
+import {
+  readTranscriptReaderCheckpoint,
+  rememberTranscriptReaderCheckpoint,
+} from "@/lib/transcriptReaderCheckpoint";
 import { itemsToBlocks } from "@/lib/itemsToBlocks";
 import { transcriptIndex } from "@/lib/transcriptOrder";
 import { messageInputKind, type MessageCommunication } from "@/lib/messageCommunication";
@@ -96,6 +100,9 @@ import {
   type PendingUserMessage,
   bindConversationForTest,
   releaseConversation,
+  hydrateTranscriptReader,
+  restoreConversationHistoryExtent,
+  revealConversationHistoryPosition,
 } from "./chatStore";
 import { conversationRegistry } from "./conversationRegistry";
 import { markSessionCreated, resetInteractionTelemetryForTests } from "./interactionTelemetry";
@@ -16478,6 +16485,7 @@ describe("chatStore — startStreamPump reconnect loop", () => {
       blocks: [...itemsToBlocks(windowItems), approvalCard, syntheticError],
       hasMoreHistory: true,
       oldestItemId: windowItems[0]!.id,
+      historyWindowStartPosition: windowItems[0]!.position!,
     });
 
     const loop = startStreamPump("conv_keep", controller, setState, getState);
@@ -16496,6 +16504,9 @@ describe("chatStore — startStreamPump reconnect loop", () => {
     expect(sinks).toHaveLength(2);
 
     const state = useChatStore.getState();
+    expect(state.blocks.some((block) => block.ctx.itemId === windowItems[0]!.id)).toBe(true);
+    expect(state.historyWindowStartPosition).toBe(windowItems[0]!.position);
+
     // The fresh fetch returns ITEMS only — dropping these blocks would lose
     // the pending ApprovalCard (and the failure reason) with no way back.
     // Captured boundaries retain order independently of server/client clock skew.
@@ -23401,6 +23412,83 @@ describe("canonical transcript event-script equivalence", () => {
           : bubble,
     );
 
+  it.each([100, 1000, 8113])("publishes a %i-row authoritative reset once", async (count) => {
+    const saved = Array.from({ length: count }, (_, position) => ({
+      ...(position % 2
+        ? assistantMessage(`batch-${position}`, `Answer ${position}`)
+        : userMessage(`batch-${position}`, `Question ${position}`)),
+      position,
+    }));
+    const bound = bindConversationForTest(`batch-${count}`, {
+      blocks: itemsToBlocks([{ ...assistantMessage("removed", "Old membership"), position: 0 }]),
+      pendingUserMessages: [
+        {
+          tempId: "exact-input",
+          stableId: saved[0]!.id,
+          content: [{ type: "input_text", text: "Question 0" }],
+        },
+        {
+          tempId: "next-input",
+          stableId: "next-input-stable",
+          content: [{ type: "input_text", text: "Question 0" }],
+        },
+      ],
+    });
+    let publications = 0;
+    const unsubscribe = useChatStore.subscribe((state, previous) => {
+      if (state.blocks !== previous.blocks) publications++;
+    });
+    const sink = pushableStream();
+    const controller = new AbortController();
+    const onSyncComplete = vi.fn(() => {
+      expect(bound.get().blocks).toHaveLength(count);
+      expect(bound.get().transcriptCheckpoint?.cursor.after_position).toBe(count - 1);
+      expect(bound.get().pendingUserMessages.map((message) => message.tempId)).toEqual([
+        "next-input",
+      ]);
+    });
+    const loop = pumpStreamEvents(
+      `batch-${count}`,
+      sink.stream,
+      controller,
+      bound.set,
+      bound.get,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      onSyncComplete,
+    );
+    const start = performance.now();
+    try {
+      sink.push(checkpoint("start", saved));
+      for (const item of saved) sink.push(done(item));
+      await tick();
+      expect(publications).toBe(0);
+      expect(onSyncComplete).not.toHaveBeenCalled();
+      expect(bound.get().pendingUserMessages).toHaveLength(2);
+      sink.push(checkpoint("complete", saved));
+      sink.push("data: [DONE]\n\n");
+      sink.close();
+      await loop;
+      expect(bound.get().blocks.map((block) => block.ctx.itemId)).toEqual(
+        saved.map((item) => item.id),
+      );
+      expect(bound.get().pendingUserMessages.map((message) => message.tempId)).toEqual([
+        "next-input",
+      ]);
+      expect(publications).toBe(1);
+      expect(onSyncComplete).toHaveBeenCalledOnce();
+      console.log(
+        "RESET_BATCH_18",
+        JSON.stringify({ count, publications, elapsedMs: performance.now() - start }),
+      );
+    } finally {
+      unsubscribe();
+      controller.abort();
+    }
+  });
+
   for (const variant of ["preview-first", "committed-first"] as const) {
     it(`${variant} converges before reconnect when the native user echo is late`, async () => {
       const q1 = { ...userMessage("one", "First question"), position: 0 };
@@ -23537,124 +23625,293 @@ describe("canonical transcript event-script equivalence", () => {
   );
 });
 
-it("binds independent conversation stores through one negotiated tab socket without SSE", async () => {
-  vi.useFakeTimers();
-  class TranscriptSocket {
-    static OPEN = 1;
-    static instances: TranscriptSocket[] = [];
-    readyState = 0;
-    onopen: (() => void) | null = null;
-    onmessage: ((event: MessageEvent) => void) | null = null;
-    onclose: (() => void) | null = null;
-    onerror: (() => void) | null = null;
-    sent: Record<string, unknown>[] = [];
-    constructor() {
-      TranscriptSocket.instances.push(this);
-      queueMicrotask(() => {
-        this.readyState = 1;
-        this.onopen?.();
-        this.emit({ type: "capabilities", transcript_stream: 1 });
-      });
+it.each([false, true])(
+  "binds independent conversation stores through one negotiated tab socket without SSE (windowed %s)",
+  async (windowed) => {
+    vi.useFakeTimers();
+    vi.mocked(getCurrentUserId).mockReturnValue(null);
+    class TranscriptSocket {
+      static OPEN = 1;
+      static revision = 0;
+      historyFrames = 0;
+      static instances: TranscriptSocket[] = [];
+      readyState = 0;
+      onopen: (() => void) | null = null;
+      onmessage: ((event: MessageEvent) => void) | null = null;
+      onclose: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      sent: Record<string, unknown>[] = [];
+      constructor() {
+        TranscriptSocket.instances.push(this);
+        queueMicrotask(() => {
+          this.readyState = 1;
+          this.onopen?.();
+          this.emit({
+            type: "capabilities",
+            transcript_stream: 1,
+            ...(windowed ? { transcript_window: 1 } : {}),
+          });
+        });
+      }
+      emit(frame: unknown) {
+        this.onmessage?.({ data: JSON.stringify(frame) } as MessageEvent);
+      }
+      send(data: string) {
+        const frame = JSON.parse(data);
+        this.sent.push(frame);
+        if (frame.type !== "subscribe") return;
+        const all = sessionItems.get(frame.session_id) ?? [];
+        const start =
+          frame.initial_limit === undefined
+            ? 0
+            : (frame.window_start_position ?? Math.max(0, all.length - frame.initial_limit));
+        const items = all.filter((item) => item.position! >= start);
+        const unchanged =
+          frame.stream_epoch === "multiplex-test" &&
+          frame.after_revision === TranscriptSocket.revision &&
+          frame.after_position === (all.at(-1)?.position ?? -1);
+        const boundary = {
+          type: "session.sync",
+          reset: !unchanged,
+          last_position: all.at(-1)?.position ?? -1,
+          item_count: all.length,
+          last_item_id: all.at(-1)?.id ?? null,
+          ...(frame.initial_limit === undefined
+            ? {}
+            : {
+                window_start_position: start,
+                window_item_count: items.length,
+                first_item_id: items[0]?.id ?? null,
+                has_older_items: all.some((item) => item.position! < start),
+              }),
+          stream_epoch: "multiplex-test",
+          item_revision: TranscriptSocket.revision,
+          reset_revision: 0,
+        };
+        this.emit({
+          type: "session.event",
+          session_id: frame.session_id,
+          event: { ...boundary, phase: "start" },
+        });
+        for (const item of unchanged ? [] : items) {
+          this.historyFrames++;
+          this.emit({
+            type: "session.event",
+            session_id: frame.session_id,
+            event: { type: "response.output_item.done", item },
+          });
+        }
+        this.emit({
+          type: "session.event",
+          session_id: frame.session_id,
+          event: { ...boundary, phase: "complete" },
+        });
+      }
+      close() {
+        this.readyState = 3;
+        this.onclose?.();
+      }
     }
-    emit(frame: unknown) {
-      this.onmessage?.({ data: JSON.stringify(frame) } as MessageEvent);
-    }
-    send(data: string) {
-      const frame = JSON.parse(data);
-      this.sent.push(frame);
-      if (frame.type !== "subscribe") return;
-      const boundary = {
-        type: "session.sync",
-        reset: true,
-        last_position: -1,
-        item_count: 0,
-        last_item_id: null,
-        stream_epoch: "multiplex-test",
-        item_revision: 0,
-        reset_revision: 0,
-      };
-      this.emit({
-        type: "session.event",
-        session_id: frame.session_id,
-        event: { ...boundary, phase: "start" },
-      });
-      this.emit({
-        type: "session.event",
-        session_id: frame.session_id,
-        event: { ...boundary, phase: "complete" },
-      });
-    }
-    close() {
-      this.readyState = 3;
-      this.onclose?.();
-    }
-  }
-  vi.stubGlobal("WebSocket", TranscriptSocket);
-  seedSession("mux-one", []);
-  seedSession("mux-two", []);
-  try {
-    await useChatStore.getState().switchTo("mux-one");
-    await ensureConversationStreamed("mux-two");
-    await vi.advanceTimersByTimeAsync(50);
-    const socket = TranscriptSocket.instances[0]!;
-    expect(TranscriptSocket.instances).toHaveLength(1);
-    expect(
-      socket.sent.filter((frame) => frame.type === "subscribe").map((frame) => frame.session_id),
-    ).toEqual(["mux-one", "mux-two"]);
-    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/stream"))).toEqual([]);
-    const releaseOne = conversationRegistry.retain("mux-one", true, false);
-    const releaseTwo = conversationRegistry.retain("mux-two", true, false);
-    onTestFinished(() => {
-      releaseOne();
-      releaseTwo();
-    });
-    fetchMock.mockClear();
-    // Each focus transition must settle before the next switch.
-    /* oxlint-disable no-await-in-loop */
-    for (const id of ["mux-two", "mux-one", "mux-two", "mux-one"]) {
-      await useChatStore.getState().switchTo(id);
+    vi.stubGlobal("WebSocket", TranscriptSocket);
+    const saved: ConversationItem[] = windowed
+      ? Array.from({ length: 10000 }, (_, position) =>
+          position === 9900
+            ? {
+                id: "hidden-first",
+                type: "metadata",
+                position,
+                response_id: "meta",
+                status: "completed",
+              }
+            : { ...assistantMessage(`window-${position}`, `Message ${position}`), position },
+        )
+      : [];
+    seedSession("mux-one", saved);
+    seedSession("mux-two", []);
+    try {
+      await useChatStore.getState().switchTo("mux-one");
+      await ensureConversationStreamed("mux-two");
       await vi.advanceTimersByTimeAsync(50);
-    }
-    /* oxlint-enable no-await-in-loop */
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(socket.sent.filter((frame) => frame.type === "subscribe")).toHaveLength(2);
-    const first = { ...assistantMessage("one", "First private answer"), position: 0 };
-    const second = { ...assistantMessage("two", "Second private answer"), position: 0 };
-    socket.emit({
-      type: "session.event",
-      session_id: "mux-one",
-      event: { type: "response.output_item.done", item: first },
-    });
-    socket.emit({
-      type: "session.event",
-      session_id: "mux-two",
-      event: { type: "response.output_item.done", item: second },
-    });
-    await vi.advanceTimersByTimeAsync(50);
-    expect(
-      conversationRegistry
+      const socket = TranscriptSocket.instances[0]!;
+      expect(TranscriptSocket.instances).toHaveLength(1);
+      expect(
+        socket.sent.filter((frame) => frame.type === "subscribe").map((frame) => frame.session_id),
+      ).toEqual(["mux-one", "mux-two"]);
+      expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/stream"))).toEqual([]);
+      if (windowed) {
+        expect(socket.sent.filter((frame) => frame.type === "subscribe")[0]).toMatchObject({
+          initial_limit: 100,
+        });
+        expect(useChatStore.getState()).toMatchObject({
+          oldestItemId: "hidden-first",
+          hasMoreHistory: true,
+          historyWindowStartPosition: 9900,
+        });
+        expect(useChatStore.getState().blocks).toHaveLength(99);
+        expect(readTranscriptReaderCheckpoint("mux-one")).toMatchObject({
+          loadedMinPosition: 9900,
+          firstItemId: "hidden-first",
+        });
+        const reads = fetchMock.mock.calls.filter(([url]) => String(url).includes("mux-one/items"));
+        expect(reads.length).toBeLessThanOrEqual(1);
+        expect(
+          reads.every(
+            ([url]) =>
+              new URL(String(url), "http://test.local").searchParams.get("limit") === "100",
+          ),
+        ).toBe(true);
+      }
+      const releaseOne = conversationRegistry.retain("mux-one", true, false);
+      const releaseTwo = conversationRegistry.retain("mux-two", true, false);
+      onTestFinished(() => {
+        releaseOne();
+        releaseTwo();
+      });
+      fetchMock.mockClear();
+      // Each focus transition must settle before the next switch.
+      /* oxlint-disable no-await-in-loop */
+      for (const id of ["mux-two", "mux-one", "mux-two", "mux-one"]) {
+        await useChatStore.getState().switchTo(id);
+        await vi.advanceTimersByTimeAsync(50);
+      }
+      /* oxlint-enable no-await-in-loop */
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(socket.sent.filter((frame) => frame.type === "subscribe")).toHaveLength(2);
+      const historyFramesBeforeDetach = socket.historyFrames;
+      const retainedCheckpoint = conversationRegistry
+        .peek("mux-one")!
+        .getState().transcriptCheckpoint;
+      conversationRegistry.detach("mux-one");
+      await useChatStore.getState().switchTo("mux-two");
+      await useChatStore.getState().switchTo("mux-one");
+      await vi.advanceTimersByTimeAsync(50);
+      expect(
+        socket.sent
+          .filter((frame) => frame.type === "subscribe" && frame.session_id === "mux-one")
+          .at(-1),
+      ).toMatchObject(retainedCheckpoint!.cursor);
+      expect(socket.historyFrames).toBe(historyFramesBeforeDetach);
+      expect(fetchMock).not.toHaveBeenCalled();
+      if (windowed) {
+        await useChatStore.getState().loadMoreHistory("mux-one");
+        expect(useChatStore.getState().historyWindowStartPosition).toBe(
+          9900 - SESSION_HISTORY_PAGE_SIZE,
+        );
+        restoreConversationHistoryExtent("mux-one", 9800);
+        expect(useChatStore.getState().historyWindowStartPosition).toBe(
+          9900 - SESSION_HISTORY_PAGE_SIZE,
+        );
+        expect(await revealConversationHistoryPosition("mux-one", 9800)).toBe(true);
+        expect(useChatStore.getState().historyWindowStartPosition).toBe(9800);
+        setSessionDraft("mux-one", { text: "Unsent reader draft", files: [] });
+        const removed = saved.find((item) => item.position === 9800)!;
+        const changed = {
+          ...saved.find((item) => item.position === 9802)!,
+          content: [{ type: "output_text", text: "Edited earlier answer" }],
+        } as ConversationItem;
+        seedSessionItems(
+          "mux-one",
+          saved
+            .filter((item) => item.id !== removed.id)
+            .map((item) => (item.id === changed.id ? changed : item)),
+        );
+        TranscriptSocket.revision++;
+        socket.emit({
+          type: "session.event",
+          session_id: "mux-one",
+          event: {
+            type: "session.heartbeat",
+            last_position: 9999,
+            item_count: 9999,
+            last_item_id: saved.at(-1)!.id,
+            stream_epoch: "new-epoch",
+            item_revision: 1,
+            reset_revision: 1,
+            reconcile_required: true,
+          },
+        });
+        await vi.advanceTimersByTimeAsync(100);
+        expect(
+          socket.sent
+            .filter((frame) => frame.type === "subscribe" && frame.session_id === "mux-one")
+            .at(-1),
+        ).toMatchObject({ initial_limit: 100, window_start_position: 9800, after_position: -1 });
+        expect(useChatStore.getState()).toMatchObject({
+          historyWindowStartPosition: 9800,
+          oldestItemId: saved.find((item) => item.position === 9801)!.id,
+          hasMoreHistory: true,
+        });
+        expect(
+          useChatStore.getState().blocks.some((block) => block.ctx.itemId === removed.id),
+        ).toBe(false);
+        expect(
+          useChatStore.getState().blocks.find((block) => block.ctx.itemId === changed.id),
+        ).toMatchObject({ fullText: "Edited earlier answer" });
+        expect(getSessionDraft("mux-one")?.text).toBe("Unsent reader draft");
+        expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/items"))).toHaveLength(
+          Math.ceil(100 / SESSION_HISTORY_PAGE_SIZE),
+        );
+      }
+      const retainedIds = conversationRegistry
         .peek("mux-one")!
         .getState()
-        .blocks.map((block) => block.ctx.itemId),
-    ).toEqual([first.id]);
-    expect(
-      conversationRegistry
-        .peek("mux-two")!
-        .getState()
-        .blocks.map((block) => block.ctx.itemId),
-    ).toEqual([second.id]);
-    releaseConversation("mux-two");
-    expect(socket.sent.at(-1)).toEqual({ type: "unsubscribe", session_id: "mux-two" });
-    expect(conversationRegistry.peek("mux-one")!.getState().abortController?.signal.aborted).toBe(
-      false,
-    );
-  } finally {
-    releaseConversation("mux-one");
-    releaseConversation("mux-two");
-    sessionUpdatesSocket.stop();
-    await vi.advanceTimersByTimeAsync(1);
-  }
-});
+        .blocks.map((block) => block.ctx.itemId);
+      const first = {
+        ...assistantMessage("one", "First private answer"),
+        position: windowed ? 10000 : 0,
+      };
+      const second = { ...assistantMessage("two", "Second private answer"), position: 0 };
+      socket.emit({
+        type: "session.event",
+        session_id: "mux-one",
+        event: { type: "response.output_item.done", item: first },
+      });
+      socket.emit({
+        type: "session.event",
+        session_id: "mux-two",
+        event: { type: "response.output_item.done", item: second },
+      });
+      await vi.advanceTimersByTimeAsync(50);
+      expect(
+        conversationRegistry
+          .peek("mux-one")!
+          .getState()
+          .blocks.map((block) => block.ctx.itemId),
+      ).toEqual([...retainedIds, first.id]);
+      expect(
+        conversationRegistry
+          .peek("mux-two")!
+          .getState()
+          .blocks.map((block) => block.ctx.itemId),
+      ).toEqual([second.id]);
+      // Assert the first subscribe after invalidation; a subsequent validated resume is allowed.
+      const subscriptions = () =>
+        socket.sent.filter((frame) => frame.type === "subscribe" && frame.session_id === "mux-one");
+      let previousSubscriptions = subscriptions().length;
+      conversationRegistry.detach("mux-one");
+      vi.mocked(getCurrentUserId).mockReturnValue("different-viewer");
+      await ensureConversationStreamed("mux-one");
+      await vi.advanceTimersByTimeAsync(50);
+      expect(subscriptions()[previousSubscriptions]).toMatchObject({ after_position: -1 });
+      previousSubscriptions = subscriptions().length;
+      releaseConversation("mux-one");
+      await useChatStore.getState().switchTo("mux-one");
+      await vi.advanceTimersByTimeAsync(50);
+      expect(subscriptions()[previousSubscriptions]).toMatchObject({ after_position: -1 });
+      releaseConversation("mux-two");
+      expect(socket.sent.at(-1)).toEqual({ type: "unsubscribe", session_id: "mux-two" });
+      expect(conversationRegistry.peek("mux-one")!.getState().abortController?.signal.aborted).toBe(
+        false,
+      );
+    } finally {
+      releaseConversation("mux-one");
+      releaseConversation("mux-two");
+      sessionUpdatesSocket.stop();
+      await vi.advanceTimersByTimeAsync(1);
+      vi.mocked(getCurrentUserId).mockReturnValue(null);
+    }
+  },
+);
 
 it("projects an accepted pending peer before grouping and keeps its original ID, position and aliases", async () => {
   const id = "peer-projection";
@@ -24347,4 +24604,133 @@ describe("snapshot pending input identity", () => {
       ]);
     },
   );
+});
+
+describe("cache reader canonical hydration", () => {
+  it("waits for initial committed membership before aligning the exact anchor", async () => {
+    const id = "reader-initial";
+    const entry = conversationRegistry.acquire(id);
+    entry.setState({ loadingConversation: true });
+    const controller = new AbortController();
+    let settled = false;
+    const result = hydrateTranscriptReader({
+      conversationId: id,
+      checkpoint: {
+        snapshot: {
+          atBottom: false,
+          anchorKey: "a",
+          anchorItemId: "msg_anchor_asst",
+          anchorOffset: 0,
+          fallbackOffset: 0,
+        },
+      },
+      signal: controller.signal,
+    }).then((value) => {
+      settled = true;
+      return value;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    entry.setState({
+      loadingConversation: false,
+      historyGeneration: 1,
+      blocks: itemsToBlocks([assistantMessage("anchor", "canonical")]),
+      hasMoreHistory: false,
+    });
+    expect(await result).toBe(true);
+  });
+
+  it("rejects a deleted exact target even when the requested position is covered", async () => {
+    const id = "reader-deleted";
+    conversationRegistry
+      .acquire(id)
+      .setState({ historyGeneration: 1, historyWindowStartPosition: 0, hasMoreHistory: false });
+    expect(
+      await hydrateTranscriptReader({
+        conversationId: id,
+        checkpoint: { loadedMinPosition: 0, searchTarget: { itemId: "deleted", start: 0, end: 1 } },
+        signal: new AbortController().signal,
+      }),
+    ).toBe(false);
+  });
+
+  it("cancels view alignment without aborting shared observation", async () => {
+    const id = "reader-cancel";
+    const observation = new AbortController();
+    conversationRegistry
+      .acquire(id)
+      .setState({ loadingConversation: true, abortController: observation });
+    const alignment = new AbortController();
+    const result = hydrateTranscriptReader({
+      conversationId: id,
+      checkpoint: {},
+      signal: alignment.signal,
+    });
+    alignment.abort();
+    expect(await result).toBe(false);
+    expect(observation.signal.aborted).toBe(false);
+  });
+
+  it("rejects ownership replacement while initial membership is pending", async () => {
+    const id = "reader-replaced";
+    conversationRegistry.acquire(id).setState({ loadingConversation: true });
+    const result = hydrateTranscriptReader({
+      conversationId: id,
+      checkpoint: {},
+      signal: new AbortController().signal,
+    });
+    conversationRegistry.release(id);
+    conversationRegistry.acquire(id).setState({ historyGeneration: 1 });
+    expect(await result).toBe(false);
+  });
+});
+
+it("restores the saved requested extent before opening observation", async () => {
+  const id = "reader-before-subscribe";
+  seedSession(id, []);
+  rememberTranscriptReaderCheckpoint(id, { loadedMinPosition: 7, firstItemId: "hidden-old" });
+  const originalFetch = fetchMock.getMockImplementation()!;
+  let requestedAtOpen: number | null | undefined;
+  fetchMock.mockImplementation((...args) => {
+    if (String(args[0]).includes(`${id}/stream`))
+      requestedAtOpen = conversationRegistry.peek(id)?.getState().historyWindowRestorePosition;
+    return originalFetch(...args);
+  });
+  await useChatStore.getState().switchTo(id);
+  await vi.waitFor(() => expect(requestedAtOpen).toBe(7));
+});
+
+it("pages for the exact reader ID even when position extent already covers it", async () => {
+  const id = "reader-exact-page";
+  const entry = conversationRegistry.acquire(id);
+  entry.setState({
+    historyGeneration: 1,
+    historyWindowStartPosition: 0,
+    hasMoreHistory: true,
+    oldestItemId: "newer",
+  });
+  const pager = vi
+    .spyOn(useChatStore.getState(), "loadMoreHistory")
+    .mockImplementationOnce(async () => {
+      entry.setState({
+        blocks: itemsToBlocks([assistantMessage("exact", "canonical")]),
+        oldestItemId: "msg_exact_asst",
+        hasMoreHistory: false,
+      });
+    });
+  try {
+    expect(
+      await hydrateTranscriptReader({
+        conversationId: id,
+        checkpoint: {
+          loadedMinPosition: 0,
+          searchTarget: { itemId: "msg_exact_asst", start: 0, end: 1 },
+        },
+        signal: new AbortController().signal,
+      }),
+    ).toBe(true);
+    expect(pager).toHaveBeenCalledOnce();
+  } finally {
+    pager.mockRestore();
+  }
 });

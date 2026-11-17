@@ -1035,6 +1035,10 @@ export interface SessionSyncEvent {
   streamEpoch: string;
   itemRevision?: number;
   resetRevision?: number;
+  windowStartPosition?: number;
+  windowItemCount?: number;
+  hasOlderItems?: boolean;
+  firstItemId?: string | null;
 }
 
 export interface SessionHeartbeatEvent {

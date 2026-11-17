@@ -743,6 +743,41 @@ describe("canonical transcript wire metadata", () => {
   });
 
   it.each([
+    {},
+    { window_start_position: -1 },
+    { window_start_position: 1.5 },
+    { window_item_count: 10001 },
+    { window_item_count: -1 },
+    { has_older_items: undefined },
+    { first_item_id: undefined },
+    { first_item_id: null },
+  ])("validates canonical window metadata independently of global counts: %j", (override) => {
+    const raw = {
+      phase: "complete",
+      reset: true,
+      last_position: 9999,
+      item_count: 10000,
+      last_item_id: "last",
+      stream_epoch: "epoch",
+      window_start_position: 9900,
+      window_item_count: 100,
+      has_older_items: true,
+      first_item_id: "hidden-first",
+      ...override,
+    };
+    const parsed = parseEvent("session.sync", raw);
+    if (Object.keys(override).length) expect(parsed).toBeNull();
+    else
+      expect(parsed).toMatchObject({
+        itemCount: 10000,
+        windowStartPosition: 9900,
+        windowItemCount: 100,
+        hasOlderItems: true,
+        firstItemId: "hidden-first",
+      });
+  });
+
+  it.each([
     { last_position: -2 },
     { item_count: -1 },
     { stream_epoch: null },

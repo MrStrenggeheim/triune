@@ -162,6 +162,7 @@ describe("createSession", () => {
     expect(session).toEqual({
       id: "conv_abc",
       branch: null,
+      nativeChildCapabilities: null,
       agentId: "agent_xyz",
       agentName: null,
       runnerId: undefined,
@@ -1664,6 +1665,25 @@ describe("openSessionStream", () => {
     expect(url).toBe("/v1/sessions/conv_abc/stream");
     expect(new Headers(init.headers).get("Accept")).toBe("text/event-stream");
     expect(init.signal).toBe(signal);
+  });
+  it("carries the negotiated loaded extent and global resume cursors over SSE", async () => {
+    fetchMock.mockResolvedValueOnce(mockJsonResponse({}));
+    await openSessionStream("reader", new AbortController().signal, {
+      initialLimit: 100,
+      windowStartPosition: 9870,
+      afterPosition: 9999,
+      afterRevision: 17,
+      streamEpoch: "epoch",
+    });
+    const params = new URL(String(fetchMock.mock.calls[0]![0]), "https://example.test")
+      .searchParams;
+    expect(Object.fromEntries(params)).toEqual({
+      initial_limit: "100",
+      window_start_position: "9870",
+      after_position: "9999",
+      after_revision: "17",
+      stream_epoch: "epoch",
+    });
   });
 });
 

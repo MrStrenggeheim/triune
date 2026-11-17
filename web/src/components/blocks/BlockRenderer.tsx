@@ -1,4 +1,8 @@
 // Modified for Triune.
+import {
+  useTranscriptDisclosureState,
+  transcriptDisclosureItemKey,
+} from "@/lib/transcriptReaderCheckpoint";
 import { subagentCardItemIds } from "@/lib/subagentActivity";
 import { useTranscriptDisclosureAnchor } from "@/hooks/useTranscriptDisclosureAnchor";
 import { ChatAttachment, type AttachmentContent } from "@/components/ChatAttachment";
@@ -329,9 +333,11 @@ export function BlockRenderer({
         continue;
       }
       // The available duration spans the turn-level work fold.
+      const firstKey = transcriptDisclosureItemKey(segment.items[0]);
       rendered.push(
         <TurnWorkedFold
-          key={`worked:${segment.startIndex}`}
+          key={`worked:${firstKey ?? segment.startIndex}`}
+          disclosureKey={firstKey ? `worked:${firstKey}` : undefined}
           workedForS={workedForS}
           animateCollapse={animateCollapse}
           defaultOpen={defaultExpanded}
@@ -625,6 +631,7 @@ function isProvisionalItem(item: RenderItem): boolean {
  * Row expanding + trace shrinking nets a single monotonic shrink.
  */
 function TurnWorkedFold({
+  disclosureKey,
   workedForS,
   animateCollapse,
   defaultOpen,
@@ -632,6 +639,7 @@ function TurnWorkedFold({
   searchRequest,
   children,
 }: {
+  disclosureKey?: string;
   workedForS?: number;
   animateCollapse: boolean;
   defaultOpen: boolean;
@@ -640,29 +648,34 @@ function TurnWorkedFold({
   children: ReactNode;
 }) {
   const label = workedForS !== undefined ? `Worked for ${formatWorkedFor(workedForS)}` : "Worked";
-  const [open, setOpen] = useState(animateCollapse || defaultOpen || searchOpen);
+  const [savedOpen, rememberOpen] = useTranscriptDisclosureState(
+    disclosureKey,
+    searchRequest ? String(searchRequest) : undefined,
+  );
+  const [open, setOpen] = useState(savedOpen ?? (animateCollapse || defaultOpen || searchOpen));
   useLayoutEffect(() => {
-    if (searchOpen) setOpen(true);
-  }, [searchOpen]);
+    if (searchOpen && savedOpen === undefined) setOpen(true);
+  }, [searchOpen, savedOpen]);
   useLayoutEffect(() => {
-    if (searchRequest) setOpen(true);
-  }, [searchRequest]);
-  const userChangedOpenRef = useRef(false);
+    if (searchRequest && savedOpen === undefined) setOpen(true);
+  }, [searchRequest, savedOpen]);
+  const userChangedOpenRef = useRef(savedOpen !== undefined);
   useLayoutEffect(() => {
     // History hydration can identify an interjection after this fold mounted.
     // Honor that late default unless the user has already made their own choice.
     if (defaultOpen && !userChangedOpenRef.current) setOpen(true);
   }, [defaultOpen]);
   useEffect(() => {
-    if (!animateCollapse || defaultOpen || searchOpen) return;
+    if (!animateCollapse || defaultOpen || searchOpen || savedOpen !== undefined) return;
     const frame = requestAnimationFrame(() => setOpen(false));
     return () => cancelAnimationFrame(frame);
-  }, [animateCollapse, defaultOpen, searchOpen]);
+  }, [animateCollapse, defaultOpen, searchOpen, savedOpen]);
 
   const preserveDisclosure = useTranscriptDisclosureAnchor();
   const [userOpened, setUserOpened] = useState(false);
   const handleOpenChange = (next: boolean) => {
     userChangedOpenRef.current = true;
+    rememberOpen(next);
     setUserOpened(next);
     setOpen(next);
   };
@@ -877,6 +890,7 @@ function renderItem(
       return (
         <ToolCard
           key={key}
+          disclosureKey={transcriptDisclosureItemKey(item)}
           name={item.execution.name}
           argsSummary={item.execution.argsSummary}
           arguments={item.execution.arguments}
@@ -893,6 +907,7 @@ function renderItem(
       return (
         <ToolCard
           key={key}
+          disclosureKey={transcriptDisclosureItemKey(item)}
           name={item.label}
           nativeToolType={item.toolType}
           arguments={Object.fromEntries(
@@ -1006,18 +1021,16 @@ function SearchableAssistantText({
 }
 
 /**
- * Stable key for each render item. Prefer the server-assigned item id;
- * fall back to call_id for tools (unique within a response) or to
- * position for pre-finalization fragments that don't carry an item id
- * yet (text/reasoning chunks emitted before their `output_item.done`).
+ * Tools retain their response-scoped call identity through item promotion.
+ * Other items prefer canonical IDs, then fragment positions.
  */
 function keyFor(item: RenderItem, index: number): string {
   if (item.kind === "subagent_activity") {
     const resource = item.data.resource as Record<string, unknown> | undefined;
     if (typeof resource?.card_key === "string") return `subagent_activity:${resource.card_key}`;
   }
+  if (item.kind === "tool") return transcriptDisclosureItemKey(item)!;
   if (item.itemId) return `${item.kind}:${item.itemId}`;
-  if (item.kind === "tool") return `tool:${item.execution.callId}`;
   if (item.kind === "elicitation") return `elicitation:${item.elicitationId}`;
   return `${item.kind}:${index}`;
 }

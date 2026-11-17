@@ -93,6 +93,8 @@ export type RenderItem =
   | {
       kind: "tool";
       itemId: string | null;
+      /** Response-local call identity survives canonical item promotion. */
+      responseId?: string;
       execution: ToolExecution;
       output: string | null;
       state: ToolState;
@@ -1778,6 +1780,7 @@ function buildAssistantItems(
           toolItem(
             ex,
             b.ctx.itemId,
+            b.ctx.responseId,
             b.ctx.timestamp,
             // Rid-scoped lookup: a reused callId can't adopt another turn's output.
             crossBubbleResults.get(`${b.ctx.responseId}:${ex.callId}`),
@@ -2043,6 +2046,7 @@ function reasoningItem(run: AnyBlock[]): RenderItem {
 function toolItem(
   execution: ToolExecution,
   itemId: string | null,
+  responseId: string,
   startedAtTimestamp: number,
   result: ToolResultBlock | undefined,
   lifecycle: ActiveResponse["state"],
@@ -2072,7 +2076,7 @@ function toolItem(
     state = "no-output";
   }
 
-  return { kind: "tool", itemId, execution, output, state, startedAt, duration };
+  return { kind: "tool", itemId, responseId, execution, output, state, startedAt, duration };
 }
 
 /** Same keys, each value strictly equal. */

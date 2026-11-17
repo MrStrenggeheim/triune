@@ -29,12 +29,13 @@ export type SessionUpdatesFrame =
   | { type: "hosts_changed" }
   | { type: "projects_changed" }
   | { type: "heartbeat" }
-  | { type: "capabilities"; transcript_stream?: number };
+  | { type: "capabilities"; transcript_stream?: number; transcript_window?: number };
 
 export interface TranscriptCursor {
   after_position: number;
   after_revision?: number;
   stream_epoch?: string;
+  window_start_position?: number;
 }
 
 export const TRANSCRIPT_NEGOTIATION_MS = 750;
@@ -132,12 +133,17 @@ class SessionUpdatesSocket {
   private watchdogTimer: ReturnType<typeof setTimeout> | null = null;
   private started = false;
   private transcriptCapability: boolean | null = null;
+  private transcriptWindowCapability = false;
   private readonly capabilityListeners = new Set<() => void>();
   private readonly transcripts = new Map<string, TranscriptSubscription>();
 
   supportsTranscripts(): boolean {
     // This socket is pinned to the modal host; routed sessions retain their own replica path.
     return this.transcriptCapability === true && !isHostRoutingEnabled();
+  }
+
+  supportsTranscriptWindows(): boolean {
+    return this.transcriptCapability === true && this.transcriptWindowCapability;
   }
 
   subscribeCapabilities(listener: () => void): () => void {
@@ -216,7 +222,19 @@ class SessionUpdatesSocket {
       },
       cancel: cleanup,
     });
-    this.send({ type: "subscribe", session_id: sessionId, ...cursor, idle });
+    const { window_start_position, ...resume } = cursor;
+    this.send({
+      type: "subscribe",
+      session_id: sessionId,
+      ...resume,
+      idle,
+      ...(this.supportsTranscriptWindows()
+        ? {
+            initial_limit: 100,
+            ...(window_start_position !== undefined ? { window_start_position } : {}),
+          }
+        : {}),
+    });
     return new Response(body, { headers: { "Content-Type": "text/event-stream" } });
   }
 
@@ -256,6 +274,7 @@ class SessionUpdatesSocket {
     this.setConnected(false);
     for (const subscription of [...this.transcripts.values()]) subscription.close();
     this.transcriptCapability = null;
+    this.transcriptWindowCapability = false;
     for (const listener of this.capabilityListeners) listener();
   }
 
@@ -417,6 +436,7 @@ class SessionUpdatesSocket {
     if (!frame || typeof frame !== "object") return;
     if (frame.type === "capabilities") {
       this.transcriptCapability = frame.transcript_stream === 1;
+      this.transcriptWindowCapability = frame.transcript_window === 1;
       for (const listener of [...this.capabilityListeners]) listener();
     }
     if (frame.type === "session.event" || frame.type === "session.error") {

@@ -303,6 +303,40 @@ describe("sessionUpdatesSocket transcript multiplexing", () => {
     }
   });
 
+  it.each([false, true])(
+    "negotiates window options only when advertised (%s)",
+    async (windowed) => {
+      latestWs().emit({
+        type: "capabilities",
+        transcript_stream: 1,
+        ...(windowed ? { transcript_window: 1 } : {}),
+      });
+      const controller = new AbortController();
+      await sessionUpdatesSocket.openTranscript(
+        "reader",
+        controller.signal,
+        {
+          after_position: 9999,
+          after_revision: 20,
+          stream_epoch: "epoch",
+          window_start_position: 9870,
+        },
+        false,
+      );
+      expect(latestWs().sent.at(-1)).toEqual({
+        type: "subscribe",
+        session_id: "reader",
+        after_position: 9999,
+        after_revision: 20,
+        stream_epoch: "epoch",
+        idle: false,
+        ...(windowed ? { initial_limit: 100, window_start_position: 9870 } : {}),
+      });
+      sessionUpdatesSocket.stop();
+      expect(sessionUpdatesSocket.supportsTranscriptWindows()).toBe(false);
+    },
+  );
+
   it("reports idle presence without recycling or resetting any membership", async () => {
     ready();
     const controller = new AbortController();

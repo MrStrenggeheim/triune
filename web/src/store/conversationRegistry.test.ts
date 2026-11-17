@@ -4,11 +4,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   ConversationRegistry,
+  MAX_CLEAN_INACTIVE_HISTORY,
   getConnectionProtocol,
   maxLiveConversations,
 } from "./conversationRegistry";
 import * as capabilities from "@/lib/capabilities";
-import type { PendingUserMessage } from "./chatStore";
+import { readTranscriptReaderCheckpoint } from "@/lib/transcriptReaderCheckpoint";
+import { setSessionDraft } from "@/lib/sessionDrafts";
+import type { AnyBlock } from "@/lib/blocks";
+import type { ConversationState, PendingUserMessage } from "./chatStore";
 
 /** An unsettled optimistic bubble — the shape that pins an entry. */
 function unsentBubble(tempId = "pend_1"): PendingUserMessage {
@@ -144,11 +148,9 @@ describe("ConversationRegistry", () => {
     releases[0]();
     expect(registry.evictLruEvictable()).toBeNull();
     releaseSecondOwner();
-    expect(registry.evictLruEvictable()).toBeNull();
-    expect(registry.has("a")).toBe(true);
+    expect(registry.evictLruEvictable()).toBe("a");
     releases.slice(1).forEach((release) => release());
-    expect(registry.evictLruEvictable()).toBeNull();
-    expect(registry.has("b")).toBe(true);
+    expect(registry.evictLruEvictable()).toBe("b");
   });
 
   it("detaches a hidden retained chat without losing its draft or transcript state", () => {
@@ -267,11 +269,12 @@ describe("ConversationRegistry", () => {
     expect(a.disposed).toBe(true);
   });
 
-  it("does evict an entry whose sends have all settled", () => {
-    // Once the POST returns, the server can account for the message — the
-    // navigate-back snapshot re-seeds it, so reclaiming its slot is safe.
+  it("keeps posted optimistic input until canonical reconciliation", () => {
     const a = registry.acquire("conv_a");
     a.setState({ pendingUserMessages: [postedBubble()] });
+    expect(registry.evictLruEvictable()).toBeNull();
+    expect(a.disposed).toBe(false);
+    a.setState({ pendingUserMessages: [] });
     expect(registry.evictLruEvictable()).toBe("conv_a");
     expect(a.disposed).toBe(true);
   });
@@ -376,5 +379,120 @@ describe("ConversationRegistry", () => {
   it("rekey is a no-op when the old id is not live", () => {
     registry.rekey("temp:deadbeef", "conv_real");
     expect(registry.has("conv_real")).toBe(false);
+  });
+});
+
+function cleanBlock(id: string, position = 12): AnyBlock {
+  return {
+    type: "user_message",
+    ctx: { itemId: id, position, responseId: id, agent: null, depth: 0, turn: 0, timestamp: 0 },
+    content: [{ type: "input_text", text: "saved history" }],
+  };
+}
+
+describe("bounded inactive history", () => {
+  it("retires 80 of 100 clean entries, retaining recent entries and a compact loaded range", () => {
+    const registry = new ConversationRegistry();
+    const disposed = vi.fn();
+    registry.subscribeDisposed(disposed);
+    const first = registry.acquire("trim-0");
+    first.setState({ blocks: [cleanBlock("saved-0")] });
+    for (let index = 1; index < 100; index++)
+      registry.acquire(`trim-${index}`).setState({ blocks: [cleanBlock(`saved-${index}`)] });
+    expect(registry.ids()).toEqual(
+      Array.from({ length: MAX_CLEAN_INACTIVE_HISTORY }, (_, i) => `trim-${80 + i}`),
+    );
+    expect(disposed).toHaveBeenCalledTimes(80);
+    expect(first.disposed).toBe(true);
+    expect(readTranscriptReaderCheckpoint("trim-0")).toEqual({
+      loadedMinPosition: 12,
+      firstItemId: "saved-0",
+    });
+    first.setState({ blocks: [] });
+    expect(first.getState().blocks).toHaveLength(1);
+    expect(registry.acquire("trim-0")).not.toBe(first);
+    expect(registry.peek("trim-0")?.getState().blocks).toEqual([]);
+    registry.clear();
+  });
+
+  it("keeps visible, mounted, active, Undo, draft files and queued work independently", async () => {
+    const registry = new ConversationRegistry();
+    const releases = [
+      registry.retain("visible"),
+      registry.retain("mounted", false),
+      registry.retainHistory("undo"),
+    ];
+    registry.setActive("active");
+    const file = new File([new Uint8Array([1, 2, 255])], "draft.bin");
+    setSessionDraft("file-draft", { text: " ", files: [file] });
+    const releaseQueue = registry.setWorkProtection((id) => id === "queue");
+    const protectedIds = ["visible", "mounted", "undo", "active", "file-draft", "queue"];
+    const entries = protectedIds.map((id) => registry.acquire(id));
+    for (let i = 0; i < 100; i++) registry.acquire(`pressure-${i}`);
+    expect(registry.ids()).toHaveLength(MAX_CLEAN_INACTIVE_HISTORY + protectedIds.length);
+    entries.forEach((entry) => expect(registry.peek(entry.id)).toBe(entry));
+    releases.forEach((release) => release());
+    releaseQueue();
+    registry.setActive(null);
+    setSessionDraft("file-draft", { text: "", files: [] });
+    await Promise.resolve();
+    expect(registry.ids()).toHaveLength(MAX_CLEAN_INACTIVE_HISTORY);
+    registry.clear();
+  });
+
+  it.each([
+    { pendingUserMessages: [postedBubble()] },
+    {
+      failedSendDraft: {
+        conversationId: "protected",
+        text: "failed",
+        files: [new File(["bytes"], "a.txt")],
+      },
+    },
+    {
+      restoredSendDraft: {
+        conversationId: "protected",
+        text: "restore",
+        files: [],
+        stableId: "restore",
+        delivered: false,
+      },
+    },
+    { pendingRetryStableId: "retry" },
+    { blocks: [cleanBlock("live:provisional")] },
+    {
+      blocks: [
+        { type: "elicitation", ctx: cleanBlock("approval").ctx, status: "pending" } as AnyBlock,
+      ],
+    },
+    { sessionStatus: "running" },
+    { sessionStatus: "waiting" },
+    { backgroundTaskCount: 1 },
+    { terminalPending: true },
+  ] satisfies Partial<ConversationState>[])("protects unsettled local state %#", (patch) => {
+    const registry = new ConversationRegistry();
+    const entry = registry.acquire("protected");
+    entry.setState(patch);
+    for (let i = 0; i < 100; i++) registry.acquire(`clean-${i}`);
+    expect(registry.peek("protected")).toBe(entry);
+    expect(entry.getState()).toMatchObject(patch);
+    registry.clear();
+  });
+
+  it("ignores old account leases and scheduled trims after disposal", async () => {
+    const registry = new ConversationRegistry();
+    const releaseOld = registry.retainHistory("same");
+    registry.acquire("same").setState({ status: "streaming" });
+    registry.clear();
+    const releaseNew = registry.retainHistory("same");
+    const entry = registry.acquire("same");
+    releaseOld();
+    for (let i = 0; i < 100; i++) registry.acquire(`new-${i}`);
+    await Promise.resolve();
+    expect(registry.peek("same")).toBe(entry);
+    releaseNew();
+    await Promise.resolve();
+    expect(entry.disposed).toBe(true);
+    registry.clear();
   });
 });

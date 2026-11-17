@@ -1,4 +1,10 @@
 // Modified for Triune.
+import {
+  readTranscriptReaderCheckpoint,
+  recordTranscriptLoadedRange,
+  setTranscriptReaderHydrator,
+  transcriptReaderScope,
+} from "@/lib/transcriptReaderCheckpoint";
 import { insertRecoveredBlocks } from "./recoveryPlacement";
 import { TranscriptReplay, upsertCanonicalItem } from "./transcriptReplay";
 import { pendingPeerReceiptPlacement, projectPeerReceipts } from "@/lib/peerMessagePlacement";
@@ -14,6 +20,7 @@ import {
   orderTranscriptBlocks,
   refreshItemPositions,
   transcriptIndex,
+  itemPosition,
   type TranscriptAnchor,
 } from "@/lib/transcriptOrder";
 import { reconcileQuestionBatches } from "@/lib/questionBatches";
@@ -67,6 +74,7 @@ import {
   fetchSessionItemsPage,
   HOST_OFFLINE_CODE,
   INITIAL_WINDOW_ITEMS,
+  SESSION_HISTORY_PAGE_SIZE,
   interrupt as interruptSession,
   openSessionStream,
   postEvent,
@@ -76,6 +84,7 @@ import {
 import { isStaleCursorError } from "@/lib/staleCursor";
 import type {
   McpServerStartup,
+  SessionSyncEvent,
   SessionInputConsumedEvent,
   SessionViewer,
   StreamEvent,
@@ -884,6 +893,12 @@ export interface ConversationState {
    * fetch. `null` until the first snapshot is hydrated.
    */
   oldestItemId: string | null;
+  /** Earliest canonical position, including metadata that renders no block. */
+  historyWindowStartPosition: number | null;
+  /** Requested reader extent is not proof that its canonical rows are loaded. */
+  historyWindowRestorePosition: number | null;
+  /** Validated transport progress belongs to retained membership, not its observation. */
+  transcriptCheckpoint: { scope: string; cursor: TranscriptCursor } | null;
   /**
    * The text + attachments of a send that failed before the server took
    * ownership of it, handed back so the composer can restore them for a
@@ -2426,6 +2441,9 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
   hasMoreHistory: false,
   loadingMoreHistory: false,
   oldestItemId: null,
+  historyWindowStartPosition: null,
+  historyWindowRestorePosition: null,
+  transcriptCheckpoint: null,
   flashItemId: null,
   pendingComposerAttachments: [],
   streamBudgetExceeded: false,
@@ -4274,6 +4292,8 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
     // backgrounded before the fetch lands. Resolving the target afterwards would
     // strand `loadingMoreHistory: true` on it — and since a live entry is never
     // re-bound on return, that guard would then no-op every future scroll-up.
+    const pageEntry = conversationRegistry.peek(conversationId);
+    const pageScope = transcriptReaderScope();
     const pageSet = setterFor(conversationId);
     pageSet({ loadingMoreHistory: true });
     // Drop the result if the window was reset while this page was in flight
@@ -4285,6 +4305,8 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
     // nothing to fix) or a generation bump (the window moved under us).
     const stale = (): boolean =>
       isConversationDisposed(conversationId) ||
+      conversationRegistry.peek(conversationId) !== pageEntry ||
+      transcriptReaderScope() !== pageScope ||
       (setterForState(conversationId)?.historyGeneration ?? historyGeneration) !==
         historyGeneration;
     try {
@@ -4304,9 +4326,15 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
           blocks: [...unique, ...state.blocks],
           hasMoreHistory: hasMore,
           oldestItemId: items[0]?.id ?? state.oldestItemId,
+          historyWindowStartPosition: earlierHistoryPosition(
+            state.historyWindowStartPosition,
+            items[0]?.position,
+          ),
           loadingMoreHistory: false,
         };
       });
+      if (!stale() && items[0]?.position !== undefined)
+        recordTranscriptLoadedRange(conversationId, items[0].position, items[0].id, pageScope);
     } catch {
       // A stale failure must not disable scroll-up on the NEW window.
       if (stale()) return;
@@ -5401,6 +5429,10 @@ async function bindStream(
   get: Getter,
   hydratePending = false,
 ): Promise<void> {
+  const readerScope = transcriptReaderScope();
+  const boundEntry = conversationRegistry.peek(id);
+  const savedMinimum = readTranscriptReaderCheckpoint(id)?.loadedMinPosition;
+  if (savedMinimum !== undefined) restoreConversationHistoryExtent(id, savedMinimum);
   racedNativeModelOptions.delete(id);
   get().abortController?.abort();
   const controller = new AbortController();
@@ -5408,6 +5440,8 @@ async function bindStream(
   const current = () =>
     !controller.signal.aborted &&
     !isConversationDisposed(id) &&
+    conversationRegistry.peek(id) === boundEntry &&
+    transcriptReaderScope() === readerScope &&
     get().abortController === controller;
   const set: Setter = (patch) => {
     if (current()) write(patch);
@@ -5521,6 +5555,10 @@ async function bindStream(
   const cursorBeforeFetch = transcriptCursors.get(controller);
   const launchBeforeFetch = mcpStartupBeforeSnapshot(id, stateBeforeFetch);
   try {
+    if (multiplexed && stateBeforeFetch.transcriptCheckpoint?.scope === transcriptCursorScope(id)) {
+      set({ loadingConversation: false });
+      return;
+    }
     if (stateBeforeFetch.blocks.length > 0) {
       // Reobserve the existing window without clearing older loaded pages or
       // replaying a send/scroll intent through a loading-state remount.
@@ -5540,7 +5578,7 @@ async function bindStream(
       }),
       fetchSessionItemsPage(id, { limit: INITIAL_WINDOW_ITEMS }),
     ]);
-    if (isConversationDisposed(id)) return;
+    if (!current()) return;
     const canonicalReplayWon = transcriptCursors.get(controller) !== cursorBeforeFetch;
     const items = canonicalReplayWon ? [] : page.items;
     const snapshotNativeMessageIds = nativeCompletedMessageIds(items);
@@ -5691,6 +5729,9 @@ async function bindStream(
         loadingConversation: false,
         hasMoreHistory: canonicalReplayWon ? get().hasMoreHistory : page.hasMore,
         oldestItemId: canonicalReplayWon ? get().oldestItemId : oldestItemId,
+        historyWindowStartPosition: canonicalReplayWon
+          ? get().historyWindowStartPosition
+          : earlierHistoryPosition(state.historyWindowStartPosition, items[0]?.position),
         // The window cursor was reset: void any in-flight loadMoreHistory.
         historyGeneration: state.historyGeneration + 1,
         // The voided page's stale early-return skips its own flag clear.
@@ -5735,6 +5776,8 @@ async function bindStream(
             : (session.usageByModel ?? state.sessionUsageByModel),
       };
     });
+    if (current() && !canonicalReplayWon && items[0]?.position !== undefined)
+      recordTranscriptLoadedRange(id, items[0].position, items[0].id, readerScope);
     if (session.usageIncluded === false) void hydrateSessionUsage(id);
     racedNativeModelOptions.delete(id);
   } catch (err) {
@@ -6353,9 +6396,37 @@ async function rehydrateWindowOnReconnect(
   // Pinned at entry (still the caller's generation — its guards just passed).
   const generation = get().historyGeneration;
   const controller = get().abortController;
+  const readerScope = transcriptReaderScope();
+  const entry = conversationRegistry.peek(id);
+  const loadedMinimum = earlierHistoryPosition(
+    get().historyWindowStartPosition,
+    get().historyWindowRestorePosition,
+  );
+  const stale = () =>
+    isConversationDisposed(id) ||
+    controller?.signal.aborted === true ||
+    get().abortController !== controller ||
+    conversationRegistry.peek(id) !== entry ||
+    transcriptReaderScope() !== readerScope ||
+    get().historyGeneration !== generation;
   let fresh: SessionItemsPage;
   try {
     fresh = await fetchSessionItemsPage(id, { limit: INITIAL_WINDOW_ITEMS });
+    if (stale()) return;
+    // Legacy recovery must refresh the reader's expanded extent, not shrink it.
+    /* oxlint-disable no-await-in-loop */
+    while (fresh.hasMore) {
+      if (loadedMinimum === null || (fresh.items[0]?.position ?? -1) <= loadedMinimum) break;
+      if (stale()) return;
+      const before = fresh.items[0]!.id;
+      const older = await fetchSessionItemsPage(id, {
+        olderThan: before,
+        limit: SESSION_HISTORY_PAGE_SIZE,
+      });
+      if (!older.items.length || older.items[0]!.id === before) return;
+      fresh = { ...fresh, items: [...older.items, ...fresh.items], hasMore: older.hasMore };
+    }
+    /* oxlint-enable no-await-in-loop */
   } catch {
     return;
   }
@@ -6366,6 +6437,7 @@ async function rehydrateWindowOnReconnect(
     get().historyGeneration !== generation
   )
     return;
+  if (controller) transcriptCursors.delete(controller);
   const snapshotNativeMessageIds = nativeCompletedMessageIds(fresh.items);
   snapshotNativeMessageIds.forEach((messageId) => ignoredNativeMessageIds.add(messageId));
   const freshBlocks = snapshotTranscriptBlocks(id, fresh.items, session);
@@ -6417,6 +6489,9 @@ async function rehydrateWindowOnReconnect(
       ),
       blocks:
         snapshotCompactionSpinners(blocks, s.activeResponse, statusPatch.activeResponse) ?? blocks,
+      historyWindowStartPosition: earlierHistoryPosition(loadedMinimum, fresh.items[0]?.position),
+      historyWindowRestorePosition: null,
+      transcriptCheckpoint: null,
       hasMoreHistory: fresh.hasMore,
       oldestItemId: fresh.items[0]?.id ?? null,
       loadingMoreHistory: false,
@@ -6424,6 +6499,13 @@ async function rehydrateWindowOnReconnect(
       historyGeneration: s.historyGeneration + 1,
     };
   });
+  if (
+    fresh.items[0]?.position !== undefined &&
+    transcriptReaderScope() === readerScope &&
+    conversationRegistry.peek(id) === entry &&
+    !controller?.signal.aborted
+  )
+    recordTranscriptLoadedRange(id, fresh.items[0].position, fresh.items[0].id, readerScope);
 }
 
 /**
@@ -6873,6 +6955,186 @@ async function backfillOnReconnect(
 const presenceAttemptControllers = new Set<AbortController>();
 const multiplexedAttempts = new WeakSet<AbortController>();
 const transcriptCursors = new WeakMap<AbortController, TranscriptCursor>();
+
+function transcriptCursorScope(id: string): string {
+  return JSON.stringify([
+    getOmnigentServerIdentity(),
+    getBasePath(),
+    getCurrentUserId(),
+    id,
+    getSessionHost(id),
+  ]);
+}
+
+function earlierHistoryPosition(current: number | null, candidate: unknown): number | null {
+  const position = itemPosition(candidate);
+  return position === undefined
+    ? current
+    : current === null
+      ? position
+      : Math.min(current, position);
+}
+
+function canonicalHistoryWindow(
+  state: ConversationState,
+  event: SessionSyncEvent,
+  blocks: AnyBlock[],
+): Pick<ConversationState, "hasMoreHistory" | "oldestItemId" | "historyWindowStartPosition"> {
+  if (event.windowStartPosition !== undefined) {
+    // An older page may finish while the captured reset is still arriving.
+    if (
+      state.historyWindowStartPosition !== null &&
+      state.historyWindowStartPosition < event.windowStartPosition
+    ) {
+      return {
+        hasMoreHistory: state.hasMoreHistory,
+        oldestItemId: state.oldestItemId,
+        historyWindowStartPosition: state.historyWindowStartPosition,
+      };
+    }
+    return {
+      hasMoreHistory: event.hasOlderItems!,
+      oldestItemId: event.firstItemId!,
+      historyWindowStartPosition: event.windowStartPosition,
+    };
+  }
+  const first = blocks.find((block) => itemPosition(block.ctx.position) !== undefined);
+  return {
+    hasMoreHistory: false,
+    oldestItemId: first?.ctx.itemId ?? null,
+    historyWindowStartPosition: first?.ctx.position ?? null,
+  };
+}
+
+/** Restore a retired reader's extent before binding; the cache owner restores its anchor separately. */
+export function restoreConversationHistoryExtent(id: string, earliestPosition: number): void {
+  if (itemPosition(earliestPosition) === undefined) return;
+  const entry = conversationRegistry.peek(id);
+  if (!entry || entry.disposed) return;
+  const state = entry.getState();
+  if (
+    state.historyWindowStartPosition !== null &&
+    state.historyWindowStartPosition <= earliestPosition
+  )
+    return;
+  if (state.abortController) transcriptCursors.delete(state.abortController);
+  setterFor(id)({
+    historyWindowRestorePosition: earlierHistoryPosition(
+      state.historyWindowRestorePosition,
+      earliestPosition,
+    ),
+    transcriptCheckpoint: null,
+  });
+}
+
+/** Extend an observed window for an exact search/reader target through ordinary older paging. */
+export async function revealConversationHistoryPosition(
+  id: string,
+  position: number,
+): Promise<boolean> {
+  if (itemPosition(position) === undefined) return false;
+  const entry = conversationRegistry.peek(id);
+  if (!entry || entry.disposed) return false;
+  const binding = entry.getState().abortController;
+  // Each older page depends on the preceding canonical cursor.
+  /* oxlint-disable no-await-in-loop */
+  while (
+    conversationRegistry.peek(id) === entry &&
+    !entry.disposed &&
+    entry.getState().abortController === binding &&
+    !binding?.signal.aborted
+  ) {
+    const state = entry.getState();
+    if (state.historyWindowStartPosition !== null && state.historyWindowStartPosition <= position)
+      return true;
+    if (!state.hasMoreHistory || state.loadingMoreHistory) return false;
+    const cursor = state.oldestItemId;
+    await useChatStore.getState().loadMoreHistory(id);
+    if (entry.getState().oldestItemId === cursor) return false;
+  }
+  /* oxlint-enable no-await-in-loop */
+  return false;
+}
+/** Restore one reader without taking ownership of its conversation's observation. */
+export async function hydrateTranscriptReader({
+  conversationId: id,
+  checkpoint,
+  signal,
+}: Parameters<Parameters<typeof setTranscriptReaderHydrator>[0]>[0]): Promise<boolean> {
+  const entry = conversationRegistry.peek(id);
+  const scope = transcriptReaderScope();
+  const cursorScope = transcriptCursorScope(id);
+  if (!entry || entry.disposed || signal.aborted) return false;
+  const current = () =>
+    !signal.aborted &&
+    !entry.disposed &&
+    conversationRegistry.peek(id) === entry &&
+    transcriptReaderScope() === scope &&
+    transcriptCursorScope(id) === cursorScope;
+  const waitFor = (ready: () => boolean): Promise<boolean> =>
+    new Promise((resolve) => {
+      const finish = (value: boolean) => {
+        unsubscribe();
+        unsubscribeDisposed();
+        signal.removeEventListener("abort", check);
+        resolve(value);
+      };
+      const check = () => {
+        if (!current()) finish(false);
+        else if (ready()) finish(true);
+      };
+      const unsubscribe = conversationRegistry.subscribe((changedId) => {
+        if (changedId === id) check();
+      });
+      const unsubscribeDisposed = conversationRegistry.subscribeDisposed((changedId) => {
+        if (changedId === id) finish(false);
+      });
+      signal.addEventListener("abort", check, { once: true });
+      check();
+    });
+  if (checkpoint.loadedMinPosition !== undefined)
+    restoreConversationHistoryExtent(id, checkpoint.loadedMinPosition);
+  const initialized = await waitFor(() => {
+    const state = entry.getState();
+    return (
+      !state.loadingConversation &&
+      (state.historyGeneration > 0 || state.transcriptCheckpoint !== null)
+    );
+  });
+  if (!initialized || !current()) return false;
+  const targetIds = new Set([
+    ...(checkpoint.snapshot && !checkpoint.snapshot.atBottom && checkpoint.snapshot.anchorItemId
+      ? [checkpoint.snapshot.anchorItemId]
+      : []),
+    ...(checkpoint.searchTarget ? [checkpoint.searchTarget.itemId] : []),
+  ]);
+  const exactTargetsLoaded = () => {
+    const index = transcriptIndex(entry.getState().blocks);
+    return [...targetIds].every((itemId) => index.items.has(itemId));
+  };
+  const extentLoaded = () =>
+    checkpoint.loadedMinPosition === undefined ||
+    (entry.getState().historyWindowStartPosition !== null &&
+      entry.getState().historyWindowStartPosition! <= checkpoint.loadedMinPosition);
+  // Ordinary contiguous pages are the existing protocol for old exact identities.
+  /* oxlint-disable no-await-in-loop */
+  while (current() && (!extentLoaded() || !exactTargetsLoaded())) {
+    const state = entry.getState();
+    if (state.loadingMoreHistory) {
+      if (!(await waitFor(() => !entry.getState().loadingMoreHistory)) || !current()) return false;
+      continue;
+    }
+    if (!state.hasMoreHistory || !state.oldestItemId) return false;
+    const previousCursor = state.oldestItemId;
+    await useChatStore.getState().loadMoreHistory(id);
+    if (!current()) return false;
+    if (entry.getState().oldestItemId === previousCursor) return false;
+  }
+  /* oxlint-enable no-await-in-loop */
+  return current() && extentLoaded() && exactTargetsLoaded();
+}
+setTranscriptReaderHydrator(hydrateTranscriptReader);
+
 let observingTranscriptCapabilities = false;
 function observeTranscriptCapabilities(): void {
   if (observingTranscriptCapabilities) return;
@@ -7069,7 +7331,25 @@ export async function startStreamPump(
         const idle = presenceIdle.idleNow();
         let streamRes: Response;
         try {
-          const cursor = transcriptCursors.get(controller) ?? { after_position: -1 };
+          const retained = get().transcriptCheckpoint;
+          if (retained?.scope === transcriptCursorScope(id)) {
+            if (!transcriptCursors.has(controller))
+              transcriptCursors.set(controller, retained.cursor);
+          } else if (retained) {
+            transcriptCursors.delete(controller);
+            set({ transcriptCheckpoint: null });
+          }
+          const cursor: TranscriptCursor = {
+            ...(transcriptCursors.get(controller) ?? { after_position: -1 }),
+            ...((get().historyWindowRestorePosition ?? get().historyWindowStartPosition) !== null
+              ? {
+                  window_start_position: earlierHistoryPosition(
+                    get().historyWindowStartPosition,
+                    get().historyWindowRestorePosition,
+                  )!,
+                }
+              : {}),
+          };
           const shared = sessionUpdatesSocket.supportsTranscripts()
             ? await sessionUpdatesSocket.openTranscript(id, attempt.signal, cursor, idle)
             : null;
@@ -7078,6 +7358,12 @@ export async function startStreamPump(
             shared ??
             (await openSessionStream(id, attempt.signal, {
               idle,
+              ...(sessionUpdatesSocket.supportsTranscriptWindows()
+                ? {
+                    initialLimit: INITIAL_WINDOW_ITEMS,
+                    windowStartPosition: cursor.window_start_position,
+                  }
+                : {}),
               ...(transcriptCursors.has(controller)
                 ? {
                     afterPosition: cursor.after_position,
@@ -7815,12 +8101,15 @@ export async function pumpStreamEvents(
   const stream = new BlockStream();
   const sseResult: SseStreamResult = { sawDone: false };
   const binding = get().abortController;
+  const cursorScope = transcriptCursorScope(id);
+  const readerScope = transcriptReaderScope();
   const rawEvents = (async function* () {
     for await (const event of parseSseStream(body, sseResult)) {
       if (
         controller.signal.aborted ||
         isConversationDisposed(id) ||
-        get().abortController !== binding
+        get().abortController !== binding ||
+        transcriptCursorScope(id) !== cursorScope
       )
         return;
       yield event;
@@ -7894,6 +8183,11 @@ export async function pumpStreamEvents(
         };
       },
       (event) => {
+        // Historical reset rows are staged once, never sent through live upserts.
+        if (replay.stages(event)) {
+          replay.accept(event, get().blocks);
+          return false;
+        }
         if (event.type === "session_heartbeat" && !resumeRequested) {
           const cursor = transcriptCursors.get(get().abortController ?? controller);
           if (!cursor) {
@@ -7938,18 +8232,17 @@ export async function pumpStreamEvents(
         }
         const rebuilt = replay.accept(event, get().blocks);
         if (event.type === "session_sync" && event.phase === "complete") {
-          if (event.reset && !rebuilt) {
+          if (!replay.checkpointAccepted) {
             requestResume?.(true);
-            return;
+            return false;
           }
           transcriptCursors.set(get().abortController ?? controller, {
             after_position: event.lastPosition,
             after_revision: event.itemRevision,
             stream_epoch: event.streamEpoch,
           });
-          onSyncComplete?.();
         }
-        if (rebuilt) {
+        if (rebuilt && event.type === "session_sync") {
           for (const block of get().blocks) {
             if (
               isLiveProvisionalBlock(block) &&
@@ -7963,13 +8256,40 @@ export async function pumpStreamEvents(
             const { blocks } = reconciled;
             return {
               ...reconciled,
-              hasMoreHistory: false,
-              oldestItemId:
-                blocks.find((block) => block.ctx.position !== undefined)?.ctx.itemId ?? null,
+              ...canonicalHistoryWindow(state, event, blocks),
+              historyWindowRestorePosition: null,
               historyGeneration: state.historyGeneration + 1,
               loadingMoreHistory: false,
             };
           });
+        } else if (
+          event.type === "session_sync" &&
+          event.phase === "complete" &&
+          replay.checkpointAccepted &&
+          event.windowStartPosition !== undefined
+        ) {
+          set((state) => canonicalHistoryWindow(state, event, state.blocks));
+        }
+        if (
+          event.type === "session_sync" &&
+          event.phase === "complete" &&
+          replay.checkpointAccepted
+        ) {
+          set({
+            transcriptCheckpoint: {
+              scope: cursorScope,
+              cursor: transcriptCursors.get(get().abortController ?? controller)!,
+            },
+          });
+          const committed = get();
+          if (committed.historyWindowStartPosition !== null)
+            recordTranscriptLoadedRange(
+              id,
+              committed.historyWindowStartPosition,
+              committed.oldestItemId,
+              readerScope,
+            );
+          onSyncComplete?.();
         }
         // Commit what the stream emitted before a turn edge applies, so the
         // edge's adoption and cleanup (e.g. of a "Compacting…" spinner) see it.
@@ -7979,6 +8299,7 @@ export async function pumpStreamEvents(
           event.type === "session_item_updated"
         )
           flush();
+        return true;
       },
     ),
     id,
@@ -10532,13 +10853,16 @@ async function* tapSessionEvents(
   events: AsyncIterable<StreamEvent>,
   conversationId: string,
   onElicitationResolved?: (elicitationId: string) => void,
-  beforeEvent?: (event: StreamEvent) => void,
+  beforeEvent?: (event: StreamEvent) => void | boolean,
 ): AsyncIterable<StreamEvent> {
   for await (const event of events) {
     if (!isConversationDisposed(conversationId)) {
       streamEventRevisions.set(conversationId, (streamEventRevisions.get(conversationId) ?? 0) + 1);
     }
-    beforeEvent?.(event);
+    if (beforeEvent?.(event) === false) {
+      pushSseEvent(conversationId, event);
+      continue;
+    }
     handleSessionEvent(event, conversationId);
     if (event.type === "elicitation_resolved") {
       onElicitationResolved?.(event.elicitationId);

@@ -6,7 +6,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ComponentProps, ReactNode } from "react";
+import { useMemo, type ComponentProps, type ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
@@ -19,9 +19,31 @@ import { FileViewerContext } from "@/shell/FileViewerContext";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ConversationScopeContext } from "@/components/chat/conversationScope";
 import { normalizeExplicitMathDelimiters } from "@/components/ai-elements/mathMarkdown";
+import {
+  TranscriptReaderContext,
+  transcriptReaderScope,
+  rememberTranscriptReaderCheckpoint,
+} from "@/lib/transcriptReaderCheckpoint";
 import { ChatSearchRevealContext } from "@/lib/chatSearchHighlights";
 import { AttachmentPreviewContext } from "@/components/ChatAttachment";
+import { ToolGroupSummary } from "./ToolCard";
 import { BlockRenderer, rendersOnlyWorkedFold } from "./BlockRenderer";
+
+function ReaderTestScope({
+  conversationId,
+  viewId,
+  children,
+}: {
+  conversationId: string;
+  viewId: string;
+  children: ReactNode;
+}) {
+  const scope = transcriptReaderScope();
+  const owner = useMemo(() => ({ conversationId, viewId, scope }), [conversationId, viewId, scope]);
+  return (
+    <TranscriptReaderContext.Provider value={owner}>{children}</TranscriptReaderContext.Provider>
+  );
+}
 
 const activityGroupReveal = {
   revealedItems: new Set(["returned"]),
@@ -2705,3 +2727,175 @@ describe("authoritative message phase folding", () => {
     expect(screen.getByText("Progress preview")).toBeVisible();
   });
 });
+
+it("restores manual Worked choices after remount without reapplying a retained search reveal", () => {
+  const items: RenderItem[] = [
+    { kind: "text", itemId: "manual-work", text: "Earlier narration", final: true },
+    { kind: "text", itemId: "manual-answer", text: "Final answer", final: true },
+  ];
+  const reveals = [1, 2, 3].map((revision) => ({
+    ...activityGroupReveal,
+    revealedItems: new Set(["manual-work"]),
+    revealRequest: { itemId: "manual-work", revision },
+  }));
+  const tree = (viewId: string, request = 0) => (
+    <ReaderTestScope conversationId="manual-reader" viewId={viewId}>
+      <ChatSearchRevealContext.Provider value={reveals[request]!}>
+        <BlockRenderer items={items} sessionStatus="idle" foldNarration />
+      </ChatSearchRevealContext.Provider>
+    </ReaderTestScope>
+  );
+  let view = render(tree("view-a"));
+  expect(screen.getByTestId("turn-worked-fold")).toHaveAttribute("data-state", "open");
+  fireEvent.click(screen.getByText("Worked"));
+  view.unmount();
+  view = render(tree("view-a"));
+  expect(screen.getByTestId("turn-worked-fold")).toHaveAttribute("data-state", "closed");
+  view.rerender(tree("view-a", 1));
+  expect(screen.getByTestId("turn-worked-fold")).toHaveAttribute("data-state", "open");
+  fireEvent.click(screen.getByText("Worked"));
+  view.unmount();
+  view = render(tree("view-a", 1));
+  expect(screen.getByTestId("turn-worked-fold")).toHaveAttribute("data-state", "closed");
+  fireEvent.click(screen.getByText("Worked"));
+  view.unmount();
+  view = render(tree("view-a", 1));
+  expect(screen.getByTestId("turn-worked-fold")).toHaveAttribute("data-state", "open");
+  fireEvent.click(screen.getByText("Worked"));
+  view.unmount();
+  rememberTranscriptReaderCheckpoint("manual-reader", { snapshot: { atBottom: true } }, "view-a");
+  view = render(tree("brand-new-view", 1));
+  expect(screen.getByTestId("turn-worked-fold")).toHaveAttribute("data-state", "closed");
+  view.unmount();
+  render(tree("brand-new-view", 2));
+  expect(screen.getByTestId("turn-worked-fold")).toHaveAttribute("data-state", "open");
+});
+
+it("keeps grouped tool choices through regrouping and reopen using canonical call identities", () => {
+  const item = (id: string): RenderItem => ({
+    kind: "tool",
+    itemId: id,
+    execution: {
+      name: `tool_${id}`,
+      argsSummary: "",
+      arguments: { key: id },
+      callId: id,
+      agentName: "agent",
+      executedBy: "server",
+      output: `output ${id}`,
+    },
+    output: `output ${id}`,
+    state: "output-available",
+    startedAt: null,
+    duration: undefined,
+  });
+  const first = item("first");
+  const second = item("second");
+  const tree = (tools: RenderItem[]) => (
+    <ReaderTestScope conversationId="tools-reader" viewId="tools-view">
+      <ToolGroupSummary tools={tools} />
+    </ReaderTestScope>
+  );
+  let view = render(tree([first, second]));
+  const group = () => view.container.querySelector('[data-slot="collapsible"]')!;
+  const groupTrigger = () =>
+    group().querySelector<HTMLButtonElement>('[data-slot="collapsible-trigger"]')!;
+  expect(group()).toHaveAttribute("data-state", "closed");
+  fireEvent.click(groupTrigger());
+  fireEvent.click(screen.getByText("tool_first").closest("button")!);
+  expect(screen.getByText("output first")).toBeVisible();
+  view.rerender(tree([first]));
+  expect(group()).toHaveAttribute("data-state", "open");
+  view.unmount();
+  view = render(tree([first, second]));
+  expect(group()).toHaveAttribute("data-state", "open");
+  expect(screen.getByText("output first")).toBeVisible();
+  expect(screen.queryByText("output second")).toBeNull();
+  fireEvent.click(groupTrigger());
+  view.unmount();
+  view = render(tree([first]));
+  expect(group()).toHaveAttribute("data-state", "closed");
+  fireEvent.click(groupTrigger());
+  expect(group()).toHaveAttribute("data-state", "open");
+  // A different canonical item owns its own group and call, even if a call ID is reused.
+  if (second.kind !== "tool") throw new Error("Expected a tool");
+  second.execution.callId = "first";
+  view.rerender(tree([second]));
+  expect(group()).toHaveAttribute("data-state", "closed");
+  fireEvent.click(groupTrigger());
+  expect(screen.queryByText("output second")).toBeNull();
+});
+
+it.each(
+  (["tool", "group", "worked"] as const).flatMap((surface) => [
+    { surface, provisionalItemId: null },
+    { surface, provisionalItemId: "reused-call" },
+  ]),
+)(
+  "preserves manual $surface disclosure from $provisionalItemId through canonical promotion and remount without sharing reused calls",
+  ({ surface, provisionalItemId }) => {
+    const tree = (responseId: string, itemId: string | null, viewId = "promotion-view") => {
+      const bubbles = buildBubbles(
+        [
+          {
+            type: "tool_group",
+            ctx: { agent: null, depth: 0, turn: 0, timestamp: 1, responseId, itemId },
+            executions: [
+              {
+                name: "promotion_tool",
+                argsSummary: "",
+                arguments: {},
+                callId: "reused-call",
+                agentName: "agent",
+                executedBy: "server",
+                output: "retained output",
+              },
+            ],
+            iteration: 0,
+          },
+        ],
+        null,
+      );
+      const bubble = bubbles.find((candidate) => candidate.kind === "assistant");
+      if (!bubble || bubble.kind !== "assistant") throw new Error("Expected assistant tools");
+      return (
+        <ReaderTestScope
+          conversationId={`promotion-${surface}-${provisionalItemId ?? "null"}`}
+          viewId={viewId}
+        >
+          {surface === "group" ? (
+            <ToolGroupSummary tools={bubble.items} />
+          ) : (
+            <BlockRenderer
+              items={bubble.items}
+              sessionStatus={surface === "worked" ? "idle" : "running"}
+            />
+          )}
+        </ReaderTestScope>
+      );
+    };
+    let view = render(tree("response-a", provisionalItemId));
+    const disclosure = () => view.container.querySelector('[data-slot="collapsible"]')!;
+    const trigger = () =>
+      disclosure().querySelector<HTMLButtonElement>('[data-slot="collapsible-trigger"]')!;
+    expect(disclosure()).toHaveAttribute("data-state", "closed");
+    fireEvent.click(trigger());
+    expect(disclosure()).toHaveAttribute("data-state", "open");
+    view.rerender(tree("response-a", "canonical-a"));
+    expect(disclosure()).toHaveAttribute("data-state", "open");
+    view.unmount();
+    view = render(tree("response-a", "canonical-a"));
+    expect(disclosure()).toHaveAttribute("data-state", "open");
+    view.rerender(tree("response-b", "canonical-b"));
+    expect(disclosure()).toHaveAttribute("data-state", "closed");
+    view.unmount();
+    view = render(tree("response-b", "canonical-b"));
+    expect(disclosure()).toHaveAttribute("data-state", "closed");
+    view.unmount();
+    view = render(tree("response-a", "canonical-a", "independent-view"));
+    expect(disclosure()).toHaveAttribute("data-state", "closed");
+    view.unmount();
+    view = render(tree("response-a", "canonical-a"));
+    expect(disclosure()).toHaveAttribute("data-state", "open");
+  },
+);

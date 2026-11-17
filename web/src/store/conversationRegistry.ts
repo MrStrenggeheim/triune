@@ -4,6 +4,8 @@
 // Detaching a stream preserves drafts, pending sends and the reader's window.
 
 import { getCachedServerInfo, isFeatureEnabled } from "@/lib/capabilities";
+import { getSessionDraft } from "@/lib/sessionDrafts";
+import { checkpointTranscriptBlocks } from "@/lib/transcriptReaderCheckpoint";
 import type { ConversationState } from "./chatStore";
 import { createInitialConversationState, isConversationStateKey } from "./conversationState";
 
@@ -123,19 +125,94 @@ export class ConversationRegistry {
   private readonly retainedIds = new Map<string, number>();
   private readonly visibleIds = new Map<string, number>();
   private readonly focusedIds = new Map<string, number>();
-  /** Scoped models preserve loaded history and client-only state after view retirement. */
-  private readonly rememberedIds = new Set<string>();
+  private readonly historyOwners = new Map<string, number>();
+  private generation = {};
+  private trimScheduled = false;
+  private externalWork: (id: string) => boolean = () => false;
+
+  /** Sole-copy root queue/draft state is supplied without importing the root store. */
+  setWorkProtection(check: (id: string) => boolean): () => void {
+    this.externalWork = check;
+    return () => {
+      if (this.externalWork === check) this.externalWork = () => false;
+    };
+  }
+
+  /** Explicit heavyweight ownership for Undo or an active resource, not saved metadata. */
+  retainHistory(id: string): () => void {
+    const generation = this.generation;
+    this.historyOwners.set(id, (this.historyOwners.get(id) ?? 0) + 1);
+    let released = false;
+    return () => {
+      if (released || generation !== this.generation) return;
+      released = true;
+      const count = this.historyOwners.get(id) ?? 0;
+      if (count <= 1) this.historyOwners.delete(id);
+      else this.historyOwners.set(id, count - 1);
+      this.scheduleTrim();
+    };
+  }
+
+  private protectedHistory(id: string, state: ConversationState): boolean {
+    const draft = getSessionDraft(id);
+    return (
+      this.activeId === id ||
+      this.retainedIds.has(id) ||
+      this.focusedIds.has(id) ||
+      this.historyOwners.has(id) ||
+      this.externalWork(id) ||
+      !!(
+        draft &&
+        (draft.text.length ||
+          draft.files.length ||
+          draft.mentionedItems?.length ||
+          draft.replyDraft)
+      ) ||
+      hasUnsentWork(state)
+    );
+  }
+
+  /** Bound additional clean history independently of observation slots and warm DOM. */
+  trimCleanHistory(exemptId?: string): string[] {
+    const candidates = [...this.entries].filter(
+      ([id, entry]) =>
+        !this.protectedHistory(id, entry.getState()) && !entry.getState().abortController,
+    );
+    const retired: string[] = [];
+    let excess = candidates.length - MAX_CLEAN_INACTIVE_HISTORY;
+    for (const [id, entry] of candidates) {
+      if (excess <= 0) break;
+      if (id === exemptId) continue;
+      checkpointTranscriptBlocks(id, entry.getState().blocks);
+      this.entries.delete(id);
+      entry.dispose();
+      retired.push(id);
+      excess--;
+    }
+    return retired;
+  }
+
+  private scheduleTrim(): void {
+    if (this.trimScheduled) return;
+    this.trimScheduled = true;
+    const generation = this.generation;
+    queueMicrotask(() => {
+      if (generation !== this.generation) return;
+      this.trimScheduled = false;
+      this.trimCleanHistory();
+    });
+  }
 
   /** Retain mounted state; only visible owners protect its live stream. */
   retain(id: string, visible = true, focused = visible): () => void {
-    this.rememberedIds.add(id);
+    const generation = this.generation;
     this.retainedIds.set(id, (this.retainedIds.get(id) ?? 0) + 1);
     if (visible) this.visibleIds.set(id, (this.visibleIds.get(id) ?? 0) + 1);
     else if (!this.visibleIds.has(id)) this.detach(id);
     const releaseFocus = visible && focused ? this.retainFocus(id) : undefined;
     let released = false;
     return () => {
-      if (released) return;
+      if (released || generation !== this.generation) return;
       released = true;
       const count = this.retainedIds.get(id) ?? 0;
       if (count <= 1) this.retainedIds.delete(id);
@@ -147,19 +224,22 @@ export class ConversationRegistry {
       }
       releaseFocus?.();
       if (!this.visibleIds.has(id)) this.detach(id);
+      this.scheduleTrim();
     };
   }
 
   /** Focus changes priority without releasing a visible observation. */
   retainFocus(id: string): () => void {
+    const generation = this.generation;
     this.focusedIds.set(id, (this.focusedIds.get(id) ?? 0) + 1);
     let released = false;
     return () => {
-      if (released) return;
+      if (released || generation !== this.generation) return;
       released = true;
       const owners = this.focusedIds.get(id) ?? 0;
       if (owners <= 1) this.focusedIds.delete(id);
       else this.focusedIds.set(id, owners - 1);
+      this.scheduleTrim();
     };
   }
 
@@ -226,13 +306,13 @@ export class ConversationRegistry {
    * Mark which conversation is on screen.
    *
    * Only used to exempt it from eviction — no behaviour is gated on being
-   * active. Pass `null` on the landing route. Eviction is slot-driven now (see
-   * `evictLruEvictable`), so switching between already-live conversations opens
-   * no stream and frees nothing; there is nothing to trim here.
+   * active. Pass `null` on the landing route. Retired views become eligible
+   * for the separate clean-history cache bound.
    */
   setActive(id: string | null): void {
     this.activeId = id;
     if (id !== null) this.touch(id);
+    this.scheduleTrim();
   }
 
   /** The conversation on screen, or `null`. */
@@ -246,7 +326,7 @@ export class ConversationRegistry {
    *
    * A fresh entry starts from `createInitialConversationState()`; the caller
    * binds its stream, which is where the origin-wide stream slot is taken (see
-   * `evictLruEvictable`). Creating an entry does not itself evict anything.
+   * `evictLruEvictable`). Creating an entry trims only excess clean, detached history.
    */
   acquire(id: string): ConversationEntry {
     const existing = this.entries.get(id);
@@ -256,6 +336,7 @@ export class ConversationRegistry {
     }
     const entry = this.createEntry(id);
     this.entries.set(id, entry);
+    this.trimCleanHistory(id);
     return entry;
   }
 
@@ -264,7 +345,6 @@ export class ConversationRegistry {
    * unavailable. Replaces the old `evictTranscriptCache`.
    */
   release(id: string): void {
-    this.rememberedIds.delete(id);
     const entry = this.entries.get(id);
     if (entry === undefined) return;
     this.entries.delete(id);
@@ -279,7 +359,10 @@ export class ConversationRegistry {
     this.retainedIds.clear();
     this.visibleIds.clear();
     this.focusedIds.clear();
-    this.rememberedIds.clear();
+    this.historyOwners.clear();
+    this.generation = {};
+    this.trimScheduled = false;
+    this.externalWork = () => false;
   }
 
   /**
@@ -294,7 +377,6 @@ export class ConversationRegistry {
     const old = this.entries.get(oldId);
     if (old === undefined) return;
     if (oldId === newId) return;
-    if (this.rememberedIds.delete(oldId)) this.rememberedIds.add(newId);
     const existing = this.entries.get(newId);
     if (existing !== undefined) {
       const existingState = existing.getState();
@@ -336,12 +418,13 @@ export class ConversationRegistry {
    */
   evictLruEvictable(exemptId?: string): string | null {
     for (const [id, entry] of this.entries) {
-      if (this.isVisible(id) || id === exemptId) continue;
-      if (this.rememberedIds.has(id) || hasUnsentWork(entry.getState())) {
+      if (this.isVisible(id) || this.focusedIds.has(id) || id === exemptId) continue;
+      if (this.protectedHistory(id, entry.getState())) {
         if (!entry.getState().abortController) continue;
         this.detach(id);
         return id;
       }
+      checkpointTranscriptBlocks(id, entry.getState().blocks);
       this.entries.delete(id);
       entry.dispose();
       return id;
@@ -382,6 +465,7 @@ export class ConversationRegistry {
         if (!changed) return;
         state = next;
         for (const listener of this.listeners) listener(id);
+        this.scheduleTrim();
       },
       dispose: () => {
         if (entry.disposed) return;
@@ -395,22 +479,36 @@ export class ConversationRegistry {
   }
 }
 
-/**
- * Whether an entry holds work the server has no record of.
- *
- * Two shapes of client-only work, each existing nowhere but this tab, so
- * evicting the entry would lose it outright — the cases where dropping an entry
- * is NOT equivalent to a cold load (the hazard `pendingByConversation` was built
- * to survive; pinning replaces that stash):
- *
- *   - an unsettled optimistic bubble (`send`'s POST hasn't returned); and
- *   - a `failedSendDraft` — a send that failed AND rolled its bubble back, so
- *     the draft is the sole surviving copy of the user's text and files. It is
- *     held until the composer restores it on return; evicting first drops it.
- */
-function hasUnsentWork(state: ConversationState): boolean {
-  return state.pendingUserMessages.some((m) => m.posted !== true) || state.failedSendDraft !== null;
+/** Conservative until canonical input/approval/finality evidence removes local overlays. */
+export function hasUnsentWork(state: ConversationState): boolean {
+  return (
+    state.pendingUserMessages.length > 0 ||
+    state.failedSendDraft !== null ||
+    state.restoredSendDraft !== null ||
+    state.pendingRetryStableId !== null ||
+    state.pendingComposerAttachments.length > 0 ||
+    state.status !== "idle" ||
+    state.sessionStatus === "running" ||
+    state.sessionStatus === "waiting" ||
+    state.backgroundTaskCount > 0 ||
+    state.activeResponse?.state === "streaming" ||
+    state.loadingConversation ||
+    state.loadingMoreHistory ||
+    state.sendLatchedAt !== null ||
+    state.startupPending ||
+    state.terminalPending ||
+    state.workspaceSwitching ||
+    state.awaitingSideChatFor !== null ||
+    state.blocks.some(
+      (block) =>
+        block.ctx.itemId?.startsWith("live:") ||
+        (block.type === "elicitation" && (block.status === "pending" || !block.ctx.itemId)) ||
+        (!block.ctx.itemId && !["response_start", "response_end"].includes(block.type)),
+    )
+  );
 }
+
+export const MAX_CLEAN_INACTIVE_HISTORY = 20;
 
 /** The app's registry. Module-scope, like the store it backs. */
 export const conversationRegistry = new ConversationRegistry();

@@ -1486,13 +1486,23 @@ export async function postEvent(
 export function openSessionStream(
   sessionId: string,
   signal: AbortSignal,
-  opts?: { idle?: boolean; afterPosition?: number; afterRevision?: number; streamEpoch?: string },
+  opts?: {
+    idle?: boolean;
+    afterPosition?: number;
+    afterRevision?: number;
+    streamEpoch?: string;
+    initialLimit?: number;
+    windowStartPosition?: number;
+  },
 ): Promise<Response> {
   const params = new URLSearchParams();
   if (opts?.idle) params.set("idle", "true");
   if (opts?.afterPosition !== undefined) params.set("after_position", String(opts.afterPosition));
   if (opts?.afterRevision !== undefined) params.set("after_revision", String(opts.afterRevision));
   if (opts?.streamEpoch !== undefined) params.set("stream_epoch", opts.streamEpoch);
+  if (opts?.initialLimit !== undefined) params.set("initial_limit", String(opts.initialLimit));
+  if (opts?.windowStartPosition !== undefined)
+    params.set("window_start_position", String(opts.windowStartPosition));
   const query = params.size ? `?${params}` : "";
   return authenticatedFetch(`/v1/sessions/${encodeURIComponent(sessionId)}/stream${query}`, {
     headers: { Accept: "text/event-stream" },

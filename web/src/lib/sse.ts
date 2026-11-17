@@ -510,7 +510,36 @@ function parseEventPayload(rawType: string, data: Record<string, unknown>): Stre
         reconcileRequired: raw.reconcile_required === true,
       };
     if (raw.phase !== "start" && raw.phase !== "complete") return null;
-    return { type: "session_sync", ...boundary, phase: raw.phase, reset: raw.reset === true };
+    const windowed = [
+      "window_start_position",
+      "window_item_count",
+      "has_older_items",
+      "first_item_id",
+    ].some((key) => key in raw);
+    if (
+      windowed &&
+      (itemPosition(raw.window_start_position) === undefined ||
+        itemPosition(raw.window_item_count) === undefined ||
+        (raw.window_item_count as number) > itemCount ||
+        typeof raw.has_older_items !== "boolean" ||
+        (raw.first_item_id !== null && typeof raw.first_item_id !== "string") ||
+        (raw.window_item_count === 0) !== (raw.first_item_id === null))
+    )
+      return null;
+    return {
+      type: "session_sync",
+      ...boundary,
+      phase: raw.phase,
+      reset: raw.reset === true,
+      ...(windowed
+        ? {
+            windowStartPosition: raw.window_start_position as number,
+            windowItemCount: raw.window_item_count as number,
+            hasOlderItems: raw.has_older_items as boolean,
+            firstItemId: raw.first_item_id as string | null,
+          }
+        : {}),
+    };
   }
 
   if (eventType === "session.background_tasks") {

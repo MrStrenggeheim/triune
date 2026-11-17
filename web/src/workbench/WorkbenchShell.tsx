@@ -71,6 +71,7 @@ import {
   type onNativeSidebarDrag,
 } from "@/lib/nativeBridge";
 import { toast } from "@/lib/notifications";
+import { conversationRegistry } from "@/store/conversationRegistry";
 import { useChatStore } from "@/store/chatStore";
 import { isTempConvId } from "@/lib/tempConversationId";
 import { randomUUID } from "@/lib/randomUUID";
@@ -255,6 +256,38 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [sessionsOnly, setSessionsOnly] = useState(false);
   const [closedViews, setClosedViews] = useState<DockView[]>([]);
+  const pendingUndoOwners = useRef(new Map<() => void, string>());
+  useEffect(() => {
+    // useDockLayout acquired committed Undo owners in its layout effect.
+    for (const [release, id] of pendingUndoOwners.current) {
+      if (!closedViews.some((view) => view.id === id)) continue;
+      release();
+      pendingUndoOwners.current.delete(release);
+    }
+  }, [closedViews]);
+  useEffect(
+    () => () => {
+      for (const release of pendingUndoOwners.current.keys()) release();
+      pendingUndoOwners.current.clear();
+    },
+    [],
+  );
+  useEffect(() => {
+    const release = conversationRegistry.setWorkProtection((id) => {
+      const state = useChatStore.getState();
+      const composer = state.sideChatComposers[id];
+      return (
+        state.queuedMessages.some((item) => item.conversationId === id) ||
+        !!state.sideChatDrafts[id]?.length ||
+        !!(composer && (composer.text.length || composer.files.length))
+      );
+    });
+    const unsubscribe = useChatStore.subscribe(() => conversationRegistry.trimCleanHistory());
+    return () => {
+      unsubscribe();
+      release();
+    };
+  }, []);
   const [locationRequest, setLocationRequest] = useState<OpenWorkbenchView | null>(null);
   const guards = useRef(new Map<string, Set<FileNavigationGuard>>());
   const explicitSearchViews = useRef(new Set<string>());
@@ -298,6 +331,7 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
     scope,
     initialLayout: createDockLayout(conversationId ? [conversationView(conversationId)] : []),
     onBeforeClose: closeGuard,
+    undoViews: closedViews,
   });
   const dockRef = useRef(dock);
   dockRef.current = dock;
@@ -989,7 +1023,22 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
   ];
   const closeView = useCallback(async (id: string) => {
     const view = dockRef.current.layout.views.find((entry) => entry.id === id);
-    const closed = await dockRef.current.closeView(id);
+    const historyId = view?.resource.conversationId;
+    const release =
+      typeof historyId === "string" ? conversationRegistry.retainHistory(historyId) : undefined;
+    if (release) pendingUndoOwners.current.set(release, id);
+    let closed: boolean;
+    try {
+      closed = await dockRef.current.closeView(id);
+    } catch (error) {
+      release?.();
+      if (release) pendingUndoOwners.current.delete(release);
+      throw error;
+    }
+    if (!closed || !mounted.current) {
+      release?.();
+      if (release) pendingUndoOwners.current.delete(release);
+    }
     if (closed && view && mounted.current)
       setClosedViews((previous) =>
         [...previous.filter((entry) => entry.id !== id), view].slice(-20),

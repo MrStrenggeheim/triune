@@ -1,4 +1,8 @@
 // Modified for Triune.
+import {
+  useTranscriptDisclosureState,
+  transcriptDisclosureItemKey,
+} from "@/lib/transcriptReaderCheckpoint";
 import { useTranscriptDisclosureAnchor } from "@/hooks/useTranscriptDisclosureAnchor";
 import { useWrapPreference } from "@/hooks/useWrapPreference";
 // Tool-call renderer. Renders each call as a single muted-text trigger
@@ -161,6 +165,8 @@ export function getOutputPreview(output: string, expanded = false): OutputPrevie
 }
 
 interface ToolCardProps {
+  /** Presentation identity; never a tool execution or API target. */
+  disclosureKey?: string;
   /** Display name for the tool. For native tools, this is the friendly label. */
   name: string;
   /**
@@ -182,6 +188,7 @@ interface ToolCardProps {
 }
 
 export function ToolCard({
+  disclosureKey,
   name,
   nativeToolType,
   argsSummary,
@@ -191,6 +198,8 @@ export function ToolCard({
   startedAt,
   duration,
 }: ToolCardProps) {
+  const [savedOpen, rememberOpen] = useTranscriptDisclosureState(disclosureKey);
+  const [open, setOpen] = useState(savedOpen ?? false);
   const preserveDisclosure = useTranscriptDisclosureAnchor();
   const title = useMemo(() => formatToolTitle(name, args, argsSummary), [name, args, argsSummary]);
   const shellCall = useMemo(() => shellToolCall(name, args), [name, args]);
@@ -214,7 +223,11 @@ export function ToolCard({
   return (
     <Collapsible
       onClickCapture={preserveDisclosure}
-      defaultOpen={false}
+      open={open}
+      onOpenChange={(next) => {
+        rememberOpen(next);
+        setOpen(next);
+      }}
       className="group not-prose w-full"
     >
       <ToolTriggerRow
@@ -276,10 +289,21 @@ export function ToolGroupSummary({ tools }: { tools: RenderItem[] }) {
       subagentCardItemIds(item.data).some((id) => reveal?.revealedItems.has(id)),
   );
   const revealRevision = requested ? (reveal?.revealRequest?.revision ?? 0) : undefined;
-  const [open, setOpen] = useState(requested);
+  const firstKey = transcriptDisclosureItemKey(tools[0]);
+  const [savedOpen, rememberOpen] = useTranscriptDisclosureState(
+    firstKey ? `tool-group:${firstKey}` : undefined,
+    revealRevision ? JSON.stringify([reveal?.revealRequest?.itemId, revealRevision]) : undefined,
+  );
+  const [groupChoice, setGroupChoice] = useState(() => ({
+    key: firstKey,
+    open: savedOpen ?? requested,
+  }));
+  const open = groupChoice.key === firstKey ? groupChoice.open : (savedOpen ?? requested);
+  if (groupChoice.key !== firstKey) setGroupChoice({ key: firstKey, open });
   useEffect(() => {
-    if (revealRevision !== undefined) setOpen(true);
-  }, [revealRevision]);
+    if (revealRevision !== undefined && savedOpen === undefined)
+      setGroupChoice({ key: firstKey, open: true });
+  }, [revealRevision, savedOpen, firstKey]);
   return (
     // Named `group/tool-summary` so this collapsible only rotates its
     // OWN chevron (line 296 in `ToolTriggerRow` uses an unnamed
@@ -289,7 +313,10 @@ export function ToolGroupSummary({ tools }: { tools: RenderItem[] }) {
     <Collapsible
       onClickCapture={preserveDisclosure}
       open={open}
-      onOpenChange={setOpen}
+      onOpenChange={(next) => {
+        rememberOpen(next);
+        setGroupChoice({ key: firstKey, open: next });
+      }}
       className="group/tool-summary not-prose w-full"
     >
       <CollapsibleTrigger className="flex min-h-7 w-full cursor-pointer items-center gap-1.5 rounded-sm py-0.5 text-left text-muted-foreground text-chat transition-colors hover:text-foreground">
@@ -314,7 +341,8 @@ export function ToolGroupSummary({ tools }: { tools: RenderItem[] }) {
           if (item.kind === "tool") {
             return (
               <ToolCard
-                key={`tool:${item.execution.callId}`}
+                key={transcriptDisclosureItemKey(item)}
+                disclosureKey={transcriptDisclosureItemKey(item)}
                 name={item.execution.name}
                 argsSummary={item.execution.argsSummary}
                 arguments={item.execution.arguments}
@@ -329,6 +357,7 @@ export function ToolGroupSummary({ tools }: { tools: RenderItem[] }) {
             return (
               <ToolCard
                 key={`native:${item.itemId ?? item.label}`}
+                disclosureKey={transcriptDisclosureItemKey(item)}
                 name={item.label}
                 nativeToolType={item.toolType}
                 arguments={item.data}

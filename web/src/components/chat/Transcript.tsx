@@ -1,10 +1,20 @@
+// Modified for Triune.
+import { useResourceViewId } from "@/lib/panelFolder";
+import {
+  TranscriptReaderContext,
+  checkpointTranscriptBlocks,
+  readTranscriptReaderCheckpoint,
+  rememberTranscriptReaderCheckpoint,
+  restoreTranscriptReaderCheckpoint,
+  transcriptReaderScope,
+  type TranscriptViewSnapshot,
+} from "@/lib/transcriptReaderCheckpoint";
 import { subagentCardItemIds } from "@/lib/subagentActivity";
 import { projectPendingTranscript } from "@/lib/transcriptOrder";
 import {
   hasTranscriptScrollOwner,
   useTranscriptDisclosureAnchor,
 } from "@/hooks/useTranscriptDisclosureAnchor";
-// Modified for Triune.
 import {
   useConversationChatStore,
   useConversationChatFocused,
@@ -84,6 +94,8 @@ import {
   remeasureRetainedElements,
 } from "@/shell/useScrollRestore";
 
+export type { TranscriptViewSnapshot } from "@/lib/transcriptReaderCheckpoint";
+
 export interface TranscriptProps {
   branch?: ConversationBranch | null;
   /** Opt in only for quote-created subchats; explicit forks retain their normal view. */
@@ -162,53 +174,34 @@ function TranscriptImpl({
   const hasTasks = useChatStore((s) => s.todos.length > 0);
   const conversationId = useChatStore((s) => s.conversationId);
   const contextSearch = useContextSearch();
-  const [searchReveal, setSearchReveal] = useState(() => ({
-    conversationId,
-    revealedItems: new Set<string>(),
-    originalSources: new Map<string, string>(),
+  const readerScope = transcriptReaderScope();
+  const viewId = useResourceViewId() ?? conversationId ?? undefined;
+  const savedReader = conversationId
+    ? readTranscriptReaderCheckpoint(conversationId, viewId)
+    : undefined;
+  const readerIdentity = JSON.stringify([readerScope, conversationId, viewId]);
+  const initialReveal = () => ({
+    identity: readerIdentity,
+    revealedItems: new Set<string>(savedReader?.revealedItemIds),
+    originalItemIds: new Set<string>(savedReader?.originalItemIds),
     revealRequest: { itemId: "", revision: 0 },
-  }));
-  const revealState = useMemo(
-    () => ({
-      revealedItems:
-        searchReveal.conversationId === conversationId
-          ? searchReveal.revealedItems
-          : new Set<string>(),
-      originalSources:
-        searchReveal.conversationId === conversationId
-          ? searchReveal.originalSources
-          : new Map<string, string>(),
-      revealRequest:
-        searchReveal.conversationId === conversationId ? searchReveal.revealRequest : undefined,
-      reveal: (itemId: string) =>
-        setSearchReveal((previous) => ({
-          conversationId,
-          revealedItems: new Set([
-            ...(previous.conversationId === conversationId ? previous.revealedItems : []),
-            itemId,
-          ]),
-          originalSources:
-            previous.conversationId === conversationId ? previous.originalSources : new Map(),
-          revealRequest: { itemId, revision: previous.revealRequest.revision + 1 },
-        })),
-      showOriginal: (itemId: string, text: string) =>
-        setSearchReveal((previous) => ({
-          conversationId,
-          revealedItems: new Set([
-            ...(previous.conversationId === conversationId ? previous.revealedItems : []),
-            itemId,
-          ]),
-          originalSources: new Map([
-            ...(previous.conversationId === conversationId ? previous.originalSources : []),
-            [itemId, text],
-          ]),
-          revealRequest: previous.revealRequest,
-        })),
-    }),
-    [conversationId, searchReveal],
-  );
+  });
+  const [searchReveal, setSearchReveal] = useState(initialReveal);
+  const currentReveal = searchReveal.identity === readerIdentity ? searchReveal : initialReveal();
+  if (currentReveal !== searchReveal) setSearchReveal(currentReveal);
   const preserveDisclosure = useTranscriptDisclosureAnchor();
-  const [expandedHistoryId, setExpandedHistoryId] = useState<string | null>(null);
+  const [historyChoice, setHistoryChoice] = useState(() => ({
+    identity: readerIdentity,
+    expanded: savedReader?.expandedHistoryId ?? null,
+  }));
+  const expandedHistoryId =
+    historyChoice.identity === readerIdentity
+      ? historyChoice.expanded
+      : (savedReader?.expandedHistoryId ?? null);
+  const setExpandedHistoryId = useCallback(
+    (expanded: string | null) => setHistoryChoice({ identity: readerIdentity, expanded }),
+    [readerIdentity],
+  );
   const [searchParams] = useSearchParams();
   const messageId = searchParams.get(MESSAGE_QUERY_PARAM);
   const inheritedEnd = useMemo(() => inheritedHistoryEnd(blocks, branch), [blocks, branch]);
@@ -225,7 +218,7 @@ function TranscriptImpl({
   const historyExpanded = expandedHistoryId === historyId || targetsHistory;
   useEffect(() => {
     if (targetsHistory) setExpandedHistoryId(historyId);
-  }, [targetsHistory, historyId]);
+  }, [targetsHistory, historyId, setExpandedHistoryId]);
   const canLoadHistory = !canFoldHistory || historyExpanded || inheritedEnd < 0;
   const visibleBlocks = useMemo(
     () => (canFoldHistory && !historyExpanded ? blocks.slice(inheritedEnd + 1) : blocks),
@@ -270,6 +263,54 @@ function TranscriptImpl({
       chatSearchSources(visibleBlocks === blocks ? bubbles : buildBubbles(blocks, activeResponse)),
     [visibleBlocks, blocks, bubbles, activeResponse],
   );
+  const revealState = useMemo(
+    () => ({
+      revealedItems: currentReveal.revealedItems,
+      originalSources: new Map(
+        searchSources
+          .filter((source) => currentReveal.originalItemIds.has(source.itemId))
+          .map((source) => [source.itemId, source.text]),
+      ),
+      revealRequest: currentReveal.revealRequest,
+      reveal: (itemId: string) =>
+        setSearchReveal((previous) => ({
+          ...previous,
+          revealedItems: new Set([...previous.revealedItems, itemId]),
+          revealRequest: { itemId, revision: previous.revealRequest.revision + 1 },
+        })),
+      showOriginal: (itemId: string, _text: string) =>
+        setSearchReveal((previous) => ({
+          ...previous,
+          revealedItems: new Set([...previous.revealedItems, itemId]),
+          originalItemIds: new Set([...previous.originalItemIds, itemId]),
+        })),
+    }),
+    [currentReveal, searchSources],
+  );
+  useEffect(() => {
+    if (!conversationId) return;
+    checkpointTranscriptBlocks(conversationId, blocks);
+    rememberTranscriptReaderCheckpoint(
+      conversationId,
+      {
+        expandedHistoryId,
+        revealedItemIds: [...currentReveal.revealedItems],
+        originalItemIds: [...currentReveal.originalItemIds],
+        ...(searchTarget?.conversationId === conversationId
+          ? {
+              searchTarget: {
+                itemId: searchTarget.itemId,
+                start: (searchTarget.textStart ?? 0) + searchTarget.range.start,
+                end: (searchTarget.textStart ?? 0) + searchTarget.range.end,
+              },
+            }
+          : {}),
+      },
+      viewId,
+      readerScope,
+    );
+  }, [conversationId, blocks, expandedHistoryId, currentReveal, searchTarget, readerScope, viewId]);
+
   const streamBubbles = useMemo(
     () => (pendingElicitations.length === 0 ? bubbles : stripPendingElicitations(bubbles)),
     [bubbles, pendingElicitations.length],
@@ -628,15 +669,6 @@ export interface TranscriptGeometry {
   rangeNonce: number;
 }
 
-export type TranscriptViewSnapshot =
-  | { atBottom: true }
-  | {
-      atBottom: false;
-      anchorKey: string | null;
-      anchorOffset: number;
-      fallbackOffset: number;
-    };
-
 export function captureTranscriptViewSnapshot({
   atBottom,
   scrollTop,
@@ -644,12 +676,13 @@ export function captureTranscriptViewSnapshot({
 }: {
   atBottom: boolean;
   scrollTop: number;
-  anchor?: { key: string; start: number };
+  anchor?: { key: string; start: number; itemId?: string | null };
 }): TranscriptViewSnapshot {
   if (atBottom) return { atBottom: true };
   return {
     atBottom: false,
     anchorKey: anchor?.key ?? null,
+    ...(anchor?.itemId ? { anchorItemId: anchor.itemId } : {}),
     anchorOffset: anchor ? anchor.start - scrollTop : 0,
     fallbackOffset: Math.round(scrollTop),
   };
@@ -665,17 +698,43 @@ export function resolveTranscriptViewOffset(
     : Math.max(0, anchorStart - snapshot.anchorOffset);
 }
 
-const MAX_CACHED_VIEWS = 24;
-const transcriptViewCache = new Map<string, TranscriptViewSnapshot>();
-function rememberTranscriptView(convId: string, snap: TranscriptViewSnapshot): void {
-  transcriptViewCache.delete(convId); // re-insert to refresh LRU order
-  transcriptViewCache.set(convId, snap);
-  while (transcriptViewCache.size > MAX_CACHED_VIEWS) {
-    const oldest = transcriptViewCache.keys().next().value;
-    if (oldest === undefined) break;
-    transcriptViewCache.delete(oldest);
-  }
+function rememberTranscriptView(
+  convId: string,
+  snapshot: TranscriptViewSnapshot,
+  scope: string,
+  viewId = convId,
+  promoteSnapshot = true,
+): void {
+  rememberTranscriptReaderCheckpoint(convId, { snapshot }, viewId, scope, promoteSnapshot);
 }
+
+/** A response key alone cannot recover a row outside the negotiated window. */
+export function transcriptBubbleAnchorId(bubble: Bubble): string | null {
+  if (bubble.kind === "assistant") {
+    for (const item of bubble.items) {
+      if ("itemId" in item && typeof item.itemId === "string" && !item.itemId.startsWith("live:"))
+        return item.itemId;
+    }
+    return null;
+  }
+  return "itemId" in bubble && !bubble.itemId.startsWith("live:") ? bubble.itemId : null;
+}
+
+/** Canonical identity survives regrouping and response-key changes during hydration. */
+export function transcriptBubbleContainsItem(bubble: Bubble, itemId: string): boolean {
+  if (bubble.kind === "assistant")
+    return bubble.items.some(
+      (item) =>
+        ("itemId" in item && item.itemId === itemId) ||
+        (item.kind === "subagent_activity" && subagentCardItemIds(item.data).includes(itemId)),
+    );
+  if (bubble.kind === "subagent_activity") return subagentCardItemIds(bubble.data).includes(itemId);
+  return (
+    "itemId" in bubble &&
+    (bubble.itemId === itemId || (bubble.kind === "user" && !!bubble.aliases?.includes(itemId)))
+  );
+}
+
 /** Physical "is this scroll element at (or within a hair of) its bottom". */
 const BOTTOM_EPSILON_PX = 8;
 /** Space between virtualized rows, shared by the virtualizer's offsets and the list's layout. */
@@ -718,8 +777,15 @@ export const VirtualBubbleList = memo(function VirtualBubbleList({
   const ctxRef = useRef(ctx);
   ctxRef.current = ctx;
   const storeConvId = useChatStore((s) => s.conversationId);
+  const readerScope = transcriptReaderScope();
+  const viewId = useResourceViewId() ?? conversationId ?? undefined;
   const restoringRef = useRef<string | null>(null);
-  const restoredSurfaceRef = useRef<{ conversationId: string; scrollEl: HTMLElement } | null>(null);
+  const restoredSurfaceRef = useRef<{
+    conversationId: string;
+    scrollEl: HTMLElement;
+    scope: string;
+    viewId?: string;
+  } | null>(null);
   const latestSnapshotRef = useRef<{
     conversationId: string;
     snapshot: TranscriptViewSnapshot;
@@ -1053,7 +1119,7 @@ export const VirtualBubbleList = memo(function VirtualBubbleList({
       if (isElAtBottom(scrollEl)) {
         const snapshot = { atBottom: true } as const;
         latestSnapshotRef.current = { conversationId, snapshot };
-        rememberTranscriptView(conversationId, snapshot);
+        rememberTranscriptView(conversationId, snapshot, readerScope, viewId);
         return;
       }
       const top = scrollEl.scrollTop;
@@ -1062,24 +1128,31 @@ export const VirtualBubbleList = memo(function VirtualBubbleList({
       const snapshot = captureTranscriptViewSnapshot({
         atBottom: false,
         scrollTop: top,
-        anchor: anchor && bubble ? { key: bubbleKey(bubble), start: anchor.start } : undefined,
+        anchor:
+          anchor && bubble
+            ? {
+                key: bubbleKey(bubble),
+                start: anchor.start,
+                itemId: transcriptBubbleAnchorId(bubble),
+              }
+            : undefined,
       });
       latestSnapshotRef.current = { conversationId, snapshot };
-      rememberTranscriptView(conversationId, snapshot);
+      rememberTranscriptView(conversationId, snapshot, readerScope, viewId);
     };
     save();
     scrollEl.addEventListener("scroll", save, { passive: true });
     return () => {
       const latest = latestSnapshotRef.current;
       if (latest?.conversationId === conversationId) {
-        rememberTranscriptView(conversationId, latest.snapshot);
+        rememberTranscriptView(conversationId, latest.snapshot, readerScope, viewId, false);
       }
       scrollEl.removeEventListener("scroll", save);
     };
-  }, [conversationId, scrollEl, storeConvId, visible]);
+  }, [conversationId, scrollEl, storeConvId, visible, readerScope, viewId]);
 
   // Restore only when the coherent deferred snapshot changes conversation.
-  // Bottom mode is written synchronously before StickToBottom takes over.
+  // Membership hydration completes before bottom or anchor alignment starts.
   // Mid-scroll mode resolves the saved bubble through the virtualizer on every
   // frame, so estimate-to-measure corrections preserve its viewport position.
   useLayoutEffect(() => {
@@ -1089,22 +1162,28 @@ export const VirtualBubbleList = memo(function VirtualBubbleList({
     }
     if (!scrollEl || !conversationId) return;
     const previous = restoredSurfaceRef.current;
-    restoredSurfaceRef.current = { conversationId, scrollEl };
+    restoredSurfaceRef.current = { conversationId, scrollEl, scope: readerScope, viewId };
     // Closing search/deep-link navigation keeps the location the reader found.
     if (
       messageId ||
       hasTranscriptScrollOwner(scrollEl) ||
-      (previous?.conversationId === conversationId && previous.scrollEl === scrollEl)
+      (previous?.conversationId === conversationId &&
+        previous.scrollEl === scrollEl &&
+        previous.scope === readerScope &&
+        previous.viewId === viewId)
     )
       return;
     const c = ctxRef.current;
-    const saved = transcriptViewCache.get(conversationId);
+    const checkpoint = readTranscriptReaderCheckpoint(conversationId, viewId, readerScope);
+    const saved = checkpoint?.snapshot;
+    const recovery = new AbortController();
     restoringRef.current = conversationId;
     let frame = 0;
     let done = false;
     const finish = () => {
       if (done) return;
       done = true;
+      recovery.abort();
       if (restoringRef.current === conversationId) restoringRef.current = null;
       cancelAnimationFrame(frame);
       for (const type of RESTORE_CANCEL_EVENTS) {
@@ -1114,6 +1193,10 @@ export const VirtualBubbleList = memo(function VirtualBubbleList({
     for (const type of RESTORE_CANCEL_EVENTS) {
       scrollEl.addEventListener(type, finish, { passive: true });
     }
+
+    const hydrate = checkpoint
+      ? restoreTranscriptReaderCheckpoint(conversationId, checkpoint, recovery.signal, readerScope)
+      : Promise.resolve(true);
 
     if (!saved || saved.atBottom) {
       const pinBottom = () => {
@@ -1127,28 +1210,41 @@ export const VirtualBubbleList = memo(function VirtualBubbleList({
         scrollEl.scrollTop = Math.max(0, scrollEl.scrollHeight - scrollEl.clientHeight - 1);
         void c.scrollToBottom("instant");
       };
-      pinBottom();
-      // Runs after sibling layout effects (notably LatestTurnSpacer) but before
-      // the browser's next paint.
-      queueMicrotask(() => {
-        if (!done && restoringRef.current === conversationId) pinBottom();
-      });
-      frame = requestAnimationFrame(() => {
-        pinBottom();
-        if (!done) frame = requestAnimationFrame(finish);
-      });
+      void hydrate
+        .then((ready) => {
+          if (done) return;
+          if (!ready) {
+            finish();
+            return;
+          }
+          pinBottom();
+          frame = requestAnimationFrame(() => {
+            pinBottom();
+            if (!done) frame = requestAnimationFrame(finish);
+          });
+        })
+        .catch((error) => {
+          if (!done) {
+            console.error("Transcript reader recovery failed", error);
+            finish();
+          }
+        });
       return finish;
     }
 
     c.stopScroll();
-    const deadline = performance.now() + SCROLL_RESTORE_BUDGET_MS;
+    let deadline = Infinity;
     const pinAnchor = () => {
       if (hasTranscriptScrollOwner(scrollEl)) {
         finish();
         return;
       }
       scrollEl.scrollTop = resolveTranscriptViewOffset(saved, (key) => {
-        const index = bubblesRef.current.findIndex((bubble) => bubbleKey(bubble) === key);
+        const index = bubblesRef.current.findIndex(
+          (bubble) =>
+            bubbleKey(bubble) === key ||
+            (!!saved.anchorItemId && transcriptBubbleContainsItem(bubble, saved.anchorItemId)),
+        );
         return index < 0 ? undefined : virtualizerRef.current.measurementsCache[index]?.start;
       });
     };
@@ -1161,10 +1257,25 @@ export const VirtualBubbleList = memo(function VirtualBubbleList({
       pinAnchor();
       if (!done) frame = requestAnimationFrame(tick);
     };
-    pinAnchor();
-    frame = requestAnimationFrame(tick);
+    void hydrate
+      .then((ready) => {
+        if (done) return;
+        if (!ready) {
+          finish();
+          return;
+        }
+        deadline = performance.now() + SCROLL_RESTORE_BUDGET_MS;
+        pinAnchor();
+        frame = requestAnimationFrame(tick);
+      })
+      .catch((error) => {
+        if (!done) {
+          console.error("Transcript reader recovery failed", error);
+          finish();
+        }
+      });
     return finish;
-  }, [conversationId, scrollEl, messageId, visible]);
+  }, [conversationId, scrollEl, messageId, visible, readerScope, viewId]);
 
   const scrollToItem = useCallback((itemId: string, mountOnly = false): boolean => {
     const index = bubblesRef.current.findIndex(
@@ -1373,4 +1484,15 @@ export const VirtualBubbleList = memo(function VirtualBubbleList({
   );
 });
 
-export const Transcript = memo(TranscriptImpl);
+export const Transcript = memo(function Transcript(props: TranscriptProps) {
+  const store = useConversationChatStore();
+  const conversationId = store((state) => state.conversationId);
+  const viewId = useResourceViewId() ?? conversationId ?? undefined;
+  const scope = transcriptReaderScope();
+  const owner = useMemo(() => ({ conversationId, viewId, scope }), [conversationId, viewId, scope]);
+  return (
+    <TranscriptReaderContext.Provider value={owner}>
+      <TranscriptImpl {...props} />
+    </TranscriptReaderContext.Provider>
+  );
+});
