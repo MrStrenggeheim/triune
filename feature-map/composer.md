@@ -731,7 +731,10 @@ Lifecycle and observer checks: `tests/server/integration/test_message_queue.py` 
 
 Same-ID edits still use the last serialized writer; storage failure preserves unsaved bytes only in the current process.
 There is no new cross-tab live refresh or cross-device synchronization.
-`APPROVAL-RECEIPT-7` remains outside this candidate pending exact-request consumption and durable acknowledgment review; approval delivery is not established.
+Runner/scaffold approvals reserve a durable exact attempt before delivery; only a receipt matching the pending Future and process identities permits resolution.
+Lost replies retry receipt lookup rather than verdict delivery, while accepted count/mirror cleanup and receipt release recover across server restart.
+Local/native waiter resolution remains separate; missing receiver evidence keeps the original attempt held for explicit disposition.
+`tests/server/test_runner_approval_delivery.py`, `tests/server/test_approval_delivery_store.py` and the receiver API suites cover these boundaries with synthetic authenticated transport.
 
 ## Gotchas
 

@@ -1731,7 +1731,13 @@ class ConversationStore(ABC):
         ...
 
     @abstractmethod
-    def set_pending_elicitation_count(self, conversation_id: str, count: int) -> None:
+    def set_pending_elicitation_count(
+        self,
+        conversation_id: str,
+        count: int,
+        *,
+        approval_attempts: list[tuple[str, str, str]] | None = None,
+    ) -> None:
         """
         Persist the outstanding elicitation count for one session.
 

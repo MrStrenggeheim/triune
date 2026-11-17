@@ -1732,6 +1732,11 @@ def _pending_elicitation_snapshot_for_session(
     :returns: Pending elicitation event dicts suitable for
         :class:`SessionResponse.pending_elicitations`.
     """
+    from omnigent.server.approval_deliveries import restore_session_holds
+    from omnigent.server.approval_delivery_store import ApprovalDeliveryStore
+
+    approval_store = ApprovalDeliveryStore(conv_store.storage_location)
+    restore_session_holds(approval_store, conv.id)
     events = pending_elicitations.snapshot_for(conv.id)
     if not (set(pending_elicitations.pending_session_ids()) - {conv.id}):
         return events
@@ -1741,6 +1746,7 @@ def _pending_elicitation_snapshot_for_session(
         if isinstance(event.get("elicitation_id"), str)
     }
     for child in _descendant_sessions(conv_store, conv.id):
+        restore_session_holds(approval_store, child.id)
         for event in pending_elicitations.snapshot_for(child.id):
             elicitation_id = event.get("elicitation_id")
             if isinstance(elicitation_id, str) and elicitation_id in seen:
@@ -3316,42 +3322,25 @@ async def _forward_approval_to_runner(
     session_id: str,
     data: dict[str, Any],
     runner_router: RunnerRouter | None,
-) -> None:
-    """
-    Forward an approval verdict to the session's bound runner.
-
-    Runner-side elicitations (policy approvals parked in the runner's
-    ``_pending_approvals`` dict, scaffold dispatch) resolve when the
-    canonical ``approval`` event reaches the runner's ``/events``. The
-    server↔runner contract stays the ``approval`` event regardless of
-    how the verdict arrived at the server (resolve URL or approval
-    event). No-op when no runner is bound (in-process setups). HTTP
-    errors are logged, not raised — a dead runner must not fail the
-    caller's resolution (the server-side Future was already set).
-
-    :param session_id: Session/conversation identifier, e.g.
-        ``"conv_abc123"``.
-    :param data: The approval payload to forward verbatim as the
-        event ``data``, e.g. ``{"elicitation_id": "elicit_abc",
-        "action": "accept"}``.
-    :param runner_router: Router used to resolve the bound runner, or
-        ``None`` in in-process setups (forward skipped).
-    """
+) -> Literal["acknowledged", "unavailable", "unconfirmed"]:
+    """Report transport acknowledgement without assuming a failed POST was rejected."""
     runner_client = await _get_runner_client(session_id, runner_router)
     if runner_client is None:
-        return
+        return "unavailable"
     try:
-        await runner_client.post(
+        response = await runner_client.post(
             f"/v1/sessions/{session_id}/events",
             json={"type": _APPROVAL_TYPE, "data": data},
             timeout=10.0,
         )
     except (httpx.HTTPError, ConnectionError):
         _logger.exception(
-            "Approval forward failed for %r",
+            "Approval forward could not be confirmed for %r",
             session_id,
             extra={"session_id": session_id},
         )
+        return "unconfirmed"
+    return "acknowledged" if 200 <= response.status_code < 300 else "unconfirmed"
 
 
 def _parse_external_assistant_message(

@@ -31,6 +31,8 @@ import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from omnigent.runtime.approval_receipts import ApprovalReceipts
+
 # Default wait budget for a UI verdict, in seconds. Held at one day
 # (86400s) — matching the deciding policy's default ``ask_timeout``: an ASK
 # is a human-in-the-loop gate and should outlive a user stepping away rather
@@ -75,6 +77,8 @@ class Verdict:
 # Future is owned by the caller that registered it — this module is just
 # the routing table the session-event handler reads to set the result.
 _pending: dict[str, asyncio.Future[Verdict]] = {}
+receipt_registry = ApprovalReceipts()
+_receipt_requests: dict[str, tuple[str, str]] = {}
 
 # Waits whose presentation state belongs to the disconnected server. Their
 # callers decide whether to recreate a policy gate or re-publish a suspended
@@ -124,6 +128,7 @@ def register(
     elicitation_id: str,
     *,
     retry_on_server_reconnect: bool = False,
+    conversation_id: str | None = None,
 ) -> asyncio.Future[Verdict]:
     """
     Create and store a Future for an outstanding ASK verdict.
@@ -140,7 +145,18 @@ def register(
         :func:`asyncio.wait_for` to bound the wait.
     """
     fut: asyncio.Future[Verdict] = asyncio.get_running_loop().create_future()
+    previous = _receipt_requests.pop(elicitation_id, None)
+    if previous is not None:
+        receipt_registry.discard(previous[0], elicitation_id, previous[1])
     _pending[elicitation_id] = fut
+    if conversation_id is not None:
+        request_id = receipt_registry.register(
+            conversation_id,
+            elicitation_id,
+            lambda: _pending.get(elicitation_id) is fut and not fut.done(),
+            lambda result: resolve(elicitation_id, result.action == "accept", result.content),
+        )
+        _receipt_requests[elicitation_id] = (conversation_id, request_id)
     if retry_on_server_reconnect:
         _retry_on_server_reconnect.add(elicitation_id)
     else:
@@ -148,7 +164,7 @@ def register(
     return fut
 
 
-def cleanup(elicitation_id: str) -> None:
+def cleanup(elicitation_id: str, *, future: asyncio.Future[Verdict] | None = None) -> None:
     """
     Remove an entry from the registry.
 
@@ -158,7 +174,12 @@ def cleanup(elicitation_id: str) -> None:
 
     :param elicitation_id: Correlation id to drop.
     """
+    if future is not None and _pending.get(elicitation_id) is not future:
+        return
     _pending.pop(elicitation_id, None)
+    registered = _receipt_requests.pop(elicitation_id, None)
+    if registered is not None:
+        receipt_registry.discard(registered[0], elicitation_id, registered[1])
     _retry_on_server_reconnect.discard(elicitation_id)
 
 
@@ -291,6 +312,7 @@ async def wait_for_user_verdict(
     fut = register(
         elicitation_id,
         retry_on_server_reconnect=retry_on_server_reconnect,
+        conversation_id=conversation_id,
     )
     # Mark the session as awaiting approval for the lifetime of this park
     # so ``has_pending`` reports it. Decremented in ``finally`` on every
@@ -303,7 +325,7 @@ async def wait_for_user_verdict(
     except TimeoutError:
         verdict = Verdict(approved=False)
     finally:
-        cleanup(elicitation_id)
+        cleanup(elicitation_id, future=fut)
         _remaining = _session_pending.get(conversation_id, 0) - 1
         if _remaining > 0:
             _session_pending[conversation_id] = _remaining
@@ -361,6 +383,9 @@ def reset_for_tests() -> None:
     """
     global _server_generation
     _pending.clear()
+    _receipt_requests.clear()
+    receipt_registry._pending.clear()
+    receipt_registry._accepted.clear()
     _retry_on_server_reconnect.clear()
     _session_pending.clear()
     for waiter in tuple(_server_reconnect_waiters):

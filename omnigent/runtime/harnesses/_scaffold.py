@@ -55,6 +55,14 @@ from pydantic import BaseModel, ConfigDict, Field
 from omnigent.errors import ErrorCode, HarnessTransportClosedError, OmnigentError
 from omnigent.native import _native_forwarder_health as native_forwarder_health
 from omnigent.policies.types import FAIL_CLOSED_PHASES
+from omnigent.runtime.approval_receipts import (
+    RUNNER_ID_HEADER,
+    RUNNER_INSTANCE_HEADER,
+    ApprovalDelivery,
+    ApprovalReceipts,
+    check_approval_binding,
+    parse_approval_body,
+)
 from omnigent.runtime.tool_output import cap_tool_output
 from omnigent.server.schemas import (
     CompletedEvent,
@@ -461,7 +469,9 @@ class TurnContext:
         event_queue: asyncio.Queue[HarnessStreamEvent | None],
         cancelled: asyncio.Event,
         session_id: str | None = None,
+        approval_receipts: ApprovalReceipts | None = None,
     ) -> None:
+        self._approval_receipts = approval_receipts or ApprovalReceipts(owner_kind="harness")
         self.session_id = session_id
         self.response_id = response_id
         self._event_queue = event_queue
@@ -641,6 +651,16 @@ class TurnContext:
         """
         future: asyncio.Future[ElicitationResult] = asyncio.get_running_loop().create_future()
         self._pending_elicitations[elicitation_id] = future
+        request_id = None
+        if self.session_id is not None:
+            request_id = self._approval_receipts.register(
+                self.session_id,
+                elicitation_id,
+                lambda: (
+                    self._pending_elicitations.get(elicitation_id) is future and not future.done()
+                ),
+                lambda result: self._complete_elicitation(elicitation_id, result),
+            )
         self._pending_human_waits += 1
         self.emit(
             ElicitationRequestEvent(
@@ -654,7 +674,10 @@ class TurnContext:
             result = await future
             return result
         finally:
-            self._pending_elicitations.pop(elicitation_id, None)
+            if self._pending_elicitations.get(elicitation_id) is future:
+                self._pending_elicitations.pop(elicitation_id, None)
+            if self.session_id is not None and request_id is not None:
+                self._approval_receipts.discard(self.session_id, elicitation_id, request_id)
             self._pending_human_waits -= 1
             self.emit(
                 ElicitationResolvedEvent(
@@ -892,6 +915,8 @@ class HarnessApp:
         # practice (AP enforces one in-flight turn per conversation
         # at its REST boundary), but stored as a dict so the route
         # handlers can look up by id without assuming uniqueness.
+        self._approval_receipts = ApprovalReceipts(owner_kind="harness")
+        self._approval_runner_binding: tuple[str, str] | None = None
         self._in_flight: dict[str, TurnContext] = {}
         # The currently active turn context, or ``None`` when idle.
         # Set under ``_lock`` when a turn starts, cleared
@@ -1148,7 +1173,115 @@ class HarnessApp:
             # heterogeneous return type.
             response_model=None,
         )
+        approval_base = "/sessions/{conversation_id}/approval-deliveries/{elicitation_id}"
+        router.add_api_route(
+            approval_base, self._approval_preflight, methods=["GET"], response_model=None
+        )
+        router.add_api_route(
+            approval_base + "/{attempt_id}",
+            self._approval_attempt,
+            methods=["GET", "POST", "DELETE"],
+            response_model=None,
+        )
         return router
+
+    def _approval_binding(self, request: Request, *, preflight: bool = False) -> tuple[str, str]:
+        runner_id = request.headers.get(RUNNER_ID_HEADER)
+        instance_id = request.headers.get(RUNNER_INSTANCE_HEADER)
+        if runner_id is None and instance_id is None:
+            binding = ("inprocess", self._approval_receipts.instance_id)
+        elif (
+            runner_id
+            and instance_id
+            and len(instance_id) == 64
+            and all(c in "0123456789abcdef" for c in instance_id)
+        ):
+            binding = (runner_id, instance_id)
+        else:
+            raise OmnigentError("Invalid runner binding.", code=ErrorCode.INVALID_INPUT)
+        if self._approval_runner_binding is None and preflight:
+            self._approval_runner_binding = binding
+        if self._approval_runner_binding != binding:
+            raise OmnigentError("Approval runner binding changed.", code=ErrorCode.CONFLICT)
+        return binding
+
+    async def _approval_preflight(
+        self, request: Request, conversation_id: str, elicitation_id: str
+    ) -> Response:
+        rejected = self._check_auth(request)
+        if rejected is not None:
+            return rejected
+        self._check_conversation_id(request, conversation_id)
+        runner_id, instance_id = self._approval_binding(request, preflight=True)
+        identity = self._approval_receipts.describe(
+            conversation_id,
+            elicitation_id,
+            runner_id=runner_id,
+            runner_instance_id=instance_id,
+        )
+        if identity is None:
+            raise OmnigentError(
+                "The exact approval request is not pending.", code=ErrorCode.NOT_FOUND
+            )
+        return JSONResponse(identity)
+
+    async def _approval_attempt(
+        self,
+        request: Request,
+        conversation_id: str,
+        elicitation_id: str,
+        attempt_id: str,
+        owner_kind: str | None = None,
+    ) -> Response:
+        rejected = self._check_auth(request)
+        if rejected is not None:
+            return rejected
+        self._check_conversation_id(request, conversation_id)
+        runner_id, instance_id = self._approval_binding(request)
+        if request.method == "GET":
+            if owner_kind != "harness":
+                raise OmnigentError("Exact receipt owner required.", code=ErrorCode.INVALID_INPUT)
+            receipt = self._approval_receipts.query(conversation_id, elicitation_id, attempt_id)
+            if receipt is None:
+                raise OmnigentError("Unknown approval receipt.", code=ErrorCode.NOT_FOUND)
+            return JSONResponse(receipt)
+        try:
+            payload = await request.json()
+        except ValueError:
+            raise OmnigentError(
+                "Invalid approval delivery body.", code=ErrorCode.INVALID_INPUT
+            ) from None
+        body = parse_approval_body(payload, release=request.method == "DELETE")
+        check_approval_binding(
+            body.identity,
+            conversation_id,
+            elicitation_id,
+            runner_id,
+            instance_id,
+            attempt_id=attempt_id,
+            owner_kind="harness",
+        )
+        identity = body.identity.model_dump()
+        if request.method == "DELETE":
+            return JSONResponse(
+                {
+                    "released": self._approval_receipts.acknowledge(
+                        conversation_id, elicitation_id, identity
+                    )
+                }
+            )
+        assert isinstance(body, ApprovalDelivery)
+        receipt = self._approval_receipts.deliver(
+            conversation_id,
+            elicitation_id,
+            identity,
+            body.result,
+            runner_id=runner_id,
+            runner_instance_id=instance_id,
+        )
+        if body.result.action == "decline" and not elicitation_id.startswith("elicit_pi_"):
+            await self._handle_interrupt_event()
+        return JSONResponse(receipt)
 
     def _check_conversation_id(self, request: Request, conversation_id: str) -> None:
         """
@@ -1425,6 +1558,7 @@ class HarnessApp:
                 event_queue=event_queue,
                 cancelled=cancelled,
                 session_id=session_id,
+                approval_receipts=self._approval_receipts,
             )
             self._in_flight[response_id] = ctx
             self._active_turn_ctx = ctx

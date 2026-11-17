@@ -1723,3 +1723,40 @@ class SqlScheduledTaskRun(OmnigentBase):
             "conversation_id",
         ),
     )
+
+
+class SqlApprovalDelivery(OmnigentBase):
+    """Durable redacted approval attempts, partitioned by workspace and conversation."""
+
+    __tablename__ = "omnigent_approval_deliveries"
+    workspace_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    conversation_id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    elicitation_id: Mapped[str] = mapped_column(String(256), primary_key=True)
+    state: Mapped[str] = mapped_column(String(16), nullable=False)
+    released: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
+    payload: Mapped[str] = mapped_column(Text, nullable=False)
+    __table_args__ = (
+        CheckConstraint("state IN ('held', 'accepted')", name="approval_delivery_state"),
+        Index(
+            "ix_approval_deliveries_recovery",
+            "state",
+            "released",
+            "workspace_id",
+            "conversation_id",
+        ),
+    )
+
+
+class SqlApprovalDeliveryTarget(OmnigentBase):
+    """Sessions whose pending-count floor includes an exact journal attempt."""
+
+    __tablename__ = "omnigent_approval_delivery_targets"
+    workspace_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    visible_conversation_id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    conversation_id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    elicitation_id: Mapped[str] = mapped_column(String(256), primary_key=True)
+    __table_args__ = (
+        Index("ix_approval_delivery_targets_owner", "workspace_id", "conversation_id"),
+    )

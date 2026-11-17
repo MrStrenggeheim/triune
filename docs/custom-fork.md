@@ -236,7 +236,7 @@ The parent owns the combined build, browser acceptance and release checks.
 - Scoped refetches retain cancellation, root-wide reconciliation and access revocation; component work counts do not prove production latency or heap savings.
 - Deferred Mermaid loading shifts cost to first use; engine-load failure retains the existing error/source UI, with recovery verified after asset restoration and reload only.
 - Ownerless transcript-model retirement remains an open decision; saved layouts, reader state, drafts, send state and editor/terminal ownership retain their existing protection.
-- `APPROVAL-RECEIPT-7` is excluded: exact-request consumption and durable acknowledgment across restart remain under review.
+- `APPROVAL-RECEIPT-7` was excluded from integration7; its later protocol is described below.
 - Branch-query/index changes delivered separately in stability8 below.
 
 ## Stability8 delivery
@@ -268,3 +268,12 @@ Sealed cold-browser samples download 1,953,366 fewer decoded JavaScript bytes wi
 The payload reduction establishes no latency improvement; desktop/phone highlighting, failure/reload, diagram entry points and Monaco initialization were checked separately.
 The unchanged baseline's TipTap mount failure remains a separate investigation.
 Evidence: `artifacts/overnight-20261116/initial-chunks/{handoff.md,counts.json}`.
+
+## Exact approval delivery follow-up
+
+`APPROVAL-RECEIPT-7` reserves a durable attempt before forwarding a runner/scaffold verdict and requires a receipt tied to the exact pending Future and process identities.
+Retries query that original receipt; acceptance commits its redacted question receipt and count changes before publishing resolution.
+Receipt-release progress survives restart and retries metadata cleanup without resending answers; local/native waiters retain their separate resolution paths.
+The additive `ad1b2c3d4e5f` migration follows `bq1a2b3c4d5e`; unknown delivery remains held rather than inferred from text, time or a generic HTTP success.
+Independent source review and 105 combined integration checks passed; synthetic ASGI/restart proofs do not establish live-provider or multi-process hard-kill behavior.
+Evidence: `artifacts/overnight-20261116/race-audit/implementation/APPROVAL-HANDOFF.md` and `approval-review/FOLLOWUP.md`.

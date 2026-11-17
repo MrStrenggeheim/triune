@@ -20,6 +20,7 @@ import json
 import logging
 import os
 import re
+import secrets
 import tempfile
 import time
 import uuid
@@ -40,6 +41,7 @@ if TYPE_CHECKING:
 import httpx
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
+from pydantic import ValidationError
 
 from omnigent.acp_cli_harnesses import ACP_CLI_HARNESSES
 from omnigent.debug_logging import (
@@ -200,6 +202,15 @@ from omnigent.runner.subagent_work import (
     unregister_child_session,
     unregister_subagent_work_for_session,
     wrapper_label_from_labels,
+)
+from omnigent.runtime.approval_receipts import (
+    RUNNER_ID_HEADER,
+    RUNNER_INSTANCE_HEADER,
+    ApprovalDelivery,
+    ApprovalReceipt,
+    PendingApprovalIdentity,
+    check_approval_binding,
+    parse_approval_body,
 )
 from omnigent.runtime.harnesses.process_manager import HarnessProcessManager, NoLiveHarnessError
 from omnigent.runtime.prompt import (
@@ -1173,6 +1184,7 @@ def create_runner_app(
     runner_workspace: Path | None = None,
     per_session_workspace: bool = True,
     mcp_manager: RunnerMcpManager | None = None,
+    runner_id: str = "inprocess",
     auth_token: str | None = None,
     auth_token_factory: Callable[[], str | None] | None = None,
 ) -> FastAPI:
@@ -1202,6 +1214,7 @@ def create_runner_app(
     :param mcp_manager: Optional :class:`RunnerMcpManager` owning
         this runner's MCP pool. ``None`` skips MCP injection
         (test path).
+    :param runner_id: Actual configured runner identity, or trusted inprocess binding.
     :param auth_token: Optional bearer token that callers must
         present in the ``Authorization`` header.  When set, every
         request except ``GET /health`` is rejected with 401 if
@@ -1214,6 +1227,11 @@ def create_runner_app(
     import hmac
 
     app = FastAPI(title="omnigent-runner")
+    if not runner_id:
+        raise ValueError("runner_id must be configured")
+    runner_instance_id = secrets.token_hex(32)
+    app.state.approval_runner_id = runner_id
+    app.state.approval_runner_instance_id = runner_instance_id
     server_base_url = getattr(server_client, "base_url", None)
     instruction_server_url = str(server_base_url) if server_base_url else None
 
@@ -6486,6 +6504,177 @@ def create_runner_app(
         if not isinstance(body, dict):
             return JSONResponse(status_code=400, content={"detail": "invalid_child_control"})
         return await native_child_controls.handle(parent_id, child_id, body)
+
+    async def _approval_harness_request(
+        method: str,
+        conversation_id: str,
+        elicitation_id: str,
+        *,
+        attempt_id: str | None = None,
+        payload: dict[str, Any] | None = None,
+    ) -> Response:
+        if process_manager is None:
+            raise OmnigentError("No live approval owner.", code=ErrorCode.NOT_FOUND)
+        try:
+            # "any" is a control lookup: it never spawns a missing harness.
+            client = await process_manager.get_client(conversation_id, "any")
+        except NoLiveHarnessError:
+            raise OmnigentError("No live approval owner.", code=ErrorCode.NOT_FOUND) from None
+        except RuntimeError:
+            return JSONResponse({"error": "approval_owner_unavailable"}, status_code=503)
+        path = f"/v1/sessions/{conversation_id}/approval-deliveries/{elicitation_id}"
+        if attempt_id is not None:
+            path += f"/{attempt_id}"
+        try:
+            response = await client.request(
+                method,
+                path,
+                json=payload,
+                params={"owner_kind": "harness"} if method == "GET" and attempt_id else None,
+                headers={RUNNER_ID_HEADER: runner_id, RUNNER_INSTANCE_HEADER: runner_instance_id},
+                timeout=30.0,
+            )
+        except httpx.HTTPError:
+            return JSONResponse({"error": "approval_owner_unavailable"}, status_code=502)
+        if not response.is_success:
+            return Response(
+                content=response.content,
+                status_code=response.status_code,
+                media_type="application/json",
+            )
+        try:
+            data = response.json()
+            if method == "DELETE":
+                if (
+                    not isinstance(data, dict)
+                    or set(data) != {"released"}
+                    or type(data["released"]) is not bool
+                ):
+                    raise ValueError("invalid release")
+                return JSONResponse(data)
+            if attempt_id is None:
+                identity = PendingApprovalIdentity.model_validate(data)
+            else:
+                identity = ApprovalReceipt.model_validate(data)
+            check_approval_binding(
+                identity,
+                conversation_id,
+                elicitation_id,
+                runner_id,
+                runner_instance_id,
+                attempt_id=attempt_id,
+                owner_kind="harness",
+            )
+            if method == "POST":
+                assert payload is not None
+                actual = identity.model_dump(exclude={"accepted", "action"})
+                if actual != payload["identity"] or data["action"] != payload["result"]["action"]:
+                    raise ValueError("receipt mismatch")
+            return JSONResponse(identity.model_dump())
+        except (ValueError, ValidationError, OmnigentError):
+            return JSONResponse({"error": "incompatible_approval_receipt"}, status_code=502)
+
+    async def _interrupt_declined_runner_approval(conversation_id: str) -> None:
+        if process_manager is None:
+            return
+        try:
+            client = await process_manager.get_client(conversation_id, "any")
+            await client.post(
+                f"/v1/sessions/{conversation_id}/events",
+                json={"type": "interrupt"},
+                timeout=5.0,
+            )
+        except (RuntimeError, httpx.HTTPError):
+            # Consumption is already recorded; interruption is best effort.
+            _logger.debug("Approval decline interrupt unavailable")
+
+    @app.get("/v1/sessions/{conversation_id}/approval-deliveries/{elicitation_id}")
+    async def approval_preflight(conversation_id: str, elicitation_id: str) -> Response:
+        identity = pending_approvals.receipt_registry.describe(
+            conversation_id,
+            elicitation_id,
+            runner_id=runner_id,
+            runner_instance_id=runner_instance_id,
+        )
+        if identity is not None:
+            return JSONResponse(identity)
+        return await _approval_harness_request("GET", conversation_id, elicitation_id)
+
+    @app.api_route(
+        "/v1/sessions/{conversation_id}/approval-deliveries/{elicitation_id}/{attempt_id}",
+        methods=["POST", "GET", "DELETE"],
+    )
+    async def approval_attempt(
+        request: Request,
+        conversation_id: str,
+        elicitation_id: str,
+        attempt_id: str,
+        owner_kind: str | None = None,
+    ) -> Response:
+        registry = pending_approvals.receipt_registry
+        if request.method == "GET":
+            if owner_kind == "harness":
+                return await _approval_harness_request(
+                    "GET",
+                    conversation_id,
+                    elicitation_id,
+                    attempt_id=attempt_id,
+                )
+            if owner_kind != "runner":
+                raise OmnigentError("Exact receipt owner required.", code=ErrorCode.INVALID_INPUT)
+            receipt = registry.query(conversation_id, elicitation_id, attempt_id)
+            if receipt is None:
+                raise OmnigentError("Unknown approval receipt.", code=ErrorCode.NOT_FOUND)
+            check_approval_binding(
+                ApprovalReceipt.model_validate(receipt),
+                conversation_id,
+                elicitation_id,
+                runner_id,
+                runner_instance_id,
+                attempt_id=attempt_id,
+                owner_kind="runner",
+            )
+            return JSONResponse(receipt)
+        try:
+            payload = await request.json()
+        except ValueError:
+            raise OmnigentError(
+                "Invalid approval delivery body.", code=ErrorCode.INVALID_INPUT
+            ) from None
+        body = parse_approval_body(payload, release=request.method == "DELETE")
+        check_approval_binding(
+            body.identity,
+            conversation_id,
+            elicitation_id,
+            runner_id,
+            runner_instance_id,
+            attempt_id=attempt_id,
+        )
+        if body.identity.owner_kind == "harness":
+            return await _approval_harness_request(
+                request.method,
+                conversation_id,
+                elicitation_id,
+                attempt_id=attempt_id,
+                payload=body.model_dump(exclude_none=True),
+            )
+        identity = body.identity.model_dump()
+        if request.method == "DELETE":
+            return JSONResponse(
+                {"released": registry.acknowledge(conversation_id, elicitation_id, identity)}
+            )
+        assert isinstance(body, ApprovalDelivery)
+        receipt = registry.deliver(
+            conversation_id,
+            elicitation_id,
+            identity,
+            body.result,
+            runner_id=runner_id,
+            runner_instance_id=runner_instance_id,
+        )
+        if body.result.action == "decline":
+            await _interrupt_declined_runner_approval(conversation_id)
+        return JSONResponse(receipt)
 
     @app.post("/v1/sessions/{conversation_id}/events")
     async def post_session_events(

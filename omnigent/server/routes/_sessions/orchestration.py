@@ -558,7 +558,7 @@ async def _publish_and_wait_for_harness_elicitation(
             elicitation_id=elicitation_id,
             params=params,
         )
-        event_payload = event.model_dump()
+        event_payload = {**event.model_dump(), "delivery_owner": "server"}
         session_stream.publish(session_id, event_payload)
         published_request = True
         if conversation_store is not None:
@@ -2385,6 +2385,39 @@ async def _resolve_native_delivery(
     return True
 
 
+async def _resolve_runner_elicitation(
+    session_id: str,
+    elicitation_id: str,
+    event: dict[str, Any],
+    data: dict[str, Any],
+    runner_router: RunnerRouter | None,
+    conversation_store: ConversationStore | None,
+) -> None:
+    """Reserve durably before delivery; subsequent attempts only query exact receipts."""
+    from omnigent.server.approval_deliveries import ApprovalDeliveries
+
+    params = event.get("params") or {}
+    if params.get("target_session_id") not in (None, session_id):
+        return
+    if conversation_store is None:
+        raise OmnigentError(
+            "Durable approval storage is unavailable; the decision remains pending.",
+            code=ErrorCode.RUNNER_UNAVAILABLE,
+        )
+    try:
+        result = ElicitationResult.model_validate(
+            {key: value for key, value in data.items() if key != "elicitation_id"}
+        )
+    except ValidationError:
+        raise OmnigentError("Invalid approval payload.", code=ErrorCode.INVALID_INPUT) from None
+    await ApprovalDeliveries(conversation_store, runner_router).resolve(
+        session_id,
+        elicitation_id,
+        event,
+        result,
+    )
+
+
 async def _resolve_elicitation(
     session_id: str,
     data: dict[str, Any],
@@ -2404,62 +2437,53 @@ async def _resolve_elicitation_unlocked(
     runner_router: RunnerRouter | None,
     conversation_store: ConversationStore | None = None,
 ) -> None:
+    """Resolve through the recorded delivery owner while preserving local wakeup semantics.
+
+    Locally parked requests retain their durable receipt-before-wakeup ordering
+    and fingerprinted re-park tombstones. Runner-owned requests keep their pending
+    card until forwarding is acknowledged; unknown forwards are never replayed.
+    Requests without pending state or a local owner are already settled or unknown.
     """
-    Resolve one outstanding elicitation from an approval payload.
-
-    Shared by the two entry points that deliver a verdict for a
-    parked elicitation: the ``type == "approval"`` branch of
-    ``POST /v1/sessions/{id}/events`` and the dedicated
-    ``POST /v1/sessions/{id}/elicitations/{eid}/resolve`` URL
-    endpoint (URL-based elicitation). Both converge here so
-    resolution semantics — server-side harness Future, sidebar
-    badge clear, and runner forward — stay identical regardless of
-    how the verdict arrived.
-
-    Three effects, in order:
-
-    1. **Server-side harness Future.** Claude-native permission
-       hooks (and any other server-parked elicitation) register a
-       Future in ``_harness_elicitation_registry``. If one exists
-       for this id, is unresolved, and is owned by *this* session
-       (cross-user guard), set its result. An
-       ownership mismatch silently skips resolution — the runner
-       forward below still fires so a runner-side elicitation with
-       the same id can reject it on its own terms.
-    2. **Sidebar badge clear.** Publish
-       ``response.elicitation_resolved`` so every subscribed client
-       (other tabs, the REPL TUI) flips its ``ApprovalCard`` and the
-       pending-elicitation badge decrements. Idempotent.
-    3. **Runner forward.** Runner-side elicitations (policy
-       approvals parked in the runner's ``_pending_approvals`` dict)
-       resolve when the approval event reaches the runner's
-       ``/events``. Forwarded as a canonical ``approval`` event.
-
-    :param session_id: Session/conversation identifier that owns
-        the elicitation, e.g. ``"conv_abc123"``.
-    :param data: Approval payload carrying the ``elicitation_id``
-        correlation key plus the MCP ``ElicitationResult`` fields
-        (``action``, optional ``content``), e.g.
-        ``{"elicitation_id": "elicit_abc", "action": "accept"}``.
-    :param runner_router: Router used to resolve the session's bound
-        runner for the forward, or ``None`` in in-process setups
-        (the forward is skipped when no runner is bound).
-    :param conversation_store: Optional store used to mirror the
-        resolved signal into ancestor streams when ``session_id`` is
-        a child session. ``None`` keeps the signal scoped locally.
-    """
-    # Empty-string default is intentional, NOT a fail-loud miss: the
-    # resolve-URL caller always supplies the id (it comes from the URL
-    # path), but the public ``approval`` event caller may post a
-    # malformed body. A missing id degrades gracefully below (no Future
-    # matches, no resolved event published) rather than 500-ing the
-    # client — the runner forward still fires so the runner can reject.
     elicitation_id = data.get("elicitation_id", "")
     if isinstance(elicitation_id, str) and await _resolve_native_delivery(
         session_id, elicitation_id, data, conversation_store
     ):
         return
     harness_future = _harness_elicitation_registry.get(elicitation_id)
+    pending_entry = pending_elicitations.lookup(elicitation_id, conversation_id=session_id)
+    owner = _harness_elicitation_owners.get(elicitation_id)
+    parked = _harness_parked_elicitations.get(elicitation_id)
+    if owner not in (None, session_id) or (parked is not None and parked.session_id != session_id):
+        return
+    locally_owned = (
+        owner == session_id
+        or (parked is not None and parked.session_id == session_id)
+        or (pending_entry is not None and pending_entry[1].get("delivery_owner") == "server")
+    )
+    if not locally_owned:
+        if pending_entry is None and conversation_store is not None:
+            from omnigent.server.approval_deliveries import held_event
+            from omnigent.server.approval_delivery_store import ApprovalDeliveryStore
+
+            saved_attempt = await asyncio.to_thread(
+                ApprovalDeliveryStore(conversation_store.storage_location).read,
+                session_id,
+                elicitation_id,
+            )
+            if saved_attempt is not None:
+                pending_entry = (session_id, held_event(saved_attempt))
+                if saved_attempt["state"] == "held":
+                    pending_elicitations.record_publish(session_id, pending_entry[1])
+        if pending_entry is not None:
+            await _resolve_runner_elicitation(
+                session_id,
+                elicitation_id,
+                pending_entry[1],
+                data,
+                runner_router,
+                conversation_store,
+            )
+        return
     # Persist the original batch before waking the native long-poll waiter.
     # Its pending params disappear when resolution fans out below.
     if conversation_store is not None and isinstance(elicitation_id, str) and elicitation_id:

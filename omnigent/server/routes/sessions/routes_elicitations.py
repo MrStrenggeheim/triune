@@ -183,6 +183,19 @@ def register_elicitations_routes(
             if conv is None:
                 raise _session_not_found()
 
+        from omnigent.errors import OmnigentError
+        from omnigent.server.approval_deliveries import ApprovalDeliveries, held_event
+
+        deliveries = ApprovalDeliveries(conversation_store, runner_router)
+        attempt = await asyncio.to_thread(deliveries.store.read, session_id, elicitation_id)
+        receipt_unconfirmed = False
+        if attempt is not None:
+            if attempt["state"] == "held":
+                pending_elicitations.record_publish(session_id, held_event(attempt))
+            try:
+                await deliveries.reconcile(session_id, elicitation_id, attempt)
+            except OmnigentError:
+                receipt_unconfirmed = True
         found = pending_elicitations.lookup(elicitation_id, conversation_id=session_id)
         if found is None:
             resolution = pending_elicitations.native_resolution_for(session_id, elicitation_id)
@@ -195,6 +208,7 @@ def register_elicitations_routes(
             return {"status": "resolved"}
         return {
             "status": "pending",
+            **({"delivery_state": "unconfirmed"} if receipt_unconfirmed else {}),
             "message": params.get("message", "Approval required"),
             "phase": params.get("phase", ""),
             "policy_name": params.get("policy_name", ""),

@@ -376,6 +376,18 @@ def publish(conversation_id: str, event: dict[str, Any]) -> int:
         use this to fail fast instead of awaiting a response that can never
         arrive; most callers ignore it.
     """
+    kind = event.get("type")
+    elicitation_id = event.get("elicitation_id")
+    if isinstance(elicitation_id, str):
+        held_attempt = pending_elicitations.held_runner_attempt(conversation_id, elicitation_id)
+        if held_attempt is not None:
+            if kind == "response.elicitation_resolved":
+                return 0  # Only the durable exact-receipt completion releases this hold.
+            if kind == "response.elicitation_request":
+                params = event.get("params")
+                delivery = params.get("runner_delivery") if isinstance(params, dict) else None
+                if not isinstance(delivery, dict) or delivery.get("attempt_id") != held_attempt:
+                    return 0
     # Mirror the emitted event to the debug-log sinks (best-effort, no content,
     # no-op unless a sink is enabled). Done first so it captures every event the
     # server produces — including ones with no live subscriber.

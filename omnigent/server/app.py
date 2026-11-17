@@ -1739,6 +1739,11 @@ def create_app(
 
         _to_thread.current_default_thread_limiter().total_tokens = 200
 
+        from omnigent.server.approval_deliveries import ApprovalDeliveries
+
+        approval_deliveries = ApprovalDeliveries(conversation_store, runner_router)
+        await approval_deliveries.restore_all()
+
         # Initialise usage telemetry (fire-and-forget; no-op when disabled).
         from omnigent.telemetry import init_client as _init_telemetry
 
@@ -1975,11 +1980,17 @@ def create_app(
                 app_inst.state.managed_sandbox_reaper = managed_sandbox_reaper
                 await managed_sandbox_reaper.start()
 
+        approval_release_task = asyncio.create_task(
+            approval_deliveries.release_loop(), name="approval-receipt-release"
+        )
         try:
             await startup_inputs.message_queue.recover_all(app_inst)
             with monitor_event_loop():
                 yield
         finally:
+            approval_release_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await approval_release_task
             if scheduler_start_retry is not None:
                 scheduler_start_retry.cancel()
                 with suppress(asyncio.CancelledError):

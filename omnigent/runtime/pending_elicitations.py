@@ -113,6 +113,18 @@ def _notify_count_hook(conversation_id: str, count: int) -> None:
         hook(conversation_id, count)
 
 
+def held_runner_attempt(conversation_id: str, elicitation_id: str) -> str | None:
+    """Return a journal-backed hold token; native/local waiters never acquire this hold."""
+    with _lock:
+        event = _pending.get(conversation_id, {}).get(elicitation_id)
+        params = event.get("params") if isinstance(event, dict) else None
+        delivery = params.get("runner_delivery") if isinstance(params, dict) else None
+        if isinstance(delivery, dict) and delivery.get("state") == "unconfirmed":
+            attempt_id = delivery.get("attempt_id")
+            return attempt_id if isinstance(attempt_id, str) else None
+    return None
+
+
 def record_publish(conversation_id: str, event: dict[str, Any]) -> None:
     """
     Update the index when an SSE event is published.

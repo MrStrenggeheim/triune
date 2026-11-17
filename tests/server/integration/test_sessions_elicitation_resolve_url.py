@@ -703,6 +703,8 @@ async def test_decline_verdict_rides_resolved_events_to_parent(
 async def test_child_mcp_elicitation_bubbles_to_parent_stream(
     client: httpx.AsyncClient,
     db_uri: str,
+    app,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """
     A child MCP ``elicitation/create`` prompt is actionable from parent chat.
@@ -777,13 +779,36 @@ async def test_child_mcp_elicitation_bubbles_to_parent_stream(
         # mirrored target_session_id). The MCP path resolves through the
         # generic approval event → _resolve_elicitation, which mirrors the
         # resolved signal back up to ancestors.
-        verdict = await client.post(
-            f"/v1/sessions/{child_id}/events",
-            json={
-                "type": "approval",
-                "data": {"elicitation_id": elicitation_id, "action": "accept"},
-            },
+        from omnigent.runner import create_runner_app, pending_approvals
+        from tests.runner.helpers import NullServerClient
+
+        runner_id = "synthetic-approval-runner"
+        store = SqlAlchemyConversationStore(db_uri)
+        store.replace_runner_id(child_id, runner_id)
+        future = pending_approvals.register(elicitation_id, conversation_id=child_id)
+        receiver = create_runner_app(
+            process_manager=None, server_client=NullServerClient(), runner_id=runner_id
         )
+        runner_router = app.state.runner_router
+        registry_get = runner_router._registry.get
+        monkeypatch.setattr(
+            runner_router._registry,
+            "get",
+            lambda rid: object() if rid == runner_id else registry_get(rid),
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=receiver), base_url="http://runner"
+        ) as runner_client:
+            runner_router._clients[runner_id] = runner_client
+            verdict = await client.post(
+                f"/v1/sessions/{child_id}/events",
+                json={
+                    "type": "approval",
+                    "data": {"elicitation_id": elicitation_id, "action": "accept"},
+                },
+            )
+            assert (await asyncio.wait_for(future, 5)).approved
+        pending_approvals.cleanup(elicitation_id)
         assert verdict.status_code == 202, verdict.text
 
         resolved_event = await parent_resolved

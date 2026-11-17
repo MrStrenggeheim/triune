@@ -4783,7 +4783,13 @@ class SqlAlchemyConversationStore(ConversationStore):
 
         return run_write_transaction(self._session_immediate, "settle_orphaned_live_status", write)
 
-    def set_pending_elicitation_count(self, conversation_id: str, count: int) -> None:
+    def set_pending_elicitation_count(
+        self,
+        conversation_id: str,
+        count: int,
+        *,
+        approval_attempts: list[tuple[str, str, str]] | None = None,
+    ) -> None:
         """
         Persist the outstanding elicitation count for one session.
 
@@ -4796,13 +4802,28 @@ class SqlAlchemyConversationStore(ConversationStore):
         from sqlalchemy import update
 
         def write(session: Session) -> None:
+            from omnigent.db.db_models import SqlApprovalDelivery
+            from omnigent.server.approval_delivery_store import held_approval_count
+
+            held = held_approval_count(session, conversation_id)
+            settled = 0
+            for target_id, eid, attempt_id in approval_attempts or []:
+                attempt = session.get(
+                    SqlApprovalDelivery, (current_workspace_id(), target_id, eid)
+                )
+                if (
+                    attempt is not None
+                    and attempt.state == "accepted"
+                    and json.loads(attempt.payload)["identity"]["attempt_id"] == attempt_id
+                ):
+                    settled += 1
             session.execute(
                 update(SqlConversationMetadata)
                 .where(
                     SqlConversationMetadata.workspace_id == current_workspace_id(),
                     SqlConversationMetadata.id == conversation_id,
                 )
-                .values(pending_elicitation_count=count)
+                .values(pending_elicitation_count=max(count - settled, held))
             )
 
         run_write_transaction(self._session_immediate, "set_pending_elicitation_count", write)
@@ -6329,6 +6350,20 @@ class SqlAlchemyConversationStore(ConversationStore):
             self._invalidate_items(deleted_id, reset=True)
 
         def delete_metadata(session: Session) -> None:
+            from omnigent.db.db_models import SqlApprovalDelivery, SqlApprovalDeliveryTarget
+
+            session.execute(
+                delete(SqlApprovalDeliveryTarget).where(
+                    SqlApprovalDeliveryTarget.workspace_id == current_workspace_id(),
+                    SqlApprovalDeliveryTarget.conversation_id.in_(subtree_ids),
+                )
+            )
+            session.execute(
+                delete(SqlApprovalDelivery).where(
+                    SqlApprovalDelivery.workspace_id == current_workspace_id(),
+                    SqlApprovalDelivery.conversation_id.in_(subtree_ids),
+                )
+            )
             session.execute(
                 delete(SqlComment).where(
                     SqlComment.workspace_id == current_workspace_id(),

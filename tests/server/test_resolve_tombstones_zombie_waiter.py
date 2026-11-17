@@ -121,6 +121,7 @@ async def test_gap_resolve_fingerprints_the_tombstone_from_the_pending_prompt():
         {
             "type": "response.elicitation_request",
             "elicitation_id": eid,
+            "delivery_owner": "server",
             "params": params.model_dump(),
         },
     )

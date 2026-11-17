@@ -13,6 +13,7 @@ import asyncio
 
 import pytest
 
+from omnigent.runtime import pending_elicitations
 from omnigent.server.routes import sessions as S
 
 
@@ -52,13 +53,23 @@ async def test_not_parked_resolve_keeps_verdict_tombstone():
     eid = "elicit_evaluate_22222222222222222222222222222222"
     S._harness_parked_elicitations.pop(eid, None)  # ensure NOT parked
     S._harness_pre_resolved_elicitations.pop(eid, None)
+    pending_elicitations.record_publish(
+        sid,
+        {
+            "type": "response.elicitation_request",
+            "elicitation_id": eid,
+            "delivery_owner": "server",
+            "params": {"message": "Synthetic pending question"},
+        },
+    )
     try:
-        await S._resolve_elicitation(sid, {"elicitation_id": eid, "action": "accept"}, None)
+        await S._resolve_elicitation(sid, {"elicitation_id": eid, "action": "decline"}, None)
         tomb = S._harness_pre_resolved_elicitations.get(eid)
         assert tomb is not None, "a not-parked resolve must leave a pre-resolved tombstone"
         assert tomb.result is not None, "the tombstone must carry the verdict (not clobbered)"
     finally:
         S._harness_pre_resolved_elicitations.pop(eid, None)
+        pending_elicitations.resolve(sid, eid)
 
 
 @pytest.mark.asyncio

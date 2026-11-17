@@ -279,13 +279,29 @@ def persist_pending_count(conversation_id: str, count: int) -> None:
         if _last_pending.get(conversation_id) == count:
             _last_pending.pop(conversation_id, None)
 
-    submit(
-        "pending_count",
-        _store.set_pending_elicitation_count,
-        conversation_id,
-        count,
-        on_failure=_evict,
-    )
+    from omnigent.runtime import pending_elicitations
+
+    attempts = []
+    for event in pending_elicitations.snapshot_for(conversation_id):
+        eid = event["elicitation_id"]
+        attempt_id = pending_elicitations.held_runner_attempt(conversation_id, eid)
+        if attempt_id is not None:
+            attempts.append(
+                (
+                    event.get("params", {}).get("target_session_id", conversation_id),
+                    eid,
+                    attempt_id,
+                )
+            )
+    store = _store
+
+    def write() -> None:
+        if attempts:
+            store.set_pending_elicitation_count(conversation_id, count, approval_attempts=attempts)
+        else:
+            store.set_pending_elicitation_count(conversation_id, count)
+
+    submit("pending_count", write, on_failure=_evict)
 
 
 def touch_runner_liveness(runner_ids: list[str]) -> None:

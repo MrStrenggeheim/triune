@@ -632,9 +632,10 @@ def test_create_app_reuses_a_resolved_no_credential_result(
     )
     monkeypatch.setattr("omnigent.runner.identity.get_stable_runner_id", lambda: "runner-test-id")
 
-    entry_mod.create_app(auth_token_factory=None, auth_resolved=auth_resolved)
+    app = entry_mod.create_app(auth_token_factory=None, auth_resolved=auth_resolved)
 
     assert len(resolutions) == expected_resolutions
+    assert app.state.approval_runner_id == "runner-test-id"
 
 
 @pytest.mark.asyncio

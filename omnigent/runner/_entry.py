@@ -1631,6 +1631,7 @@ def create_app(
         runner_workspace=runner_workspace,
         per_session_workspace=isolate_session,
         mcp_manager=mcp_manager,
+        runner_id=_runner_id,
         auth_token=runner_auth_token,
         auth_token_factory=auth_token_factory,
     )
