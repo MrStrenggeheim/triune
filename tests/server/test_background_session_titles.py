@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 import uuid
 
@@ -492,6 +493,7 @@ class _FakeRunnerResponse:
 class _FakeRunnerClient:
     def __init__(self) -> None:
         self.requests: list[tuple[str, dict[str, object]]] = []
+        self.post_contexts: list[tuple[int, int]] = []
 
     async def post(
         self,
@@ -501,6 +503,8 @@ class _FakeRunnerClient:
         timeout: float,
     ) -> _FakeRunnerResponse:
         assert timeout == 65.0
+        await asyncio.sleep(0)
+        self.post_contexts.append((threading.get_ident(), current_workspace_id()))
         self.requests.append((url, json))
         return _FakeRunnerResponse(
             {"status": "generated", "title": "Debug authentication timeout"}
@@ -516,30 +520,43 @@ class _FakeRunnerRouter:
     def __init__(self, client: _FakeRunnerClient) -> None:
         self.client = client
         self.session_ids: list[str] = []
+        self.lookup_contexts: list[tuple[int, int]] = []
 
     def client_for_existing_conversation(self, session_id: str) -> _FakeRoutedRunner:
+        self.lookup_contexts.append((threading.get_ident(), current_workspace_id()))
         self.session_ids.append(session_id)
         return _FakeRoutedRunner(self.client)
 
 
 async def test_runner_generator_posts_session_configuration() -> None:
+    loop_thread_id = threading.get_ident()
     client = _FakeRunnerClient()
     router = _FakeRunnerRouter(client)
     generator = RunnerBackgroundTitleGenerator(router)  # type: ignore[arg-type]
 
-    title = await generator(
-        BackgroundTitleRequest(
-            session_id="conv_test",
-            prompt="please investigate the authentication timeout",
-            agent_id="agent_test",
-            harness_override="claude-sdk",
-            model_override="claude-sonnet-4-6",
-            additional_instructions="Use the requested slug format.",
+    with workspace_scope(11):
+        task = asyncio.create_task(
+            generator(
+                BackgroundTitleRequest(
+                    session_id="conv_test",
+                    prompt="please investigate the authentication timeout",
+                    agent_id="agent_test",
+                    harness_override="claude-sdk",
+                    model_override="claude-sonnet-4-6",
+                    additional_instructions="Use the requested slug format.",
+                )
+            )
         )
-    )
+    with workspace_scope(22):
+        title = await task
+        assert current_workspace_id() == 22
 
     assert title == "Debug authentication timeout"
     assert router.session_ids == ["conv_test"]
+    [(lookup_thread_id, lookup_workspace_id)] = router.lookup_contexts
+    assert lookup_thread_id != loop_thread_id
+    assert lookup_workspace_id == 11
+    assert client.post_contexts == [(loop_thread_id, 11)]
     assert client.requests == [
         (
             "/v1/sessions/conv_test/background-title",
