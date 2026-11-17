@@ -78,7 +78,7 @@ def input_attributes(source: Mapping[str, object] | None) -> dict[str, str | int
     return attrs
 
 
-def _diagnostic_attributes(source: Mapping[str, object]) -> dict[str, object]:
+def diagnostic_attributes(source: Mapping[str, object]) -> dict[str, object]:
     """Allow named identifiers, short code values, and bounded integers; reject content."""
     attrs: dict[str, object] = dict(input_attributes(source))
     for keys, pattern in (
@@ -146,7 +146,7 @@ def log_input_event(
         if not correlation:
             return
         extra = debug_event(event_name, session_id=session_id)
-        extra["attributes"] = _diagnostic_attributes({**correlation, **fields})
+        extra["attributes"] = diagnostic_attributes({**correlation, **fields})
         logger.info("%s", event_name, extra=extra)
     except Exception as exc:  # noqa: BLE001 — diagnostics must not interrupt delivery.
         with contextlib.suppress(Exception):

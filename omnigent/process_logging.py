@@ -1,9 +1,12 @@
 """Shared process logging setup for Omnigent entrypoints."""
 
+# Modified for Triune.
+
 from __future__ import annotations
 
 import atexit
 import contextlib
+import json
 import logging
 import os
 import re
@@ -282,7 +285,18 @@ class RedactingLogFormatter(TerminalLogFormatter):
     """Format a complete record, then remove token-like strings from it."""
 
     def format(self, record: logging.LogRecord) -> str:
-        return redact_log_text(super().format(record))
+        text = super().format(record)
+        attributes = getattr(record, "attributes", None)
+        if isinstance(attributes, dict):
+            from omnigent.native.input_diagnostics import diagnostic_attributes
+
+            safe = diagnostic_attributes(attributes)
+            # Only input-correlated records receive the bounded, content-free suffix.
+            if any(
+                key in safe for key in ("input_stable_id", "pending_id", "delivery_attempt_id")
+            ):
+                text += " " + json.dumps(safe, sort_keys=True, separators=(",", ":"))
+        return redact_log_text(text)
 
 
 def data_dir() -> Path:

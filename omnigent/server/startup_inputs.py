@@ -228,6 +228,7 @@ class ManagedStartupInputs:
                 session_id,
                 "launch_failed",
                 f"The message could not be delivered: {reason[:1000]}",
+                sandbox_failure=True,
             )
 
     async def accepts(self, conv: Conversation, app: Any) -> bool:
@@ -379,6 +380,7 @@ class ManagedStartupInputs:
                     session_id,
                     f"launch_{attempt.runner_id}",
                     f"The agent could not start on the sandbox: {reason[:1000]}",
+                    sandbox_failure=True,
                 )
             return True
         if state is not None and not items:
@@ -571,7 +573,9 @@ class ManagedStartupInputs:
                     status=None,
                 )
 
-    async def _report_failure(self, session_id: str, failure_id: str, message: str) -> None:
+    async def _report_failure(
+        self, session_id: str, failure_id: str, message: str, *, sandbox_failure: bool = False
+    ) -> None:
         """Record a startup failure in the transcript and the session's status."""
         from omnigent.server.routes.sessions import _publish_sandbox_status, _publish_status
 
@@ -594,7 +598,8 @@ class ManagedStartupInputs:
                 )
             ],
         )
-        _publish_sandbox_status(session_id, "failed", message)
+        if sandbox_failure:
+            _publish_sandbox_status(session_id, "failed", message)
         _publish_status(session_id, "failed", failure_origin="startup_input_failed")
 
     async def shutdown(self) -> None:

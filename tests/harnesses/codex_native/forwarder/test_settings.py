@@ -367,6 +367,30 @@ def test_thread_settings_updated_records_effort_and_collaboration_mode() -> None
     assert state.collaboration_mode == "plan"
 
 
+@pytest.mark.parametrize(
+    ("sandbox", "approval", "expected"),
+    [
+        ("dangerFullAccess", "never", "full-access"),
+        ("readOnly", "on-request", "read-only"),
+        ("workspaceWrite", "on-request", "ask-for-approval"),
+    ],
+)
+def test_resume_permission_snapshot_uses_native_sandbox_field(sandbox, approval, expected) -> None:
+    state = fwd._CodexForwarderState()
+    state.note_resume_response(
+        {
+            "result": {
+                "approvalPolicy": approval,
+                "approvalsReviewer": "user",
+                "sandbox": {"type": sandbox},
+                "activePermissionProfile": None,
+            }
+        }
+    )
+    assert state.approval_preset == expected
+    assert state.posted_approval_preset is None
+
+
 def test_thread_settings_updated_records_approval_preset() -> None:
     """
     ``thread/settings/updated`` resolves the live ``/permissions`` preset.

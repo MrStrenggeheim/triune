@@ -14,7 +14,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 from urllib.parse import urlsplit
 
-UI_CONTRACT_VERSION = "2026-11-16.1"
+UI_CONTRACT_VERSION = "2026-11-17.1"
 ARTIFACT_KIT_VERSION = "1.0.0"
 
 # Output syntax is product guidance. Action names below are filtered against
@@ -107,6 +107,17 @@ _GROUPS: dict[str, dict[str, Any]] = {
             "sys_session_message",
             "sys_read_inbox",
             "sys_session_get_history",
+            "sys_session_get_info",
+            "sys_session_list",
+            "sys_session_close",
+            "sys_session_share",
+            "sys_session_rename",
+            "sys_agent_get",
+            "sys_agent_list",
+            "sys_agent_download",
+            "export_agent",
+            "sys_list_models",
+            "sys_advise_models",
             "Agent",
             "spawn_agent",
         ),
@@ -148,6 +159,7 @@ _GROUPS: dict[str, dict[str, Any]] = {
             "sys_terminal_launch",
             "sys_terminal_list",
             "sys_terminal_read",
+            "sys_terminal_send",
             "sys_terminal_close",
             "exec_command",
             "Bash",
@@ -250,6 +262,7 @@ _GROUPS: dict[str, dict[str, Any]] = {
             "update_comment",
             "sys_session_get_history",
             "sys_session_create",
+            "search_conversations",
         ),
         "transport": (
             "captured source annotations, user quote/fork actions and exposed "
@@ -275,7 +288,7 @@ _GROUPS: dict[str, dict[str, Any]] = {
     },
     "workspace": {
         "label": "Workspace, search and navigation",
-        "tools": ("ui_open_file", "sys_os_list", "sys_os_read"),
+        "tools": ("ui_open_file", "sys_os_list", "sys_os_read", "sys_os_write", "sys_os_edit"),
         "transport": "exposed UI/OS tools and user workspace/search controls",
         "input": "Workspace-relative authorized paths and scoped query/source identities.",
         "output": (
@@ -300,6 +313,7 @@ _GROUPS: dict[str, dict[str, Any]] = {
             "sys_call_async",
             "sys_read_inbox",
             "sys_cancel_async",
+            "sys_cancel_task",
             "sys_timer_set",
             "sys_timer_cancel",
             "sys_scheduled_task_create",
@@ -350,7 +364,84 @@ _GROUPS: dict[str, dict[str, Any]] = {
 }
 
 
+_DISCOVERY_GROUPS = {
+    "browser": (
+        "Web search, fetching and embedded-browser interaction",
+        (
+            "web_search",
+            "web_fetch",
+            "web_read",
+            "nimble_research",
+            "nimble_extract",
+            "browser_navigate",
+            "browser_snapshot",
+            "browser_click",
+            "browser_type",
+            "browser_screenshot",
+        ),
+        "Use an attached embedded browser for visible interaction; "
+        "search/fetch for research or bulk retrieval.",
+    ),
+    "skills": (
+        "Discover and read skill instructions",
+        ("load_skill", "read_skill_file"),
+        "Load the relevant skill and its resources through the advertised tool; "
+        "preserve user instructions.",
+    ),
+    "policies": (
+        "Inspect policy templates and add authorized policies",
+        ("sys_policy_registry", "sys_add_policy"),
+        "Inspect before changing policies; "
+        "authorization and server enforcement remain authoritative.",
+    ),
+    "discovery": (
+        "Discover runtime tools and UI capabilities",
+        ("sys_ui_capabilities",),
+        "Inspect the current catalog; discovery never grants access "
+        "or makes an unavailable tool callable.",
+    ),
+    "memory": (
+        "Retain, recall and reflect on authorized persistent memory",
+        ("hindsight_retain", "hindsight_recall", "hindsight_reflect"),
+        "Use only configured memory tools and authorized content; preserve source attribution.",
+    ),
+}
+for _key, (_label, _tools, _guidance) in _DISCOVERY_GROUPS.items():
+    _GROUPS[_key] = {
+        "label": _label,
+        "tools": _tools,
+        "transport": "Actually advertised registered tool schema",
+        "input": "Arguments declared by the current tool schema.",
+        "output": "The tool's actual structured result, including errors and scope.",
+        "ui": "Captured tool call and result, with supported specialized presentation.",
+        "lifecycle": _guidance,
+        "persistence": "Captured tool history; resource retention follows the owning tool.",
+        "limits": "Runtime registration, permissions and tool-specific scope still apply.",
+        "fallback": "Use an authorized available equivalent or report the missing capability.",
+    }
+
+TOOL_SELECTION_GUIDANCE = (
+    "Choose an advertised structured tool for its matching operation; prefer native patch/edit "
+    "tools for precise edits and retained diff metadata. Use shell for commands, pipelines, "
+    "builds/tests or operations without a suitable tool. Tool scope matters: Triune file tools "
+    "use their environment root plus explicit path grants; native commands use the harness "
+    "sandbox. A denial never authorizes bypass through another tool. Use exact advertised names "
+    "and schemas; catalog names describe capabilities, not permission or availability."
+)
+
+VISUAL_SELECTION_GUIDANCE = (
+    "Choose fast, polished visuals: tables for comparisons, math for formulas, Mermaid for "
+    "compact flows, SVG/PNG plots for precise/exportable figures, and small HTML/SVG/canvas "
+    "artifacts when interaction improves understanding. Reuse the artifact kit instead of "
+    "rediscovering styling. Simple recipe: labeled control → local calculation → SVG/canvas "
+    "view; comparison recipe: shared dimensions → table or aligned chart; diagram recipe: "
+    "named nodes → labeled connections. Use a static visual when interaction adds no value."
+)
+
+
 _PRODUCT_GUIDANCE = (
+    TOOL_SELECTION_GUIDANCE,
+    VISUAL_SELECTION_GUIDANCE,
     (
         "Use Markdown, $math$/$$math$$ and fenced mermaid; preserve real source "
         "citations and authoritative response phases."
@@ -439,6 +530,7 @@ def ui_capabilities(
             id=key,
             availability=availability,
             tools=tools,
+            catalog_tools=list(definition["tools"]),
             scope="Current authorized chat/workspace; server checks remain authoritative.",
         )
         groups[key] = entry
@@ -454,7 +546,15 @@ def ui_capabilities(
             "scope": "Explicitly supplied names only; native builtins may not be inventoried.",
             "complete": False,
             "names": list(names),
+            "other_advertised": [
+                name
+                for name in names
+                if _tool_name(name)
+                not in {tool for definition in _GROUPS.values() for tool in definition["tools"]}
+            ],
         },
+        "tool_selection": TOOL_SELECTION_GUIDANCE,
+        "visual_selection": VISUAL_SELECTION_GUIDANCE,
         "renderer": {
             "version": 1,
             "active_client_verified": False,
@@ -488,8 +588,15 @@ def native_ui_contract(
         "tools, permissions and runtime capability results)."
     ]
     for group in catalog["groups"].values():
-        tools_text = ", ".join(group["tools"]) or "no registered action tool"
+        tools_text = ", ".join(group["tools"]) or (
+            "catalog only: " + ", ".join(group["catalog_tools"])
+            if group["catalog_tools"]
+            else "output only"
+        )
         lines.append(f"- {group['id']}: {group['label']} [{group['availability']}; {tools_text}].")
+    other = catalog["tool_inventory"]["other_advertised"]
+    if other:
+        lines.append("- Other advertised tools (use their schemas): " + ", ".join(other) + ".")
     lines.extend(_PRODUCT_GUIDANCE)
     command = catalog["groups"]["files"].get("attach_command")
     if command:

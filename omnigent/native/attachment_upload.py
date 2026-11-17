@@ -3,11 +3,40 @@
 from __future__ import annotations
 
 import mimetypes
+import os
 from pathlib import Path
 
 import httpx
 
 MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024
+
+
+def native_attachment_response_id(session_id: str) -> str | None:
+    """Capture the current native owner only from this exact session's bridge."""
+    from omnigent.harnesses.codex_native.bridge import (
+        bridge_dir_for_codex_home,
+        read_bridge_state,
+    )
+
+    codex_home = os.environ.get("CODEX_HOME")
+    if not codex_home:
+        return None
+    state = read_bridge_state(bridge_dir_for_codex_home(Path(codex_home)))
+    if state is None or state.session_id != session_id or not state.active_turn_id:
+        return None
+    return f"codex_{state.active_turn_id}"
+
+
+def attachment_owner_headers(
+    response_id: str | None, source_call_id: str | None = None
+) -> dict[str, str]:
+    """Transport observed receipt ownership; missing ownership stays standalone."""
+    if not response_id:
+        return {}
+    headers = {"X-Triune-Response-Id": response_id}
+    if source_call_id:
+        headers["X-Triune-Source-Call-Id"] = source_call_id
+    return headers
 
 
 def read_attachment(path: Path) -> bytes:
@@ -31,6 +60,8 @@ async def upload_attachment(
     filename: str,
     content: bytes,
     source_id: str | None = None,
+    response_id: str | None = None,
+    source_call_id: str | None = None,
 ) -> dict:
     from urllib.parse import quote
 
@@ -45,7 +76,10 @@ async def upload_attachment(
                 mimetypes.guess_type(filename)[0] or "application/octet-stream",
             )
         },
-        headers={"Idempotency-Key": source_id} if source_id else {},
+        headers={
+            **({"Idempotency-Key": source_id} if source_id else {}),
+            **attachment_owner_headers(response_id, source_call_id),
+        },
     )
     response.raise_for_status()
     return response.json()

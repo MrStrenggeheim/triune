@@ -334,6 +334,8 @@ class MessageData(BaseModel):
     phase: Literal["commentary", "final_answer"] | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    process_receipt: bool = Field(default=False, exclude_if=lambda value: value is False)
+    source_call_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @field_validator("phase", mode="before")
     @classmethod

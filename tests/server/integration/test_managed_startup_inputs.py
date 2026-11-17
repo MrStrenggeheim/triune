@@ -10,7 +10,7 @@ import json
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
 import httpx
@@ -693,6 +693,8 @@ async def test_host_refusal_keeps_startup_input_without_repeated_launches(
     )
     monkeypatch.setattr("omnigent.server.routes.sessions._launch_runner_on_host", launch)
     startup = env.app.state.startup_inputs
+    sandbox_status = Mock()
+    monkeypatch.setattr("omnigent.server.routes.sessions._publish_sandbox_status", sandbox_status)
     await startup._deliver(env.app, session_id, saved)
     await startup._deliver(env.app, session_id, saved)
     assert launch.await_count == 1
@@ -701,6 +703,7 @@ async def test_host_refusal_keeps_startup_input_without_repeated_launches(
     [error] = env.conv_store.list_items(session_id).data
     assert error.data.code == "startup_input_failed"
     assert (detail or "The host refused to launch the session") in error.data.message
+    sandbox_status.assert_not_called()
 
 
 async def test_saved_sdk_skill_resolves_after_launch_and_replaces_pending_bubble(
@@ -928,13 +931,18 @@ async def test_input_saved_while_startup_finishes_is_still_delivered(
 
 async def test_failed_create_launch_is_visible_to_every_replica(
     startup_env: _Env,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     env = startup_env
     session_id = await _create(env)
     host_id = uuid4().hex
     env.conv_store.set_host_id(session_id, host_id, "/tmp/managed-workspace")
     startup = env.app.state.startup_inputs
+    sandbox_status = Mock()
+    monkeypatch.setattr("omnigent.server.routes.sessions._publish_sandbox_status", sandbox_status)
     await startup.record_launch_failure(session_id, "spend limit reached")
+    sandbox_status.assert_called_once()
+    assert sandbox_status.call_args.args[:2] == (session_id, "failed")
     conv = env.conv_store.get_conversation(session_id)
     assert conv is not None and conv.labels[STARTUP_LABEL] == "failed"
     # No sandbox is left to deliver the saved first input; say so in the transcript.

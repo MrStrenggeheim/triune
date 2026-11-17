@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 import logging
 import os
 import re
@@ -45,6 +46,33 @@ from omnigent.process_logging import (
     terminal_stream_handler,
     terminal_supports_color,
 )
+
+
+def test_process_log_retains_only_allowlisted_input_correlation() -> None:
+    record = logging.LogRecord(
+        "omnigent.native", logging.INFO, __file__, 1, "native.input.sent", (), None
+    )
+    record.attributes = {
+        "input_stable_id": "a" * 32,
+        "delivery_attempt_id": "b" * 32,
+        "stage": "rpc_accepted",
+        "pending_age_ms": 18,
+        "message_text": "private prompt",
+        "authorization": "Bearer private-token",
+        "thread_id": "invalid\ncontent",
+    }
+    formatter = RedactingLogFormatter(fmt="%(message)s", use_colors=False)
+    rendered = formatter.format(record)
+    assert rendered.startswith("native.input.sent ")
+    assert json.loads(rendered.removeprefix("native.input.sent ")) == {
+        "input_stable_id": "a" * 32,
+        "delivery_attempt_id": "b" * 32,
+        "stage": "rpc_accepted",
+        "pending_age_ms": 18,
+    }
+    assert record.attributes["message_text"] == "private prompt"
+    record.attributes = {"stage": "rpc_accepted", "message_text": "private prompt"}
+    assert formatter.format(record) == "native.input.sent"
 
 
 @pytest.fixture(autouse=True)

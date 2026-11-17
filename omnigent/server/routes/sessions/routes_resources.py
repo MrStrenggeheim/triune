@@ -2273,15 +2273,27 @@ def register_resources_routes(
         from omnigent.entities.conversation import MessageData, NewConversationItem
         from omnigent.server.routes._sessions.helpers import _publish_external_conversation_item
 
+        response_id = request.headers.get("X-Triune-Response-Id")
+        source_call_id = request.headers.get("X-Triune-Source-Call-Id")
+        for value in (response_id, source_call_id):
+            if value is not None and (
+                not value or len(value) > 256 or any(ord(c) < 32 for c in value)
+            ):
+                raise HTTPException(400, "Invalid attachment owner identity")
+        if source_call_id and not response_id:
+            raise HTTPException(400, "Attachment call ownership requires a response")
         resource = await _store_session_file(request, session_id, file, presentation=True)
         conv = await _validate_session(session_id, request, LEVEL_EDIT)
         message = NewConversationItem(
             type="message",
-            response_id="attachment-" + resource["id"],
+            response_id=response_id or "attachment-" + resource["id"],
             stable_id=resource["id"],
             data=MessageData(
                 role="assistant",
                 agent=conv.agent_id or "agent",
+                phase="commentary" if response_id else None,
+                process_receipt=response_id is not None,
+                source_call_id=source_call_id,
                 content=[
                     {
                         "type": "output_file",

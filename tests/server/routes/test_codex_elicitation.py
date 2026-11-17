@@ -7,6 +7,8 @@ These are pure-function tests — no HTTP or runtime needed.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from omnigent.errors import OmnigentError
@@ -124,9 +126,19 @@ def test_async_agent_message_questions_use_durable_item_identity(questions) -> N
     assert params["codex_method"] == "item/completed"
     assert params["item_id"] == "native-question"
     assert params["isBlocking"] is False
-    assert request.build_response(
+    response = request.build_response(
         ElicitationResult(action="accept", content={"question_0": "Blue"})
-    ) == {"input": [{"type": "text", "text": f"{questions[0]['title']}\nBlue"}]}
+    )
+    text = response["input"][0]["text"]
+    assert text.startswith("<send_user_message_question_reply>\n")
+    assert text.endswith("\n</send_user_message_question_reply>")
+    assert json.loads(text.split("\n")[1]) == [
+        {
+            "questionItemId": '["request_user_input_async","native-question",0]',
+            "question": questions[0]["title"],
+            "answer": "Blue",
+        }
+    ]
     assert request.build_response(ElicitationResult(action="cancel")) == {"input": []}
     for action in ["accept", "decline"]:
         assert request.build_response(ElicitationResult(action=action, content={})) == {

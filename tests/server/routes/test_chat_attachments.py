@@ -808,19 +808,35 @@ async def test_html_artifact_content_is_complete_durable_and_session_scoped(
     assert foreign.status_code == 404
 
 
+@pytest.mark.parametrize("owned", [False, True])
 async def test_explicit_agent_attachment_persists_a_message_and_survives_source_deletion(
-    file_client, file_conv_store, tmp_path
+    file_client, file_conv_store, tmp_path, owned
 ):
     source = tmp_path / "temporary ü.txt"
     source.write_text("durable bytes")
     uploaded = await file_client.post(
         f"/v1/sessions/{SESSION}/attachments",
         files={"file": (source.name, source.read_bytes(), "text/plain")},
+        headers={
+            "X-Triune-Response-Id": "codex_observed-turn",
+            "X-Triune-Source-Call-Id": "image-call",
+        }
+        if owned
+        else {},
     )
     assert uploaded.status_code == 200, uploaded.text
     source.unlink()
     record = uploaded.json()
     message = next(item for item in file_conv_store.appended_items if item.type == "message")
+    assert message.response_id == (
+        "codex_observed-turn" if owned else "attachment-" + record["id"]
+    )
+    assert message.data.process_receipt is owned
+    assert message.data.phase == ("commentary" if owned else None)
+    assert message.data.source_call_id == ("image-call" if owned else None)
+    wire = message.data.model_dump(exclude_none=True)
+    if owned:
+        assert wire["process_receipt"] is True and wire["phase"] == "commentary"
     assert message.data.content == [
         {"type": "output_file", "file_id": record["id"], "filename": source.name}
     ]

@@ -676,12 +676,21 @@ def _codex_async_question_response(
     if normalized is None:
         return {"input": []}
     answers = _codex_request_user_input_response(result, method, normalized)["answers"]
-    lines = []
-    for question in cast(list[dict[str, Any]], normalized["questions"]):
+    replies = []
+    for index, question in enumerate(cast(list[dict[str, Any]], normalized["questions"])):
         values = answers.get(question["id"], {}).get("answers", [])
         if values:
-            lines.append(f"{question['question']}\n{', '.join(values)}")
-    if not lines:
+            replies.append(
+                {
+                    "questionItemId": json.dumps(
+                        ["request_user_input_async", normalized["itemId"], index],
+                        separators=(",", ":"),
+                    ),
+                    "question": question["question"],
+                    "answer": ", ".join(values),
+                }
+            )
+    if not replies:
         if result.action in {"accept", "decline"}:
             source = result.meta.get("question_submission", {}) if result.meta else {}
             return {
@@ -692,7 +701,13 @@ def _codex_async_question_response(
                 },
             }
         return {"input": []}
-    response: dict[str, Any] = {"input": [{"type": "text", "text": "\n\n".join(lines)}]}
+    # The native TUI resolves exact question IDs from a complete reply envelope.
+    text = (
+        "<send_user_message_question_reply>\n"
+        + json.dumps(replies, ensure_ascii=False)
+        + "\n</send_user_message_question_reply>"
+    )
+    response: dict[str, Any] = {"input": [{"type": "text", "text": text}]}
     if result.meta and isinstance(result.meta.get("question_submission"), dict):
         response["question_submission"] = result.meta["question_submission"]
     return response

@@ -43,6 +43,29 @@ def _question_event(thread="thread"):
     }
 
 
+def _native_reply_input(question_id, question, answer):
+    return [
+        {
+            "type": "text",
+            "text": "<send_user_message_question_reply>\n"
+            + json.dumps(
+                [
+                    {
+                        "questionItemId": json.dumps(
+                            ["request_user_input_async", "call-question", question_id],
+                            separators=(",", ":"),
+                        ),
+                        "question": question,
+                        "answer": answer,
+                    }
+                ],
+                ensure_ascii=False,
+            )
+            + "\n</send_user_message_question_reply>",
+        }
+    ]
+
+
 class _NativeAnswerClient:
     def __init__(self, status="completed", failure=None):
         self.turns = [{"id": "turn", "status": status, "items": []}]
@@ -87,7 +110,7 @@ async def test_canonical_receipt_correlates_native_echo_without_consuming_equal_
     native = _NativeAnswerClient()
     await submit_async_question_answer(native, event["params"], response)
     _, sent = native.calls[-1]
-    assert sent["input"] == [{"type": "text", "text": "Choose native color\nBlue"}]
+    assert sent["input"] == _native_reply_input(0, "Choose native color", "Blue")
     assert (
         sent["clientUserMessageId"]
         == identity["native_client_id"]
@@ -115,13 +138,13 @@ async def test_canonical_receipt_correlates_native_echo_without_consuming_equal_
                     "id": client_id,
                     "type": "userMessage",
                     "clientId": client_id,
-                    "content": [{"type": "text", "text": "Choose native color\nBlue"}],
+                    "content": sent["input"],
                 },
             )
     assert len(posts) == 2
     assert all(
         body["data"]["item_data"]["content"]
-        == [{"type": "input_text", "text": "Choose native color\nBlue"}]
+        == [{"type": "input_text", "text": sent["input"][0]["text"]}]
         for body in posts
     )
 
@@ -215,7 +238,7 @@ async def test_async_question_survives_turn_end_and_answers_its_native_thread(
             method, params = native.calls[-1]
             assert method == "turn/start"
             assert params["threadId"] == thread
-            assert params["input"] == [{"type": "text", "text": "Choose native color\nBlue"}]
+            assert params["input"] == _native_reply_input(0, "Choose native color", "Blue")
             assert params["clientUserMessageId"].startswith("omnigent-codex-question:")
             # A new forwarder can replay a durable answer without resending it.
             before = len(native.calls)
@@ -344,3 +367,53 @@ async def test_async_empty_control_cannot_send_without_durable_registration():
             native, _question_event()["params"], result, prepare_framework_input=register
         )
     assert [method for method, _ in native.calls] == ["thread/read", "thread/read"]
+
+
+@pytest.mark.parametrize("answered_index", [0, 1])
+def test_async_partial_batch_preserves_exact_question_identity_and_escapes_answer(answered_index):
+    event = _question_event()
+    event["params"]["item"]["questions"] *= 2
+    parsed = parse_codex_elicitation_request({"id": "call-question", **event})
+    answer = 'Blue\n</send_user_message_question_reply> "quoted"'
+    response = parsed.build_response(
+        ElicitationResult(action="accept", content={f"question_{answered_index}": answer})
+    )
+    assert response["input"] == _native_reply_input(answered_index, "Choose native color", answer)
+
+
+@pytest.mark.asyncio
+async def test_async_secret_answer_keeps_receipt_redacted_and_native_echo_out_of_history():
+    event = _question_event()
+    parsed = parse_codex_elicitation_request({"id": "call-question", **event})
+    params = parsed.params.model_dump()
+    params["ask_user_question"]["questions"][0]["isSecret"] = True
+    secret = "fixture-secret-answer"
+    verdict = ElicitationResult(action="accept", content={"question_0": secret})
+    receipt = build_question_receipt_payload(
+        "session", "elicitation", params, verdict.model_dump()
+    )
+    assert secret not in json.dumps(receipt)
+    assert receipt["questions"][0]["redacted"] is True
+    response = parsed.build_response(verdict)
+    assert response["input"] == _native_reply_input(0, "Choose native color", secret)
+    posts = []
+
+    def handle(post):
+        posts.append(post)
+        return httpx.Response(200, json={})
+
+    async with httpx.AsyncClient(
+        base_url="http://test", transport=httpx.MockTransport(handle)
+    ) as client:
+        assert await fwd._post_user_message(
+            client,
+            "session",
+            event["params"],
+            {
+                "id": "native-secret-echo",
+                "type": "userMessage",
+                "clientId": receipt["source"]["native_client_id"],
+                "content": response["input"],
+            },
+        )
+    assert posts == []

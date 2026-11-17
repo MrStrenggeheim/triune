@@ -52,6 +52,20 @@ def test_unknown_delivery_stage_is_observable_without_overwriting_state(
     assert record.attributes["pending_id"] == pending_id
 
 
+def test_midturn_observation_survives_pending_snapshot_and_restore() -> None:
+    pending_id = pending_inputs.record("conv", [_text_block("followup")], sent_mid_turn=True)
+    [snapshot] = pending_inputs.snapshot_for("conv")
+    assert snapshot["sent_mid_turn"] is True
+    drained = pending_inputs.resolve("conv", pending_id)
+    assert drained is not None
+    pending_inputs.restore("conv", drained)
+    assert pending_inputs.snapshot_for("conv") == [snapshot]
+    pending_inputs.mark_interrupted("conv", [pending_id])
+    assert pending_inputs.snapshot_for("conv") == []
+    pending_inputs.record("conv", [_text_block("unknown arrival")])
+    assert "sent_mid_turn" not in pending_inputs.snapshot_for("conv")[0]
+
+
 @pytest.mark.parametrize("hold", [True, False])
 @pytest.mark.parametrize("interrupted", [True, False])
 def test_delivery_identity_and_original_enqueue_time_survive_retry_and_restore(

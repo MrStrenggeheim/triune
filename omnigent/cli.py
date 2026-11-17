@@ -14387,11 +14387,16 @@ def attach_file_command(path: Path, session_id: str, server: str | None) -> None
     import httpx
 
     from omnigent.chat import _remote_headers
-    from omnigent.native.attachment_upload import read_attachment
+    from omnigent.native.attachment_upload import (
+        attachment_owner_headers,
+        native_attachment_response_id,
+        read_attachment,
+    )
 
     configured = _load_effective_config().get("server")
     base_url = server or configured or "http://127.0.0.1:6767"
     try:
+        owner_headers = attachment_owner_headers(native_attachment_response_id(session_id))
         content = read_attachment(path)
         with httpx.Client(
             base_url=base_url,
@@ -14402,6 +14407,7 @@ def attach_file_command(path: Path, session_id: str, server: str | None) -> None
             response = client.post(
                 f"/v1/sessions/{quote(session_id, safe='')}/attachments",
                 files={"file": (path.name, content)},
+                headers=owner_headers,
             )
             response.raise_for_status()
             resource = response.json()

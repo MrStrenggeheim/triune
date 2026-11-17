@@ -31,6 +31,11 @@ def test_complete_catalog_is_gated_by_actual_advertised_tools() -> None:
         "workspace",
         "background",
         "notices",
+        "browser",
+        "skills",
+        "policies",
+        "discovery",
+        "memory",
     }
     assert catalog["groups"]["files"]["tools"] == ["mcp__omnigent__upload_file"]
     assert catalog["groups"]["background"]["tools"] == ["sys_read_inbox"]
@@ -99,4 +104,27 @@ def test_static_startup_contract_is_additive_and_repeatable() -> None:
     assert "triune-artifact" in first and 'data-triune-kit="1"' in first
     assert "no external CDN" in first
     assert "sys_read_inbox to collect" not in first
-    assert len(first) < 4096
+    assert len(first) < 8192
+
+
+def test_every_advertised_tool_is_named_without_fabricating_availability() -> None:
+    names = ["mcp__omnigent__sys_os_edit", "sys_policy_registry", "custom_analysis", "load_skill"]
+    catalog = ui_capabilities("codex-native", tool_names=names)
+    mapped = {tool for group in catalog["groups"].values() for tool in group["tools"]}
+    assert mapped | set(catalog["tool_inventory"]["other_advertised"]) == set(names)
+    assert catalog["groups"]["workspace"]["tools"] == ["mcp__omnigent__sys_os_edit"]
+    assert catalog["groups"]["browser"]["tools"] == []
+    assert catalog["groups"]["browser"]["availability"] == "conditional"
+    startup = native_ui_contract("codex-native", tools=names)
+    assert all(name in startup for name in names)
+    assert "catalog only: web_search" in startup
+    assert "A denial never authorizes bypass" in startup
+    assert "SVG/PNG plots" in startup
+
+
+def test_packaged_catalog_covers_registered_builtin_names() -> None:
+    from omnigent.tools.builtins import BUILTIN_NAMES
+
+    catalog = ui_capabilities()
+    known = {tool for group in catalog["groups"].values() for tool in group["catalog_tools"]}
+    assert known >= BUILTIN_NAMES

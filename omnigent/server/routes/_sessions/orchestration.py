@@ -8180,6 +8180,7 @@ async def _forward_native_child_event(
                 cast(list[dict[str, Any]], content),
                 created_by=created_by,
                 stable_id=stable_id,
+                sent_mid_turn=_session_status_cache.get(conv.id, conv.live_status) == "running",
             )
             if is_message
             else None
@@ -8536,6 +8537,7 @@ async def _dispatch_session_event_to_runner_impl(
                 created_by=created_by,
                 stable_id=web_stable_id,
                 background_titles_enabled=background_titles_enabled,
+                sent_mid_turn=_session_status_cache.get(session_id, conv.live_status) == "running",
             )
             if queues_message
             else None
