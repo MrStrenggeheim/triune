@@ -1071,3 +1071,21 @@ def test_peer_input_is_not_settled_by_literal_human_text(hold):
     assert matched.skipped == []
     assert pending_inputs.resolve_oldest("conv", exclude_stable_ids={peer_id}) is None
     assert pending_inputs.pending_id_for_stable_id("conv", peer_id) == peer
+
+
+def test_snapshot_preserves_canonical_input_identity_for_equal_text_sends() -> None:
+    first = pending_inputs.record("repeat", [_text_block("continue")], stable_id="a" * 32)
+    content = [
+        _text_block("continue"),
+        {"type": "input_image", "file_id": "upload", "filename": "a.png"},
+    ]
+    second = pending_inputs.record("repeat", content, stable_id="b" * 32, created_by="sender")
+    snapshot = pending_inputs.snapshot_for("repeat")
+    assert [(entry["pending_id"], entry["item_id"]) for entry in snapshot] == [
+        (first, "a" * 32),
+        (second, "b" * 32),
+    ]
+    assert snapshot[1]["content"] == content
+    assert snapshot[1]["created_by"] == "sender"
+    pending_inputs.record("legacy", [_text_block("continue")])
+    assert "item_id" not in pending_inputs.snapshot_for("legacy")[0]

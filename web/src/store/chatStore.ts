@@ -5631,7 +5631,8 @@ async function bindStream(
       // keeping both would double-render and strand one of them.
       const toPending = (p: PendingInput): PendingUserMessage => ({
         tempId: p.pendingId,
-        ...(p.position !== undefined && p.itemId ? { itemId: p.itemId, position: p.position } : {}),
+        ...(p.itemId ? { itemId: p.itemId } : {}),
+        ...(p.position !== undefined ? { position: p.position } : {}),
         content: p.content,
         ...(p.communication ? { communication: p.communication } : {}),
         ...(p.createdBy !== undefined ? { author: p.createdBy } : {}),
@@ -5650,7 +5651,12 @@ async function bindStream(
             (candidate) =>
               candidate.tempId === p.tempId ||
               candidate.tempId === p.pendingId ||
-              (!candidate.communication &&
+              (candidate.itemId !== undefined &&
+                [p.itemId, p.stableId].includes(candidate.itemId)) ||
+              (!candidate.itemId &&
+                !p.itemId &&
+                (!p.stableId || p.serverOwnedInitial) &&
+                !candidate.communication &&
                 !p.communication &&
                 pendingContentsMatch(p, candidate.content)),
           );
@@ -5662,45 +5668,6 @@ async function bindStream(
         // the send chain, so server-known entries precede in-flight ones.
         candidatePending = [...serverPending, ...unknownToServer];
       }
-      // Dedupe on a COLD LOAD only: drop any candidate whose message already
-      // committed — a snapshot-replayed ghost the server never drained, or a
-      // restored stash bubble whose message persisted while the user was
-      // away. Without this the bubble double-renders beside the committed
-      // item. Native has no id to correlate the POST with the mirrored item,
-      // so dedupe by text; the transcript prepends markers/blockquotes,
-      // leaving the POSTed text at the end, so match with endsWith.
-      // Image-only entries (no text) are kept.
-      //
-      // A cold bind has no live optimistic bubbles of its own — the entry was
-      // just created — so every candidate here comes from the server's
-      // `pending_inputs`, and deduping against all committed copies is correct.
-      // (The old baseline arithmetic existed only because `switchTo` used to
-      // destroy state and restore bubbles from a stash, which could collide
-      // with an older identical message in history.)
-      const dedupePending = hydratePending && candidatePending.length > 0;
-      const committedUserTexts = dedupePending ? committedUserTextsOf(allBlocks) : [];
-      const countEndsWith = (texts: string[], suffix: string): number =>
-        texts.reduce((n, c) => (c.endsWith(suffix) ? n + 1 : n), 0);
-      const snapshotPending: PendingUserMessage[] = dedupePending
-        ? candidatePending.filter((p) => {
-            if (p.communication) {
-              const origin = p.communication;
-              return !allBlocks.some(
-                (block) =>
-                  block.ctx.itemId === p.tempId ||
-                  (p.pendingId !== undefined && block.ctx.itemId === p.pendingId) ||
-                  (block.type === "user_message" &&
-                    block.communication?.message_id === origin.message_id &&
-                    block.communication.source_conversation_id === origin.source_conversation_id &&
-                    block.communication.destination_conversation_id ===
-                      origin.destination_conversation_id),
-              );
-            }
-            const text = messageContentText(p.content);
-            if (text === "") return true;
-            return countEndsWith(committedUserTexts, text) === 0;
-          })
-        : candidatePending;
       const syntheticError: ErrorBlock | null =
         session.status === "failed" && session.lastTaskError != null && !hasErrorBlock
           ? {
@@ -5716,7 +5683,7 @@ async function bindStream(
         ...effectiveBindingPatch,
         ...reconnectStatusPatch(session, state, launchBeforeFetch, stateBeforeFetch.todos),
         blocks: syntheticError !== null ? [...allBlocks, syntheticError] : allBlocks,
-        pendingUserMessages: reconcilePendingMessages(snapshotPending, snapshotBlocks, session),
+        pendingUserMessages: reconcilePendingMessages(candidatePending, allBlocks, session),
         ...(unsentDraft !== null && state.failedSendDraft === null
           ? { failedSendDraft: unsentDraft }
           : {}),
@@ -6494,31 +6461,88 @@ function reconcilePendingMessages(
   committed: AnyBlock[],
   session: Session,
 ): PendingUserMessage[] {
+  // Merge the local and server copies before consuming receipts, so one
+  // committed item cannot settle two distinct pending inputs.
+  const candidates = [...pending];
+  const unmatched = [...pending];
+  for (const input of session.pendingInputs ?? []) {
+    const exact = unmatched.findIndex(
+      (message) =>
+        message.pendingId === input.pendingId ||
+        message.tempId === input.pendingId ||
+        message.stableId === input.pendingId ||
+        (input.itemId !== undefined && [message.itemId, message.stableId].includes(input.itemId)),
+    );
+    const matching =
+      exact !== -1
+        ? exact
+        : unmatched.findIndex(
+            (message) =>
+              !message.itemId &&
+              (!message.stableId || message.serverOwnedInitial) &&
+              !input.itemId &&
+              !message.communication &&
+              !input.communication &&
+              pendingContentsMatch(message, input.content),
+          );
+    if (matching !== -1) {
+      const [message] = unmatched.splice(matching, 1);
+      const at = candidates.indexOf(message!);
+      candidates[at] = {
+        ...message!,
+        pendingId: input.pendingId,
+        ...(input.itemId ? { itemId: input.itemId } : {}),
+        ...(input.position !== undefined ? { position: input.position } : {}),
+        content: input.content,
+        ...(input.communication ? { communication: input.communication } : {}),
+        ...(input.createdBy !== undefined ? { author: input.createdBy } : {}),
+      };
+    } else {
+      candidates.push({
+        tempId: input.pendingId,
+        pendingId: input.pendingId,
+        ...(input.itemId ? { itemId: input.itemId } : {}),
+        ...(input.position !== undefined ? { position: input.position } : {}),
+        posted: true,
+        content: input.content,
+        ...(input.communication ? { communication: input.communication } : {}),
+        ...(input.createdBy !== undefined ? { author: input.createdBy } : {}),
+      });
+    }
+  }
   const receipts = committed.filter(
     (block): block is UserMessageBlock => block.type === "user_message",
   );
   const pendingItemIds = new Set(
-    pending
-      .flatMap((message) => [message.stableId, message.pendingId, message.tempId])
+    candidates
+      .flatMap((message) => [message.itemId, message.stableId, message.pendingId, message.tempId])
       .filter((id): id is string => id !== undefined),
   );
-  const remaining = pending.filter((message) => {
+  return candidates.filter((message) => {
     if (message.initialDraft) return true;
     const match = receipts.findIndex((receipt) => {
+      const receiptIds = [receipt.ctx.itemId, ...(receipt.ctx.aliases ?? [])];
       if (
-        receipt.ctx.itemId === message.stableId ||
-        receipt.ctx.itemId === message.pendingId ||
-        receipt.ctx.itemId === message.tempId
+        receiptIds.some(
+          (id) =>
+            id &&
+            [message.itemId, message.stableId, message.pendingId, message.tempId].includes(id),
+        )
       )
         return true;
-      // Equal text must not steal a receipt naming another pending input.
-      if (receipt.ctx.itemId && pendingItemIds.has(receipt.ctx.itemId)) return false;
+      // Equal text or peer metadata must not steal another input's receipt.
+      if (receiptIds.some((id) => id && pendingItemIds.has(id))) return false;
       if (message.communication || receipt.communication) {
         return (
           message.communication !== undefined &&
-          receipt.communication?.message_id === message.communication.message_id
+          receipt.communication?.message_id === message.communication.message_id &&
+          receipt.communication.source_conversation_id ===
+            message.communication.source_conversation_id &&
+          receipt.communication.destination_conversation_id ===
+            message.communication.destination_conversation_id
         );
       }
+      if (message.itemId || message.stableId || receipt.inputStableId) return false;
       if (messageInputKind(receipt.communication, receipt.userAuthored, receipt.isMeta) !== "human")
         return false;
       if (message.author && receipt.ctx.createdBy && message.author !== receipt.ctx.createdBy)
@@ -6532,70 +6556,6 @@ function reconcilePendingMessages(
     receipts.splice(match, 1);
     return false;
   });
-  const unmatched = [...remaining];
-  const serverReceipts = committed.filter(
-    (block): block is UserMessageBlock => block.type === "user_message",
-  );
-  const replayed: PendingUserMessage[] = [];
-  for (const input of session.pendingInputs ?? []) {
-    const exact = unmatched.findIndex(
-      (message) =>
-        message.pendingId === input.pendingId ||
-        message.tempId === input.pendingId ||
-        message.stableId === input.pendingId,
-    );
-    const matching =
-      exact !== -1
-        ? exact
-        : unmatched.findIndex(
-            (message) =>
-              !message.communication &&
-              !input.communication &&
-              pendingContentsMatch(message, input.content),
-          );
-    if (matching !== -1) {
-      const [message] = unmatched.splice(matching, 1);
-      const at = remaining.indexOf(message!);
-      remaining[at] = {
-        ...message!,
-        pendingId: input.pendingId,
-        ...(input.position !== undefined && input.itemId
-          ? { itemId: input.itemId, position: input.position }
-          : {}),
-        content: input.content,
-        ...(input.communication ? { communication: input.communication } : {}),
-      };
-      continue;
-    }
-    if (committed.some((block) => block.ctx.itemId === input.pendingId)) continue;
-    const committedInput = serverReceipts.findIndex((block) => {
-      if (input.communication || block.communication) {
-        return input.communication?.message_id === block.communication?.message_id;
-      }
-      if (messageInputKind(block.communication, block.userAuthored, block.isMeta) !== "human")
-        return false;
-      const text = withoutAttachedMarkers(messageContentText(input.content));
-      return (
-        text !== "" && withoutAttachedMarkers(messageContentText(block.content)).endsWith(text)
-      );
-    });
-    if (committedInput !== -1) {
-      serverReceipts.splice(committedInput, 1);
-      continue;
-    }
-    replayed.push({
-      tempId: input.pendingId,
-      pendingId: input.pendingId,
-      ...(input.position !== undefined && input.itemId
-        ? { itemId: input.itemId, position: input.position }
-        : {}),
-      posted: true,
-      content: input.content,
-      ...(input.communication ? { communication: input.communication } : {}),
-      ...(input.createdBy ? { author: input.createdBy } : {}),
-    });
-  }
-  return [...remaining, ...replayed];
 }
 
 const completionRecoveries = new WeakMap<AbortController, { responseId: string }>();

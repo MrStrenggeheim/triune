@@ -95,6 +95,7 @@ Saved items reconcile by exact ID and committed conversation position; pending p
 Missing positioned activity updates insert once in canonical order; loaded cards enrich in place, while unpositioned legacy updates retain bounded recovery and truthful failure notices.
 Reconnect resumes from position, revision and stream-epoch cursors: trusted same-epoch recovery point-reads tracked old-card changes and replays the appended tail.
 Failed multiplex subscriptions retain increasing retry delays until validated synchronization completes; opening a local response alone does not reset backoff.
+Pending snapshots retain accepted input identities independently of position; reconnect merges their local copies and consumes each exact receipt once, preserving repeated intentional inputs.
 The bounded mutation journal coalesces changed identities; expired/untracked mutations and untrusted cursors still require an authoritative reset.
 Reset replaces committed membership while preserving drafts, uploads and unmatched previews; unchanged heartbeats cause no history reads or replay.
 Revision tracking is process-local and workspace-scoped; writes bypassing its mutation hooks require explicit invalidation or reset.

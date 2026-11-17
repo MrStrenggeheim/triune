@@ -956,7 +956,8 @@ def snapshot_for(conversation_id: str) -> list[dict[str, Any]]:
     :param conversation_id: Conversation/session id to query, e.g.
         ``"conv_abc123"``.
     :returns: Insertion-ordered list of dicts, each with ``"pending_id"``
-        and ``"content"`` keys, plus an optional ``"created_by"`` key
+        and ``"content"`` keys, plus optional ``"item_id"`` (canonical
+        input identity) and ``"created_by"`` keys
         when the sender identity was recorded at
         :func:`record` time, e.g. ``[{"pending_id": "pending_a1b2c3",
         "content": [{"type": "input_text", "text": "hi"}],
@@ -973,6 +974,7 @@ def snapshot_for(conversation_id: str) -> list[dict[str, Any]]:
         return [
             {
                 "pending_id": entry.pending_id,
+                **({"item_id": entry.stable_id} if entry.stable_id is not None else {}),
                 "content": copy.deepcopy(entry.content),
                 **({"created_by": entry.created_by} if entry.created_by is not None else {}),
             }

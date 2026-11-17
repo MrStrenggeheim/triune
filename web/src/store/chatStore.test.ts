@@ -13441,6 +13441,59 @@ describe("chatStore — startStreamPump reconnect loop", () => {
     vi.useRealTimers();
   });
 
+  it.each(["continue", "Please continue"])(
+    "keeps distinct identified input during reconnect after %s",
+    async (older) => {
+      vi.useFakeTimers();
+      const id = "reconnect-repeat";
+      const before = userMessage("before", "before the gap");
+      const saved = userMessage("older", older);
+      seedSession(id, [before]);
+      const sinks = routeStreamOpens();
+      const controller = new AbortController();
+      const pending = {
+        tempId: "new-temp",
+        stableId: "new-stable",
+        posted: true,
+        content: [{ type: "input_text" as const, text: "continue" }],
+      };
+      const next = { ...pending, tempId: "next-temp", stableId: "next-stable" };
+      const bound = bindConversationForTest(id, {
+        abortController: controller,
+        blocks: itemsToBlocks([before]),
+        pendingUserMessages: [pending, next],
+        isNativeTerminalSession: true,
+      });
+      const loop = startStreamPump(id, controller, bound.set, bound.get);
+      try {
+        await drainAsync();
+        seedSessionItems(id, [before, saved]);
+        sinks.at(-1)!.error();
+        await drainAsync();
+        expect(bound.get().pendingUserMessages).toEqual([pending, next]);
+
+        const exact = {
+          ...userMessage("receipt", "native reformatted input"),
+          input_stable_id: pending.stableId,
+        };
+        seedSessionItems(id, [before, saved, exact]);
+        sinks.at(-1)!.error();
+        await drainAsync();
+        expect(bound.get().pendingUserMessages).toEqual([next]);
+        sinks.at(-1)!.error();
+        await drainAsync();
+        expect(bound.get().pendingUserMessages).toEqual([next]);
+      } finally {
+        controller.abort();
+        sinks.at(-1)!.push("data: [DONE]\n\n");
+        sinks.at(-1)!.close();
+        await drainAsync(2);
+        await loop;
+        vi.useRealTimers();
+      }
+    },
+  );
+
   function reply4Ids(blocks: AnyBlock[]): string[] {
     return blocks
       .filter((b) => b.type === "text_done" || b.type === "user_message")
@@ -24113,4 +24166,128 @@ it("retains the confirmed native input alias beside older aliases through repeat
     stableKey: pending.tempId,
     ctx: { itemId: item.id, aliases: [pending.stableId, "older-pending-id"] },
   });
+});
+
+describe("snapshot pending input identity", () => {
+  it.each([false, true])(
+    "keeps a distinct equal-text server pending input on cold load (position=%s)",
+    async (positioned) => {
+      const id = "snapshot-repeat";
+      seedSession(id, [userMessage("older", "continue")]);
+      sessionPendingInputs.set(id, [
+        {
+          pending_id: "new-pending",
+          item_id: "new-stable",
+          ...(positioned ? { position: 20 } : {}),
+          content: [{ type: "input_text", text: "continue" }],
+        },
+      ]);
+      await useChatStore.getState().switchTo(id);
+      expect(useChatStore.getState().pendingUserMessages).toMatchObject([
+        { tempId: "new-pending", itemId: "new-stable" },
+      ]);
+    },
+  );
+
+  it.each(["item", "alias"])(
+    "deduplicates a server pending input by exact %s identity on cold load",
+    async (identity) => {
+      const id = "snapshot-exact";
+      seedSession(id, [
+        {
+          ...userMessage("echo", "native reformatted input"),
+          id: identity === "item" ? "new-stable" : "native-item",
+          ...(identity === "alias" ? { input_stable_id: "new-stable" } : {}),
+        } as MessageItem,
+      ]);
+      sessionPendingInputs.set(id, [
+        {
+          pending_id: "new-pending",
+          item_id: "new-stable",
+          content: [{ type: "input_text", text: "continue" }],
+        },
+      ]);
+      await useChatStore.getState().switchTo(id);
+      expect(useChatStore.getState().pendingUserMessages).toEqual([]);
+    },
+  );
+
+  it("reserves an exact receipt for its input before matching legacy equal text", async () => {
+    const id = "snapshot-exact-once";
+    seedSession(id, [{ ...userMessage("echo", "continue"), id: "consumed-stable" }]);
+    sessionPendingInputs.set(id, [
+      { pending_id: "legacy", content: [{ type: "input_text", text: "continue" }] },
+      {
+        pending_id: "consumed",
+        item_id: "consumed-stable",
+        content: [{ type: "input_text", text: "continue" }],
+      },
+      {
+        pending_id: "next",
+        item_id: "next-stable",
+        content: [{ type: "input_text", text: "continue" }],
+      },
+    ]);
+    await useChatStore.getState().switchTo(id);
+    expect(useChatStore.getState().pendingUserMessages.map((p) => p.tempId)).toEqual([
+      "legacy",
+      "next",
+    ]);
+  });
+
+  it("consumes a legacy receipt once across snapshot replay", async () => {
+    const id = "snapshot-legacy-once";
+    seedSession(id, [userMessage("echo", "continue")]);
+    seedPendingInputs(id, [
+      { pending_id: "first", content: [{ type: "input_text", text: "continue" }] },
+      { pending_id: "second", content: [{ type: "input_text", text: "continue" }] },
+    ]);
+    await useChatStore.getState().switchTo(id);
+    expect(useChatStore.getState().pendingUserMessages.map((p) => p.tempId)).toEqual(["second"]);
+  });
+
+  it.each(["message_id", "source_conversation_id", "destination_conversation_id"] as const)(
+    "preserves peer uploads and origin when the receipt has a different %s",
+    async (field) => {
+      const id = "snapshot-peer-origin";
+      const communication: MessageCommunication = {
+        kind: "peer",
+        message_id: "peer-input",
+        source_conversation_id: "reviewer",
+        destination_conversation_id: id,
+        delivery_state: "unknown",
+        receipt: "accepted",
+      };
+      const content = [
+        { type: "input_text" as const, text: "continue" },
+        { type: "input_file" as const, file_id: "peer-upload", filename: "review.txt" },
+      ];
+      seedSession(id, [
+        {
+          ...userMessage("peer", "continue"),
+          communication: { ...communication, [field]: "other" },
+        },
+      ]);
+      sessionPendingInputs.set(id, [
+        {
+          pending_id: "pending-peer",
+          item_id: "peer-input",
+          content,
+          communication,
+          created_by: "owner",
+        },
+      ]);
+      await useChatStore.getState().switchTo(id);
+      expect(useChatStore.getState().pendingUserMessages).toEqual([
+        {
+          tempId: "pending-peer",
+          pendingId: "pending-peer",
+          itemId: "peer-input",
+          content,
+          communication,
+          author: "owner",
+        },
+      ]);
+    },
+  );
 });
