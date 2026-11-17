@@ -1,3 +1,4 @@
+# Modified for Triune; inherited notices remain applicable.
 """
 Unit tests for :mod:`omnigent.runtime.session_stream`.
 
@@ -1324,3 +1325,211 @@ async def test_internal_observer_receives_events_without_claiming_a_browser_list
     finally:
         await internal.aclose()
         await external.aclose()
+
+
+@pytest.mark.asyncio
+async def test_replay_heartbeat_and_overflow_never_complete(monkeypatch):
+    monkeypatch.setattr(session_stream, "_SUBSCRIBER_QUEUE_MAX_EVENTS", 1)
+    gate = asyncio.Event()
+
+    async def replay():
+        yield {"type": "session.sync", "phase": "start"}
+        await gate.wait()
+        yield {"type": "session.sync", "phase": "complete"}
+
+    stream = session_stream.subscribe("slow-replay", replay=replay, heartbeat_interval_s=0.01)
+    async with contextlib.aclosing(stream):
+        assert (await anext(stream))["phase"] == "start"
+        assert (await anext(stream))["type"] == "session.heartbeat"
+        session_stream.publish("slow-replay", {"type": "one"})
+        session_stream.publish("slow-replay", {"type": "two"})
+        gate.set()
+        with pytest.raises(session_stream.SubscriberOverflowError):
+            await anext(stream)
+    assert not session_stream.has_subscribers("slow-replay")
+
+
+@pytest.mark.asyncio
+async def test_late_snapshot_cannot_replace_live_resource_state():
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def snapshot():
+        started.set()
+        await release.wait()
+        return [
+            {"type": "session.resource.created", "resource": {"id": "terminal", "status": "old"}},
+            {"type": "session.resource.created", "resource": {"id": "other", "status": "initial"}},
+        ]
+
+    stream = session_stream.subscribe(
+        "snapshot-race", on_subscribed=snapshot, heartbeat_interval_s=0.01
+    )
+    async with contextlib.aclosing(stream):
+        pending = asyncio.create_task(anext(stream))
+        await started.wait()
+        live = {
+            "type": "session.resource.deleted",
+            "resource_id": "terminal",
+            "resource_type": "terminal",
+            "session_id": "snapshot-race",
+        }
+        session_stream.publish("snapshot-race", live)
+        assert await pending == live
+        release.set()
+        events = []
+        while not any(event["type"] == "session.heartbeat" for event in events):
+            events.append(await anext(stream))
+        assert [event["resource"]["id"] for event in events if "resource" in event] == ["other"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bound", ["bytes", "age"])
+async def test_live_backlog_byte_and_age_bounds(monkeypatch, bound):
+    from omnigent.runtime import stream_queue
+
+    clock = [100.0]
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(stream_queue, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    monkeypatch.setattr(session_stream, "_SUBSCRIBER_QUEUE_MAX_BYTES", 32)
+    stream = session_stream.subscribe("bounded", ready_event={"type": "ready"})
+    async with contextlib.aclosing(stream):
+        await anext(stream)
+        session_stream.publish("bounded", {"type": "large" if bound == "age" else "x" * 40})
+        await asyncio.sleep(0)
+        if bound == "age":
+            clock[0] += session_stream._SUBSCRIBER_QUEUE_MAX_AGE_S + 1
+        with pytest.raises(session_stream.SubscriberOverflowError):
+            await anext(stream)
+
+
+@pytest.mark.parametrize("phase", ["live", "replay", "snapshot"])
+async def test_anyio_level_cancellation_unregisters_and_joins(phase):
+    import anyio
+
+    started = anyio.Event()
+    closed = []
+
+    async def snapshot():
+        try:
+            started.set()
+            await anyio.sleep_forever()
+        finally:
+            closed.append("snapshot")
+
+    async def replay():
+        try:
+            started.set()
+            await anyio.sleep_forever()
+            yield {}
+        finally:
+            closed.append("replay")
+
+    async def consume():
+        stream = session_stream.subscribe(
+            "level-cancel",
+            internal=True,
+            ready_event={"type": "ready"},
+            replay=replay if phase == "replay" else None,
+            on_subscribed=snapshot if phase == "snapshot" else None,
+        )
+        async with contextlib.aclosing(stream):
+            await anext(stream)
+            if phase == "live":
+                started.set()
+            await anext(stream)
+
+    async with anyio.create_task_group() as group:
+        group.start_soon(consume)
+        await started.wait()
+        group.cancel_scope.cancel()
+    assert "level-cancel" not in session_stream._subscribers
+    assert not session_stream._internal_queues
+    assert closed == ([] if phase == "live" else [phase])
+
+
+async def test_late_child_snapshot_preserves_base_and_partial_live_fields():
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def snapshot():
+        started.set()
+        await release.wait()
+        return [
+            {
+                "type": "session.child_session.updated",
+                "child_session_id": "child",
+                "child": {
+                    "title": "base",
+                    "task_summary": "task",
+                    "last_message_preview": "old",
+                    "busy": False,
+                },
+            }
+        ]
+
+    stream = session_stream.subscribe("partial-child", on_subscribed=snapshot)
+    async with contextlib.aclosing(stream):
+        pending = asyncio.create_task(anext(stream))
+        await started.wait()
+        state = {}
+        for changes in ({"busy": True}, {"last_message_preview": None}):
+            session_stream.publish(
+                "partial-child",
+                {
+                    "type": "session.child_session.updated",
+                    "child_session_id": "child",
+                    "child": changes,
+                },
+            )
+            event = await pending
+            state.update(event["child"])
+            pending = asyncio.create_task(anext(stream))
+        release.set()
+        state.update((await pending)["child"])
+        assert state == {
+            "title": "base",
+            "task_summary": "task",
+            "last_message_preview": None,
+            "busy": True,
+        }
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["x" * 1048576, "中" * (1048576 // 3), "\0" * 1048576, "x" * 1048577],
+    ids=["ascii", "unicode", "escaped-controls", "truncation-suffix"],
+)
+async def test_supported_tool_output_fits_broker_and_member_bytes(text):
+    from omnigent.runtime.stream_queue import MAX_STREAM_BYTES, BoundedEventQueue
+    from omnigent.runtime.tool_output import cap_tool_output
+
+    output = cap_tool_output(text)
+    event = {
+        "type": "response.output_item.done",
+        "item": {"id": "exact-id", "position": 3, "output": output},
+    }
+    broker = BoundedEventQueue(max_events=1024, max_bytes=MAX_STREAM_BYTES, max_age=30)
+    member = BoundedEventQueue(max_events=128, max_bytes=MAX_STREAM_BYTES, max_age=15)
+    broker.put_nowait(event)
+    await member.put(
+        {"type": "session.event", "session_id": "exact-session", "event": await broker.get()}
+    )
+    delivered = await member.get()
+    assert delivered["event"]["item"] == {"id": "exact-id", "position": 3, "output": output}
+
+
+async def test_byte_capacity_waits_until_drain_and_preserves_deadline():
+    from omnigent.runtime.stream_queue import BoundedEventQueue, EventTooLargeError, StreamEvent
+
+    queue = BoundedEventQueue(max_events=128, max_bytes=50, max_age=10)
+    queue.put_nowait({"value": "x" * 25})
+    admitted = asyncio.create_task(queue.put({"value": "y" * 25}))
+    await asyncio.sleep(0)
+    assert not admitted.done() and queue.qsize() == 1
+    await queue.get()
+    await admitted
+    assert (await queue.get())["value"] == "y" * 25
+    with pytest.raises(EventTooLargeError):
+        await queue.put({"value": "x" * 100})
+    with pytest.raises(TimeoutError):
+        await queue.put(StreamEvent({"value": "expired"}, 0))

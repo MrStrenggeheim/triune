@@ -20,6 +20,9 @@
 import { isHostRoutingEnabled, resolveWebSocketUrl } from "@/lib/host";
 import { modalHostId, isModalHostResolved } from "@/lib/sessionHost";
 import type { SessionListWireItem } from "@/lib/sessionListCache";
+import { parseEvent } from "./sse";
+import { transcriptEventStream } from "./transcriptEventStream";
+import type { StreamEvent } from "./events";
 
 /** A frame pushed by the server over the updates stream. */
 export type SessionUpdatesFrame =
@@ -50,10 +53,15 @@ export function isRetryableTranscriptError(code: string): boolean {
   ].includes(code);
 }
 
-interface TranscriptSubscription {
-  controller: ReadableStreamDefaultController<Uint8Array>;
-  close: () => void;
+export interface TranscriptResponse {
+  ok: true;
+  status: 200;
+  headers: Headers;
+  body: ReadableStream<StreamEvent>;
 }
+type TranscriptSubscription = ReturnType<typeof transcriptEventStream> & {
+  received?: (event: StreamEvent) => void;
+};
 
 type FrameListener = (frame: SessionUpdatesFrame) => void;
 
@@ -176,7 +184,8 @@ class SessionUpdatesSocket {
     signal: AbortSignal,
     cursor: TranscriptCursor,
     idle: boolean,
-  ): Promise<Response | null> {
+    received?: (event: StreamEvent) => void,
+  ): Promise<TranscriptResponse | null> {
     if (!(await this.negotiateTranscript(signal))) return null;
     if (signal.aborted) throw new DOMException("Aborted", "AbortError");
     // A known compatible server reconnects through this socket; never open a parallel SSE.
@@ -208,20 +217,10 @@ class SessionUpdatesSocket {
       this.send({ type: "unsubscribe", session_id: sessionId });
     };
     const abort = () => subscription.close();
-    const body = new ReadableStream<Uint8Array>({
-      start: (controller) => {
-        subscription = {
-          controller,
-          close: () => {
-            cleanup();
-            controller.close();
-          },
-        };
-        this.transcripts.set(sessionId, subscription);
-        signal.addEventListener("abort", abort, { once: true });
-      },
-      cancel: cleanup,
-    });
+    subscription = transcriptEventStream(cleanup);
+    subscription.received = received;
+    this.transcripts.set(sessionId, subscription);
+    signal.addEventListener("abort", abort, { once: true });
     const { window_start_position, ...resume } = cursor;
     this.send({
       type: "subscribe",
@@ -235,7 +234,7 @@ class SessionUpdatesSocket {
           }
         : {}),
     });
-    return new Response(body, { headers: { "Content-Type": "text/event-stream" } });
+    return { ok: true, status: 200, headers: new Headers(), body: subscription.body };
   }
 
   reportPresence(idle: boolean): void {
@@ -443,10 +442,10 @@ class SessionUpdatesSocket {
       const subscription = this.transcripts.get(frame.session_id);
       if (!subscription) return;
       if (frame.type === "session.error") {
-        subscription.controller.enqueue(
-          new TextEncoder().encode(
-            `event: session.transport_error\ndata: ${JSON.stringify({ code: frame.code })}\n\n`,
-          ),
+        subscription.received?.({ type: "session_transport_error", code: frame.code });
+        subscription.push(
+          { type: "session_transport_error", code: frame.code },
+          event.data.length * 2,
         );
         subscription.close();
         // Authorization failures settle only this membership; other streams stay connected.
@@ -456,13 +455,11 @@ class SessionUpdatesSocket {
       }
       const payload = frame.event;
       if (!payload || typeof payload !== "object" || typeof payload.type !== "string") return;
-      if ((subscription.controller.desiredSize ?? 0) < -1024) {
-        subscription.close();
-        return;
+      const parsed = parseEvent(payload.type, payload);
+      if (parsed) {
+        subscription.received?.(parsed);
+        subscription.push(parsed, new TextEncoder().encode(event.data).byteLength);
       }
-      subscription.controller.enqueue(
-        new TextEncoder().encode(`event: ${payload.type}\ndata: ${JSON.stringify(payload)}\n\n`),
-      );
       return;
     }
     for (const listener of this.listeners) listener(frame);

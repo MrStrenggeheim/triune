@@ -1,26 +1,39 @@
+# Modified for Triune.
 """Socket-owned transcript memberships on the existing session-list WebSocket."""
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
-import json
 import logging
+import time
+from collections import deque
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, cast
 
+import anyio
 from fastapi import APIRouter, Request, WebSocket
 from fastapi.routing import APIRoute
-from starlette.responses import StreamingResponse
 
 from omnigent.errors import OmnigentError
 from omnigent.runtime import session_stream
+from omnigent.runtime.stream_queue import (
+    MAX_STREAM_BYTES,
+    BoundedEventQueue,
+    EventTooLargeError,
+    StreamEvent,
+)
 from omnigent.server import presence
-from omnigent.server.session_recovery import valid_window_options
+from omnigent.server.session_recovery import valid_window_options, validate_sync_complete
 
 _logger = logging.getLogger(__name__)
 _MAX_MEMBERSHIPS = 32
+_MEMBER_MAX_EVENTS = 128
+_MEMBER_MAX_BYTES = MAX_STREAM_BYTES
+_MEMBER_MAX_AGE_S = 15.0
+_WRITE_TIMEOUT_S = 5.0
+_AUTH_HANDOFF_TIMEOUT_S = 1.0
 
 
 @dataclass
@@ -29,6 +42,13 @@ class _Membership:
     presence: dict[str, Any] = field(default_factory=dict)
     closed: bool = False
     authorize: Callable[[], Awaitable[None]] | None = None
+    queue: BoundedEventQueue = field(
+        default_factory=lambda: BoundedEventQueue(
+            max_events=_MEMBER_MAX_EVENTS,
+            max_bytes=_MEMBER_MAX_BYTES,
+            max_age=_MEMBER_MAX_AGE_S,
+        )
+    )
 
 
 class _MembershipRequest(Request):
@@ -50,28 +70,79 @@ class _MembershipRequest(Request):
 
 
 class SessionMultiplex:
-    """Reuse the authorized SSE endpoint; share only the socket's serialized sender."""
+    """Independent bounded memberships sharing a deadline-limited physical writer."""
 
     def __init__(
         self,
         router: APIRouter,
         websocket: WebSocket,
         send: Callable[[dict[str, Any]], Awaitable[None]],
-        emit_lock: asyncio.Lock,
+        _emit_lock: asyncio.Lock | None = None,
     ) -> None:
         self.router = router
         self.websocket = websocket
         self._sender = send
-        self.emit_lock = emit_lock
         self.members: dict[str, _Membership] = {}
+        self._writing = False
+        self._write_available = asyncio.Event()
+        self._write_available.set()
+        self._ready: deque[object] = deque()
+        self._broken = False
 
     async def send(
-        self, frame: dict[str, Any], authorize: Callable[[], Awaitable[None]] | None = None
+        self,
+        frame: dict[str, Any],
+        authorize: Callable[[], Awaitable[None]] | None = None,
+        current: Callable[[], bool] | None = None,
     ) -> None:
-        async with self.emit_lock:
-            if authorize is not None:
-                await authorize()
-            await self._sender(frame)
+        # Initial authorization is independent: an unready member owns no turn.
+        await asyncio.sleep(0)
+        if authorize is not None:
+            await authorize()
+        ticket = object()
+        self._ready.append(ticket)
+        waited = False
+        try:
+            while self._writing or self._ready[0] is not ticket:
+                waited = True
+                self._write_available.clear()
+                await self._write_available.wait()
+            if self._broken:
+                raise ConnectionError("Session socket writer closed")
+            if waited and authorize is not None:
+                # A completed contender owns the next admission turn, not the
+                # physical writer. Bound this final fresh check; never cache grants.
+                try:
+                    async with asyncio.timeout(_AUTH_HANDOFF_TIMEOUT_S):
+                        await authorize()
+                except TimeoutError:
+                    raise ConnectionError("Session publication authorization deadline") from None
+            if current is not None and not current():
+                return
+            # No suspension from final authorization through physical socket claim.
+            self._writing = True
+            try:
+                async with asyncio.timeout(_WRITE_TIMEOUT_S):
+                    await self._sender(frame)
+            except asyncio.CancelledError:
+                # ASGI send cancellation leaves delivery uncertain; no sibling may
+                # reuse the writer until this physical socket is made terminal.
+                self._broken = True
+                with anyio.CancelScope(shield=True), contextlib.suppress(Exception):
+                    async with asyncio.timeout(1):
+                        await self.websocket.close(code=1011)
+                raise
+            except (TimeoutError, OSError):
+                self._broken = True
+                with contextlib.suppress(Exception):
+                    async with asyncio.timeout(1):
+                        await self.websocket.close(code=1011)
+                raise ConnectionError("Session socket write failed") from None
+            finally:
+                self._writing = False
+        finally:
+            self._ready.remove(ticket)
+            self._write_available.set()
 
     async def _remove(self, session_id: str) -> None:
         member = self.members.pop(session_id, None)
@@ -83,6 +154,8 @@ class SessionMultiplex:
                     await member.task
 
     async def close(self) -> None:
+        self._broken = True
+        self._write_available.set()
         members = list(self.members.values())
         self.members.clear()
         tasks = []
@@ -203,6 +276,14 @@ class SessionMultiplex:
         initial_limit: int | None,
         window_start_position: int | None,
     ) -> None:
+        async def error(code: str) -> None:
+            member.queue.clear()
+            if not self._broken:
+                await self.send(
+                    {"type": "session.error", "session_id": session_id, "code": code},
+                    current=lambda: not member.closed and self.members.get(session_id) is member,
+                )
+
         try:
             # Both endpoints belong to this router; use the same authorization,
             # strict runner preparation, resource snapshots and recovery generator.
@@ -213,7 +294,11 @@ class SessionMultiplex:
                 and route.path.endswith("/sessions/{session_id}/stream")
             )
             request = _MembershipRequest(self.websocket, member)
-            response: StreamingResponse = await endpoint(
+            factory = cast(
+                Callable[..., Awaitable[AsyncGenerator[dict[str, Any], None]]],
+                vars(endpoint)["stream_events"],
+            )
+            stream = await factory(
                 request=request,
                 session_id=session_id,
                 idle=idle,
@@ -224,48 +309,86 @@ class SessionMultiplex:
                 window_start_position=window_start_position,
             )
             member.authorize = request.state.stream_authorize
-            # This endpoint returns our async generator of unencoded SSE strings.
-            stream = cast(AsyncGenerator[str, None], response.body_iterator)
             async with contextlib.aclosing(stream) as frames:
-                async for chunk in frames:
-                    if member.closed:
-                        break
-                    data = "\n".join(
-                        line[5:].lstrip()
-                        for line in chunk.splitlines()
-                        if line.startswith("data:")
-                    )
-                    if data == "[DONE]":
-                        break
-                    if data:
-                        await self.send(
-                            {
-                                "type": "session.event",
-                                "session_id": session_id,
-                                "event": json.loads(data),
-                            },
-                            member.authorize,
-                        )
+
+                async def produce() -> None:
+                    async for event in frames:
+                        if member.closed:
+                            return
+                        try:
+                            await member.queue.put(
+                                StreamEvent(
+                                    {
+                                        "type": "session.event",
+                                        "session_id": session_id,
+                                        "event": event,
+                                    },
+                                    getattr(
+                                        event, "deadline", time.monotonic() + _MEMBER_MAX_AGE_S
+                                    ),
+                                    getattr(event, "check", None),
+                                )
+                            )
+                        except EventTooLargeError:
+                            raise session_stream.SubscriberEventTooLargeError from None
+                        except (asyncio.QueueFull, TimeoutError):
+                            raise session_stream.SubscriberOverflowError from None
+                        await asyncio.sleep(0)
+                    raise ConnectionError("Session stream ended")
+
+                async def deliver() -> None:
+                    while True:
+                        if member.queue.expired:
+                            raise session_stream.SubscriberOverflowError
+                        frame = await member.queue.get()
+                        remaining_age = max(0, member.queue.last_taken_deadline - time.monotonic())
+                        if remaining_age <= 0:
+                            raise session_stream.SubscriberOverflowError
+
+                        async def authorize_frame(frame=frame) -> None:
+                            if member.authorize is not None:
+                                await member.authorize()
+                            check = getattr(frame, "check", None)
+                            if check is not None:
+                                check()
+                            validate_sync_complete(session_id, frame["event"])
+
+                        try:
+                            async with asyncio.timeout(remaining_age):
+                                await self.send(
+                                    frame,
+                                    authorize_frame,
+                                    lambda: (
+                                        not member.closed
+                                        and self.members.get(session_id) is member
+                                    ),
+                                )
+                        except TimeoutError:
+                            raise session_stream.SubscriberOverflowError from None
+
+                workers = [asyncio.create_task(produce()), asyncio.create_task(deliver())]
+                try:
+                    done, _ = await asyncio.wait(workers, return_when=asyncio.FIRST_COMPLETED)
+                    for task in done:
+                        task.result()
+                finally:
+                    for task in workers:
+                        task.cancel()
+                    await asyncio.gather(*workers, return_exceptions=True)
             if not member.closed:
-                await self.send(
-                    {"type": "session.error", "session_id": session_id, "code": "stream_reconnect"}
-                )
+                await error("stream_reconnect")
         except OmnigentError as exc:
-            await self.send({"type": "session.error", "session_id": session_id, "code": exc.code})
+            await error(exc.code)
+        except session_stream.SubscriberEventTooLargeError:
+            await error("stream_event_too_large")
         except session_stream.SubscriberOverflowError:
-            await self.send(
-                {"type": "session.error", "session_id": session_id, "code": "stream_overflow"}
-            )
+            await error("stream_overflow")
         except (ConnectionError, OSError):
-            await self.send(
-                {"type": "session.error", "session_id": session_id, "code": "stream_reconnect"}
-            )
+            await error("stream_reconnect")
         except Exception as exc:  # noqa: BLE001 -- isolate one failed membership
             # Log only identity and exception class; validation text can contain bodies.
             _logger.error("Session membership %s failed (%s)", session_id, type(exc).__name__)
-            await self.send(
-                {"type": "session.error", "session_id": session_id, "code": "stream_failed"}
-            )
+            await error("stream_failed")
         finally:
             member.closed = True
             if self.members.get(session_id) is member:

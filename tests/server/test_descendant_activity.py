@@ -77,13 +77,12 @@ async def test_descendant_batches_reuse_overlapping_roots_and_keep_all_facts(
     store.set_session_live_status(leaf.id, "failed")
     loaded: list[str] = []
     batches: list[list[str]] = []
-    get_rows = store.get_conversations
+    get_rows = store.get_activity_conversations
     get_edges = store.list_activity_child_ids
 
-    def load(ids: list[str], *, include_execution_state: bool = True):
+    def load(ids: list[str]):
         loaded.extend(ids)
-        assert include_execution_state is False
-        rows = get_rows(ids, include_execution_state=include_execution_state)
+        rows = get_rows(ids)
         if missing:
             rows.pop(leaf.id, None)
         return rows
@@ -92,7 +91,7 @@ async def test_descendant_batches_reuse_overlapping_roots_and_keep_all_facts(
         batches.append(ids)
         return get_edges(ids, limit=limit)
 
-    monkeypatch.setattr(store, "get_conversations", load)
+    monkeypatch.setattr(store, "get_activity_conversations", load)
     monkeypatch.setattr(store, "list_activity_child_ids", edges)
     result = await activity_descendants(
         [root, child], store, lambda rows, _: {row.id for row in rows}

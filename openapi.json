@@ -22460,11 +22460,10 @@
     },
     "/v1/sessions/{session_id}/stream": {
       "get": {
-        "description": "Subscribe to the session's live SSE event stream.\n\nAn explicit `after_position` enables persisted recovery after live\nregistration; `after_revision` and `stream_epoch` permit append-only\nresume when no old-position mutation occurred.\nAn untrusted cursor resets canonical membership.\nLegacy callers without a cursor retain live-tail behavior.\n\nHolding this stream open registers the caller as a session\n*viewer* (presence): co-viewers' streams receive\n`session.presence` events on join/leave/idle edges, and\nthis stream's snapshot-on-connect includes the current\nviewer list. Presence is scoped to the session tree's root\nconversation, so viewers of different agents/sub-agents in\none session see each other. See\n`omnigent/server/presence.py`.\n\n**Returns:** An SSE `StreamingResponse`.\n\n**Raises**\n\n- `OmnigentError` \u2014 404 if no session exists.",
+        "description": "Encode the authorized typed session stream as HTTP SSE.",
         "operationId": "stream_session_v1_sessions__session_id__stream_get",
         "parameters": [
           {
-            "description": "Session/conversation identifier, e.g. `\"conv_abc123\"`.",
             "in": "path",
             "name": "session_id",
             "required": true,
@@ -22474,7 +22473,6 @@
             }
           },
           {
-            "description": "Presence idle flag computed by the web client at connect time (tab backgrounded \u2265 its debounce). An idle flip can reconnect SSE or update the existing WebSocket membership.",
             "in": "query",
             "name": "idle",
             "required": false,

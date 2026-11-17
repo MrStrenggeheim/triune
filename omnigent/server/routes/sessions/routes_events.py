@@ -9,7 +9,7 @@ import itertools
 import secrets
 import time
 import weakref
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal, cast
 
@@ -184,6 +184,7 @@ from omnigent.server.routes._sessions.helpers import (
     _build_actor,
     _build_skill_slash_command_policy_body,
     _dispatch_skill_slash_command_to_runner,
+    _encode_live_events,
     _evaluate_output_policy,
     _extract_user_text_from_event,
     _filesystem_attachment_in_history,
@@ -194,6 +195,7 @@ from omnigent.server.routes._sessions.helpers import (
     _handle_external_session_todos,
     _is_codex_native_subagent,
     _is_devin_native_subagent,
+    _iter_live_events,
     _launch_runner_on_host,
     _native_coding_agent_for_session,
     _parse_background_tasks,
@@ -236,7 +238,6 @@ from omnigent.server.routes._sessions.helpers import (
     _session_status_from_cache,
     _signal_harness_elicitation_resolved_by_id,
     _stop_session_via_runner,
-    _stream_live_events,
     _wait_for_runner_client,
     reconcile_orphaned_running_status,
     require_filesystem_attachment_runtime,
@@ -3860,34 +3861,38 @@ def register_events_routes(
         initial_limit: int | None = Query(default=None, ge=1, le=9007199254740991),
         window_start_position: int | None = Query(default=None, ge=0, le=9007199254740991),
     ) -> StreamingResponse:
-        """
-        Subscribe to the session's live SSE event stream.
+        """Encode the authorized typed session stream as HTTP SSE."""
+        events = await prepare_session_stream(
+            request,
+            session_id,
+            idle,
+            after_position,
+            after_revision,
+            stream_epoch,
+            initial_limit,
+            window_start_position,
+        )
+        return StreamingResponse(
+            _encode_live_events(events, session_id),
+            media_type="text/event-stream",
+            headers={
+                "X-Omnigent-Stream-Epoch": inflight_text.stream_epoch(),
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
 
-        An explicit ``after_position`` enables persisted recovery after live
-        registration; ``after_revision`` and ``stream_epoch`` permit append-only
-        resume when no old-position mutation occurred.
-        An untrusted cursor resets canonical membership.
-        Legacy callers without a cursor retain live-tail behavior.
-
-        Holding this stream open registers the caller as a session
-        *viewer* (presence): co-viewers' streams receive
-        ``session.presence`` events on join/leave/idle edges, and
-        this stream's snapshot-on-connect includes the current
-        viewer list. Presence is scoped to the session tree's root
-        conversation, so viewers of different agents/sub-agents in
-        one session see each other. See
-        ``omnigent/server/presence.py``.
-
-        :param request: The FastAPI request, used to detect
-            disconnect.
-        :param session_id: Session/conversation identifier,
-            e.g. ``"conv_abc123"``.
-        :param idle: Presence idle flag computed by the web client
-            at connect time (tab backgrounded ≥ its debounce). An
-            idle flip can reconnect SSE or update the existing WebSocket membership.
-        :returns: An SSE :class:`StreamingResponse`.
-        :raises OmnigentError: 404 if no session exists.
-        """
+    async def prepare_session_stream(
+        request: Request,
+        session_id: str,
+        idle: bool = False,
+        after_position: int | None = Query(default=None, ge=-1),
+        after_revision: int | None = Query(default=None, ge=0),
+        stream_epoch: str | None = None,
+        initial_limit: int | None = Query(default=None, ge=1, le=9007199254740991),
+        window_start_position: int | None = Query(default=None, ge=0, le=9007199254740991),
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        """Prepare access, routing and recovery once for either transport."""
         from omnigent.server.session_recovery import SessionRecovery, valid_window_options
 
         if not valid_window_options(initial_limit, window_start_position):
@@ -3918,13 +3923,24 @@ def register_events_routes(
         )
 
         async def authorize_stream() -> None:
-            await _require_access_and_level(
+            initial_access = await _require_access_and_level(
                 user_id, session_id, LEVEL_READ, permission_store, conversation_store
             )
-            current = await asyncio.to_thread(conversation_store.get_conversation, session_id)
+            current = initial_access.conversation
+            if current is None:
+                current = await asyncio.to_thread(conversation_store.get_conversation, session_id)
             if current is None:
                 raise _session_not_found()
-            if current.runner_id != conv.runner_id:
+            scope_fields = (
+                "runner_id",
+                "host_id",
+                "workspace",
+                "workspace_transition",
+                "root_conversation_id",
+                "parent_conversation_id",
+                "share_workspace_files",
+            )
+            if any(getattr(current, field) != getattr(conv, field) for field in scope_fields):
                 # Reconnect through the normal strict runner preparation path.
                 raise ConnectionError("Session runner changed during stream")
             if runner_router is not None:
@@ -3937,6 +3953,23 @@ def register_events_routes(
                     )
                 if current_client is not runner_client:
                     raise ConnectionError("Session runner route changed during stream")
+            # Routing can suspend; finish with a current access/scope read, never
+            # carry an earlier grant through runner preparation or a writer wait.
+            access = await _require_access_and_level(
+                user_id, session_id, LEVEL_READ, permission_store, conversation_store
+            )
+            final_conversation = access.conversation
+            if final_conversation is None:
+                final_conversation = await asyncio.to_thread(
+                    conversation_store.get_conversation, session_id
+                )
+            if final_conversation is None:
+                raise _session_not_found()
+            if any(
+                getattr(final_conversation, field) != getattr(conv, field)
+                for field in scope_fields
+            ):
+                raise ConnectionError("Session scope changed during stream")
 
         request.state.stream_authorize = authorize_stream
 
@@ -4051,40 +4084,19 @@ def register_events_routes(
             events.append(presence.snapshot(conv.root_conversation_id, session_id))
             return events
 
-        return StreamingResponse(
-            _stream_live_events(
-                request,
-                session_id,
-                _resource_snapshot,
-                # Presence tracks distinct human actors only — the reserved
-                # single-user "local" sentinel maps to None (no tracking),
-                # same as message attribution.
-                viewer_user_id=_attribution_user(user_id),
-                viewer_idle=idle,
-                # Scope presence to the tree's root: sub-agent pages open
-                # the CHILD conversation's stream, and per-conversation
-                # scoping would hide co-viewers on other agents.
-                presence_root_id=conv.root_conversation_id,
-                recovery=recovery,
-                presence_membership=getattr(request.state, "presence_membership", None),
-                raise_overflow=getattr(request.state, "multiplex", False),
-            ),
-            media_type="text/event-stream",
-            headers={
-                "X-Omnigent-Stream-Epoch": inflight_text.stream_epoch(),
-                # Keep intermediaries from buffering the SSE stream:
-                # ``X-Accel-Buffering: no`` disables nginx-style response
-                # buffering so heartbeats and deltas reach the client as
-                # they're written (a buffered proxy can delay the 15s
-                # heartbeat past a client/idle timeout), and ``no-cache``
-                # keeps the long-lived response out of any shared cache.
-                # NOTE: this does NOT defeat the Databricks Apps ingress'
-                # hard ~5-min HTTP/2 stream-duration cap — that drop is
-                # handled by the client's transparent reconnect.
-                "Cache-Control": "no-cache",
-                "X-Accel-Buffering": "no",
-            },
+        return _iter_live_events(
+            request,
+            session_id,
+            _resource_snapshot,
+            viewer_user_id=_attribution_user(user_id),
+            viewer_idle=idle,
+            presence_root_id=conv.root_conversation_id,
+            recovery=recovery,
+            presence_membership=getattr(request.state, "presence_membership", None),
         )
+
+    # Both adapters use the same factory; WebSocket never invokes the HTTP route.
+    vars(stream_session)["stream_events"] = prepare_session_stream
 
     # ── DELETE /sessions/{session_id} ──────────────────────────────
 

@@ -126,3 +126,12 @@ Approval receipt protocol work, ownerless-model retirement and isolated future b
 
 [LICENSING.md](LICENSING.md) defines scope and the required notice.
 Git diffs against the imported baseline identify exact modified paths and lines.
+
+## Stream synchronization refactor — 2026-11-17
+
+- Share structured event production across SSE and WebSocket adapters; remove browser WebSocket-to-SSE conversion.
+- Bound membership queues and physical write time, separate expensive reads from emission, and preserve fresh publication authorization.
+- Isolate ancillary snapshot work from replay/live delivery while retaining canonical synchronization boundaries and incomplete-recovery checks.
+- Own browser synchronization by binding and attempt, retain visible unfocused multiplex subscriptions, and bound incomplete synchronization separately from socket liveness.
+- Persist bounded content-free receipt, acceptance and visible-DOM diagnostics within the authenticated viewer scope.
+- Project descendant activity fields without general row hydration, preserving matched authorized responses and query counts.

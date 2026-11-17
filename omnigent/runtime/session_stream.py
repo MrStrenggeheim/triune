@@ -31,9 +31,12 @@ import asyncio
 import contextlib
 import logging
 import threading
+import time
 import weakref
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterable
 from typing import Any
+
+import anyio
 
 from omnigent.db.workspace_cache import WorkspaceScopedCache
 from omnigent.debug_logging import (
@@ -46,11 +49,20 @@ from omnigent.debug_logging import (
 from omnigent.errors import ErrorImpact, ErrorPhase
 from omnigent.native.input_diagnostics import input_attributes
 from omnigent.runtime import disconnect_outcome, inflight_text, pending_elicitations
+from omnigent.runtime.stream_queue import (
+    MAX_STREAM_BYTES,
+    BoundedEventQueue,
+    EventTooLargeError,
+    StreamEvent,
+)
 
 _logger = logging.getLogger(__name__)
 
 # A generous burst allowance that still bounds one stalled subscriber's memory.
 _SUBSCRIBER_QUEUE_MAX_EVENTS = 1024
+_SUBSCRIBER_QUEUE_MAX_BYTES = MAX_STREAM_BYTES
+_SUBSCRIBER_QUEUE_MAX_AGE_S = 30.0
+_SNAPSHOT_TIMEOUT_S = 15.0
 
 # Sentinel objects that signal terminal subscriber states.
 _DONE = object()
@@ -59,6 +71,10 @@ _OVERFLOW = object()
 
 class SubscriberOverflowError(RuntimeError):
     """Raised when a subscriber falls behind the bounded live-event queue."""
+
+
+class SubscriberEventTooLargeError(SubscriberOverflowError):
+    """A deterministic size failure requires explicit intervention, not replay."""
 
 
 # Subscriber registry: conversation_id -> set of
@@ -126,6 +142,8 @@ def _enqueue_or_overflow(
     try:
         queue.put_nowait(item)
         return
+    except EventTooLargeError:
+        queue._session_stream_oversized = True  # type: ignore[attr-defined]
     except asyncio.QueueFull:
         pass
 
@@ -554,8 +572,10 @@ async def subscribe(
     :raises SubscriberOverflowError: If this subscriber falls behind the
         bounded event queue.
     """
-    queue: asyncio.Queue[dict[str, Any] | object] = asyncio.Queue(
-        maxsize=_SUBSCRIBER_QUEUE_MAX_EVENTS
+    queue = BoundedEventQueue(
+        max_events=_SUBSCRIBER_QUEUE_MAX_EVENTS,
+        max_bytes=_SUBSCRIBER_QUEUE_MAX_BYTES,
+        max_age=_SUBSCRIBER_QUEUE_MAX_AGE_S,
     )
     loop = asyncio.get_running_loop()
     entry = (queue, loop)
@@ -581,54 +601,136 @@ async def subscribe(
             exc_info=True,
         )
         pre_ready_events = []
+
+    def check_backlog() -> None:
+        if getattr(queue, "_session_stream_oversized", False):
+            raise SubscriberEventTooLargeError
+        held_expired = (
+            live_task is not None
+            and live_task.done()
+            and not live_task.cancelled()
+            and queue.last_taken_deadline <= time.monotonic()
+        )
+        if held_expired or queue.expired or getattr(queue, "_session_stream_overflowed", False):
+            raise SubscriberOverflowError(
+                f"session stream backlog exceeded for {conversation_id!r}"
+            )
+
+    def snapshot_key(event: dict[str, Any]) -> tuple[str, str]:
+        kind = str(event.get("type", ""))
+        if kind.startswith("session.resource."):
+            resource = event.get("resource")
+            identity = (
+                resource.get("id") if isinstance(resource, dict) else event.get("resource_id")
+            )
+            return "resource", str(identity or "*")
+        if kind.startswith("session.child_session."):
+            return "child", str(event.get("child_session_id", "*"))
+        return kind, "*"
+
+    changed_during_snapshot: set[tuple[str, str]] = set()
+    changed_child_fields: dict[str, set[str]] = {}
+    snapshot_superseded = False
+
+    async def snapshot() -> Iterable[dict[str, Any]]:
+        assert on_subscribed is not None
+        try:
+            return await asyncio.wait_for(on_subscribed(), timeout=_SNAPSHOT_TIMEOUT_S)
+        except Exception as exc:
+            _logger.debug("session snapshot %s failed (%s)", conversation_id, type(exc).__name__)
+            return ()
+
+    snapshot_task: asyncio.Task[Iterable[dict[str, Any]]] | None = None
+    next_task: asyncio.Task[Any] | None = None
+    live_task: asyncio.Task[Any] | None = None
     try:
         if ready_event is not None:
             yield ready_event
+        if on_subscribed is not None:
+            snapshot_task = asyncio.create_task(snapshot())
         if replay is not None:
             async with contextlib.aclosing(replay()) as replay_events:
-                async for replay_event in replay_events:
-                    yield replay_event
+                try:
+                    while True:
+                        next_task = asyncio.create_task(anext(replay_events))
+                        while True:
+                            # Queue age is enforced even when replay is stuck in a read.
+                            done, _ = await asyncio.wait(
+                                {next_task},
+                                timeout=min(heartbeat_interval_s or queue.max_age, queue.max_age),
+                            )
+                            check_backlog()
+                            if done:
+                                break
+                            if heartbeat_interval_s is not None:
+                                yield {"type": "session.heartbeat"}
+                        try:
+                            replay_event = next_task.result()
+                        except StopAsyncIteration:
+                            break
+                        yield StreamEvent(
+                            replay_event, time.monotonic() + queue.max_age, check_backlog
+                        )
+                finally:
+                    if next_task is not None:
+                        next_task.cancel()
+                        with anyio.CancelScope(shield=True):
+                            await asyncio.gather(next_task, return_exceptions=True)
+        check_backlog()
         for pre_ready_event in pre_ready_events:
             yield pre_ready_event
-        if on_subscribed is not None:
-            # Gather the snapshot AFTER the slot is registered (above) so a
-            # delta published during the gather lands on ``queue`` and is
-            # yielded by the loop below — no missed events between snapshot
-            # and live tail (the broker has no buffer). Best-effort: a
-            # failing/slow hook must not block the live tail.
-            try:
-                snapshot_events = await on_subscribed()
-            except Exception:
-                _logger.debug(
-                    "session_stream on_subscribed snapshot failed for %s",
-                    conversation_id,
-                    exc_info=True,
-                )
-                snapshot_events = ()
-            for snapshot_event in snapshot_events:
-                yield snapshot_event
         heartbeat_deadline = (
             loop.time() + heartbeat_interval_s if heartbeat_interval_s is not None else None
         )
         while True:
-            if heartbeat_interval_s is None:
-                item = await queue.get()
-            else:
-                try:
-                    assert heartbeat_deadline is not None
-                    item = await asyncio.wait_for(
-                        queue.get(), timeout=max(0, heartbeat_deadline - loop.time())
-                    )
-                except TimeoutError:
-                    # Queue was idle past the heartbeat deadline. Emit
-                    # a synthetic keepalive. Its wire bytes give the
-                    # route's ``request.is_disconnected()`` check and
-                    # the client's SSE read-timeout something to fire
-                    # against if the socket has gone half-open (e.g.
-                    # after a laptop sleep).
-                    heartbeat_deadline = loop.time() + heartbeat_interval_s
-                    yield {"type": "session.heartbeat"}
-                    continue
+            check_backlog()
+            if live_task is None:
+                live_task = asyncio.create_task(queue.get())
+            waiting = {live_task}
+            if snapshot_task is not None:
+                waiting.add(snapshot_task)
+            done, _ = await asyncio.wait(
+                waiting,
+                timeout=max(0, heartbeat_deadline - loop.time()) if heartbeat_deadline else None,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            check_backlog()
+            if heartbeat_deadline is not None and loop.time() >= heartbeat_deadline:
+                assert heartbeat_interval_s is not None
+                heartbeat_deadline = loop.time() + heartbeat_interval_s
+                yield {"type": "session.heartbeat"}
+            if snapshot_task in done:
+                assert snapshot_task is not None
+                snapshot_events = snapshot_task.result()
+                snapshot_task = None
+                for snapshot_event in snapshot_events:
+                    check_backlog()
+                    key = snapshot_key(snapshot_event)
+                    if key[0] == "child" and key[1] in changed_child_fields:
+                        # Live child bodies are partial: omit only overwritten fields
+                        # so the client's normal merge keeps both base and live state.
+                        snapshot_event = {
+                            **snapshot_event,
+                            "child": {
+                                field: value
+                                for field, value in snapshot_event.get("child", {}).items()
+                                if field not in changed_child_fields[key[1]]
+                            },
+                        }
+                        yield snapshot_event
+                        continue
+                    if (
+                        snapshot_superseded
+                        or key in changed_during_snapshot
+                        or (key[0], "*") in changed_during_snapshot
+                    ):
+                        continue
+                    yield snapshot_event
+            if live_task not in done:
+                continue
+            check_backlog()
+            item = live_task.result()
+            live_task = None
             if item is _DONE:
                 return
             if item is _OVERFLOW:
@@ -637,8 +739,28 @@ async def subscribe(
                     f"exceeded {_SUBSCRIBER_QUEUE_MAX_EVENTS} queued events"
                 )
             assert isinstance(item, dict)
-            yield item
+            if snapshot_task is not None:
+                if item.get("type") == "session.child_session.updated":
+                    child = item.get("child", {})
+                    if isinstance(child, dict):
+                        changed_child_fields.setdefault(
+                            str(item.get("child_session_id")), set()
+                        ).update(child)
+                        if (
+                            sum(map(len, changed_child_fields.values()))
+                            > _SUBSCRIBER_QUEUE_MAX_EVENTS
+                        ):
+                            raise SubscriberOverflowError(
+                                "Ancillary snapshot change tracking exceeded"
+                            )
+                if len(changed_during_snapshot) >= _SUBSCRIBER_QUEUE_MAX_EVENTS:
+                    snapshot_superseded = True
+                else:
+                    changed_during_snapshot.add(snapshot_key(item))
+            yield StreamEvent(item, queue.last_taken_deadline, check_backlog)
     finally:
+        # Level-triggered ASGI cancellation can interrupt every await below.
+        # Remove the registry entry synchronously before joining child tasks.
         with _lock:
             _internal_queues.discard(queue)
             subs = _subscribers.get(conversation_id)
@@ -646,3 +768,8 @@ async def subscribe(
                 subs.discard(entry)
                 if not subs:
                     _subscribers.pop(conversation_id, None)
+        pending = [task for task in (snapshot_task, next_task, live_task) if task is not None]
+        for task in pending:
+            task.cancel()
+        with anyio.CancelScope(shield=True):
+            await asyncio.gather(*pending, return_exceptions=True)

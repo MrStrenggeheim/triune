@@ -100,6 +100,10 @@ def test_readiness_heartbeat_waits_for_history_then_displays_live_progress(
     expect(view.get_by_text("Saved reply", exact=True)).to_be_visible()
     composer = view.get_by_label("Message the agent", exact=True)
     composer.fill("Preserve my draft")
+    # A visible window must keep its multiplex membership when another window
+    # gains focus. The legacy SSE origin-slot policy remains a separate contract.
+    page.evaluate("window.dispatchEvent(new Event('blur'))")
+    canonical = [saved]
     for position in (1, 2):
         live = {
             **message_item(
@@ -111,10 +115,74 @@ def test_readiness_heartbeat_waits_for_history_then_displays_live_progress(
             "position": position,
             "phase": "commentary",
         }
+        canonical.append(live)
         event({"type": "response.output_item.done", "item": live})
         expect(view.get_by_text(f"Live progress {position}", exact=True)).to_be_visible()
     assert len(subscriptions) == 1
     expect(composer).to_have_value("Preserve my draft")
+    page.evaluate("window.dispatchEvent(new Event('focus'))")
+    expect(view.get_by_text("Live progress 2", exact=True)).to_be_visible()
+    assert len(subscriptions) == 1
+
+    # A replacement socket and changed epoch still need a completed replay;
+    # readiness must neither clear displayed history nor restart the membership.
+    boundary.update(
+        last_position=2,
+        last_item_id=canonical[-1]["id"],
+        item_count=3,
+        item_revision=3,
+        stream_epoch="ready-first-reconnected",
+    )
+    sockets[-1].close(code=1012, reason="Fixture server restart")
+    page.wait_for_function("window.__readyHeartbeatCount >= 2")
+    page.wait_for_timeout(250)
+    assert len(subscriptions) == 2
+    expect(view.get_by_text("Live progress 2", exact=True)).to_be_visible()
+    event({"type": "session.sync", "phase": "start", "reset": True, **boundary})
+    for item in canonical:
+        event({"type": "response.output_item.done", "item": item})
+    event({"type": "session.sync", "phase": "complete", "reset": True, **boundary})
+    expect(view.get_by_text("Saved reply", exact=True)).to_have_count(1)
+    for position in (1, 2):
+        expect(view.get_by_text(f"Live progress {position}", exact=True)).to_have_count(1)
+    expect(composer).to_have_value("Preserve my draft")
+    assert len(subscriptions) == 2
+    diagnostic_key = "triune:convergence:v1"
+    page.wait_for_function(
+        """key => {
+          const records = JSON.parse(localStorage.getItem(key) || '{}').records || [];
+          return records.some(row => row.stage === 'displayed' && row.itemId === 'ready-live-2'
+            && typeof row.attemptId === 'string');
+        }""",
+        arg=diagnostic_key,
+    )
+    before_reload = page.evaluate("key => localStorage.getItem(key)", diagnostic_key)
+    assert len(before_reload.encode()) <= 64_000
+    assert all(
+        text not in before_reload for text in ("Saved reply", "Live progress", "Preserve my draft")
+    )
+    retained_attempts = {
+        row["attemptId"] for row in json.loads(before_reload)["records"] if row.get("attemptId")
+    }
+    page.reload()
+    page.wait_for_function("window.__readyHeartbeatCount >= 1")
+    event({"type": "session.sync", "phase": "start", "reset": True, **boundary})
+    for item in canonical:
+        event({"type": "response.output_item.done", "item": item})
+    event({"type": "session.sync", "phase": "complete", "reset": True, **boundary})
+    expect(view.get_by_text("Live progress 2", exact=True)).to_be_visible()
+    expect(composer).to_have_value("Preserve my draft")
+    page.wait_for_function(
+        """({key, previous}) => {
+          const records = JSON.parse(localStorage.getItem(key) || '{}').records || [];
+          return records.some(row => row.stage === 'displayed' && row.attemptId
+            && !previous.includes(row.attemptId));
+        }""",
+        arg={"key": diagnostic_key, "previous": sorted(retained_attempts)},
+    )
+    records = page.evaluate("key => JSON.parse(localStorage.getItem(key)).records", diagnostic_key)
+    assert retained_attempts & {row.get("attemptId") for row in records}
+    assert {"received", "accepted", "displayed"} <= {row["stage"] for row in records}
     assert browser_errors == []
 
 
@@ -421,9 +489,7 @@ def test_shared_transcript_orders_and_recovers_without_reloading(
     revisions[first.session_id] = reset_revisions[first.session_id] = 6
     for _ in range(2):
         event(first.session_id, {"type": "response.output_item.updated", "item": activity})
-    activity_group = transcript.get_by_role(
-        "button", name=re.compile(r"Started or steered .*subagent")
-    )
+    activity_group = transcript.get_by_role("button", name=re.compile(r"\d+ subagents?"))
     expect(activity_group).to_be_visible()
     activity_group.click()
     expect(transcript.get_by_test_id("subagent-activity")).to_have_count(1)

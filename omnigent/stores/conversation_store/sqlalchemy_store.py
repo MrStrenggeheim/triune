@@ -1572,6 +1572,71 @@ class SqlAlchemyConversationStore(ConversationStore):
             for row in rows
         }
 
+    @shared_read_scope()
+    def get_activity_conversations(self, conversation_ids: list[str]) -> dict[str, Conversation]:
+        """Project activity facts in batches of at most 500 IDs, without ORM hydration."""
+        unique_ids = list(dict.fromkeys(conversation_ids))
+        result: dict[str, Conversation] = {}
+        for offset in range(0, len(unique_ids), 500):
+            batch = unique_ids[offset : offset + 500]
+            with self._conv_session("get_activity_conversations") as session:
+                rows = session.execute(
+                    select(
+                        SqlConversation.id,
+                        SqlConversation.created_at,
+                        SqlConversation.updated_at,
+                        SqlConversation.parent_conversation_id,
+                        SqlConversation.root_conversation_id,
+                        SqlConversation.agent_id,
+                        SqlConversation.archived,
+                    ).where(
+                        SqlConversation.workspace_id == current_workspace_id(),
+                        SqlConversation.id.in_(batch),
+                    )
+                ).all()
+                row_ids = [row.id for row in rows]
+                labels = _fetch_labels_bulk(session, row_ids)
+            if not rows:
+                continue
+            with self._session("get_activity_conversations") as session:
+                metadata = {
+                    row.id: row
+                    for row in session.execute(
+                        select(
+                            SqlConversationMetadata.id,
+                            SqlConversationMetadata.runner_id,
+                            SqlConversationMetadata.live_status,
+                            SqlConversationMetadata.pending_elicitation_count,
+                            SqlConversationMetadata.project_id,
+                        ).where(
+                            SqlConversationMetadata.workspace_id == current_workspace_id(),
+                            SqlConversationMetadata.id.in_(row_ids),
+                        )
+                    )
+                }
+            for row in rows:
+                meta = metadata.get(row.id)
+                result[row.id] = Conversation(
+                    id=row.id,
+                    created_at=row.created_at,
+                    updated_at=row.updated_at,
+                    parent_conversation_id=row.parent_conversation_id,
+                    root_conversation_id=row.root_conversation_id,
+                    kind="sub_agent" if row.parent_conversation_id is not None else "default",
+                    agent_id=row.agent_id,
+                    archived=row.archived,
+                    labels=labels.get(row.id, {}),
+                    runner_id=meta.runner_id if meta else None,
+                    live_status=(
+                        decode_session_live_status(meta.live_status)
+                        if meta and meta.live_status is not None
+                        else None
+                    ),
+                    pending_elicitation_count=meta.pending_elicitation_count if meta else None,
+                    project_id=meta.project_id if meta else None,
+                )
+        return result
+
     def list_child_conversation_ids_by_parent(
         self,
         parent_conversation_ids: list[str],

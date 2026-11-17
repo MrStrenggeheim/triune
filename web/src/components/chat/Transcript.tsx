@@ -1,4 +1,5 @@
 // Modified for Triune.
+import { useTranscriptConvergenceDisplay } from "@/hooks/useTranscriptConvergenceDisplay";
 import { useResourceViewId } from "@/lib/panelFolder";
 import {
   TranscriptReaderContext,
@@ -34,7 +35,7 @@ import { cn } from "@/lib/utils";
 import { getCurrentAuthorId } from "@/lib/identity";
 import { hasCommandModifier } from "@/lib/hotkeys";
 import { isSystemUserContent } from "@/lib/systemMessage";
-import { isTerminalCommandInput } from "@/lib/blocks";
+import { isTerminalCommandInput, type AnyBlock } from "@/lib/blocks";
 import type { ConversationBranch } from "@/lib/conversationBranches";
 import { hasInheritedHistory, inheritedHistoryEnd } from "@/lib/inheritedHistory";
 import { TooltipButton } from "@/components/ui/tooltip";
@@ -340,6 +341,7 @@ function TranscriptImpl({
       streamBubbles,
       pendingElicitations,
       blockCount: visibleBlocks.length,
+      diagnosticBlocks: visibleBlocks,
       committedUserIds,
       hasCommittedAnchor:
         committedUserIds.size > 0 || visibleBlocks.some((block) => block.type !== "user_message"),
@@ -560,6 +562,7 @@ function TranscriptImpl({
                 {display.loadingMoreHistory && <HistoryLoadingIndicator />}
                 <VirtualBubbleList
                   bubbles={display.streamBubbles}
+                  diagnosticBlocks={display.diagnosticBlocks}
                   scrollEl={scroller?.el ?? null}
                   lastAssistantIndex={lastAssistantIndex}
                   showsWorking={display.showsWorking}
@@ -741,6 +744,7 @@ function isElAtBottom(el: HTMLElement): boolean {
 
 export const VirtualBubbleList = memo(function VirtualBubbleList({
   bubbles,
+  diagnosticBlocks,
   scrollEl,
   lastAssistantIndex,
   showsWorking,
@@ -752,6 +756,7 @@ export const VirtualBubbleList = memo(function VirtualBubbleList({
   onGeometryChange,
 }: {
   bubbles: Bubble[];
+  diagnosticBlocks?: AnyBlock[];
   scrollEl: HTMLElement | null;
   lastAssistantIndex: number;
   showsWorking: boolean;
@@ -1416,13 +1421,22 @@ export const VirtualBubbleList = memo(function VirtualBubbleList({
   // and spacer. rangeNonce bumps on any mounted-range change so a windowed-out
   // spacer anchor that has remounted gets a fresh measure.
   const rangeNonce = (range?.startIndex ?? -1) * 100003 + (range?.endIndex ?? -1);
+  const displayVersion = useMemo(() => ({ bubbles, rangeNonce }), [bubbles, rangeNonce]);
+  useTranscriptConvergenceDisplay(
+    wrapperRef,
+    conversationId,
+    visible,
+    displayVersion,
+    scrollEl,
+    diagnosticBlocks,
+  );
   useEffect(() => {
     onGeometryChange({ scrollToItem, cancelPendingScroll, activeTurnId, rangeNonce });
   }, [onGeometryChange, scrollToItem, cancelPendingScroll, activeTurnId, rangeNonce]);
 
   if (disableVirtualization) {
     return (
-      <div className="flex w-full flex-col gap-4">
+      <div ref={wrapperRef} className="flex w-full flex-col gap-4">
         {bubbles.map((bubble, index) => (
           <BubbleView
             key={rowKey(bubble)}

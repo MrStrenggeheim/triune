@@ -49,8 +49,8 @@ import { transcriptIndex } from "@/lib/transcriptOrder";
 import { messageInputKind, type MessageCommunication } from "@/lib/messageCommunication";
 import { buildBubbles } from "@/lib/renderItems";
 import { getSessionSlim, INITIAL_WINDOW_ITEMS, SESSION_HISTORY_PAGE_SIZE } from "@/lib/sessionsApi";
-import { SSE_STALL_TIMEOUT_MS } from "@/lib/sse";
-import { sessionUpdatesSocket } from "@/lib/sessionUpdatesSocket";
+import { SSE_STALL_TIMEOUT_MS, parseSseStream, withStallGuard } from "@/lib/sse";
+import { sessionUpdatesSocket, type TranscriptResponse } from "@/lib/sessionUpdatesSocket";
 import { serializeReplyDraft, type StoredReplyDraft } from "@/lib/replyDraft";
 import { clearUnsentSends, peekUnsentSend, rememberUnsentSend } from "@/lib/unsentSends";
 import {
@@ -288,6 +288,26 @@ function pushableStream(): StreamSink {
     push: (frame) => ctrl!.enqueue(enc.encode(frame)),
     close: () => ctrl!.close(),
     error: (err) => ctrl!.error(err ?? new Error("stream dropped")),
+  };
+}
+
+/** Feed the same readiness/replay scenarios through the structured production seam. */
+function structuredResponse(response: Response): TranscriptResponse {
+  const events = parseSseStream(withStallGuard(response.body!))[Symbol.asyncIterator]();
+  return {
+    ok: true,
+    status: 200,
+    headers: new Headers(),
+    body: new ReadableStream<StreamEvent>({
+      async pull(controller) {
+        const next = await events.next();
+        if (next.done) controller.close();
+        else controller.enqueue(next.value);
+      },
+      async cancel() {
+        await events.return?.();
+      },
+    }),
   };
 }
 
@@ -14825,7 +14845,9 @@ describe("chatStore — startStreamPump reconnect loop", () => {
         .mockReturnValue(transport !== "legacy-sse");
       const shared = vi
         .spyOn(sessionUpdatesSocket, "openTranscript")
-        .mockImplementation(async (_id, signal, cursor) => response(signal, cursor.after_position));
+        .mockImplementation(async (_id, signal, cursor) =>
+          structuredResponse(response(signal, cursor.after_position)),
+        );
       const normalFetch = fetchMock.getMockImplementation()!;
       fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
         const url = new URL(String(input), "http://test.local");
@@ -14931,7 +14953,7 @@ describe("chatStore — startStreamPump reconnect loop", () => {
           sinks.push(sink);
           signals.push(signal);
           signal.addEventListener("abort", () => sink.close(), { once: true });
-          return new Response(sink.stream, { headers: { "Content-Type": "text/event-stream" } });
+          return structuredResponse(new Response(sink.stream));
         });
       const controller = new AbortController();
       useChatStore.setState({ conversationId: id, abortController: controller });
@@ -14984,6 +15006,50 @@ describe("chatStore — startStreamPump reconnect loop", () => {
       }
     },
   );
+
+  it("stops an unsupported oversized transcript with one explicit error and retains loaded content", async () => {
+    const id = "oversized-transcript";
+    seedSession(id, []);
+    setSessionDraft(id, { text: "Preserve my draft", files: [] });
+    const support = vi.spyOn(sessionUpdatesSocket, "supportsTranscripts").mockReturnValue(true);
+    const open = vi.spyOn(sessionUpdatesSocket, "openTranscript").mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      body: new ReadableStream<StreamEvent>({
+        start(controller) {
+          controller.enqueue({ type: "session_transport_error", code: "stream_event_too_large" });
+          controller.close();
+        },
+      }),
+    });
+    const controller = new AbortController();
+    useChatStore.setState({
+      conversationId: id,
+      abortController: controller,
+      blocks: itemsToBlocks([assistantMessage("saved", "Keep loaded content")]),
+    });
+    try {
+      await startStreamPump(id, controller, setState, getState);
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(open).toHaveBeenCalledTimes(1);
+      expect(getState().blocks.some((block) => block.ctx.itemId === "msg_saved_asst")).toBe(true);
+      expect(
+        getState().blocks.some(
+          (block) =>
+            block.type === "error" &&
+            block.message.includes("Choose Export from Conversation actions"),
+        ),
+      ).toBe(true);
+      expect(getState().abortController).toBeNull();
+      expect(getState().transcriptCheckpoint).toBeNull();
+      expect(getSessionDraft(id)?.text).toBe("Preserve my draft");
+    } finally {
+      controller.abort();
+      open.mockRestore();
+      support.mockRestore();
+    }
+  });
 
   it("stops reconnecting (and clears the binding) when aborted after a drop", async () => {
     seedSession("conv_abrt3", []);

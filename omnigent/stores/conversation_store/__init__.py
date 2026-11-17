@@ -691,6 +691,18 @@ class ConversationStore(ABC):
         """
         ...
 
+    def get_activity_conversations(self, conversation_ids: list[str]) -> dict[str, Conversation]:
+        """Read fresh descendant facts without loading unrelated session configuration.
+
+        Only identity, timestamps, parent/root, kind, agent/runner binding,
+        labels, archived, live_status, pending_elicitation_count and project_id
+        are populated; other Conversation fields retain their defaults.
+        Missing conversations are omitted, but missing metadata is not a missing
+        conversation. Callers must authorize the result before publishing it.
+        Backends may retain the general light read as a compatibility fallback.
+        """
+        return self.get_conversations(conversation_ids, include_execution_state=False)
+
     @abstractmethod
     def list_child_conversation_ids_by_parent(
         self,

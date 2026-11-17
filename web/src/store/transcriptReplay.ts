@@ -81,6 +81,18 @@ export class TranscriptReplay {
     return this.items !== null;
   }
 
+  /** Validated staged progress, not traffic or repeated delivery of an identity. */
+  get stagedProgressPosition(): number | undefined {
+    if (
+      this.invalid ||
+      !this.items ||
+      !this.boundary ||
+      this.items.size > (this.boundary.windowItemCount ?? this.boundary.itemCount)
+    )
+      return undefined;
+    return this.lastStagedPosition;
+  }
+
   /** Whether a committed row belongs to the active reset rather than ordinary live processing. */
   stages(event: StreamEvent): boolean {
     if (!this.items || !this.boundary || !("committedItem" in event) || !event.committedItem)

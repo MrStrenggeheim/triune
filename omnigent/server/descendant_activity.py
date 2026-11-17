@@ -54,9 +54,7 @@ async def activity_descendants(
         )
         examined.update(candidates)
         loaded = (
-            await asyncio.to_thread(
-                store.get_conversations, candidates, include_execution_state=False
-            )
+            await asyncio.to_thread(store.get_activity_conversations, candidates)
             if candidates
             else {}
         )

@@ -19,6 +19,19 @@ MAX_INITIAL_LIMIT = 200
 MAX_SAFE_POSITION = (1 << 53) - 1
 
 
+def validate_sync_complete(session_id: str, event: dict[str, Any]) -> None:
+    """A completion queued before a mutation must not become authoritative later."""
+    if (
+        event.get("type") == "session.sync"
+        and event.get("phase") == "complete"
+        and (
+            event.get("stream_epoch") != inflight_text.stream_epoch()
+            or session_stream.item_revision(session_id)[1] > event["item_revision"]
+        )
+    ):
+        raise ConnectionError("Transcript changed before recovery publication")
+
+
 def valid_window_options(initial_limit: Any, window_start_position: Any) -> bool:
     """Share strict window validation between SSE and WebSocket subscriptions."""
     return (
@@ -177,6 +190,18 @@ class SessionRecovery:
         after_position = -1 if reset else self.after_position
         if window:
             after_position = max(after_position, window["window_start_position"] - 1)
+        expected_count = (
+            window.get("window_item_count", checkpoint["item_count"])
+            if reset
+            else (
+                await asyncio.to_thread(
+                    self.store.item_checkpoint,
+                    self.session_id,
+                    after_position=after_position,
+                    through_position=checkpoint["last_position"],
+                )
+            )["item_count"]
+        )
         replayed_count = 0
         if latest is not None:
             await self.authorize()
@@ -208,10 +233,9 @@ class SessionRecovery:
                 break
             assert page.data[-1].position is not None
             after_position = page.data[-1].position
-        if window:
-            self._check_window_revision(revision)
-            if reset and replayed_count != window["window_item_count"]:
-                raise ConnectionError("Transcript window membership changed during recovery")
+        self._check_window_revision(revision)
+        if replayed_count != expected_count:
+            raise ConnectionError("Transcript membership changed during recovery")
         self._baseline_revision = revision
         yield {**boundary, "phase": "complete"}
 

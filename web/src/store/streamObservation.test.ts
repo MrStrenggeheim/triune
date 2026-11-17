@@ -42,6 +42,7 @@ function observe(
   acquire: Parameters<typeof observeConversationStream>[0]["acquire"],
   priority = () => 1,
   catchUp = vi.fn(async (_signal: AbortSignal) => {}),
+  multiplexed = false,
 ) {
   const binding = new AbortController();
   controllers.push(binding);
@@ -58,9 +59,38 @@ function observe(
     pump,
     catchUp,
     priority,
+    multiplexed: () => multiplexed,
   });
   return { binding, catchUp, pump, done };
 }
+
+it("keeps visible multiplex memberships through blur and priority contention, suspending only on hide", async () => {
+  vi.useFakeTimers();
+  vi.stubGlobal("navigator", { locks: {} });
+  const page = browserPage();
+  const multiplex = observe(page, oneSlot(), () => 1, vi.fn(), true);
+  await vi.advanceTimersByTimeAsync(0);
+  page.window.dispatchEvent(new Event("blur"));
+  const legacy = observe(
+    page,
+    vi.fn(async () => null),
+    () => 2,
+  );
+  refreshConversationObservationPriority();
+  await vi.advanceTimersByTimeAsync(STREAM_SNAPSHOT_INTERVAL_MS * 2);
+  expect(multiplex.pump).toHaveBeenCalledTimes(1);
+  expect(multiplex.pump.mock.calls[0][0].signal.aborted).toBe(false);
+  expect(multiplex.catchUp).not.toHaveBeenCalled();
+  page.show(false);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(multiplex.pump.mock.calls[0][0].signal.aborted).toBe(true);
+  page.show(true);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(multiplex.pump).toHaveBeenCalledTimes(2);
+  multiplex.binding.abort();
+  legacy.binding.abort();
+  await Promise.all([multiplex.done, legacy.done]);
+});
 
 function oneSlot() {
   let held = false;

@@ -219,7 +219,6 @@ describe("sessionUpdatesSocket transcript multiplexing", () => {
       session_id: id,
       event: { type: "response.output_text.delta", delta: text },
     });
-  const decode = (value: Uint8Array | undefined) => new TextDecoder().decode(value);
 
   it("preserves the per-session replica route when host routing is enabled", async () => {
     const routing = vi.spyOn(host, "isHostRoutingEnabled").mockReturnValue(true);
@@ -285,16 +284,25 @@ describe("sessionUpdatesSocket transcript multiplexing", () => {
       });
       event("unsubscribed", "private");
       event("a", "first");
-      expect(decode((await firstReader.read()).value)).toContain('"delta":"first"');
+      expect((await firstReader.read()).value).toMatchObject({
+        type: "text_delta",
+        delta: "first",
+      });
       event("b", "second");
-      expect(decode((await secondReader.read()).value)).toContain('"delta":"second"');
+      expect((await secondReader.read()).value).toMatchObject({
+        type: "text_delta",
+        delta: "second",
+      });
       latestWs().emit({ type: "changed", items: [] });
       expect(listFrames).toEqual([{ type: "changed", items: [] }]);
       a.abort();
       expect((await firstReader.read()).done).toBe(true);
       expect(latestWs().sent.at(-1)).toEqual({ type: "unsubscribe", session_id: "a" });
       event("b", "still live");
-      expect(decode((await secondReader.read()).value)).toContain("still live");
+      expect((await secondReader.read()).value).toMatchObject({
+        type: "text_delta",
+        delta: "still live",
+      });
       expect(latestWs().closeCount).toBe(0);
     } finally {
       stop();
@@ -378,10 +386,13 @@ describe("sessionUpdatesSocket transcript multiplexing", () => {
     const readA = first!.body!.getReader();
     const readB = second!.body!.getReader();
     latestWs().emit({ type: "session.error", session_id: "a", code: "forbidden" });
-    expect(decode((await readA.read()).value)).toContain('"code":"forbidden"');
+    expect((await readA.read()).value).toEqual({
+      type: "session_transport_error",
+      code: "forbidden",
+    });
     expect((await readA.read()).done).toBe(true);
     event("b", "authorized");
-    expect(decode((await readB.read()).value)).toContain("authorized");
+    expect((await readB.read()).value).toMatchObject({ type: "text_delta", delta: "authorized" });
     expect(latestWs().closeCount).toBe(0);
     a.abort();
     b.abort();
@@ -410,7 +421,10 @@ describe("sessionUpdatesSocket transcript multiplexing", () => {
       }),
     } as MessageEvent);
     event("same-id", "current viewer");
-    expect(decode((await response!.body!.getReader().read()).value)).toContain("current viewer");
+    expect((await response!.body!.getReader().read()).value).toMatchObject({
+      type: "text_delta",
+      delta: "current viewer",
+    });
     controller.abort();
   });
 });

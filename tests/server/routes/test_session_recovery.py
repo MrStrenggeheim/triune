@@ -252,7 +252,8 @@ async def test_mutation_during_delta_replay_is_recovered_without_another_full_re
         stream_epoch=inflight_text.stream_epoch(),
         project=project,
     )
-    frames = await _events(recovery)
+    with pytest.raises(ConnectionError, match="changed during recovery"):
+        await _events(recovery)
     heartbeat = await recovery.prepare({"type": "session.heartbeat"})
     assert heartbeat["reconcile_required"]
     resumed = await _events(
@@ -262,7 +263,7 @@ async def test_mutation_during_delta_replay_is_recovered_without_another_full_re
             _allowed,
             enabled=True,
             after_position=activity.position,
-            after_revision=frames[-1]["item_revision"],
+            after_revision=revision,
             stream_epoch=inflight_text.stream_epoch(),
         )
     )

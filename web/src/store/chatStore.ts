@@ -5,15 +5,22 @@ import {
   setTranscriptReaderHydrator,
   transcriptReaderScope,
 } from "@/lib/transcriptReaderCheckpoint";
+import {
+  conversationSynchronization,
+  type SynchronizationAttempt,
+} from "./conversationSynchronization";
+import { recordConvergence, stampConvergenceBlocks } from "@/lib/convergenceDiagnostics";
 import { insertRecoveredBlocks } from "./recoveryPlacement";
-import { TranscriptReplay, upsertCanonicalItem } from "./transcriptReplay";
+import { upsertCanonicalItem } from "./transcriptReplay";
 import { pendingPeerReceiptPlacement, projectPeerReceipts } from "@/lib/peerMessagePlacement";
 import { markInputLifecycle } from "@/lib/inputDiagnostics";
 import {
   sessionUpdatesSocket,
   isRetryableTranscriptError,
   type TranscriptCursor,
+  type TranscriptResponse,
 } from "@/lib/sessionUpdatesSocket";
+import { readTranscriptEvents } from "@/lib/transcriptEventStream";
 import {
   normalizeTranscript,
   replaceNativePreviewContent,
@@ -3881,7 +3888,7 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
       // events. Revalidate them and newly revealed views against saved history;
       // negotiated visible streams already reconcile their revision checkpoints.
       const controller = entry.getState().abortController;
-      const checkpoint = controller ? transcriptCursors.get(controller) : undefined;
+      const checkpoint = controller ? conversationSynchronization(controller).cursor : undefined;
       // A continuously visible negotiated stream already owns gap recovery.
       // Moving focus only changes the root projection, not its observation.
       if (
@@ -5479,7 +5486,7 @@ async function bindStream(
   const controller = new AbortController();
   write({ abortController: controller });
   const stateBeforeFetch = get();
-  const cursorBeforeFetch = transcriptCursors.get(controller);
+  const cursorBeforeFetch = conversationSynchronization(controller).cursor;
   const launchBeforeFetch = mcpStartupBeforeSnapshot(id, stateBeforeFetch);
   const ownsBinding = () =>
     !boundEntry?.disposed &&
@@ -5569,14 +5576,15 @@ async function bindStream(
       if (!bootstrapCurrent()) return settleBinding();
     }
 
-    const mayObserve =
-      typeof document === "undefined" ||
-      (document.visibilityState !== "hidden" && (!navigator.locks || document.hasFocus()));
     if (typeof WebSocket !== "undefined") observeTranscriptCapabilities();
     multiplexed =
       typeof WebSocket !== "undefined"
         ? await sessionUpdatesSocket.negotiateTranscript(controller.signal)
         : false;
+    const mayObserve =
+      typeof document === "undefined" ||
+      (document.visibilityState !== "hidden" &&
+        (multiplexed || !navigator.locks || document.hasFocus()));
     hasSlot = mayObserve && (multiplexed || (await acquireStreamSlot(id, controller.signal)));
     const initialSlot = hasSlot ? heldStreamSlots.get(id) : undefined;
     if (!bootstrapCurrent()) {
@@ -5595,6 +5603,7 @@ async function bindStream(
     // bounded replay and exact-input dedupe as reconnects.
     void observeConversationStream({
       signal: controller.signal,
+      multiplexed: () => sessionUpdatesSocket.supportsTranscripts(),
       initialSlot: initialSlot
         ? observationSlot(initialSlot)
         : multiplexed && mayObserve
@@ -5704,7 +5713,7 @@ async function bindStream(
       set({ loadingConversation: false });
       return;
     }
-    const canonicalReplayWon = transcriptCursors.get(controller) !== cursorBeforeFetch;
+    const canonicalReplayWon = conversationSynchronization(controller).cursor !== cursorBeforeFetch;
     const items = canonicalReplayWon ? [] : page.items;
     const snapshotNativeMessageIds = nativeCompletedMessageIds(items);
     snapshotNativeMessageIds.forEach((messageId) => ignoredNativeMessageIds.add(messageId));
@@ -6597,7 +6606,7 @@ async function rehydrateWindowOnReconnect(
     throw error;
   }
   if (stale()) return;
-  if (controller) transcriptCursors.delete(controller);
+  if (controller) conversationSynchronization(controller).cursor = undefined;
   const snapshotNativeMessageIds = nativeCompletedMessageIds(fresh.items);
   snapshotNativeMessageIds.forEach((messageId) => ignoredNativeMessageIds.add(messageId));
   const freshBlocks = snapshotTranscriptBlocks(id, fresh.items, session);
@@ -7207,7 +7216,6 @@ async function backfillOnReconnect(
 // Legacy SSE-only servers still receive idle changes by recycling their attempt.
 const presenceAttemptControllers = new Set<AbortController>();
 const multiplexedAttempts = new WeakSet<AbortController>();
-const transcriptCursors = new WeakMap<AbortController, TranscriptCursor>();
 
 function transcriptCursorScope(id: string): string {
   return JSON.stringify([
@@ -7270,7 +7278,7 @@ export function restoreConversationHistoryExtent(id: string, earliestPosition: n
     state.historyWindowStartPosition <= earliestPosition
   )
     return;
-  if (state.abortController) transcriptCursors.delete(state.abortController);
+  if (state.abortController) conversationSynchronization(state.abortController).cursor = undefined;
   setterFor(id)({
     historyWindowRestorePosition: earlierHistoryPosition(
       state.historyWindowRestorePosition,
@@ -7581,21 +7589,23 @@ export async function startStreamPump(
       streamAttemptActivity.set(attempt, Date.now());
       openedHost = getSessionHost(id);
       liveAttempt = attempt;
+      const receiptScope = transcriptReaderScope();
+      let synchronization: SynchronizationAttempt | undefined;
       try {
         const idle = presenceIdle.idleNow();
-        let streamRes: Response;
+        let streamRes: Response | TranscriptResponse;
         let expectsInitialSync = false;
         try {
           const retained = get().transcriptCheckpoint;
           if (retained?.scope === transcriptCursorScope(id)) {
-            if (!transcriptCursors.has(controller))
-              transcriptCursors.set(controller, retained.cursor);
+            if (conversationSynchronization(controller).cursor === undefined)
+              conversationSynchronization(controller).cursor = retained.cursor;
           } else if (retained) {
-            transcriptCursors.delete(controller);
+            conversationSynchronization(controller).cursor = undefined;
             set({ transcriptCheckpoint: null });
           }
           const cursor: TranscriptCursor = {
-            ...(transcriptCursors.get(controller) ?? { after_position: -1 }),
+            ...(conversationSynchronization(controller).cursor ?? { after_position: -1 }),
             ...((get().historyWindowRestorePosition ?? get().historyWindowStartPosition) !== null
               ? {
                   window_start_position: earlierHistoryPosition(
@@ -7605,14 +7615,41 @@ export async function startStreamPump(
                 }
               : {}),
           };
-          const shared = sessionUpdatesSocket.supportsTranscripts()
-            ? await sessionUpdatesSocket.openTranscript(id, attempt.signal, cursor, idle)
+          if (sessionUpdatesSocket.supportsTranscripts()) {
+            synchronization = conversationSynchronization(controller).begin(
+              true,
+              (retry, reason) => {
+                recordConvergence("recovery", {
+                  conversationId: id,
+                  ...synchronization!.identity,
+                  reason,
+                });
+                if (retry) failedOpens++;
+                attempt.abort();
+              },
+            );
+          }
+          const shared = synchronization
+            ? await sessionUpdatesSocket.openTranscript(
+                id,
+                attempt.signal,
+                cursor,
+                idle,
+                (event) => {
+                  if (transcriptReaderScope() === receiptScope && synchronization!.current)
+                    recordStreamReceipt(id, synchronization!, event);
+                },
+              )
             : null;
+          if (!shared) {
+            synchronization?.stop();
+            synchronization = undefined;
+          }
           if (shared) multiplexedAttempts.add(attempt);
           expectsInitialSync =
             shared !== null ||
             sessionUpdatesSocket.supportsTranscriptWindows() ||
-            transcriptCursors.has(controller);
+            conversationSynchronization(controller).cursor !== undefined;
           streamRes =
             shared ??
             (await openSessionStream(id, attempt.signal, {
@@ -7623,7 +7660,7 @@ export async function startStreamPump(
                     windowStartPosition: cursor.window_start_position,
                   }
                 : {}),
-              ...(transcriptCursors.has(controller)
+              ...(conversationSynchronization(controller).cursor !== undefined
                 ? {
                     afterPosition: cursor.after_position,
                     afterRevision: cursor.after_revision,
@@ -7695,7 +7732,10 @@ export async function startStreamPump(
         // leaves the transcript silently frozen. Treat a non-SSE content
         // type as a failed open so it backs off like any other bad answer.
         const contentType = streamRes.headers.get("content-type") ?? "";
-        if (!contentType.toLowerCase().includes("text/event-stream")) {
+        if (
+          !multiplexedAttempts.has(attempt) &&
+          !contentType.toLowerCase().includes("text/event-stream")
+        ) {
           void streamRes.body.cancel().catch(() => {});
           console.warn(`Session ${id}: stream open returned '${contentType}', will retry`);
           failedOpens += 1;
@@ -7735,7 +7775,7 @@ export async function startStreamPump(
         // reconcile resupplies whatever committed during the dead window —
         // without it the pump blocks in read() forever and the transcript
         // silently freezes until a page reload.
-        const guardedBody = withStallGuard(streamRes.body, {
+        const guardedBody = withStallGuard<Uint8Array | StreamEvent>(streamRes.body, {
           onActivity: () => {
             streamAttemptActivity.set(attempt, Date.now());
           },
@@ -7763,6 +7803,8 @@ export async function startStreamPump(
             failedOpens = 0;
           },
           expectsInitialSync,
+          multiplexedAttempts.has(attempt),
+          synchronization,
         );
         if (reconnecting && !multiplexedAttempts.has(attempt)) {
           // A transport drop must also release its pending snapshot reads.
@@ -7808,6 +7850,7 @@ export async function startStreamPump(
           markLivePreviewsInterrupted(id, set);
         }
       } finally {
+        synchronization?.stop();
         liveAttempt = null;
         observationController.signal.removeEventListener("abort", onOuterAbort);
         presenceAttemptControllers.delete(attempt);
@@ -8035,7 +8078,12 @@ type NativeTextDelta = Extract<StreamEvent, { type: "text_delta" }> & {
  * :param deltas: chunks in arrival order, including their stream indices.
  * :returns: nothing; mutates `blocks` in the store.
  */
-function applyLiveDeltas(set: Setter, get: Getter, deltas: NativeTextDelta[]): void {
+function applyLiveDeltas(
+  set: Setter,
+  get: Getter,
+  deltas: NativeTextDelta[],
+  accepted?: (blocks: AnyBlock[]) => void,
+): void {
   const fold = (s: ChatState) => {
     const changes = new Map<number, TextDone>();
     const byId = transcriptIndex(s.blocks).items;
@@ -8085,6 +8133,7 @@ function applyLiveDeltas(set: Setter, get: Getter, deltas: NativeTextDelta[]): v
   };
   const base = get();
   const folded = fold(base);
+  accepted?.([...folded.changes.values()]);
   if (
     folded.inserted.size === 0 &&
     set.nativePreviewContent?.({
@@ -8101,6 +8150,7 @@ function applyLiveDeltas(set: Setter, get: Getter, deltas: NativeTextDelta[]): v
         ? folded
         : fold(current);
     const blocks = current.blocks.slice();
+    if (update !== folded) accepted?.([...update.changes.values()]);
     for (const [at, block] of update.changes) blocks[at] = block;
     return { ...update.startupPatch, blocks };
   });
@@ -8363,9 +8413,31 @@ function revivePendingElicitationBlock(
 // live, in order. Create sites call `markSessionCreated`. `approval` above stays
 // a direct emit — it has no stream lifecycle.
 
+function recordStreamReceipt(id: string, replay: SynchronizationAttempt, event: StreamEvent): void {
+  recordConvergence("received", {
+    conversationId: id,
+    ...replay.receivedIdentity(event),
+    itemId: typeof event.committedItem?.id === "string" ? event.committedItem.id : undefined,
+    position: itemPosition(event.committedItem?.position ?? event.position),
+    kind:
+      event.type === "session_sync"
+        ? "sync"
+        : event.type === "session_heartbeat"
+          ? "heartbeat"
+          : event.committedItem
+            ? "item"
+            : event.type === "text_delta"
+              ? "delta"
+              : "state",
+    ...(event.type === "session_sync" || event.type === "session_heartbeat"
+      ? { position: event.lastPosition, revision: event.itemRevision }
+      : {}),
+  });
+}
+
 export async function pumpStreamEvents(
   id: string,
-  body: ReadableStream<Uint8Array>,
+  body: ReadableStream<Uint8Array | StreamEvent>,
   controller: AbortController,
   set: Setter,
   get: Getter,
@@ -8375,22 +8447,63 @@ export async function pumpStreamEvents(
   nativeReplayPrefixes: ReadonlyMap<string, string> = new Map(),
   onSyncComplete?: () => void,
   expectsInitialSync = false,
+  structured = false,
+  synchronization?: SynchronizationAttempt,
 ): Promise<StreamEndReason> {
   const stream = new BlockStream();
   const sseResult: SseStreamResult = { sawDone: false };
   const binding = get().abortController;
   const cursorScope = transcriptCursorScope(id);
   const readerScope = transcriptReaderScope();
+  const replay =
+    synchronization ??
+    conversationSynchronization(binding ?? controller).begin(
+      expectsInitialSync,
+      (retry, reason) => {
+        recordConvergence("recovery", { conversationId: id, ...replay.identity, reason });
+        requestResume?.(retry);
+      },
+    );
   const rawEvents = (async function* () {
-    for await (const event of parseSseStream(body, sseResult)) {
+    const source = structured
+      ? readTranscriptEvents(body as ReadableStream<StreamEvent>)
+      : parseSseStream(body as ReadableStream<Uint8Array>, sseResult);
+    for await (const event of source) {
       if (
         controller.signal.aborted ||
+        !replay.current ||
         isConversationDisposed(id) ||
         get().abortController !== binding ||
         transcriptCursorScope(id) !== cursorScope
       )
         return;
+      if (!structured) recordStreamReceipt(id, replay, event);
+      const previousItemBlocks =
+        event.type === "session_item_updated" && !replay.stages(event)
+          ? new Set(get().blocks.filter((block) => block.ctx.itemId === event.item.id))
+          : undefined;
       yield event;
+      if (
+        event.type === "session_item_updated" &&
+        previousItemBlocks !== undefined &&
+        typeof event.item.id === "string" &&
+        replay.current &&
+        hasCommittedItem(get().blocks, event.item.id)
+      ) {
+        const updated = get().blocks.filter(
+          (block) => block.ctx.itemId === event.item.id && !previousItemBlocks?.has(block),
+        );
+        if (updated.length) {
+          stampConvergenceBlocks(updated, replay.identity);
+          recordConvergence("accepted", {
+            conversationId: id,
+            ...replay.identity,
+            kind: "item",
+            itemId: event.item.id,
+            position: itemPosition(event.item.position),
+          });
+        }
+      }
     }
   })();
   // Blocks awaiting their coalesced flush; `seenItemIds` dedupes against
@@ -8400,9 +8513,6 @@ export async function pumpStreamEvents(
   const liveTextBuffer: NativeTextDelta[] = [];
   const seenItemIds = new Set<string>();
   const completedPreviewIds = new Map<string, string>();
-  const replay = new TranscriptReplay();
-  let awaitingSync = expectsInitialSync;
-  let resumeRequested = false;
   const nativeMessagesSeen = new Set<string>();
   const previewToRetire = (block: AnyBlock, blocks: AnyBlock[]): AnyBlock | undefined => {
     const messageId = completedPreviewIds.get(block.ctx.itemId ?? "");
@@ -8428,7 +8538,16 @@ export async function pumpStreamEvents(
       .splice(0)
       .filter((delta) => !ignoredMessages.has(delta.messageId));
     if (deltas.length && !controller.signal.aborted && !isConversationDisposed(id)) {
-      applyLiveDeltas(set, get, deltas);
+      applyLiveDeltas(set, get, deltas, (blocks) =>
+        stampConvergenceBlocks(blocks, replay.identity),
+      );
+      for (const delta of deltas)
+        recordConvergence("accepted", {
+          conversationId: id,
+          ...replay.identity,
+          kind: "delta",
+          itemId: LIVE_ITEM_PREFIX + delta.messageId,
+        });
     }
   };
   // Tap the raw event stream for `session.*` side effects (sessionStatus,
@@ -8467,32 +8586,17 @@ export async function pumpStreamEvents(
           replay.accept(event, get().blocks);
           return false;
         }
-        if (event.type === "session_sync" && event.phase === "start") awaitingSync = true;
-        // The ready heartbeat precedes the requested replay; only a completed
-        // sync makes its advertised checkpoint comparable with our cursor.
-        if (event.type === "session_heartbeat" && !resumeRequested && !awaitingSync) {
-          const cursor = transcriptCursors.get(get().abortController ?? controller);
-          if (!cursor) {
-            // An additive checkpoint negotiates recovery on an SSE compatibility connection.
-            transcriptCursors.set(get().abortController ?? controller, { after_position: -1 });
-            resumeRequested = true;
-            requestResume?.();
-          } else if (
-            event.streamEpoch !== cursor.stream_epoch ||
-            (event.itemRevision !== undefined &&
-              cursor.after_revision !== undefined &&
-              event.itemRevision !== cursor.after_revision) ||
-            event.lastPosition > cursor.after_position ||
-            event.reconcileRequired
-          ) {
-            resumeRequested = true;
-            requestResume?.();
-          }
-        }
+        if (event.type === "session_heartbeat") replay.heartbeat(event);
         if (event.type === "session_transport_error") {
-          if (isRetryableTranscriptError(event.code)) requestResume?.(true);
+          if (isRetryableTranscriptError(event.code)) replay.recover(true, "transport");
           else {
-            failUnavailableStream(set, `transcript unavailable (${event.code})`);
+            failUnavailableStream(
+              set,
+              `transcript unavailable (${event.code})`,
+              event.code === "stream_event_too_large"
+                ? "A saved item is too large for live updates. Choose Export from Conversation actions to read its full contents."
+                : undefined,
+            );
             set({ status: "idle" });
             sseResult.sawDone = true;
           }
@@ -8515,17 +8619,11 @@ export async function pumpStreamEvents(
         const rebuilt = replay.accept(event, get().blocks);
         if (event.type === "session_sync" && event.phase === "complete") {
           if (!replay.checkpointAccepted) {
-            requestResume?.(true);
             return false;
           }
-          awaitingSync = false;
-          transcriptCursors.set(get().abortController ?? controller, {
-            after_position: event.lastPosition,
-            after_revision: event.itemRevision,
-            stream_epoch: event.streamEpoch,
-          });
         }
         if (rebuilt && event.type === "session_sync") {
+          const previous = new Set(get().blocks);
           for (const block of get().blocks) {
             if (
               isLiveProvisionalBlock(block) &&
@@ -8537,6 +8635,10 @@ export async function pumpStreamEvents(
           set((state) => {
             const reconciled = reconcileExactPendingInputs(rebuilt, state.pendingUserMessages);
             const { blocks } = reconciled;
+            stampConvergenceBlocks(
+              blocks.filter((block) => !previous.has(block)),
+              replay.identity,
+            );
             return {
               ...reconciled,
               ...canonicalHistoryWindow(state, event, blocks),
@@ -8561,10 +8663,33 @@ export async function pumpStreamEvents(
           set({
             transcriptCheckpoint: {
               scope: cursorScope,
-              cursor: transcriptCursors.get(get().abortController ?? controller)!,
+              cursor: conversationSynchronization(get().abortController ?? controller).cursor!,
             },
           });
           const committed = get();
+          recordConvergence("accepted", {
+            conversationId: id,
+            ...replay.identity,
+            kind: "sync",
+            position: event.lastPosition,
+            revision: event.itemRevision,
+          });
+          for (const block of committed.blocks) {
+            if (
+              block.ctx.itemId &&
+              itemPosition(block.ctx.position) !== undefined &&
+              block.ctx.position! <= event.lastPosition &&
+              (event.windowStartPosition === undefined ||
+                block.ctx.position! >= event.windowStartPosition)
+            )
+              recordConvergence("accepted", {
+                conversationId: id,
+                ...replay.identity,
+                kind: "item",
+                itemId: block.ctx.itemId,
+                position: block.ctx.position,
+              });
+          }
           if (committed.historyWindowStartPosition !== null)
             recordTranscriptLoadedRange(
               id,
@@ -8660,6 +8785,15 @@ export async function pumpStreamEvents(
         );
       }
       if (fresh.length === 0) return extra ?? {};
+      stampConvergenceBlocks(fresh, replay.identity);
+      for (const block of fresh)
+        recordConvergence("accepted", {
+          conversationId: id,
+          ...replay.identity,
+          kind: "item",
+          itemId: block.ctx.itemId ?? undefined,
+          position: block.ctx.position,
+        });
       // Only newly accepted text counts, not snapshot hydration or duplicates.
       const hasAssistantText = fresh.some((b) =>
         b.type === "text_chunk"
@@ -8903,6 +9037,7 @@ export async function pumpStreamEvents(
     flush();
     return "dropped";
   } finally {
+    replay.stop();
     // Drop any pending frame + its buffered blocks so a queued flush
     // can't apply this stream's blocks after switchTo bound another.
     // `abortController` lifecycle is owned by `startStreamPump`'s loop,
@@ -11222,12 +11357,17 @@ function finalizeActive(
 const STREAM_UNAVAILABLE_CODE = "stream_unavailable";
 
 /** Fail the active turn and surface one fallback when no bubble can show it. */
-function failUnavailableStream(set: Setter, error: string): void {
+function failUnavailableStream(set: Setter, error: string, message?: string): void {
   set((s) => {
     const activeResponse =
       s.activeResponse === null
         ? null
-        : { ...s.activeResponse, state: "failed" as const, error, completedAt: Date.now() };
+        : {
+            ...s.activeResponse,
+            state: "failed" as const,
+            error: message ?? error,
+            completedAt: Date.now(),
+          };
     const blocks = s.blocks.filter(
       (block) => block.type !== "error" || block.code !== STREAM_UNAVAILABLE_CODE,
     );
@@ -11244,7 +11384,8 @@ function failUnavailableStream(set: Setter, error: string): void {
       blocks: [
         ...blocks,
         makeClientErrorBlock(
-          "The live connection to the assistant is unavailable. Reload the page to reconnect.",
+          message ??
+            "The live connection to the assistant is unavailable. Reload the page to reconnect.",
           STREAM_UNAVAILABLE_CODE,
         ),
       ],

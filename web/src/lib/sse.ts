@@ -128,10 +128,10 @@ export const SSE_STALL_TIMEOUT_MS = 45_000;
  * @param opts.onStall Called once when the guard trips.
  * @returns The guarded stream to consume in place of `source`.
  */
-export function withStallGuard(
-  source: ReadableStream<Uint8Array>,
+export function withStallGuard<T>(
+  source: ReadableStream<T>,
   opts: { stallMs?: number; onActivity?: () => void; onStall?: () => void } = {},
-): ReadableStream<Uint8Array> {
+): ReadableStream<T> {
   const stallMs = opts.stallMs ?? SSE_STALL_TIMEOUT_MS;
   const reader = source.getReader();
   let timer: ReturnType<typeof setTimeout> | null = null;
@@ -141,7 +141,7 @@ export function withStallGuard(
       timer = null;
     }
   };
-  return new ReadableStream<Uint8Array>({
+  return new ReadableStream<T>({
     async pull(controller) {
       // Cancelling the reader resolves the pending read as `done`, which
       // closes the wrapped stream through the normal path below.
@@ -150,7 +150,7 @@ export function withStallGuard(
         opts.onStall?.();
         reader.cancel().catch(() => {});
       }, stallMs);
-      let result: ReadableStreamReadResult<Uint8Array>;
+      let result: ReadableStreamReadResult<T>;
       try {
         result = await reader.read();
       } catch (err) {

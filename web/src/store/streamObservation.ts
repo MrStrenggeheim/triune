@@ -8,6 +8,8 @@ export const STREAM_SNAPSHOT_TIMEOUT_MS = 15_000;
 
 interface ObservationOptions {
   signal: AbortSignal;
+  /** Multiplex memberships have no cross-window connection budget. */
+  multiplexed?: () => boolean;
   initialSlot?: StreamSlot;
   acquire: () => Promise<StreamSlot | null>;
   pump: (controller: AbortController, resumed: boolean) => Promise<void>;
@@ -93,13 +95,16 @@ export async function observeConversationStream(options: ObservationOptions): Pr
   let announcedWaiting = false;
   let initialSlot = options.initialSlot ?? null;
   const visible = () => !page || page.visibilityState !== "hidden";
-  const priority = () => (visible() && focused ? (options.priority?.() ?? 1) : 0);
+  const multiplexed = () => options.multiplexed?.() ?? false;
+  const mayObserve = () => visible() && (multiplexed() || focused);
+  const priority = () => (visible() && focused && !multiplexed() ? (options.priority?.() ?? 1) : 0);
   const higherPriorityWaiting = () =>
+    !multiplexed() &&
     [...observers].some(
       (other) => other !== observer && other.waiting && other.priority() > priority(),
     );
   const changed = () => {
-    if (!visible() || !focused || higherPriorityWaiting()) attempt?.abort();
+    if (!mayObserve() || higherPriorityWaiting()) attempt?.abort();
     if (!visible() || priority() > snapshotPriority) snapshot?.abort();
     wake?.();
   };
@@ -140,7 +145,7 @@ export async function observeConversationStream(options: ObservationOptions): Pr
       let slot: StreamSlot | null = initialSlot;
       initialSlot = null;
       observer.waiting = true;
-      if (!slot && visible() && focused && !higherPriorityWaiting()) slot = await options.acquire();
+      if (!slot && mayObserve() && !higherPriorityWaiting()) slot = await options.acquire();
       if (!slot) {
         resumed = true;
         if (!announcedWaiting) {
@@ -148,7 +153,7 @@ export async function observeConversationStream(options: ObservationOptions): Pr
           refreshConversationObservationPriority();
         }
       }
-      if (options.signal.aborted || !visible() || !focused) {
+      if (options.signal.aborted || !mayObserve()) {
         await slot?.release();
       } else if (slot) {
         observer.waiting = false;

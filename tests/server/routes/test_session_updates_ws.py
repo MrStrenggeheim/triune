@@ -1615,10 +1615,10 @@ def test_sse_window_query_validation_and_shared_recovery_wiring(app, stores, mon
     async def finite_stream(request, session_id, *args, recovery, **kwargs):
         captured.append(recovery)
         async for event in recovery.events():
-            yield "data: " + json.dumps(event) + "\n\n"
+            yield event
 
     monkeypatch.setattr(
-        "omnigent.server.routes.sessions.routes_events._stream_live_events", finite_stream
+        "omnigent.server.routes.sessions.routes_events._iter_live_events", finite_stream
     )
     with TestClient(app) as client:
         url = f"/v1/sessions/{sid}/stream"
@@ -1643,3 +1643,499 @@ def test_sse_window_query_validation_and_shared_recovery_wiring(app, stores, mon
         assert captured[-1].initial_limit == 200
         assert captured[-1].window_start_position == 0
         assert '"window_item_count": 0' in response.text
+
+
+async def test_multiplex_writer_isolates_auth_and_rechecks_after_contention():
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    from fastapi import APIRouter
+
+    from omnigent.server.session_multiplex import SessionMultiplex
+
+    auth_started, release_auth = asyncio.Event(), asyncio.Event()
+    write_started, release_write = asyncio.Event(), asyncio.Event()
+    sent = []
+    revoked = False
+    checks = 0
+
+    async def write(frame):
+        if frame["type"] == "blocker":
+            write_started.set()
+            await release_write.wait()
+        sent.append(frame["type"])
+
+    async def authorize():
+        nonlocal checks
+        checks += 1
+        auth_started.set()
+        await release_auth.wait()
+        if revoked:
+            raise ConnectionError("revoked")
+
+    mux = SessionMultiplex(APIRouter(), AsyncMock(), write, asyncio.Lock())
+    candidate = asyncio.create_task(mux.send({"type": "candidate"}, authorize))
+    await auth_started.wait()
+    blocker = asyncio.create_task(mux.send({"type": "blocker"}))
+    await write_started.wait()
+    release_auth.set()
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    assert checks == 1
+    revoked = True
+    release_write.set()
+    await blocker
+    with pytest.raises(ConnectionError, match="revoked"):
+        await candidate
+    assert checks == 2
+    assert sent == ["blocker"]
+    await mux.close()
+
+
+async def test_multiplex_hot_backlog_yields_to_ready_sibling():
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    from fastapi import APIRouter
+
+    from omnigent.server.session_multiplex import SessionMultiplex
+
+    sent = []
+    gate = asyncio.Event()
+    sibling_ready = asyncio.Event()
+
+    async def write(frame):
+        sent.append(frame["type"])
+        if len(sent) == 5:
+            gate.set()
+
+    async def sibling_auth():
+        sibling_ready.set()
+        await gate.wait()
+
+    mux = SessionMultiplex(APIRouter(), AsyncMock(), write, asyncio.Lock())
+
+    async def hot():
+        for _ in range(100):
+            await mux.send({"type": "hot"})
+
+    sibling = asyncio.create_task(mux.send({"type": "sibling"}, sibling_auth))
+    await sibling_ready.wait()
+    await asyncio.gather(hot(), sibling)
+    assert sent.index("sibling") <= 6
+    await mux.close()
+
+
+async def test_multiplex_writer_deadline_breaks_socket(monkeypatch):
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    from fastapi import APIRouter
+
+    from omnigent.server import session_multiplex
+
+    monkeypatch.setattr(session_multiplex, "_WRITE_TIMEOUT_S", 0.01)
+    socket = AsyncMock()
+
+    async def blocked(frame):
+        await asyncio.Event().wait()
+
+    mux = session_multiplex.SessionMultiplex(APIRouter(), socket, blocked, asyncio.Lock())
+    with pytest.raises(ConnectionError, match="write failed"):
+        await mux.send({"type": "blocked"})
+    socket.close.assert_awaited_once_with(code=1011)
+    with pytest.raises(ConnectionError, match="closed"):
+        await mux.send({"type": "later"})
+    await mux.close()
+
+
+@pytest.mark.timeout(20)
+def test_slow_list_read_does_not_block_transcript_or_new_membership(app, stores, monkeypatch):
+    import threading
+
+    from omnigent.runtime import session_stream
+
+    first = _seed_session(stores, owner=ALICE, title="first")
+    second = _seed_session(stores, owner=ALICE, title="second")
+    started, release = threading.Event(), threading.Event()
+    original = stores[0].get_conversations
+
+    def held(ids, **kwargs):
+        started.set()
+        assert release.wait(5)
+        return original(ids, **kwargs)
+
+    with TestClient(app).websocket_connect(
+        "/v1/sessions/updates", headers={"X-Forwarded-Email": ALICE}
+    ) as ws:
+        _subscribe(ws, first)
+        monkeypatch.setattr(stores[0], "get_conversations", held)
+        ws.send_json({"type": "watch", "session_ids": [first]})
+        try:
+            assert started.wait(5)
+            _subscribe(ws, second)
+            session_stream.publish(
+                first,
+                {
+                    "type": "session.changed_files.invalidated",
+                    "session_id": first,
+                    "environment_id": "default",
+                },
+            )
+            assert (
+                _recv_transcript(ws, first, "session.changed_files.invalidated")["session_id"]
+                == first
+            )
+            ws.send_json({"type": "watch", "session_ids": [second]})
+        finally:
+            release.set()
+        snapshot = _recv_until(ws, {"snapshot"})
+        assert [item["id"] for item in snapshot["items"]] == [second]
+
+
+@pytest.mark.timeout(20)
+@pytest.mark.parametrize("path", ["watch", "discovery"])
+@pytest.mark.parametrize("revoked", ["root", "branch"])
+def test_list_publication_rechecks_grants_after_liveness(
+    app, stores, monkeypatch, fast_rescan, path, revoked
+):
+    import asyncio
+    import threading
+
+    from omnigent.server.routes.sessions import routes_core
+
+    store, _, permissions = stores
+    root = _seed_session(stores, owner=ALICE, title="root")
+    child = store.create_conversation(
+        kind="sub_agent", parent_conversation_id=root, agent_id="087b7cb7ac30abf4debfaa578d052ec6"
+    )
+    branch = store.fork_conversation(child.id)
+    permissions.grant(ALICE, branch.id, LEVEL_OWNER)
+    store.set_session_live_status(branch.id, "running")
+    started, release = threading.Event(), threading.Event()
+    original = routes_core._apply_liveness_to_items
+
+    async def held(items, lookup):
+        await original(items, lookup)
+        started.set()
+        assert await asyncio.to_thread(release.wait, 5)
+
+    monkeypatch.setattr(routes_core, "_apply_liveness_to_items", held)
+    with TestClient(app).websocket_connect(
+        "/v1/sessions/updates", headers={"X-Forwarded-Email": ALICE}
+    ) as ws:
+        _recv_until(ws, {"capabilities"})
+        if path == "watch":
+            ws.send_json({"type": "watch", "session_ids": [root]})
+        else:
+            # A heartbeat proves reader/discovery tasks have started.
+            _recv_until(ws, {"heartbeat"})
+            sessions_routes.user_session_stream.publish(
+                ALICE, {"type": "session_added", "session_id": root}
+            )
+        try:
+            assert started.wait(5)
+            permissions.revoke(ALICE, root if revoked == "root" else branch.id)
+        finally:
+            release.set()
+        if revoked == "root" and path == "discovery":
+            for _ in range(3):
+                assert json.loads(ws.receive_text())["type"] == "heartbeat"
+        else:
+            frame = _recv_until(ws, {"snapshot" if path == "watch" else "changed"})
+            if revoked == "root":
+                assert frame["items"] == []
+            else:
+                item = frame["items"][0]
+                assert [row["id"] for row in item["activity"]["descendants"]] == [child.id]
+                assert item["activity"]["descendant_running"] is False
+                assert item["status"] == "idle"
+
+
+async def test_ready_fifo_bounds_service_under_auth_and_write_contention():
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    from fastapi import APIRouter
+
+    from omnigent.server.session_multiplex import SessionMultiplex
+
+    writer_started, release_writer = asyncio.Event(), asyncio.Event()
+    slow_ready = asyncio.Event()
+    release_slow = asyncio.Event()
+    sent = []
+    checks = 0
+
+    async def write(frame):
+        if frame["type"] == "blocker":
+            writer_started.set()
+            await release_writer.wait()
+        sent.append(frame["type"])
+
+    async def slow_auth():
+        nonlocal checks
+        checks += 1
+        if checks == 1:
+            slow_ready.set()
+        else:
+            await release_slow.wait()
+
+    mux = SessionMultiplex(APIRouter(), AsyncMock(), write)
+    blocker = asyncio.create_task(mux.send({"type": "blocker"}))
+    await writer_started.wait()
+    slow = asyncio.create_task(mux.send({"type": "slow"}, slow_auth))
+    await slow_ready.wait()
+    fast = [asyncio.create_task(mux.send({"type": "fast"})) for _ in range(20)]
+    await asyncio.sleep(0)
+    release_writer.set()
+    await blocker
+    await asyncio.sleep(0)
+    assert sent == ["blocker"]
+    release_slow.set()
+    await asyncio.gather(slow, *fast)
+    assert sent == ["blocker", "slow", *(["fast"] * 20)]
+    assert checks == 2
+    await mux.close()
+
+
+@pytest.mark.timeout(30)
+@pytest.mark.parametrize("count", [300, 1000])
+def test_expanded_real_replay_backpressures_without_losing_items(app, stores, monkeypatch, count):
+    import asyncio
+
+    from omnigent.entities import NewConversationItem
+    from omnigent.entities.conversation import MessageData
+    from omnigent.server import session_multiplex
+
+    sid = _seed_session(stores, owner=ALICE, title="expanded")
+    originals = stores[0].append(
+        sid,
+        [
+            NewConversationItem(
+                type="message",
+                response_id="turn",
+                data=MessageData(role="user", content=[{"type": "input_text", "text": "saved"}]),
+            )
+            for _ in range(count)
+        ],
+    )
+    original_send = session_multiplex.SessionMultiplex.send
+
+    async def delayed(self, *args, **kwargs):
+        await asyncio.sleep(0.001)
+        return await original_send(self, *args, **kwargs)
+
+    monkeypatch.setattr(session_multiplex.SessionMultiplex, "send", delayed)
+    with TestClient(app).websocket_connect(
+        "/v1/sessions/updates", headers={"X-Forwarded-Email": ALICE}
+    ) as ws:
+        ws.send_json(
+            {
+                "type": "subscribe",
+                "session_id": sid,
+                "initial_limit": 100,
+                "window_start_position": 0,
+            }
+        )
+        seen = []
+        while True:
+            frame = json.loads(ws.receive_text())
+            assert frame["type"] != "session.error", frame
+            event = frame.get("event", {})
+            if event.get("type") == "response.output_item.done":
+                seen.append((event["item"]["id"], event["item"]["position"]))
+            if event.get("type") == "session.sync" and event.get("phase") == "complete":
+                break
+        assert seen == [(item.id, item.position) for item in originals]
+        assert event["window_item_count"] == count
+
+
+async def test_cancelled_physical_write_closes_socket_before_sibling():
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    from fastapi import APIRouter
+
+    from omnigent.server.session_multiplex import SessionMultiplex
+
+    started = asyncio.Event()
+    socket = AsyncMock()
+    calls = []
+
+    async def write(frame):
+        calls.append(frame["type"])
+        started.set()
+        await asyncio.Event().wait()
+
+    mux = SessionMultiplex(APIRouter(), socket, write)
+    active = asyncio.create_task(mux.send({"type": "active"}))
+    await started.wait()
+    sibling = asyncio.create_task(mux.send({"type": "sibling"}))
+    active.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await active
+    with pytest.raises(ConnectionError, match="closed"):
+        await sibling
+    assert calls == ["active"]
+    socket.close.assert_awaited_once_with(code=1011)
+    await mux.close()
+
+
+@pytest.mark.timeout(30)
+@pytest.mark.parametrize("resume", [False, True], ids=["cold", "retained"])
+@pytest.mark.parametrize("oversized", [False, True], ids=["supported", "legacy-oversized"])
+def test_stored_output_exact_delivery_or_terminal_size_error(app, stores, resume, oversized):
+    from omnigent.entities import NewConversationItem
+    from omnigent.entities.conversation import FunctionCallOutputData
+
+    sid = _seed_session(stores, owner=ALICE, title="large-output")
+    text = "\0" * (2 * 1048576 if oversized else 1048576)
+    with TestClient(app).websocket_connect(
+        "/v1/sessions/updates", headers={"X-Forwarded-Email": ALICE}
+    ) as ws:
+        baseline = _subscribe(ws, sid) if resume else None
+        [saved] = stores[0].append(
+            sid,
+            [
+                NewConversationItem(
+                    type="function_call_output",
+                    response_id="turn",
+                    data=FunctionCallOutputData(call_id="call", output=text),
+                )
+            ],
+        )
+        request = {"type": "subscribe", "session_id": sid, "initial_limit": 100}
+        if baseline is not None:
+            request.update(
+                after_position=baseline["last_position"],
+                after_revision=baseline["item_revision"],
+                stream_epoch=baseline["stream_epoch"],
+            )
+        ws.send_json(request)
+        delivered = []
+        completed = False
+        error = None
+        while not completed and error is None:
+            frame = json.loads(ws.receive_text())
+            if frame["type"] == "session.error":
+                error = frame["code"]
+                break
+            event = frame.get("event", {})
+            if event.get("type") == "response.output_item.done":
+                delivered.append(event["item"])
+            completed = event.get("type") == "session.sync" and event.get("phase") == "complete"
+        if oversized:
+            assert error == "stream_event_too_large"
+            assert delivered == [] and not completed
+        else:
+            assert error is None and completed
+            assert [(item["id"], item["position"], item["output"]) for item in delivered] == [
+                (saved.id, saved.position, text)
+            ]
+        assert stores[0].get_item(sid, saved.id).data.output == text
+
+
+@pytest.mark.parametrize("malformed", [False, True])
+def test_publication_preserves_raw_branch_edges_and_overlapping_root_order(app, stores, malformed):
+    store, _, permissions = stores
+    root = _seed_session(stores, owner=ALICE, title="root")
+    branch = store.fork_conversation(root)
+    permissions.grant(ALICE, branch.id, LEVEL_OWNER)
+    store.create_conversation(
+        kind="sub_agent",
+        parent_conversation_id=branch.id,
+        agent_id="087b7cb7ac30abf4debfaa578d052ec6",
+    )
+    if malformed:
+        store.set_labels(branch.id, {"omnigent.branch.inherited_item_count": "-1"})
+        store.delete_label(branch.id, "omnigent.fork.source_id")
+        store.delete_label(branch.id, "omnigent.side_chat.source_id")
+        assert store.get_conversation(branch.id).branch is None
+    with TestClient(app) as client:
+        page = client.get("/v1/sessions", headers={"X-Forwarded-Email": ALICE}).json()["data"]
+        expected = {
+            item["id"]: item["activity"] for item in page if item["id"] in {root, branch.id}
+        }
+        with client.websocket_connect(
+            "/v1/sessions/updates", headers={"X-Forwarded-Email": ALICE}
+        ) as ws:
+            ws.send_json({"type": "watch", "session_ids": [root, branch.id]})
+            actual = {
+                item["id"]: item["activity"] for item in _recv_until(ws, {"snapshot"})["items"]
+            }
+            assert actual == expected
+            assert branch.id in [row["id"] for row in actual[root]["descendants"]]
+
+
+async def test_broker_overflow_while_completion_waits_for_writer_is_terminal(monkeypatch):
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    from fastapi import APIRouter
+
+    from omnigent.runtime import inflight_text, session_stream
+    from omnigent.server.session_multiplex import SessionMultiplex
+
+    monkeypatch.setattr(session_stream, "_SUBSCRIBER_QUEUE_MAX_EVENTS", 2)
+    router = APIRouter()
+    completion_produced = asyncio.Event()
+    writer_started, release_writer = asyncio.Event(), asyncio.Event()
+    errored = asyncio.Event()
+    sent = []
+
+    @router.get("/sessions/{session_id}/stream")
+    async def endpoint(session_id: str):
+        raise AssertionError("WebSocket must not invoke the SSE adapter")
+
+    async def authorize():
+        return None
+
+    async def replay():
+        yield {
+            "type": "session.sync",
+            "phase": "start",
+            "item_revision": 0,
+            "stream_epoch": inflight_text.stream_epoch(),
+        }
+        yield {
+            "type": "session.sync",
+            "phase": "complete",
+            "item_revision": 0,
+            "stream_epoch": inflight_text.stream_epoch(),
+        }
+        completion_produced.set()
+
+    async def factory(request, session_id, **kwargs):
+        request.state.stream_authorize = authorize
+        return session_stream.subscribe(session_id, replay=replay)
+
+    endpoint.stream_events = factory
+
+    async def write(frame):
+        if frame["type"] == "blocker":
+            writer_started.set()
+            await release_writer.wait()
+        sent.append(frame)
+        if frame["type"] == "session.error":
+            errored.set()
+
+    socket = AsyncMock()
+    socket.scope = {"type": "websocket", "headers": []}
+    mux = SessionMultiplex(router, socket, write)
+    blocker = asyncio.create_task(mux.send({"type": "blocker"}))
+    await writer_started.wait()
+    try:
+        await mux.handle({"type": "subscribe", "session_id": "writer-overflow"})
+        await asyncio.wait_for(completion_produced.wait(), 1)
+        for _ in range(3):
+            session_stream.publish("writer-overflow", {"type": "session.heartbeat"})
+        await asyncio.sleep(0)
+        release_writer.set()
+        await blocker
+        await asyncio.wait_for(errored.wait(), 1)
+        assert not any(frame.get("event", {}).get("phase") == "complete" for frame in sent)
+        assert sent[-1]["code"] == "stream_overflow"
+    finally:
+        release_writer.set()
+        await mux.close()
+    assert not session_stream.has_subscribers("writer-overflow")

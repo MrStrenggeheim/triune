@@ -21,7 +21,7 @@ import urllib.parse
 import weakref
 from collections import deque
 from collections.abc import (
-    AsyncIterator,
+    AsyncGenerator,
     Awaitable,
     Callable,
     Coroutine,
@@ -9769,72 +9769,68 @@ async def _stream_live_events(
     recovery: Any = None,
     presence_membership: dict[str, Any] | None = None,
     raise_overflow: bool = False,
-) -> AsyncIterator[str]:
+) -> AsyncGenerator[str, None]:
+    """Encode the shared event producer for legacy HTTP SSE consumers."""
+    async with contextlib.aclosing(
+        _encode_live_events(
+            _iter_live_events(
+                request,
+                session_id,
+                on_subscribed,
+                viewer_user_id,
+                viewer_idle,
+                presence_root_id,
+                recovery,
+                presence_membership,
+            ),
+            session_id,
+            raise_overflow=raise_overflow,
+        )
+    ) as frames:
+        async for frame in frames:
+            yield frame
+
+
+async def _encode_live_events(
+    events: AsyncGenerator[dict[str, Any], None],
+    session_id: str,
+    *,
+    raise_overflow: bool = False,
+) -> AsyncGenerator[str, None]:
+    """SSE-only framing; typed WebSocket consumers never enter this adapter."""
+    async with contextlib.aclosing(events) as events:
+        try:
+            async for event in events:
+                yield _format_sse(event["type"], event)
+        except session_stream.SubscriberOverflowError:
+            if raise_overflow:
+                raise
+            _logger.warning("session stream overflow for %s; reconnect required", session_id)
+        else:
+            if not shutdown_state.server_shutting_down():
+                yield "data: [DONE]\n\n"
+
+
+async def _iter_live_events(
+    request: Request,
+    session_id: str,
+    on_subscribed: Callable[[], Awaitable[Iterable[dict[str, Any]]]] | None = None,
+    viewer_user_id: str | None = None,
+    viewer_idle: bool = False,
+    presence_root_id: str | None = None,
+    recovery: Any = None,
+    presence_membership: dict[str, Any] | None = None,
+) -> AsyncGenerator[dict[str, Any], None]:
+    """Yield validated events for both transport adapters.
+
+    Register before replay, preserve presence until iterator close, and keep
+    required canonical recovery failures visible to the owning transport.
+    Ancillary snapshots may finish after live events; subscription handles
+    their precedence. SSE alone encodes events and intentional completion.
     """
-    Yield SSE-formatted events from the conversation's live stream.
+    from omnigent.runtime.stream_queue import StreamEvent
+    from omnigent.server.session_recovery import validate_sync_complete
 
-    Register the bounded live queue before optional persisted recovery.
-    Recovery replays append positions or resets after old-item mutation;
-    legacy callers keep their snapshot plus live-tail behavior.
-
-    An intentional session close emits ``[DONE]``. Server shutdown and
-    subscriber overflow instead end without it so clients reconnect and
-    reconcile from the persisted snapshot after the server returns.
-
-    ``finally`` is cleanup-only (presence deregistration): yielding
-    from ``finally`` during client ``aclose`` / ``GeneratorExit``
-    raises ``RuntimeError: async generator ignored GeneratorExit``.
-    The subscribe iterator is wrapped in ``contextlib.aclosing`` so
-    outer ``aclose`` tears down the pub-sub subscriber slot
-    immediately (a bare ``async for`` would defer that to GC).
-
-    Each emitted dict is validated against
-    :data:`ServerStreamEvent` at the wire boundary so a runtime
-    that publishes an unmodelled ``type`` fails loud rather than
-    serializing an unknown event verbatim.
-
-    The subscribe call passes a ``ready_event`` heartbeat plus
-    ``heartbeat_interval_s``. The ready heartbeat is yielded
-    immediately after the live-tail subscriber slot is registered,
-    before any snapshot hook runs, so clients can wait for a
-    concrete subscription acknowledgment before posting a fast
-    one-shot turn. The interval heartbeat keeps an idle stream
-    emitting ``session.heartbeat`` events on a fixed cadence (see
-    :data:`_SESSION_STREAM_HEARTBEAT_INTERVAL_S`). Without that,
-    a stream that sits between turns has nothing crossing the wire;
-    the client's SSE read-timeout and this route's
-    ``request.is_disconnected()`` check (only polled on event
-    arrival) both lag for minutes after a half-open socket forms
-    (e.g. after a laptop sleep). The heartbeat gives both sides a
-    regular byte to fire against.
-
-    :param request: The FastAPI request, used to detect disconnect.
-    :param session_id: Session/conversation identifier whose stream
-        to subscribe to, e.g. ``"conv_abc123"``.
-    :param on_subscribed: Optional snapshot-on-connect hook forwarded to
-        :func:`session_stream.subscribe`; its events are yielded ahead of
-        the live tail so a fresh client sees current resource state
-        without polling. ``None`` (default) keeps the pure live-tail
-        shape used by callers that reconcile via the snapshot endpoint.
-    :param viewer_user_id: Authenticated identity to register in the
-        session's presence registry for this stream's lifetime, e.g.
-        ``"alice@example.com"``. ``None`` (default, and the reserved
-        single-user sentinel mapped via ``attribution_user``) skips
-        presence tracking entirely.
-    :param viewer_idle: The viewer's connect-time idle flag (tab
-        backgrounded), from the route's ``idle`` query param. Ignored
-        when *viewer_user_id* is ``None``.
-    :param presence_root_id: Root conversation of the streamed
-        session's tree (its ``root_conversation_id``), e.g.
-        ``"conv_root123"``. Presence is scoped to the tree's root so
-        viewers of different agents/sub-agents in one session see
-        each other. Required when *viewer_user_id* is set; ignored
-        otherwise.
-    :returns: An async iterator of SSE message strings.
-    :raises ValueError: If *viewer_user_id* is set without
-        *presence_root_id* — a per-conversation presence scope would
-        silently split a session's viewers per agent.
-    """
     # Presence registers before the subscribe loop: the join broadcast
     # fans out to ALREADY-subscribed co-viewers, while this stream
     # learns the full list (self included) from the snapshot-on-connect
@@ -9876,31 +9872,38 @@ async def _stream_live_events(
             async for event in live_events:
                 if await request.is_disconnected():
                     break
-                if recovery is not None:
-                    await recovery.authorize()
-                    event = await recovery.prepare(event)
-                    if event is None:
-                        continue
-                event_type = event.get("type")
-                if not isinstance(event_type, str):
-                    raise ValueError(
-                        f"session stream event missing string ``type`` field: {event!r}",
-                    )
-                validated = _SERVER_STREAM_EVENT_ADAPTER.validate_python(event)
-                yield _format_sse(event_type, validated.model_dump())
-    except session_stream.SubscriberOverflowError:
-        if raise_overflow:
-            raise
-        _logger.warning(
-            "session stream subscriber overflowed for %s; closing for snapshot reconnect",
-            session_id,
-            extra={"session_id": session_id},
-        )
-    else:
-        # Server restart is a transport drop, not a permanent session close.
-        # Never yield from finally: aclose / GeneratorExit cannot accept a yield.
-        if not shutdown_state.server_shutting_down():
-            yield "data: [DONE]\n\n"
+                deadline = (
+                    event.deadline
+                    if isinstance(event, StreamEvent)
+                    else time.monotonic() + session_stream._SUBSCRIBER_QUEUE_MAX_AGE_S
+                )
+                check = event.check if isinstance(event, StreamEvent) else None
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise session_stream.SubscriberOverflowError
+                try:
+                    async with asyncio.timeout(remaining):
+                        if recovery is not None:
+                            await recovery.authorize()
+                            event = await recovery.prepare(event)
+                            if event is None:
+                                continue
+                        event_type = event.get("type")
+                        if not isinstance(event_type, str):
+                            raise ValueError("session stream event missing string type")
+                        validated = _SERVER_STREAM_EVENT_ADAPTER.validate_python(event)
+                        if recovery is not None and not getattr(
+                            getattr(request, "state", None), "multiplex", False
+                        ):
+                            await recovery.authorize()
+                        validate_sync_complete(session_id, event)
+                        if check is not None:
+                            check()
+                except TimeoutError:
+                    raise session_stream.SubscriberOverflowError from None
+                if time.monotonic() >= deadline:
+                    raise session_stream.SubscriberOverflowError
+                yield StreamEvent(validated.model_dump(mode="json"), deadline, check)
     finally:
         # The non-None checks besides presence_token's are type
         # narrowing only: a minted token implies both were set above.

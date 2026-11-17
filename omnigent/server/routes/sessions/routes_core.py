@@ -2344,6 +2344,124 @@ def register_core_routes(
         # the cached snippet untouched.
         return [item.model_dump(exclude={"search_snippet"}) for item in items]
 
+    def _authorize_list_publication(
+        items: list[dict[str, Any]], user_id: str | None
+    ) -> list[dict[str, Any]]:
+        """Recheck all projected paths after awaited metadata and liveness work."""
+        ids = {item["id"] for item in items}
+        for item in items:
+            ids.update(item.get("child_session_ids") or ())
+            ids.update(row["id"] for row in (item.get("activity") or {}).get("descendants", []))
+        current = conversation_store.get_activity_conversations(list(ids))
+        admin = (
+            permission_store is not None
+            and user_id is not None
+            and permission_store.is_admin(user_id)
+        )
+        grants = (
+            permission_store.list_for_sessions(list(ids)) if permission_store is not None else {}
+        )
+        allowed_ids: dict[str, bool] = {}
+
+        def allowed(cid: str, visiting: frozenset[str] = frozenset()) -> bool:
+            if cid in allowed_ids:
+                return allowed_ids[cid]
+            if cid in visiting:
+                return False
+            row = current.get(cid)
+            if row is None:
+                return False
+            if permission_store is None or admin:
+                result = True
+            elif row.parent_conversation_id in current:
+                result = allowed(row.parent_conversation_id, visiting | {cid})
+            elif row.parent_conversation_id:
+                result = check_session_access(
+                    user_id,
+                    row.parent_conversation_id,
+                    LEVEL_READ,
+                    permission_store,
+                    conversation_store,
+                )
+            else:
+                result = (
+                    _permission_level_from_grants(user_id, grants.get(cid, []), False) is not None
+                )
+            allowed_ids[cid] = result
+            return result
+
+        visible = []
+        for item in items:
+            if not allowed(item["id"]):
+                continue
+            item["permission_level"] = (
+                _permission_level_from_grants(user_id, grants.get(item["id"], []), admin)
+                if permission_store is not None
+                else None
+            )
+            if permission_store is not None:
+                item["owner"] = _owner_from_grants(grants.get(item["id"], []))
+            item["child_session_ids"] = [
+                cid for cid in item.get("child_session_ids", []) if allowed(cid)
+            ]
+            activity = item.get("activity")
+            if activity:
+                reachable = {item["id"]}
+                remaining = list(activity.get("descendants", []))
+                while remaining:
+                    accepted = []
+                    for row in remaining:
+                        source = current.get(row["id"])
+                        if source is None or not allowed(source.id):
+                            continue
+                        parent = source.parent_conversation_id
+                        branch_source = source.labels.get(
+                            "omnigent.branch.source_conversation_id"
+                        ) or (source.branch.source_conversation_id if source.branch else None)
+                        if parent in reachable or branch_source in reachable:
+                            reachable.add(source.id)
+                            accepted.append(row)
+                    if not accepted:
+                        break
+                    accepted_ids = {row["id"] for row in accepted}
+                    remaining = [row for row in remaining if row["id"] not in accepted_ids]
+                retained = [
+                    row for row in activity.get("descendants", []) if row["id"] in reachable
+                ]
+                activity["descendants"] = retained
+                activity["descendant_running"] = (
+                    True
+                    if any(row["status"] == "running" for row in retained)
+                    else False
+                    if activity["descendants_complete"]
+                    else None
+                )
+                for row in retained:
+                    row["permission_level"] = (
+                        _permission_level_from_grants(user_id, grants.get(row["id"], []), admin)
+                        if permission_store is not None
+                        else None
+                    )
+                    row["owner"] = (
+                        _owner_from_grants(grants.get(row["id"], []))
+                        if permission_store is not None
+                        else None
+                    )
+                if activity["descendant_running"] is not True:
+                    item["status"] = activity["own_status"]
+            visible.append(item)
+        published_ids = {item["id"] for item in visible}
+        for item in visible:
+            published_ids.update(
+                row["id"] for row in (item.get("activity") or {}).get("descendants", [])
+            )
+        for item in visible:
+            for row in (item.get("activity") or {}).get("descendants", []):
+                for key in ("branch_source_id", "parent_session_id"):
+                    if row.get(key) not in published_ids:
+                        row[key] = None
+        return visible
+
     @router.websocket("/sessions/updates")
     async def session_updates(websocket: WebSocket) -> None:
         """
@@ -2396,29 +2514,14 @@ def register_core_routes(
         )
 
         watched: list[str] = []
-        # Last SessionListItem dump sent per id, used to diff. Keyed only
-        # by currently-watched ids; pruned when the watch-set narrows.
+        generation = 0
         last_sent: dict[str, dict[str, Any]] = {}
         last_send_monotonic = time.monotonic()
-        # Serializes the read-diff-send-update critical section between the
-        # reader (snapshot on watch) and the ticker (interval deltas) so
-        # they never interleave updates to ``last_sent``.
-        emit_lock = asyncio.Lock()
+        watch_changed = asyncio.Event()
 
         async def _send(frame: dict[str, Any]) -> None:
-            """
-            Serialize and send one frame, stamping the last-send time so
-            the heartbeat timer measures idleness from the last real send.
-
-            :param frame: The outgoing frame, e.g.
-                ``{"type": "changed", "items": [...]}``. Sent as JSON text.
-            """
+            """Only telemetry and physical writing belong at the emission boundary."""
             nonlocal last_send_monotonic
-            # Stamp the active trace context into the frame so a client
-            # with browser-side propagation can correlate sidebar updates
-            # to the trace that produced them. No-op when no span is
-            # active (idle heartbeats/snapshots), keeping the frame
-            # wire-identical in the common case.
             from omnigent.runtime import telemetry
 
             telemetry.record_message_payload(frame)
@@ -2426,46 +2529,55 @@ def register_core_routes(
             await websocket.send_text(json.dumps(frame))
             last_send_monotonic = time.monotonic()
 
-        async def _emit_snapshot() -> None:
-            """Send a full snapshot for the current watch-set and reset the
-            diff baseline to it."""
-            items = await _fetch_watched_items(watched, user_id)
-            dumps = {item["id"]: item for item in items}
-            last_sent.clear()
-            last_sent.update(dumps)
-            await _send({"type": "snapshot", "items": list(dumps.values())})
-
-        async def _emit_deltas() -> None:
-            """Diff the watched ids against the last frame and send only the
-            changes; emit a heartbeat when nothing changed but the link has
-            been idle."""
-            nonlocal last_send_monotonic
-            if watched:
-                items = await _fetch_watched_items(watched, user_id)
-                current = {item["id"]: item for item in items}
-                changed = [dump for cid, dump in current.items() if last_sent.get(cid) != dump]
-                # Removed = a still-watched id that no longer resolves (lost
-                # access or deleted). De-watched ids are pruned silently
-                # below, not reported as removed.
-                removed = [cid for cid in watched if cid not in current and cid in last_sent]
-                last_sent.clear()
-                last_sent.update(current)
-                if changed:
-                    await _send({"type": "changed", "items": changed})
-                if removed:
-                    await _send({"type": "removed", "ids": removed})
-            from omnigent.server.routes import sessions as _sf
-
-            if time.monotonic() - last_send_monotonic >= _sf._SESSION_UPDATES_HEARTBEAT_INTERVAL_S:
-                await _send({"type": "heartbeat"})
-
         from omnigent.server.session_multiplex import SessionMultiplex
 
-        transcript_streams = SessionMultiplex(router, websocket, _send, emit_lock)
+        transcript_streams = SessionMultiplex(router, websocket, _send)
+
+        async def _emit_list(kind: str, ids: list[str], expected: int) -> None:
+            frame: dict[str, Any] = {"type": kind, "items": []}
+            removed: list[str] = []
+
+            async def prepare() -> None:
+                nonlocal removed
+                items = await _fetch_watched_items(ids, user_id)
+                items = await asyncio.to_thread(_authorize_list_publication, items, user_id)
+                current = {item["id"]: item for item in items}
+                frame["items"] = (
+                    items
+                    if kind == "snapshot"
+                    else [item for cid, item in current.items() if last_sent.get(cid) != item]
+                )
+                removed = [cid for cid in ids if cid in last_sent and cid not in current]
+
+            await transcript_streams.send(
+                frame,
+                prepare,
+                lambda: generation == expected and (kind == "snapshot" or bool(frame["items"])),
+            )
+            if generation != expected:
+                return
+            if kind == "snapshot":
+                last_sent.clear()
+            last_sent.update({item["id"]: item for item in frame["items"]})
+            if kind == "changed" and removed:
+                removal: dict[str, Any] = {"type": "removed", "ids": []}
+
+                async def confirm_removal() -> None:
+                    visible = {item["id"] for item in await _fetch_watched_items(removed, user_id)}
+                    removal["ids"] = [cid for cid in removed if cid not in visible]
+
+                await transcript_streams.send(
+                    removal,
+                    confirm_removal,
+                    lambda: generation == expected and bool(removal["ids"]),
+                )
+                if generation == expected:
+                    for cid in removal["ids"]:
+                        last_sent.pop(cid, None)
 
         async def _reader() -> None:
-            """Apply incoming watch-set updates and snapshot each one."""
-            nonlocal watched
+            """Accept membership commands even while a list projection is blocked."""
+            nonlocal watched, generation
             while True:
                 raw = await websocket.receive_text()
                 try:
@@ -2475,150 +2587,97 @@ def register_core_routes(
                 if isinstance(msg, dict) and await transcript_streams.handle(msg):
                     continue
                 if not isinstance(msg, dict) or msg.get("type") != "watch":
-                    # Forward-compatible: ignore frames we don't understand.
                     continue
                 ids = msg.get("session_ids")
                 if not isinstance(ids, list):
                     continue
-                # Dedupe preserving order, keep only strings. Dedupe fully
-                # first, then cap — so the truncation count below is the real
-                # number of distinct ids dropped, not skewed by duplicates that
-                # happen to sit past the cap.
-                deduped: list[str] = []
-                unique: set[str] = set()
-                for cid in ids:
-                    if isinstance(cid, str) and cid not in unique:
-                        unique.add(cid)
-                        deduped.append(cid)
                 from omnigent.server.routes import sessions as _sf
 
+                deduped = list(dict.fromkeys(cid for cid in ids if isinstance(cid, str)))
                 if len(deduped) > _sf._SESSION_UPDATES_MAX_WATCHED:
-                    # Ids past the cap get no push updates and are never reported
-                    # "removed" (they aren't watched). The client's low-rate list
-                    # reconciliation still covers them, but log the silent drop so
-                    # an oversized watch-set is diagnosable rather than invisible.
                     _logger.warning(
-                        "session-updates watch-set truncated to %d of %d distinct ids "
-                        "for user %r; ids beyond the cap rely on list-poll reconciliation",
+                        "session-updates watch-set truncated to %d of %d distinct ids",
                         _sf._SESSION_UPDATES_MAX_WATCHED,
                         len(deduped),
-                        user_id,
                     )
-                    deduped = deduped[: _sf._SESSION_UPDATES_MAX_WATCHED]
-                # The watched set after capping — used to prune baselines for ids
-                # the client no longer watches (including any just truncated).
-                watched_set = set(deduped)
-                # Handle the watch under a span parented on any trace
-                # context the browser stamped into the frame, so the
-                # snapshot read (and its DB spans) nest under the
-                # client-originated trace.
-                from omnigent.runtime import telemetry
-
-                with telemetry.consume_frame_span("session_updates.watch", msg):
-                    async with emit_lock:
-                        watched = deduped
-                        # Drop baselines for ids no longer watched so they
-                        # can't surface as spurious "removed" later.
-                        for stale in [cid for cid in last_sent if cid not in watched_set]:
-                            del last_sent[stale]
-                        await _emit_snapshot()
+                watched = deduped[: _sf._SESSION_UPDATES_MAX_WATCHED]
+                generation += 1
+                watch_changed.set()
 
         async def _ticker() -> None:
-            """Emit deltas / heartbeats on a fixed interval."""
+            """One list-state owner; slow reads never own the socket writer."""
+            completed_generation = 0
             while True:
                 from omnigent.server.routes import sessions as _sf
 
-                await asyncio.sleep(_sf._SESSION_UPDATES_RESCAN_INTERVAL_S)
-                async with emit_lock:
-                    try:
-                        await _emit_deltas()
-                    except WebSocketDisconnect:
-                        # The client went away mid-send — the normal terminal
-                        # condition. Propagate so the stream tears down and the
-                        # reader/ticker pair is cancelled.
-                        raise
-                    except Exception:
-                        # A transient store/DB read failure must not kill a live
-                        # stream and force every watcher to reconnect +
-                        # re-snapshot. Log it and try again next interval; the
-                        # diff is recomputed from scratch each tick, so a skipped
-                        # tick costs at most one delayed delta. (CancelledError
-                        # is not an Exception subclass, so cancellation still
-                        # propagates.)
-                        _logger.warning(
-                            "session-updates delta tick failed; retrying next interval",
-                            exc_info=True,
-                        )
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(
+                        watch_changed.wait(), timeout=_sf._SESSION_UPDATES_RESCAN_INTERVAL_S
+                    )
+                watch_changed.clear()
+                expected, ids = generation, list(watched)
+                try:
+                    if expected != completed_generation:
+                        await _emit_list("snapshot", ids, expected)
+                        if generation == expected:
+                            completed_generation = expected
+                    elif ids:
+                        await _emit_list("changed", ids, expected)
+                except (WebSocketDisconnect, ConnectionError):
+                    raise
+                except Exception as exc:
+                    _logger.warning("session-updates list read failed (%s)", type(exc).__name__)
+
+        async def _heartbeat() -> None:
+            while True:
+                from omnigent.server.routes import sessions as _sf
+
+                await asyncio.sleep(_sf._SESSION_UPDATES_HEARTBEAT_INTERVAL_S)
+                if (
+                    time.monotonic() - last_send_monotonic
+                    >= _sf._SESSION_UPDATES_HEARTBEAT_INTERVAL_S
+                ):
+                    await transcript_streams.send({"type": "heartbeat"})
 
         async def _discovery() -> None:
-            """Push sessions newly made accessible to this user — created,
-            forked, or shared from elsewhere — so they enter the sidebar
-            without a list poll.
-
-            Such ids are NOT in the client's watch-set (the client doesn't
-            know about them yet), so the per-interval diff can't surface them.
-            This reacts to the create/grant event instead: it fetches the one
-            announced id (access-checked, same as the watch path) and pushes
-            it. The client reconciles the unknown id into its cache, then
-            re-sends its watch-set including it, after which it is tracked
-            like any normal watched row. Idle users with no new sessions
-            receive nothing — so the zero-traffic property holds."""
             async for evt in user_session_stream.subscribe(_discovery_key(user_id)):
                 if not isinstance(evt, dict):
                     continue
-                evt_type = evt.get("type")
-                if evt_type == "session_added":
+                kind = evt.get("type")
+                if kind in {"hosts_changed", "projects_changed"}:
+                    await transcript_streams.send({"type": kind})
+                elif kind == "session_added":
                     sid = evt.get("session_id")
-                    if not isinstance(sid, str):
+                    if not isinstance(sid, str) or sid in watched:
                         continue
-                    async with emit_lock:
-                        # Already watched ⇒ the normal diff already covers it.
-                        if sid in watched:
-                            continue
-                        try:
-                            items = await _fetch_watched_items([sid], user_id)
-                            if items:
-                                await _send({"type": "changed", "items": items})
-                        except WebSocketDisconnect:
-                            # Client gone mid-send — propagate to tear the stream down.
-                            raise
-                        except Exception:
-                            # A transient read/send failure for one announcement
-                            # must not drop the whole stream; the session is still
-                            # discoverable on the client's next list reconcile.
-                            _logger.warning(
-                                "session-updates discovery push failed for %r; "
-                                "falling back to list reconcile",
-                                sid,
-                                exc_info=True,
-                            )
-                elif evt_type == "hosts_changed":
-                    async with emit_lock:
-                        try:
-                            await _send({"type": "hosts_changed"})
-                        except WebSocketDisconnect:
-                            raise
-                        except Exception:
-                            _logger.warning(
-                                "hosts-changed push failed; client will rely on fallback poll",
-                                exc_info=True,
-                            )
-                elif evt_type == "projects_changed":
-                    async with emit_lock:
-                        try:
-                            await _send({"type": "projects_changed"})
-                        except WebSocketDisconnect:
-                            raise
-                        except Exception:
-                            _logger.warning(
-                                "projects-changed push failed; client converges on next load",
-                                exc_info=True,
-                            )
+                    frame: dict[str, Any] = {"type": "changed", "items": []}
+
+                    async def prepare_discovery(frame=frame, sid=sid) -> None:
+                        items = await _fetch_watched_items([sid], user_id)
+                        frame["items"] = await asyncio.to_thread(
+                            _authorize_list_publication, items, user_id
+                        )
+
+                    try:
+                        await transcript_streams.send(
+                            frame,
+                            prepare_discovery,
+                            lambda sid=sid, frame=frame: (
+                                sid not in watched and bool(frame["items"])
+                            ),
+                        )
+                    except (WebSocketDisconnect, ConnectionError):
+                        raise
+                    except Exception as exc:
+                        _logger.warning(
+                            "session-updates discovery read failed (%s)", type(exc).__name__
+                        )
 
         reader_task = asyncio.create_task(_reader(), name="session-updates-reader")
         ticker_task = asyncio.create_task(_ticker(), name="session-updates-ticker")
         discovery_task = asyncio.create_task(_discovery(), name="session-updates-discovery")
-        tasks = {reader_task, ticker_task, discovery_task}
+        heartbeat_task = asyncio.create_task(_heartbeat(), name="session-updates-heartbeat")
+        tasks = {reader_task, ticker_task, discovery_task, heartbeat_task}
         try:
             done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
             for task in done:

@@ -99,17 +99,29 @@ See the unified-workspace feature map for source mappings and desktop/mobile acc
 Views retain drafts, buffers, undo state and terminal lifecycles while inactive presentation and view-owned polling pause.
 Hidden chat memberships detach without discarding retained state and reconcile missed items when shown again.
 On servers advertising `transcript_stream:1`, one updates WebSocket per browser tab carries list watches, independently authorized transcript memberships and presence.
+Visible multiplex memberships survive window blur; hidden view leases detach, while legacy SSE retains origin-slot and focus arbitration.
+The server produces structured events once for WebSocket and SSE adapters, and the browser parses WebSocket events without converting them back into SSE bytes.
+Membership queues bound events, serialized bytes and residence time; physical writes have a deadline, and expensive authorization or list reads run outside the physical writer.
+Authorization is refreshed after any writer wait; revoked or rebound memberships cannot publish queued frames under an earlier check.
+Ready senders take FIFO turns; the final fresh authorization handoff is capped at one second and a physical socket write at five seconds.
+The serialized-event budget accommodates maximum tool output including JSON escaping; individually unsupported payloads stop with an export instruction rather than retrying unchanged forever.
 Saved items reconcile by exact ID and committed conversation position; pending previews retain explicit anchors until their own committed identity replaces them.
 Missing positioned activity updates insert once in canonical order; loaded cards enrich in place, while unpositioned legacy updates retain bounded recovery and truthful failure notices.
 Reconnect resumes from position, revision and stream-epoch cursors: trusted same-epoch recovery point-reads tracked old-card changes and replays the appended tail.
 Failed multiplex subscriptions retain increasing retry delays until validated synchronization completes; opening a local response alone does not reset backoff.
 Readiness heartbeats wait for an already-requested history synchronization instead of restarting it; live checkpoint gaps still trigger recovery after synchronization completes.
+An explicit binding/attempt synchronization owner accepts only validated replay completion and bounds incomplete synchronization independently of heartbeat traffic.
+Ancillary resource snapshots no longer hold the live tail; canonical replay still preserves its captured high-water boundary and rejects incomplete recovery.
+Content-free convergence diagnostics correlate received, accepted and displayed identities across reloads, with bounded retention and authenticated viewer scope.
+Displayed samples come from committed visible DOM rows; they do not equate store publication with screen presentation or claim physical display timing.
 Fallback history reads cancel on focus return, hiding or disposal and have a fifteen-second deadline, so pending snapshots cannot prevent live observation from resuming.
 Pending snapshots retain accepted input identities independently of position; reconnect merges their local copies and consumes each exact receipt once, preserving repeated intentional inputs.
 The bounded mutation journal coalesces changed identities; expired/untracked mutations and untrusted cursors still require an authoritative reset.
 Reset replaces committed membership while preserving drafts, uploads and unmatched previews; unchanged heartbeats cause no history reads or replay.
 Revision tracking is process-local and workspace-scoped; writes bypassing its mutation hooks require explicit invalidation or reset.
 Older servers use SSE after bounded capability negotiation of 750ms; host-routed sessions retain their existing SSE routing.
+Descendant activity reads project only required scalar metadata and labels in batches, preserving authorization, ordering, nulls and incomplete-coverage semantics.
+Matched backup measurements retain exact response hashes and query counts while eliminating general row hydration and execution-override decoding for descendants.
 Visible panes and two recent hidden layout groups stay mounted briefly; older recoverable views retire while their saved layouts remain intact.
 Editors, terminals and other views with local state remain resident until they can be restored safely.
 Stable resource boundaries and scoped subscriptions avoid updating unrelated chats when switching layouts or opening files.

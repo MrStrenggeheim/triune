@@ -1,4 +1,5 @@
 // Modified for Triune; inherited notices remain applicable.
+import { useTranscriptConvergenceDisplay } from "@/hooks/useTranscriptConvergenceDisplay";
 import { ComposerMentionMenu } from "@/components/composer/ComposerMentionMenu";
 import { ComposerMentionChips } from "@/components/composer/ComposerMentionChips";
 import { useMentionBrowser } from "@/hooks/useMentionBrowser";
@@ -303,6 +304,14 @@ export function SideChatPane({
   // Keep the newest content in view. A side chat is short and non-virtualized,
   // so a bottom sentinel scrolled on each change is enough.
   const transcriptRef = useRef<HTMLDivElement>(null);
+  useTranscriptConvergenceDisplay(
+    transcriptRef,
+    childId,
+    !pending,
+    bubbles,
+    undefined,
+    visibleBlocks,
+  );
   const bottomRef = useRef<HTMLDivElement>(null);
   const followTail = useRef(true);
   useEffect(() => {

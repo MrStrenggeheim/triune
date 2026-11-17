@@ -1,3 +1,4 @@
+# Modified for Triune; inherited notices remain applicable.
 """Unit tests for :func:`_stream_live_events` disconnect / completion cleanup.
 
 Pins the contract that ``finally`` is cleanup-only (presence + nested
@@ -128,3 +129,122 @@ async def test_normal_completion_emits_done_and_cleans_up(
             break
         await asyncio.sleep(0.02)
     assert presence.snapshot(SESSION_ID, SESSION_ID)["viewers"] == []
+
+
+@pytest.mark.parametrize("bound", ["events", "bytes", "age"])
+async def test_overflow_during_completion_preparation_cannot_publish_complete(monkeypatch, bound):
+    from omnigent.runtime import inflight_text
+    from omnigent.server.routes._sessions.helpers import _iter_live_events
+
+    monkeypatch.setattr(session_stream, "_SUBSCRIBER_QUEUE_MAX_EVENTS", 2)
+    if bound == "bytes":
+        monkeypatch.setattr(session_stream, "_SUBSCRIBER_QUEUE_MAX_BYTES", 128)
+    if bound == "age":
+        monkeypatch.setattr(session_stream, "_SUBSCRIBER_QUEUE_MAX_AGE_S", 0.05)
+    preparing, release = asyncio.Event(), asyncio.Event()
+
+    class Recovery:
+        enabled = True
+
+        async def authorize(self):
+            return None
+
+        async def events(self):
+            boundary = {
+                "type": "session.sync",
+                "item_revision": 0,
+                "reset_revision": 0,
+                "reset": True,
+                "last_position": -1,
+                "item_count": 0,
+                "last_item_id": None,
+                "stream_epoch": inflight_text.stream_epoch(),
+            }
+            yield {**boundary, "phase": "start"}
+            yield {**boundary, "phase": "complete"}
+
+        async def prepare(self, event):
+            if event.get("phase") == "complete":
+                preparing.set()
+                await release.wait()
+            return event
+
+    stream = _iter_live_events(_ConnectedRequest(), SESSION_ID, recovery=Recovery())
+    try:
+        assert (await anext(stream))["type"] == "session.heartbeat"
+        assert (await anext(stream))["phase"] == "start"
+        pending = asyncio.create_task(anext(stream))
+        await preparing.wait()
+        for _ in range(1 if bound == "age" else 3):
+            session_stream.publish(
+                SESSION_ID,
+                {"type": "session.heartbeat", "padding": "x" * 40 if bound == "bytes" else ""},
+            )
+        await asyncio.sleep(0.06 if bound == "age" else 0)
+        release.set()
+        with pytest.raises(session_stream.SubscriberOverflowError):
+            await pending
+    finally:
+        await stream.aclose()
+    assert not session_stream.has_subscribers(SESSION_ID)
+
+
+@pytest.mark.parametrize("phase", ["live", "replay", "snapshot"])
+async def test_anyio_cancelled_adapter_cleans_presence_and_nested_tasks(monkeypatch, phase):
+    import anyio
+
+    from omnigent.server.routes._sessions.helpers import _iter_live_events
+
+    monkeypatch.setattr(presence, "_LEAVE_GRACE_S", 0.001)
+    started = anyio.Event()
+    closed = []
+
+    async def snapshot():
+        try:
+            started.set()
+            await anyio.sleep_forever()
+        finally:
+            closed.append("snapshot")
+
+    class Recovery:
+        enabled = True
+
+        async def authorize(self):
+            return None
+
+        async def prepare(self, event):
+            return event
+
+        async def events(self):
+            try:
+                started.set()
+                await anyio.sleep_forever()
+                yield {}
+            finally:
+                closed.append("replay")
+
+    async def consume():
+        stream = _iter_live_events(
+            _ConnectedRequest(),
+            SESSION_ID,
+            on_subscribed=snapshot if phase == "snapshot" else None,
+            recovery=Recovery() if phase == "replay" else None,
+            viewer_user_id=USER_ID,
+            presence_root_id=SESSION_ID,
+        )
+        try:
+            await anext(stream)
+            if phase == "live":
+                started.set()
+            await anext(stream)
+        finally:
+            await stream.aclose()
+
+    async with anyio.create_task_group() as group:
+        group.start_soon(consume)
+        await started.wait()
+        group.cancel_scope.cancel()
+    await asyncio.sleep(0.01)
+    assert not session_stream.has_subscribers(SESSION_ID)
+    assert presence.snapshot(SESSION_ID, SESSION_ID)["viewers"] == []
+    assert closed == ([] if phase == "live" else [phase])
