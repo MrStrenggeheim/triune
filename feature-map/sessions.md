@@ -838,6 +838,7 @@ Root sort and structural changes retain broad reconciliation; affected slow read
 Bounded synthetic query/decode counts do not establish a production p95 or endpoint speedup.
 Native message provenance and return-correlation reads also omit unused execution fields while retaining fresh scope, tenant, access and runner checks.
 `tests/server/routes/test_native_ingest_metadata.py` covers mutations across awaits; store scope tests cover single/split databases and host generations.
+Descendant prompt discovery also uses light metadata without changing traversal or hold restoration; `tests/server/test_runner_approval_delivery.py` covers held prompts, fresh tenant labels, paging and cycles.
 
 ## Gotchas
 

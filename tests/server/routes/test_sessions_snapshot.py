@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 from sqlalchemy.exc import StatementError
@@ -20,6 +21,7 @@ from omnigent.native.native_coding_agents import (
     CLAUDE_NATIVE_CODING_AGENT,
     CODEX_NATIVE_CODING_AGENT,
 )
+from omnigent.server.approval_delivery_store import ApprovalDeliveryStore
 from omnigent.server.routes import sessions as _sessions_mod
 from omnigent.server.routes._sessions.helpers import _truncate_error_message_label
 from omnigent.server.routes._sessions.orchestration import _build_session_response
@@ -33,6 +35,18 @@ from omnigent.server.routes.sessions import (
 )
 from omnigent.server.schemas import SessionResponse
 from omnigent.spec.types import AgentSpec, ExecutorSpec
+
+
+@pytest.fixture(autouse=True)
+def _empty_approval_journal(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These snapshot-store doubles have no durable approvals; API tests own that boundary."""
+    journal = Mock(spec=ApprovalDeliveryStore)
+    journal.held.return_value = []
+    journal.read.return_value = None
+    monkeypatch.setattr(
+        "omnigent.server.approval_delivery_store.ApprovalDeliveryStore",
+        lambda storage_location: journal,
+    )
 
 
 async def _drain_model_options(session_id: str) -> None:
@@ -124,6 +138,8 @@ class _ConversationStore:
         original single-session snapshot tests, which have no spawn tree.
     """
 
+    storage_location = "snapshot-test-store"
+
     def __init__(
         self,
         items: list[ConversationItem],
@@ -132,6 +148,9 @@ class _ConversationStore:
         self.items = items
         self.list_items_calls: list[dict[str, object]] = []
         self._conversations = conversations
+
+    def list_pending_inputs(self, conversation_id: str) -> list[ConversationItem]:
+        return []
 
     def get_conversation(self, conversation_id: str) -> Conversation | None:
         if self._conversations is not None:

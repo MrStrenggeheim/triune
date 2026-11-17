@@ -1695,6 +1695,7 @@ def _descendant_sessions(
                 parent_conversation_id=parent_id,
                 limit=100,
                 after=after,
+                include_execution_state=False,
             )
             for child in page.data:
                 if child.id in seen:

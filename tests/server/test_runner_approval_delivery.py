@@ -17,7 +17,15 @@ import httpx
 import pytest
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import JSONResponse
+from sqlalchemy import insert
 
+import omnigent.stores.conversation_store.sqlalchemy_store as conversation_store_module
+from omnigent.db.db_models import (
+    SqlConversation,
+    SqlConversationLabel,
+    SqlConversationMetadata,
+    workspace_scope,
+)
 from omnigent.errors import OmnigentError
 from omnigent.runner import create_runner_app, pending_approvals
 from omnigent.runner.routing import RunnerRouter
@@ -447,7 +455,7 @@ async def test_unknown_verdict_is_not_forwarded_or_saved_for_a_future_waiter(mon
     assert orchestration._harness_pre_resolved_elicitations.get("unknown-question") is None
 
 
-async def test_snapshot_releases_only_exact_durable_accepted_cached_hold(boundary):
+async def test_snapshot_releases_only_exact_durable_accepted_cached_hold(boundary, monkeypatch):
     b = boundary
     b.transport.mode = "after"
     assert (
@@ -455,6 +463,36 @@ async def test_snapshot_releases_only_exact_durable_accepted_cached_hold(boundar
     ).status_code == 503
     await b.future
     held = b.service.store.read(b.sid, "question")
+    b.store.set_session_state(b.sid, {"synthetic": "q" * 32768})
+    counts_before = [
+        b.store.get_conversation(sid).pending_elicitation_count for sid in (b.parent.id, b.sid)
+    ]
+    # Rebuild a missing child marker from its hold while another prompt triggers the walk.
+    for sid in (b.parent.id, b.sid):
+        pending_elicitations.resolve(sid, "question")
+    pending_elicitations.record_publish("unrelated-session", b.event)
+    decoded = []
+    original_decode = conversation_store_module._decode_session_state
+
+    def decode(value):
+        decoded.append(len(value or ""))
+        return original_decode(value)
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(conversation_store_module, "_decode_session_state", decode)
+            snapshot = helpers._pending_elicitation_snapshot_for_session(b.store, b.parent)
+        assert decoded == []
+        assert snapshot == [
+            helpers._targeted_elicitation_event(held_event(held), target_session_id=b.sid)
+        ]
+        assert pending_elicitations.count_for(b.sid) == 1
+        assert [
+            b.store.get_conversation(sid).pending_elicitation_count for sid in (b.parent.id, b.sid)
+        ] == counts_before
+        assert b.service.store.read(b.sid, "question") == held
+    finally:
+        pending_elicitations.resolve("unrelated-session", "question")
     b.transport.mode = "normal"
     await b.service.reconcile(b.sid, "question", held)
     # A second replica retained these markers while another accepted the receipt.
@@ -473,6 +511,93 @@ async def test_snapshot_releases_only_exact_durable_accepted_cached_hold(boundar
         b.store, b.store.get_conversation(b.sid)
     )
     assert snapshot == [b.event]
+
+
+@pytest.mark.parametrize("split_db", [False, True])
+async def test_snapshot_descendants_keep_fresh_tenant_paging_and_cycles(
+    db_uri, tmp_path, monkeypatch, split_db
+):
+    store = (
+        SqlAlchemyConversationStore(db_uri, f"sqlite:///{tmp_path}/conversations.db")
+        if split_db
+        else SqlAlchemyConversationStore(db_uri)
+    )
+    root_id = "b" * 32
+    child_ids = [f"{1000 + i:032x}" for i in range(101)]
+    foreign_id = "f" * 32
+    for tenant in (0, 91):
+        with workspace_scope(tenant):
+            ids = [root_id, *child_ids, *([foreign_id] if tenant else [])]
+            rows = [
+                {
+                    "workspace_id": tenant,
+                    "id": sid,
+                    "root_conversation_id": root_id,
+                    "parent_conversation_id": child_ids[0] if sid == root_id else root_id,
+                    "created_at": i + 1,
+                    "updated_at": i + 1,
+                    "title": "synthetic",
+                }
+                for i, sid in enumerate(ids)
+            ]
+            with store._conv_engine.begin() as conn:
+                conn.execute(insert(SqlConversation), rows)
+            with store._engine.begin() as conn:
+                conn.execute(
+                    insert(SqlConversationMetadata),
+                    [
+                        {
+                            "workspace_id": tenant,
+                            "id": sid,
+                            "session_state": '{"policy":"unused"}',
+                            "runner_id": f"runner-{tenant}",
+                            "workspace": f"/workspace/{tenant}",
+                        }
+                        for sid in ids
+                    ],
+                )
+            with store._conv_engine.begin() as conn:
+                conn.execute(
+                    insert(SqlConversationLabel),
+                    [
+                        {
+                            "workspace_id": tenant,
+                            "conversation_id": sid,
+                            "key": "tenant",
+                            "value": str(tenant),
+                            "updated_at": 1,
+                        }
+                        for sid in ids
+                    ],
+                )
+    original_list = store.list_conversations
+    calls = []
+
+    def list_conversations(**kwargs):
+        calls.append(kwargs)
+        return original_list(**kwargs)
+
+    monkeypatch.setattr(store, "list_conversations", list_conversations)
+    for tenant in (0, 91):
+        with workspace_scope(tenant):
+            expected = {*child_ids, *([foreign_id] if tenant else [])}
+            for revision in ("first", "second"):
+                await asyncio.to_thread(store.set_labels, child_ids[0], {"revision": revision})
+                calls.clear()
+                descendants = await asyncio.to_thread(helpers._descendant_sessions, store, root_id)
+                assert {child.id for child in descendants} == expected
+                assert len(descendants) == len(expected)
+                assert all(child.runner_id == f"runner-{tenant}" for child in descendants)
+                assert all(child.workspace == f"/workspace/{tenant}" for child in descendants)
+                assert all(child.labels["tenant"] == str(tenant) for child in descendants)
+                assert all(child.session_state == {} for child in descendants)
+                assert (
+                    next(c for c in descendants if c.id == child_ids[0]).labels["revision"]
+                    == revision
+                )
+                root_pages = [c for c in calls if c["parent_conversation_id"] == root_id]
+                assert len(root_pages) == 2 and root_pages[1]["after"] is not None
+                assert all(c["kind"] == "sub_agent" and c["limit"] == 100 for c in calls)
 
 
 async def test_release_failure_is_visible_and_retry_never_replays_answer(boundary, caplog):
