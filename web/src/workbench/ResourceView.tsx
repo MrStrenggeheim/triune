@@ -32,7 +32,7 @@ import { TooltipButton } from "@/components/ui/tooltip";
 import { FilesPanel } from "@/shell/FilesPanel";
 import { ContentSearchPanel } from "@/shell/ContentSearchPanel";
 import { FileViewer } from "@/shell/FileViewer";
-import { PullRequestPanel } from "@/shell/PullRequestPanel";
+import { LazyPullRequestPanel as PullRequestPanel } from "@/shell/LazyPullRequestPanel";
 import { WorkspaceSelectionDialog } from "@/shell/WorkspaceSelectionDialog";
 import { WorkspaceSelector } from "@/shell/WorkspaceSelector";
 import { parentOf } from "@/shell/WorkspacePicker";

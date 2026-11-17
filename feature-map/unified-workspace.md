@@ -16,6 +16,8 @@ Conversation and tool views share resizable, dockable panes while keeping their 
 - `appearance`: shared content surfaces, primary bottom tab strips, consistent switches and list density follow `design-system/triune/MASTER.md`.
 - `migration`: existing conversation, file and shell references remain accessible without starting or stopping resources.
 - `retained-performance`: the [integration7 delivery](../docs/custom-fork.md#integration7-delivery) keeps visible observation stable through focus changes, batches title saves and retains tab geometry observers; unchanged transcript lists also skip parent focus renders.
+- `conditional-loading`: PR surfaces share a lazy implementation; docked Automations loads its scheduling code on first use while preserving resident view state.
+- `local-load-recovery`: failed first imports show the shared local error with manual Refresh, preserving unrelated composer and dirty editor nodes without automatic navigation.
 
 ## How to get to it (user POV)
 

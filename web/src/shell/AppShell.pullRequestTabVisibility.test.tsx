@@ -236,7 +236,7 @@ describe("opening Pull Requests from the composer", () => {
     writeSessionWorkspaceState("conv_ws", { open: false, rightRailTab: "files" });
   });
 
-  it("opens and dismisses the mobile drawer without opening the hidden desktop rail", () => {
+  it("opens and dismisses the mobile drawer without opening the hidden desktop rail", async () => {
     vi.mocked(isMobileViewport).mockReturnValue(true);
     renderShell();
 
@@ -244,7 +244,7 @@ describe("opening Pull Requests from the composer", () => {
 
     const drawer = screen.getByTestId("github-panel-drawer");
     expect(drawer).toHaveAttribute("data-state", "open");
-    expect(within(drawer).getByTestId("github-panel")).toBeInTheDocument();
+    expect(await within(drawer).findByTestId("github-panel")).toBeInTheDocument();
     expect(readSessionWorkspaceState("conv_ws").open).toBe(false);
     expect(screen.getAllByTestId("github-panel")).toHaveLength(1);
 
@@ -257,7 +257,7 @@ describe("opening Pull Requests from the composer", () => {
 
   it.each([true, false])(
     "opens the desktop Pull Requests tab without mounting the mobile panel (pinned: %s)",
-    (isPinned) => {
+    async (isPinned) => {
       if (!isPinned) writePinnedWorkspaceTabs(["files", "changes", "subagents"]);
       renderShell();
 
@@ -268,7 +268,7 @@ describe("opening Pull Requests from the composer", () => {
         "aria-selected",
         "true",
       );
-      expect(within(workspace).getByTestId("github-panel")).toBeInTheDocument();
+      expect(await within(workspace).findByTestId("github-panel")).toBeInTheDocument();
       expect(
         within(workspace).queryAllByRole("button", { name: "Close Pull Requests" }),
       ).toHaveLength(isPinned ? 0 : 1);

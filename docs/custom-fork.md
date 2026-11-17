@@ -277,3 +277,17 @@ Receipt-release progress survives restart and retries metadata cleanup without r
 The additive `ad1b2c3d4e5f` migration follows `bq1a2b3c4d5e`; unknown delivery remains held rather than inferred from text, time or a generic HTTP success.
 Independent source review and 105 combined integration checks passed; synthetic ASGI/restart proofs do not establish live-provider or multi-process hard-kill behavior.
 Evidence: `artifacts/overnight-20261116/race-audit/implementation/APPROVAL-HANDOFF.md` and `approval-review/FOLLOWUP.md`.
+
+## Conditional view loading
+
+`LAZY-PR-10` shares one lazy PR implementation across docked views, the compatibility rail and the mobile drawer.
+`LAZY-AUTOMATIONS-10` defers the docked scheduling page while retaining its existing direct route and resident search, filter and dialog state.
+Both use the shared chunk-error boundary with automatic reload disabled locally, keeping unrelated editors and composer drafts mounted when an asset is unavailable.
+Manual Refresh remains a deliberate document reload; sole-copy editor changes and unsent PR comments are not promised to survive it.
+The isolated PR candidate defers 337,122 decoded bytes but increases initial requests from 122 to 134; the Automations candidate separately defers 85,113 bytes.
+These isolated byte deltas must not be summed as the combined release result; the exact combined bundle has its own acceptance evidence.
+
+`BACKEND-COST-10` omits unused execution metadata during descendant prompt discovery, preserving fresh traversal, paging, tenant scope and durable approval restoration.
+Synthetic active traversal removes 48 execution-column conversions and 24 policy/notices parses with identical response bytes and SQL counts.
+Snapshot unit doubles now explicitly model empty durable journals and saved-input queues; actual ledger behavior remains covered by SQLite/ASGI approval tests.
+Evidence: `artifacts/overnight-20261116/{cold-followup/lazy-pr/handoff.md,lazy-automations/handoff.md,backend-cost10/HANDOFF.txt,stability10}`.

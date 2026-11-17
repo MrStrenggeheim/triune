@@ -35,7 +35,7 @@ import { useIsEmbedded } from "@/lib/embedded";
 import { legacyWorkspaceViews } from "./legacyLayout";
 import { dockStorageKey } from "./dockPersistence";
 import { readSessionWorkspaceState } from "@/lib/sessionWorkspaceState";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Undo2Icon,
@@ -89,7 +89,7 @@ import { NotificationLayoutProvider } from "@/components/NotificationCenter";
 import { Toaster } from "@/components/ui/sonner";
 import { BrowserPane } from "@/components/BrowserPane/BrowserPane";
 import { ExecutionLogsPanel } from "@/shell/ExecutionLogsPanel";
-import { TasksPage } from "@/pages/TasksPage";
+import { ChunkLoadErrorBoundary } from "@/components/ChunkLoadErrorBoundary";
 import {
   WorkbenchProvider,
   type OpenWorkbenchView,
@@ -121,6 +121,8 @@ import {
   createQuoteSubchat,
 } from "@/lib/contextReferenceNavigation";
 import { ViewCommandScope, useFocusedViewCommands } from "./viewCommands";
+
+const TasksPage = lazy(() => import("@/pages/TasksPage").then((m) => ({ default: m.TasksPage })));
 
 const VIEW_TYPES: { kind: WorkbenchViewKind; label: string; icon: typeof FolderIcon }[] = [
   { kind: "files", label: "Explorer", icon: FolderIcon },
@@ -1374,7 +1376,20 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
             }}
           />
         );
-      else if (view.kind === "automations") content = <TasksPage />;
+      else if (view.kind === "automations")
+        content = (
+          <ChunkLoadErrorBoundary autoReload={false}>
+            <Suspense
+              fallback={
+                <div role="status" className="p-4 text-sm">
+                  Loading automations…
+                </div>
+              }
+            >
+              <TasksPage />
+            </Suspense>
+          </ChunkLoadErrorBoundary>
+        );
       else if (view.kind === "browser" && sessionId && supportsBrowser())
         content = (
           <BrowserPane

@@ -1,5 +1,5 @@
 // Modified for Triune; inherited notices remain applicable.
-import { useContext, useLayoutEffect, useState, type ReactNode } from "react";
+import { useContext, useLayoutEffect, useState, type ComponentProps, type ReactNode } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, expect, it, vi } from "vitest";
@@ -13,6 +13,7 @@ import { authenticatedFetch } from "@/lib/identity";
 import { panelFolderKey, readPanelFolder, setPanelFolder } from "@/lib/panelFolder";
 import type { WorkspaceSelectionDialogProps } from "@/shell/WorkspaceSelectionDialog";
 import type { FileViewerProps } from "@/shell/FileViewer";
+import type { LazyPullRequestPanel } from "@/shell/LazyPullRequestPanel";
 
 const state = vi.hoisted(() => ({
   openContentSearch: undefined as ((path: string, replace?: boolean) => void) | undefined,
@@ -68,7 +69,19 @@ vi.mock("@/shell/FilesPanel", () => ({
   ),
 }));
 vi.mock("@/shell/ContentSearchPanel", () => ({ ContentSearchPanel: () => null }));
-vi.mock("@/shell/PullRequestPanel", () => ({ PullRequestPanel: () => null }));
+vi.mock("@/shell/PullRequestPanel", () => ({
+  PullRequestPanel: (props: ComponentProps<typeof LazyPullRequestPanel>) => (
+    <div
+      data-testid="pr-view"
+      data-view={props.viewId}
+      data-session={props.conversationId}
+      data-active={String(props.active)}
+      data-hide-location={String(props.hideLocation)}
+    >
+      {props.locationControls}
+    </div>
+  ),
+}));
 vi.mock("@/shell/FileViewer", () => ({
   FileViewer: (props: FileViewerProps) => {
     const { conversationId, path, recipientValid, onClose } = props;
@@ -389,4 +402,27 @@ it("forwards the enclosing view's captured content-search action", () => {
   expect(state.openContentSearch).toBe(openContentSearch);
   act(() => state.openContentSearch!("src", true));
   expect(openContentSearch).toHaveBeenCalledWith("src", true);
+});
+
+it("loads the PR view with its captured identity and keeps it mounted while inactive", async () => {
+  const props = {
+    viewId: "captured-pr",
+    kind: "pr" as const,
+    workspace: original,
+    conversationId: "captured-owner",
+    onOpenFile: vi.fn(),
+  };
+  const { rerender } = render(<ResourceView {...props} active />, { wrapper });
+  const panel = await screen.findByTestId("pr-view");
+  expect(panel).toHaveAttribute("data-view", "captured-pr");
+  expect(panel).toHaveAttribute("data-session", "captured-owner");
+  expect(panel).toHaveAttribute("data-hide-location", "true");
+  expect(panel.querySelector("button")).not.toBeNull();
+
+  rerender(<ResourceView {...props} active={false} />);
+  expect(screen.getByTestId("pr-view")).toBe(panel);
+  expect(panel).toHaveAttribute("data-active", "false");
+  rerender(<ResourceView {...props} active />);
+  expect(screen.getByTestId("pr-view")).toBe(panel);
+  expect(panel).toHaveAttribute("data-active", "true");
 });

@@ -92,7 +92,7 @@ import { ContentSearchPanel } from "./ContentSearchPanel";
 import { FileViewer } from "./FileViewer";
 import { ResponsiveViewerSlot } from "./ResponsiveViewerSlot";
 import { AdaptiveFileWorkspace } from "./AdaptiveFileWorkspace";
-import { PullRequestPanel } from "./PullRequestPanel";
+import { LazyPullRequestPanel as PullRequestPanel } from "./LazyPullRequestPanel";
 import type { ChangedSort } from "./FlatFileList";
 import { useTerminalStatuses } from "./useTerminalStatuses";
 import { type RightRailTab, TAB_BADGE_BASE } from "./railTabs";

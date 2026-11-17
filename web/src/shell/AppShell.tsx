@@ -168,7 +168,7 @@ import {
 } from "./FileViewerContext";
 import { FilesPanelDrawer } from "./FilesPanelDrawer";
 import type { ChangedSort } from "./FlatFileList";
-import { PullRequestPanel } from "./PullRequestPanel";
+import { LazyPullRequestPanel as PullRequestPanel } from "./LazyPullRequestPanel";
 import { MobilePanelDrawer } from "./MobilePanelDrawer";
 import { isMobileViewport, Sidebar } from "./Sidebar";
 import { SidebarHeaderActions } from "./SidebarHeaderActions";
