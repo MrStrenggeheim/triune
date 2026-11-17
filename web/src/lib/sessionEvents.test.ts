@@ -1597,8 +1597,37 @@ describe("session.permission_mode (FLAT envelope)", () => {
 });
 
 describe("session.codex_approval_mode (FLAT envelope)", () => {
+  it("ignores legacy current-scope and unversioned observations", () => {
+    expect(
+      parse("session.codex_approval_mode", {
+        conversation_id: "conv_abc",
+        approval_mode: "read-only",
+      }),
+    ).toEqual([]);
+    expect(
+      parse("session.codex_next_turn_permissions_v1", {
+        conversation_id: "conv_abc",
+        approval_mode: "read-only",
+      }),
+    ).toEqual([]);
+  });
+
+  it("preserves an empty native observation to clear an unknown custom profile", () => {
+    const events = parse("session.codex_next_turn_permissions_v1", {
+      protocol: "codex-next-turn-permissions/v1",
+      scope: "subsequent_turns",
+      conversation_id: "conv_abc",
+      approval_mode: "",
+    });
+    expect(events).toEqual([
+      { type: "session_codex_approval_mode", conversationId: "conv_abc", approvalMode: "" },
+    ]);
+  });
+
   it("lifts conversation_id and approval_mode string", () => {
-    const events = parse("session.codex_approval_mode", {
+    const events = parse("session.codex_next_turn_permissions_v1", {
+      protocol: "codex-next-turn-permissions/v1",
+      scope: "subsequent_turns",
       conversation_id: "conv_abc",
       approval_mode: "approve-for-me",
     });
@@ -1610,11 +1639,23 @@ describe("session.codex_approval_mode (FLAT envelope)", () => {
   });
 
   it("rejects missing approval_mode", () => {
-    expect(parse("session.codex_approval_mode", { conversation_id: "conv_abc" })).toEqual([]);
+    expect(
+      parse("session.codex_next_turn_permissions_v1", {
+        protocol: "codex-next-turn-permissions/v1",
+        scope: "subsequent_turns",
+        conversation_id: "conv_abc",
+      }),
+    ).toEqual([]);
   });
 
   it("rejects missing conversation_id", () => {
-    expect(parse("session.codex_approval_mode", { approval_mode: "approve-for-me" })).toEqual([]);
+    expect(
+      parse("session.codex_next_turn_permissions_v1", {
+        protocol: "codex-next-turn-permissions/v1",
+        scope: "subsequent_turns",
+        approval_mode: "approve-for-me",
+      }),
+    ).toEqual([]);
   });
 });
 

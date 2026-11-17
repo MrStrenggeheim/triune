@@ -409,8 +409,12 @@ async def test_sync_codex_approval_mode_change_posts_preset_and_dedupes() -> Non
         (
             "/v1/sessions/conv_x/events",
             {
-                "type": "external_codex_approval_mode_change",
-                "data": {"approval_mode": "read-only"},
+                "type": "external_codex_next_turn_permissions_v1",
+                "data": {
+                    "protocol": "codex-next-turn-permissions/v1",
+                    "scope": "subsequent_turns",
+                    "approval_mode": "read-only",
+                },
             },
         )
     ]
@@ -557,8 +561,10 @@ async def test_sync_codex_approval_mode_change_posts_and_dedupes() -> None:
         (
             "/v1/sessions/conv_x/events",
             {
-                "type": "external_codex_approval_mode_change",
+                "type": "external_codex_next_turn_permissions_v1",
                 "data": {
+                    "protocol": "codex-next-turn-permissions/v1",
+                    "scope": "subsequent_turns",
                     "terminal_launch_args": [
                         "-c",
                         'default_permissions="dev"',
@@ -567,9 +573,8 @@ async def test_sync_codex_approval_mode_change_posts_and_dedupes() -> None:
                         "-c",
                         'approvals_reviewer="auto_review"',
                     ],
-                    # Same event now also carries the runtime preset (danger sandbox
-                    # → full-access) for the web read-back label.
-                    "approval_mode": "full-access",
+                    # A custom profile has no built-in preset label.
+                    "approval_mode": "",
                 },
             },
         )
@@ -582,7 +587,7 @@ async def test_sync_codex_approval_mode_change_posts_and_dedupes() -> None:
         "-c",
         'approvals_reviewer="auto_review"',
     ]
-    assert state.posted_approval_preset == "full-access"
+    assert state.posted_approval_preset == ""
 
 
 def test_codex_permission_settings_fall_back_to_legacy_policy_args() -> None:
@@ -601,3 +606,17 @@ def test_codex_permission_settings_fall_back_to_legacy_policy_args() -> None:
         "-c",
         'approvals_reviewer="user"',
     ]
+
+
+def test_custom_profile_clears_previous_builtin_permission_label() -> None:
+    state = fwd._CodexForwarderState(approval_preset="full-access")
+    state.note_thread_settings_updated(
+        {
+            "threadSettings": {
+                "approvalPolicy": "on-request",
+                "activePermissionProfile": {"id": "custom-project"},
+                "sandboxPolicy": {"type": "workspaceWrite"},
+            }
+        }
+    )
+    assert state.approval_preset == ""

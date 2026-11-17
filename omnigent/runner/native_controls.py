@@ -10,6 +10,7 @@ import asyncio
 import contextlib
 import dataclasses
 import logging
+import re
 import threading
 import time
 import urllib.parse
@@ -180,28 +181,12 @@ _CLAUDE_MODEL_LATE_DIALOG_POLL_S = 2.0
 
 
 # Settle delay between keystrokes when driving Codex TUI popups. The
-# slash-command menu, the /permissions popup, and the Full Access confirm
-# sub-dialog are each drawn asynchronously; without a pause the next key races
+# slash-command menu is drawn asynchronously; without a pause the next key races
 # ahead (e.g. Enter arrives before the menu commits, so the command never
 # submits).
 _CODEX_POPUP_RENDER_S = 0.7
 
 
-# Budget for confirming an approval switch actually landed. Codex echoes
-# "Permissions updated to <label>" once the popup applies; we poll the pane for
-# it so a keystroke that didn't apply (e.g. a slow-rendering popup) fails loud
-# instead of the label claiming a mode the TUI never entered.
-_CODEX_PERMISSION_CONFIRM_BUDGET_S = 4.0
-
-
-# Budget for the /permissions popup to render its option rows before we read
-# them to find the target preset's menu digit. The popup can be slow to draw
-# mid-session (a busy TUI, MCP still starting), so give it room; if it still
-# can't be read we fall back to the preset's conventional menu position rather
-# than failing the switch. Which rows the popup lists is codex-config-dependent
-# (Read Only appears only with a read-only permission profile), so the digit is
-# read from the live popup when possible rather than hardcoded.
-_CODEX_PERMISSION_MENU_BUDGET_S = 5.0
 # Runtime recovery and bridge publication precede any settings RPC. Keep this
 # below the server's Codex settings forward budget, including confirmation.
 _CODEX_SETTINGS_READY_TIMEOUT_S = 15.0
@@ -840,20 +825,18 @@ def build_native_controls(
             },
         )
 
-    async def _handle_codex_native_approval_mode_change(
-        conv_id: str,
-        mode: str,
-    ) -> Response:
-        # Codex switches approval stance through its own /permissions popup, not
-        # thread/settings/update (that RPC drives model/effort but no-ops for
-        # approval). So drive the popup by keystroke into the codex tmux pane —
-        # the same channel /compact uses — reading the popup to find the preset's
-        # menu digit (row positions vary by codex build/platform, so we discover
-        # it rather than hardcode it) and confirming Codex echoed the switch.
-        from omnigent.codex_approval_modes import codex_permission_preset
+    async def _handle_codex_native_approval_mode_change(conv_id: str, mode: str) -> Response:
+        from omnigent.codex_approval_modes import (
+            codex_next_turn_permission_ack,
+            codex_permission_preset,
+            codex_permission_settings,
+        )
+        from omnigent.harnesses.codex_native.app_server import (
+            CodexAppServerResponseError,
+            client_for_transport,
+        )
 
-        preset = codex_permission_preset(mode)
-        if preset is None:
+        if codex_permission_preset(mode) is None:
             return JSONResponse(
                 status_code=400,
                 content={
@@ -861,77 +844,139 @@ def build_native_controls(
                     "detail": f"Unknown codex approval mode {mode!r}",
                 },
             )
-        registry = resource_registry.terminal_registry
-        instance = registry.get(conv_id, "codex", "main") if registry is not None else None
-        if instance is None or not instance.running:
-            return JSONResponse(
-                status_code=503,
-                content={
-                    "error": "codex_native_approval_mode_failed",
-                    "detail": "Codex terminal is not running; reconnect first.",
-                },
+        lock = _codex_settings_locks.get(conv_id)
+        if lock is None:
+            lock = _codex_settings_locks[conv_id] = asyncio.Lock()
+        async with lock:
+            # Read the existing bridge only: settings must never wake or resume a runtime.
+            state = await _codex_native_bridge_state_for_session(
+                conv_id, action="next-turn permissions"
             )
-        try:
-            offered = await asyncio.to_thread(
-                _inject_codex_permission_mode,
-                str(instance.socket_path),
-                instance.tmux_target,
-                label=preset.label,
-                needs_confirm=preset.needs_confirm,
-            )
-            # Confirm the switch landed before reporting success — the injection
-            # is otherwise fire-and-forget, so a slow-rendering popup would leave
-            # the label claiming a mode the TUI never entered.
-            confirmed = offered and await asyncio.to_thread(
-                _codex_permission_mode_confirmed,
-                str(instance.socket_path),
-                instance.tmux_target,
-                preset.label,
-            )
-        except (RuntimeError, ValueError) as exc:
-            return JSONResponse(
-                status_code=503,
-                content={
-                    "error": "codex_native_approval_mode_failed",
-                    "detail": _client_safe_error_detail(
-                        exc, context="codex-native approval mode change"
-                    ),
-                },
-            )
-        if not offered:
-            # The popup was read but had no row for this preset. Codex lists Read
-            # Only only when the session runs with a read-only permission profile,
-            # so point the user at the reachable path instead of a phantom switch.
-            if preset.value == "read-only":
-                detail = (
-                    "Codex's /permissions popup doesn't offer Read Only on this "
-                    "platform — Codex lists it only on Windows or when a permission "
-                    "profile is active. To run read-only, start a new session in "
-                    "read-only mode."
+            if state is None:
+                return JSONResponse(
+                    status_code=503,
+                    content={
+                        "error": "codex_native_approval_mode_failed",
+                        "detail": (
+                            "No loaded Codex runtime is available. No permission update was sent."
+                        ),
+                    },
                 )
-            else:
-                detail = (
-                    f"Codex's /permissions popup on this session doesn't offer {preset.label!r}."
+            client = client_for_transport(
+                state.socket_path, client_name="omnigent-codex-native-permissions"
+            )
+            dispatched = False
+            try:
+                async with asyncio.timeout(10):
+                    await client.connect()
+                    version = re.search(
+                        r"^[^/\s]+/(\d+)\.(\d+)\.(\d+)(?:\s|$)",
+                        client.server_user_agent or "",
+                    )
+                    if version is None or tuple(map(int, version.groups())) < (0, 164, 0):
+                        raise ValueError(
+                            "Next-turn permissions require a verified Codex runtime "
+                            "version 0.164.0 or newer."
+                        )
+                    response = await client.request(
+                        "thread/read", {"threadId": state.thread_id, "includeTurns": False}
+                    )
+                    result = response.get("result")
+                    thread = result.get("thread") if isinstance(result, dict) else None
+                    status = thread.get("status") if isinstance(thread, dict) else None
+                    if (
+                        not isinstance(thread, dict)
+                        or thread.get("id") != state.thread_id
+                        or not isinstance(status, dict)
+                        or status.get("type") not in {"idle", "active"}
+                    ):
+                        raise ValueError(
+                            "The Codex thread is not loaded; no permission update was sent."
+                        )
+                    cwd = thread.get("cwd")
+                    if not isinstance(cwd, str) or not cwd:
+                        raise ValueError("Codex did not confirm the thread workspace.")
+                    profiles: list[Any] = []
+                    cursor = None
+                    seen: set[str] = set()
+                    while True:
+                        params: dict[str, Any] = {"cwd": cwd}
+                        if cursor is not None:
+                            params["cursor"] = cursor
+                        result = (await client.request("permissionProfile/list", params)).get(
+                            "result", {}
+                        )
+                        if not isinstance(result, dict):
+                            raise ValueError(
+                                "Codex did not return its allowed permission profiles."
+                            )
+                        rows = result.get("data")
+                        if not isinstance(rows, list):
+                            raise ValueError(
+                                "Codex did not return its allowed permission profiles."
+                            )
+                        profiles.extend(rows)
+                        cursor = result.get("nextCursor")
+                        if cursor is None:
+                            break
+                        if not isinstance(cursor, str) or cursor in seen:
+                            raise ValueError(
+                                "Codex returned an invalid permission profile cursor."
+                            )
+                        seen.add(cursor)
+                    settings = codex_permission_settings(mode, profiles)
+                    dispatched = True
+                    await client.request(
+                        "thread/settings/update", {"threadId": state.thread_id, **settings}
+                    )
+            except CodexAppServerResponseError as exc:
+                return JSONResponse(
+                    status_code=503,
+                    content={
+                        "error": "codex_native_approval_mode_failed",
+                        "detail": _client_safe_error_detail(
+                            exc, context="Codex next-turn permission request rejected"
+                        ),
+                    },
                 )
+            except Exception as exc:
+                _logger.warning("Codex next-turn permission update failed", exc_info=True)
+                if dispatched:
+                    return JSONResponse(
+                        status_code=504,
+                        content={
+                            "error": "codex_native_approval_mode_unconfirmed",
+                            "detail": (
+                                "The next-turn permission update was sent, "
+                                "but its outcome is unknown. "
+                                "It may have applied. The picker shows "
+                                "the last native-observed setting. "
+                                "Use Stop separately for urgent restrictions."
+                            ),
+                        },
+                    )
+                return JSONResponse(
+                    status_code=503,
+                    content={
+                        "error": "codex_native_approval_mode_unsupported",
+                        "detail": (
+                            str(exc)
+                            if isinstance(exc, ValueError)
+                            else _client_safe_error_detail(
+                                exc, context="Codex next-turn permissions; no update sent"
+                            )
+                        ),
+                    },
+                )
+            finally:
+                with contextlib.suppress(Exception):
+                    await asyncio.wait_for(client.close(), timeout=_CODEX_SETTINGS_CLOSE_TIMEOUT_S)
+            # Supported same-mode updates may emit no event. The RPC acknowledges
+            # acceptance; the subscribed forwarder alone publishes observed state.
             return JSONResponse(
-                status_code=503,
-                content={
-                    "error": "codex_native_approval_mode_unsupported",
-                    "detail": detail,
-                },
+                status_code=200,
+                content=codex_next_turn_permission_ack(mode),
             )
-        if not confirmed:
-            return JSONResponse(
-                status_code=503,
-                content={
-                    "error": "codex_native_approval_mode_failed",
-                    "detail": (
-                        f"Codex didn't confirm the switch to {preset.label!r} within "
-                        f"{_CODEX_PERMISSION_CONFIRM_BUDGET_S:g}s; please try again."
-                    ),
-                },
-            )
-        return JSONResponse(status_code=200, content={"approval_mode": preset.value})
 
     async def _codex_native_model_options(conv_id: str) -> list[_JsonObject]:
         from omnigent.harnesses.codex_native.app_server import (
@@ -2080,108 +2125,6 @@ def build_native_controls(
         _run_tmux(socket_path, "send-keys", "-l", "-t", target, command)
         time.sleep(_CODEX_POPUP_RENDER_S)
         _run_tmux(socket_path, "send-keys", "-t", target, "Enter")
-
-    def _inject_codex_permission_mode(
-        socket_path: str,
-        target: str,
-        *,
-        label: str,
-        needs_confirm: bool,
-    ) -> bool:
-        # Drive Codex's /permissions popup: open it, read its rows to find the
-        # digit that selects *label*, then press it. Which rows the popup lists
-        # depends on the session's codex config (Read Only shows only with a
-        # read-only permission profile) and their order can vary, so the digit is
-        # read from the live popup. If the popup can't be read in time (a busy
-        # TUI, a slow draw), fall back to the preset's conventional menu position
-        # rather than failing the switch. Full Access opens a "Yes, continue
-        # anyway" sub-dialog whose first option (digit 1) confirms. A settle pause
-        # between keystrokes is required — each screen draws asynchronously, and
-        # typing the command then pressing Enter back-to-back races the slash-menu
-        # so the command never submits.
-        #
-        # Returns True once a digit is pressed for *label* (from the live popup,
-        # or its conventional position on fallback); False when the popup was read
-        # but lists no row for *label*.
-        from omnigent.codex_approval_modes import (
-            CODEX_NATIVE_PERMISSION_PRESETS,
-            codex_permissions_menu,
-        )
-        from omnigent.harnesses.claude_native.bridge import _capture_pane, _run_tmux
-
-        # Reset to a clean composer so the command submits: close any stray
-        # menu/popup, then clear the line. C-u also wipes any text the TUI user
-        # was mid-typing — a rare, accepted cost for reliable injection.
-        _run_tmux(socket_path, "send-keys", "-t", target, "Escape")
-        _run_tmux(socket_path, "send-keys", "-t", target, "C-u")
-        _run_tmux(socket_path, "send-keys", "-l", "-t", target, "/permissions")
-        time.sleep(_CODEX_POPUP_RENDER_S)
-        _run_tmux(socket_path, "send-keys", "-t", target, "Enter")
-
-        # Wait for the popup to draw. Anchor on seeing at least two known preset
-        # rows (every popup variant lists Ask for approval and Full Access)
-        # rather than any numbered line, so a numbered list still visible in the
-        # transcript above can't be mistaken for the rendered popup.
-        known_labels = {preset.label for preset in CODEX_NATIVE_PERMISSION_PRESETS}
-
-        def _read_menu() -> dict[str, str]:
-            return codex_permissions_menu(_capture_pane(socket_path, target))
-
-        deadline = time.monotonic() + _CODEX_PERMISSION_MENU_BUDGET_S
-        options: dict[str, str] = {}
-        while True:
-            time.sleep(_CODEX_POPUP_RENDER_S)
-            options = _read_menu()
-            if len(options.keys() & known_labels) >= 2:
-                break
-            if time.monotonic() >= deadline:
-                options = {}
-                break
-
-        if options:
-            # The live popup was read: trust it. A missing row means this
-            # session's codex genuinely doesn't offer the preset (e.g. Read Only
-            # without a read-only permission profile). Re-read once to tolerate a
-            # partially-drawn popup before concluding the row is absent.
-            digit = options.get(label)
-            if digit is None:
-                time.sleep(_CODEX_POPUP_RENDER_S)
-                digit = _read_menu().get(label)
-            if digit is None:
-                # Close the popup so the TUI isn't stranded in it.
-                _run_tmux(socket_path, "send-keys", "-t", target, "Escape")
-                return False
-        else:
-            # The popup couldn't be read within the budget (a busy or slow TUI).
-            # Fall back to the preset's conventional menu position and let the
-            # confirmation echo gate correctness, rather than failing the switch.
-            digit = next(
-                (
-                    str(position)
-                    for position, preset in enumerate(CODEX_NATIVE_PERMISSION_PRESETS, start=1)
-                    if preset.label == label
-                ),
-                None,
-            )
-            if digit is None:
-                return False
-        _run_tmux(socket_path, "send-keys", "-l", "-t", target, digit)
-        if needs_confirm:
-            time.sleep(_CODEX_POPUP_RENDER_S)
-            _run_tmux(socket_path, "send-keys", "-l", "-t", target, "1")
-        return True
-
-    def _codex_permission_mode_confirmed(socket_path: str, target: str, label: str) -> bool:
-        from omnigent.codex_approval_modes import codex_permission_switch_confirmed
-        from omnigent.harnesses.claude_native.bridge import _capture_pane
-
-        deadline = time.monotonic() + _CODEX_PERMISSION_CONFIRM_BUDGET_S
-        while True:
-            if codex_permission_switch_confirmed(_capture_pane(socket_path, target), label):
-                return True
-            if time.monotonic() >= deadline:
-                return False
-            time.sleep(_CODEX_POPUP_RENDER_S)
 
     async def _handle_hermes_native_compact(conv_id: str) -> Response:
         from omnigent.harnesses.hermes_native.bridge import (

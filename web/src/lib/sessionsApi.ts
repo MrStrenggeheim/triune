@@ -1,3 +1,4 @@
+import { CODEX_NEXT_TURN_PROTOCOL, CODEX_NEXT_TURN_PATH } from "./codexApprovalMode";
 // Modified for Triune.
 
 // Typed client for the four `/v1/sessions` endpoints introduced in
@@ -1052,6 +1053,36 @@ export async function launchRunner(
   return { runnerId: wire.runner_id };
 }
 
+/** Use only the versioned action: a cached UI must remain safe after server rollback. */
+export async function setCodexNextTurnPermissions(sessionId: string, mode: string): Promise<void> {
+  const res = await authenticatedFetch(
+    `/v1/sessions/${encodeURIComponent(sessionId)}${CODEX_NEXT_TURN_PATH}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ protocol: CODEX_NEXT_TURN_PROTOCOL, scope: "subsequent_turns", mode }),
+    },
+  );
+  if (res.status === 404 || res.status === 405) {
+    throw new ApiError(
+      "This server does not support versioned next-turn permissions. No legacy permission request was sent.",
+      res.status,
+      "codex_permission_protocol_required",
+    );
+  }
+  const ack = await readJsonOrThrow<Record<string, unknown>>(res);
+  if (
+    ack?.protocol !== CODEX_NEXT_TURN_PROTOCOL ||
+    ack.scope !== "subsequent_turns" ||
+    ack.status !== "accepted" ||
+    ack.mode !== mode
+  ) {
+    throw new Error(
+      "The server did not acknowledge the versioned future-scope request. Its outcome is unknown; it may have applied. No legacy fallback was sent.",
+    );
+  }
+}
+
 /**
  * PATCH mutable session properties.
  *
@@ -1116,7 +1147,7 @@ export async function updateSession(
     body.permission_mode = updates.claudePermissionMode;
   }
   if (updates.codexApprovalMode !== undefined) {
-    body.approval_mode = updates.codexApprovalMode;
+    throw new Error("Use setCodexNextTurnPermissions; legacy permission PATCH is disabled.");
   }
   if ("costControlModeOverride" in updates) {
     body.cost_control_mode_override = updates.costControlModeOverride ?? null;

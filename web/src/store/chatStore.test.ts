@@ -366,6 +366,15 @@ function defaultFetchHandler(input: RequestInfo | URL, init?: RequestInit): Resp
       ],
     });
   }
+  if (path.endsWith("/codex/next-turn-permissions/v1") && init?.method === "POST") {
+    const body = JSON.parse(String(init.body));
+    return mockResponse({
+      protocol: body.protocol,
+      scope: body.scope,
+      mode: body.mode,
+      status: "accepted",
+    });
+  }
   // GET /v1/sessions/{id} — snapshot used by bindStream for items + agentId.
   const snapshotMatch = path.match(/^\/v1\/sessions\/([^/]+)$/);
   if (snapshotMatch && init?.method === "PATCH") {
@@ -401,7 +410,7 @@ function defaultFetchHandler(input: RequestInfo | URL, init?: RequestInit): Resp
       sessionLabels.set(sessionId, labels);
     }
     if ("approval_mode" in body && typeof body.approval_mode === "string") {
-      labels["omnigent.codex_native.approval_mode"] = body.approval_mode;
+      labels["omnigent.codex_native.next_turn_permissions_v1"] = body.approval_mode;
       sessionLabels.set(sessionId, labels);
     }
     return mockResponse({
@@ -11497,6 +11506,16 @@ describe("chatStore — session configuration scope", () => {
     });
   }
 
+  function permissionCallsFor(id: string): Record<string, unknown>[] {
+    return fetchMock.mock.calls
+      .filter(
+        ([input, init]) =>
+          String(input).split("?")[0] === `/v1/sessions/${id}/codex/next-turn-permissions/v1` &&
+          init?.method === "POST",
+      )
+      .map(([, init]) => JSON.parse(String(init?.body)));
+  }
+
   function patchCallsFor(id: string): Record<string, unknown>[] {
     return fetchMock.mock.calls
       .filter(([u, init]) => {
@@ -12445,7 +12464,7 @@ describe("chatStore — session configuration scope", () => {
     withSnapshot("conv_approval_hydrate", {
       labels: {
         "omnigent.wrapper": "codex-native-ui",
-        "omnigent.codex_native.approval_mode": "approve-for-me",
+        "omnigent.codex_native.next_turn_permissions_v1": "approve-for-me",
       },
     });
 
@@ -12468,7 +12487,7 @@ describe("chatStore — session configuration scope", () => {
   it("leaves Codex approval mode empty on a non-Codex session", async () => {
     seedSession("conv_approval_non_codex", []);
     withSnapshot("conv_approval_non_codex", {
-      labels: { "omnigent.codex_native.approval_mode": "approve-for-me" },
+      labels: { "omnigent.codex_native.next_turn_permissions_v1": "approve-for-me" },
     });
 
     await useChatStore.getState().switchTo("conv_approval_non_codex");
@@ -12476,7 +12495,7 @@ describe("chatStore — session configuration scope", () => {
     expect(useChatStore.getState().codexApprovalMode).toBe("");
   });
 
-  it("PATCHes Codex approval mode and settles from the returned label", async () => {
+  it("POSTs versioned future Codex permissions without treating the reply as a native observation", async () => {
     seedSession("conv_approval_toggle", []);
     withSnapshot("conv_approval_toggle", { labels: { "omnigent.wrapper": "codex-native-ui" } });
     await useChatStore.getState().switchTo("conv_approval_toggle");
@@ -12484,18 +12503,91 @@ describe("chatStore — session configuration scope", () => {
 
     await useChatStore.getState().setCodexApprovalMode("approve-for-me");
 
-    expect(patchCallsFor("conv_approval_toggle")).toEqual([{ approval_mode: "approve-for-me" }]);
-    expect(useChatStore.getState().codexApprovalMode).toBe("approve-for-me");
+    expect(permissionCallsFor("conv_approval_toggle")).toEqual([
+      {
+        protocol: "codex-next-turn-permissions/v1",
+        scope: "subsequent_turns",
+        mode: "approve-for-me",
+      },
+    ]);
+    expect(patchCallsFor("conv_approval_toggle")).toEqual([]);
+    expect(useChatStore.getState().codexApprovalMode).toBe("");
   });
 
-  it("rolls back Codex approval mode when the PATCH is rejected", async () => {
+  it.each(["accepted", "rejected", "network"])(
+    "preserves a newer native permission observation after a delayed %s reply",
+    async (outcome) => {
+      seedSession("conv_permission_race", []);
+      withSnapshot("conv_permission_race", {
+        labels: {
+          "omnigent.wrapper": "codex-native-ui",
+          "omnigent.codex_native.next_turn_permissions_v1": "full-access",
+        },
+      });
+      await useChatStore.getState().switchTo("conv_permission_race");
+      let finish: (response: Response) => void = () => {};
+      let fail: (error: Error) => void = () => {};
+      fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (
+          url.split("?")[0] ===
+            "/v1/sessions/conv_permission_race/codex/next-turn-permissions/v1" &&
+          init?.method === "POST"
+        ) {
+          return new Promise<Response>((resolve, reject) => {
+            finish = resolve;
+            fail = reject;
+          });
+        }
+        return defaultFetchHandler(input, init);
+      });
+      const request = useChatStore.getState().setCodexApprovalMode("read-only");
+      const settled = request.catch((error: unknown) => error);
+      expect(useChatStore.getState().codexApprovalMode).toBe("full-access");
+      handleSessionEvent({
+        type: "session_codex_approval_mode",
+        conversationId: "conv_permission_race",
+        approvalMode: "approve-for-me",
+      });
+      if (outcome === "network") fail(new TypeError("Failed to fetch"));
+      else if (outcome === "rejected")
+        finish(
+          mockResponse(
+            {
+              error: {
+                code: "runner_unavailable",
+                message: "Outcome unknown; it may have applied.",
+              },
+            },
+            { ok: false, status: 503 },
+          ),
+        );
+      else
+        finish(
+          mockResponse({
+            protocol: "codex-next-turn-permissions/v1",
+            scope: "subsequent_turns",
+            mode: "read-only",
+            status: "accepted",
+          }),
+        );
+      const result = await settled;
+      if (outcome === "network") expect(String(result)).toContain("unknown outcome");
+      expect(useChatStore.getState().codexApprovalMode).toBe("approve-for-me");
+    },
+  );
+
+  it("preserves the last native observation when the versioned permission request is rejected", async () => {
     seedSession("conv_approval_failure", []);
     withSnapshot("conv_approval_failure", { labels: { "omnigent.wrapper": "codex-native-ui" } });
     await useChatStore.getState().switchTo("conv_approval_failure");
     fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input.toString();
       const path = url.split("?")[0]!;
-      if (path === "/v1/sessions/conv_approval_failure" && init?.method === "PATCH") {
+      if (
+        path === "/v1/sessions/conv_approval_failure/codex/next-turn-permissions/v1" &&
+        init?.method === "POST"
+      ) {
         return mockResponse(
           {
             error: {
@@ -12514,12 +12606,17 @@ describe("chatStore — session configuration scope", () => {
       "Could not switch to approve-for-me approval mode",
     );
 
-    expect(patchCallsFor("conv_approval_failure")).toEqual([{ approval_mode: "approve-for-me" }]);
-    // Rolls back to the pre-switch value; with no label yet, that's the unset
-    // empty string — never the optimistic value.
+    expect(permissionCallsFor("conv_approval_failure")).toEqual([
+      {
+        protocol: "codex-next-turn-permissions/v1",
+        scope: "subsequent_turns",
+        mode: "approve-for-me",
+      },
+    ]);
+    // No optimistic permission value was shown; no observation leaves it unknown.
     expect(useChatStore.getState().codexApprovalMode).toBe("");
     expect(sessionLabels.get("conv_approval_failure")).not.toHaveProperty(
-      "omnigent.codex_native.approval_mode",
+      "omnigent.codex_native.next_turn_permissions_v1",
     );
   });
 

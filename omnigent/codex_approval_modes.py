@@ -1,20 +1,7 @@
-"""Codex-native runtime approval presets — mirrors Codex's ``/permissions`` popup.
+"""Codex permission presets configured for subsequent turns.
 
-The interactive ``codex`` TUI switches approval stance through its own
-``/permissions`` popup, NOT through the app-server ``thread/settings/update``
-RPC (that path drives model/effort but is a no-op for approval). So Omnigent's
-running-session switcher drives the popup by keystroke: type ``/permissions``,
-then the option's menu digit (position-independent, unlike arrow navigation),
-then confirm the sub-dialog for the ones that ask.
-
-These presets use the popup's labels. Menu digits are discovered from the
-rendered popup because row positions vary by platform and configuration.
-
-Read Only is absent from the default macOS/Linux popup, but appears on Windows
-and with permission profiles. The full-bypass launch flag has no popup row.
-
-Kept dependency-free so the server routes, the runner, and the web contract can
-all agree on the same list.
+Structured updates preserve running turns and terminal drafts.
+Native profile discovery determines which built-in presets are available.
 """
 
 from __future__ import annotations
@@ -22,6 +9,40 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
+
+CODEX_NEXT_TURN_PROTOCOL = "codex-next-turn-permissions/v1"
+CODEX_NEXT_TURN_PATH = "/codex/next-turn-permissions/v1"
+CODEX_NEXT_TURN_LABEL = "omnigent.codex_native.next_turn_permissions_v1"
+CODEX_NEXT_TURN_EVENT = "external_codex_next_turn_permissions_v1"
+
+
+def codex_next_turn_permission_mode(payload: object) -> str:
+    """Require explicit versioned future-scope intent before any native mutation."""
+    if not isinstance(payload, Mapping) or set(payload) != {"protocol", "scope", "mode"}:
+        raise ValueError(
+            "Use the versioned next-turn permission action with explicit future scope."
+        )
+    if (
+        payload.get("protocol") != CODEX_NEXT_TURN_PROTOCOL
+        or payload.get("scope") != "subsequent_turns"
+    ):
+        raise ValueError(
+            "This action requires codex-next-turn-permissions/v1 and subsequent_turns scope."
+        )
+    mode = payload.get("mode")
+    if not isinstance(mode, str) or mode not in CODEX_NATIVE_PERMISSION_VALUES:
+        raise ValueError("Unknown next-turn permission preset.")
+    return mode
+
+
+def codex_next_turn_permission_ack(mode: str) -> dict[str, str]:
+    """Acknowledge this protocol's accepted future setting, never active-turn scope."""
+    return {
+        "protocol": CODEX_NEXT_TURN_PROTOCOL,
+        "scope": "subsequent_turns",
+        "mode": mode,
+        "status": "accepted",
+    }
 
 
 @dataclass(frozen=True)
@@ -82,6 +103,30 @@ def codex_permission_preset(value: str) -> CodexPermissionPreset | None:
     return next((p for p in CODEX_NATIVE_PERMISSION_PRESETS if p.value == value), None)
 
 
+def codex_permission_settings(mode: str, profiles: object) -> dict[str, str]:
+    """Resolve a preset only when native discovery explicitly allows its profile."""
+    profile_id = {
+        "ask-for-approval": ":workspace",
+        "approve-for-me": ":workspace",
+        "full-access": ":danger-full-access",
+        "read-only": ":read-only",
+    }.get(mode)
+    if (
+        not isinstance(profiles, list)
+        or profile_id is None
+        or not any(
+            isinstance(row, Mapping) and row.get("id") == profile_id and row.get("allowed") is True
+            for row in profiles
+        )
+    ):
+        raise ValueError("This Codex runtime does not allow the requested permission profile.")
+    return {
+        "permissions": profile_id,
+        "approvalPolicy": "never" if mode == "full-access" else "on-request",
+        "approvalsReviewer": "auto_review" if mode == "approve-for-me" else "user",
+    }
+
+
 _MENU_ROW_RE = re.compile(r"^\s*(?:›\s*)?(\d+)\.\s+(.*)$")
 _CURRENT_SUFFIX_RE = re.compile(r"\s*\(current\)\s*$", re.IGNORECASE)
 _CONFIRMATION_MARKERS = (
@@ -125,13 +170,9 @@ _READ_ONLY_SANDBOX_TYPES = frozenset({"readOnly", "read-only"})
 def codex_permission_preset_from_thread_settings(settings: object) -> str | None:
     """Map a Codex ``threadSettings`` payload to a ``/permissions`` preset value.
 
-    Reads the approval fields Codex emits on a ``thread/settings/updated`` (and
-    ``thread/resume``) notification. Presets are distinguished by, in order: a
-    full-access sandbox/profile/``never`` policy → ``full-access``; a read-only
-    sandbox/profile → ``read-only``; an ``auto_review`` reviewer under on-request
-    → ``approve-for-me``; a plain on-request policy → ``ask-for-approval``.
-    Returns ``None`` when the payload doesn't resolve to a preset (e.g. a custom
-    profile).
+    Reads configured future-turn scope from native settings observations.
+    A custom profile never inherits a built-in label merely from its approval policy.
+    Full Access requires both the unrestricted scope and the never-ask policy.
 
     :param settings: The ``threadSettings`` mapping (or anything, defensively).
     :returns: A value from :data:`CODEX_NATIVE_PERMISSION_VALUES`, or ``None``.
@@ -144,16 +185,18 @@ def codex_permission_preset_from_thread_settings(settings: object) -> str | None
     sandbox_type = sandbox.get("type") if isinstance(sandbox, Mapping) else None
     profile = settings.get("activePermissionProfile")
     profile_id = profile.get("id") if isinstance(profile, Mapping) else None
-    if (
-        sandbox_type in _FULL_ACCESS_SANDBOX_TYPES
-        or profile_id == ":danger-full-access"
-        or approval_policy == "never"
-    ):
-        return "full-access"
+    if profile_id not in {None, ":workspace", ":read-only", ":danger-full-access"}:
+        return None
     if sandbox_type in _READ_ONLY_SANDBOX_TYPES or profile_id == ":read-only":
         return "read-only"
-    if reviewer == "auto_review":
+    if approval_policy == "never" and (
+        sandbox_type in _FULL_ACCESS_SANDBOX_TYPES or profile_id == ":danger-full-access"
+    ):
+        return "full-access"
+    if sandbox_type not in {"workspaceWrite", "workspace-write"} and profile_id != ":workspace":
+        return None
+    if approval_policy == "on-request" and reviewer == "auto_review":
         return "approve-for-me"
-    if approval_policy == "on-request":
+    if approval_policy == "on-request" and reviewer in {None, "user"}:
         return "ask-for-approval"
     return None

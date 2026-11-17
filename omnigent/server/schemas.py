@@ -3646,27 +3646,24 @@ class SessionPermissionModeEvent(_SSEEventBase):
 
 
 class SessionCodexApprovalModeEvent(_SSEEventBase):
-    """
-    Active approval/sandbox-mode update from a codex-native session.
+    """Legacy current-scope event retained only to invalidate old tabs to Unknown.
 
-    Emitted after the web UI switches the mode, and after the Codex forwarder
-    observes a ``thread/settings/updated`` notification — an approval change the
-    user made inside Codex's ``/permissions`` popup, which Omnigent has no other
-    way to see. Lets the composer's approval picker track the thread without a
-    reload.
-
-    :param type: Always ``"session.codex_approval_mode"``.
-    :param conversation_id: Session identifier, e.g. ``"conv_abc123"``.
-    :param approval_mode: The active mode, one of ``"ask-for-approval"``,
-        ``"approve-for-me"``, ``"full-access"``, ``"read-only"``.
-
-    Category: **transient** (SSE-only). The server also writes
-    ``omnigent.codex_native.approval_mode`` on the conversation labels (and
-    ``terminal_launch_args``), so reconnecting clients restore the same state
-    from the session snapshot.
+    Future permission settings use SessionCodexNextTurnPermissionsEvent.
     """
 
     type: Literal["session.codex_approval_mode"]
+    conversation_id: str
+    approval_mode: str
+
+
+class SessionCodexNextTurnPermissionsEvent(_SSEEventBase):
+    """Versioned native configuration for subsequent turns, never active scope."""
+
+    type: Literal["session.codex_next_turn_permissions_v1"] = (
+        "session.codex_next_turn_permissions_v1"
+    )
+    protocol: Literal["codex-next-turn-permissions/v1"] = "codex-next-turn-permissions/v1"
+    scope: Literal["subsequent_turns"] = "subsequent_turns"
     conversation_id: str
     approval_mode: str
 
@@ -5148,6 +5145,7 @@ ServerStreamEvent = Annotated[
     | SessionCollaborationModeEvent
     | SessionPermissionModeEvent
     | SessionCodexApprovalModeEvent
+    | SessionCodexNextTurnPermissionsEvent
     | SessionAgentChangedEvent
     | SessionTodosEvent
     | RuntimeNoticeObservedEvent

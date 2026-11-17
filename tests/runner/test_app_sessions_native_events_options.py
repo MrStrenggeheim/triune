@@ -597,6 +597,123 @@ async def test_events_compact_on_native_session_returns_503_when_bridge_not_read
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["running", "completed"])
+@pytest.mark.parametrize(
+    "mode", ["ask-for-approval", "approve-for-me", "full-access", "read-only"]
+)
+@pytest.mark.parametrize(
+    "outcome", ["accepted", "lost_reply", "unsupported_version", "unavailable_profile"]
+)
+async def test_events_codex_next_turn_permissions(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, status: str, mode: str, outcome: str
+) -> None:
+    """Busy updates use only native RPCs; lost replies never assert unchanged permissions."""
+    from unittest.mock import AsyncMock
+
+    from omnigent.codex_approval_modes import codex_permission_settings
+    from omnigent.harnesses.codex_native import app_server, bridge
+    from omnigent.runner.app import _session_event_queues_ref
+    from tests.runner.helpers import make_test_terminal_instance
+
+    conv_id = "permission_control"
+    monkeypatch.setattr(bridge, "_BRIDGE_ROOT", tmp_path / "bridge")
+    bridge_dir = bridge.bridge_dir_for_bridge_id(conv_id)
+    bridge.write_bridge_state(
+        bridge_dir,
+        bridge.CodexNativeBridgeState(
+            session_id=conv_id,
+            socket_path="ws://127.0.0.1:43210",
+            thread_id="thread_permissions",
+            codex_home=str(bridge.codex_home_for_bridge_dir(bridge_dir)),
+            active_turn_id="turn_busy" if status == "running" else None,
+        ),
+    )
+    profiles = [
+        {"id": name, "allowed": True}
+        for name in [":workspace", ":read-only", ":danger-full-access"]
+    ]
+    native = AsyncMock()
+    native.server_user_agent = (
+        "omnigent-codex-native-permissions/0.163.0"
+        if outcome == "unsupported_version"
+        else "omnigent-codex-native-permissions/0.164.0 (Linux)"
+    )
+    requests: list[tuple[str, Any]] = []
+
+    async def request(method: str, params: Any) -> dict[str, Any]:
+        requests.append((method, params))
+        if method == "thread/read":
+            return {
+                "result": {
+                    "thread": {
+                        "id": "thread_permissions",
+                        "cwd": str(tmp_path),
+                        "status": {"type": "active" if status == "running" else "idle"},
+                    }
+                }
+            }
+        if method == "permissionProfile/list":
+            return {"result": {"data": [] if outcome == "unavailable_profile" else profiles}}
+        assert method == "thread/settings/update"
+        if outcome == "lost_reply":
+            raise TimeoutError("native accepted but reply was lost")
+        return {"result": {}}  # Same-mode success need not emit a notification.
+
+    native.request.side_effect = request
+    monkeypatch.setattr(app_server, "client_for_transport", lambda *_a, **_k: native)
+    monkeypatch.setattr(
+        claude_native_bridge, "_run_tmux", lambda *_a, **_k: pytest.fail("terminal input")
+    )
+    registry = TerminalRegistry()
+    registry._by_conversation[conv_id] = {
+        ("codex", "main"): make_test_terminal_instance("codex", "main", tmp_path)
+    }
+    app, _ = await _build_app_for_spec(_harness_spec("codex-native"), terminal_registry=registry)
+    async with _runner_client(app) as client:
+        created = await client.post(
+            "/v1/sessions",
+            json={"session_id": conv_id, "agent_id": "880b5afda28ad55ff74cbeb9b5fc67fb"},
+        )
+        assert created.status_code == 201, created.text
+        app.state.native_pane_status[conv_id] = status
+        _drain_session_event_queue(_session_event_queues_ref.get(conv_id))
+        response = await client.post(
+            f"/v1/sessions/{conv_id}/codex/next-turn-permissions/v1",
+            json={
+                "protocol": "codex-next-turn-permissions/v1",
+                "scope": "subsequent_turns",
+                "mode": mode,
+            },
+        )
+        assert app.state.native_pane_status[conv_id] == status
+        assert _drain_session_event_queue(_session_event_queues_ref.get(conv_id)) == []
+    native.close.assert_awaited_once()
+    updates = [params for method, params in requests if method == "thread/settings/update"]
+    if outcome in {"unsupported_version", "unavailable_profile"}:
+        assert response.status_code == 503, response.text
+        assert updates == []
+    else:
+        assert updates == [
+            {"threadId": "thread_permissions", **codex_permission_settings(mode, profiles)}
+        ]
+        assert response.status_code == (504 if outcome == "lost_reply" else 200), response.text
+        if outcome == "lost_reply":
+            assert response.json()["error"] == "codex_native_approval_mode_unconfirmed"
+            assert "outcome is unknown" in response.json()["detail"]
+        else:
+            assert response.json() == {
+                "protocol": "codex-next-turn-permissions/v1",
+                "scope": "subsequent_turns",
+                "mode": mode,
+                "status": "accepted",
+            }
+    assert all(
+        method in {"thread/read", "permissionProfile/list", "thread/settings/update"}
+        for method, _ in requests
+    )
+
+
+@pytest.mark.asyncio
 async def test_events_compact_on_codex_native_types_settles_then_submits(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -4318,3 +4435,67 @@ async def test_events_compact_on_claude_sdk_buffered_compact_failed_fallback() -
         f"swallowed); got {len(in_progress)} from types {[e.get('type') for e in events]}"
     )
     assert completed == [], "no completed should appear when nothing compacted"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"type": "codex_approval_mode_change", "approval_mode": "read-only"},
+        {
+            "type": "codex_approval_mode_change",
+            "approval_mode": "read-only",
+            "protocol": "codex-next-turn-permissions/v1",
+        },
+    ],
+)
+async def test_old_server_permission_event_is_rejected_before_native_control(
+    monkeypatch: pytest.MonkeyPatch, body: dict[str, Any]
+) -> None:
+    from omnigent.harnesses.codex_native import app_server
+
+    monkeypatch.setattr(
+        app_server, "client_for_transport", lambda *_a, **_k: pytest.fail("native RPC")
+    )
+    monkeypatch.setattr(
+        claude_native_bridge, "_run_tmux", lambda *_a, **_k: pytest.fail("terminal keys")
+    )
+    app, _ = await _build_app_for_spec(_harness_spec("codex-native"))
+    async with _runner_client(app) as client:
+        response = await client.post("/v1/sessions/legacy/events", json=body)
+    assert response.status_code == 409
+    assert "No permission update was sent" in response.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"mode": "read-only"},
+        {
+            "protocol": "codex-next-turn-permissions/v1",
+            "scope": "current_turn",
+            "mode": "read-only",
+        },
+        {
+            "protocol": "codex-next-turn-permissions/v1",
+            "scope": "subsequent_turns",
+            "mode": "read-only",
+            "approval_mode": "read-only",
+        },
+    ],
+)
+async def test_versioned_runner_action_requires_explicit_scope(
+    monkeypatch: pytest.MonkeyPatch, body: dict[str, Any]
+) -> None:
+    from omnigent.harnesses.codex_native import app_server
+
+    monkeypatch.setattr(
+        app_server, "client_for_transport", lambda *_a, **_k: pytest.fail("native RPC")
+    )
+    app, _ = await _build_app_for_spec(_harness_spec("codex-native"))
+    async with _runner_client(app) as client:
+        response = await client.post(
+            "/v1/sessions/legacy/codex/next-turn-permissions/v1", json=body
+        )
+    assert response.status_code == 400

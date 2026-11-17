@@ -160,3 +160,29 @@ async def test_client_close_clears_state_when_websocket_close_fails() -> None:
     assert client._pending_requests == {}
     assert client._reader_task is None
     assert client._ws is None
+
+
+async def test_connect_retains_only_the_current_native_user_agent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = CodexAppServerClient(ws_url="ws://127.0.0.1:12345")
+    websocket = AsyncMock(spec=ClientConnection)
+    monkeypatch.setattr(app_server.websockets, "connect", AsyncMock(return_value=websocket))
+    monkeypatch.setattr(
+        client,
+        "request",
+        AsyncMock(
+            side_effect=[{"result": {"userAgent": "codex_cli_rs/0.164.0 (Linux)"}}, {"result": {}}]
+        ),
+    )
+
+    async def reader() -> None:
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(client, "_reader_loop", reader)
+    await client.connect()
+    assert client.server_user_agent == "codex_cli_rs/0.164.0 (Linux)"
+    await client.close()
+    await client.connect()
+    assert client.server_user_agent is None
+    await client.close()

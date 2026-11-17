@@ -31,6 +31,7 @@ import {
   SESSION_HISTORY_PAGE_SIZE,
   stopSession,
   updateSession,
+  setCodexNextTurnPermissions,
 } from "./sessionsApi";
 import { BACKGROUND_SESSION_TITLES_STORAGE_KEY } from "./backgroundSessionTitlesPreferences";
 import { getSessionHost, setSessionHost } from "./sessionHost";
@@ -2021,5 +2022,54 @@ describe("importLocalSessions", () => {
     // First the stream endpoint (404), then the buffered fallback.
     expect(fetchMock.mock.calls[0][0]).toBe("/v1/imports/local/stream");
     expect(fetchMock.mock.calls[1][0]).toBe("/v1/imports/local");
+  });
+});
+
+describe("versioned next-turn permission compatibility", () => {
+  const ack = {
+    protocol: "codex-next-turn-permissions/v1",
+    scope: "subsequent_turns",
+    mode: "read-only",
+    status: "accepted",
+  };
+  it("keeps a cached new UI safe after backend rollback without a legacy fallback", async () => {
+    fetchMock.mockResolvedValueOnce(mockJsonResponse(ack));
+    await setCodexNextTurnPermissions("conv_abc", "read-only");
+    // Same client/module remains loaded; the backend has rolled back after discovery.
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({ detail: "Not Found" }, { ok: false, status: 404 }),
+    );
+    await expect(setCodexNextTurnPermissions("conv_abc", "read-only")).rejects.toThrow(
+      "No legacy permission request was sent",
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    for (const [url, init] of fetchMock.mock.calls) {
+      expect(url).toBe("/v1/sessions/conv_abc/codex/next-turn-permissions/v1");
+      expect(init.method).toBe("POST");
+      expect(JSON.parse(init.body)).toEqual({
+        protocol: ack.protocol,
+        scope: ack.scope,
+        mode: ack.mode,
+      });
+    }
+  });
+  it.each([
+    {},
+    { ...ack, protocol: "old" },
+    { ...ack, scope: "current_turn" },
+    { ...ack, mode: "full-access" },
+    { ...ack, status: "queued" },
+  ])("refuses an absent or mismatched future-scope acknowledgement %j", async (reply) => {
+    fetchMock.mockResolvedValueOnce(mockJsonResponse(reply));
+    await expect(setCodexNextTurnPermissions("conv_abc", "read-only")).rejects.toThrow(
+      "outcome is unknown",
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+  it("never converts a legacy updateSession permission request into a PATCH", async () => {
+    await expect(updateSession("conv_abc", { codexApprovalMode: "read-only" })).rejects.toThrow(
+      "legacy permission PATCH is disabled",
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

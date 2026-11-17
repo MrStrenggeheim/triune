@@ -2778,6 +2778,7 @@ function ComposerImpl(
   /** Applies *mode*; resolves whether the session landed on it. */
   const changePermission = async (mode: string): Promise<boolean> => {
     if (isReadOnly || unreachable || configBusyRef.current) return false;
+    setCommandError(null);
     configBusyRef.current = true;
     setConfigBusy(true);
     const sourceSessionId = useChatStore.getState().conversationId;
@@ -4602,8 +4603,17 @@ function ComposerImpl(
               </div>
               {(showClaudePermissionMode || showCodexApprovalMode) && (
                 <ComposerPermissionPicker
-                  label="Permission mode"
-                  value={permissionLabel || "Permission mode"}
+                  label={showCodexApprovalMode ? "Next-turn permissions" : "Permission mode"}
+                  value={
+                    showCodexApprovalMode
+                      ? `Next turn: ${permissionLabel || "Unknown"}`
+                      : permissionLabel || "Permission mode"
+                  }
+                  description={
+                    showCodexApprovalMode
+                      ? "Native execution on subsequent turns; shows the last native-observed setting. Current work keeps its permissions; use Stop separately for urgent restrictions. Triune action policies, including scheduled tasks, still apply."
+                      : undefined
+                  }
                   harness={sessionHarness}
                   selectedValue={selectedPermissionMode}
                   options={permissionOptions}

@@ -152,6 +152,25 @@ describe("shared composer controls", () => {
     expect(onClick).toHaveBeenCalledOnce();
   });
 
+  it("explains next-turn scope before a permission selection", () => {
+    render(
+      <ComposerPermissionPicker
+        label="Next-turn permissions"
+        value="Next turn: Read Only"
+        description="Current work keeps its permissions; use Stop separately."
+        options={[{ value: "read-only", label: "Read Only" }]}
+        onSelect={vi.fn()}
+      />,
+    );
+    fireEvent.keyDown(
+      screen.getByRole("button", { name: "Next-turn permissions: Next turn: Read Only" }),
+      { key: "ArrowDown" },
+    );
+    expect(
+      screen.getByText("Current work keeps its permissions; use Stop separately."),
+    ).toBeVisible();
+  });
+
   it("dispatches permission selections through the caller's handler", () => {
     const onSelect = vi.fn();
     render(

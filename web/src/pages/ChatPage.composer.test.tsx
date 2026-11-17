@@ -2837,7 +2837,7 @@ describe("Composer shared visible controls", () => {
       }
       expect(chip).toBeDisabled();
       expect(chip).not.toHaveAttribute("title");
-      expect(chip).toHaveAccessibleName("Permission mode: Ask for approval");
+      expect(chip).toHaveAccessibleName("Next-turn permissions: Next turn: Ask for approval");
       await userEvent.hover(chip);
       expect(await screen.findByRole("tooltip")).toHaveTextContent(
         "Only the session owner can change the permission mode",
@@ -2848,7 +2848,7 @@ describe("Composer shared visible controls", () => {
     },
   );
 
-  it("doesn't offer Read Only as a codex runtime switch", () => {
+  it("offers Read Only as a next-turn native permission profile", () => {
     useChatStore.setState({
       conversationId: "codex-no-read-only",
       codexApprovalMode: "read-only",
@@ -2859,7 +2859,7 @@ describe("Composer shared visible controls", () => {
     expect(chip).toHaveTextContent("Read Only");
     fireEvent.keyDown(chip, { key: "ArrowDown" });
     expect(screen.getByTestId("composer-permission-option-full-access")).toBeInTheDocument();
-    expect(screen.queryByTestId("composer-permission-option-read-only")).toBeNull();
+    expect(screen.getByTestId("composer-permission-option-read-only")).toBeInTheDocument();
   });
 });
 
@@ -3051,10 +3051,12 @@ describe("Composer permission-mode shortcut", () => {
     renderWithTooltips(<Composer {...composerProps({ showCodexApprovalMode: true })} />);
 
     await cycleTo("Full Access");
+    await cycleTo("Read Only");
     await cycleTo("Ask for approval");
     await cycleTo("Approve for me");
     expect(setApproval.mock.calls.map(([mode]) => mode)).toEqual([
       "full-access",
+      "read-only",
       "ask-for-approval",
       "approve-for-me",
     ]);
@@ -3084,7 +3086,7 @@ describe("Composer permission-mode shortcut", () => {
   });
 
   it.each([
-    { name: "a read-only Codex session", harness: "codex-native", codex: "read-only" },
+    { name: "an unknown Codex profile", harness: "codex-native", codex: "custom-profile" },
     { name: "a Claude session in Don't ask", harness: "claude-native", claude: "dontAsk" },
   ])("leaves the mode alone in $name, which the chip can't switch back to", (session) => {
     useChatStore.setState({

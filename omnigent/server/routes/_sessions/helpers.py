@@ -44,7 +44,11 @@ from fastapi.responses import Response
 from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError, StatementError
 
-from omnigent.codex_approval_modes import CODEX_NATIVE_PERMISSION_VALUES
+from omnigent.codex_approval_modes import (
+    CODEX_NATIVE_PERMISSION_VALUES,
+    CODEX_NEXT_TURN_PROTOCOL,
+    codex_next_turn_permission_ack,
+)
 from omnigent.db.utils import generate_task_id
 from omnigent.db.workspace_cache import WorkspaceScopedCache
 from omnigent.debug_logging import debug_event, runner_log_scope
@@ -281,6 +285,7 @@ from omnigent.server.schemas import (
     SessionBtwSidechatEvent,
     SessionChildSessionUpdatedEvent,
     SessionCodexApprovalModeEvent,
+    SessionCodexNextTurnPermissionsEvent,
     SessionCollaborationModeEvent,
     SessionCreatedEvent,
     SessionCreateMetadata,
@@ -387,19 +392,18 @@ def _publish_permission_mode(session_id: str, mode: str) -> None:
 
 
 def _publish_codex_approval_mode(session_id: str, mode: str) -> None:
-    """
-    Publish the live codex-native approval/sandbox mode for a session.
-
-    :param session_id: Session/conversation identifier, e.g. ``"conv_abc123"``.
-    :param mode: The active approval mode, e.g. ``"read-only"``.
-    :returns: None.
-    """
-    event = SessionCodexApprovalModeEvent(
-        type="session.codex_approval_mode",
+    """Publish future scope separately; invalidate the old current-scope display."""
+    event = SessionCodexNextTurnPermissionsEvent(
         conversation_id=session_id,
         approval_mode=mode,
     )
     session_stream.publish(session_id, event.model_dump())
+    legacy = SessionCodexApprovalModeEvent(
+        type="session.codex_approval_mode",
+        conversation_id=session_id,
+        approval_mode="unknown",
+    )
+    session_stream.publish(session_id, legacy.model_dump())
 
 
 def _publish_policy_denied(session_id: str, reason: str, phase: str) -> None:
@@ -2868,14 +2872,22 @@ async def _persist_external_codex_approval_mode_change(
     body: SessionEventInput,
     conversation_store: ConversationStore,
 ) -> None:
-    """Persist a Codex-observed approval change (from a TUI ``/permissions`` switch).
+    """Persist native-observed subsequent-turn settings and their restart arguments.
 
     The forwarder posts two things it saw in ``thread/settings/updated``:
     ``terminal_launch_args`` (the create/fork/resume vocabulary, merged into the
-    row) and ``approval_mode`` (the runtime ``/permissions`` preset, stamped on
+    row) and ``approval_mode`` (the configured future-turn preset, stamped on
     the read-back label + published live so the web picker tracks the TUI). Both
     are optional but at least one must be present.
     """
+    if (
+        body.data.get("protocol") != CODEX_NEXT_TURN_PROTOCOL
+        or body.data.get("scope") != "subsequent_turns"
+    ):
+        raise OmnigentError(
+            "Native future-setting observations require the v1 scope contract",
+            code=ErrorCode.INVALID_INPUT,
+        )
     raw_args = body.data.get("terminal_launch_args")
     raw_mode = body.data.get("approval_mode")
     if raw_args is None and raw_mode is None:
@@ -2910,18 +2922,24 @@ async def _persist_external_codex_approval_mode_change(
             )
     if raw_mode is None:
         return
-    if raw_mode not in CODEX_NATIVE_PERMISSION_VALUES:
+    if raw_mode != "" and raw_mode not in CODEX_NATIVE_PERMISSION_VALUES:
         raise OmnigentError(
             "external_codex_approval_mode_change data.approval_mode must be one of "
             f"{sorted(CODEX_NATIVE_PERMISSION_VALUES)}; got {raw_mode!r}",
             code=ErrorCode.INVALID_INPUT,
         )
-    if conv.labels.get(_CODEX_NATIVE_APPROVAL_MODE_LABEL_KEY) == raw_mode:
+    if (
+        conv.labels.get(_CODEX_NATIVE_APPROVAL_MODE_LABEL_KEY) == raw_mode
+        and conv.labels.get("omnigent.codex_native.approval_mode") == "unknown"
+    ):
         return
     await asyncio.to_thread(
         conversation_store.set_labels,
         session_id,
-        {_CODEX_NATIVE_APPROVAL_MODE_LABEL_KEY: raw_mode},
+        {
+            _CODEX_NATIVE_APPROVAL_MODE_LABEL_KEY: raw_mode,
+            "omnigent.codex_native.approval_mode": "unknown",
+        },
     )
     _publish_codex_approval_mode(session_id, raw_mode)
 
@@ -4922,33 +4940,24 @@ def _require_codex_approval_mode_forward(
     session_id: str,
     mode: str,
     runner_result: _RunnerForwardResult | None,
-) -> None:
-    """
-    Fail when a live codex approval-mode switch wasn't applied by the runner.
-
-    The runner applies the mode by driving Codex's own ``/permissions`` popup
-    and only returns 2xx once it confirms Codex echoed the switch. Persisting the
-    label without a confirmed forward would let the picker claim a mode the TUI
-    isn't in, so an explicit switch requires a reachable runner that confirmed it.
-
-    :param session_id: Session/conversation identifier, e.g. ``"conv_abc123"``.
-    :param mode: Requested approval mode, e.g. ``"read-only"``.
-    :param runner_result: HTTP result returned by the runner, or ``None`` when
-        no runner could be reached.
-    :returns: None.
-    :raises OmnigentError: If no runner was reachable or the runner rejected the
-        live approval-mode update.
-    """
+) -> dict[str, str]:
+    """Require native acceptance of a future-turn setting, without asserting active scope."""
     if runner_result is None:
         raise OmnigentError(
-            f"Could not switch to {mode} approval mode: no live Codex runner is "
-            f"available for session {session_id!r}. Reconnect the session and try again.",
+            f"Could not confirm the next-turn permission request for {session_id!r}. "
+            "Its outcome is unknown if delivery was interrupted; it may have applied. "
+            "The picker shows the last native-observed setting.",
+            code=ErrorCode.RUNNER_UNAVAILABLE,
+        )
+    if runner_result.status_code in {404, 405}:
+        raise OmnigentError(
+            "The bound runner does not support versioned next-turn permissions. "
+            "Update the runner. No legacy permission request was sent.",
             code=ErrorCode.RUNNER_UNAVAILABLE,
         )
     if not 200 <= runner_result.status_code < 300:
-        # The runner's body carries why the switch failed (e.g. the codex
-        # terminal isn't running, or Codex never echoed the switch); surface it
-        # so the UI banner explains the failure instead of a bare status code.
+        # Surface native refusal or unknown-outcome details without asserting
+        # that a request timed out before it could change future settings.
         detail = ""
         try:
             payload = json.loads(runner_result.body)
@@ -4960,6 +4969,21 @@ def _require_codex_approval_mode_forward(
             f"Could not switch to {mode} approval mode for session {session_id!r}.{detail}",
             code=ErrorCode.RUNNER_UNAVAILABLE,
         )
+
+    try:
+        payload = json.loads(runner_result.body)
+    except (TypeError, ValueError):
+        payload = None
+    expected = codex_next_turn_permission_ack(mode)
+    if not isinstance(payload, dict) or any(
+        payload.get(key) != value for key, value in expected.items()
+    ):
+        raise OmnigentError(
+            "The runner did not acknowledge the versioned future-scope request. "
+            "Its outcome is unknown; it may have applied. No legacy fallback was sent.",
+            code=ErrorCode.RUNNER_UNAVAILABLE,
+        )
+    return expected
 
 
 # Bound fallback assistant text while preserving multiline tracebacks and
@@ -7306,6 +7330,8 @@ async def _forward_session_change_to_runner_impl(
     runner_router: Any,
     event: dict[str, Any],
     timeout_s: float = 5.0,
+    *,
+    endpoint_path: str | None = None,
 ) -> _RunnerForwardResult | None:
     """
     Best-effort POST a control event to the bound runner.
@@ -7362,7 +7388,7 @@ async def _forward_session_change_to_runner_impl(
         return None
     try:
         resp = await runner_client.post(
-            f"/v1/sessions/{session_id}/events",
+            endpoint_path or f"/v1/sessions/{session_id}/events",
             json=event,
             timeout=timeout_s,
         )

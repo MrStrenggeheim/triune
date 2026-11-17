@@ -8,13 +8,13 @@ import {
 } from "@/lib/codexApprovalMode";
 
 describe("codexApprovalMode", () => {
-  it("offers only the stances a running session can switch into, in popup order", () => {
-    // Read Only and the full-bypass sandbox stance are launch-only, so the
-    // runtime picker doesn't offer them.
+  it("offers the four built-in future-turn permission presets", () => {
+    // Native discovery, not terminal menu positions, gates availability.
     expect(CODEX_NATIVE_RUNTIME_APPROVAL_PRESETS.map((m) => m.value)).toEqual([
       "ask-for-approval",
       "approve-for-me",
       "full-access",
+      "read-only",
     ]);
   });
 
@@ -25,7 +25,7 @@ describe("codexApprovalMode", () => {
       expect(codexApprovalModeLabel("full-access")).toBe("Full Access");
     });
 
-    it("still labels a read-only session the picker can't switch into", () => {
+    it("labels the Read Only profile", () => {
       expect(codexApprovalModeLabel("read-only")).toBe("Read Only");
     });
 
@@ -37,7 +37,14 @@ describe("codexApprovalMode", () => {
   });
 
   describe("codexApprovalModeFromSession", () => {
-    it("returns the label the server stamps after a confirmed switch", () => {
+    it("does not relabel an old server's current-scope label as future scope", () => {
+      expect(
+        codexApprovalModeFromSession({
+          labels: { "omnigent.codex_native.approval_mode": "read-only" },
+        }),
+      ).toBeNull();
+    });
+    it("returns the label from a native settings observation", () => {
       expect(
         codexApprovalModeFromSession({
           labels: { [CODEX_NATIVE_APPROVAL_MODE_LABEL_KEY]: "approve-for-me" },

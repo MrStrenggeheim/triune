@@ -155,6 +155,7 @@ export const ComposerHostTrigger = forwardRef<
 export function ComposerPermissionPicker({
   label,
   value,
+  description,
   harness,
   selectedValue,
   options,
@@ -168,6 +169,7 @@ export function ComposerPermissionPicker({
 }: {
   label: string;
   value: string;
+  description?: string;
   harness?: string | null;
   selectedValue?: string | null;
   options: readonly { value: string; label: string }[];
@@ -181,12 +183,10 @@ export function ComposerPermissionPicker({
   onSelect: (value: string) => void;
   testIdPrefix?: string;
 }) {
+  const help = `${label}: ${value}${description ? `. ${description}` : ""}`;
   return (
     <DropdownMenu>
-      <DisabledActionTooltip
-        reason={disabled ? disabledReason : undefined}
-        label={`${label}: ${value}`}
-      >
+      <DisabledActionTooltip reason={disabled ? disabledReason : undefined} label={help}>
         <DropdownMenuTrigger asChild disabled={disabled || (loading && !interactiveWhileLoading)}>
           <TooltipButton
             type="button"
@@ -198,7 +198,7 @@ export function ComposerPermissionPicker({
               loading && "disabled:opacity-100",
             )}
             aria-label={`${label}: ${value}`}
-            title={disabled && disabledReason ? disabledReason : `${label}: ${value}`}
+            title={disabled && disabledReason ? disabledReason : help}
             data-testid={`${testIdPrefix}-permission-chip`}
             data-permission-concept={permissionModeConcept(harness, selectedValue)}
           >
@@ -229,6 +229,11 @@ export function ComposerPermissionPicker({
         }}
       >
         <div className="px-2 py-1 text-xs text-muted-foreground">{label}</div>
+        {description && (
+          <p className="max-w-72 px-2 pb-2 text-xs whitespace-normal break-words text-muted-foreground">
+            {description}
+          </p>
+        )}
         <DropdownMenuRadioGroup value={selectedValue ?? undefined} onValueChange={onSelect}>
           {options.map((option) => (
             <DropdownMenuRadioItem

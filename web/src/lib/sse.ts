@@ -891,11 +891,13 @@ function parseEventPayload(rawType: string, data: Record<string, unknown>): Stre
       permissionMode,
     } satisfies SessionPermissionModeEvent;
   }
-  if (eventType === "session.codex_approval_mode") {
+  if (eventType === "session.codex_next_turn_permissions_v1") {
+    if (data.protocol !== "codex-next-turn-permissions/v1" || data.scope !== "subsequent_turns")
+      return null;
     const conversationId = data.conversation_id;
     if (typeof conversationId !== "string" || !conversationId) return null;
     const approvalMode = data.approval_mode;
-    if (typeof approvalMode !== "string" || !approvalMode) return null;
+    if (typeof approvalMode !== "string") return null;
     return {
       type: "session_codex_approval_mode",
       conversationId,

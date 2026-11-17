@@ -668,10 +668,10 @@ export interface SessionPermissionModeEvent {
 }
 
 /**
- * `session.codex_approval_mode` — active codex-native approval/sandbox switch.
+ * `session.codex_next_turn_permissions_v1` — native-observed future-turn settings.
  *
- * Emitted when the web picker switches the mode, and when the Codex forwarder
- * sees a `thread/settings/updated` (a `/permissions` change made in the TUI).
+ * The parser validates protocol and scope before producing this internal event.
+ * Legacy current-scope observations never enter this state.
  */
 export interface SessionCodexApprovalModeEvent {
   type: "session_codex_approval_mode";

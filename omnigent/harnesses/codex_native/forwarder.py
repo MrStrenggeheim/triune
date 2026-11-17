@@ -19,7 +19,11 @@ from pathlib import Path
 
 import httpx
 
-from omnigent.codex_approval_modes import codex_permission_preset_from_thread_settings
+from omnigent.codex_approval_modes import (
+    CODEX_NEXT_TURN_EVENT,
+    CODEX_NEXT_TURN_PROTOCOL,
+    codex_permission_preset_from_thread_settings,
+)
 from omnigent.debug_logging import debug_event
 from omnigent.entities.session_resources import terminal_resource_id
 from omnigent.harnesses.claude_native.bridge import url_component
@@ -1084,13 +1088,13 @@ class _CodexForwarderState:
         args = _codex_terminal_launch_args_from_settings(payload)
         if args is not None:
             self.terminal_launch_args = args
-        # Also resolve the /permissions preset for the web read-back label. A
-        # payload that maps to no preset (e.g. a custom permission profile) has no
-        # preset value to show, so the last-known one stays put — the picker keeps
-        # its prior value rather than blanking. Known limitation for custom profiles.
-        preset = codex_permission_preset_from_thread_settings(payload)
-        if preset is not None:
-            self.approval_preset = preset
+        # This is configured future-turn scope, not the running turn's policy.
+        # Clear an old label when native settings no longer match a built-in preset.
+        if any(
+            key in payload
+            for key in ("approvalPolicy", "sandboxPolicy", "activePermissionProfile")
+        ):
+            self.approval_preset = codex_permission_preset_from_thread_settings(payload) or ""
 
 
 @dataclass(frozen=True)
@@ -3788,7 +3792,7 @@ async def _sync_codex_approval_mode_change(
     preset_changed = preset is not None and preset != forwarder_state.posted_approval_preset
     if not args_changed and not preset_changed:
         return
-    data: _JsonObject = {}
+    data: _JsonObject = {"protocol": CODEX_NEXT_TURN_PROTOCOL, "scope": "subsequent_turns"}
     if args is not None:
         data["terminal_launch_args"] = args
     if preset is not None:
@@ -3796,10 +3800,10 @@ async def _sync_codex_approval_mode_change(
     response = await _post_session_event(
         client,
         session_id,
-        event_type="external_codex_approval_mode_change",
+        event_type=CODEX_NEXT_TURN_EVENT,
         data=data,
     )
-    _log_failed_session_event_post("external_codex_approval_mode_change", response)
+    _log_failed_session_event_post(CODEX_NEXT_TURN_EVENT, response)
     if response is not None and response.status_code < 400:
         if args is not None:
             forwarder_state.posted_terminal_launch_args = list(args)

@@ -9015,8 +9015,12 @@ async def test_post_external_codex_approval_mode_change_persists_terminal_args(
     resp = await client.post(
         f"/v1/sessions/{session['id']}/events",
         json={
-            "type": "external_codex_approval_mode_change",
-            "data": {"terminal_launch_args": args},
+            "type": "external_codex_next_turn_permissions_v1",
+            "data": {
+                "protocol": "codex-next-turn-permissions/v1",
+                "scope": "subsequent_turns",
+                "terminal_launch_args": args,
+            },
         },
     )
 
@@ -9060,8 +9064,12 @@ async def test_post_external_codex_approval_mode_change_preserves_other_args(
     resp = await client.post(
         f"/v1/sessions/{session['id']}/events",
         json={
-            "type": "external_codex_approval_mode_change",
-            "data": {"terminal_launch_args": permission_args},
+            "type": "external_codex_next_turn_permissions_v1",
+            "data": {
+                "protocol": "codex-next-turn-permissions/v1",
+                "scope": "subsequent_turns",
+                "terminal_launch_args": permission_args,
+            },
         },
     )
 
@@ -11157,7 +11165,9 @@ async def test_patch_collaboration_mode_persists_label_and_forwards_event(
     assert mode_events[0]["mode"] == "plan"
 
 
-@pytest.mark.parametrize("runner_status", [None, 503], ids=["no_runner", "runner_rejects"])
+@pytest.mark.parametrize(
+    "runner_status", [None, 503, 504], ids=["no_runner", "runner_rejects", "unknown_outcome"]
+)
 async def test_patch_collaboration_mode_requires_live_runner_before_persisting(
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
@@ -11265,25 +11275,19 @@ async def test_patch_collaboration_mode_rejects_non_codex_session(
     assert "collaboration_mode is only supported" in resp.text
 
 
-async def test_patch_approval_mode_forwards_and_persists_label(
+@pytest.mark.parametrize("observed_mode", ["full-access", "read-only"])
+async def test_patch_approval_mode_does_not_overwrite_native_observation(
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
+    observed_mode: str,
 ) -> None:
-    """
-    PATCH ``approval_mode`` drives the Codex ``/permissions`` popup and records it.
-
-    The web picker writes through the sessions PATCH route. The server forwards a
-    harness-agnostic ``codex_approval_mode_change`` event so the runner keys the
-    preset into the Codex TUI, then persists the read-back label and publishes a
-    live ``session.codex_approval_mode``. Codex owns the durable state (its own
-    session config), so the route writes no ``terminal_launch_args``.
-    """
+    """Native observations own the label, even when another update races the PATCH reply."""
 
     captured: list[_ForwardedEffort] = []
     published: list[tuple[str, dict[str, Any]]] = []
     _capture_published(monkeypatch, published)
 
-    def _handler(request: httpx.Request) -> httpx.Response:
+    async def _handler(request: httpx.Request) -> httpx.Response:
         """Accept the injection like the codex-native runner handler."""
         if request.method != "POST":
             return httpx.Response(204)
@@ -11291,7 +11295,28 @@ async def test_patch_approval_mode_forwards_and_persists_label(
         if request.content:
             body = json.loads(request.content)
         captured.append(_ForwardedEffort(url=str(request.url), body=body))
-        return httpx.Response(200, json={"approval_mode": "full-access"})
+        if body and body.get("protocol") == "codex-next-turn-permissions/v1":
+            observation = await client.post(
+                f"/v1/sessions/{session['id']}/events",
+                json={
+                    "type": "external_codex_next_turn_permissions_v1",
+                    "data": {
+                        "protocol": "codex-next-turn-permissions/v1",
+                        "scope": "subsequent_turns",
+                        "approval_mode": observed_mode,
+                    },
+                },
+            )
+            assert observation.status_code < 300, observation.text
+        return httpx.Response(
+            200,
+            json={
+                "protocol": "codex-next-turn-permissions/v1",
+                "scope": "subsequent_turns",
+                "mode": "full-access",
+                "status": "accepted",
+            },
+        )
 
     async with _runtime_runner(_handler):
         agent = await create_test_agent(client)
@@ -11306,30 +11331,45 @@ async def test_patch_approval_mode_forwards_and_persists_label(
         )
         captured.clear()
 
-        resp = await client.patch(
-            f"/v1/sessions/{session['id']}",
-            json={"approval_mode": "full-access"},
+        resp = await client.post(
+            f"/v1/sessions/{session['id']}/codex/next-turn-permissions/v1",
+            json={
+                "protocol": "codex-next-turn-permissions/v1",
+                "scope": "subsequent_turns",
+                "mode": "full-access",
+            },
         )
 
     assert resp.status_code == 200, resp.text
-    assert resp.json()["labels"]["omnigent.codex_native.approval_mode"] == "full-access"
-    # Runtime approval rides the /permissions popup, not launch args: the caller's
-    # existing args are left untouched.
-    assert resp.json()["terminal_launch_args"] == ["--model", "gpt-5-codex"]
-    forwards = [f for f in captured if f.url.endswith(f"/v1/sessions/{session['id']}/events")]
+    assert resp.json()["mode"] == "full-access"
+    snapshot = (await client.get(f"/v1/sessions/{session['id']}")).json()
+    assert snapshot["labels"]["omnigent.codex_native.next_turn_permissions_v1"] == observed_mode
+    assert snapshot["labels"]["omnigent.codex_native.approval_mode"] == "unknown"
+    # Only native observations own restart arguments; PATCH does not rewrite them.
+    assert snapshot["terminal_launch_args"] == ["--model", "gpt-5-codex"]
+    forwards = [
+        f
+        for f in captured
+        if f.url.endswith(f"/v1/sessions/{session['id']}/codex/next-turn-permissions/v1")
+    ]
     assert len(forwards) == 1, f"Expected one runner forward, got {captured!r}"
     assert forwards[0].body == {
-        "type": "codex_approval_mode_change",
-        "approval_mode": "full-access",
+        "protocol": "codex-next-turn-permissions/v1",
+        "scope": "subsequent_turns",
+        "mode": "full-access",
     }
     mode_events = [
-        event for _, event in published if event["type"] == "session.codex_approval_mode"
+        event
+        for _, event in published
+        if event["type"] == "session.codex_next_turn_permissions_v1"
     ]
     assert len(mode_events) == 1
-    assert mode_events[0]["approval_mode"] == "full-access"
+    assert mode_events[0]["approval_mode"] == observed_mode
 
 
-@pytest.mark.parametrize("runner_status", [None, 503], ids=["no_runner", "runner_rejects"])
+@pytest.mark.parametrize(
+    "runner_status", [None, 503, 504], ids=["no_runner", "runner_rejects", "unknown_outcome"]
+)
 async def test_patch_approval_mode_requires_live_runner_before_persisting(
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
@@ -11357,7 +11397,9 @@ async def test_patch_approval_mode_requires_live_runner_before_persisting(
                 runner_status,
                 json={
                     "error": "codex_native_approval_mode_failed",
-                    "detail": "Codex terminal is not running; reconnect first.",
+                    "detail": "Outcome unknown; it may have applied."
+                    if runner_status == 504
+                    else "No update sent.",
                 },
             )
 
@@ -11378,9 +11420,13 @@ async def test_patch_approval_mode_requires_live_runner_before_persisting(
             },
         )
 
-        resp = await client.patch(
-            f"/v1/sessions/{session['id']}",
-            json={"approval_mode": "full-access"},
+        resp = await client.post(
+            f"/v1/sessions/{session['id']}/codex/next-turn-permissions/v1",
+            json={
+                "protocol": "codex-next-turn-permissions/v1",
+                "scope": "subsequent_turns",
+                "mode": "full-access",
+            },
         )
         snapshot = (await client.get(f"/v1/sessions/{session['id']}")).json()
     finally:
@@ -11389,10 +11435,17 @@ async def test_patch_approval_mode_requires_live_runner_before_persisting(
         set_runner_client(None)
 
     assert resp.status_code == 503, resp.text
-    assert "Could not switch to full-access approval mode" in resp.text
-    assert "omnigent.codex_native.approval_mode" not in snapshot["labels"]
+    if runner_status is None:
+        assert "outcome is unknown" in resp.text
+    elif runner_status == 504:
+        assert "Outcome unknown; it may have applied" in resp.text
+    else:
+        assert "No update sent" in resp.text
+    assert "omnigent.codex_native.next_turn_permissions_v1" not in snapshot["labels"]
     mode_events = [
-        event for _, event in published if event["type"] == "session.codex_approval_mode"
+        event
+        for _, event in published
+        if event["type"] == "session.codex_next_turn_permissions_v1"
     ]
     assert mode_events == []
 
@@ -11404,13 +11457,17 @@ async def test_patch_approval_mode_rejects_non_codex_session(
     agent = await create_test_agent(client)
     session = await _create_session(client, agent["id"])
 
-    resp = await client.patch(
-        f"/v1/sessions/{session['id']}",
-        json={"approval_mode": "ask-for-approval"},
+    resp = await client.post(
+        f"/v1/sessions/{session['id']}/codex/next-turn-permissions/v1",
+        json={
+            "protocol": "codex-next-turn-permissions/v1",
+            "scope": "subsequent_turns",
+            "mode": "ask-for-approval",
+        },
     )
 
     assert resp.status_code == 400, resp.text
-    assert "approval_mode is only supported" in resp.text
+    assert "Next-turn permissions require" in resp.text
 
 
 async def test_patch_approval_mode_rejects_unknown_mode(
@@ -11427,18 +11484,24 @@ async def test_patch_approval_mode_rejects_unknown_mode(
         },
     )
 
-    resp = await client.patch(
-        f"/v1/sessions/{session['id']}",
-        json={"approval_mode": "turbo"},
+    resp = await client.post(
+        f"/v1/sessions/{session['id']}/codex/next-turn-permissions/v1",
+        json={
+            "protocol": "codex-next-turn-permissions/v1",
+            "scope": "subsequent_turns",
+            "mode": "turbo",
+        },
     )
 
     assert resp.status_code == 400, resp.text
-    assert "approval_mode must be one of" in resp.text
+    assert "Unknown next-turn permission preset" in resp.text
 
 
+@pytest.mark.parametrize("observed_mode", ["full-access", ""])
 async def test_post_external_codex_approval_mode_change_sets_label_and_publishes(
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
+    observed_mode: str,
 ) -> None:
     """
     A /permissions change inside the Codex TUI reaches the web picker (TUI→UI).
@@ -11456,16 +11519,23 @@ async def test_post_external_codex_approval_mode_change_sets_label_and_publishes
     resp = await client.post(
         f"/v1/sessions/{session['id']}/events",
         json={
-            "type": "external_codex_approval_mode_change",
-            "data": {"approval_mode": "full-access"},
+            "type": "external_codex_next_turn_permissions_v1",
+            "data": {
+                "protocol": "codex-next-turn-permissions/v1",
+                "scope": "subsequent_turns",
+                "approval_mode": observed_mode,
+            },
         },
     )
 
     assert resp.status_code == 202, resp.text
-    assert [event["type"] for _, event in published] == ["session.codex_approval_mode"]
-    assert published[0][1]["approval_mode"] == "full-access"
+    assert [event["type"] for _, event in published] == [
+        "session.codex_next_turn_permissions_v1",
+        "session.codex_approval_mode",
+    ]
+    assert published[0][1]["approval_mode"] == observed_mode
     snapshot = (await client.get(f"/v1/sessions/{session['id']}")).json()
-    assert snapshot["labels"]["omnigent.codex_native.approval_mode"] == "full-access"
+    assert snapshot["labels"]["omnigent.codex_native.next_turn_permissions_v1"] == observed_mode
 
 
 async def test_post_external_codex_approval_mode_change_requires_a_field(
@@ -11477,7 +11547,13 @@ async def test_post_external_codex_approval_mode_change_requires_a_field(
 
     resp = await client.post(
         f"/v1/sessions/{session['id']}/events",
-        json={"type": "external_codex_approval_mode_change", "data": {}},
+        json={
+            "type": "external_codex_next_turn_permissions_v1",
+            "data": {
+                "protocol": "codex-next-turn-permissions/v1",
+                "scope": "subsequent_turns",
+            },
+        },
     )
 
     assert resp.status_code == 400, resp.text
@@ -11686,7 +11762,9 @@ async def test_patch_permission_mode_replaces_standalone_bypass_flag(
     assert resp.json()["labels"]["omnigent.claude_native.permission_mode"] == "auto"
 
 
-@pytest.mark.parametrize("runner_status", [None, 503], ids=["no_runner", "runner_rejects"])
+@pytest.mark.parametrize(
+    "runner_status", [None, 503, 504], ids=["no_runner", "runner_rejects", "unknown_outcome"]
+)
 async def test_patch_permission_mode_requires_live_runner_before_persisting(
     client: httpx.AsyncClient,
     runner_status: int | None,
@@ -13326,3 +13404,131 @@ async def test_external_error_item_model_unavailable_card_live_and_after_reload(
         assert shown["message"] == item_data["message"]
         for field, value in card.items():
             assert shown.get(field) == value, (field, shown)
+
+
+@pytest.mark.parametrize(
+    "status,ack",
+    [
+        (404, {"detail": "Not Found"}),
+        (204, None),
+        (200, {}),
+        (200, {"approval_mode": "read-only"}),
+        (
+            200,
+            {
+                "protocol": "codex-next-turn-permissions/v1",
+                "scope": "current_turn",
+                "mode": "read-only",
+                "status": "accepted",
+            },
+        ),
+        (
+            200,
+            {
+                "protocol": "codex-next-turn-permissions/v1",
+                "scope": "subsequent_turns",
+                "mode": "full-access",
+                "status": "accepted",
+            },
+        ),
+    ],
+)
+async def test_next_turn_contract_never_falls_back_to_old_remote_runner(
+    client: httpx.AsyncClient, status: int, ack: dict | None
+) -> None:
+    calls = []
+
+    def runner(request):
+        calls.append(request)
+        return httpx.Response(status, json=ack) if ack is not None else httpx.Response(status)
+
+    async with _runtime_runner(runner):
+        agent = await create_test_agent(client)
+        session = await _create_session(
+            client, agent["id"], labels={"omnigent.wrapper": "codex-native-ui"}
+        )
+        calls.clear()
+        path = f"/v1/sessions/{session['id']}/codex/next-turn-permissions/v1"
+        response = await client.post(
+            path,
+            json={
+                "protocol": "codex-next-turn-permissions/v1",
+                "scope": "subsequent_turns",
+                "mode": "read-only",
+            },
+        )
+        action_calls = list(calls)
+        snapshot = (await client.get(f"/v1/sessions/{session['id']}")).json()
+    assert response.status_code == 503, response.text
+    assert len(action_calls) == 1 and action_calls[0].url.path == path
+    assert "omnigent.codex_native.next_turn_permissions_v1" not in snapshot["labels"]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"approval_mode": "read-only"},
+        {"approval_mode": "read-only", "silent": True, "title": "should not apply"},
+    ],
+)
+async def test_old_ui_permission_patch_is_rejected_without_forward_or_write(
+    client: httpx.AsyncClient, body: dict
+) -> None:
+    calls = []
+
+    def runner(request):
+        calls.append(request)
+        return httpx.Response(200, json={})
+
+    async with _runtime_runner(runner):
+        agent = await create_test_agent(client)
+        session = await _create_session(
+            client, agent["id"], labels={"omnigent.wrapper": "codex-native-ui"}
+        )
+        calls.clear()
+        response = await client.patch(f"/v1/sessions/{session['id']}", json=body)
+        snapshot = (await client.get(f"/v1/sessions/{session['id']}")).json()
+    assert response.status_code == 400, response.text
+    assert "No permission update was sent" in response.text
+    assert calls == []
+    assert snapshot["title"] == session["title"]
+    assert "omnigent.codex_native.next_turn_permissions_v1" not in snapshot["labels"]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"mode": "read-only"},
+        {
+            "protocol": "codex-next-turn-permissions/v1",
+            "scope": "current_turn",
+            "mode": "read-only",
+        },
+        {
+            "protocol": "codex-next-turn-permissions/v1",
+            "scope": "subsequent_turns",
+            "mode": "read-only",
+            "approval_mode": "read-only",
+        },
+    ],
+)
+async def test_new_server_requires_explicit_future_scope_without_forward(
+    client: httpx.AsyncClient, body: dict
+) -> None:
+    calls = []
+
+    def runner(request):
+        calls.append(request)
+        return httpx.Response(200, json={})
+
+    async with _runtime_runner(runner):
+        agent = await create_test_agent(client)
+        session = await _create_session(
+            client, agent["id"], labels={"omnigent.wrapper": "codex-native-ui"}
+        )
+        calls.clear()
+        response = await client.post(
+            f"/v1/sessions/{session['id']}/codex/next-turn-permissions/v1", json=body
+        )
+    assert response.status_code == 400, response.text
+    assert calls == []

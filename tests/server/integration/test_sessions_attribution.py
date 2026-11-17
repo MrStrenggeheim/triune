@@ -334,8 +334,12 @@ async def test_post_event_uses_runner_supplied_created_by(
     [
         (
             {
-                "type": "external_codex_approval_mode_change",
-                "data": {"terminal_launch_args": ["--sandbox", "read-only"]},
+                "type": "external_codex_next_turn_permissions_v1",
+                "data": {
+                    "protocol": "codex-next-turn-permissions/v1",
+                    "scope": "subsequent_turns",
+                    "terminal_launch_args": ["--sandbox", "read-only"],
+                },
             },
             ["--sandbox", "read-only"],
         ),

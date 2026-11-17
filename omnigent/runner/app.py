@@ -6676,6 +6676,26 @@ def create_runner_app(
             await _interrupt_declined_runner_approval(conversation_id)
         return JSONResponse(receipt)
 
+    @app.post("/v1/sessions/{conversation_id}/codex/next-turn-permissions/v1")
+    async def set_codex_next_turn_permissions(conversation_id: str, request: Request) -> Response:
+        from omnigent.codex_approval_modes import codex_next_turn_permission_mode
+
+        try:
+            mode = codex_next_turn_permission_mode(await request.json())
+        except ValueError as exc:
+            return JSONResponse(
+                status_code=400, content={"error": "invalid_input", "detail": str(exc)}
+            )
+        if _session_harness_name(conversation_id) != "codex-native":
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "error": "invalid_input",
+                    "detail": "Next-turn permissions require a loaded Codex session.",
+                },
+            )
+        return await _handle_codex_native_approval_mode_change(conversation_id, mode)
+
     @app.post("/v1/sessions/{conversation_id}/events")
     async def post_session_events(
         conversation_id: str,
@@ -7264,22 +7284,14 @@ def create_runner_app(
             return Response(status_code=204)
 
         if body_type == "codex_approval_mode_change":
-            harness = _session_harness_name(conversation_id)
-            if harness == "codex-native":
-                mode = body.get("approval_mode") if isinstance(body, dict) else None
-                if not isinstance(mode, str) or not mode:
-                    return JSONResponse(
-                        status_code=400,
-                        content={
-                            "error": "invalid_input",
-                            "detail": "Body 'approval_mode' must be a non-empty string",
-                        },
-                    )
-                return await _handle_codex_native_approval_mode_change(
-                    conversation_id,
-                    mode,
-                )
-            return Response(status_code=204)
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "error": "codex_permission_protocol_required",
+                    "detail": "Legacy permission controls are disabled. Update the server/client "
+                    "to use the versioned next-turn action. No permission update was sent.",
+                },
+            )
 
         codex_goal_response = await codex_goal_runner.handle_event(
             conversation_id,

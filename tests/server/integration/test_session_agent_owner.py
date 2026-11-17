@@ -198,7 +198,10 @@ async def test_only_owner_can_change_codex_approval_mode(
 
     async def forward(session_id: str, router: object, event: dict[str, object], **kwargs: object):
         forwarded.append(event)
-        return _RunnerForwardResult(200, '{"approval_mode": "full-access"}')
+        return _RunnerForwardResult(
+            200,
+            '{"protocol":"codex-next-turn-permissions/v1","scope":"subsequent_turns","mode":"full-access","status":"accepted"}',
+        )
 
     # Isolate the external runner; keep authorization, persistence, and mode confirmation real.
     monkeypatch.setattr(
@@ -231,18 +234,32 @@ async def test_only_owner_can_change_codex_approval_mode(
     after_denial = await auth_client.get(path, headers=owner)
     assert after_denial.status_code == 200, after_denial.text
     assert after_denial.json()["title"] == original_title
-    assert "omnigent.codex_native.approval_mode" not in after_denial.json()["labels"]
+    assert "omnigent.codex_native.next_turn_permissions_v1" not in after_denial.json()["labels"]
     assert forwarded == []
 
-    owner_update = await auth_client.patch(
-        path,
-        json={"approval_mode": "full-access", "title": "Owner title"},
-        headers=owner,
+    legacy = await auth_client.patch(
+        path, json={"approval_mode": "full-access", "title": "Owner title"}, headers=owner
+    )
+    assert legacy.status_code == 400
+    assert forwarded == []
+    body = {
+        "protocol": "codex-next-turn-permissions/v1",
+        "scope": "subsequent_turns",
+        "mode": "full-access",
+    }
+    denied = await auth_client.post(
+        path + "/codex/next-turn-permissions/v1", json=body, headers=shared
+    )
+    assert denied.status_code == 403
+    assert forwarded == []
+    owner_update = await auth_client.post(
+        path + "/codex/next-turn-permissions/v1", json=body, headers=owner
     )
     assert owner_update.status_code == 200, owner_update.text
-    assert owner_update.json()["title"] == "Owner title"
-    assert owner_update.json()["labels"]["omnigent.codex_native.approval_mode"] == "full-access"
-    assert forwarded == [{"type": "codex_approval_mode_change", "approval_mode": "full-access"}]
+    assert owner_update.json()["scope"] == "subsequent_turns"
+    assert forwarded == [body]
+    snapshot = (await auth_client.get(path, headers=owner)).json()
+    assert snapshot["title"] == original_title
 
 
 async def test_shared_editor_cannot_update_bundle(auth_client: httpx.AsyncClient) -> None:
@@ -526,8 +543,12 @@ async def test_admin_can_update_any_agent(auth_client: httpx.AsyncClient, db_uri
     [
         (
             {
-                "type": "external_codex_approval_mode_change",
-                "data": {"terminal_launch_args": ["--sandbox", "read-only"]},
+                "type": "external_codex_next_turn_permissions_v1",
+                "data": {
+                    "protocol": "codex-next-turn-permissions/v1",
+                    "scope": "subsequent_turns",
+                    "terminal_launch_args": ["--sandbox", "read-only"],
+                },
             },
             ["--sandbox", "read-only"],
         ),

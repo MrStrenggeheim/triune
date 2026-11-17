@@ -231,13 +231,13 @@ _CODEX_NATIVE_COLLABORATION_MODE_LABEL_KEY = "omnigent.codex_native.collaboratio
 # Current approval/sandbox mode of a live codex-native session. ``terminal_launch_args``
 # carries the persisted CLI form; this label is the read-back the web picker prefers,
 # mirroring ``_CLAUDE_NATIVE_PERMISSION_MODE_LABEL_KEY``.
-_CODEX_NATIVE_APPROVAL_MODE_LABEL_KEY = "omnigent.codex_native.approval_mode"
+_CODEX_NATIVE_APPROVAL_MODE_LABEL_KEY = "omnigent.codex_native.next_turn_permissions_v1"
 
 
 _EXTERNAL_CODEX_COLLABORATION_MODE_CHANGE_TYPE: str = "external_codex_collaboration_mode_change"
 
 
-_EXTERNAL_CODEX_APPROVAL_MODE_CHANGE_TYPE: str = "external_codex_approval_mode_change"
+_EXTERNAL_CODEX_APPROVAL_MODE_CHANGE_TYPE: str = "external_codex_next_turn_permissions_v1"
 
 
 _CODEX_NATIVE_COLLABORATION_MODES: frozenset[str] = frozenset({"default", "plan"})

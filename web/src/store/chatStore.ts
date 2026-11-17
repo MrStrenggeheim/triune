@@ -80,6 +80,7 @@ import {
   postEvent,
   type SessionItemsPage,
   updateSession,
+  setCodexNextTurnPermissions,
 } from "@/lib/sessionsApi";
 import { isStaleCursorError } from "@/lib/staleCursor";
 import type {
@@ -870,13 +871,11 @@ export interface ConversationState {
    */
   claudePermissionMode: string;
   /**
-   * Approval mode of a running codex-native session, one of
-   * ``"ask-for-approval"``, ``"approve-for-me"``, ``"full-access"``,
-   * ``"read-only"`` (Codex's ``/permissions`` presets). Hydrated from the
-   * ``omnigent.codex_native.approval_mode`` read-back label on bind (runtime
-   * approval no longer rides launch args) and updated by the composer's picker
-   * or a live ``session.codex_approval_mode`` event. Empty string when unknown
-   * (non-codex session, or not yet observed).
+   * Last native-observed subsequent-turn permission preset.
+   * Hydrated only from ``omnigent.codex_native.next_turn_permissions_v1``
+   * and validated ``session.codex_next_turn_permissions_v1`` events.
+   * Legacy current-scope labels/events and mutation acknowledgements do not set it.
+   * Empty means custom, unknown, or not yet observed.
    */
   codexApprovalMode: string;
   /**
@@ -4267,18 +4266,16 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
     const target = actionTarget(get, targetId);
     const { conversationId } = target.state;
     if (!conversationId) return;
-    const previous = target.state.codexApprovalMode;
-    // Pinned for the same reason as `setCostControlMode` — see there.
-    const patchSet = setterFor(conversationId);
-    // Optimistic, then reconciled against the mode the server confirms the
-    // Codex thread landed on.
-    patchSet({ codexApprovalMode: mode });
+    // Only native observations update this label. A late acknowledgement or
+    // failed request must not overwrite a newer terminal/client setting.
     try {
-      const session = await updateSession(conversationId, { codexApprovalMode: mode });
-      patchSet({ codexApprovalMode: codexApprovalModeFromSession(session) ?? "" });
-    } catch (err) {
-      patchSet({ codexApprovalMode: previous });
-      throw err;
+      await setCodexNextTurnPermissions(conversationId, mode);
+    } catch (error) {
+      if (error instanceof ApiError) throw error;
+      throw new Error(
+        "The next-turn permission request has an unknown outcome and may have applied. The picker shows the last native-observed setting. Use Stop separately for urgent restrictions.",
+        { cause: error },
+      );
     }
   },
 
@@ -9809,8 +9806,8 @@ export function handleSessionEvent(event: StreamEvent, streamConversationId?: st
       applyToNamedConversation(event.conversationId, { codexPlanMode: event.mode === "plan" });
       return;
     case "session_codex_approval_mode":
-      // A Codex approval switch made in the web picker or the native TUI's
-      // /permissions popup; the server has confirmed it's the live mode.
+      // Native-observed subsequent-turn settings; an empty value clears
+      // a preset label when the configured profile is custom or unknown.
       applyToNamedConversation(event.conversationId, {
         codexApprovalMode: event.approvalMode,
       });

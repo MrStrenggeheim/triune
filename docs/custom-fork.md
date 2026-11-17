@@ -348,3 +348,25 @@ The private 1,000/10,000-item cases use 38 VM instructions at both sizes versus 
 The change adds no index, schema migration, planner hint or response cache, and does not establish a production latency improvement.
 Cold synchronization still performs an authoritative full-history reset when no cursor exists; a bounded initial window requires a separate membership/count/recovery contract.
 Evidence: `artifacts/overnight-20261116/{history-read-audit/REPORT.md,history-read-audit/implementation/comparison.json,stability14/cursor-plan-before.json}`.
+
+## Codex next-turn permissions
+
+`PERMISSION-INTERRUPT` replaces terminal permission injection with the loaded native runtime's structured settings RPC.
+The picker configures native execution for subsequent turns, including while another turn runs; Stop remains a separate user action for urgent restrictions.
+Triune action policies, including scheduling approvals, remain independent.
+The runtime handshake must report Codex 0.164.0 or newer, and native profile discovery must explicitly allow the selected built-in profile.
+The native forwarder's observed configuration owns labels and restart arguments; delayed PATCH replies cannot overwrite newer observations.
+Timeouts after dispatch report an unknown outcome without rollback, relaunch, automatic resume or guessed menu input.
+Unknown custom profiles clear the built-in preset label instead of retaining a misleading previous value.
+Source validation and isolated CLI/TUI/browser evidence are recorded in `artifacts/reliability-audit-20261117/permission-control/`; activation is separate.
+
+### Permission protocol compatibility
+
+The public and runner mutation route is `POST /v1/sessions/{id}/codex/next-turn-permissions/v1`.
+Requests explicitly name protocol `codex-next-turn-permissions/v1`, scope `subsequent_turns` and the preset `mode`.
+Both hops validate acknowledgement protocol, scope, mode and accepted status; neither falls back to a legacy PATCH or runner event.
+Legacy `approval_mode` PATCHes and `codex_approval_mode_change` runner events are rejected before native mutation, even when an extra scope marker is supplied.
+This remains safe when a cached client outlives a server rollback or a remote runner is older.
+Future observations use `session.codex_next_turn_permissions_v1` and `omnigent.codex_native.next_turn_permissions_v1`; the old current-scope label/event receives only an Unknown invalidation.
+Actual `86aca953c` server/runner probes returned 404 for the new route without side effects; its unknown runner event returned 200, while a marked legacy event still attempted Escape.
+Compatibility evidence and the integration delta from the functional candidate are under `artifacts/reliability-audit-20261117/permission-control/compatibility/`.

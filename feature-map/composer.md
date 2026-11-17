@@ -87,13 +87,18 @@ and steers messages while the agent is busy.
   unreachable, smart-routing effort disabled, terminal/editor focus untouched.
 - `effort-terminal-mirror`: an effort change typed in the Codex terminal shows
   in the composer, and a composer pick is not reverted by later terminal turns.
-- `permission-mode`: the harness's native approval modes; the current mode is
-  marked and the choice persists.
+- `permission-mode`: the harness's native approval modes; the selected mode is marked.
+  Codex uses **Next-turn permissions** for native execution, including Read Only, while current work keeps its captured permissions.
+  The last native-observed setting owns the label; RPC acceptance and lost replies never optimistically replace it or roll it back.
+  Use Stop separately for urgent restrictions; Triune action policies, including scheduled tasks, still apply.
+  Native 0.164.0+ and an explicitly allowed built-in profile are required; unsupported versions and profiles fail visibly without terminal input.
+  Versioned public/runner actions require explicit future scope and matching acknowledgements; cached clients never fall back to legacy mutation after rollback.
+  Old clients fail visibly; future observations cannot populate their current-scope label.
 - `permission-mode-hotkey`: Shift+Tab in the in-session composer for Claude,
   Codex, and Devin native sessions steps through every mode in the chip's menu,
   including Full Access and Dangerous, wrapping while the chip is clickable. States:
   slash/mention menu acting on Tab, chip disabled, session in a mode the chip can't switch back to
-  (Codex read-only, Claude Don't ask; menu only), change in flight (Shift+Tab
+  (unknown Codex profile, Claude Don't ask; menu only), change in flight (Shift+Tab
   holds focus without sending another request; Tab still moves focus forward), change
   refused or failed (next press moves past it, or retries it when it is the only
   other mode), no other mode (native focus move, no

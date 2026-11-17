@@ -1,16 +1,17 @@
-"""E2E: codex-native Approvals picker switches the live approval mode."""
+"""E2E: the Codex future-turn picker reads native-observed settings."""
 
 from __future__ import annotations
 
 import json
 from urllib.parse import urlparse
 
+import pytest
 from playwright.sync_api import Page, Route, expect
 
 from tests.e2e_ui.conftest import fetch_with_retry
 
 # Conversation-label key the server stamps after a confirmed switch.
-_APPROVAL_MODE_LABEL_KEY = "omnigent.codex_native.approval_mode"
+_APPROVAL_MODE_LABEL_KEY = "omnigent.codex_native.next_turn_permissions_v1"
 
 
 def _patch_session_as_codex_native(
@@ -44,7 +45,10 @@ def _patch_session_as_codex_native(
         nonlocal latest_payload
         request = route.request
         parsed = urlparse(request.url)
-        if parsed.path != f"/v1/sessions/{session_id}":
+        if parsed.path not in {
+            f"/v1/sessions/{session_id}",
+            f"/v1/sessions/{session_id}/codex/next-turn-permissions/v1",
+        }:
             route.continue_()
             return
 
@@ -53,14 +57,18 @@ def _patch_session_as_codex_native(
             response = fetch_with_retry(route)
             payload = response.json()
             headers = {**response.headers, **headers}
-        elif request.method == "PATCH":
+        elif request.method == "POST" and parsed.path.endswith("/codex/next-turn-permissions/v1"):
             request_body = json.loads(request.post_data or "{}")
             patch_bodies.append(request_body)
-            payload = dict(latest_payload or {})
-            if "approval_mode" in request_body:
-                # The real server persists the label only after the runner
-                # confirms Codex's /permissions popup applied the preset.
-                cur_approval_mode[0] = request_body["approval_mode"]
+            assert request_body["protocol"] == "codex-next-turn-permissions/v1"
+            assert request_body["scope"] == "subsequent_turns"
+            cur_approval_mode[0] = request_body["mode"]
+            route.fulfill(
+                status=200,
+                headers=headers,
+                body=json.dumps({**request_body, "status": "accepted"}),
+            )
+            return
         else:
             route.continue_()
             return
@@ -83,16 +91,18 @@ def _patch_session_as_codex_native(
     return patch_bodies
 
 
+@pytest.mark.parametrize("width", [390, 1440], ids=["phone", "desktop"])
 def test_codex_native_approval_mode_switch_persists(
     page: Page,
     seeded_session: tuple[str, str],
+    width: int,
 ) -> None:
     """Picking an approval preset in the gear modal PATCHes the server.
 
     Selecting "Approve for me" sends ``{"approval_mode": "approve-for-me"}``
-    to ``PATCH /v1/sessions/{id}`` — the request that drives Codex's own
-    ``/permissions`` popup on the runner — and the picker then shows the
-    server's stamped read-back label rather than a locally guessed value.
+    to ``PATCH /v1/sessions/{id}`` for a structured native settings update.
+    The acknowledgement does not replace the displayed native observation.
+    Reload reads the later server-side observation.
 
     :param page: Playwright page fixture.
     :param seeded_session: ``(base_url, session_id)`` for a real server-backed
@@ -103,24 +113,34 @@ def test_codex_native_approval_mode_switch_persists(
     base_url, session_id = seeded_session
     patch_bodies = _patch_session_as_codex_native(page, session_id)
 
+    page.set_viewport_size({"width": width, "height": 900})
     page.goto(f"{base_url}/c/{session_id}")
 
     picker = page.get_by_test_id("composer-permission-chip")
     expect(picker).to_be_visible(timeout=15_000)
     picker.click()
-    expect(page.get_by_test_id("composer-permission-option-read-only")).to_have_count(0)
+    expect(page.get_by_test_id("composer-permission-option-read-only")).to_be_visible()
+    expect(page.get_by_test_id("composer-permission-menu")).to_contain_text(
+        "Triune action policies"
+    )
     with page.expect_response(
         lambda response: (
-            response.request.method == "PATCH"
-            and urlparse(response.url).path == f"/v1/sessions/{session_id}"
+            response.request.method == "POST"
+            and urlparse(response.url).path
+            == f"/v1/sessions/{session_id}/codex/next-turn-permissions/v1"
             and response.status == 200
         )
     ):
         page.get_by_test_id("composer-permission-option-approve-for-me").click()
 
-    assert patch_bodies[-1] == {"approval_mode": "approve-for-me"}
+    assert patch_bodies[-1] == {
+        "protocol": "codex-next-turn-permissions/v1",
+        "scope": "subsequent_turns",
+        "mode": "approve-for-me",
+    }
 
-    expect(picker).to_contain_text("Approve for me")
+    # PATCH acceptance is not a native observation; reload reads the saved observation.
+    expect(picker).to_have_accessible_name("Next-turn permissions: Next turn: Unknown")
     page.reload()
     expect(page.get_by_test_id("composer-permission-chip")).to_contain_text("Approve for me")
 

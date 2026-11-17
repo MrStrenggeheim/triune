@@ -1,23 +1,16 @@
-// Running-session approval switcher for codex-native. Unlike the create-time
-// presets in `nativeHarnessModes` (which map to `terminal_launch_args`), the
-// live switch drives Codex's own `/permissions` popup by keystroke injection,
-// so its options and labels mirror that popup. Read Only isn't offered: the
-// popup lists it only for sessions already running a read-only permission
-// profile, so users start a new read-only session instead. The full-bypass
-// sandbox stance stays launch-only (the server 400s it on a runtime switch).
-
+// Last native-observed permission configuration for subsequent Codex turns.
 export interface CodexRuntimeApprovalPreset {
   value: string;
   label: string;
   description: string;
 }
 
-/** Conversation-label key the server writes for the live approval mode. */
-export const CODEX_NATIVE_APPROVAL_MODE_LABEL_KEY = "omnigent.codex_native.approval_mode";
+/** Label written from native-observed future-turn permission settings. */
+export const CODEX_NATIVE_APPROVAL_MODE_LABEL_KEY =
+  "omnigent.codex_native.next_turn_permissions_v1";
 
 /**
- * The three runtime approval stances the picker can switch into, in Codex's
- * `/permissions` popup order.
+ * Built-in future-turn presets; the runner checks native profile availability.
  */
 export const CODEX_NATIVE_RUNTIME_APPROVAL_PRESETS: CodexRuntimeApprovalPreset[] = [
   {
@@ -35,10 +28,14 @@ export const CODEX_NATIVE_RUNTIME_APPROVAL_PRESETS: CodexRuntimeApprovalPreset[]
     label: "Full Access",
     description: "Edit any file and access the internet without approval",
   },
+  {
+    value: "read-only",
+    label: "Read Only",
+    description: "Read files only; approval required for changes",
+  },
 ];
 
-// A session launched read-only still reports it as its live mode, so it keeps
-// a label even though the picker can't switch into it.
+// Read Only is also a structured native permission profile.
 const CODEX_NATIVE_READ_ONLY_LABEL = "Read Only";
 
 /** Human label for an approval-mode value, falling back to the raw value. */
@@ -49,13 +46,11 @@ export function codexApprovalModeLabel(mode: string | null | undefined): string 
 }
 
 /**
- * The live approval mode of a codex-native session, or null when unknown.
+ * Last observed subsequent-turn permission setting, or null when unknown.
  *
- * Reads only the label the server stamps after a confirmed switch (web PATCH
- * or a `/permissions` change observed in the TUI). It does NOT reconstruct
- * from launch args — the runtime stance no longer rides them — so a session
- * that hasn't switched yet resolves to null and the picker shows an unset
- * state rather than a guessed default.
+ * Reads only native observations, including the initial subscription snapshot.
+ * PATCH acceptance alone never changes this label, and launch arguments are
+ * not used to guess a value. Custom or unknown native profiles have no label.
  */
 export function codexApprovalModeFromSession(
   session: { labels?: Record<string, string | null> | null } | null | undefined,
@@ -63,3 +58,6 @@ export function codexApprovalModeFromSession(
   const labelled = session?.labels?.[CODEX_NATIVE_APPROVAL_MODE_LABEL_KEY];
   return typeof labelled === "string" && labelled ? labelled : null;
 }
+
+export const CODEX_NEXT_TURN_PROTOCOL = "codex-next-turn-permissions/v1";
+export const CODEX_NEXT_TURN_PATH = "/codex/next-turn-permissions/v1";

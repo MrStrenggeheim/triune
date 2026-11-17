@@ -1128,6 +1128,7 @@ class CodexAppServerClient:
         # ``None`` marks the end of the event stream (reader exited).
         self._events: asyncio.Queue[CodexMessage | None] = asyncio.Queue()
         self._next_id = 1
+        self.server_user_agent: str | None = None
 
     async def connect(self) -> None:
         """
@@ -1155,7 +1156,8 @@ class CodexAppServerClient:
             self._reader_loop(),
             name="codex-native-app-server-reader",
         )
-        await self.request(
+        self.server_user_agent = None
+        initialized = await self.request(
             "initialize",
             {
                 "clientInfo": {
@@ -1167,6 +1169,9 @@ class CodexAppServerClient:
                 },
             },
         )
+        result = initialized.get("result")
+        agent = result.get("userAgent") if isinstance(result, dict) else None
+        self.server_user_agent = agent if isinstance(agent, str) else None
         await self.notify("initialized")
 
     async def close(self) -> None:

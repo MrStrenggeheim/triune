@@ -32,6 +32,8 @@ from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from omnigent.codex_approval_modes import (
     CODEX_NATIVE_PERMISSION_VALUES,
+    CODEX_NEXT_TURN_PATH,
+    codex_next_turn_permission_mode,
 )
 from omnigent.db.utils import generate_agent_id, generate_file_id
 from omnigent.debug_logging import add_audit_attrs, debug_event, set_current_runner_id
@@ -2809,6 +2811,34 @@ def register_core_routes(
         )
         return ResetSessionModelOverrideResponse(reset=reset)
 
+    @router.post("/sessions/{session_id}" + CODEX_NEXT_TURN_PATH)
+    async def set_codex_next_turn_permissions(
+        request: Request, session_id: str, body: dict[str, Any]
+    ) -> dict[str, str]:
+        user_id = _get_user_id(request, auth_provider)
+        await _require_access(
+            user_id, session_id, LEVEL_OWNER, permission_store, conversation_store
+        )
+        try:
+            mode = codex_next_turn_permission_mode(body)
+        except ValueError as exc:
+            raise OmnigentError(str(exc), code=ErrorCode.INVALID_INPUT) from exc
+        conv = await asyncio.to_thread(conversation_store.get_conversation, session_id)
+        if conv is None:
+            raise _session_not_found()
+        if conv.labels.get(_CLAUDE_NATIVE_WRAPPER_LABEL_KEY) != _CODEX_NATIVE_WRAPPER_LABEL_VALUE:
+            raise OmnigentError(
+                "Next-turn permissions require a Codex session", code=ErrorCode.INVALID_INPUT
+            )
+        result = await _forward_session_change_to_runner(
+            session_id,
+            runner_router,
+            body,
+            timeout_s=_TUI_INJECT_FORWARD_TIMEOUT_S,
+            endpoint_path=f"/v1/sessions/{session_id}{CODEX_NEXT_TURN_PATH}",
+        )
+        return _require_codex_approval_mode_forward(session_id, mode, result)
+
     @router.patch(
         "/sessions/{session_id}",
         response_model=None,
@@ -3010,34 +3040,12 @@ def register_core_routes(
                     code=ErrorCode.INVALID_INPUT,
                 )
             requested_permission_mode = body.permission_mode
-        approval_mode_requested = "approval_mode" in body.model_fields_set
-        requested_codex_approval_mode: str | None = None
-        if approval_mode_requested:
-            if body.approval_mode is None:
-                raise OmnigentError(
-                    "approval_mode must be a non-empty string",
-                    code=ErrorCode.INVALID_INPUT,
-                )
-            if body.approval_mode not in CODEX_NATIVE_PERMISSION_VALUES:
-                raise OmnigentError(
-                    f"approval_mode must be one of {sorted(CODEX_NATIVE_PERMISSION_VALUES)}",
-                    code=ErrorCode.INVALID_INPUT,
-                )
-            conv_for_approval_mode = await asyncio.to_thread(
-                conversation_store.get_conversation,
-                session_id,
+        if "approval_mode" in body.model_fields_set:
+            raise OmnigentError(
+                "Legacy permission controls are disabled. Update this client to use "
+                "Next-turn permissions. No permission update was sent by this request.",
+                code=ErrorCode.INVALID_INPUT,
             )
-            if conv_for_approval_mode is None:
-                raise _session_not_found()
-            if (
-                conv_for_approval_mode.labels.get(_CLAUDE_NATIVE_WRAPPER_LABEL_KEY)
-                != _CODEX_NATIVE_WRAPPER_LABEL_VALUE
-            ):
-                raise OmnigentError(
-                    "approval_mode is only supported for codex-native sessions",
-                    code=ErrorCode.INVALID_INPUT,
-                )
-            requested_codex_approval_mode = body.approval_mode
         labels_to_set = dict(body.labels or {})
         # Pins are per-user. The client writes the canonical ``omnigent.pinned``
         # key; rewrite it to the caller's per-user key so one user's pin doesn't
@@ -3631,29 +3639,6 @@ def register_core_routes(
                     session_id,
                     terminal_launch_args=_merged_permission_args,
                 )
-        if requested_codex_approval_mode is not None and live_forward:
-            _approval_result = await _forward_session_change_to_runner(
-                session_id,
-                runner_router,
-                {
-                    "type": "codex_approval_mode_change",
-                    "approval_mode": requested_codex_approval_mode,
-                },
-                # The runner drives Codex's /permissions popup — reading the rows,
-                # pressing the preset's digit, then confirming the echo — which
-                # outlasts the default forward budget.
-                timeout_s=_TUI_INJECT_FORWARD_TIMEOUT_S,
-            )
-            # Raises unless the runner drove the /permissions popup, so the label
-            # can never claim a preset the Codex TUI wasn't switched to. Codex owns
-            # the durable approval state (its own session config); the label is the
-            # web read-back only, so there is no terminal_launch_args coupling here.
-            _require_codex_approval_mode_forward(
-                session_id,
-                requested_codex_approval_mode,
-                _approval_result,
-            )
-            labels_to_set[_CODEX_NATIVE_APPROVAL_MODE_LABEL_KEY] = requested_codex_approval_mode
         # Some labels are cleared by DELETE, not by upserting an empty value:
         # the project membership (empty = "remove from project") and the pinned
         # flag (empty = "unpin"). Split any empty-valued clear keys out before

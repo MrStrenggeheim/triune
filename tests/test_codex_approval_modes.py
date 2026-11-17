@@ -186,3 +186,15 @@ def test_permission_switch_confirmation_messages(message: str) -> None:
     """Both Codex confirmation spellings identify the selected label."""
     assert codex_permission_switch_confirmed(message, "Full Access")
     assert not codex_permission_switch_confirmed(message, "Read Only")
+
+
+@pytest.mark.parametrize("profile", ["custom", ":workspace"])
+def test_custom_or_read_only_never_is_not_full_access(profile: str) -> None:
+    settings = {
+        "approvalPolicy": "never",
+        "sandboxPolicy": {"type": "readOnly"},
+        "activePermissionProfile": {"id": profile},
+    }
+    assert codex_permission_preset_from_thread_settings(settings) == (
+        None if profile == "custom" else "read-only"
+    )
