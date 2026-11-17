@@ -295,6 +295,7 @@ export function TurnRail({
             <TooltipButton
               key={turn.itemId}
               type="button"
+              tooltip={false}
               data-turn-tick={turn.itemId}
               ref={setTickRef}
               onMouseEnter={(e) => handleTickEnter(turn.itemId, e.clientX, e.clientY)}

@@ -135,3 +135,8 @@ Git diffs against the imported baseline identify exact modified paths and lines.
 - Own browser synchronization by binding and attempt, retain visible unfocused multiplex subscriptions, and bound incomplete synchronization separately from socket liveness.
 - Persist bounded content-free receipt, acceptance and visible-DOM diagnostics within the authenticated viewer scope.
 - Project descendant activity fields without general row hydration, preserving matched authorized responses and query counts.
+
+## Hover guidance refinements — 2026-11-17
+
+- Suppress the duplicate turn-rail tooltip while preserving its rich preview, navigation and accessible label.
+- Remove redundant quote-text and move-handle tooltips while preserving quote movement, removal and accessible controls.

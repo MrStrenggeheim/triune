@@ -6,6 +6,7 @@ An active Goal appears after Plan in the attention shelf, including when it is t
 Unread native follow-ups sit below the working indicator under one shared hint, then return above it on individual consumption receipts.
 The header Usage menu refreshes stale observations/accounting on opening while retaining current values.
 Quote rows use square full-width surfaces with internal controls; drag or keyboard placement moves an atomic quote to an authored-text caret and supports guarded undo.
+Composer quote text and move/remove controls show no hover tooltip; accessible action labels and keyboard placement remain available.
 Up Arrow recalls history only into an empty draft; nonempty and quoted drafts retain ordinary caret navigation.
 Nonempty short transcripts align to their bottom with normal padding; reload, pending receipts and completion never reserve blank trailing turn-framing space.
 Quote and bottom-spacing browser checks: `tests/browser_ui/chat/test_quote_movement.py` and `tests/browser_ui/chat/test_bottom_spacing23.py`.

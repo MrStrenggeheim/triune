@@ -141,13 +141,13 @@ export function ReplyDraftBlocks({
           <blockquote
             className="flex w-full min-w-0 items-center gap-1 rounded-none border-l-2 border-l-primary/60 bg-muted/40 px-2 py-1.5 text-sm text-muted-foreground"
             data-testid="composer-reply-quote"
-            title={quote.text}
           >
             {onMove && (
               <Button
                 type="button"
                 size="icon-xs"
                 variant="ghost"
+                tooltip={false}
                 aria-label={`Move quote ${index + 1}`}
                 aria-pressed={movingId === quote.id}
                 className="shrink-0 cursor-grab touch-none active:cursor-grabbing"

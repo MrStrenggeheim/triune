@@ -150,6 +150,8 @@ Composer selectors use the same UI typography, normal weight and foreground; eff
 Preserve existing composer padding, gaps and hit targets; microphone relocation is the only approved reordering in that row.
 The workspace trigger uses approved B: computer icon, lighter Host, middle dot, foreground path and chevron on one line; mobile labels remain compact.
 Tooltips are arrowless and canonical, and appear only for additional meaning, hidden details or shortcuts.
+Consistency applies where a tooltip is useful; do not add one to every control or infer that an accessible label requires a tooltip.
+Composer quotes and their move/remove controls have no hover tooltip; keep accessible labels and normal focus/hover styling.
 All native scrolling uses the shared slim treatment; preserve specialized transcript and terminal scroll behavior.
 Background color changes mark full surface edges without an additional border; equal-colored panes retain necessary separators.
 The native bottom gesture area shares the chat surface and has no exterior pane divider.
