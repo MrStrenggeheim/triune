@@ -144,6 +144,31 @@ it("keeps image fit and zoom in the dedicated header", async () => {
   expect(img.style.zoom).toBe("1");
 });
 
+it("keeps dedicated SVG source, preview and exact original download in one header", async () => {
+  const svg =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="80"><text x="5" y="20">Original diagram</text></svg>';
+  const view = mount("diagram.svg", "image/svg+xml", svg);
+  view.showPreview({
+    sessionId: "original-chat",
+    attachment: { file_id: "file-id", filename: "diagram.svg" },
+  });
+  const image = await screen.findByRole("img", { name: "diagram.svg" });
+  const section = screen.getByRole("region", { name: "Preview diagram.svg" });
+  expect(section.querySelectorAll("header")).toHaveLength(1);
+  const header = within(section.querySelector("header")!);
+  fireEvent.click(header.getByRole("button", { name: "Source" }));
+  await waitFor(() =>
+    expect(section.querySelector("pre code")).toHaveTextContent("Original diagram"),
+  );
+  expect(image).not.toBeInTheDocument();
+  fireEvent.click(header.getByRole("button", { name: "Preview" }));
+  expect(screen.getByRole("img", { name: "diagram.svg" })).toBeVisible();
+  fireEvent.click(header.getByRole("button", { name: "Download diagram.svg" }));
+  await waitFor(() => expect(mocks.download).toHaveBeenCalledOnce());
+  expect(mocks.download.mock.calls[0][1]).toBe("diagram.svg");
+  expect(await mocks.download.mock.calls[0][0].text()).toBe(svg);
+});
+
 it.each([
   [1600, 800, 512],
   [600, 1200, 128],

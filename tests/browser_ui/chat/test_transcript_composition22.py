@@ -147,6 +147,21 @@ def test_media_slots_agent_bar_and_table_survive_reload(
         geometry.append(
             {"theme": theme, "density": density, "icon": icon, "border": border, "color": color}
         )
+    header = card.locator(".activity-message-header")
+    header_before = header.bounding_box()
+    expect(header.locator(".resource-description")).to_be_visible()
+    expect(header.locator(".resource-description")).not_to_contain_text("**")
+    card.get_by_role("button", name="Expand activity", exact=True).click()
+    expect(header.locator(".resource-description")).to_have_count(0)
+    header_after = header.bounding_box()
+    assert header_before and header_after
+    assert header_after["height"] == pytest.approx(header_before["height"], abs=1)
+    for control in header.locator("button,a").all():
+        bounds = control.bounding_box()
+        assert bounds
+        assert bounds["y"] + bounds["height"] / 2 == pytest.approx(
+            header_after["y"] + header_after["height"] / 2, abs=1
+        )
     artifacts = Path(output_path)
     artifacts.mkdir(parents=True, exist_ok=True)
     (artifacts / "composition-geometry.json").write_text(json.dumps(geometry, indent=2))
