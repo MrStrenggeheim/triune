@@ -7204,7 +7204,8 @@ export async function startStreamPump(
         if (!hasConnected) clearSseLog(id);
         hasConnected = true;
         hostReaddressed = false;
-        failedOpens = 0;
+        // A multiplex Response is local; only completed sync acknowledges the subscription.
+        if (!multiplexedAttempts.has(attempt)) failedOpens = 0;
         consecutive404s = 0;
         presenceIdle.noteReported(idle);
         streamAttemptActivity.set(attempt, Date.now());
@@ -7240,6 +7241,9 @@ export async function startStreamPump(
             attempt.abort();
           },
           replayPrefixes,
+          () => {
+            failedOpens = 0;
+          },
         );
         if (reconnecting && !multiplexedAttempts.has(attempt)) {
           await reconcileOnReconnect(id, set, get, ignoredNativeMessageIds);
@@ -7825,6 +7829,7 @@ export async function pumpStreamEvents(
   ignoredMessages: Set<string> = new Set<string>(),
   requestResume?: (retry?: boolean) => void,
   nativeReplayPrefixes: ReadonlyMap<string, string> = new Map(),
+  onSyncComplete?: () => void,
 ): Promise<StreamEndReason> {
   const stream = new BlockStream();
   const sseResult: SseStreamResult = { sawDone: false };
@@ -7961,6 +7966,7 @@ export async function pumpStreamEvents(
             after_revision: event.itemRevision,
             stream_epoch: event.streamEpoch,
           });
+          onSyncComplete?.();
         }
         if (rebuilt) {
           for (const block of get().blocks) {

@@ -14556,6 +14556,85 @@ describe("chatStore — startStreamPump reconnect loop", () => {
     await loop;
   });
 
+  it.each([true, false])(
+    "backs off rejected multiplex subscriptions until canonical synchronization succeeds (reset=%s)",
+    async (reset) => {
+      const id = "multiplex-retry";
+      seedSession(id, []);
+      const sinks: StreamSink[] = [];
+      const signals: AbortSignal[] = [];
+      const checkpoint = {
+        reset: true,
+        stream_epoch: "retry-epoch",
+        item_revision: 0,
+        reset_revision: 0,
+        item_count: 0,
+        last_position: -1,
+        last_item_id: null,
+      };
+      const support = vi.spyOn(sessionUpdatesSocket, "supportsTranscripts").mockReturnValue(true);
+      const random = vi.spyOn(Math, "random").mockReturnValue(0);
+      const open = vi
+        .spyOn(sessionUpdatesSocket, "openTranscript")
+        .mockImplementation(async (_id, signal) => {
+          const sink = pushableStream();
+          sinks.push(sink);
+          signals.push(signal);
+          signal.addEventListener("abort", () => sink.close(), { once: true });
+          return new Response(sink.stream, { headers: { "Content-Type": "text/event-stream" } });
+        });
+      const controller = new AbortController();
+      useChatStore.setState({ conversationId: id, abortController: controller });
+      const loop = startStreamPump(id, controller, setState, getState);
+      try {
+        await vi.advanceTimersByTimeAsync(0);
+        expect(sinks).toHaveLength(1);
+        // A local Response is not the server's acknowledgement of this membership.
+        /* oxlint-disable no-await-in-loop */
+        for (const [index, delay] of [125, 250, 500, 1000].entries()) {
+          const sink = sinks.at(-1)!;
+          // Neither a started replay nor an incomplete reset acknowledges synchronization.
+          if (index > 0) sink.push(sse("session.sync", { ...checkpoint, phase: "start" }));
+          if (index === 2) {
+            sink.push(sse("session.sync", { ...checkpoint, phase: "complete", item_count: 1 }));
+          } else {
+            sink.push(sse("session.transport_error", { code: "stream_failed" }));
+          }
+          await vi.advanceTimersByTimeAsync(0);
+          await vi.advanceTimersByTimeAsync(delay - 1);
+          expect(sinks).toHaveLength(index + 1);
+          await vi.advanceTimersByTimeAsync(1);
+          expect(sinks).toHaveLength(index + 2);
+        }
+        /* oxlint-enable no-await-in-loop */
+        sinks.at(-1)!.push(sse("session.sync", { ...checkpoint, reset, phase: "start" }));
+        sinks.at(-1)!.push(sse("session.sync", { ...checkpoint, reset, phase: "complete" }));
+        await vi.advanceTimersByTimeAsync(0);
+        sinks.at(-1)!.push(sse("session.transport_error", { code: "stream_reconnect" }));
+        await vi.advanceTimersByTimeAsync(124);
+        expect(sinks).toHaveLength(5);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(sinks).toHaveLength(6);
+        sinks.at(-1)!.push(sse("session.transport_error", { code: "runner_unavailable" }));
+        await vi.advanceTimersByTimeAsync(0);
+        controller.abort();
+        await vi.advanceTimersByTimeAsync(6000);
+        await loop;
+        expect(sinks).toHaveLength(6);
+        expect(signals.every((signal) => signal.aborted)).toBe(true);
+        expect(sinks.every((sink) => !sink.stream.locked)).toBe(true);
+        expect(useChatStore.getState().abortController).toBeNull();
+      } finally {
+        controller.abort();
+        await vi.advanceTimersByTimeAsync(6000);
+        await loop;
+        open.mockRestore();
+        support.mockRestore();
+        random.mockRestore();
+      }
+    },
+  );
+
   it("stops reconnecting (and clears the binding) when aborted after a drop", async () => {
     seedSession("conv_abrt3", []);
     const sinks = routeStreamOpens();

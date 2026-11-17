@@ -200,6 +200,7 @@ Compare the same two/four/twelve-chat scenarios when measuring latency; browser/
 - Agent and shell rows open named tabs; historical output never attaches or launches a process.
 - Native child input and steering require current runtime capabilities, independently of transcript readability.
 - Visible chats share one tab-level transcript socket when supported; hidden chats retain state and resume from completed position/revision checkpoints.
+- Rejected multiplex subscriptions back off until validated synchronization completes; reconnect tests cover invalid replay and cancellation during the delay.
 - Older servers and deployments using host routing retain the authorized per-session SSE path.
 - Orchestration rows open resources in tabs, with no redundant Open button; graph remains available without internal history-coverage or Messages entries.
 - Native Codex inputs retain their canonical identity through start/steer and echo; unresolved historical messages are not reclassified by text.
