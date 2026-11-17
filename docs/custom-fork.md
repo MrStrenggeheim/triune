@@ -259,3 +259,11 @@ Full session reads and each original authorization/binding check remain; no requ
 The synthetic 20-item probes retain identical receipts, item hashes, positions and SQL counts while reducing unused execution decoding.
 Alternating point-read CPU controls show the clearest benefit with large policy metadata and a small overhead for empty state; no production latency claim is made.
 Evidence: `artifacts/overnight-20261116/native-ingest/{HANDOFF.txt,measured-merits.json}`.
+
+## Highlighting payload follow-up
+
+`INITIAL-CHUNKS-9` leaves Shiki themes and WASM behind their existing dynamic imports, retaining the shared core/engine group and Streamdown compatibility rule.
+Sealed cold-browser samples download 1,953,366 fewer decoded JavaScript bytes with the same 122 initial requests; core still evaluates and first use fetches the required data.
+The payload reduction establishes no latency improvement; desktop/phone highlighting, failure/reload, diagram entry points and Monaco initialization were checked separately.
+The unchanged baseline's TipTap mount failure remains a separate investigation.
+Evidence: `artifacts/overnight-20261116/initial-chunks/{handoff.md,counts.json}`.
