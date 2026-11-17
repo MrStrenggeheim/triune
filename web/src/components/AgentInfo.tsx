@@ -4,6 +4,7 @@ import { McpRegistryPicker } from "@/components/McpRegistry";
 // header info-icon popover that displays them.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ContentSkeleton } from "@/components/ui/loading";
 import {
   CheckIcon,
   CopyIcon,
@@ -1496,6 +1497,9 @@ export function AgentInfoContent({
             {versionFooter}
           </span>
         </div>
+      )}
+      {serverInfo === "loading" && !versionFooter && (
+        <ContentSkeleton label="Loading version information" rows={1} className="px-0 py-3" />
       )}
     </div>
   );

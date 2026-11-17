@@ -441,6 +441,22 @@ describe("SettingsPage", () => {
     expect(readDefaultAgentId()).toBe("missing-agent");
   });
 
+  it("retains the known default-agent label while its catalog refreshes", () => {
+    writeDefaultAgentId("ag_polly");
+    vi.mocked(useAvailableAgents).mockReturnValue({
+      data: [
+        { id: "ag_polly", name: "polly", display_name: "Polly", harness: "claude-sdk", skills: [] },
+      ],
+      isLoading: false,
+      isPlaceholderData: true,
+      isError: false,
+    } as unknown as ReturnType<typeof useAvailableAgents>);
+    renderPage("/settings/general");
+    const setting = within(screen.getByTestId("settings-default-agent"));
+    expect(setting.getByTestId("new-chat-landing-agent-select")).toHaveAccessibleName("Polly");
+    expect(setting.queryByTestId("new-chat-landing-picker-loading")).toBeNull();
+  });
+
   it("shows catalog failure without clearing a saved default", () => {
     writeDefaultAgentId("missing-agent");
     vi.mocked(useAvailableAgents).mockReturnValue({

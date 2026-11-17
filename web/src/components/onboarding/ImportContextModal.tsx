@@ -1,5 +1,5 @@
 // Modified for Triune.
-import { ContentSkeleton } from "@/components/ui/loading";
+import { ContentSkeleton, OperationStatus } from "@/components/ui/loading";
 // Post-setup "Your setup is ready" modal: one tab per harness, showing the
 // credential Omnigent adopted and the MCP servers, skills, and plugins found
 // there. Review only: sessions already load these, so nothing is selected.
@@ -300,7 +300,14 @@ function ImportContextBody({
 
   let content: ReactNode;
   if (status === "loading") {
-    content = <ContentSkeleton label={loadingMessage} rows={4} className="min-h-48" />;
+    content = (
+      <div className="min-h-48">
+        <OperationStatus className="px-3 py-2">{loadingMessage}</OperationStatus>
+        <div aria-hidden="true">
+          <ContentSkeleton label="Loading imports" rows={4} />
+        </div>
+      </div>
+    );
   } else if (status === "offline") {
     content = <EmptyState>{machine} is offline. Reconnect it to review its imports.</EmptyState>;
   } else if (harnesses.length === 0) {

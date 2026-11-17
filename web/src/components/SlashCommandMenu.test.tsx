@@ -207,6 +207,26 @@ describe("/mcp panel connection state", () => {
     );
   }
 
+  it("reserves initial MCP content and preserves loaded rows during refresh", () => {
+    const view = renderPanel({ mcpServersLoading: true });
+    expect(screen.getByRole("status", { name: "Loading MCP servers…" })).toBeVisible();
+    expect(screen.queryByText("No MCP servers enabled for this session.")).toBeNull();
+    const servers = [{ name: "retained-server", connection: "connected" as const }];
+    view.rerender(
+      <MemoryRouter>
+        <SlashCommandMenu {...menuProps} showMcpServers mcpServers={servers} />
+      </MemoryRouter>,
+    );
+    const row = screen.getByTestId("mcp-server-row-retained-server");
+    view.rerender(
+      <MemoryRouter>
+        <SlashCommandMenu {...menuProps} showMcpServers mcpServers={servers} mcpServersLoading />
+      </MemoryRouter>,
+    );
+    expect(screen.getByTestId("mcp-server-row-retained-server")).toBe(row);
+    expect(screen.getByText("Refreshing MCP servers…")).toBeVisible();
+  });
+
   it("labels connected and sign-in-required rows and leaves stateless rows unlabeled", () => {
     renderPanel({
       mcpServers: [

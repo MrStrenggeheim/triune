@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
@@ -137,7 +138,8 @@ describe("ImportReviewGate with a requested host", () => {
     renderWithClient(<ImportReviewGate />);
 
     // A listed host is named rather than described by its runner.
-    expect(await screen.findByText("Connecting to target-machine…")).toBeTruthy();
+    expect(await screen.findByText("Connecting to target-machine…")).toBeVisible();
+    expect(screen.getByText(/Found in your harnesses on target-machine\./)).toBeVisible();
     await waitFor(() => expect(authenticatedFetchMock).toHaveBeenCalled());
     expect(screen.queryByText("/o")).toBeNull();
     expect(screen.queryByText(/is offline/)).toBeNull();

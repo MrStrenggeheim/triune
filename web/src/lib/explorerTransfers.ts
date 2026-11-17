@@ -1,3 +1,4 @@
+// Modified for Triune.
 import {
   bytesToBase64,
   childPath,
@@ -57,8 +58,9 @@ function publish(): void {
             active: true,
             value:
               value.total > 0 ? Math.min(100, (value.completed / value.total) * 100) : undefined,
-            label:
-              value.total > 1
+            label: value.message
+              ? undefined
+              : value.total > 1
                 ? `${formatBytes(value.completed)} of ${formatBytes(value.total)} · ${Math.round((value.completed / value.total) * 100)}%`
                 : "Preparing…",
           }
@@ -116,7 +118,9 @@ export function dismissExplorerTransfer(conversationId: string): void {
 }
 
 function startTransfer(
-  initial: Pick<ExplorerTransfer, "conversationId" | "kind" | "name" | "total">,
+  initial: Pick<ExplorerTransfer, "conversationId" | "kind" | "name" | "total"> & {
+    message?: string;
+  },
   execute: (
     signal: AbortSignal,
     progress: (name: string, completed: number, total: number) => void,
@@ -127,12 +131,18 @@ function startTransfer(
     throw new Error("A file transfer is already running in this workspace.");
   const transfer: ActiveTransfer = {
     controller: new AbortController(),
-    value: { ...initial, completed: 0, status: "running", message: null },
+    value: { ...initial, completed: 0, status: "running", message: initial.message ?? null },
   };
   transfers.set(initial.conversationId, transfer);
   publish();
   const progress = (name: string, completed: number, total: number) => {
-    transfer.value = { ...transfer.value, name, completed, total };
+    transfer.value = {
+      ...transfer.value,
+      name,
+      completed,
+      total,
+      message: transfer.value.status === "running" ? null : transfer.value.message,
+    };
     publish();
   };
   void (async () => {
@@ -280,7 +290,13 @@ export function startExplorerArchive(
     filesystemOperation(conversationId, body, signal, target);
   const paths = [...selection];
   startTransfer(
-    { conversationId: identity, kind: "download", name: "Preparing ZIP…", total: 1 },
+    {
+      conversationId: identity,
+      kind: "download",
+      name: "ZIP archive",
+      total: 0,
+      message: "Preparing ZIP…",
+    },
     async (signal, progress) => {
       let archiveId: string | undefined;
       try {
@@ -292,6 +308,7 @@ export function startExplorerArchive(
         archiveId = begun.archive_id;
         if (!archiveId || begun.size === undefined)
           throw new Error("The host did not create an archive.");
+        progress(begun.filename ?? "files.zip", 0, begun.size);
         const parts: BlobPart[] = [];
         let offset = 0;
         while (offset < begun.size) {

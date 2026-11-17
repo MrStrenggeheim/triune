@@ -1885,6 +1885,7 @@ function DefaultAgentControl() {
           }
           hasAgents={agentList.length > 0}
           loading={loading}
+          interactiveWhileLoading={selected !== undefined}
           host={null}
           onSelectAgent={(agent) => save(agent.id)}
           pendingAgent={null}

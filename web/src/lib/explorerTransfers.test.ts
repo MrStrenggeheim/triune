@@ -1,6 +1,8 @@
+// Modified for Triune.
 import { waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { filesystemOperation } from "./explorerOperations";
+import { notify, updateNotification } from "./notifications";
 import {
   cancelExplorerTransfer,
   dismissExplorerTransfer,
@@ -15,7 +17,7 @@ vi.mock("./explorerOperations", () => ({
   childPath: vi.fn(),
 }));
 vi.mock("./notifications", () => ({
-  getNotificationSnapshot: () => ({ entries: [] }),
+  getNotificationSnapshot: () => ({ entries: [{ id: "transfer" }] }),
   notify: vi.fn(() => "transfer"),
   removeNotification: vi.fn(),
   updateNotification: vi.fn(),
@@ -31,6 +33,44 @@ it("rejects a transfer without any persisted resource target", () => {
     "resource target is required",
   );
   expect(filesystemOperation).not.toHaveBeenCalled();
+});
+
+it("keeps one notification while ZIP preparation becomes measured download progress", async () => {
+  let finishBegin!: (value: { archive_id: string; size: number; filename: string }) => void;
+  let finishChunk!: (value: { content_base64: string }) => void;
+  vi.mocked(notify).mockReturnValue("transfer");
+  vi.mocked(filesystemOperation).mockImplementation(async (_id, body) => {
+    if (body.operation === "archive_begin")
+      return new Promise((resolve) => {
+        finishBegin = resolve;
+      });
+    if (body.operation === "archive_chunk")
+      return new Promise((resolve) => {
+        finishChunk = resolve;
+      });
+    return {};
+  });
+  startExplorerArchive("zip-chat", ["file.txt"]);
+  expect(notify).toHaveBeenCalledWith(
+    expect.objectContaining({
+      title: "Preparing ZIP…",
+      progress: expect.objectContaining({ active: true, value: undefined, label: undefined }),
+    }),
+  );
+  finishBegin({ archive_id: "archive", size: 3, filename: "bundle.zip" });
+  await waitFor(() =>
+    expect(updateNotification).toHaveBeenCalledWith(
+      "transfer",
+      expect.objectContaining({
+        title: "Downloading bundle.zip",
+        progress: expect.objectContaining({ value: 0 }),
+      }),
+      expect.any(Object),
+    ),
+  );
+  finishChunk({ content_base64: btoa("zip") });
+  await waitFor(() => expect(getExplorerTransfers()[0]?.status).toBe("completed"));
+  expect(notify).toHaveBeenCalledOnce();
 });
 
 it("keeps independent transfers and cancellation cleanup bound to their initial workspace", async () => {

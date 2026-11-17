@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { registryRequest } from "@/lib/mcpRegistry";
 import type * as IdentityModule from "@/lib/identity";
 
@@ -72,15 +73,19 @@ vi.mock("@/lib/sessionsApi", () => ({ forkSession: vi.fn() }));
 vi.mock("@/lib/mcpRegistry", () => ({ registryRequest: vi.fn() }));
 
 const versionEnv = vi.hoisted(() => ({
+  loading: false,
   enabledConnections: [] as string[],
   serverVersion: null as string | null,
   hostVersion: undefined as string | null | undefined,
 }));
 vi.mock("@/lib/CapabilitiesContext", () => ({
-  useServerInfo: () => ({
-    server_version: versionEnv.serverVersion,
-    enabled_connections: versionEnv.enabledConnections,
-  }),
+  useServerInfo: () =>
+    versionEnv.loading
+      ? "loading"
+      : {
+          server_version: versionEnv.serverVersion,
+          enabled_connections: versionEnv.enabledConnections,
+        },
 }));
 vi.mock("@/hooks/RunnerHealthProvider", () => ({
   useSessionHostVersion: () => versionEnv.hostVersion,
@@ -446,6 +451,7 @@ describe("AgentInfoButton version footer", () => {
   beforeEach(() => {
     versionEnv.serverVersion = null;
     versionEnv.hostVersion = undefined;
+    versionEnv.loading = false;
   });
 
   it("joins server and host versions in the popover footer", () => {
@@ -480,6 +486,15 @@ describe("AgentInfoButton version footer", () => {
     // Popover still opens (agent name proves it) — just no version footer.
     expect(screen.getByText("Databricks_coding_agent")).toBeInTheDocument();
     expect(screen.queryByTestId("agent-info-versions")).toBeNull();
+  });
+
+  it("reserves known-loading version metadata without inventing an owner", () => {
+    versionEnv.loading = true;
+    renderButtonWithSession(AGENT_WITH_BOTH, "conv_ver");
+    fireEvent.click(screen.getByTestId("agent-info-trigger"));
+    expect(screen.getByRole("status", { name: "Loading version information" })).toBeVisible();
+    expect(screen.queryByTestId("agent-info-session-owner")).toBeNull();
+    versionEnv.loading = false;
   });
 });
 

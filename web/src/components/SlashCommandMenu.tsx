@@ -1,5 +1,5 @@
 // Modified for Triune.
-import { ContentSkeleton } from "@/components/ui/loading";
+import { ContentSkeleton, OperationStatus } from "@/components/ui/loading";
 import { TooltipButton } from "@/components/ui/tooltip";
 import { useEffect, useRef } from "react";
 import {
@@ -214,6 +214,7 @@ interface SlashCommandMenuProps {
   /** Effective MCP servers: agent-declared plus host-native for the active harness. */
   mcpServers?: readonly McpServerRow[];
   mcpServersStatus?: string;
+  mcpServersLoading?: boolean;
   mcpSettingsHref?: string;
   /** Start the in-place sign-in for a `sign-in-required` row, by row name. */
   onMcpSignIn?: (name: string) => void;
@@ -299,6 +300,7 @@ function McpSignInAction({
 interface McpServerRowsProps {
   servers?: readonly McpServerRow[];
   status?: string;
+  loading?: boolean;
   onSignIn?: (name: string) => void;
   authorizingName?: string | null;
   signInError?: McpSignInError | null;
@@ -307,10 +309,12 @@ interface McpServerRowsProps {
 function McpServerRows({
   servers,
   status,
+  loading = false,
   onSignIn,
   authorizingName,
   signInError,
 }: McpServerRowsProps) {
+  if (loading && !servers?.length) return <ContentSkeleton label="Loading MCP servers…" rows={2} />;
   if (!servers?.length && !status) {
     return (
       <div role="status" className="px-2 py-2 text-ui text-muted-foreground">
@@ -370,6 +374,7 @@ function McpServerRows({
           {status}
         </div>
       )}
+      {loading && <OperationStatus className="px-2 py-2">Refreshing MCP servers…</OperationStatus>}
     </>
   );
 }
@@ -486,6 +491,7 @@ export function SlashCommandMenu({
   showMcpServers = false,
   mcpServers,
   mcpServersStatus,
+  mcpServersLoading,
   mcpSettingsHref,
   onMcpSignIn,
   mcpAuthorizingName,
@@ -506,6 +512,7 @@ export function SlashCommandMenu({
       <McpServerMenu
         servers={mcpServers}
         status={mcpServersStatus}
+        loading={mcpServersLoading}
         settingsHref={mcpSettingsHref}
         onSignIn={onMcpSignIn}
         authorizingName={mcpAuthorizingName}
