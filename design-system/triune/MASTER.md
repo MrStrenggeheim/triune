@@ -222,7 +222,7 @@ Use the shared All/Agents/Shells control in the header and two-line resource ent
 Resource entries reuse semantic status pills with an icon and label in a stable trailing column; the whole row opens without a redundant Open action.
 Colored status pills fit their icon and text; any width reserved for alignment belongs to the uncolored outer column.
 Narrow resource rows keep title details and previews on one ellipsized line and collapse status text to its accessible icon at 440px or less.
-Compact message-card headers move status and actions below the text at 480px or less, preserving separate reachable controls.
+Compact message-card headers retain one row, truncate the text column and show compact status icons while preserving reachable controls and accessible status labels.
 Open resources in tabs; retain graph in the existing menu, without inspector modals or status-group hierarchies.
 Routine capture diagnostics, History coverage and Messages do not appear in Orchestration.
 Workspace selection starts from the captured source chat's Host and path; confirmation alone changes its source.

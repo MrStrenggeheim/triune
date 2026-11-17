@@ -36,7 +36,7 @@ import type { SessionStatus } from "@/lib/types";
 import type { ActiveResponse } from "@/store/types";
 import { cn } from "@/lib/utils";
 import { ChatSearchRevealContext } from "@/lib/chatSearchHighlights";
-import { MediaBatch, MediaBatchItems, isVisualAttachment } from "@/components/MediaBatch";
+import { MediaBatch, MediaBatchItems, isVisualOnlyMessage } from "@/components/MediaBatch";
 import { FilePathAwareMessageResponse } from "./ChatMarkdown";
 import { ElicitationCard } from "./ApprovalCard";
 import { ReasoningView } from "./ReasoningView";
@@ -416,10 +416,7 @@ function renderSequence(
     const item = items[i]!;
 
     const visualOnly = (candidate: RenderItem) =>
-      candidate.kind === "text" &&
-      !candidate.text.trim() &&
-      !!candidate.attachments?.length &&
-      candidate.attachments.every(isVisualAttachment);
+      candidate.kind === "text" && isVisualOnlyMessage(candidate.text, candidate.attachments);
     if (visualOnly(item) && items[i + 1] && visualOnly(items[i + 1]!)) {
       const start = i;
       const previews: ReactNode[] = [];

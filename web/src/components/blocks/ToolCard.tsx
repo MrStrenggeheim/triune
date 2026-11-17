@@ -5,6 +5,7 @@ import {
 } from "@/lib/transcriptReaderCheckpoint";
 import { useTranscriptDisclosureAnchor } from "@/hooks/useTranscriptDisclosureAnchor";
 import { useInlinePreviewBoundary } from "@/artifacts/inlinePreviewBoundary";
+import { ContentSkeleton, OperationStatus } from "@/components/ui/loading";
 import { useWrapPreference } from "@/hooks/useWrapPreference";
 // Tool-call renderer. Renders each call as a single muted-text trigger
 // line (status icon + truncated `name(argsSummary)`); clicking expands an
@@ -618,6 +619,7 @@ function ShellTerminalPanel({
           <div className="border-t border-border/60 pt-1" data-tool-section="output">
             <OutputSection
               output={parsed.text}
+              language="ansi"
               renderPanel={(text) => (
                 <>
                   <div className="flex items-center justify-between px-3 text-xs text-muted-foreground">
@@ -812,6 +814,46 @@ function WrapTextButton({
   );
 }
 
+/** Count the visible text prefix with at most one boundary-line binary search. */
+export function visibleCodeCharacterCount(code: HTMLElement, text: string, bottom: number): number {
+  const lines = text.split("\n");
+  let visible = 0;
+  for (let index = 0; index < code.children.length && index < lines.length; index++) {
+    const line = code.children[index]!;
+    const textLength = lines[index]!.length;
+    const bounds = line.getBoundingClientRect();
+    if (bounds.top >= bottom) break;
+    if (bounds.bottom <= bottom) {
+      visible += textLength + (index < lines.length - 1 ? 1 : 0);
+      continue;
+    }
+    const nodes: { node: Text; start: number; end: number }[] = [];
+    const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+    let offset = 0;
+    while (walker.nextNode()) {
+      const node = walker.currentNode as Text;
+      nodes.push({ node, start: offset, end: offset + node.length });
+      offset += node.length;
+    }
+    const range = document.createRange();
+    let low = 0;
+    let high = Math.min(textLength, offset);
+    while (low < high) {
+      const middle = Math.ceil((low + high) / 2);
+      const position = middle - 1;
+      const target = nodes.find((entry) => position >= entry.start && position < entry.end);
+      if (!target) break;
+      range.setStart(target.node, position - target.start);
+      range.setEnd(target.node, position - target.start + 1);
+      if (range.getBoundingClientRect().bottom <= bottom) low = middle;
+      else high = middle - 1;
+    }
+    visible += low;
+    break;
+  }
+  return Math.min(text.length, visible);
+}
+
 function OutputSection({
   output,
   renderPanel,
@@ -826,6 +868,7 @@ function OutputSection({
   const preserveDisclosure = useTranscriptDisclosureAnchor();
   const [isExpanded, setIsExpanded] = useState(false);
   const [overflows, setOverflows] = useState(false);
+  const [visibleCharacters, setVisibleCharacters] = useState<number>();
   const container = useRef<HTMLDivElement>(null);
   const body = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
@@ -833,17 +876,31 @@ function OutputSection({
   const [expandedHeight, setExpandedHeight] = useState<number>();
   const collapsedPreview = useMemo(() => getOutputPreview(output), [output]);
   const preview = useMemo(() => getOutputPreview(output, isExpanded), [output, isExpanded]);
+  const displayedOutput =
+    language === "ansi" ? stripAnsi(dropTrailingPartialEscape(output)) : output;
   useLayoutEffect(() => {
     const measure = () => {
-      if (!isExpanded && body.current && content.current)
+      if (!isExpanded && body.current && content.current) {
         setOverflows(content.current.scrollHeight > body.current.clientHeight + 1);
+        const code = content.current.querySelector<HTMLElement>("pre code");
+        if (code && body.current.clientHeight > 0)
+          setVisibleCharacters(
+            visibleCodeCharacterCount(
+              code,
+              language === "ansi"
+                ? stripAnsi(dropTrailingPartialEscape(collapsedPreview.text))
+                : collapsedPreview.text,
+              body.current.getBoundingClientRect().bottom,
+            ),
+          );
+      }
     };
     measure();
     const observer = new ResizeObserver(measure);
     if (body.current) observer.observe(body.current);
     if (content.current) observer.observe(content.current);
     return () => observer.disconnect();
-  }, [output, isExpanded]);
+  }, [output, isExpanded, language, collapsedPreview.text]);
   const canExpand = collapsedPreview.isTruncated || overflows || isExpanded;
   return (
     <div
@@ -897,10 +954,12 @@ function OutputSection({
           </Button>
           <span className="min-w-0 truncate">
             {isExpanded
-              ? `${output.length.toLocaleString()} characters`
-              : collapsedPreview.hiddenCharCount
-                ? `${collapsedPreview.hiddenCharCount.toLocaleString()} characters omitted`
-                : `${collapsedPreview.lineCount.toLocaleString()} lines`}
+              ? `${displayedOutput.length.toLocaleString()} characters`
+              : visibleCharacters !== undefined
+                ? `${Math.max(0, displayedOutput.length - visibleCharacters).toLocaleString()} characters hidden`
+                : collapsedPreview.hiddenCharCount
+                  ? `${collapsedPreview.hiddenCharCount.toLocaleString()} characters omitted`
+                  : `${collapsedPreview.lineCount.toLocaleString()} lines`}
           </span>
         </div>
       )}
@@ -910,17 +969,12 @@ function OutputSection({
 
 function ToolPendingOutput({ duration }: { duration: number | undefined }) {
   return (
-    <div className="py-1">
-      <div className="flex items-center gap-2 text-muted-foreground text-ui">
-        <Loader2Icon className="size-4 animate-spin text-info" />
-        <span>
-          Waiting for output
-          {duration !== undefined ? ` for ${formatToolDuration(duration)}` : ""}
-        </span>
-      </div>
-      <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted">
-        <div className="h-full w-1/3 animate-pulse rounded-full bg-info/70" />
-      </div>
+    <div className="space-y-2 py-1">
+      <OperationStatus>
+        Waiting for output
+        {duration !== undefined ? ` for ${formatToolDuration(duration)}` : ""}
+      </OperationStatus>
+      <ContentSkeleton label="Loading tool output" rows={2} className="p-0" />
     </div>
   );
 }

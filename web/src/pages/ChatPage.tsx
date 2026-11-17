@@ -60,7 +60,7 @@ import {
 import { ComposerMentionChips } from "@/components/composer/ComposerMentionChips";
 import { ComposerAddMenu } from "@/components/composer/ComposerAddMenu";
 import { ComposerAttentionShelf } from "@/components/composer/ComposerAttentionShelf";
-import { ContentSkeleton } from "@/components/ui/loading";
+import { ContentSkeleton, OperationStatus } from "@/components/ui/loading";
 import { ReplyDraftBlocks } from "@/components/composer/ReplyDraftBlocks";
 import {
   ComposerPermissionPicker,
@@ -1792,10 +1792,8 @@ const MainAgentSurface = memo(function MainAgentSurfaceImpl({
   // task as the height change (before any paint — the only ordering Gecko
   // doesn't paint past; every async pin leaves one intermediate frame).
   // Guarded by the live lock state, not the public isAtBottom alias, so a
-  // reader who scrolled up mid-stream is never yanked down. The spacer
-  // re-measures first: its reserved height tracks the viewport, so it must
-  // shrink in this same task — otherwise the pin reads a stale scrollHeight
-  // and the browser paints the spacer's later RO settle as a visible shift.
+  // reader who scrolled up mid-stream is never yanked down.
+  // Retain the optional resize hook for embedded transcript callers.
   const spacerMeasureRef = useRef<(() => void) | null>(null);
   // Whether the transcript was physically at the bottom as of its last scroll
   // event. Evaluated lazily-per-event (not at pin time) so the write never
@@ -2500,6 +2498,8 @@ function ComposerImpl(
     replaceText,
     appendQuote,
     removeQuote,
+    moveQuote,
+    undoQuoteMove,
   } = useReplyDraft();
   const [submitWithModEnter] = useState(() => readSubmitWithModEnter());
   const [commandError, setCommandError] = useState<string | null>(null);
@@ -2690,11 +2690,9 @@ function ComposerImpl(
       ? undefined
       : hostMcpRoutingId === null
         ? "Host MCP servers unavailable: this session has no known host."
-        : hostMcpQuery.isLoading
-          ? "Loading MCP servers…"
-          : hostMcpQuery.isError
-            ? "Couldn’t load MCP servers from this session’s host."
-            : undefined;
+        : hostMcpQuery.isError
+          ? "Couldn’t load MCP servers from this session’s host."
+          : undefined;
   const mcpSettingsHref =
     `/settings/harnesses${nativeMcpHarness ? `/${sessionHarness}` : ""}` +
     (hostMcpRoutingId ? `?host=${encodeURIComponent(hostMcpRoutingId)}` : "");
@@ -4116,14 +4114,8 @@ function ComposerImpl(
       onStop();
       return;
     }
-    // ArrowUp/Down recall — only when the caret is already at the very
-    // start (ArrowUp) or end (ArrowDown) of the text.  Checking for the
-    // absence of "\n" before/after the cursor is not sufficient: long
-    // single-line text that wraps visually contains no newlines, so that
-    // check always fires and history recall intercepts cursor movement
-    // within the wrapped line.  Gating on position 0 / length ensures the
-    // browser gets to move the caret through wrapped lines first; only the
-    // final ArrowUp-at-start / ArrowDown-at-end triggers recall.
+    // Up recalls only into a completely empty draft; ordinary arrows must never
+    // replace authored text or quote cards. Down still exits an existing recall.
     // Recall is for UNmodified arrows only. Cmd/Ctrl+↑/↓ (switch session) and
     // Cmd/Alt+↑/↓ (jump between messages) are global window hotkeys meant to
     // fire even mid-compose; without this guard the recall below intercepts
@@ -4136,7 +4128,12 @@ function ComposerImpl(
       !e.altKey
     ) {
       const ta = e.currentTarget;
-      if (e.key === "ArrowUp" && ta.selectionStart === 0) {
+      if (
+        e.key === "ArrowUp" &&
+        fullText.length === 0 &&
+        draft.quotes.length === 0 &&
+        ta.selectionStart === 0
+      ) {
         // Empty-composer recall takes the last queued row before browsing history.
         if (fullText.trim() === "" && files.length === 0 && mentionedItems.length === 0) {
           const target = queuedMessages.findLast((m) => m.conversationId === conversationId);
@@ -4320,6 +4317,14 @@ function ComposerImpl(
                 keyboard={{ submitWithModEnter, preventsKeyboardSubmit }}
                 disabled={disabled || isReadOnly || unreachable || composerLockedByBtw}
                 onGrowth={onViewportShrinkPinScroll}
+                onMove={(id, target, offset) => {
+                  moveQuote(id, target, offset);
+                  resetCursor();
+                  recallingRef.current = false;
+                  dirtyRef.current = true;
+                  dismissMention();
+                }}
+                onUndoMove={undoQuoteMove}
                 onRemove={(id) => {
                   removeQuote(id);
                   resetCursor();
@@ -4360,6 +4365,7 @@ function ComposerImpl(
                   showMcpServers={showMcpServers}
                   mcpServers={mcpServers}
                   mcpServersStatus={mcpServersStatus}
+                  mcpServersLoading={hostMcpQuery.isFetching}
                   mcpSettingsHref={mcpSettingsHref}
                   onMcpSignIn={onMcpSignIn}
                   mcpAuthorizingName={registrySignIn.authorizing}
@@ -4481,6 +4487,13 @@ function ComposerImpl(
             <>
               <ComposerAddMenu
                 disabled={false}
+                pendingLabel={
+                  planModeBusy
+                    ? "Updating plan mode"
+                    : subchatBusy
+                      ? "Starting side chat"
+                      : undefined
+                }
                 attachDisabled={
                   disabled || isReadOnly || hasPendingElicitation || composerLockedByBtw
                 }
@@ -5685,10 +5698,11 @@ function SessionHarnessPicker({
       {startingSession && (
         <div
           className="px-2 py-1 text-xs whitespace-normal text-muted-foreground"
-          role="status"
           data-testid="composer-agent-starting-session"
         >
-          Starting the session to switch models…
+          <OperationStatus className="text-xs">
+            Starting the session to switch models…
+          </OperationStatus>
         </div>
       )}
       {costRoutingEligible && showModels && (

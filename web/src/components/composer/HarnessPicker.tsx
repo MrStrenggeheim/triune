@@ -1,3 +1,4 @@
+// Modified for Triune; inherited notices remain applicable.
 import { useMenuInputIntent } from "@/hooks/useMenuInputIntent";
 import {
   type ComponentProps,

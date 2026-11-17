@@ -1,5 +1,6 @@
 import { useTranscriptDisclosureAnchor } from "@/hooks/useTranscriptDisclosureAnchor";
 import { markInputLifecycle } from "@/lib/inputDiagnostics";
+import { ContentSkeleton, OperationStatus } from "@/components/ui/loading";
 // Modified for Triune.
 import { useWorkbenchActions } from "@/workbench/WorkbenchContext";
 import { useConversationChatStore, useConversationChatVisible } from "@/workbench/ScopedChatStore";
@@ -28,7 +29,6 @@ import {
   FolderIcon,
   ImageIcon,
   Link2Icon,
-  Loader2Icon,
   SplitIcon,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -518,10 +518,17 @@ export function WorkingIndicator() {
       <Message from="assistant" data-testid="working-indicator" aria-hidden="true">
         <MessageContent>
           <div className="flex items-center gap-1.5 py-0.5">
-            <BrandLogo variant="icon" className="otto-working h-4 w-auto shrink-0" />
-            <Shimmer className="text-sm font-mono" duration={1.5}>
-              {label}
-            </Shimmer>
+            <BrandLogo
+              variant="icon"
+              className={cn("h-4 w-auto shrink-0", !blockedOn && "otto-working")}
+            />
+            {blockedOn ? (
+              <span className="text-sm font-mono text-muted-foreground">{label}</span>
+            ) : (
+              <Shimmer className="text-sm font-mono" duration={1.5}>
+                {label}
+              </Shimmer>
+            )}
           </div>
         </MessageContent>
       </Message>
@@ -592,6 +599,25 @@ export function AwaitingAgentMessages({ bubbles }: { bubbles: Bubble[] }) {
   );
 }
 
+const interruptionMarkers = new WeakMap<AnyBlock[], ReadonlySet<string>>();
+
+function hasInterruptionMarker(blocks: AnyBlock[], responseId: string): boolean {
+  let responses = interruptionMarkers.get(blocks);
+  if (!responses) {
+    responses = new Set(
+      blocks.flatMap((block) =>
+        block.type === "user_message" &&
+        messageInputKind(block.communication, block.userAuthored, block.isMeta) === "system" &&
+        parseSystemMessage(extractUserText(block.content))?.kind === "interrupted"
+          ? [block.ctx.responseId]
+          : [],
+      ),
+    );
+    interruptionMarkers.set(blocks, responses);
+  }
+  return responses.has(responseId);
+}
+
 function CompactionLoadingIndicator({ createdAtS }: { createdAtS?: number }) {
   const [elapsed, setElapsed] = useState(0);
 
@@ -614,18 +640,10 @@ function CompactionLoadingIndicator({ createdAtS }: { createdAtS?: number }) {
   return (
     <Message from="assistant" data-testid="compacting-indicator">
       <MessageContent>
-        <div className="flex items-center gap-2 text-sm font-mono">
-          <Shimmer as="span" duration={1.5}>
-            Compacting conversation…
-          </Shimmer>
-          {elapsed > 0 && <span className="text-muted-foreground">({elapsed}s)</span>}
-        </div>
-        <div className="mt-2 h-1 overflow-hidden rounded-full bg-muted">
-          <div
-            className="h-full w-1/3 rounded-full bg-muted-foreground/40"
-            style={{ animation: "compaction-slide 1.5s ease-in-out infinite alternate" }}
-          />
-        </div>
+        <OperationStatus className="font-mono">
+          Compacting conversation…
+          {elapsed > 0 && <span aria-hidden="true"> ({elapsed}s)</span>}
+        </OperationStatus>
       </MessageContent>
     </Message>
   );
@@ -1085,6 +1103,8 @@ function AssistantBubble({
     useShallow((s) => ({
       sessionStatus: s.sessionStatus,
       hasPendingElicitation: hasPendingElicitationBlock(s.blocks),
+      hasInterruptionMarker:
+        bubble.lifecycle === "cancelled" && hasInterruptionMarker(s.blocks, bubble.responseId),
     })),
   );
   const conversationId = useChatStore((s) => scopedConversationId ?? s.conversationId);
@@ -1092,6 +1112,14 @@ function AssistantBubble({
   const rootHasPendingElicitation = useChatStore((s) =>
     scopedConversationId ? false : hasPendingElicitationBlock(s.blocks),
   );
+  const rootHasInterruptionMarker = useChatStore((s) =>
+    !scopedConversationId && bubble.lifecycle === "cancelled"
+      ? hasInterruptionMarker(s.blocks, bubble.responseId)
+      : false,
+  );
+  const interruptionAlreadyShown = scopedConversationId
+    ? scopedState.hasInterruptionMarker
+    : rootHasInterruptionMarker;
   const sessionStatus = scopedConversationId ? scopedState.sessionStatus : rootSessionStatus;
   // A pending elicitation means the turn is parked awaiting the user — still in
   // flight even when its lifecycle or the session status reads settled.
@@ -1239,7 +1267,7 @@ function AssistantBubble({
             onRetryError={recoveryDisabled ? undefined : handleRetryError}
           />
         </MessageContent>
-        {bubble.lifecycle === "cancelled" && (
+        {bubble.lifecycle === "cancelled" && !interruptionAlreadyShown && (
           <div data-testid="assistant-interrupted-indicator">
             <SystemMessageView message={{ kind: "interrupted", label: "Interrupted", body: "" }} />
           </div>
@@ -1402,13 +1430,7 @@ export function KeepBottomOnViewportResize() {
 
 export function HistoryLoadingIndicator() {
   return (
-    <div
-      role="status"
-      className="flex items-center justify-center gap-2 py-2 text-muted-foreground text-ui"
-    >
-      <Loader2Icon className="size-4 animate-spin" aria-hidden />
-      Loading earlier messages…
-    </div>
+    <ContentSkeleton label="Loading earlier messages" rows={1} className="mx-auto max-w-md py-2" />
   );
 }
 
@@ -2201,6 +2223,7 @@ export function JumpToTopButton({
         variant="outline"
         size="sm"
         disabled={jumping}
+        loading={jumping}
         onClick={() => void jumpToTop()}
         aria-label="Jump to the first message"
         componentId="chat.nav.jump_to_top"
@@ -2216,12 +2239,8 @@ export function JumpToTopButton({
           visible ? "pointer-events-auto" : "pointer-events-none",
         )}
       >
-        {jumping ? (
-          <Loader2Icon className="size-3.5 animate-spin" aria-hidden />
-        ) : (
-          <ArrowUpIcon className="size-3.5" aria-hidden />
-        )}
-        {jumping ? "Loading history…" : "Jump to top"}
+        <ArrowUpIcon className="size-3.5" aria-hidden />
+        Jump to top
       </Button>
     </div>
   );

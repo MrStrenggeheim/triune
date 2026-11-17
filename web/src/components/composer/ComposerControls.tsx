@@ -210,7 +210,11 @@ export function ComposerPermissionPicker({
             data-testid={`${testIdPrefix}-permission-chip`}
             data-permission-concept={permissionModeConcept(harness, selectedValue)}
           >
-            <HandIcon className="size-3 shrink-0" />
+            {loading ? (
+              <Loader2Icon aria-hidden="true" className="size-3 shrink-0 animate-spin" />
+            ) : (
+              <HandIcon className="size-3 shrink-0" />
+            )}
             {!iconOnly && (
               <span
                 className={cn(

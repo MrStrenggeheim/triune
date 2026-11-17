@@ -369,8 +369,12 @@ it("shares composer collision bounds with one observer per open shelf popup", ()
     expect(popup.style.maxWidth).toContain("--radix-popper-available-width");
     expect(popup).toHaveAttribute("data-align", "center");
     expect(popup.className).toContain("30rem");
-    const widths = observers.filter((observer) =>
-      observer.observe.mock.calls.some(([node]) => node === column),
+    // Resolving the portal trigger may replace an initial observer; only live
+    // observers contribute to the per-popup resource budget.
+    const widths = observers.filter(
+      (observer) =>
+        observer.observe.mock.calls.some(([node]) => node === column) &&
+        observer.disconnect.mock.calls.length === 0,
     );
     expect(widths).toHaveLength(1);
     act(() => {

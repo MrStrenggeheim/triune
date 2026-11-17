@@ -6,6 +6,11 @@
   container-type: inline-size;
 }
 
+/* Center the two-pixel accent in the shared 14px tool-icon column. */
+.subagent-activity-card > .activity-row--message {
+  margin-inline-start: calc((0.875rem - 2px) / 2);
+}
+
 /* Short resource titles stay on one line even when their renderer uses blocks. */
 .resource-title-detail :is(div, p),
 .resource-description :is(div, p) {

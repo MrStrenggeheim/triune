@@ -2942,6 +2942,55 @@
         "title": "ErrorResponse",
         "type": "object"
       },
+      "ExecutionObservation": {
+        "description": "Model metadata from an actual provider record, never current configuration.",
+        "properties": {
+          "effort": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effort"
+          },
+          "model": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Model",
+            "type": "string"
+          },
+          "source": {
+            "enum": [
+              "codex_turn_context",
+              "claude_response"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
+          "turn_id": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turn Id"
+          }
+        },
+        "required": [
+          "model",
+          "source"
+        ],
+        "title": "ExecutionObservation",
+        "type": "object"
+      },
       "ExtensionAssetErrorResponse": {
         "description": "Concise diagnostic for one unresolved browser bundle.",
         "properties": {
@@ -5019,6 +5068,28 @@
             "title": "Content",
             "type": "array"
           },
+          "execution": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExecutionObservation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "input_stable_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Server-matched browser input identity, independent of the canonical item id. Omitted when no input identity is established.",
+            "title": "Input Stable Id"
+          },
           "interrupted": {
             "default": false,
             "description": "`True` when an assistant message is a durable partial response from an interrupted external-native turn, e.g. Codex `turn/completed` with status `\"interrupted\"`. Defaults to `False` and is omitted from serialized payloads in that case.",
@@ -5057,6 +5128,11 @@
             ],
             "title": "Phase"
           },
+          "process_receipt": {
+            "default": false,
+            "title": "Process Receipt",
+            "type": "boolean"
+          },
           "resource_scope": {
             "anyOf": [
               {
@@ -5077,6 +5153,17 @@
             ],
             "title": "Role",
             "type": "string"
+          },
+          "source_call_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Call Id"
           },
           "startup_options": {
             "anyOf": [
@@ -7870,6 +7957,7 @@
             "session.changed_files.invalidated": "#/components/schemas/SessionChangedFilesInvalidatedEvent",
             "session.child_session.updated": "#/components/schemas/SessionChildSessionUpdatedEvent",
             "session.codex_approval_mode": "#/components/schemas/SessionCodexApprovalModeEvent",
+            "session.codex_next_turn_permissions_v1": "#/components/schemas/SessionCodexNextTurnPermissionsEvent",
             "session.collaboration_mode": "#/components/schemas/SessionCollaborationModeEvent",
             "session.created": "#/components/schemas/SessionCreatedEvent",
             "session.heartbeat": "#/components/schemas/SessionHeartbeatEvent",
@@ -7933,6 +8021,9 @@
           },
           {
             "$ref": "#/components/schemas/SessionCodexApprovalModeEvent"
+          },
+          {
+            "$ref": "#/components/schemas/SessionCodexNextTurnPermissionsEvent"
           },
           {
             "$ref": "#/components/schemas/SessionAgentChangedEvent"
@@ -8579,15 +8670,13 @@
         "type": "object"
       },
       "SessionCodexApprovalModeEvent": {
-        "description": "Active approval/sandbox-mode update from a codex-native session.\n\nEmitted after the web UI switches the mode, and after the Codex forwarder\nobserves a `thread/settings/updated` notification \u2014 an approval change the\nuser made inside Codex's `/permissions` popup, which Omnigent has no other\nway to see. Lets the composer's approval picker track the thread without a\nreload.",
+        "description": "Legacy current-scope event retained only to invalidate old tabs to Unknown.\n\nFuture permission settings use SessionCodexNextTurnPermissionsEvent.",
         "properties": {
           "approval_mode": {
-            "description": "The active mode, one of `\"ask-for-approval\"`, `\"approve-for-me\"`, `\"full-access\"`, `\"read-only\"`. Category: **transient** (SSE-only). The server also writes `omnigent.codex_native.approval_mode` on the conversation labels (and `terminal_launch_args`), so reconnecting clients restore the same state from the session snapshot.",
             "title": "Approval Mode",
             "type": "string"
           },
           "conversation_id": {
-            "description": "Session identifier, e.g. `\"conv_abc123\"`.",
             "title": "Conversation Id",
             "type": "string"
           },
@@ -8621,7 +8710,6 @@
           },
           "type": {
             "const": "session.codex_approval_mode",
-            "description": "Always `\"session.codex_approval_mode\"`.",
             "title": "Type",
             "type": "string"
           }
@@ -8632,6 +8720,71 @@
           "approval_mode"
         ],
         "title": "SessionCodexApprovalModeEvent",
+        "type": "object"
+      },
+      "SessionCodexNextTurnPermissionsEvent": {
+        "description": "Versioned native configuration for subsequent turns, never active scope.",
+        "properties": {
+          "approval_mode": {
+            "title": "Approval Mode",
+            "type": "string"
+          },
+          "conversation_id": {
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
+          },
+          "protocol": {
+            "const": "codex-next-turn-permissions/v1",
+            "default": "codex-next-turn-permissions/v1",
+            "title": "Protocol",
+            "type": "string"
+          },
+          "scope": {
+            "const": "subsequent_turns",
+            "default": "subsequent_turns",
+            "title": "Scope",
+            "type": "string"
+          },
+          "sequence_number": {
+            "anyOf": [
+              {
+                "format": "int64",
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Sequence Number"
+          },
+          "type": {
+            "const": "session.codex_next_turn_permissions_v1",
+            "default": "session.codex_next_turn_permissions_v1",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "conversation_id",
+          "approval_mode"
+        ],
+        "title": "SessionCodexNextTurnPermissionsEvent",
         "type": "object"
       },
       "SessionCollaborationModeEvent": {
@@ -11277,6 +11430,18 @@
       "SessionSyncEvent": {
         "description": "Canonical replay boundary; reset replaces the client's committed set.",
         "properties": {
+          "first_item_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "First Item Id"
+          },
           "framework_input_ids": {
             "anyOf": [
               {
@@ -11291,6 +11456,18 @@
             ],
             "default": null,
             "title": "Framework Input Ids"
+          },
+          "has_older_items": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Has Older Items"
           },
           "item_count": {
             "format": "int64",
@@ -11362,6 +11539,34 @@
             "const": "session.sync",
             "title": "Type",
             "type": "string"
+          },
+          "window_item_count": {
+            "anyOf": [
+              {
+                "format": "int64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Window Item Count"
+          },
+          "window_start_position": {
+            "anyOf": [
+              {
+                "format": "int64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Window Start Position"
           }
         },
         "required": [
@@ -17770,6 +17975,64 @@
         ]
       }
     },
+    "/v1/sessions/{session_id}/codex/next-turn-permissions/v1": {
+      "post": {
+        "operationId": "set_codex_next_turn_permissions_v1_sessions__session_id__codex_next_turn_permissions_v1_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Set Codex Next Turn Permissions V1 Sessions  Session Id  Codex Next Turn Permissions V1 Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Codex Next Turn Permissions",
+        "tags": [
+          "sessions"
+        ]
+      }
+    },
     "/v1/sessions/{session_id}/codex_goal": {
       "delete": {
         "description": "Clear the current Codex app-server goal.\n\n**Returns:** Whether Codex removed an existing goal.\n\n**Raises**\n\n- `OmnigentError` \u2014 400 for non-Codex sessions, 404 for missing sessions, or 503 when no live Codex runner can clear the goal.",
@@ -22269,6 +22532,42 @@
                 }
               ],
               "title": "Stream Epoch"
+            }
+          },
+          {
+            "in": "query",
+            "name": "initial_limit",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Initial Limit"
+            }
+          },
+          {
+            "in": "query",
+            "name": "window_start_position",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Window Start Position"
             }
           }
         ],

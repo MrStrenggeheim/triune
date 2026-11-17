@@ -1,3 +1,4 @@
+# Modified for Triune; inherited notices remain applicable.
 """
 Unit tests for :mod:`omnigent.runtime.pending_inputs`.
 

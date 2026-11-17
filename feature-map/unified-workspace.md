@@ -36,7 +36,8 @@ Conversation and tool views share resizable, dockable panes while keeping their 
 - Use the grouped Host/Chat source picker in Orchestration or a Preview's Comments control to choose its owner explicitly.
 - Use the combined workspace selector in the composer or resource-view toolbar; Host and Path are both directly reachable in its modal.
 - Use Up before the Explorer workspace path to make its parent folder the root.
-- Opening Settings temporarily reveals desktop navigation; its mobile section chooser stays reachable when navigation is closed.
+- Open Settings from the fixed sidebar footer; reveal navigation first when it is closed.
+- Settings keeps its mobile section chooser reachable and preserves the prior workspace and draft on return.
 - Open Settings → Appearance to change the accent or list density.
 - In Appearance → On startup, choose Continue last session (default) or New chat; continuation restores the layout owner rather than whichever embedded chat last had focus.
 
@@ -152,7 +153,7 @@ Layout miniatures and Inbox consolidation remain deferred.
 - Shared overflow surfaces use transcript-style overlay thumbs; fitting content, composers and tab bars have no visible scrollbar.
 - Appearance density choices include shared preview cards; buttons do not shift vertically when pressed.
 - Search control and popup center on the whole application, independently of adjacent actions.
-- On desktop, + Open follows centered Search with an 8px gap; mobile restores the 28px Open face beside the bell and Settings.
+- On desktop, + Open follows centered Search with an 8px gap; mobile keeps the 28px Open face beside the bell, with Settings in the sidebar footer.
 - Mobile Open has a transparent 32px-wide target using header height minus 4px, without overlapping Search or Notifications; tab-strip plus sizing is separate.
 
 Acceptance and evidence: `tests/browser_ui/chat/test_workspace_cycle.py`, `test_workspace_iteration.py` and `test_workspace_selection_design.py` in the same folder.
@@ -165,6 +166,9 @@ Use desktop/mobile and both color modes; verify drafts, original file bytes and 
 - Opening a live chip captures its original before editing; passive classification neither captures bytes nor grants new filesystem access.
 - The File Editor header has one copyable Host/path, Comments, Diff and a three-dot menu; choose the comments chat inside the comments sidebar.
 - Notifications follow Comfortable/Compact density, preserve Undo, offer Show read and name archived chats.
+- Feed descriptions show at most two lines with inline More/Less controls; toast shadows retain their paint gutters while stacked notices scroll.
+- Preview footer geometry follows Comfortable/Compact; file size joins Download independently of filename/path metadata.
+- Additional compiled checks: `tests/browser_ui/chat/test_workspace_queue22.py`, `tests/browser_ui/chat/test_media_refinements.py` and `tests/browser_ui/chat/test_transcript_composition22.py`.
 - Hidden Explorer/transcript geometry is retained across chat changes; visible remeasurement restores real dimensions without zero-height cache writes.
 - Sidebar hierarchy omits a chat from Sessions when its loaded ancestor already presents it under a project, while retaining explicit project/pin placement and unknown orphans.
 - Modified Git entries use the inherited amber indicator; other status precedence is unchanged.

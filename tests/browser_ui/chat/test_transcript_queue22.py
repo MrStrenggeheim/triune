@@ -18,7 +18,24 @@ def test_pending_group_receipts_and_permission_copy(
 ) -> None:
     chat = chat_session_contract
     chat.harness = "codex-native"
-    chat.update_session(labels={"omnigent.codex_native.next_turn_permissions_v1": "full-access"})
+    chat.update_session(
+        labels={
+            "omnigent.wrapper": "codex-native-ui",
+            "omnigent.codex_native.next_turn_permissions_v1": "full-access",
+        }
+    )
+    chat.contract.json(
+        f"/v1/sessions/{chat.session_id}/codex_goal",
+        {
+            "goal": {
+                "thread_id": "native-thread",
+                "objective": "Verify the release",
+                "status": "active",
+                "tokens_used": 0,
+                "time_used_seconds": 0,
+            }
+        },
+    )
     page.set_viewport_size({"width": width, "height": 1000})
     page.emulate_media(reduced_motion="reduce", color_scheme="dark" if width < 500 else "light")
     page.add_init_script("localStorage.setItem('omnigent:always-steer', 'true')")
@@ -31,6 +48,18 @@ def test_pending_group_receipts_and_permission_copy(
     chat.wait_for_stream()
     chip = page.get_by_test_id("composer-permission-chip")
     expect(chip).to_have_text("Full Access")
+    goal = page.get_by_test_id("composer-goal-mode")
+    expect(goal).to_be_visible()
+    shelf = page.get_by_test_id("composer-attention-shelf")
+    expect(shelf).to_be_visible()
+    assert shelf.locator('[data-testid="composer-goal-mode"]').count() == 1
+    for density in ("comfortable", "compact"):
+        page.locator("html").evaluate("(node, value) => node.dataset.listDensity = value", density)
+        inset = shelf.evaluate(
+            "node => { const box = node.closest('.composer-shelf-content'); "
+            "return parseFloat(getComputedStyle(box).paddingTop); }"
+        )
+        assert inset == (4 if density == "comfortable" else 2)
     baseline = page.locator('[data-message-id="original"]').bounding_box()
     assert baseline is not None
     chat.emit_busy("busy-turn")

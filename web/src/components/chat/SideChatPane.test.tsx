@@ -1,3 +1,4 @@
+// Modified for Triune; inherited notices remain applicable.
 import { clearSessionDrafts } from "@/lib/sessionDrafts";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { createPortal } from "react-dom";
@@ -111,6 +112,22 @@ afterEach(() => {
   localStorage.clear();
 });
 
+it.each(["", "Unfinished side draft", "  \n "])(
+  "keeps Up Arrow as native caret navigation in side composer: %j",
+  (text) => {
+    localStorage.setItem(
+      `omnigent:prompt-history:${childId}`,
+      JSON.stringify(["Previous side prompt"]),
+    );
+    renderPane(<SideChatPane childId={childId} />);
+    const input = screen.getByTestId("side-chat-input") as HTMLTextAreaElement;
+    fireEvent.change(input, { target: { value: text } });
+    input.setSelectionRange(0, 0);
+    expect(fireEvent.keyDown(input, { key: "ArrowUp" })).toBe(true);
+    expect(input).toHaveValue(text);
+  },
+);
+
 describe("side-chat working indicator", () => {
   it.each([false, true])("groups unread inputs below working (full-session: %s)", (fullSession) => {
     const entry = conversationRegistry.acquire(childId);
@@ -128,10 +145,34 @@ describe("side-chat working indicator", () => {
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     expect(group.querySelectorAll('[data-role="user"]')).toHaveLength(2);
+    const stack = group.parentElement!;
+    expect(stack).toHaveClass("mt-auto");
+    expect(stack.lastElementChild).toBe(group);
+    expect(stack.nextElementSibling).toHaveAttribute("aria-hidden", "true");
+    expect(stack.nextElementSibling).toHaveClass("h-0", "shrink-0");
     act(() => entry.setState({ pendingUserMessages: [pending[1]!] }));
     expect(group.querySelectorAll('[data-role="user"]')).toHaveLength(1);
-    act(() => entry.setState({ pendingUserMessages: [] }));
+    act(() =>
+      entry.setState({
+        pendingUserMessages: [],
+        blocks: itemsToBlocks([
+          {
+            id: "consumed-bottom",
+            response_id: "bottom-turn",
+            type: "message",
+            role: "user",
+            user_authored: true,
+            status: "completed",
+            content: [{ type: "input_text", text: "Consumed bottom message" }],
+          },
+        ]),
+      }),
+    );
     expect(screen.queryByTestId("message-awaiting-agent")).not.toBeInTheDocument();
+    expect(stack.lastElementChild).toBe(screen.getByTestId("working-indicator"));
+    act(() => entry.setState({ sessionStatus: "idle", activeResponse: null, status: "idle" }));
+    expect(screen.queryByTestId("working-indicator")).not.toBeInTheDocument();
+    expect(stack.lastElementChild).toHaveTextContent("Consumed bottom message");
   });
   it("shows the full session history and live state without exposing a read-only composer", () => {
     const entry = conversationRegistry.acquire(childId);
@@ -271,6 +312,34 @@ describe("side chat opened from a text selection", () => {
     await waitFor(() => expect(useChatStore.getState().sideChatDrafts).toEqual({}));
   });
 
+  it("moves a seeded quote into text, undoes it, and retains attached files", () => {
+    const id = "pending:moving";
+    const file = new File(["data"], "notes.txt", { type: "text/plain" });
+    useChatStore.setState({
+      sideChatDrafts: { [id]: "Seed quotation" },
+      sideChatComposers: { [id]: { text: "before after", files: [file] } },
+    });
+    renderPane(<SideChatPane childId={id} onStart={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Move quote 1" }), { detail: 0 });
+    const tail = screen.getByTestId("side-chat-input") as HTMLTextAreaElement;
+    tail.setSelectionRange(7, 7);
+    fireEvent.keyDown(tail, { key: "Enter" });
+    const moved = useChatStore.getState().sideChatComposers[id]!;
+    expect(moved.text).toBe("after");
+    expect(moved.quotes?.[0]).toMatchObject({
+      id: "seed",
+      before: "before ",
+      text: "Seed quotation",
+    });
+    expect(moved.files[0]).toBe(file);
+    expect(useChatStore.getState().sideChatDrafts[id]).toBeUndefined();
+    fireEvent.keyDown(tail, { key: "z", ctrlKey: true });
+    expect(useChatStore.getState().sideChatComposers[id]!.text).toBe("before after");
+    fireEvent.click(screen.getByRole("button", { name: "Remove quote" }));
+    expect(useChatStore.getState().sideChatComposers[id]!.quotes).toHaveLength(0);
+    expect(useChatStore.getState().sideChatComposers[id]!.files[0]).toBe(file);
+  });
+
   it("preserves surrounding replies when quote cards are removed", () => {
     conversationRegistry.acquire(childId).setState({ sessionStatus: "idle" });
     useChatStore.setState({
@@ -382,7 +451,7 @@ describe("side-chat selection reply", () => {
     fireEvent.click(screen.getAllByRole("button", { name: "Remove quote" })[1]);
     const selectedText = "Ask a question here without affecting the main conversation.";
     selectText(screen.getByText(selectedText));
-    fireEvent.click(screen.getByRole("menuitem", { name: "Reply ↵" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Reply" }));
     fireEvent.change(tail, { target: { value: "After the added quote" } });
     act(() => mic.current!.onVoiceDiscard!());
 
@@ -418,7 +487,7 @@ describe("side-chat selection reply", () => {
     act(() => mic.current!.onTranscript("spoken addition"));
     expect(tail).toHaveValue("Tail answer spoken addition");
     selectText(screen.getByText("Ask a question here without affecting the main conversation."));
-    fireEvent.click(screen.getByRole("menuitem", { name: "Reply ↵" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Reply" }));
     fireEvent.change(tail, { target: { value: "After the added quote" } });
     fireEvent.change(screen.getByRole("textbox", { name: "Reply text before quote 1" }), {
       target: { value: "Edited earlier answer" },
@@ -552,12 +621,12 @@ describe("side-chat selection reply", () => {
       const pane = <SideChatPane childId={childId} fullSession={fullSession} />;
       const view = renderPane(pane);
       selectText(screen.getByText("First passage"));
-      fireEvent.click(screen.getByRole("menuitem", { name: "Reply ↵" }));
+      fireEvent.click(screen.getByRole("menuitem", { name: "Reply" }));
       fireEvent.change(screen.getByTestId("side-chat-input"), {
         target: { value: "First answer" },
       });
       selectText(screen.getByText("Second passage"));
-      fireEvent.click(screen.getByRole("menuitem", { name: "Reply ↵" }));
+      fireEvent.click(screen.getByRole("menuitem", { name: "Reply" }));
 
       const between = screen.getByRole("textbox", { name: "Reply text before quote 2" });
       expect(between).toHaveValue("First answer");
@@ -702,7 +771,7 @@ describe("side-chat selection reply", () => {
     });
     renderPane(<SideChatPane childId={childId} />);
     selectText(screen.getByText("Ask a question here without affecting the main conversation."));
-    fireEvent.click(screen.getByRole("menuitem", { name: "Reply ↵" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Reply" }));
 
     expect(useChatStore.getState().sideChatComposers[childId]).toEqual({
       text: "",
@@ -717,7 +786,7 @@ describe("side-chat selection reply", () => {
       ],
     });
     expect(screen.getByTestId("side-chat-input")).toHaveFocus();
-    expect(screen.queryByRole("menuitem", { name: "Reply ↵" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "Reply" })).toBeNull();
     expect(useChatStore.getState().sideChatToOpen).toBeNull();
     expect(send).not.toHaveBeenCalled();
   });
@@ -725,7 +794,7 @@ describe("side-chat selection reply", () => {
   it("does not offer Reply in a read-only side chat", () => {
     renderPane(<SideChatPane childId={childId} readOnly />);
     selectText(screen.getByText("This side chat has ended and can’t be continued."));
-    expect(screen.queryByRole("menuitem", { name: "Reply ↵" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "Reply" })).toBeNull();
   });
 
   it("does not offer Reply while a side chat is starting", () => {
@@ -734,7 +803,7 @@ describe("side-chat selection reply", () => {
     });
     renderPane(<SideChatPane childId="pending:starting" />);
     selectText(screen.getByTestId("working-indicator"));
-    expect(screen.queryByRole("menuitem", { name: "Reply ↵" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "Reply" })).toBeNull();
   });
 });
 

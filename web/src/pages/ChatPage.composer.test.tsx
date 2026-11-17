@@ -167,11 +167,18 @@ vi.mock("@/hooks/useHosts", async (importOriginal) => ({
   useHosts: () => ({ data: [] }),
 }));
 const { hostMcpQueryMock } = vi.hoisted(() => ({
-  hostMcpQueryMock: vi.fn(() => ({
-    data: [] as UseHarnessInventoryModule.HostMcpServer[] | undefined,
-    isLoading: false,
-    isError: false,
-  })),
+  hostMcpQueryMock: vi.fn(
+    (): {
+      data: UseHarnessInventoryModule.HostMcpServer[] | undefined;
+      isLoading: boolean;
+      isError: boolean;
+      isFetching?: boolean;
+    } => ({
+      data: [] as UseHarnessInventoryModule.HostMcpServer[] | undefined,
+      isLoading: false,
+      isError: false,
+    }),
+  ),
 }));
 vi.mock("@/hooks/useHarnessInventory", async (importOriginal) => ({
   ...(await importOriginal<typeof UseHarnessInventoryModule>()),
@@ -3762,7 +3769,12 @@ describe("Composer MCP status command", () => {
         : [];
       composerSessionSnapshot.hostId = "host_native";
       setComposerState({ boundAgentId: "agent_native", sessionHarness: "codex-native" });
-      hostMcpQueryMock.mockReturnValue({ data: undefined, isLoading: true, isError: false });
+      hostMcpQueryMock.mockReturnValue({
+        data: undefined,
+        isLoading: true,
+        isFetching: true,
+        isError: false,
+      });
       const props = composerProps({
         agents: [{ id: "agent_native", name: "Native agent", mcp_servers: mcpServers }],
       });
@@ -3772,7 +3784,9 @@ describe("Composer MCP status command", () => {
         </MemoryRouter>,
       );
       fireEvent.change(textarea(), { target: { value: "/mcp" } });
-      expect(screen.getByRole("status")).toHaveTextContent("Loading MCP servers…");
+      expect(screen.getByRole("status")).toHaveTextContent(
+        hasAgentServers ? "Refreshing MCP servers…" : "Loading MCP servers…",
+      );
       if (mcpServers.length)
         expect(screen.getByTestId("mcp-server-menu")).toHaveTextContent("known-agent-server");
       unmount();
@@ -3981,7 +3995,12 @@ describe("Composer MCP status command", () => {
       expect(panel).toHaveTextContent("Host MCP servers unavailable");
       expect(panel).not.toHaveTextContent("No MCP servers enabled");
 
-      hostMcpQueryMock.mockReturnValue({ data: undefined, isLoading: true, isError: false });
+      hostMcpQueryMock.mockReturnValue({
+        data: undefined,
+        isLoading: true,
+        isFetching: true,
+        isError: false,
+      });
       act(() => setSessionHost("conv_mcp", "late-host"));
       expect(hostMcpQueryMock).toHaveBeenLastCalledWith("late-host", true, expect.any(Function));
       expect(panel).toHaveTextContent("Loading MCP servers…");
@@ -4796,9 +4815,7 @@ describe("Composer reply quotes", () => {
     act(() => ref.current?.appendReplyQuote("First point"));
     expect(textarea()).toHaveValue("");
     expect(screen.getByLabelText("Reply text before quote 1")).toHaveValue("My introduction");
-    expect(
-      screen.getByTestId("composer-reply-quote").querySelector("blockquote"),
-    ).toHaveTextContent("First point");
+    expect(screen.getByTestId("composer-reply-quote")).toHaveTextContent("First point");
     expect(screen.getByRole("button", { name: "Remove quote" })).toBeEnabled();
 
     fireEvent.change(textarea(), {
@@ -4924,7 +4941,7 @@ describe("Composer reply quotes", () => {
     expect(getSessionDraft("conv_test")?.text).toBe(
       "Draft\n\n> Quoted line\n> \n> Another paragraph",
     );
-    expect(screen.getByTestId("composer-reply-quote").querySelector("blockquote")).toHaveAttribute(
+    expect(screen.getByTestId("composer-reply-quote")).toHaveAttribute(
       "title",
       "Quoted line\n\nAnother paragraph",
     );
@@ -5105,8 +5122,6 @@ describe("Composer reply quotes", () => {
       JSON.stringify([{ text: serializeReplyDraft(replyDraft), replyDraft }]),
     );
     render(<Composer {...composerProps()} />);
-    fireEvent.change(textarea(), { target: { value: "Draft from before recall" } });
-    textarea().setSelectionRange(0, 0);
     fireEvent.keyDown(textarea(), { key: "ArrowUp" });
     fireEvent.click(screen.getByRole("button", { name: "Remove quote" }));
     const edited = "Introduction\n\nAnswer to keep";
@@ -5120,8 +5135,6 @@ describe("Composer reply quotes", () => {
   it("exits history recall on the first manual text edit", () => {
     localStorage.setItem("omnigent:prompt-history:conv_test", JSON.stringify(["Older prompt"]));
     render(<Composer {...composerProps()} />);
-    fireEvent.change(textarea(), { target: { value: "Draft from before recall" } });
-    textarea().setSelectionRange(0, 0);
     fireEvent.keyDown(textarea(), { key: "ArrowUp" });
     expect(textarea()).toHaveValue("Older prompt");
     const edited = "My edited prompt";
@@ -6377,6 +6390,68 @@ describe("Composer — queued-message flush gating", () => {
   });
 });
 
+describe("Composer — safe Up Arrow recall", () => {
+  const conversationId = "conv_safe_recall";
+  beforeEach(() => {
+    clearSessionDrafts();
+    localStorage.removeItem(`omnigent:prompt-history:${conversationId}`);
+    useChatStore.setState({
+      conversationId,
+      queuedMessages: [],
+      sessionStatus: "idle",
+      status: "idle",
+    });
+    appendPromptHistoryEntry("Older prompt", conversationId);
+    appendPromptHistoryEntry("Latest prompt", conversationId);
+  });
+  afterEach(() => {
+    cleanup();
+    clearSessionDrafts();
+    localStorage.removeItem(`omnigent:prompt-history:${conversationId}`);
+  });
+
+  it.each([
+    { text: "Unfinished draft", start: 0, end: 0, restored: false },
+    { text: "Unfinished draft", start: 5, end: 5, restored: false },
+    { text: "Unfinished draft", start: 16, end: 16, restored: false },
+    { text: "First line\nSecond line", start: 0, end: 0, restored: false },
+    { text: "First line\nSecond line", start: 12, end: 12, restored: false },
+    { text: "  \n ", start: 0, end: 0, restored: false },
+    { text: "Selected text", start: 0, end: 8, restored: false },
+    { text: "Restored draft", start: 0, end: 0, restored: true },
+  ])(
+    "preserves nonempty authored text and native arrow handling: %o",
+    ({ text, start, end, restored }) => {
+      if (restored) setSessionDraft(conversationId, { text, files: [] });
+      render(<Composer {...composerProps()} />);
+      const input = textarea();
+      if (!restored) fireEvent.change(input, { target: { value: text } });
+      input.setSelectionRange(start, end);
+      expect(fireEvent.keyDown(input, { key: "ArrowUp" })).toBe(true);
+      expect(input).toHaveValue(text);
+    },
+  );
+
+  it("recalls into an empty composer once and preserves the recalled draft on repeated Up", () => {
+    render(<Composer {...composerProps()} />);
+    expect(fireEvent.keyDown(textarea(), { key: "ArrowUp" })).toBe(false);
+    expect(textarea()).toHaveValue("Latest prompt");
+    textarea().setSelectionRange(0, 0);
+    expect(fireEvent.keyDown(textarea(), { key: "ArrowUp" })).toBe(true);
+    expect(textarea()).toHaveValue("Latest prompt");
+  });
+
+  it("preserves quote context when its active text field is empty", () => {
+    const ref = createRef<ComponentRef<typeof Composer>>();
+    render(<Composer {...composerProps()} ref={ref} />);
+    act(() => ref.current?.appendReplyQuote("Captured source context"));
+    expect(textarea()).toHaveValue("");
+    expect(fireEvent.keyDown(textarea(), { key: "ArrowUp" })).toBe(true);
+    expect(screen.getByTestId("composer-reply-quote")).toHaveTextContent("Captured source context");
+    expect(textarea()).toHaveValue("");
+  });
+});
+
 describe("Composer — editing queued messages", () => {
   const CONV = "conv_uparrow_edit";
   const QUEUED_TEXT = "queued follow-up recalled for editing";
@@ -6595,7 +6670,7 @@ describe("Composer — editing queued messages", () => {
     expect(props.onSend).toHaveBeenCalledWith(QUEUED_TEXT, [file]);
   });
 
-  it("browsing history over a non-empty draft leaves the queued row alone", async () => {
+  it("Up Arrow preserves a non-empty draft and leaves the queued row alone", () => {
     appendPromptHistoryEntry(QUEUED_TEXT, CONV);
     renderWithTooltips(<Composer {...composerProps()} />);
 
@@ -6604,7 +6679,7 @@ describe("Composer — editing queued messages", () => {
     ta.setSelectionRange(0, 0);
     fireEvent.keyDown(ta, { key: "ArrowUp" });
 
-    await waitFor(() => expect(textarea().value).toBe(QUEUED_TEXT));
+    expect(textarea()).toHaveValue("half-typed draft");
     expect(useChatStore.getState().queuedMessages).toHaveLength(1);
   });
 

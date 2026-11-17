@@ -1,6 +1,6 @@
 // Triune additions: PolyForm Noncommercial 1.0.0; see LICENSING.md.
 // Required Notice: Copyright 2026 MrStrenggeheim. Triune (https://github.com/MrStrenggeheim/triune).
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronRightIcon, GaugeIcon } from "lucide-react";
 import { HeaderActionButton } from "@/components/HeaderActionButton";
 import { Button } from "@/components/ui/button";
@@ -11,6 +11,7 @@ import { useRuntimeNotices, type RuntimeQuota } from "@/hooks/useRuntimeNotices"
 import { formatSessionCostUsd, formatTokenCount } from "@/lib/formatCost";
 import type { ModelUsage } from "@/lib/types";
 import { useConversationChatStore } from "@/workbench/ScopedChatStore";
+import { sessionMetadataAuthority } from "@/lib/sessionsApi";
 
 function recordedNumber(value: number | null | undefined): number | null {
   return value != null && Number.isFinite(value) && value >= 0 ? value : null;
@@ -335,7 +336,7 @@ function UsagePopover({
       >
         {error && (
           <div role="alert" className="flex items-center gap-[var(--popup-text-gap)] text-sm">
-            <span>Could not refresh provider usage.</span>
+            <span>Could not refresh usage.</span>
             <Button variant="ghost" size="xs" disabled={refreshing} onClick={onRefresh}>
               Retry
             </Button>
@@ -369,20 +370,43 @@ export function ConversationHeaderStatus({
   const readable = permissionLevel == null || permissionLevel >= 1;
   const observations = useRuntimeNotices(conversationId, active && readable);
   const useStore = useConversationChatStore();
-  const [usageError, setUsageError] = useState(false);
-  const [usageRefreshing, setUsageRefreshing] = useState(false);
-  useEffect(() => setUsageError(false), [conversationId]);
-  const refreshUsage = () => {
-    if (usageRefreshing) return;
-    setUsageRefreshing(true);
+  const authority = sessionMetadataAuthority();
+  const owner = useMemo(() => ({ conversationId, authority }), [conversationId, authority]);
+  const currentOwner = useRef<typeof owner | null>(owner);
+  currentOwner.current = owner;
+  const pendingUsage = useRef<{ owner: typeof owner } | null>(null);
+  const [usageState, setUsageState] = useState({ owner, error: false, refreshing: false });
+  const usageError = usageState.owner === owner && usageState.error;
+  const usageRefreshing = usageState.owner === owner && usageState.refreshing;
+  useEffect(() => {
+    currentOwner.current = owner;
+    return () => {
+      if (currentOwner.current === owner) currentOwner.current = null;
+    };
+  }, [owner]);
+  const refreshUsage = (force = false) => {
+    if (pendingUsage.current?.owner === owner) return;
+    const request = { owner };
+    pendingUsage.current = request;
+    setUsageState({ owner, error: usageError, refreshing: true });
+    const current = () =>
+      currentOwner.current === owner &&
+      pendingUsage.current === request &&
+      sessionMetadataAuthority() === owner.authority;
     void useStore
       .getState()
-      .refreshSessionUsage(conversationId)
+      .refreshSessionUsage(conversationId, force ? { force: true } : undefined)
       .then(
-        () => setUsageError(false),
-        () => setUsageError(true),
+        () => {
+          if (current()) setUsageState({ owner, error: false, refreshing: false });
+        },
+        () => {
+          if (current()) setUsageState({ owner, error: true, refreshing: false });
+        },
       )
-      .finally(() => setUsageRefreshing(false));
+      .finally(() => {
+        if (pendingUsage.current === request) pendingUsage.current = null;
+      });
   };
   if (!readable || observations.accessDenied) return null;
   return (
@@ -407,7 +431,7 @@ export function ConversationHeaderStatus({
         }}
         onRefresh={() => {
           void observations.refetch();
-          refreshUsage();
+          refreshUsage(true);
         }}
         refreshing={observations.isFetching || usageRefreshing}
       />

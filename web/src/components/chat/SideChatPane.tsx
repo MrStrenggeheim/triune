@@ -94,6 +94,8 @@ import { parentIdFromLabels } from "@/lib/sessionHost";
 import {
   appendReplyQuote,
   removeReplyQuote,
+  moveReplyQuote,
+  type ReplyDraft,
   restoreReplyDraft,
   serializeReplyDraft,
   snapshotReplyDraft,
@@ -346,12 +348,13 @@ export function SideChatPane({
               variant="ghost"
               size="sm"
               disabled={state.loadingMoreHistory}
+              loading={state.loadingMoreHistory}
               onClick={() => {
                 followTail.current = false;
                 void useChatStore.getState().loadMoreHistory(childId);
               }}
             >
-              {state.loadingMoreHistory ? "Loading…" : "Load earlier messages"}
+              Load earlier messages
             </Button>
           )}
           {loadFailed ? (
@@ -386,20 +389,22 @@ export function SideChatPane({
               )}
             </div>
           ) : (
-            <div className="flex flex-col gap-4">
-              {streamBubbles.map((bubble, index) => (
-                <BubbleView
-                  key={bubbleKey(bubble)}
-                  bubble={bubble}
-                  isLastAssistant={index === lastAssistantIndex}
-                  showsWorking={showsWorking}
-                  recoveryDisabled={readOnly}
-                />
-              ))}
-              {shouldShowWorkingIndicator(showsWorking, bubbles) && <WorkingIndicator />}
-              <AwaitingAgentMessages bubbles={awaitingAgentBubbles} />
-              <div ref={bottomRef} />
-            </div>
+            <>
+              <div className="mt-auto flex shrink-0 flex-col gap-4">
+                {streamBubbles.map((bubble, index) => (
+                  <BubbleView
+                    key={bubbleKey(bubble)}
+                    bubble={bubble}
+                    isLastAssistant={index === lastAssistantIndex}
+                    showsWorking={showsWorking}
+                    recoveryDisabled={readOnly}
+                  />
+                ))}
+                {shouldShowWorkingIndicator(showsWorking, bubbles) && <WorkingIndicator />}
+                <AwaitingAgentMessages bubbles={awaitingAgentBubbles} />
+              </div>
+              <div ref={bottomRef} className="h-0 shrink-0" aria-hidden="true" />
+            </>
           )}
         </div>
         {!readOnly && !starting && (
@@ -672,6 +677,11 @@ function SideChatComposer({
     ...(quote === undefined ? [] : [{ id: "seed", before: "", text: quote }]),
     ...(composer?.quotes ?? []),
   ];
+  const quoteMoves = useRef<{
+    childId: string;
+    moves: { before: ReplyDraft; after: ReplyDraft }[];
+  }>({ childId, moves: [] });
+  if (quoteMoves.current.childId !== childId) quoteMoves.current = { childId, moves: [] };
   useAutoGrowTextarea(tailTextareaRef, text, quotes.length ? Infinity : 10);
   const autoSend = pending ? undefined : draft;
   useEffect(() => {
@@ -1063,6 +1073,37 @@ function SideChatComposer({
                 activeTextId={activeTextId}
                 keyboard={{ submitWithModEnter: false, preventsKeyboardSubmit: false }}
                 disabled={!ready}
+                onMove={(id, target, offset) => {
+                  const before = { quotes, text };
+                  const after = moveReplyQuote(before, id, target, offset);
+                  if (before === after) return;
+                  quoteMoves.current.moves = [
+                    ...quoteMoves.current.moves.slice(-19),
+                    { before, after },
+                  ];
+                  updateComposer(childId, (current) => ({ ...current, ...after }));
+                  if (quote !== undefined) clearSideChatDraft(childId);
+                  setActiveTextId(id);
+                }}
+                onUndoMove={() => {
+                  const move = quoteMoves.current.moves.at(-1);
+                  const current = useChatStore.getState().sideChatComposers[childId];
+                  if (
+                    !move ||
+                    !current ||
+                    current.quotes?.length !== move.after.quotes.length ||
+                    current.quotes.some(
+                      (item, index) => item.id !== move.after.quotes[index]?.id,
+                    ) ||
+                    serializeReplyDraft({ ...current, quotes: current.quotes }) !==
+                      serializeReplyDraft(move.after)
+                  )
+                    return false;
+                  quoteMoves.current.moves.pop();
+                  updateComposer(childId, (latest) => ({ ...latest, ...move.before }));
+                  setActiveTextId(null);
+                  return true;
+                }}
                 inputFor={(replyQuote) => ({
                   onChange: (event) => editText(replyQuote.id, event.target.value),
                   onFocus: (event) => focusText(replyQuote.id, event.currentTarget),
@@ -1070,7 +1111,8 @@ function SideChatComposer({
                   onPaste,
                 })}
                 onRemove={(id) => {
-                  if (id === "seed") clearSideChatDraft(childId);
+                  quoteMoves.current.moves = [];
+                  if (id === "seed" && quote !== undefined) clearSideChatDraft(childId);
                   else
                     updateComposer(childId, (current) => ({
                       ...current,

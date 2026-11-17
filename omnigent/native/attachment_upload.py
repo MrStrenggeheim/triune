@@ -1,3 +1,4 @@
+# Modified for Triune; inherited notices remain applicable.
 """Explicit native-agent attachments: upload bytes read under the caller's OS permissions."""
 
 from __future__ import annotations

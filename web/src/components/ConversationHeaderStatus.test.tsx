@@ -15,6 +15,7 @@ vi.mock("@/lib/identity", () => ({
   getCurrentUserId: () => "header-status-viewer",
 }));
 const fetch = vi.mocked(authenticatedFetch);
+const originalRefreshSessionUsage = useChatStore.getState().refreshSessionUsage;
 let client: QueryClient;
 const quota = {
   id: "quota-primary",
@@ -52,6 +53,7 @@ beforeEach(() => {
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   fetch.mockReset().mockResolvedValue(Response.json({ data: [], quotas: [quota] }));
   useChatStore.setState({
+    refreshSessionUsage: vi.fn().mockResolvedValue(undefined),
     conversationId: "header-chat",
     tokensUsed: 100,
     contextWindow: 1000,
@@ -63,6 +65,7 @@ afterEach(() => {
   cleanup();
   client.clear();
   vi.restoreAllMocks();
+  useChatStore.setState({ refreshSessionUsage: originalRefreshSessionUsage });
 });
 
 it("keeps Usage reachable without Notices and separates context, accounting and quota units", async () => {
@@ -121,10 +124,49 @@ it("refreshes stale observations on open and reuses fresh data on immediate reop
     fireEvent.click(screen.getByRole("button", { name: "Usage" }));
     await waitFor(() => expect(screen.getByText("45% used")).toBeVisible());
     expect(fetch).toHaveBeenCalledTimes(2);
-    expect(refreshUsage).toHaveBeenCalledWith("header-chat");
+    expect(refreshUsage).toHaveBeenCalledWith("header-chat", undefined);
     fireEvent.keyDown(document.body, { key: "Escape" });
     fireEvent.click(screen.getByRole("button", { name: "Usage" }));
     expect(fetch).toHaveBeenCalledTimes(2);
+  } finally {
+    useChatStore.setState({ refreshSessionUsage: original });
+  }
+});
+
+it("fences usage feedback to its chat and forces explicit retry", async () => {
+  fetch.mockImplementation(async () => Response.json({ data: [], quotas: [quota] }));
+  let rejectOld!: (error: Error) => void;
+  let rejectNew!: (error: Error) => void;
+  const oldRead = new Promise<void>((_resolve, reject) => {
+    rejectOld = reject;
+  });
+  const newRead = new Promise<void>((_resolve, reject) => {
+    rejectNew = reject;
+  });
+  const refreshUsage = vi
+    .fn()
+    .mockReturnValueOnce(oldRead)
+    .mockReturnValueOnce(newRead)
+    .mockResolvedValue(undefined);
+  const original = useChatStore.getState().refreshSessionUsage;
+  useChatStore.setState({ refreshSessionUsage: refreshUsage });
+  try {
+    const view = render(<ConversationHeaderStatus conversationId="header-chat" />, { wrapper });
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole("button", { name: "Usage" }));
+    expect(refreshUsage).toHaveBeenCalledTimes(1);
+    view.rerender(<ConversationHeaderStatus conversationId="new-chat" />);
+    fireEvent.click(screen.getByRole("button", { name: "Usage" }));
+    await waitFor(() => expect(refreshUsage).toHaveBeenCalledTimes(2));
+    await act(async () => rejectOld(new Error("Old chat failed")));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    fireEvent.click(screen.getByRole("button", { name: "Usage" }));
+    expect(refreshUsage).toHaveBeenCalledTimes(2);
+    await act(async () => rejectNew(new Error("Current read failed")));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(refreshUsage).toHaveBeenLastCalledWith("new-chat", { force: true });
   } finally {
     useChatStore.setState({ refreshSessionUsage: original });
   }
@@ -397,7 +439,7 @@ it("keeps Usage read-only, retries failures and renders only known observation f
   render(<ConversationHeaderStatus conversationId="header-chat" />, { wrapper });
   await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
   fireEvent.click(screen.getByRole("button", { name: "Usage" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent("Could not refresh provider usage.");
+  expect(await screen.findByRole("alert")).toHaveTextContent("Could not refresh usage.");
   expect(document.body).not.toHaveTextContent("private-provider-detail");
   fetch.mockResolvedValueOnce(Response.json({ data: [], quotas: [secretQuota] }));
   fireEvent.click(screen.getByRole("button", { name: "Retry" }));

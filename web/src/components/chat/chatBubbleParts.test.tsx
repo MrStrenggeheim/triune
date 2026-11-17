@@ -8,7 +8,12 @@ import type { Bubble } from "@/lib/renderItems";
 import { useChatStore, type ChatState } from "@/store/chatStore";
 import { conversationRegistry } from "@/store/conversationRegistry";
 import { ForkDialogContextProvider } from "@/shell/ForkDialogContext";
-import { BubbleView, buildPendingBubbles, containsMermaidDiagram } from "./chatBubbleParts";
+import {
+  BubbleView,
+  bubbleKey,
+  buildPendingBubbles,
+  containsMermaidDiagram,
+} from "./chatBubbleParts";
 import { MemoryRouter } from "react-router-dom";
 import type { MessageCommunication } from "@/lib/messageCommunication";
 import { itemsToBlocks } from "@/lib/itemsToBlocks";
@@ -20,6 +25,78 @@ import type { ElicitationBlock } from "@/lib/blocks";
 const fetchMock = vi.fn();
 const initialStoreState = useChatStore.getState();
 const continuation = "Please continue from where you left off.";
+
+it.each([false, true])("renders one exact interruption marker in scoped pane: %s", (scoped) => {
+  const childId = "interrupt-child";
+  const client = new QueryClient();
+  const partial = {
+    type: "message" as const,
+    id: "partial",
+    role: "assistant" as const,
+    response_id: "interrupted-turn",
+    status: "completed" as const,
+    interrupted: true,
+    content: [{ type: "output_text" as const, text: "Partial work" }],
+  };
+  const marker = {
+    type: "message" as const,
+    id: "marker",
+    role: "user" as const,
+    response_id: "interrupted-turn",
+    status: "completed" as const,
+    is_meta: true,
+    content: [{ type: "input_text" as const, text: "[System: interrupted]" }],
+  };
+  const view = (human: boolean, responseId = "interrupted-turn") => {
+    const blocks = itemsToBlocks([
+      partial,
+      {
+        ...marker,
+        is_meta: !human,
+        user_authored: human,
+        response_id: responseId,
+        ...(!human
+          ? {
+              communication: {
+                kind: "system" as const,
+                message_id: "marker",
+                destination_conversation_id: scoped ? childId : "conv_retry",
+                delivery_state: "confirmed" as const,
+              },
+            }
+          : {}),
+      },
+    ]);
+    if (scoped) conversationRegistry.acquire(childId).setState({ blocks, sessionStatus: "idle" });
+    else useChatStore.setState({ blocks, sessionStatus: "idle" });
+    return (
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <ConversationScopeContext.Provider value={scoped ? childId : null}>
+            {buildBubbles(blocks, null).map((bubble) => (
+              <BubbleView key={bubbleKey(bubble)} bubble={bubble} />
+            ))}
+          </ConversationScopeContext.Provider>
+        </MemoryRouter>
+      </QueryClientProvider>
+    );
+  };
+  try {
+    const rendered = render(view(false));
+    expect(screen.getAllByTestId("system-message")).toHaveLength(1);
+    expect(screen.queryByTestId("assistant-interrupted-indicator")).not.toBeInTheDocument();
+    rendered.rerender(view(true));
+    expect(screen.getByTestId("assistant-interrupted-indicator")).toBeInTheDocument();
+    expect(screen.getAllByTestId("system-message")).toHaveLength(1);
+    rendered.rerender(view(false, "different-turn"));
+    expect(screen.getByTestId("assistant-interrupted-indicator")).toBeInTheDocument();
+    expect(screen.getAllByTestId("system-message")).toHaveLength(2);
+  } finally {
+    cleanup();
+    conversationRegistry.clear();
+    client.clear();
+  }
+});
 
 describe("question batch composition", () => {
   it.each(["pending", "responded"] as const)(
@@ -1050,7 +1127,7 @@ it("renders a restored pending peer with attribution instead of a human bubble",
       </ConversationScopeContext.Provider>
     </MemoryRouter>,
   );
-  expect(screen.getByText("Agent", { selector: "strong" })).toBeInTheDocument();
+  expect(screen.getByText("Reviewer", { selector: "strong" })).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "Reviewer" })).toHaveAttribute("href", "/c/source");
   expect(screen.queryByText(/Unconfirmed|accepted/)).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Copy link" })).not.toBeInTheDocument();

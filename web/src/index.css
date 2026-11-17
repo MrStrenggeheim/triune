@@ -1981,6 +1981,12 @@ html[data-electron-mac] .breadcrumb-folder {
   }
 }
 
+/* Center SVG loaders independently of surrounding surface geometry. */
+svg.animate-spin {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
 /* Global reduced-motion gate. The two scoped blocks above keep their
  * static-state declarations (class specificity beats * for those visible
  * properties); this universal rule collapses every other transition-* and

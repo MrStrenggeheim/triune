@@ -1,3 +1,4 @@
+// Modified for Triune; inherited notices remain applicable.
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { ComposerAddMenu } from "./ComposerAddMenu";

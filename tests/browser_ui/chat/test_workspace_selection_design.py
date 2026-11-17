@@ -13,6 +13,7 @@ import pytest
 from playwright.sync_api import Locator, Page, Request, Route, expect
 
 from tests.browser_ui.chat.session_contract import list_payload, message_item
+from tests.browser_ui.chat.test_iteration6 import _navigation
 from tests.browser_ui.chat.test_unified_workspace import (
     WorkspaceJourney,
     _capture,
@@ -276,9 +277,7 @@ def test_uploaded_artifact_fence_retains_appearance_state_and_originals(
     _capture(page, str(evidence), "artifact-uploaded-interactive-tail")
 
     _close_navigation(page)
-    page.get_by_role("banner", name="Application").get_by_role(
-        "button", name="Settings", exact=True
-    ).click()
+    _navigation(page).get_by_test_id("settings-button").click()
     if width < 768:
         page.get_by_role("combobox", name="Settings section", exact=True).click()
         page.get_by_role("option", name="Appearance", exact=True).click()
@@ -762,7 +761,7 @@ def test_settings_from_closed_navigation_retains_draft_and_approved_chrome(
     for name, width, height in (("desktop", 1440, 1000), ("phone", 390, 844)):
         page.set_viewport_size({"width": width, "height": height})
         _close_navigation(page)
-        appbar.get_by_role("button", name="Settings", exact=True).click()
+        _navigation(page).get_by_test_id("settings-button").click()
         expect(page).to_have_url(
             re.compile(re.escape(chat.contract.base_url) + r"/settings(?:/general)?$")
         )

@@ -7,9 +7,11 @@ import re
 from pathlib import Path
 from typing import Any
 
+import pytest
 from playwright.sync_api import Page, Route, expect
 
 from tests.browser_ui.chat.session_contract import ChatSessionContract, list_payload
+from tests.browser_ui.chat.test_bottom_spacing23 import record_side_tail_geometry
 
 
 def test_runnerless_side_chat_sends_from_its_direct_url(
@@ -189,6 +191,8 @@ def test_side_chat_resume_conflict_refetches_metadata_and_seals_pane(
     resume = page.get_by_role("button", name="Resume session", exact=True)
     expect(resume).to_be_visible(timeout=10_000)
     expect(page.get_by_text("Parent remains usable.")).to_be_visible()
+    before_spacing = record_side_tail_geometry(page)
+    (artifacts / "side-before-geometry.json").write_text(json.dumps(before_spacing, indent=2))
     page.screenshot(path=str(artifacts / "side-chat-before.png"), full_page=True)
     metadata_gets_before = len(child_gets)
 
@@ -208,4 +212,8 @@ def test_side_chat_resume_conflict_refetches_metadata_and_seals_pane(
     assert retry_posts == [{"type": "retry_session", "data": {}}]
     assert len(child_gets) > metadata_gets_before
     assert child_gets[-1]["labels"] == {"omnigent.closed": "true"}
+    after_spacing = record_side_tail_geometry(page)
+    (artifacts / "side-after-geometry.json").write_text(json.dumps(after_spacing, indent=2))
+    for geometry in (before_spacing, after_spacing):
+        assert geometry["viewportGap"] == pytest.approx(geometry["padding"], abs=2), geometry
     page.screenshot(path=str(artifacts / "side-chat-after.png"), full_page=True)

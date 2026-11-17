@@ -1,3 +1,4 @@
+# Modified for Triune; inherited notices remain applicable.
 """Native attachment uploads forward original bytes, not local path authority."""
 
 import base64

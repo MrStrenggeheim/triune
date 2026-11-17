@@ -196,7 +196,7 @@ function PeerMessageContent({
 
   return (
     <article
-      className="group min-w-0 text-sm"
+      className={cn("group min-w-0 text-sm", flashing && "animate-message-highlight")}
       data-testid="peer-message"
       data-direction={outgoing ? "sent" : "received"}
       data-message-id={itemId}
@@ -300,25 +300,7 @@ function PeerMessageContent({
                   }
                 />
               }
-              summary={
-                relatedDisplay.preview ? (
-                  <span>{preview}</span>
-                ) : (
-                  <ConversationScopeContext.Provider value={messageConversationId ?? null}>
-                    <FilePathAwareMessageResponse
-                      sourceItemId={itemId}
-                      breaks
-                      mode="static"
-                      className={cn(
-                        "text-sm leading-5 [&>*]:my-0 [&_p]:my-0 [&_p]:leading-5",
-                        flashing && "animate-message-highlight",
-                      )}
-                    >
-                      {preview}
-                    </FilePathAwareMessageResponse>
-                  </ConversationScopeContext.Provider>
-                )
-              }
+              summary={preview}
             >
               <ConversationScopeContext.Provider value={messageConversationId ?? null}>
                 <FilePathAwareMessageResponse

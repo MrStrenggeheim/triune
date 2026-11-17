@@ -13,6 +13,8 @@ Uploaded HTML renders inline through an explicit artifact fence and in the exist
 - `retention`: hidden retained frames keep context while supported timer/animation work pauses.
 - `isolation`: an opaque sandbox prevents app DOM, cookie and storage access; external networking remains blocked.
 - `states`: missing files, denied access, malformed references, loading and document errors remain visible.
+- `usable-height`: inline documents receive the current usable body limit through `TriuneArtifact.maximumBodyHeight` and `--ta-max-body-height`; shorter documents keep natural height.
+- `dedicated-header`: HTML and SVG dedicated preview views reuse one outer header for source/preview and their downloads; inline artifacts retain their own controls.
 
 ## How to get to it (user POV)
 

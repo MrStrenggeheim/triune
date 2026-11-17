@@ -5,6 +5,10 @@ While running, its hover and dropdown add only “Only applies next turn”; the
 An active Goal appears after Plan in the attention shelf, including when it is the shelf's only resource.
 Unread native follow-ups sit below the working indicator under one shared hint, then return above it on individual consumption receipts.
 The header Usage menu refreshes stale observations/accounting on opening while retaining current values.
+Quote rows use square full-width surfaces with internal controls; drag or keyboard placement moves an atomic quote to an authored-text caret and supports guarded undo.
+Up Arrow recalls history only into an empty draft; nonempty and quoted drafts retain ordinary caret navigation.
+Nonempty short transcripts align to their bottom with normal padding; reload, pending receipts and completion never reserve blank trailing turn-framing space.
+Quote and bottom-spacing browser checks: `tests/browser_ui/chat/test_quote_movement.py` and `tests/browser_ui/chat/test_bottom_spacing23.py`.
 Compiled transition checks: `tests/browser_ui/chat/test_transcript_queue22.py` covers desktop/phone pending receipts, reload and permission captions, plus fixed-height tool expansion.
 Component checks: `ConversationHeaderStatus.test.tsx`, `ComposerAttentionShelf.test.tsx`, `ComposerControls.test.tsx`, `Transcript.virtualList.test.tsx` and `SideChatPane.test.tsx` cover the shared owners and native-find path.
 

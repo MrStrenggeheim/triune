@@ -1441,7 +1441,7 @@ export interface ChatActions {
    * snapshot. No-ops for inactive or missing conversations.
    */
   refreshSessionState: (conversationId?: string) => Promise<void>;
-  refreshSessionUsage: (conversationId?: string) => Promise<void>;
+  refreshSessionUsage: (conversationId?: string, options?: { force?: boolean }) => Promise<void>;
   /** Dismiss the too-many-tabs banner for the current over-budget episode. */
   dismissStreamBudgetBanner: () => void;
   /** Hide the launch's `action_required` banner while the launch keeps asking for *details*. */
@@ -1470,9 +1470,24 @@ let queryClient: QueryClient | null = null;
 const streamEventRevisions = new Map<string, number>();
 conversationRegistry.subscribeDisposed((id) => streamEventRevisions.delete(id));
 
-// Reconnects share a binding; only one usage request may hydrate it at a time.
-const sessionUsageHydrations = new WeakSet<AbortController>();
-const sessionUsageHydrationTimes = new WeakMap<AbortController, number>();
+// One read per entry and authority; menu reads remain independent of transcript liveness.
+interface SessionUsageRead {
+  entry: ConversationEntry;
+  controller: AbortController;
+  promise: Promise<void>;
+  scope: string;
+  authority: string;
+  fetcher: ReturnType<typeof getOmnigentHostConfig>["fetcher"];
+}
+const sessionUsageHydrations = new Map<string, SessionUsageRead>();
+const sessionUsageHydrationTimes = new WeakMap<
+  ConversationEntry,
+  Omit<SessionUsageRead, "entry" | "controller" | "promise"> & { at: number }
+>();
+conversationRegistry.subscribeDisposed((id) => {
+  sessionUsageHydrations.get(id)?.controller.abort();
+  sessionUsageHydrations.delete(id);
+});
 const sessionUsageRevisions = new WeakMap<ConversationEntry, { cost: number; models: number }>();
 
 // Snapshot reconciliation must teach the already-running stream pump which
@@ -4065,9 +4080,9 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
     });
   },
 
-  refreshSessionUsage: async (conversationId) => {
+  refreshSessionUsage: async (conversationId, options) => {
     const id = conversationId ?? get().conversationId;
-    if (id) await hydrateSessionUsage(id, true);
+    if (id) await hydrateSessionUsage(id, true, options?.force);
   },
 
   setEffort: async (effort, targetId) => {
@@ -5905,53 +5920,80 @@ async function bindStream(
 }
 
 /** Hydrate display-only subtree totals without delaying session reconciliation. */
-async function hydrateSessionUsage(id: string, reportFailure = false): Promise<void> {
+async function hydrateSessionUsage(
+  id: string,
+  reportFailure = false,
+  force = false,
+): Promise<void> {
   const entry = conversationRegistry.peek(id);
   const before = entry?.getState();
-  const controller = before?.abortController;
+  const binding = before?.abortController;
   if (
-    entry === undefined ||
+    !entry ||
     entry.disposed ||
-    before === undefined ||
-    controller == null ||
-    controller.signal.aborted ||
-    sessionUsageHydrations.has(controller)
-  ) {
+    !before ||
+    (!reportFailure && (!binding || binding.signal.aborted))
+  )
     return;
-  }
-  if (reportFailure && Date.now() - (sessionUsageHydrationTimes.get(controller) ?? 0) < 5000)
-    return;
-  sessionUsageHydrations.add(controller);
+  const scope = transcriptReaderScope();
+  const authority = sessionMetadataAuthority();
+  const fetcher = getOmnigentHostConfig().fetcher;
+  const sameScope = (read: Pick<SessionUsageRead, "scope" | "authority" | "fetcher">) =>
+    read.scope === scope && read.authority === authority && read.fetcher === fetcher;
+  const existing = sessionUsageHydrations.get(id);
+  if (
+    existing &&
+    existing.entry === entry &&
+    !existing.controller.signal.aborted &&
+    sameScope(existing)
+  )
+    return reportFailure ? existing.promise : existing.promise.catch(() => {});
+  existing?.controller.abort();
+  const last = sessionUsageHydrationTimes.get(entry);
+  if (reportFailure && !force && last && sameScope(last) && Date.now() - last.at < 5000) return;
+
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  // Menu reads have their own lifetime, including when the transcript is offline.
+  if (!reportFailure) binding?.signal.addEventListener("abort", abort, { once: true });
   const revisionsBeforeFetch = sessionUsageRevisions.get(entry) ?? { cost: 0, models: 0 };
-  try {
-    const usage = await getSessionUsage(id, { signal: controller.signal });
-    if (
-      usage.id !== id ||
-      controller.signal.aborted ||
-      conversationRegistry.peek(id) !== entry ||
-      entry.getState().abortController !== controller
-    ) {
-      return;
+  const current = () =>
+    !controller.signal.aborted &&
+    !entry.disposed &&
+    conversationRegistry.peek(id) === entry &&
+    transcriptReaderScope() === scope &&
+    sessionMetadataAuthority() === authority &&
+    getOmnigentHostConfig().fetcher === fetcher &&
+    (reportFailure || entry.getState().abortController === binding);
+  const promise = Promise.resolve().then(async () => {
+    try {
+      const usage = await getSessionUsage(id, { signal: controller.signal });
+      if (!current()) return;
+      if (usage.id !== id)
+        throw new Error("Usage response does not match the requested conversation");
+      const revisions = sessionUsageRevisions.get(entry) ?? { cost: 0, models: 0 };
+      sessionUsageHydrationTimes.set(entry, { at: Date.now(), scope, authority, fetcher });
+      // A live cost/model update during the read wins independently for each field.
+      entrySetter(entry)((state) => ({
+        ...(revisions.cost === revisionsBeforeFetch.cost &&
+        state.sessionCostUsd === before.sessionCostUsd
+          ? { sessionCostUsd: usage.totalCostUsd ?? state.sessionCostUsd }
+          : {}),
+        ...(revisions.models === revisionsBeforeFetch.models &&
+        state.sessionUsageByModel === before.sessionUsageByModel
+          ? { sessionUsageByModel: usage.usageByModel ?? state.sessionUsageByModel }
+          : {}),
+      }));
+    } catch (error) {
+      if (current()) throw error;
+    } finally {
+      binding?.signal.removeEventListener("abort", abort);
+      if (sessionUsageHydrations.get(id)?.controller === controller)
+        sessionUsageHydrations.delete(id);
     }
-    const revisions = sessionUsageRevisions.get(entry) ?? { cost: 0, models: 0 };
-    sessionUsageHydrationTimes.set(controller, Date.now());
-    // A live cost/model update during the read wins independently for each field.
-    entrySetter(entry)((state) => ({
-      ...(revisions.cost === revisionsBeforeFetch.cost &&
-      state.sessionCostUsd === before.sessionCostUsd
-        ? { sessionCostUsd: usage.totalCostUsd ?? state.sessionCostUsd }
-        : {}),
-      ...(revisions.models === revisionsBeforeFetch.models &&
-      state.sessionUsageByModel === before.sessionUsageByModel
-        ? { sessionUsageByModel: usage.usageByModel ?? state.sessionUsageByModel }
-        : {}),
-    }));
-  } catch (error) {
-    // Usage is optional display data; retain known totals or leave them unknown.
-    if (reportFailure) throw error;
-  } finally {
-    sessionUsageHydrations.delete(controller);
-  }
+  });
+  sessionUsageHydrations.set(id, { entry, controller, promise, scope, authority, fetcher });
+  return reportFailure ? promise : promise.catch(() => {});
 }
 
 /**

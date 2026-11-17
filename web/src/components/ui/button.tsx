@@ -132,7 +132,11 @@ const Button = React.forwardRef<
     >
       {showLoading ? (
         <>
-          <Spinner className="absolute inset-0 m-auto size-4" />
+          <Spinner
+            aria-hidden="true"
+            role="presentation"
+            className="absolute inset-0 m-auto size-4"
+          />
           {/* `display: contents` keeps children as direct flex items (gap and
               width preserved); `invisible` hides them without removing them. */}
           <span className="contents invisible">{children}</span>

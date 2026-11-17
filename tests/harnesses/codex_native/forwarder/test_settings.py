@@ -1,3 +1,4 @@
+# Modified for Triune; inherited notices remain applicable.
 """
 Tests for the codex-native forwarder's model-change sync-back
 (:mod:`omnigent.harnesses.codex_native.forwarder`).

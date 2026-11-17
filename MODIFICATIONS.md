@@ -111,5 +111,18 @@ Approval receipt protocol work, ownerless-model retirement and isolated future b
 - Drain cancelled pure validation before releasing that lock, discard its unused result and preserve cancellation and error reporting.
 
 
+## Workspace and transcript refinements — 2026-11-17
+
+- Group unread follow-ups below the working indicator; preserve exact receipts, replay metadata and ordinary consumed-message placement.
+- Restore concise permission captions, put active goals in the attention shelf, refresh Usage on demand and protect nonempty drafts from history recall.
+- Bound tool input/output readers without changing expanded height, normalize tool metadata, and preserve passive Markdown previews and stable activity headers.
+- Retain captured child execution model/effort and native upload turn ownership; correlate structured question replies without text-based dismissal.
+- Unify dedicated preview headers, batch adjacent visual messages, preserve authored file captions and apply density to media footers and controls.
+- Refine sidebar/settings/tab controls and notification disclosure/shadows through existing shared components.
+- Standardize initial-content skeletons and actual-request feedback while preserving loaded content, user state and static human waits.
+- Remove trailing turn-framing reservations and isolate metadata readiness from visible stream ownership.
+- Keep canonical synchronization alive through readiness heartbeats and make fallback snapshot jobs cancellable and deadline-bound.
+- Centralize packaged tool and visualization guidance without treating catalog entries or future-turn permission choices as current execution authority.
+
 [LICENSING.md](LICENSING.md) defines scope and the required notice.
 Git diffs against the imported baseline identify exact modified paths and lines.

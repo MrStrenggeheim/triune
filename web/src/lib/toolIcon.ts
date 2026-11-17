@@ -1,3 +1,4 @@
+// Modified for Triune; inherited notices remain applicable.
 // Pick a category icon for a tool-call trigger row. Returns a lucide
 // component reference (the trigger row applies sizing classes).
 //

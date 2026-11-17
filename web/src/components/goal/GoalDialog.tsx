@@ -1,6 +1,8 @@
+// Modified for Triune; inherited notices remain applicable.
 import { TooltipButton } from "@/components/ui/tooltip";
 import { useCallback, useEffect, useState } from "react";
-import { CheckIcon, Loader2Icon, PauseCircleIcon, PlayCircleIcon, TargetIcon } from "lucide-react";
+import { CheckIcon, PauseCircleIcon, PlayCircleIcon, TargetIcon } from "lucide-react";
+import { ContentSkeleton } from "@/components/ui/loading";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -53,13 +55,8 @@ interface GoalSummaryProps {
  * @returns Current-goal summary element.
  */
 function GoalSummary({ loading, goal }: GoalSummaryProps) {
-  if (loading) {
-    return (
-      <div className="flex items-center gap-2 text-ui text-muted-foreground">
-        <Loader2Icon className="size-4 animate-spin" />
-        <span>Loading goal</span>
-      </div>
-    );
+  if (loading && !goal) {
+    return <ContentSkeleton label="Loading goal" rows={2} className="px-0" />;
   }
   if (!goal) {
     return (

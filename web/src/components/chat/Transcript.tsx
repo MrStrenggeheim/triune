@@ -72,7 +72,6 @@ import {
   HistoryLoadingIndicator,
   JumpToTopButton,
   KeepBottomOnViewportResize,
-  LatestTurnSpacer,
   ScrollToBottomOnSend,
   WorkingIndicator,
   AwaitingAgentMessages,
@@ -121,7 +120,7 @@ export interface TranscriptProps {
   agentsError: unknown;
   /** True while a managed-sandbox launch is in flight (cold-launch spinner). */
   sandboxLaunching: boolean;
-  /** Pub/sub ref for the LatestTurnSpacer's synchronous re-measure handle. */
+  /** Compatibility resize hook; live transcripts reserve no trailing turn space. */
   spacerMeasureRef: React.RefObject<(() => void) | null>;
 }
 
@@ -162,7 +161,6 @@ function TranscriptImpl({
   showsWorking,
   agentsError,
   sandboxLaunching,
-  spacerMeasureRef,
 }: TranscriptProps) {
   const useChatStore = useConversationChatStore();
   const focused = useConversationChatFocused();
@@ -510,6 +508,8 @@ function TranscriptImpl({
             className={cn(
               "chat-conversation-content mx-auto w-full gap-4 px-4 pb-6 md:px-[clamp(0px,calc((var(--chat-column-width)+3.5rem-100cqi)*0.5),1.75rem)]",
               "pt-20",
+              (display.bubbles.length > 0 || showWorkingIndicator || display.mcpStartupActive) &&
+                "min-h-full justify-end",
               showArcaBanner && "chat-content-under-arca-banner",
               CHAT_COLUMN_WIDTH,
             )}
@@ -584,17 +584,6 @@ function TranscriptImpl({
                 <McpStartupIndicator />
               </>
             )}
-            {/* Frames the initially loaded turn at the top of the viewport. */}
-            <LatestTurnSpacer
-              key={display.conversationId ?? "landing"}
-              scrollElement={scroller?.el ?? null}
-              conversationId={display.conversationId}
-              blockCount={display.blockCount}
-              committedUserIds={display.committedUserIds}
-              hasCommittedAnchor={display.hasCommittedAnchor}
-              measureRef={spacerMeasureRef}
-              remeasureNonce={spacerMeasureNonce}
-            />
           </ConversationContent>
           <ConversationScrollButton />
         </Conversation>

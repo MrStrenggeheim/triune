@@ -702,6 +702,53 @@ describe("test harness teardown", () => {
 });
 
 describe("chatStore — lazy subtree usage", () => {
+  it("refreshes offline totals without runtime binding, reuses freshness and forces explicit refresh", async () => {
+    const entry = conversationRegistry.acquire("conv_offline_usage");
+    entry.setState({ sessionCostUsd: 1, abortController: null });
+    const readUsage = vi.fn(() => usage("conv_offline_usage", 3));
+    routeUsage("conv_offline_usage", readUsage);
+    await useChatStore.getState().refreshSessionUsage("conv_offline_usage");
+    expect(entry.getState().sessionCostUsd).toBe(3);
+    await useChatStore.getState().refreshSessionUsage("conv_offline_usage");
+    expect(readUsage).toHaveBeenCalledOnce();
+    readUsage.mockImplementation(() => usage("conv_offline_usage", 5));
+    await useChatStore.getState().refreshSessionUsage("conv_offline_usage", { force: true });
+    expect(readUsage).toHaveBeenCalledTimes(2);
+    expect(entry.getState().sessionCostUsd).toBe(5);
+    readUsage.mockImplementation(() => usage("different-conversation", 99));
+    await expect(
+      useChatStore.getState().refreshSessionUsage("conv_offline_usage", { force: true }),
+    ).rejects.toThrow("does not match");
+    expect(entry.getState().sessionCostUsd).toBe(5);
+    expect(entry.getState().abortController).toBeNull();
+    expect(fetchMock.mock.calls.every(([input]) => !String(input).endsWith("/stream"))).toBe(true);
+  });
+
+  it("deduplicates offline reads and rejects a late result after authority changes", async () => {
+    const entry = conversationRegistry.acquire("conv_offline_scope");
+    entry.setState({ sessionCostUsd: 1, abortController: null });
+    let finish!: (response: Response) => void;
+    const pending = new Promise<Response>((resolve) => {
+      finish = resolve;
+    });
+    const readUsage = vi.fn(() => pending);
+    routeUsage("conv_offline_scope", readUsage);
+    const first = useChatStore.getState().refreshSessionUsage("conv_offline_scope");
+    const second = useChatStore
+      .getState()
+      .refreshSessionUsage("conv_offline_scope", { force: true });
+    await tick();
+    expect(readUsage).toHaveBeenCalledOnce();
+    try {
+      setOmnigentHostConfig({ serverIdentity: "replacement-usage-server" });
+      finish(usage("conv_offline_scope", 99));
+      await Promise.all([first, second]);
+      expect(entry.getState().sessionCostUsd).toBe(1);
+    } finally {
+      setOmnigentHostConfig({});
+    }
+  });
+
   function snapshot(id: string, fields: Record<string, unknown> = {}): Response {
     return mockResponse({
       id,

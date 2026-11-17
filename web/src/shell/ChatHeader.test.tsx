@@ -1,3 +1,4 @@
+// Modified for Triune; inherited notices remain applicable.
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import type { ComponentProps } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";

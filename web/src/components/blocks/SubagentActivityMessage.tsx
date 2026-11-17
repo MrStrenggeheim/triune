@@ -206,7 +206,7 @@ function Task({
     );
   return (
     <div
-      className="not-prose w-full min-w-0 text-sm"
+      className="subagent-activity-card not-prose w-full min-w-0 text-sm"
       data-testid="subagent-activity"
       data-phase={activity.phase}
       data-child-session-id={activity.sessionId}
@@ -220,7 +220,7 @@ function Task({
         description={task ? shortTaskText(task, 80) : "Delegated task"}
         status={status ?? subagentEventStatus(activity)}
         action={action}
-        preview={preview ? shortTaskText(preview, 180) : "Delegated task"}
+        preview={preview || "Delegated task"}
       >
         {canonical ? (
           messages.length > 0 ? (

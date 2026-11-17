@@ -1,3 +1,4 @@
+import { itemsToBlocks } from "@/lib/itemsToBlocks";
 // Modified for Triune.
 import {
   readTranscriptReaderCheckpoint,
@@ -125,6 +126,80 @@ it.each([false, true])(
       );
       expect(screen.queryByTestId("awaiting-agent-messages")).not.toBeInTheDocument();
       expect(screen.getAllByTestId("message-bubble")).toHaveLength(2);
+    } finally {
+      cleanup();
+      useChatStore.setState(previous);
+      client.clear();
+    }
+  },
+);
+
+it.each(["completed", "working", "pending"] as const)(
+  "keeps the actual %s tail last through a reload-equivalent remount without reservation",
+  (phase) => {
+    const previous = useChatStore.getState();
+    const blocks = itemsToBlocks([
+      {
+        id: "bottom-user",
+        response_id: "bottom-turn",
+        type: "message",
+        role: "user",
+        user_authored: true,
+        status: "completed",
+        content: [{ type: "input_text", text: "Bottom message" }],
+      },
+    ]);
+    useChatStore.setState({
+      conversationId: "bottom-test",
+      blocks,
+      activeResponse: null,
+      sessionStatus: phase === "completed" ? "idle" : "running",
+      pendingUserMessages:
+        phase === "pending"
+          ? [
+              {
+                tempId: "bottom-pending",
+                sentMidTurn: true,
+                content: [{ type: "input_text", text: "Pending bottom message" }],
+              },
+            ]
+          : [],
+    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const view = (key: string) => (
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <Transcript
+            key={key}
+            hostId={null}
+            setConversationEl={() => {}}
+            containerEl={null}
+            scroller={null}
+            setScroller={() => {}}
+            sendScrollNonce={0}
+            hasMoreHistory={false}
+            loadingMoreHistory={false}
+            isMobileViewport
+            showsWorking={phase !== "completed"}
+            agentsError={null}
+            sandboxLaunching={false}
+            spacerMeasureRef={{ current: null }}
+          />
+        </MemoryRouter>
+      </QueryClientProvider>
+    );
+    try {
+      const result = render(view("initial"));
+      for (const key of ["initial", "reload"]) {
+        result.rerender(view(key));
+        fireEvent.keyDown(window, { key: "f", ctrlKey: true });
+        const content = result.container.querySelector(".chat-conversation-content")!;
+        expect(content).toHaveClass("min-h-full", "justify-end");
+        const tail = content.lastElementChild!;
+        if (phase === "pending") expect(tail).toBe(screen.getByTestId("awaiting-agent-messages"));
+        else if (phase === "working") expect(tail).toBe(screen.getByTestId("working-indicator"));
+        else expect(tail).toContainElement(screen.getByText("Bottom message"));
+      }
     } finally {
       cleanup();
       useChatStore.setState(previous);

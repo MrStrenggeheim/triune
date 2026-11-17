@@ -1,3 +1,4 @@
+# Modified for Triune; inherited notices remain applicable.
 """Codex permission presets configured for subsequent turns.
 
 Structured updates preserve running turns and terminal drafts.

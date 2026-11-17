@@ -1,3 +1,4 @@
+# Modified for Triune; inherited notices remain applicable.
 """Tests for shared process logging helpers."""
 
 from __future__ import annotations

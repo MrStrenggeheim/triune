@@ -1,6 +1,6 @@
 // Required Notice: Copyright 2026 MrStrenggeheim. Triune (https://github.com/MrStrenggeheim/triune).
 import type { ReactNode } from "react";
-import { Loader2Icon } from "lucide-react";
+import { Spinner } from "./spinner";
 import { cn } from "@/lib/utils";
 
 /** Initial content placeholder; callers keep already-loaded content mounted. */
@@ -44,7 +44,7 @@ export function OperationStatus({
       )}
     >
       <span className="inline-flex size-4 shrink-0 items-center justify-center" aria-hidden="true">
-        <Loader2Icon className="size-3.5 animate-spin motion-reduce:animate-none" />
+        <Spinner role="presentation" aria-hidden="true" className="size-3.5" />
       </span>
       <span>{children}</span>
     </span>

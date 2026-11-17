@@ -1,3 +1,4 @@
+// Modified for Triune; inherited notices remain applicable.
 import {
   ArrowLeftIcon,
   EllipsisVerticalIcon,

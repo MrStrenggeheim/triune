@@ -16,7 +16,7 @@ export function MediaBatch({ children }: { children: ReactNode }) {
     <MediaBatchContext.Provider value={true}>
       <div
         data-media-batch
-        className="not-prose my-2 flex min-w-0 max-w-full flex-nowrap items-start gap-2 overflow-x-auto"
+        className="not-prose my-2 flex min-w-0 max-w-full flex-nowrap items-start gap-2 overflow-x-auto [&>*]:shrink-0"
         role="group"
         aria-label="Media previews"
       >

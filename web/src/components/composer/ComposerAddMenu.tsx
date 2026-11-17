@@ -21,6 +21,7 @@ const EMPTY_PROJECTS: readonly { name: string }[] = [];
 
 export function ComposerAddMenu({
   disabled,
+  pendingLabel,
   onAttach,
   attachDisabled = false,
   onGoal,
@@ -41,6 +42,7 @@ export function ComposerAddMenu({
   onProjectSelect,
 }: {
   disabled: boolean;
+  pendingLabel?: string;
   onAttach: () => void;
   attachDisabled?: boolean;
   onGoal?: () => void;
@@ -85,8 +87,9 @@ export function ComposerAddMenu({
           onPointerDownCapture={() => setPointerInteraction(true)}
           onKeyDownCapture={() => setPointerInteraction(false)}
           disabled={disabled}
-          aria-label="Add"
-          title="Add"
+          loading={!!pendingLabel}
+          aria-label={pendingLabel ?? "Add"}
+          title={pendingLabel ?? "Add"}
           data-testid={`${testIdPrefix}-attach`}
           componentId={`${testIdPrefix}.add_menu`}
         >

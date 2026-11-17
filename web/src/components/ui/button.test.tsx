@@ -1,3 +1,4 @@
+// Modified for Triune; inherited notices remain applicable.
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -152,7 +153,9 @@ describe("Button loading state", () => {
       "true",
     );
     expect(screen.getByText("Update goal")).toBeInTheDocument();
-    expect(screen.getByRole("status", { name: "Loading" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Update goal" }).querySelector("svg"),
+    ).toHaveAttribute("aria-hidden", "true");
   });
 
   it("disables the button and marks it busy while loading", () => {

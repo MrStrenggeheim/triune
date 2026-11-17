@@ -1,3 +1,4 @@
+// Modified for Triune; inherited notices remain applicable.
 import { createElement } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -5,10 +6,47 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { FileViewerContext } from "@/shell/FileViewerContext";
 import type { RenderItem } from "@/lib/renderItems";
 import { writeTerminalThemeMode } from "@/lib/terminalThemePreferences";
-import { ToolCard, ToolGroupSummary, formatToolDuration, getOutputPreview } from "./ToolCard";
+import {
+  ToolCard,
+  ToolGroupSummary,
+  formatToolDuration,
+  getOutputPreview,
+  visibleCodeCharacterCount,
+} from "./ToolCard";
 
 beforeEach(() => localStorage.clear());
 afterEach(cleanup);
+
+it("counts clipping inside the rendered preview instead of just the omitted source tail", () => {
+  const code = document.createElement("code");
+  const lines = ["First", "Second", "Third"];
+  for (const [index, text] of lines.entries()) {
+    const line = document.createElement("span");
+    line.textContent = text;
+    line.getBoundingClientRect = () => ({ top: index * 20, bottom: (index + 1) * 20 }) as DOMRect;
+    code.append(line);
+  }
+  expect(visibleCodeCharacterCount(code, lines.join("\n"), 40)).toBe("First\nSecond\n".length);
+  expect(visibleCodeCharacterCount(code, lines.join("\n"), 60)).toBe(lines.join("\n").length);
+});
+
+it("finds a soft-wrapped boundary with logarithmic glyph measurements", () => {
+  const code = document.createElement("code");
+  const line = document.createElement("span");
+  line.textContent = "x".repeat(10_000);
+  line.getBoundingClientRect = () => ({ top: 0, bottom: 40 }) as DOMRect;
+  code.append(line);
+  const range = document.createRange();
+  const measure = vi.fn(() => ({ bottom: range.endOffset <= 5234 ? 20 : 40 }) as DOMRect);
+  Object.defineProperty(range, "getBoundingClientRect", { value: measure });
+  const createRange = vi.spyOn(document, "createRange").mockReturnValue(range);
+  try {
+    expect(visibleCodeCharacterCount(code, line.textContent, 30)).toBe(5234);
+    expect(measure.mock.calls.length).toBeLessThanOrEqual(14);
+  } finally {
+    createRange.mockRestore();
+  }
+});
 
 // Render helper: ToolCard reads a Tooltip (trigger title) so it needs the
 // TooltipProvider; createElement keeps this in a .ts file without JSX.

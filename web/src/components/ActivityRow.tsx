@@ -177,7 +177,7 @@ export function ActivityRow({
       >
         {icon}
       </span>
-      <div className={`min-w-0 flex-1 ${message ? "activity-message-text" : ""}`}>
+      <div className={`min-w-0 flex-1 ${message ? "activity-message-text" : "resource-text"}`}>
         {titleDetail ? (
           <div className="flex min-w-0 items-center gap-1">
             {heading}
@@ -217,6 +217,7 @@ export function ActivityRow({
                   size="xs"
                   aria-label={`Actions for ${name}`}
                   disabled={stopping}
+                  loading={stopping}
                   className="resource-status h-auto rounded-4xl p-0 font-normal"
                   onPointerDown={(event) => {
                     pointerType.current = event.pointerType;
@@ -233,7 +234,7 @@ export function ActivityRow({
                     aria-hidden="true"
                   >
                     <SquareIcon className="size-3 fill-current" aria-hidden="true" />
-                    {stopping ? "Stopping…" : "Stop"}
+                    Stop
                   </Badge>
                 </Button>
               </DropdownMenuTrigger>
