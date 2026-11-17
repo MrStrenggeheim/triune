@@ -1,7 +1,9 @@
+// Modified for Triune.
 import { describe, expect, it } from "vitest";
 import {
   readComposerDraft,
   removeReplyQuote,
+  moveReplyQuote,
   restoreReplyDraft,
   serializeReplyDraft,
   snapshotReplyDraft,
@@ -17,6 +19,47 @@ const interleaved: ReplyDraft = {
 };
 
 describe("reply drafts", () => {
+  it("moves an atomic quote into the middle of tail text without changing authored text order", () => {
+    const moved = moveReplyQuote(interleaved, "first", null, 7);
+    expect(moved.quotes.map((quote) => quote.id)).toEqual(["second", "first"]);
+    expect(moved.quotes[0]!.before).toBe("IntroductionFirst answer");
+    expect(moved.quotes[1]).toEqual({ ...interleaved.quotes[0], before: "Second " });
+    expect(moved.text).toBe("answer");
+    expect(interleaved.quotes[0]!.before).toBe("Introduction");
+  });
+
+  it("moves backward into an earlier text field and retains Unicode and whitespace", () => {
+    const draft: ReplyDraft = {
+      quotes: [
+        { id: "a", before: "Hi 🙂 world\n", text: "A" },
+        { id: "b", before: " B before ", text: "B" },
+      ],
+      text: " tail",
+    };
+    const moved = moveReplyQuote(draft, "b", "a", 5);
+    expect(moved).toEqual({
+      quotes: [
+        { id: "b", before: "Hi 🙂", text: "B" },
+        { id: "a", before: " world\n", text: "A" },
+      ],
+      text: " B before  tail",
+    });
+  });
+
+  it("remaps a removed quote's own and following text fields without losing characters", () => {
+    const draft: ReplyDraft = { quotes: [{ id: "a", before: "abc", text: "A" }], text: "def" };
+    expect(moveReplyQuote(draft, "a", "a", 1)).toEqual({
+      quotes: [{ id: "a", before: "a", text: "A" }],
+      text: "bcdef",
+    });
+    expect(moveReplyQuote(draft, "a", null, 1)).toEqual({
+      quotes: [{ id: "a", before: "abcd", text: "A" }],
+      text: "ef",
+    });
+    expect(moveReplyQuote(draft, "a", "a", 3)).toBe(draft);
+    expect(moveReplyQuote(draft, "a", "missing", 0)).toBe(draft);
+    expect(moveReplyQuote(draft, "missing", null, 0)).toBe(draft);
+  });
   it("round-trips explicit interleaved text and multiline quotes without persisting UI ids", () => {
     const text =
       "Introduction\n\n> First line\n> \n> Next paragraph\n\nFirst answer\n\n> Second quote\n\nSecond answer";

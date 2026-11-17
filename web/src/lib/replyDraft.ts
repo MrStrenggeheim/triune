@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { nanoid } from "nanoid";
 
 export interface ReplyQuote {
@@ -113,4 +114,44 @@ export function removeReplyQuote(draft: ReplyDraft, id: string): ReplyDraft {
     return { ...draft, quotes };
   }
   return { quotes, text: joinParagraphs([removed!.before, draft.text]) };
+}
+
+/** Move one atomic quote into authored text, retaining every authored character and quote ID. */
+export function moveReplyQuote(
+  draft: ReplyDraft,
+  id: string,
+  targetTextId: string | null,
+  offset: number,
+): ReplyDraft {
+  const sourceIndex = draft.quotes.findIndex((quote) => quote.id === id);
+  if (sourceIndex < 0 || !Number.isFinite(offset)) return draft;
+  const source = draft.quotes[sourceIndex]!;
+  const target =
+    targetTextId === null ? null : draft.quotes.find((quote) => quote.id === targetTextId);
+  if (targetTextId !== null && !target) return draft;
+  let insertion = Math.max(0, Math.min(Math.trunc(offset), (target?.before ?? draft.text).length));
+  const quotes = [...draft.quotes];
+  quotes.splice(sourceIndex, 1);
+  const next = quotes[sourceIndex];
+  let text = draft.text;
+  if (next) quotes[sourceIndex] = { ...next, before: source.before + next.before };
+  else text = source.before + text;
+  const destinationTextId = targetTextId === id ? (next?.id ?? null) : targetTextId;
+  if (targetTextId !== id && targetTextId === (next?.id ?? null)) insertion += source.before.length;
+  const targetIndex =
+    destinationTextId === null
+      ? quotes.length
+      : quotes.findIndex((quote) => quote.id === destinationTextId);
+  const targetText = destinationTextId === null ? text : quotes[targetIndex]!.before;
+  const moved = { ...source, before: targetText.slice(0, insertion) };
+  if (destinationTextId === null) text = targetText.slice(insertion);
+  else quotes[targetIndex] = { ...quotes[targetIndex]!, before: targetText.slice(insertion) };
+  quotes.splice(targetIndex, 0, moved);
+  const unchanged =
+    text === draft.text &&
+    quotes.every(
+      (quote, index) =>
+        quote.id === draft.quotes[index]?.id && quote.before === draft.quotes[index]?.before,
+    );
+  return unchanged ? draft : { ...draft, quotes, text };
 }
