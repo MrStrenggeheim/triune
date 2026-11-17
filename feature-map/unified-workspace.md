@@ -18,6 +18,7 @@ Conversation and tool views share resizable, dockable panes while keeping their 
 - `retained-performance`: the [integration7 delivery](../docs/custom-fork.md#integration7-delivery) keeps visible observation stable through focus changes, batches title saves and retains tab geometry observers; unchanged transcript lists also skip parent focus renders.
 - `conditional-loading`: PR surfaces share a lazy implementation; docked Automations loads its scheduling code on first use while preserving resident view state.
 - `local-load-recovery`: failed first imports show the shared local error with manual Refresh, preserving unrelated composer and dirty editor nodes without automatic navigation.
+- `native-stream-content`: typed updates of placed native previews retain canonical placement and immutable lookup indexes; structural and final changes still normalize through the general path.
 
 ## How to get to it (user POV)
 

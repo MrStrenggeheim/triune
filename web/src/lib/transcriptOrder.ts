@@ -4,6 +4,7 @@ import {
   type AnyBlock,
   type MessageContentBlock,
   type UserMessageBlock,
+  type TextDone,
 } from "./blocks";
 import type { MessageCommunication } from "./messageCommunication";
 
@@ -27,8 +28,8 @@ export function isCommittedBlock(block: AnyBlock): boolean {
 }
 
 interface BlockIndex {
-  items: Map<string, number>;
-  tools: Map<string, number>;
+  readonly items: ReadonlyMap<string, number>;
+  readonly tools: ReadonlyMap<string, number>;
 }
 const indexes = new WeakMap<AnyBlock[], BlockIndex>();
 
@@ -36,15 +37,58 @@ const indexes = new WeakMap<AnyBlock[], BlockIndex>();
 export function transcriptIndex(blocks: AnyBlock[]): BlockIndex {
   let index = indexes.get(blocks);
   if (index) return index;
-  index = { items: new Map(), tools: new Map() };
+  const items = new Map<string, number>();
+  const tools = new Map<string, number>();
+  index = { items, tools };
   blocks.forEach((block, at) => {
-    if (block.ctx.itemId && !index.items.has(block.ctx.itemId))
-      index.items.set(block.ctx.itemId, at);
+    if (block.ctx.itemId && !items.has(block.ctx.itemId)) items.set(block.ctx.itemId, at);
     if (block.type === "tool_group")
-      for (const execution of block.executions) index.tools.set(execution.callId, at);
+      for (const execution of block.executions) tools.set(execution.callId, at);
   });
   indexes.set(blocks, index);
   return index;
+}
+
+export interface NativePreviewContentUpdate {
+  base: AnyBlock[];
+  changes: ReadonlyMap<
+    number,
+    Pick<TextDone, "fullText" | "hasCodeBlocks" | "streamIndex" | "previewInterrupted">
+  >;
+}
+
+/** Replace placed preview content without changing membership, placement or index identity. */
+export function replaceNativePreviewContent(
+  current: AnyBlock[],
+  update: NativePreviewContentUpdate,
+): AnyBlock[] | null {
+  if (current !== update.base || update.changes.size === 0) return null;
+  for (const at of update.changes.keys()) {
+    const block = current[at];
+    if (
+      !block ||
+      block.type !== "text_done" ||
+      !block.ctx.itemId?.startsWith(LIVE_ITEM_PREFIX) ||
+      !block.ctx.anchor ||
+      block.ctx.position !== undefined
+    )
+      return null;
+  }
+  const next = current.slice();
+  for (const [at, content] of update.changes) {
+    const block = current[at]! as TextDone;
+    next[at] = {
+      ...block,
+      fullText: content.fullText,
+      hasCodeBlocks: content.hasCodeBlocks,
+      ...(content.streamIndex !== undefined ? { streamIndex: content.streamIndex } : {}),
+      ...(content.previewInterrupted !== undefined
+        ? { previewInterrupted: content.previewInterrupted }
+        : {}),
+    };
+  }
+  indexes.set(next, transcriptIndex(current));
+  return next;
 }
 
 interface PendingPlacement {

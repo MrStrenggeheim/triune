@@ -291,3 +291,18 @@ These isolated byte deltas must not be summed as the combined release result; th
 Synthetic active traversal removes 48 execution-column conversions and 24 policy/notices parses with identical response bytes and SQL counts.
 Snapshot unit doubles now explicitly model empty durable journals and saved-input queues; actual ledger behavior remains covered by SQLite/ASGI approval tests.
 Evidence: `artifacts/overnight-20261116/{cold-followup/lazy-pr/handoff.md,lazy-automations/handoff.md,backend-cost10/HANDOFF.txt,stability10}`.
+
+## Streaming and pending-input work
+
+`STREAM-CONTENT-11` uses an explicit entry-owned operation for already placed native preview content, retaining the immutable item/tool index and canonical placement.
+Membership changes, pending-input changes, replay/reset, canonical edits and final replacement retain the general normalization path.
+The 5,000-item, 100-flush probe reduces normalization/index rebuilding from 100 calls to one and full item-map copies to zero; array copies and renderer discovery scans remain linear.
+The existing multiplex browser scenarios now also exercise optimistic input, repeated indexed updates, replay, a skipped chunk and authoritative final replacement.
+
+`TITLE-ROUTING-11` runs the fresh background-title runner lookup off the event loop while retaining the captured workspace and event-loop HTTP dispatch.
+Its injected 80 ms SQLite-delay control reduces the heartbeat pause from 84.7 to 5.6 ms; this is a boundary check, not production latency evidence.
+
+`PENDING-QUERY-11` adds an index matching pending-input filtering and submission order, preserving existing indexes, queue states, cursor semantics and tenant predicates.
+Migration `pq1a2b3c4d5e` follows `ad1b2c3d4e5f`; existing split conversation databases ensure the same index at startup.
+The synthetic 30,000-row store probe avoids the previous full-history scan; index storage and write maintenance are the tradeoff.
+Evidence: `artifacts/overnight-20261116/{stream-content/HANDOFF.md,title-routing/handoff.json,pending-query/implementation-manifest.json,stability11}`.

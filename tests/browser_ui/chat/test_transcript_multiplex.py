@@ -122,27 +122,89 @@ def test_shared_transcript_orders_and_recovers_without_reloading(
     assert first.stream.connection_generation == second.stream.connection_generation == 0
 
     # A committed answer arriving before the consumed-input echo used to stay inverted.
-    first.set_items([a2, q2, a1, q1])
-    revisions[first.session_id] = 4
-    if arrival == "preview-first":
-        event(
-            first.session_id,
-            {
-                "type": "response.output_text.delta",
-                "message_id": "native-a2",
-                "index": 0,
-                "delta": "Second answer",
-                "final": True,
-            },
+    # STREAM-CONTENT-11 browser coverage: actual optimistic input and native content updates.
+    pending_send = []
+
+    def hold_input(route) -> None:
+        first.event_posts.append({"url": route.request.url, "body": route.request.post_data_json})
+        pending_send.append(route)
+
+    browser_contract.route(
+        browser_contract._matcher(f"/v1/sessions/{first.session_id}/events"), hold_input
+    )
+    composer = view.get_by_label("Message the agent", exact=True)
+    composer.fill("Second request")
+    with page.expect_request(
+        lambda request: (
+            request.method == "POST"
+            and request.url.endswith(f"/v1/sessions/{first.session_id}/events")
         )
+    ):
+        composer.press("Enter")
+    expect(view.get_by_text("Second request", exact=True)).to_be_visible()
+    assert len(pending_send) == 1
+
+    def assert_pending_before(reply) -> None:
+        pending = view.get_by_text("Second request", exact=True)
+        assert pending.evaluate(
+            "(node, reply) => !!(node.compareDocumentPosition(reply) "
+            "& Node.DOCUMENT_POSITION_FOLLOWING)",
+            reply.element_handle(),
+        )
+        expect(_view(page, "Chat B").get_by_text("Other chat answer", exact=True)).to_be_visible()
+        expect(
+            _view(page, "Chat B").get_by_text("Second preview (gap)", exact=True)
+        ).to_have_count(0)
+
+    if arrival == "preview-first":
+        preview = view.locator('[data-search-item-id="live:native-a2"]')
+
+        def delta(index: int, text: str, final: bool = False) -> None:
+            event(
+                first.session_id,
+                {
+                    "type": "response.output_text.delta",
+                    "message_id": "native-a2",
+                    "index": index,
+                    "delta": text,
+                    "final": final,
+                },
+            )
+
+        delta(0, "Second ")
+        expect(preview).to_contain_text("Second")
+        assert_pending_before(preview)
+        delta(1, "preview")
+        expect(preview).to_contain_text("Second preview")
+        assert_pending_before(preview)
+        delta(1, "preview")  # Duplicate index must not append the suffix twice.
+        delta(0, "Second ")  # Replay the same indexed prefix over the actual socket.
+        delta(1, "preview")
+        page.wait_for_timeout(100)
+        expect(preview).to_contain_text("Second preview")
+        expect(preview).not_to_contain_text("previewpreview")
+        delta(3, " (gap)")  # Missing index 2 deliberately leaves incomplete preview text.
+        expect(preview).to_contain_text("Second preview (gap)")
+        delta(4, "", final=True)
+        assert_pending_before(preview)
+        page.screenshot(path=str(Path(output_path) / "native-preview-gap-before-canonical.png"))
     else:
         event(first.session_id, {"type": "response.output_item.done", "item": a2})
+    if arrival == "committed-first":
+        assert_pending_before(view.locator('[data-search-item-id="a2"]'))
+    first.set_items([a2, q2, a1, q1])
+    revisions[first.session_id] = 4
+    pending_send[0].fulfill(json={"queued": True, "item_id": "pending-q2"})
+    expect(composer).to_have_value("")
+    composer.fill("Keep this unsent draft")
     event(
         first.session_id,
         {
             "type": "session.input.consumed",
             "data": {
                 "item_id": "q2",
+                "cleared_pending_id": "pending-q2",
+                "response_id": "turn2",
                 "type": "message",
                 "position": 12,
                 "data": {"role": "user", "user_authored": True, "content": q2["content"]},
@@ -156,6 +218,10 @@ def test_shared_transcript_orders_and_recovers_without_reloading(
     )
     transcript = view.get_by_role("log")
     expect(transcript.locator('[data-search-item-id="a2"]')).to_have_count(1)
+    expect(transcript.locator('[data-search-item-id="a2"]')).to_contain_text("Second answer")
+    expect(transcript.locator('[data-search-item-id="live:native-a2"]')).to_have_count(0)
+    expect(transcript.get_by_text("Second preview (gap)", exact=True)).to_have_count(0)
+    expect(transcript.get_by_text("Second request", exact=True)).to_have_count(1)
 
     def order() -> list[str]:
         return transcript.locator("[data-search-item-id]").evaluate_all(
@@ -218,5 +284,7 @@ def test_shared_transcript_orders_and_recovers_without_reloading(
     expect(view.get_by_label("Message the agent", exact=True)).to_have_value(
         "Keep this unsent draft"
     )
-    assert first.event_posts == second.event_posts == []
+    assert len(first.event_posts) == 1
+    assert "Second request" in json.dumps(first.event_posts[0]["body"])
+    assert second.event_posts == []
     assert browser_errors == []

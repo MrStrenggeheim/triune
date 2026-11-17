@@ -34,6 +34,7 @@ import type {
 } from "@/lib/blocks";
 import type { ConversationItem, MessageItem } from "@/lib/conversationItems";
 import { itemsToBlocks } from "@/lib/itemsToBlocks";
+import { transcriptIndex } from "@/lib/transcriptOrder";
 import { messageInputKind, type MessageCommunication } from "@/lib/messageCommunication";
 import { buildBubbles } from "@/lib/renderItems";
 import { getSessionSlim, INITIAL_WINDOW_ITEMS, SESSION_HISTORY_PAGE_SIZE } from "@/lib/sessionsApi";
@@ -17138,9 +17139,6 @@ describe("pending initial prompt transport", () => {
 });
 
 describe("chatStore — live delta streaming (claude-native)", () => {
-  const setState = useChatStore.setState as unknown as Parameters<typeof pumpStreamEvents>[3];
-  const getState = useChatStore.getState as unknown as Parameters<typeof pumpStreamEvents>[4];
-
   /** A FrameScheduler whose pending flush the test fires by hand. */
   function manualScheduler(): { scheduler: FrameScheduler; fire: () => void } {
     let cb: (() => void) | null = null;
@@ -17207,7 +17205,9 @@ describe("chatStore — live delta streaming (claude-native)", () => {
     controller: AbortController;
     manual: ReturnType<typeof manualScheduler>;
     done: ReturnType<typeof pumpStreamEvents>;
+    bound: ReturnType<typeof bindConversationForTest>;
   } {
+    const bound = bindConversationForTest(conversationId);
     const sink = pushableStream();
     const controller = new AbortController();
     const manual = manualScheduler();
@@ -17215,12 +17215,12 @@ describe("chatStore — live delta streaming (claude-native)", () => {
       conversationId,
       sink.stream,
       controller,
-      setState,
-      getState,
+      bound.set,
+      bound.get,
       manual.scheduler,
       ignoredMessages,
     );
-    return { sink, controller, manual, done };
+    return { sink, controller, manual, done, bound };
   }
 
   /** The single provisional `live:*` preview block, or undefined. */
@@ -17258,6 +17258,202 @@ describe("chatStore — live delta streaming (claude-native)", () => {
     manual.fire();
     expect(writes).toHaveBeenCalledTimes(2);
   });
+
+  it("normalizes a mixed native frame and retires only its matching preview", async () => {
+    const id = "conv_native_mixed";
+    const history = [{ ...assistantMessage("old", "Prior answer"), position: 0 }];
+    useChatStore.setState({
+      conversationId: id,
+      blocks: itemsToBlocks(history),
+      isNativeTerminalSession: true,
+      activeResponse: { responseId: "active", state: "streaming", error: null },
+    });
+    const { sink, manual, done, bound } = startPump(id);
+    sink.push(nativeDelta("m1", 0, "one ", false));
+    await tick();
+    const before = bound.get().blocks;
+    const beforeIndex = transcriptIndex(before);
+    sink.push(nativeDelta("m1", 1, "two", false));
+    sink.push(nativeDelta("m2", 0, "other ", false));
+    sink.push(nativeDelta("m2", 1, "reply", false));
+    sink.push(nativeDelta("m1", 2, " three", false));
+    await tick();
+    manual.fire();
+    const mixed = bound.get().blocks;
+    expect(mixed.map((block) => block.ctx.itemId)).toEqual([history[0]!.id, "live:m1", "live:m2"]);
+    expect(mixed[1]).toMatchObject({ fullText: "one two three", streamIndex: 2 });
+    expect(mixed[2]).toMatchObject({ fullText: "other reply", streamIndex: 1 });
+    expect(transcriptIndex(mixed)).not.toBe(beforeIndex);
+    expect(beforeIndex.items.has("live:m2")).toBe(false);
+    expect(before[1]).toMatchObject({ fullText: "one ", streamIndex: 0 });
+    sink.push(messageDone("final-m1", "active", "Canonical first reply", "m1"));
+    sink.close();
+    await done;
+    expect(bound.get().blocks.some((block) => block.ctx.itemId === "live:m1")).toBe(false);
+    expect(bound.get().blocks.filter((block) => block.ctx.itemId === "final-m1")).toHaveLength(1);
+    expect(bound.get().blocks.find((block) => block.ctx.itemId === "live:m2")).toMatchObject({
+      fullText: "other reply",
+    });
+  });
+
+  it("dismisses startup on optimized content and keeps late metadata dismissed", async () => {
+    const id = "conv_native_startup_content";
+    const history = [{ ...assistantMessage("old", "Prior answer"), position: 0 }];
+    const starting: Record<string, McpServerStartup> = {
+      safe: { status: "starting", error: null },
+    };
+    seedSession(id, history);
+    sessionMcpStartup.set(id, starting);
+    sessionLabels.set(id, { "omnigent.wrapper": "codex-native-ui" });
+    useChatStore.setState({
+      conversationId: id,
+      blocks: itemsToBlocks(history),
+      isNativeTerminalSession: true,
+      mcpStartup: starting,
+      mcpStartupLaunch: { pending: true, dismissed: false },
+    });
+    const { sink, manual, done, bound } = startPump(id);
+    sink.push(nativeDelta("m1", 0, "", false));
+    await tick();
+    expect(bound.get().mcpStartup).toEqual(starting);
+    const placedIndex = transcriptIndex(bound.get().blocks);
+    sink.push(nativeDelta("m1", 1, "Live text", false));
+    await tick();
+    manual.fire();
+    expect(transcriptIndex(bound.get().blocks)).toBe(placedIndex);
+    expect(bound.get().mcpStartup).toBeNull();
+    expect(bound.get().mcpStartupLaunch).toEqual({ pending: true, dismissed: true });
+    handleSessionEvent({ type: "session_mcp_startup", conversationId: id, servers: starting });
+    handleSessionEvent({
+      type: "session_agent_changed",
+      conversationId: id,
+      agentId: "agent_xyz",
+      agentName: "Test agent",
+    });
+    await tick();
+    expect(bound.get().mcpStartup).toBeNull();
+    expect(bound.get().mcpStartupLaunch.dismissed).toBe(true);
+    sink.close();
+    await done;
+  });
+
+  it.each(["visible", "background"])(
+    "keeps placed-preview content and indexes stable while %s, then converges to the final item",
+    async (visibility) => {
+      const id = `conv_content_${visibility}`;
+      const history = Array.from({ length: 20 }, (_, position) => ({
+        ...assistantMessage(`old-${position}`, `Old [source](https://example.invalid/${position})`),
+        position,
+        created_at: position + 1,
+      }));
+      const committed = itemsToBlocks(history);
+      useChatStore.setState({
+        conversationId: id,
+        blocks: committed,
+        isNativeTerminalSession: true,
+        sessionStatus: "running",
+        activeResponse: { responseId: "active", state: "streaming", error: null },
+      });
+      const { sink, manual, done, bound } = startPump(id);
+      sink.push(nativeDelta("m1", 0, "first ", false));
+      await tick();
+      const first = bound.get().blocks;
+      const index = transcriptIndex(first);
+      const context = first.at(-1)!.ctx;
+      const indexEntries = [...index.items];
+      if (visibility === "background")
+        bindConversationForTest("other-content-owner", { blocks: [] });
+      sink.push(nativeDelta("m1", 2, "third", false));
+      await tick();
+      manual.fire();
+      const updated = bound.get().blocks;
+      expect(transcriptIndex(updated)).toBe(index);
+      expect(updated.at(-1)!.ctx).toBe(context);
+      expect(updated.at(-1)).toMatchObject({
+        fullText: "first third",
+        streamIndex: 2,
+        previewInterrupted: true,
+      });
+      expect(updated.slice(0, -1).every((block, at) => block === committed[at])).toBe(true);
+      expect([...index.items]).toEqual(indexEntries);
+      expect(first.at(-1)).toMatchObject({ fullText: "first ", streamIndex: 0 });
+      sink.push(nativeDelta("m1", 1, "duplicate", false));
+      await tick();
+      manual.fire();
+      expect(bound.get().blocks.at(-1)).toMatchObject({ fullText: "first third", streamIndex: 2 });
+      const staleBlocks = bound.get().blocks;
+      const stalePending = bound.get().pendingUserMessages;
+      bound.set({
+        pendingUserMessages: [
+          { tempId: "pending-local", content: [{ type: "input_text", text: "next" }] },
+        ],
+      });
+      expect(
+        bound.set.nativePreviewContent!({
+          base: staleBlocks,
+          pendingUserMessages: stalePending,
+          changes: new Map([[20, { fullText: "stale", hasCodeBlocks: false }]]),
+          dismissStartup: false,
+        }),
+      ).toBe(false);
+      expect(bound.get().blocks.at(-1)).toMatchObject({ fullText: "first third" });
+      bound.set({ pendingUserMessages: [] });
+      const text = "first second third [source](https://example.invalid/final) Ω🙂";
+      const replayIndex = transcriptIndex(bound.get().blocks);
+      sink.close();
+      await done;
+      const replaySink = pushableStream();
+      const replay = pumpStreamEvents(
+        id,
+        replaySink.stream,
+        new AbortController(),
+        bound.set,
+        bound.get,
+        manual.scheduler,
+        new Set(),
+        undefined,
+        new Map([["live:m1", ""]]),
+      );
+      replaySink.push(nativeDelta("m1", 3, text, false));
+      await tick();
+      manual.fire();
+      expect(bound.get().blocks.at(-1)).toMatchObject({
+        fullText: text,
+        streamIndex: 3,
+        previewInterrupted: false,
+      });
+      expect(transcriptIndex(bound.get().blocks)).toBe(replayIndex);
+      const final = {
+        ...assistantMessage("active", text, "m1"),
+        id: "final-content",
+        position: 20,
+        phase: "final_answer",
+        created_at: 21,
+      };
+      replaySink.push(sse("response.output_item.done", { message_id: "m1", item: final }));
+      replaySink.push(nativeDelta("m1", 4, "late", true));
+      replaySink.close();
+      await replay;
+      manual.fire();
+      expect(bound.get().blocks.map((block) => block.ctx.itemId)).toEqual([
+        ...history.map((item) => item.id),
+        final.id,
+      ]);
+      expect(bound.get().blocks.at(-1)).toMatchObject({
+        type: "text_done",
+        fullText: text,
+        phase: "final_answer",
+        ctx: { position: 20 },
+      });
+      expect(buildBubbles(bound.get().blocks, null)).toEqual(
+        buildBubbles(itemsToBlocks([...history, final]), null),
+      );
+      if (visibility === "background") {
+        expect(useChatStore.getState().conversationId).toBe("other-content-owner");
+        expect(useChatStore.getState().blocks).toEqual([]);
+      }
+    },
+  );
 
   it.each(["final chunk", "server close", "transport close", "transport error"])(
     "flushes pending native text on %s without a later duplicate frame",

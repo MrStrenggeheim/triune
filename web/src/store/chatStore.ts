@@ -9,6 +9,8 @@ import {
 } from "@/lib/sessionUpdatesSocket";
 import {
   normalizeTranscript,
+  replaceNativePreviewContent,
+  type NativePreviewContentUpdate,
   orderTranscriptBlocks,
   refreshItemPositions,
   transcriptIndex,
@@ -4468,7 +4470,16 @@ function queuedSendOptions(
   };
 }
 
-type Setter = (partial: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>)) => void;
+interface NativePreviewContentOperation extends NativePreviewContentUpdate {
+  pendingUserMessages: PendingUserMessage[];
+  dismissStartup: boolean;
+}
+
+type Setter = ((
+  partial: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>),
+) => void) & {
+  nativePreviewContent?: (operation: NativePreviewContentOperation) => boolean;
+};
 type Getter = () => ChatState;
 
 // zustand's unwrapped setter, captured before the routing wrapper below
@@ -4747,7 +4758,7 @@ function entryGetter(entry: ConversationEntry): Getter {
  * stream.
  */
 function entrySetter(entry: ConversationEntry): Setter {
-  return (partial) => {
+  const set: Setter = (partial) => {
     const state = entryGetter(entry)();
     let patch = typeof partial === "function" ? partial(state) : partial;
     if (
@@ -4782,6 +4793,20 @@ function entrySetter(entry: ConversationEntry): Setter {
       entry.setState(conversationPatch as Partial<ConversationState>);
     }
   };
+  set.nativePreviewContent = (operation) => {
+    const state = entry.getState();
+    if (entry.disposed || state.pendingUserMessages !== operation.pendingUserMessages) return false;
+    const blocks = replaceNativePreviewContent(state.blocks, operation);
+    if (!blocks) return false;
+    entry.setState({
+      blocks,
+      ...(operation.dismissStartup
+        ? { mcpStartup: null, mcpStartupLaunch: { ...state.mcpStartupLaunch, dismissed: true } }
+        : {}),
+    });
+    return true;
+  };
+  return set;
 }
 
 /**
@@ -7463,24 +7488,27 @@ type NativeTextDelta = Extract<StreamEvent, { type: "text_delta" }> & {
  * appended directly.
  *
  * :param set: store setter.
+ * :param get: getter for the same conversation.
  * :param deltas: chunks in arrival order, including their stream indices.
  * :returns: nothing; mutates `blocks` in the store.
  */
-function applyLiveDeltas(set: Setter, deltas: NativeTextDelta[]): void {
-  set((s) => {
-    const blocks = s.blocks.slice();
-    const byId = new Map(transcriptIndex(s.blocks).items);
+function applyLiveDeltas(set: Setter, get: Getter, deltas: NativeTextDelta[]): void {
+  const fold = (s: ChatState) => {
+    const changes = new Map<number, TextDone>();
+    const byId = transcriptIndex(s.blocks).items;
+    const inserted = new Map<string, number>();
     for (const { messageId, delta, index, replayPrefix } of deltas) {
       const itemId = LIVE_ITEM_PREFIX + messageId;
-      const at = byId.get(itemId) ?? -1;
+      const at = inserted.get(itemId) ?? byId.get(itemId) ?? -1;
       if (at === -1) {
         const live = s.activeResponse;
         const responseId = live?.state === "streaming" ? live.responseId : itemId;
-        byId.set(itemId, blocks.length);
-        blocks.push(makeLiveTextBlock(itemId, delta, responseId, index));
+        const nextAt = s.blocks.length + inserted.size;
+        inserted.set(itemId, nextAt);
+        changes.set(nextAt, makeLiveTextBlock(itemId, delta, responseId, index));
         continue;
       }
-      const existing = blocks[at]!;
+      const existing = changes.get(at) ?? s.blocks[at]!;
       if (existing.type !== "text_done") continue;
       if (
         replayPrefix === undefined &&
@@ -7495,14 +7523,14 @@ function applyLiveDeltas(set: Setter, deltas: NativeTextDelta[]): void {
         index !== undefined &&
         existing.streamIndex !== undefined &&
         index > existing.streamIndex + 1;
-      blocks[at] = {
+      changes.set(at, {
         ...existing,
         fullText,
         hasCodeBlocks: fullText.includes("```"),
         ...(index !== undefined ? { streamIndex: index } : {}),
         ...(missedChunk ? { previewInterrupted: true } : {}),
         ...(replayPrefix !== undefined ? { previewInterrupted: false } : {}),
-      };
+      });
     }
     const startupPatch = deltas.some(({ delta }) => delta.length > 0)
       ? {
@@ -7510,7 +7538,28 @@ function applyLiveDeltas(set: Setter, deltas: NativeTextDelta[]): void {
           mcpStartupLaunch: { ...s.mcpStartupLaunch, dismissed: true },
         }
       : {};
-    return { ...startupPatch, blocks };
+    return { changes, inserted, startupPatch };
+  };
+  const base = get();
+  const folded = fold(base);
+  if (
+    folded.inserted.size === 0 &&
+    set.nativePreviewContent?.({
+      base: base.blocks,
+      changes: folded.changes,
+      pendingUserMessages: base.pendingUserMessages,
+      dismissStartup: deltas.some(({ delta }) => delta.length > 0),
+    })
+  )
+    return;
+  set((current) => {
+    const update =
+      current.blocks === base.blocks && current.pendingUserMessages === base.pendingUserMessages
+        ? folded
+        : fold(current);
+    const blocks = current.blocks.slice();
+    for (const [at, block] of update.changes) blocks[at] = block;
+    return { ...update.startupPatch, blocks };
   });
 }
 
@@ -7821,7 +7870,7 @@ export async function pumpStreamEvents(
       .splice(0)
       .filter((delta) => !ignoredMessages.has(delta.messageId));
     if (deltas.length && !controller.signal.aborted && !isConversationDisposed(id)) {
-      applyLiveDeltas(set, deltas);
+      applyLiveDeltas(set, get, deltas);
     }
   };
   // Tap the raw event stream for `session.*` side effects (sessionStatus,

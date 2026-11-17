@@ -4,6 +4,7 @@ import { itemsToBlocks } from "./itemsToBlocks";
 import { buildBubbles, mergePlacedPendingBubbles, type Bubble } from "./renderItems";
 import {
   normalizeTranscript,
+  replaceNativePreviewContent,
   orderTranscriptBlocks,
   projectPendingTranscript,
   transcriptIndex,
@@ -30,6 +31,75 @@ const preview = (id: string): TextDone => ({
 });
 
 describe("canonical order and provisional placement", () => {
+  it("reuses immutable indexes only for content changes to an already placed native preview", () => {
+    const history = itemsToBlocks([
+      item("a1", 0),
+      {
+        id: "call",
+        position: 1,
+        type: "function_call",
+        status: "completed",
+        response_id: "turn",
+        name: "read",
+        call_id: "call-id",
+        arguments: "{}",
+      },
+    ]);
+    const placed = normalizeTranscript(
+      { blocks: history, pendingUserMessages: [] },
+      { blocks: [...history, preview("answer")], pendingUserMessages: [] },
+    ).blocks;
+    const oldIndex = transcriptIndex(placed);
+    const oldEntries = [...oldIndex.items];
+    const oldTools = [...oldIndex.tools];
+    const original = placed.at(-1)! as TextDone;
+    const changes = new Map([
+      [
+        placed.length - 1,
+        {
+          fullText: "Answer [source](https://example.invalid/source) ```ts",
+          hasCodeBlocks: true,
+          streamIndex: 9,
+          previewInterrupted: true,
+        },
+      ],
+    ]);
+    const next = replaceNativePreviewContent(placed, { base: placed, changes })!;
+    expect(next).not.toBe(placed);
+    expect(next.slice(0, -1)).toEqual(history);
+    expect(next[0]).toBe(history[0]);
+    expect(next.at(-1)).toMatchObject(changes.get(placed.length - 1)!);
+    expect(next.at(-1)!.ctx).toBe(original.ctx);
+    expect(original.fullText).toBe("answer");
+    expect(transcriptIndex(next)).toBe(oldIndex);
+    expect([...oldIndex.items]).toEqual(oldEntries);
+    expect([...oldIndex.tools]).toEqual(oldTools);
+    expect(oldIndex.tools.get("call-id")).toBe(1);
+    const appended = normalizeTranscript(
+      { blocks: next, pendingUserMessages: [] },
+      { blocks: [...next, ...itemsToBlocks([item("a2", 2)])], pendingUserMessages: [] },
+    ).blocks;
+    expect(transcriptIndex(appended)).not.toBe(oldIndex);
+    expect(transcriptIndex(appended).items.get("a2")).toBeDefined();
+    expect(oldIndex.items.has("a2")).toBe(false);
+    expect(replaceNativePreviewContent(appended, { base: next, changes })).toBeNull();
+  });
+
+  it("rejects committed, unplaced or stale-base content operations", () => {
+    const committed = itemsToBlocks([item("a1", 0)]);
+    const unplaced = [preview("answer")];
+    const changes = new Map([[0, { fullText: "replacement", hasCodeBlocks: false }]]);
+    expect(replaceNativePreviewContent(committed, { base: committed, changes })).toBeNull();
+    expect(replaceNativePreviewContent(unplaced, { base: unplaced, changes })).toBeNull();
+    const placed = normalizeTranscript(
+      { blocks: committed, pendingUserMessages: [] },
+      { blocks: [...committed, ...unplaced], pendingUserMessages: [] },
+    ).blocks;
+    const stale = { base: placed, changes: new Map([[1, changes.get(0)!]]) };
+    expect(replaceNativePreviewContent(placed.slice(), stale)).toBeNull();
+    expect(replaceNativePreviewContent(placed, { base: placed, changes: new Map() })).toBeNull();
+  });
+
   it("keeps canonical order when an identified live record still lacks its saved position", () => {
     const a1 = itemsToBlocks([item("a1", 1)])[0]!;
     const a2 = itemsToBlocks([item("a2", 3)])[0]!;
