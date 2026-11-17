@@ -21,13 +21,18 @@ export function replaceCanonicalTranscript(
       ? {
           ...block,
           content: preserveInputAttachments(block.content, old.stableKey ? old.content : null),
+          ...((block.inputStableId ?? old.inputStableId)
+            ? { inputStableId: block.inputStableId ?? old.inputStableId }
+            : {}),
           ...(old.stableKey ? { stableKey: old.stableKey } : {}),
           ctx: {
             ...block.ctx,
             ...(old.ctx.clientCreatedAtS !== undefined
               ? { clientCreatedAtS: old.ctx.clientCreatedAtS }
               : {}),
-            ...(old.ctx.aliases ? { aliases: old.ctx.aliases } : {}),
+            ...(old.ctx.aliases
+              ? { aliases: [...new Set([...(block.ctx.aliases ?? []), ...old.ctx.aliases])] }
+              : {}),
           },
         }
       : block;

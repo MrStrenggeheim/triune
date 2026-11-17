@@ -213,6 +213,8 @@ Attribution and file boundaries: `tests/server/integration/test_session_orchestr
 
 - `tests/browser_ui/chat/test_transcript_multiplex.py` opens two chats on one socket, delivers a preview or committed answer before its user echo, and compares the settled transcript with reload.
 - The same journey exercises position/revision recovery after missed old-item updates and removals while preserving an unsent draft.
+- It also checks optimistic/native input identity across acknowledgement, canonical replay and missing consumed receipts; intentional identical sends remain distinct after reload.
+- Ordinary terminal metadata remains part of canonical replay without requesting missing-subagent recovery or producing activity-unavailable notices.
 - `tests/browser_ui/chat/test_workspace_iteration.py::test_iteration5_sidebar_status_actions_and_hierarchy` verifies collapsed-child roll-up, the two collapsing status groups, selected control surfaces and menu actions on desktop and phone.
 - `tests/browser_ui/chat/test_workspace_iteration.py::test_iteration5_accepted_session_focus_and_search_scroll` checks explicit desktop session focus, mobile tap-to-type and exact search positioning without stealing the query focus.
 - `tests/browser_ui/chat/test_search_navigation.py::test_search_virtual_reveal_original_source_and_cancel` covers virtualized source reveal, delayed geometry and manual-scroll cancellation; search-result theme variants remain in `test_search_results.py`.

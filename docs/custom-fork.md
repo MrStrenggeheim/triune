@@ -322,6 +322,14 @@ Evidence: `artifacts/overnight-20261116/projection-analysis/{comparison.json,can
 `CLAUDE-CHILD-RUNNER-15` extends the same transactional checks to an ordinary Claude child's exact native subagent identity.
 The registration must carry trusted authority for the parent's current binding; the store checks the persisted parent/native identity and unchanged child binding before writing only the runner field.
 Ordinary native children retain their conversation, dispatch and transcript identity; side chats and independently hosted children do not acquire this shared-runner authority.
+
+## Native input replay identity
+
+`INPUT-LIVE-DEDUP-16` reconciles optimistic sends with canonical user items at live insertion, reset and late HTTP acknowledgement.
+Server-matched native messages retain an optional `input_stable_id` alongside their native item ID; external producers cannot assert that alias, and ambiguous FIFO settlement cannot create it.
+Exact identities preserve separate intentional identical sends, uploaded files and stable rendering keys without matching browser message text.
+`RESOURCE-UPDATE-RECOVERY-16` keeps ordinary terminal metadata in canonical replay while excluding it from missing-subagent recovery.
+The shared transcript browser journey and focused store/server cases cover these boundaries; see [canonical transcript acceptance](../feature-map/unified-workspace.md#canonical-transcript-and-navigation-acceptance).
 The existing exact-runner checks still gate shell observations and provenance-bearing events.
 This repairs reused-child shell inventory after parent runner replacement; it does not infer general transcript completeness or repair historical rows by guessing identity.
 Source, authorization/concurrency evidence and activation are recorded separately in `artifacts/overnight-20261116/{event-rejections,stability13,sibling-child-audit,stability15}`.

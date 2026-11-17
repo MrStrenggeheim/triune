@@ -322,6 +322,8 @@ class MessageData(BaseModel):
         suppress delayed preview chunks after the authoritative item.
     :param user_authored: Human input confirmed by a trusted submission or
         adapter identity, independently of protocol role and account identity.
+    :param input_stable_id: Server-matched browser input identity, independent
+        of the canonical item id. Omitted when no input identity is established.
     :param subagent_return_id: Native task id of an explicitly completed child.
     :param communication: Trusted peer/native provenance, independent of model role.
     """
@@ -348,6 +350,7 @@ class MessageData(BaseModel):
     agent: str | None = Field(default=None, serialization_alias="model")
     is_meta: bool = Field(default=False, exclude_if=lambda value: value is False)
     user_authored: bool = Field(default=False, exclude_if=lambda value: value is False)
+    input_stable_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
     subagent_return_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
     interrupted: bool = Field(default=False, exclude_if=lambda value: value is False)
     stream_message_id: str | None = None

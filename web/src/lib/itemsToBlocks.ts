@@ -349,12 +349,20 @@ function itemToBlock(item: ConversationItem, agentName?: string | null): AnyBloc
 
 function userMessageToBlock(item: MessageItem): UserMessageBlock {
   return {
+    ...(typeof item.input_stable_id === "string" && item.input_stable_id
+      ? { inputStableId: item.input_stable_id }
+      : {}),
     userAuthored: item.user_authored === true,
     isMeta: item.is_meta === true,
     ...(readMessageCommunication(item.communication) ? { communication: item.communication } : {}),
     type: "user_message",
     ...(item.response_id === "pending_input" ? { pending: true } : {}),
-    ctx: ctxFor(item),
+    ctx: {
+      ...ctxFor(item),
+      ...(typeof item.input_stable_id === "string" && item.input_stable_id
+        ? { aliases: [item.input_stable_id] }
+        : {}),
+    },
     // Forward the full content array verbatim so the renderer can
     // pluck text, images, and files without the translator imposing
     // an interpretation. Cast restricts to the user-input subset

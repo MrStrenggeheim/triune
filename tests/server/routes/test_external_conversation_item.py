@@ -1,8 +1,40 @@
 """Tests for externally-forwarded conversation-item parsing."""
 
+import pytest
+
 from omnigent.entities import ConversationItem, MessageData
 from omnigent.server.routes.sessions import _parse_external_conversation_item
 from omnigent.server.schemas import SessionEventInput
+
+
+@pytest.mark.parametrize("role,agent", [("user", None), ("assistant", "codex")])
+def test_legacy_message_payload_omits_absent_input_alias(role: str, agent: str | None) -> None:
+    legacy = {
+        "communication": None,
+        "phase": None,
+        "resource_scope": None,
+        "role": role,
+        "content": [],
+        "agent": agent,
+        "stream_message_id": None,
+    }
+    message = MessageData.model_validate(legacy)
+    assert message.model_dump() == {
+        "resource_scope": None,
+        "role": role,
+        "content": [],
+        "agent": agent,
+        "stream_message_id": None,
+    }
+    item = ConversationItem(
+        id="legacy",
+        type="message",
+        status="completed",
+        response_id="turn",
+        created_at=1,
+        data=message,
+    )
+    assert "input_stable_id" not in item.to_api_dict()
 
 
 def test_native_message_stream_id_survives_snapshot_serialization() -> None:

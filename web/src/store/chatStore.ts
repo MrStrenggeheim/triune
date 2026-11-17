@@ -1704,10 +1704,10 @@ interface SendChain {
 const sendChains = new Map<string | symbol, SendChain>();
 
 /**
- * Sends whose POST has not settled, by stable id, flagged `true` once a live
- * `session_input_consumed` named the id. Read by `send()`'s failure path: that
- * acknowledgement proves THIS attempt was taken even when the POST's answer is
- * lost and an earlier refused attempt's item already sits in the transcript.
+ * Sends whose POST has not settled, by stable id, flagged `true` by a consumed
+ * receipt or a server-confirmed native input alias. Read by `send()`'s failure
+ * path: that proof identifies this attempt even when the POST answer is lost
+ * and an earlier refused attempt's item already sits in the transcript.
  */
 const inFlightSends = new Map<string, boolean>();
 
@@ -3353,25 +3353,29 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
         // what releases this conversation's entry for eviction, since the
         // server can now replay it. The bubble keeps rendering until its
         // consumed event pops it.
-        setterFor(sessionId)((s) => ({
-          pendingUserMessages: s.pendingUserMessages.map((p) =>
+        setterFor(sessionId)((s) => {
+          const pending = s.pendingUserMessages.map((p) =>
             p.tempId === tempId
               ? {
                   ...p,
                   posted: true,
+                  ...(postResult.itemId ? { itemId: postResult.itemId } : {}),
                   ...(postResult.position !== undefined
                     ? { position: postResult.position, itemId: postResult.itemId ?? p.stableId }
                     : {}),
                   ...(postResult.pendingId ? { pendingId: postResult.pendingId } : {}),
                 }
               : p,
-          ),
-          settledShellInputs: s.settledShellInputs.map((entry) =>
-            entry.tempId === tempId && postResult.pendingId
-              ? { ...entry, pendingId: postResult.pendingId }
-              : entry,
-          ),
-        }));
+          );
+          return {
+            ...reconcileExactPendingInputs(s.blocks, pending),
+            settledShellInputs: s.settledShellInputs.map((entry) =>
+              entry.tempId === tempId && postResult.pendingId
+                ? { ...entry, pendingId: postResult.pendingId }
+                : entry,
+            ),
+          };
+        });
         opts?.onAccepted?.();
       }
       // Note: native-terminal messages return a `pending_id`, but the
@@ -3437,8 +3441,8 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
       let serverRefused = answeredWithRefusal || retriesRefusedSend;
       const draftState =
         draftSessionId === null ? get() : (setterForState(draftSessionId) ?? get());
-      // A live `session_input_consumed` for this very attempt proves the runner
-      // took it, whatever became of the POST's answer.
+      // A consumed receipt or confirmed native input alias proves this attempt
+      // reached the runner, whatever became of the POST's answer.
       let deliveredDespiteFailure = inFlightSends.get(stableId) === true;
       let unsettled = false;
       if (
@@ -7968,36 +7972,11 @@ export async function pumpStreamEvents(
               ignoreLivePreview(block, ignoredMessages);
           }
           set((state) => {
-            const pendingById = new Map<string, PendingUserMessage>();
-            for (const pending of state.pendingUserMessages) {
-              if (pending.initialDraft) continue;
-              for (const key of [
-                pending.itemId,
-                pending.stableId,
-                pending.pendingId,
-                pending.tempId,
-              ])
-                if (key) pendingById.set(key, pending);
-            }
-            const consumed = new Set<string>();
-            const blocks = rebuilt.map((block) => {
-              if (block.type !== "user_message" || block.ctx.responseId === "pending_input")
-                return block;
-              const pending = block.ctx.itemId ? pendingById.get(block.ctx.itemId) : undefined;
-              if (!pending) return block;
-              consumed.add(pending.tempId);
-              return {
-                ...block,
-                stableKey: block.stableKey ?? pending.tempId,
-                content: preserveInputAttachments(block.content, pending.content),
-              };
-            });
+            const reconciled = reconcileExactPendingInputs(rebuilt, state.pendingUserMessages);
+            const { blocks } = reconciled;
             return {
-              blocks,
+              ...reconciled,
               hasMoreHistory: false,
-              pendingUserMessages: consumed.size
-                ? state.pendingUserMessages.filter((pending) => !consumed.has(pending.tempId))
-                : state.pendingUserMessages,
               oldestItemId:
                 blocks.find((block) => block.ctx.position !== undefined)?.ctx.itemId ?? null,
               historyGeneration: state.historyGeneration + 1,
@@ -8726,6 +8705,53 @@ function committedContentFor(
   return preserveInputAttachments(serverContent, pendingContent);
 }
 
+/** Reconcile committed user items using only exact submission identities. */
+function reconcileExactPendingInputs(
+  blocks: AnyBlock[],
+  pendingUserMessages: PendingUserMessage[],
+): Pick<ConversationState, "blocks" | "pendingUserMessages"> {
+  const pendingById = new Map<string, PendingUserMessage>();
+  for (const pending of pendingUserMessages) {
+    if (pending.initialDraft) continue;
+    for (const id of [pending.itemId, pending.stableId, pending.pendingId, pending.tempId])
+      if (id) pendingById.set(id, pending);
+  }
+  const consumed = new Set<string>();
+  const reconciled = blocks.map((block) => {
+    if (block.type !== "user_message" || block.ctx.responseId === "pending_input") return block;
+    // Only the confirmed native alias proves delivery; generic item identity can predate refusal.
+    if (block.inputStableId && inFlightSends.has(block.inputStableId))
+      inFlightSends.set(block.inputStableId, true);
+    const pending = [block.ctx.itemId, ...(block.ctx.aliases ?? [])]
+      .map((id) => (id ? pendingById.get(id) : undefined))
+      .find((candidate) => candidate && !consumed.has(candidate.tempId));
+    if (!pending) return block;
+    consumed.add(pending.tempId);
+    const communication = block.communication ?? pending.communication;
+    return {
+      ...block,
+      stableKey: block.stableKey ?? pending.tempId,
+      content: preserveInputAttachments(block.content, pending.content),
+      ...(communication ? { communication } : {}),
+      ctx: {
+        ...block.ctx,
+        ...(block.ctx.createdBy === undefined && pending.author !== undefined
+          ? { createdBy: pending.author }
+          : {}),
+        ...(block.ctx.clientCreatedAtS === undefined && pending.createdAtS !== undefined
+          ? { clientCreatedAtS: pending.createdAtS }
+          : {}),
+      },
+    };
+  });
+  return {
+    blocks: consumed.size ? reconciled : blocks,
+    pendingUserMessages: consumed.size
+      ? pendingUserMessages.filter((pending) => !consumed.has(pending.tempId))
+      : pendingUserMessages,
+  };
+}
+
 /** Fill provenance and uploads when a persisted item beats its pending receipt. */
 function reconcileCommittedInput(
   blocks: AnyBlock[],
@@ -9167,7 +9193,23 @@ export function handleSessionEvent(event: StreamEvent, streamConversationId?: st
   ): void => {
     setterFor(sourceConversationId)((state) => {
       const next = typeof patch === "function" ? patch(state) : patch;
-      if (event.type !== "session_input_consumed" || event.position === undefined) return next;
+      if (event.type !== "session_input_consumed") return next;
+      // A trusted receipt may promote a native ID before its POST returns.
+      for (const block of next.blocks ?? state.blocks) {
+        if (block.type !== "user_message" || block.ctx.itemId !== event.itemId) continue;
+        const promoted = state.pendingUserMessages.find(
+          (pending) => pending.tempId === block.stableKey,
+        );
+        for (const identity of [
+          event.itemId,
+          event.data.input_stable_id,
+          ...(block.ctx.aliases ?? []),
+          promoted?.stableId,
+        ])
+          if (typeof identity === "string" && inFlightSends.has(identity))
+            inFlightSends.set(identity, true);
+      }
+      if (event.position === undefined) return next;
       const blocks = (next.blocks ?? state.blocks).map((block) =>
         block.ctx.itemId === event.itemId
           ? {
@@ -9227,7 +9269,10 @@ export function handleSessionEvent(event: StreamEvent, streamConversationId?: st
           typeof event.item.position === "number" &&
           (event.item.type !== "resource_event" || !hasCommittedItem(state.blocks, event.item.id))
         ) {
-          return { blocks: upsertCanonicalItem(state.blocks, event.item as ConversationItem) };
+          const blocks = upsertCanonicalItem(state.blocks, event.item as ConversationItem);
+          return event.item.type === "message" && event.item.role === "user"
+            ? reconcileExactPendingInputs(blocks, state.pendingUserMessages)
+            : { blocks };
         }
         const blocks = updateLoadedResourceItems(state.blocks, [event.item]);
         return blocks === state.blocks ? {} : { blocks };
@@ -9236,7 +9281,12 @@ export function handleSessionEvent(event: StreamEvent, streamConversationId?: st
       if (
         sourceConversationId &&
         typeof itemId === "string" &&
-        event.item.type === "resource_event"
+        event.item.type === "resource_event" &&
+        // Sparse legacy updates still need canonical recovery; known non-activity metadata does not.
+        (event.item.resource_type == null || event.item.resource_type === "session") &&
+        (event.item.event_type == null ||
+          event.item.event_type === "session.subagent.delegated" ||
+          event.item.event_type === "session.subagent.returned")
       ) {
         const state = setterForState(sourceConversationId);
         if (state && !state.blocks.some((block) => block.ctx.itemId === itemId)) {
@@ -9972,7 +10022,9 @@ export function handleSessionEvent(event: StreamEvent, streamConversationId?: st
           );
         const matchedIndex = s.pendingUserMessages.findIndex((pending) =>
           [pending.tempId, pending.pendingId, pending.stableId].some(
-            (id) => id !== undefined && (id === named || id === event.itemId),
+            (id) =>
+              id !== undefined &&
+              (id === named || id === event.itemId || id === event.data.input_stable_id),
           ),
         );
         if (hasCommittedItem(s.blocks, event.itemId)) {

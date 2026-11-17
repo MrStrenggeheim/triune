@@ -2,17 +2,20 @@
 
 import json
 import logging
+import uuid
 from unittest.mock import Mock
 
 import pytest
 
 from omnigent.debug_logging import record_to_row
+from omnigent.entities import ConversationItem, MessageData
 from omnigent.runtime import pending_inputs, session_stream
 from omnigent.server.routes._sessions.orchestration import (
     _persist_external_conversation_item,
     _record_native_input_lifecycle,
 )
 from omnigent.server.schemas import SessionEventInput
+from omnigent.server.session_recovery import SessionRecovery
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
 
 
@@ -76,6 +79,23 @@ async def test_skipped_message_logs_committed_ids_once_and_keeps_enqueue_identit
     assert len(rows) == 2
     lost, matched = [row["attributes"] for row in rows]
     saved = {item.id: item for item in store.list_items(conv.id).data}
+    assert matched_id != "b" * 32
+    recovered = SqlAlchemyConversationStore(db_uri).get_item(conv.id, matched_id)
+    assert recovered is not None and isinstance(recovered.data, MessageData)
+    assert recovered.to_api_dict()["input_stable_id"] == "b" * 32
+    restored = ConversationItem.model_validate_json(recovered.model_dump_json())
+    assert isinstance(restored.data, MessageData) and restored.data.input_stable_id == "b" * 32
+
+    async def allowed() -> None:
+        pass
+
+    replay = SessionRecovery(SqlAlchemyConversationStore(db_uri), conv.id, allowed, enabled=True)
+    frames = [event async for event in replay.events()]
+    [replayed] = [
+        frame["item"] for frame in frames if frame.get("item", {}).get("id") == matched_id
+    ]
+    assert replayed["input_stable_id"] == "b" * 32
+    assert all(frame["type"] != "session.input.consumed" for frame in frames)
     assert lost["outcome"] == "skipped_without_native_record"
     assert lost["pending_id"] == first
     assert lost["input_stable_id"] == "a" * 32
@@ -120,6 +140,93 @@ async def test_skipped_message_logs_committed_ids_once_and_keeps_enqueue_identit
     )
     assert [p["pending_id"] for p in pending_inputs.snapshot_for(conv.id)] == [newer]
     pending_inputs.resolve(conv.id, newer)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pending_text", [None, "native text", "different text"])
+async def test_native_input_alias_requires_matched_pending_identity(
+    db_uri: str, pending_text: str | None
+) -> None:
+    store = SqlAlchemyConversationStore(db_uri)
+    conv = store.create_conversation(title="Test")
+    if pending_text is not None:
+        pending_inputs.record(
+            conv.id,
+            [{"type": "input_text", "text": pending_text}],
+            stable_id="a" * 32,
+            background_titles_enabled=False,
+        )
+    source_id = "native:alias:0"
+    item_id = await _persist_external_conversation_item(
+        conv.id,
+        conv,
+        SessionEventInput(
+            type="external_conversation_item",
+            data={
+                "item_type": "message",
+                "item_data": {
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "native text"}],
+                    "input_stable_id": "f" * 32,
+                },
+                "input_stable_id": "e" * 32,
+                "source_id": source_id,
+            },
+        ),
+        store,
+        enabled=False,
+    )
+    assert (
+        item_id
+        == uuid.uuid5(uuid.NAMESPACE_URL, f"omnigent-external-item:{conv.id}:{source_id}").hex
+    )
+    recovered = SqlAlchemyConversationStore(db_uri).get_item(conv.id, item_id)
+    assert recovered is not None and isinstance(recovered.data, MessageData)
+    if pending_text == "native text":
+        assert recovered.to_api_dict()["input_stable_id"] == "a" * 32
+        assert recovered.data.user_authored
+    else:
+        assert "input_stable_id" not in recovered.to_api_dict()
+        assert "input_stable_id" not in recovered.data.model_dump()
+        assert not recovered.data.user_authored
+    assert pending_inputs.snapshot_for(conv.id) == []
+
+
+@pytest.mark.asyncio
+async def test_identical_native_inputs_keep_distinct_browser_aliases(db_uri: str) -> None:
+    store = SqlAlchemyConversationStore(db_uri)
+    conv = store.create_conversation(title="Test")
+    content = [{"type": "input_text", "text": "intentional repeat"}]
+    for stable_id in ("a" * 32, "b" * 32):
+        pending_inputs.record(
+            conv.id, content, stable_id=stable_id, background_titles_enabled=False
+        )
+    bodies = [
+        SessionEventInput(
+            type="external_conversation_item",
+            data={
+                "item_type": "message",
+                "item_data": {"role": "user", "content": content},
+                "source_id": f"native:repeat:{index}",
+            },
+        )
+        for index in range(2)
+    ]
+    first_id = await _persist_external_conversation_item(
+        conv.id, conv, bodies[0], store, enabled=False
+    )
+    assert (
+        await _persist_external_conversation_item(conv.id, conv, bodies[0], store, enabled=False)
+        == first_id
+    )
+    assert len(pending_inputs.snapshot_for(conv.id)) == 1
+    second_id = await _persist_external_conversation_item(
+        conv.id, conv, bodies[1], store, enabled=False
+    )
+    assert first_id != second_id
+    recovered = SqlAlchemyConversationStore(db_uri).list_items(conv.id).data
+    assert [item.to_api_dict()["input_stable_id"] for item in recovered] == ["a" * 32, "b" * 32]
+    assert pending_inputs.snapshot_for(conv.id) == []
 
 
 @pytest.mark.asyncio

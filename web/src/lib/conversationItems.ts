@@ -29,6 +29,8 @@ export interface BaseItem {
 }
 
 export interface MessageItem extends BaseItem {
+  /** Server-confirmed browser submission identity for a native user item. */
+  input_stable_id?: string;
   phase?: "commentary" | "final_answer";
   communication?: MessageCommunication;
   type: "message";

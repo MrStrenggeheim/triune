@@ -3450,7 +3450,14 @@ async def _persist_external_conversation_item_unlocked(
             item = _merge_pending_file_blocks(item, drained.content)
             if match_method != "fifo_fallback":
                 item = item.model_copy(
-                    update={"data": item.data.model_copy(update={"user_authored": True})}
+                    update={
+                        "data": item.data.model_copy(
+                            update={
+                                "user_authored": True,
+                                "input_stable_id": drained.stable_id,
+                            }
+                        )
+                    }
                 )
             # A text match preserves the sender recorded at POST time. FIFO
             # settlement alone does not establish authorship of the mirror.
@@ -3615,6 +3622,9 @@ def _new_external_conversation_item(
 ) -> NewConversationItem:
     """Parse an external item event, keyed by its ``source_id`` when it has one."""
     item = _parse_external_conversation_item(body)
+    if isinstance(item.data, MessageData):
+        # Only server-matched pending input can establish a browser alias.
+        item.data = item.data.model_copy(update={"input_stable_id": None})
     if isinstance(item.data, MessageData) and item.data.communication is not None:
         origin = item.data.communication
         if origin.kind not in {"native_agent", "system", "external"}:

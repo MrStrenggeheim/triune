@@ -9732,7 +9732,7 @@ describe("chatStore — handleSessionEvent (session.* events)", () => {
 
       handleSessionEvent(shellEvent("input"));
 
-      expect(useChatStore.getState().pendingUserMessages).toEqual([draft]);
+      expect(useChatStore.getState().pendingUserMessages).toMatchObject([draft]);
     });
 
     it("matches nothing for an empty command", () => {
@@ -23536,6 +23536,96 @@ it("projects an accepted pending peer before grouping and keeps its original ID,
 
 describe("SYNC-ACCEPTANCE canonical resource update", () => {
   it.each([false, true])(
+    "does not recover ordinary terminal creation metadata (empty=%s)",
+    async (empty) => {
+      const id = "ordinary-terminal-replay";
+      const anchor = { ...userMessage("greeting", "Hi"), position: 0 };
+      const terminals = [1, 3].map((position) => ({
+        id: `terminal-created-${position}`,
+        position,
+        response_id: id,
+        type: "resource_event",
+        resource_type: "terminal",
+        resource_id: "terminal_codex_main",
+        event_type: "session.resource.created",
+        resource: { id: "terminal_codex_main", type: "terminal" },
+      }));
+      seedSession(id, [anchor, ...terminals] as ConversationItem[]);
+      const bound = bindConversationForTest(id, {
+        blocks: empty ? [] : itemsToBlocks([anchor]),
+        oldestItemId: empty ? null : anchor.id,
+      });
+      const info = vi.spyOn(toast, "info").mockReturnValue("unexpected-activity-notice");
+      onTestFinished(() => info.mockRestore());
+      const sink = pushableStream();
+      const controller = new AbortController();
+      const pumping = pumpStreamEvents(id, sink.stream, controller, bound.set, bound.get);
+      for (const item of terminals) sink.push(sse("response.output_item.done", { item }));
+      sink.close();
+      await pumping;
+      await tick();
+      expect(bound.get().blocks.map((block) => block.ctx.itemId)).toEqual(empty ? [] : [anchor.id]);
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(info).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([null, 403, 404])(
+    "keeps authorized recovery for a sparse legacy subagent update (status=%s)",
+    async (status) => {
+      const id = "sparse-legacy-activity";
+      const before = userMessage("legacy-before", "Before");
+      const activity = {
+        id: "sparse-activity",
+        response_id: "child-turn",
+        type: "resource_event",
+        resource_type: "session",
+        resource_id: "authorized-child",
+        event_type: "session.subagent.returned",
+        resource: { dispatch_id: "authorized-dispatch", result_text: "Saved result" },
+      } as unknown as ConversationItem;
+      const after = assistantMessage("legacy-after", "After");
+      seedSession(id, [before, activity, after]);
+      const loaded = itemsToBlocks([before, after]);
+      const bound = bindConversationForTest(id, { blocks: loaded, oldestItemId: before.id });
+      const info = vi.spyOn(toast, "info").mockReturnValue("unexpected-activity-notice");
+      const error = vi.spyOn(toast, "error").mockReturnValue("authorization-notice");
+      onTestFinished(() => {
+        info.mockRestore();
+        error.mockRestore();
+      });
+      if (status) fetchMock.mockResolvedValueOnce(mockResponse({}, { ok: false, status }));
+      handleSessionEvent(
+        { type: "session_item_updated", item: { id: activity.id, type: "resource_event" } },
+        id,
+      );
+      await tick();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(info).not.toHaveBeenCalled();
+      if (status) {
+        expect(bound.get().blocks).toBe(loaded);
+        expect(error).toHaveBeenCalledExactlyOnceWith(
+          status === 403
+            ? "Activity update is unavailable because access was denied."
+            : "Activity update is no longer available.",
+          { id: expect.any(String) },
+        );
+      } else {
+        expect(bound.get().blocks.map((block) => block.ctx.itemId)).toEqual([
+          before.id,
+          activity.id,
+          after.id,
+        ]);
+        expect(bound.get().blocks[1]).toMatchObject({
+          toolType: "subagent_activity",
+          data: activity,
+        });
+        expect(error).not.toHaveBeenCalled();
+      }
+    },
+  );
+
+  it.each([false, true])(
     "inserts an absent positioned worker card once without legacy recovery (empty=%s)",
     async (empty) => {
       const activity = {
@@ -23585,4 +23675,363 @@ describe("SYNC-ACCEPTANCE canonical resource update", () => {
       expect(bound.get().blocks[0]).toMatchObject({ data: updated });
     },
   );
+});
+
+// Native inputs reconcile canonical items independently of transient consumed receipts.
+describe("exact native input reconciliation", () => {
+  const id = "exact-native-input";
+  async function sendPair() {
+    useChatStore.setState({
+      conversationId: id,
+      isNativeTerminalSession: true,
+      abortController: new AbortController(),
+    });
+    let posts = 0;
+    fetchMock.mockImplementation((input, init) =>
+      String(input).endsWith("/events")
+        ? mockResponse({ queued: true, pending_id: `native-pending-${++posts}` })
+        : defaultFetchHandler(input, init),
+    );
+    await useChatStore.getState().send("test", "agent_xyz");
+    await useChatStore.getState().send("test", "agent_xyz");
+    return [...useChatStore.getState().pendingUserMessages];
+  }
+  async function frames(...events: string[]) {
+    const sink = pushableStream();
+    const controller = new AbortController();
+    const pumping = pumpStreamEvents(
+      id,
+      sink.stream,
+      controller,
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    events.forEach((event) => sink.push(event));
+    sink.close();
+    await pumping;
+    controller.abort();
+  }
+  const canonical = (pending: PendingUserMessage, nativeId = pending.stableId!) => ({
+    ...(userMessage("native-turn", "test") as MessageItem),
+    id: nativeId,
+    position: 4,
+    ...(nativeId !== pending.stableId ? { input_stable_id: pending.stableId } : {}),
+  });
+
+  it.each([false, true])(
+    "settles only the exact equal-text send from user done (alias=%s)",
+    async (alias) => {
+      const pending = await sendPair();
+      const item = canonical(pending[1]!, alias ? "native-origin-id" : undefined);
+      await frames(sse("response.output_item.done", { item }));
+      const state = useChatStore.getState();
+      expect(state.pendingUserMessages.map((p) => p.stableId)).toEqual([pending[0]!.stableId]);
+      expect(state.blocks).toHaveLength(1);
+      expect(state.blocks[0]).toMatchObject({
+        stableKey: pending[1]!.tempId,
+        ctx: { itemId: item.id, position: 4 },
+      });
+    },
+  );
+
+  it("preserves both identical sends when a canonical item has no matching identity", async () => {
+    const pending = await sendPair();
+    const item = {
+      ...(userMessage("native-turn", "test") as MessageItem),
+      id: "unmatched-native",
+      position: 4,
+    };
+    await frames(sse("response.output_item.done", { item }));
+    expect(useChatStore.getState().pendingUserMessages.map((p) => p.stableId)).toEqual(
+      pending.map((p) => p.stableId),
+    );
+  });
+
+  it("uses the trusted native alias during complete reset without consuming the other equal-text send", async () => {
+    const pending = await sendPair();
+    const item = canonical(pending[1]!, "native-reset-id");
+    const boundary = {
+      reset: true,
+      last_position: 4,
+      last_item_id: item.id,
+      item_count: 1,
+      stream_epoch: "exact-native",
+      item_revision: 1,
+      reset_revision: 1,
+    };
+    await frames(
+      sse("session.sync", { ...boundary, phase: "start" }),
+      sse("response.output_item.done", { item }),
+      sse("session.sync", { ...boundary, phase: "complete" }),
+    );
+    expect(useChatStore.getState().pendingUserMessages.map((p) => p.stableId)).toEqual([
+      pending[0]!.stableId,
+    ]);
+    expect(useChatStore.getState().blocks[0]).toMatchObject({
+      stableKey: pending[1]!.tempId,
+      ctx: { aliases: [pending[1]!.stableId] },
+    });
+  });
+
+  it.each(["receipt-first", "done-first"])(
+    "retains trusted pending-ID promotion and repeated done after %s",
+    async (order) => {
+      const pending = await sendPair();
+      const item = {
+        ...(userMessage("native-turn", "test") as MessageItem),
+        id: "legacy-native-id",
+        position: 4,
+      };
+      const done = sse("response.output_item.done", { item });
+      const receipt = sse("session.input.consumed", {
+        data: {
+          item_id: item.id,
+          type: "message",
+          cleared_pending_id: pending[1]!.pendingId,
+          data: { role: "user", user_authored: true, content: item.content },
+        },
+      });
+      await frames(...(order === "receipt-first" ? [receipt, done, done] : [done, receipt, done]));
+      const state = useChatStore.getState();
+      expect(state.pendingUserMessages.map((p) => p.stableId)).toEqual([pending[0]!.stableId]);
+      expect(state.blocks).toHaveLength(1);
+      expect(state.blocks[0]).toMatchObject({
+        stableKey: pending[1]!.tempId,
+        ctx: { itemId: item.id },
+      });
+    },
+  );
+
+  it.each(["stable", "pending-ack", "item-ack", "alias"])(
+    "reconciles a canonical user item before its late POST result through %s",
+    async (identity) => {
+      useChatStore.setState({
+        conversationId: id,
+        isNativeTerminalSession: true,
+        abortController: new AbortController(),
+      });
+      let finishPost!: (response: Response) => void;
+      fetchMock.mockImplementation((input, init) =>
+        String(input).endsWith("/events")
+          ? new Promise<Response>((resolve) => {
+              finishPost = resolve;
+            })
+          : defaultFetchHandler(input, init),
+      );
+      const sending = useChatStore.getState().send("test", "agent_xyz");
+      await vi.waitFor(() => expect(finishPost).toBeTypeOf("function"));
+      const pending = useChatStore.getState().pendingUserMessages[0]!;
+      const nativeId = identity === "stable" ? pending.stableId! : "native-before-post";
+      const item = {
+        ...(userMessage("native-turn", "test") as MessageItem),
+        id: nativeId,
+        position: 4,
+        ...(identity === "alias" ? { input_stable_id: pending.stableId } : {}),
+      };
+      await frames(sse("response.output_item.done", { item }));
+      if (identity === "pending-ack" || identity === "item-ack")
+        expect(useChatStore.getState().pendingUserMessages).toHaveLength(1);
+      finishPost(
+        mockResponse({
+          queued: true,
+          ...(identity === "item-ack"
+            ? { item_id: nativeId }
+            : { pending_id: identity === "pending-ack" ? nativeId : "native-post-ack" }),
+        }),
+      );
+      await sending;
+      expect(useChatStore.getState().pendingUserMessages).toEqual([]);
+      expect(useChatStore.getState().blocks[0]).toMatchObject({
+        stableKey: pending.tempId,
+        ctx: { itemId: nativeId },
+      });
+    },
+  );
+
+  it.each([false, true])(
+    "never restores a consumed native input when its POST subsequently fails=%s",
+    async (fails) => {
+      useChatStore.setState({
+        conversationId: id,
+        isNativeTerminalSession: true,
+        abortController: new AbortController(),
+        failedSendDraft: null,
+      });
+      let finishPost!: (response: Response) => void;
+      let failPost!: (error: Error) => void;
+      fetchMock.mockImplementation((input, init) =>
+        String(input).endsWith("/events")
+          ? new Promise<Response>((resolve, reject) => {
+              finishPost = resolve;
+              failPost = reject;
+            })
+          : defaultFetchHandler(input, init),
+      );
+      const sending = useChatStore.getState().send("test", "agent_xyz");
+      await vi.waitFor(() => expect(finishPost).toBeTypeOf("function"));
+      const pending = useChatStore.getState().pendingUserMessages[0]!;
+      const item = {
+        ...(userMessage("native-turn", "test") as MessageItem),
+        id: "consumed-native-id",
+        position: 4,
+      };
+      await frames(
+        sse("session.input.consumed", {
+          data: {
+            item_id: item.id,
+            type: "message",
+            cleared_pending_id: "unreturned-pending-id",
+            data: { role: "user", user_authored: true, content: item.content },
+          },
+        }),
+        sse("response.output_item.done", { item }),
+        sse("response.output_item.done", { item }),
+      );
+      if (fails) failPost(new Error("POST answer lost"));
+      else finishPost(mockResponse({ queued: true, pending_id: "unreturned-pending-id" }));
+      await sending;
+      const state = useChatStore.getState();
+      expect(state.pendingUserMessages).toEqual([]);
+      expect(state.failedSendDraft).toBeNull();
+      expect(state.blocks).toHaveLength(1);
+      expect(state.blocks[0]).toMatchObject({ stableKey: pending.tempId });
+    },
+  );
+
+  it.each(["done", "reset", "same-id-refused", "generic-alias-refused"])(
+    "handles a lost consumed receipt and late failed POST through %s",
+    async (scenario) => {
+      useChatStore.setState({
+        conversationId: id,
+        isNativeTerminalSession: true,
+        abortController: new AbortController(),
+        failedSendDraft: null,
+      });
+      let finishPost!: (response: Response) => void;
+      let failPost!: (error: Error) => void;
+      fetchMock.mockImplementation((input, init) =>
+        String(input).endsWith("/events")
+          ? new Promise<Response>((resolve, reject) => {
+              finishPost = resolve;
+              failPost = reject;
+            })
+          : defaultFetchHandler(input, init),
+      );
+      const sending = useChatStore.getState().send("test", "agent_xyz");
+      await vi.waitFor(() => expect(failPost).toBeTypeOf("function"));
+      const pending = useChatStore.getState().pendingUserMessages[0]!;
+      const confirmed = scenario === "done" || scenario === "reset";
+      const item = {
+        ...(userMessage("native-turn", "test") as MessageItem),
+        id: scenario === "same-id-refused" ? pending.stableId! : "native-dropped-receipt",
+        position: 4,
+        ...(confirmed ? { input_stable_id: pending.stableId } : {}),
+      };
+      if (scenario === "generic-alias-refused") {
+        const blocks = itemsToBlocks([item]);
+        blocks[0]!.ctx.aliases = [pending.stableId!];
+        useChatStore.setState({ blocks });
+      }
+      const done = sse("response.output_item.done", { item });
+      if (scenario === "reset") {
+        const boundary = {
+          reset: true,
+          last_position: 4,
+          last_item_id: item.id,
+          item_count: 1,
+          stream_epoch: "lost-input-receipt",
+          item_revision: 1,
+          reset_revision: 1,
+        };
+        await frames(
+          sse("session.sync", { ...boundary, phase: "start" }),
+          done,
+          sse("session.sync", { ...boundary, phase: "complete" }),
+        );
+      } else await frames(done);
+      expect(useChatStore.getState().pendingUserMessages).toEqual([]);
+      if (confirmed) failPost(new Error("POST response lost after native delivery"));
+      else
+        finishPost(
+          mockResponse(
+            { error: { code: "FORBIDDEN", message: "Send refused" } },
+            { ok: false, status: 403 },
+          ),
+        );
+      await sending;
+      const state = useChatStore.getState();
+      if (confirmed) {
+        expect(state.failedSendDraft).toBeNull();
+        expect(state.blocks).toHaveLength(1);
+        expect(state.blocks[0]).toMatchObject({
+          stableKey: pending.tempId,
+          ctx: { itemId: item.id },
+        });
+      } else {
+        expect(state.failedSendDraft).toMatchObject({
+          stableId: pending.stableId,
+          serverRefused: true,
+        });
+      }
+    },
+  );
+
+  it("preserves uploads, author, timestamp and initial unsent drafts during exact promotion", () => {
+    const pending: PendingUserMessage = {
+      tempId: "exact-uploads",
+      stableId: "upload-stable",
+      author: "agent",
+      createdAtS: 100,
+      content: [
+        { type: "input_image", file_id: "uploaded", filename: "image.png" },
+        { type: "input_text", text: "test" },
+      ],
+    };
+    const draft = {
+      ...pending,
+      tempId: "unsent",
+      stableId: "unsent",
+      initialDraft: { text: "test", files: [] },
+    };
+    useChatStore.setState({ conversationId: id, pendingUserMessages: [pending, draft] });
+    handleSessionEvent(
+      { type: "session_item_updated", item: canonical(pending, "native-upload") },
+      id,
+    );
+    handleSessionEvent({ type: "session_item_updated", item: canonical(draft) }, id);
+    expect(useChatStore.getState().pendingUserMessages).toMatchObject([draft]);
+    expect(useChatStore.getState().blocks[0]).toMatchObject({
+      stableKey: pending.tempId,
+      content: pending.content,
+      ctx: { createdBy: "agent", clientCreatedAtS: 100 },
+    });
+  });
+});
+
+it("retains the confirmed native input alias beside older aliases through repeated canonical updates", async () => {
+  const id = "retained-input-alias";
+  const pending: PendingUserMessage = {
+    tempId: "optimistic-alias",
+    stableId: "browser-submission",
+    content: [{ type: "input_text", text: "test" }],
+  };
+  const item = {
+    ...(userMessage("native-turn", "test") as MessageItem),
+    id: "native-alias-item",
+    position: 4,
+  };
+  const old = itemsToBlocks([item]);
+  old[0]!.ctx.aliases = ["older-pending-id"];
+  useChatStore.setState({ conversationId: id, blocks: old, pendingUserMessages: [pending] });
+  handleSessionEvent(
+    { type: "session_item_updated", item: { ...item, input_stable_id: pending.stableId } },
+    id,
+  );
+  handleSessionEvent({ type: "session_item_updated", item }, id);
+  expect(useChatStore.getState().pendingUserMessages).toEqual([]);
+  expect(useChatStore.getState().blocks).toHaveLength(1);
+  expect(useChatStore.getState().blocks[0]).toMatchObject({
+    stableKey: pending.tempId,
+    ctx: { itemId: item.id, aliases: [pending.stableId, "older-pending-id"] },
+  });
 });

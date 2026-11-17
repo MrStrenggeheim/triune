@@ -249,6 +249,8 @@ export interface ResponseStartBlock {
  * user input directly, not as a block).
  */
 export interface UserMessageBlock {
+  /** Server-confirmed browser submission consumed by this native user item. */
+  inputStableId?: string;
   /** Render-only provisional projection; send state remains in pendingUserMessages. */
   pending?: boolean;
   awaitingAgent?: boolean;
