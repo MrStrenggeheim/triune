@@ -58,6 +58,7 @@ const PreviewControl = React.forwardRef<
       ref={ref}
       className={cn(
         !grouped && PREVIEW_CONTROL_SURFACE,
+        close && "size-10 md:size-8",
         "disabled:pointer-events-auto motion-reduce:transition-none [@media(any-pointer:coarse)]:min-h-11 [@media(any-pointer:coarse)]:min-w-11",
         className,
       )}

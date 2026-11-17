@@ -11,6 +11,7 @@ import { apiErrorFromResponse } from "@/lib/sessionsApi";
 import { useViewerId } from "@/hooks/useViewerId";
 import { Button } from "@/components/ui/button";
 import { ArtifactFrame } from "./ArtifactFrame";
+import { ContentSkeleton } from "@/components/ui/loading";
 import type { ArtifactReference } from "./artifactProtocol";
 
 /** File identity stays scoped to its source chat; the server authorizes metadata and original bytes. */
@@ -63,7 +64,7 @@ export function UploadedArtifact({
         </Button>
       </div>
     );
-  if (!resource.data) return <p role="status">Loading artifact…</p>;
+  if (!resource.data) return <ContentSkeleton label="Loading artifact…" />;
   const data = resource.data;
   const request: AttachmentPreviewRequest = {
     sessionId,

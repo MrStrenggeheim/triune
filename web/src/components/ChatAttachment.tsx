@@ -1112,7 +1112,11 @@ function AttachmentPdf({
       reader.abort();
     };
   }, [blob, filename]);
-  return data ? <PdfViewer data={data} conversationId={sessionId} /> : <p>Loading PDF…</p>;
+  return data ? (
+    <PdfViewer data={data} conversationId={sessionId} />
+  ) : (
+    <ContentSkeleton label="Loading PDF…" />
+  );
 }
 export function ScopedChatAttachment({ reference }: { reference: string }) {
   const { sessionId, itemId } = useContext(ChatAttachmentContext);
