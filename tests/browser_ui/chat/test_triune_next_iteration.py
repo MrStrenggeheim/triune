@@ -7,12 +7,13 @@ from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
 import pytest
-from playwright.sync_api import Page, expect
+from playwright.sync_api import Page, Route, expect
 
 from tests.browser_ui.chat.session_contract import chat_session_handle, list_payload, message_item
 from tests.browser_ui.chat.test_unified_workspace import (
     WorkspaceJourney,
     _capture,
+    _command,
     _navigate_chat,
     _open,
     _saved_dock,
@@ -30,9 +31,41 @@ def test_fifty_layouts_retire_while_preserving_draft_and_editor_undo(
     output_path: str,
     browser_errors: list[str],
 ) -> None:
-    """Real SPA layout retirement preserves saved membership and protected editor models."""
+    """Fifty layouts retire clean history while reader choices and protected owners survive."""
     journey = workspace_journey
-    first = journey.chats[0]
+    first, reader = journey.chats
+    source = "[label](https://example.test/needle)"
+    reader_items = []
+    for index in range(35):
+        reader_items.extend(
+            [
+                message_item(
+                    f"reader-user-{index}",
+                    "user",
+                    f"Request {index}",
+                    response_id=f"reader-turn-{index}",
+                ),
+                message_item(
+                    f"reader-work-{index}",
+                    "assistant",
+                    source if index == 12 else f"Narration {index}",
+                    response_id=f"reader-turn-{index}",
+                ),
+                message_item(
+                    f"reader-answer-{index}",
+                    "assistant",
+                    "\n\n".join(f"Answer {index}, paragraph {line}." for line in range(12)),
+                    response_id=f"reader-turn-{index}",
+                ),
+            ]
+        )
+    reader.set_items(
+        [
+            {**item, "position": position}
+            for position, item in reversed(list(enumerate(reader_items)))
+        ]
+    )
+    page.add_init_script("localStorage.setItem('omnigent:fold-assistant-narration', 'true')")
     with ExitStack() as stack:
         for index in range(2, 50):
             chat = stack.enter_context(
@@ -56,6 +89,10 @@ def test_fifty_layouts_retire_while_preserving_draft_and_editor_undo(
                     f"/v1/sessions/{chat.session_id}/{endpoint}", list_payload([])
                 )
             browser_contract.json(f"/v1/sessions/{chat.session_id}/comments", [])
+            browser_contract.json(f"/v1/sessions/{chat.session_id}/runtime-notices", {"data": []})
+            browser_contract.json(
+                f"/v1/sessions/{chat.session_id}/resources/shells", list_payload([])
+            )
             journey.chats.append(chat)
         browser_contract.json("/v1/workbench-workspaces/resolve", journey.workspace, method="POST")
         browser_contract.json(
@@ -88,9 +125,93 @@ def test_fifty_layouts_retire_while_preserving_draft_and_editor_undo(
         page.keyboard.press("Enter")
         page.keyboard.insert_text("retained_delta = 42")
         editor.evaluate("el => { window.__protectedRetiredEditor = el; }")
+        # Search opens original Markdown; the reader then explicitly closes its fold.
+        start = source.index("needle")
+        browser_contract.json(
+            "/v1/sessions/search/messages",
+            {
+                "data": [
+                    {
+                        "session_id": reader.session_id,
+                        "title": "Chat B",
+                        "item_id": "reader-work-12",
+                        "role": "assistant",
+                        "created_at": 1,
+                        "text": source,
+                        "text_start": 0,
+                        "content_hash": "fixture",
+                        "snippet": source,
+                        "snippet_start": 0,
+                        "ranges": [{"start": start, "end": start + 6}],
+                        "occurrence_count": 1,
+                    }
+                ],
+                "has_more": False,
+                "next_cursor": None,
+            },
+        )
+        _navigate_chat(page, reader)
+        reader_view = _view(page, "Chat B")
+        page.keyboard.press("ControlOrMeta+f")
+        page.get_by_role("region", name="Chat search").get_by_label(
+            "Search chats", exact=True
+        ).fill("needle")
+        original = reader_view.locator(
+            '[data-search-item-id="reader-work-12"] [data-chat-plain-text]'
+        )
+        expect(original).to_have_text(source, timeout=15_000)
+        fold = reader_view.locator(
+            '[data-message-id="reader-turn-12"] [data-testid="turn-worked-fold"]'
+        )
+        expect(fold).to_have_attribute("data-state", "open")
+        page.get_by_test_id("context-search-bar").get_by_role(
+            "button", name="Close search", exact=True
+        ).click()
+        fold.get_by_role("button", name="Worked", exact=True).click()
+        expect(fold).to_have_attribute("data-state", "closed")
+        _command(page, "Close focused view")
+        expect(reader_view).to_have_count(0)
+        _command(page, "Reopen closed view")
+        expect(fold).to_have_attribute("data-state", "closed")
+        fold.get_by_role("button", name="Worked", exact=True).click()
+        expect(original).to_have_text(source)
+        scroller = reader_view.locator('[role="log"] > div').first
+        scroller.dispatch_event("wheel")
+        scroller.evaluate("""el => {
+            const row = el.querySelector('[data-message-id="reader-turn-12"]');
+            el.scrollTop += row.getBoundingClientRect().top - el.getBoundingClientRect().top - 70;
+            el.dispatchEvent(new Event('scroll'));
+        }""")
+        anchor = reader_view.locator('[data-message-id="reader-turn-12"]')
+        offset = anchor.bounding_box()["y"] - scroller.bounding_box()["y"]
         observations = []
-        for index, chat in enumerate(journey.chats[1:], 1):
+        busy = journey.chats[2]
+        for index, chat in enumerate(journey.chats[2:], 2):
             _navigate_chat(page, chat)
+            expect(
+                _view(page, chat.session_snapshot()["title"]).get_by_text(
+                    f"Answer in layout {index}", exact=True
+                )
+            ).to_be_visible()
+            if chat is busy:
+                busy.wait_for_stream()
+                busy.emit_busy("cache-busy-turn")
+                busy.emit(
+                    {
+                        "event": "response.output_text.delta",
+                        "data": {
+                            "message_id": "cache-busy-preview",
+                            "index": 0,
+                            "delta": "Pending native work must survive cache pressure",
+                            "final": False,
+                        },
+                    }
+                )
+                expect(
+                    _view(page, chat.session_snapshot()["title"]).get_by_text(
+                        "Pending native work must survive cache pressure", exact=True
+                    )
+                ).to_be_visible()
             count = page.locator("[data-dock-view]").count()
             observations.append({"visited": index + 1, "mounted": count})
             if index >= 3:
@@ -111,6 +232,39 @@ def test_fifty_layouts_retire_while_preserving_draft_and_editor_undo(
         ).to_be_visible()
         assert len(_saved_dock(page)["chats"]) >= 50
         expect(page.get_by_text("Conversation stream capacity", exact=True)).to_have_count(0)
+        # A held canonical read distinguishes real model retirement from a hidden warm DOM.
+        expect(reader_view).to_have_count(0)
+        held: list[Route] = []
+        browser_contract.route(
+            re.compile(
+                rf"^{re.escape(reader.base_url)}/v1/sessions/{reader.session_id}/items(?:\?.*)?$"
+            ),
+            lambda route: held.append(route),
+        )
+        with page.expect_request(re.compile(rf"/v1/sessions/{reader.session_id}/items(?:\?.*)?$")):
+            _navigate_chat(page, reader)
+        expect(anchor).to_have_count(0)
+        assert held, "An evicted reader must fetch canonical history"
+        for route in held:
+            route.fulfill(json=list_payload(reader._items))
+        expect(original).to_have_text(source, timeout=15_000)
+        expect(fold).to_have_attribute("data-state", "open")
+        page.wait_for_function(
+            """({view, offset}) => {
+            const row = view.querySelector('[data-message-id="reader-turn-12"]');
+            const scroller = view.querySelector('[role="log"] > div');
+            return !!row && Math.abs(row.getBoundingClientRect().top
+                - scroller.getBoundingClientRect().top - offset) < 3;
+        }""",
+            arg={"view": reader_view.element_handle(), "offset": offset},
+            timeout=10_000,
+        )
+        _navigate_chat(page, busy)
+        expect(
+            _view(page, busy.session_snapshot()["title"]).get_by_text(
+                "Pending native work must survive cache pressure", exact=True
+            )
+        ).to_be_visible()
         _navigate_chat(page, first)
         page.get_by_role("tab", name="Chat A", exact=True).click()
         expect(_view(page, "Chat A").get_by_label("Message the agent")).to_have_value(

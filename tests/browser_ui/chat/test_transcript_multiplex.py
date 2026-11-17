@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 from playwright.sync_api import Page, WebSocketRoute, expect
@@ -416,3 +417,223 @@ def test_shared_transcript_orders_and_recovers_without_reloading(
     assert "Second request" in json.dumps(first.event_posts[0]["body"])
     assert second.event_posts == []
     assert browser_errors == []
+
+
+@pytest.mark.parametrize("width", [1440, 390], ids=["desktop", "phone"])
+def test_bounded_initial_history_preserves_an_older_reader_window(
+    page: Page,
+    workspace_journey: WorkspaceJourney,
+    browser_contract: BrowserContract,
+    browser_errors: list[str],
+    output_path: str,
+    width: int,
+) -> None:
+    """Cold replay is bounded; older navigation extends subsequent reset coverage."""
+    chat = workspace_journey.chats[0]
+    items = [
+        {
+            **message_item(
+                f"window-{index}",
+                "user" if index % 2 == 0 else "assistant",
+                f"History item {index}",
+                response_id=f"window-turn-{index // 2}",
+            ),
+            "position": index,
+            **({"phase": "final_answer"} if index % 2 else {}),
+        }
+        for index in range(10_000)
+    ]
+    chat.set_items(list(reversed(items)))
+    subscriptions: list[dict] = []
+    pages: list[dict] = []
+    sockets: list[WebSocketRoute] = []
+    replay_sizes: list[int] = []
+    resumed_frame_counts: list[int] = []
+    revision = 10_000
+    other = workspace_journey.chats[1]
+
+    def item_page(request) -> dict:
+        query = parse_qs(urlparse(request.url).query)
+        limit = int(query.get("limit", ["100"])[0])
+        cursor = query.get("after", [None])[0]
+        before = next((item["position"] for item in items if item["id"] == cursor), 10_000)
+        selected = [item for item in items if item["position"] < before][-limit:]
+        pages.append({"before": before, "count": len(selected)})
+        return {
+            "object": "list",
+            "data": list(reversed(selected)),
+            "has_more": bool(selected and selected[0]["position"] > 0),
+            "first_id": selected[-1]["id"] if selected else None,
+            "last_id": selected[0]["id"] if selected else None,
+        }
+
+    browser_contract.json(f"/v1/sessions/{chat.session_id}/items", item_page)
+
+    def send_event(socket: WebSocketRoute, payload: dict) -> None:
+        socket.send(
+            json.dumps({"type": "session.event", "session_id": chat.session_id, "event": payload})
+        )
+
+    def checkpoint() -> dict:
+        return {
+            "conversation_id": chat.session_id,
+            "last_position": items[-1]["position"],
+            "last_item_id": items[-1]["id"],
+            "item_count": len(items),
+            "item_revision": revision,
+            "reset_revision": revision,
+            "stream_epoch": "bounded-history-browser",
+        }
+
+    def attach(socket: WebSocketRoute) -> None:
+        sockets.append(socket)
+
+        def received(raw: str | bytes) -> None:
+            message = json.loads(raw)
+            if message.get("type") != "subscribe":
+                return
+            if message["session_id"] == other.session_id:
+                other_item = {**other._items[0], "position": 0}
+                other_boundary = {
+                    "conversation_id": other.session_id,
+                    "last_position": other_item.get("position", 0),
+                    "last_item_id": other_item["id"],
+                    "item_count": 1,
+                    "item_revision": 1,
+                    "reset_revision": 0,
+                    "stream_epoch": "bounded-history-other",
+                }
+                socket.send(
+                    json.dumps(
+                        {
+                            "type": "session.event",
+                            "session_id": other.session_id,
+                            "event": {
+                                **other_boundary,
+                                "type": "session.sync",
+                                "phase": "start",
+                                "reset": True,
+                            },
+                        }
+                    )
+                )
+                socket.send(
+                    json.dumps(
+                        {
+                            "type": "session.event",
+                            "session_id": other.session_id,
+                            "event": {"type": "response.output_item.done", "item": other_item},
+                        }
+                    )
+                )
+                socket.send(
+                    json.dumps(
+                        {
+                            "type": "session.event",
+                            "session_id": other.session_id,
+                            "event": {
+                                **other_boundary,
+                                "type": "session.sync",
+                                "phase": "complete",
+                                "reset": True,
+                            },
+                        }
+                    )
+                )
+                return
+            subscriptions.append(message)
+            if (
+                message.get("after_position") == items[-1]["position"]
+                and message.get("after_revision") == revision
+                and message.get("stream_epoch") == "bounded-history-browser"
+            ):
+                resumed_frame_counts.append(0)
+                send_event(
+                    socket,
+                    {**checkpoint(), "type": "session.sync", "phase": "start", "reset": False},
+                )
+                send_event(
+                    socket,
+                    {
+                        **checkpoint(),
+                        "type": "session.sync",
+                        "phase": "complete",
+                        "reset": False,
+                    },
+                )
+                return
+            start = message.get("window_start_position", 9_900)
+            selected = [item for item in items if item["position"] >= start]
+            replay_sizes.append(len(selected))
+            boundary = {
+                **checkpoint(),
+                "type": "session.sync",
+                "reset": True,
+                "window_start_position": start,
+                "window_item_count": len(selected),
+                "has_older_items": start > 0,
+                "first_item_id": selected[0]["id"] if selected else None,
+            }
+            send_event(socket, {**boundary, "phase": "start"})
+            for item in selected:
+                send_event(socket, {"type": "response.output_item.done", "item": item})
+            send_event(socket, {**boundary, "phase": "complete"})
+
+        socket.on_message(received)
+        socket.send(
+            json.dumps({"type": "capabilities", "transcript_stream": 1, "transcript_window": 1})
+        )
+
+    browser_contract.websocket("**/v1/sessions/updates*", attach)
+    page.set_viewport_size({"width": width, "height": 844 if width == 390 else 1000})
+    page.goto(chat.url)
+    view = _view(page, "Chat A")
+    expect(view.get_by_text("History item 9999", exact=True)).to_be_visible()
+    assert subscriptions[0].get("initial_limit") == 100
+    assert replay_sizes == [100]
+    assert all(page["count"] <= 100 for page in pages)
+    composer = view.get_by_label("Message the agent", exact=True)
+    composer.fill("Retain this history draft")
+
+    # The standard message deep-link path must page beyond the initial window.
+    page.goto(chat.url + "?message=window-9870")
+    target = view.get_by_text("History item 9870", exact=True)
+    expect(target).to_be_visible()
+    expect(view.get_by_text("History item 9871", exact=True)).to_be_visible()
+    expect(composer).to_have_value("Retain this history draft")
+    assert any(page["before"] <= 9_900 for page in pages)
+    target_top = target.bounding_box()["y"]
+    old_subscription_count = len(subscriptions)
+    items[9_870] = {
+        **items[9_870],
+        "content": [{"type": "input_text", "text": "History item 9870 revised"}],
+    }
+    del items[9_871]
+    revision += 1
+    send_event(
+        sockets[-1], {"type": "session.heartbeat", "reconcile_required": True, **checkpoint()}
+    )
+    expect(view.get_by_text("History item 9870 revised", exact=True)).to_be_visible()
+    expect(view.get_by_text("History item 9871", exact=True)).to_have_count(0)
+    revised_top = view.get_by_text("History item 9870 revised", exact=True).bounding_box()["y"]
+    assert revised_top == pytest.approx(target_top, abs=8)
+    assert len(subscriptions) > old_subscription_count
+    assert subscriptions[-1]["window_start_position"] <= 9_870
+    assert max(replay_sizes) < len(items)
+    expect(composer).to_have_value("Retain this history draft")
+
+    # A retained A -> B -> A reader resumes from its validated cursor without history frames.
+    if page.get_by_role("button", name="Open navigation", exact=True).is_visible():
+        page.get_by_role("button", name="Open navigation", exact=True).click()
+    page.locator(f'aside [data-sidebar-session-id="{other.session_id}"]').click()
+    expect(_view(page, "Chat B").get_by_text("Answer from Chat B", exact=True)).to_be_visible()
+    if page.get_by_role("button", name="Open navigation", exact=True).is_visible():
+        page.get_by_role("button", name="Open navigation", exact=True).click()
+    page.locator(f'aside [data-sidebar-session-id="{chat.session_id}"]').click()
+    expect(
+        _view(page, "Chat A").get_by_text("History item 9870 revised", exact=True)
+    ).to_be_visible()
+    expect(composer).to_have_value("Retain this history draft")
+    assert resumed_frame_counts == [0]
+    assert browser_errors == []
+    page.screenshot(path=str(Path(output_path) / "bounded-history-reader-after-reset.png"))

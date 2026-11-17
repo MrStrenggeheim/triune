@@ -62,3 +62,27 @@ persistence: `tests/e2e_ui/chat/test_working_indicator_background_tasks.py` keep
 reload/reconnect coverage. Likewise, composer attachment checks complement the
 real upload/ingestion tests in `tests/e2e/test_files_upload_e2e.py` and
 `tests/e2e/test_image_upload_e2e.py`.
+
+
+## Frozen reliability acceptance
+
+Run these cases against one frozen built SPA and retain its assets throughout the journeys.
+The browser-contract cases replace backend dependencies and do not prove native permissions or production latency.
+
+| Boundary | Maintained case |
+| --- | --- |
+| Canonical ordering, desktop/phone older-window restore and retained cursors | `test_transcript_multiplex.py` |
+| Fifty-layout retirement, exact reader restore, drafts and editor Undo | `test_triune_next_iteration.py::test_fifty_layouts_retire_while_preserving_draft_and_editor_undo` |
+| Inbox insertion/refresh, draft/focus/selection and reading offset | `../test_inbox_reader.py` (desktop/phone, light/dark) |
+| Native future-permission picker and observed label reload | `tests/e2e_ui/chat/test_codex_approval_mode_picker.py` |
+
+From the repository root after building once:
+
+```sh
+.venv/bin/python -m pytest -p no:rerunfailures --browser-ui-skip-build tests/browser_ui/chat/test_transcript_multiplex.py 'tests/browser_ui/chat/test_triune_next_iteration.py::test_fifty_layouts_retire_while_preserving_draft_and_editor_undo' tests/browser_ui/test_inbox_reader.py
+.venv/bin/python -m pytest --ui-skip-build --reruns 0 tests/e2e_ui/chat/test_codex_approval_mode_picker.py
+```
+
+For disclosure promotion, manually expand a provisional tool, group and Worked section, then allow canonical history and reopen the reader.
+Each choice must survive promotion and reopening; another response reusing the same call ID must remain independent.
+Permission browser mocks complement the native/server contract tests; they do not establish full host/server restart recovery.
