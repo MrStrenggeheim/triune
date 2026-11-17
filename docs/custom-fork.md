@@ -324,3 +324,12 @@ Ordinary native children retain their conversation, dispatch and transcript iden
 The existing exact-runner checks still gate shell observations and provenance-bearing events.
 This repairs reused-child shell inventory after parent runner replacement; it does not infer general transcript completeness or repair historical rows by guessing identity.
 Source, authorization/concurrency evidence and activation are recorded separately in `artifacts/overnight-20261116/{event-rejections,stability13}`.
+
+## Exact history cursor lookup
+
+`CURSOR-LOOKUP-14` projects the primary-key timestamp alongside position when resolving an exact item ID.
+This lets SQLite seek through the existing primary-key prefix instead of scanning a covering position index, retaining the same tenant/conversation predicates, cursor errors and page results.
+The private 1,000/10,000-item cases use 38 VM instructions at both sizes versus approximately 4,000/40,000 before; deployed read-only plans confirm the same index choice.
+The change adds no index, schema migration, planner hint or response cache, and does not establish a production latency improvement.
+Cold synchronization still performs an authoritative full-history reset when no cursor exists; a bounded initial window requires a separate membership/count/recovery contract.
+Evidence: `artifacts/overnight-20261116/{history-read-audit/REPORT.md,history-read-audit/implementation/comparison.json,stability14/cursor-plan-before.json}`.

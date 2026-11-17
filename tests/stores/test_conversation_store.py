@@ -13,12 +13,17 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
-from sqlalchemy import event, text, update
-from sqlalchemy.exc import DBAPIError
+from sqlalchemy import event, insert, text, update
+from sqlalchemy.exc import DBAPIError, MultipleResultsFound
 from sqlalchemy.orm import Session
 
 from omnigent.db.compression import CompressedText
-from omnigent.db.db_models import SqlConversationMetadata, SqlHost, workspace_scope
+from omnigent.db.db_models import (
+    SqlConversationItem,
+    SqlConversationMetadata,
+    SqlHost,
+    workspace_scope,
+)
 from omnigent.db.utils import get_or_create_engine
 from omnigent.entities import (
     CompactionData,
@@ -1696,15 +1701,25 @@ def _make_5_items(conversation_store: SqlAlchemyConversationStore, conv_id: str)
     )
 
 
+@pytest.mark.parametrize("order", ["asc", "desc"])
 def test_list_items_after_cursor(
     conversation_store: SqlAlchemyConversationStore,
+    order: str,
 ) -> None:
     conv = conversation_store.create_conversation()
     items = _make_5_items(conversation_store, conv.id)
 
-    page = conversation_store.list_items(conv.id, after=items[1].id, limit=2)
-    assert len(page.data) == 2
-    assert page.data[0].id == items[2].id
+    with _capture_driver_sql(conversation_store, table="conversation_items") as captured:
+        page = conversation_store.list_items(conv.id, after=items[1].id, limit=2, order=order)
+    expected = items[2:4] if order == "asc" else items[:1]
+    assert page.data == expected
+    assert page.first_id == expected[0].id and page.last_id == expected[-1].id
+    assert page.has_more is (order == "asc")
+    if conversation_store._conv_engine.dialect.name == "sqlite":
+        [(statement, parameters)] = [row for row in captured if "ORDER BY" not in row[0]]
+        plan = _explain_driver(conversation_store, statement, parameters)
+        assert "SEARCH conversation_items" in plan, plan
+        assert "workspace_id=? AND conversation_id=? AND id=?" in plan, plan
 
 
 def test_list_items_desc_order(
@@ -1734,14 +1749,19 @@ def test_list_items_desc_with_after_cursor(
     assert page2.data[1].id == items[1].id
 
 
+@pytest.mark.parametrize("order", ["asc", "desc"])
 def test_list_items_before_cursor(
     conversation_store: SqlAlchemyConversationStore,
+    order: str,
 ) -> None:
     conv = conversation_store.create_conversation()
     items = _make_5_items(conversation_store, conv.id)
     # asc order: [0, 1, 2, 3, 4]; before item[3] should give [0, 1, 2]
-    page = conversation_store.list_items(conv.id, before=items[3].id, order="asc")
-    assert [it.id for it in page.data] == [items[i].id for i in range(3)]
+    page = conversation_store.list_items(conv.id, before=items[3].id, order=order)
+    expected = items[:3] if order == "asc" else items[4:]
+    assert page.data == expected
+    assert page.first_id == expected[0].id and page.last_id == expected[-1].id
+    assert not page.has_more
 
 
 def test_list_items_cursor_scoped_to_conversation(
@@ -1765,6 +1785,40 @@ def test_list_items_cursor_scoped_to_conversation(
         conversation_store.list_items(conv.id, after=other_items[1].id)
     with pytest.raises(StaleCursorError):
         conversation_store.list_items(conv.id, before=other_items[1].id)
+    with pytest.raises(StaleCursorError):
+        conversation_store.list_items(conv.id, after="f" * 32)
+
+    with workspace_scope(99):
+        conversation_store.create_conversation(conversation_id=conv.id)
+        tenant_items = _make_5_items(conversation_store, conv.id)
+    for direction in ("after", "before"):
+        with pytest.raises(StaleCursorError):
+            conversation_store.list_items(conv.id, **{direction: tenant_items[1].id})
+
+
+def test_list_items_cursor_rejects_duplicate_identity(
+    conversation_store: SqlAlchemyConversationStore,
+) -> None:
+    """The timestamp projection must not hide duplicate IDs across timestamp partitions."""
+    conv = conversation_store.create_conversation()
+    [item, *_] = _make_5_items(conversation_store, conv.id)
+    with conversation_store._conv_session("test_setup") as session:
+        session.execute(
+            insert(SqlConversationItem).values(
+                workspace_id=0,
+                conversation_id=conv.id,
+                id=item.id,
+                created_at=item.created_at + 1,
+                position=item.position,
+                response_id=item.response_id,
+                status=1,
+                type=1,
+                data=item.data.model_dump_json(),
+                search_text="duplicate",
+            )
+        )
+    with pytest.raises(MultipleResultsFound):
+        conversation_store.list_items(conv.id, after=item.id)
 
 
 def _captured_item_statement_limits(store: SqlAlchemyConversationStore, run) -> list[int]:
@@ -7845,7 +7899,7 @@ def _capture_conversation_selects(store: SqlAlchemyConversationStore):
 
 
 @contextlib.contextmanager
-def _capture_driver_sql(store: SqlAlchemyConversationStore):
+def _capture_driver_sql(store: SqlAlchemyConversationStore, *, table: str = "conversations"):
     """Capture (statement, parameters) as the DBAPI sees them.
 
     Plan tests need the driver-level form: the cursor binds a 16-byte
@@ -7859,7 +7913,7 @@ def _capture_driver_sql(store: SqlAlchemyConversationStore):
     captured: list[tuple[str, object]] = []
 
     def _on(conn, cursor, statement, parameters, context, executemany):
-        if statement.lstrip().upper().startswith("SELECT") and "FROM conversations" in statement:
+        if statement.lstrip().upper().startswith("SELECT") and f"FROM {table}" in statement:
             captured.append((statement, parameters))
 
     sa_event.listen(store._conv_engine, "before_cursor_execute", _on)

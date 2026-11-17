@@ -3043,8 +3043,10 @@ class SqlAlchemyConversationStore(ConversationStore):
             conversation — deleted between two page fetches, or a cursor
             id from another conversation.
         """
+        # The primary-key timestamp prevents SQLite from preferring a covering
+        # position index that must scan the conversation to find this ID.
         position = session.execute(
-            select(SqlConversationItem.position).where(
+            select(SqlConversationItem.position, SqlConversationItem.created_at).where(
                 SqlConversationItem.workspace_id == current_workspace_id(),
                 SqlConversationItem.conversation_id == conversation_id,
                 SqlConversationItem.id == cursor_id,
