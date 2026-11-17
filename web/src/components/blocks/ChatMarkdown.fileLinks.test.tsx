@@ -16,6 +16,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FileViewerContext } from "@/shell/FileViewerContext";
+import { MediaBatch } from "@/components/MediaBatch";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ConversationScopeContext } from "@/components/chat/conversationScope";
 import { FilePathAwareMessageResponse } from "./ChatMarkdown";
@@ -151,6 +152,7 @@ function renderMarkdown(
   sourceItemId?: string,
   previewContext: ComponentProps<typeof AttachmentPreviewContext.Provider>["value"] = {},
   mode: "static" | "streaming" = "static",
+  outerBatch = false,
 ): QueryClient {
   changedPaths = changed;
   openFile.mockClear();
@@ -163,9 +165,17 @@ function renderMarkdown(
         <TooltipProvider delayDuration={0}>
           <ConversationScopeContext.Provider value="conv_1">
             <AttachmentPreviewContext.Provider value={previewContext}>
-              <FilePathAwareMessageResponse sourceItemId={sourceItemId} mode={mode}>
-                {markdown}
-              </FilePathAwareMessageResponse>
+              {outerBatch ? (
+                <MediaBatch>
+                  <FilePathAwareMessageResponse sourceItemId={sourceItemId} mode={mode}>
+                    {markdown}
+                  </FilePathAwareMessageResponse>
+                </MediaBatch>
+              ) : (
+                <FilePathAwareMessageResponse sourceItemId={sourceItemId} mode={mode}>
+                  {markdown}
+                </FilePathAwareMessageResponse>
+              )}
             </AttachmentPreviewContext.Provider>
           </ConversationScopeContext.Provider>
         </TooltipProvider>
@@ -1206,34 +1216,43 @@ it("does not permit arbitrary current-origin images or retrieve another source s
   );
 });
 
-it("batches adjacent images while keeping text boundaries and source order", async () => {
-  fetchMock.mockImplementation(async (url: string) =>
-    url.endsWith("/content")
-      ? new Response("png", { headers: { "Content-Type": "image/png" } })
-      : jsonResponse({
-          name: url.includes("first") ? "first.png" : "second.png",
-          metadata: { bytes: 3 },
-        }),
-  );
-  const create = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:preview");
-  const revoke = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
-  try {
-    renderMarkdown(
-      "Before\n\n![first](/v1/sessions/conv_1/resources/files/first/content)\n\n![second](/v1/sessions/conv_1/resources/files/second/content)\n\nBetween\n\n![last](/v1/sessions/conv_1/resources/files/third/content)",
-      [],
-      FILE_VIEWER,
-      "source-item",
+it.each([false, true])(
+  "batches adjacent images without nested scrolling rows (outer batch: %s)",
+  async (outerBatch) => {
+    fetchMock.mockImplementation(async (url: string) =>
+      url.endsWith("/content")
+        ? new Response("png", { headers: { "Content-Type": "image/png" } })
+        : jsonResponse({
+            name: url.includes("first") ? "first.png" : "second.png",
+            metadata: { bytes: 3 },
+          }),
     );
-    await screen.findAllByRole("img");
-    expect(document.querySelectorAll("[data-media-batch]")).toHaveLength(1);
-    expect(
-      screen
-        .getByRole("group", { name: "Media previews" })
-        .querySelectorAll('[data-testid="chat-attachment"]'),
-    ).toHaveLength(2);
-    expect(screen.getByText("Between")).toBeInTheDocument();
-  } finally {
-    create.mockRestore();
-    revoke.mockRestore();
-  }
-});
+    const create = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:preview");
+    const revoke = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+    try {
+      renderMarkdown(
+        outerBatch
+          ? "![first](/v1/sessions/conv_1/resources/files/first/content)\n\n![second](/v1/sessions/conv_1/resources/files/second/content)"
+          : "Before\n\n![first](/v1/sessions/conv_1/resources/files/first/content)\n\n![second](/v1/sessions/conv_1/resources/files/second/content)\n\nBetween\n\n![last](/v1/sessions/conv_1/resources/files/third/content)",
+        [],
+        FILE_VIEWER,
+        "source-item",
+        {},
+        "static",
+        outerBatch,
+      );
+      await screen.findAllByRole("img");
+      expect(document.querySelectorAll("[data-media-batch]")).toHaveLength(1);
+      expect(
+        screen
+          .getByRole("group", { name: "Media previews" })
+          .querySelectorAll('[data-testid="chat-attachment"]'),
+      ).toHaveLength(2);
+      if (!outerBatch) expect(screen.getByText("Between")).toBeInTheDocument();
+      expect(document.querySelectorAll("[data-media-batch] [data-media-batch]")).toHaveLength(0);
+    } finally {
+      create.mockRestore();
+      revoke.mockRestore();
+    }
+  },
+);

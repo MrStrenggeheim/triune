@@ -53,7 +53,8 @@ import {
 } from "@/hooks/useWorkspaceChangedFiles";
 import { showToast } from "@/components/ui/toast";
 import { canonicalSessionImages, parseSessionFileSource } from "@/lib/remoteImagePolicy";
-import { MediaBatch, remarkMediaBatches } from "@/components/MediaBatch";
+import { MediaBatch, remarkMediaBatches, useMediaBatch } from "@/components/MediaBatch";
+import { isPathologicalMarkdownText } from "@/lib/markdownText";
 import { splitArtifactMarkdown } from "@/artifacts/artifactProtocol";
 
 const UploadedArtifact = lazy(() =>
@@ -453,13 +454,16 @@ function MediaParagraph({
   node: _node,
   ...props
 }: WithHastNode<React.ComponentProps<"p">>) {
+  const batched = useMediaBatch();
   const contents = Array.isArray(children) ? children : [children];
   const images = contents.filter((child) => !(typeof child === "string" && child.trim() === ""));
   if (
-    images.length > 1 &&
+    images.length > 0 &&
     images.every((child) => isValidElement(child) && child.type === ZoomableMarkdownImage)
-  )
-    return <MediaBatch>{images}</MediaBatch>;
+  ) {
+    if (batched) return <div className="flex flex-nowrap items-start gap-2">{images}</div>;
+    if (images.length > 1) return <MediaBatch>{images}</MediaBatch>;
+  }
   return <p {...props}>{children}</p>;
 }
 
@@ -492,40 +496,7 @@ const STREAM_MARKDOWN_THROTTLE_MS = 100;
 //   layout becomes pathological regardless of total size (base64, long URLs).
 // `MAX_PLAINTEXT_DISPLAY_LENGTH`: hard cap on what we paint even as plain text,
 //   so a multi-MB payload can't blow up the DOM; the rest is elided.
-const MAX_MARKDOWN_TEXT_LENGTH = 50_000;
-const MAX_UNBROKEN_TOKEN_LENGTH = 5_000;
 const MAX_PLAINTEXT_DISPLAY_LENGTH = 200_000;
-
-/**
- * Longest run of consecutive non-whitespace characters in `text`. ASCII
- * whitespace (space, tab, CR, LF, FF, VT) resets the run — those are the
- * break opportunities the layout engine can use. O(n), single pass.
- */
-function longestUnbrokenRun(text: string): number {
-  let max = 0;
-  let current = 0;
-  for (let i = 0; i < text.length; i += 1) {
-    const code = text.charCodeAt(i);
-    // 32 = space; 9..13 = tab, LF, VT, FF, CR.
-    if (code === 32 || (code >= 9 && code <= 13)) {
-      current = 0;
-    } else {
-      current += 1;
-      if (current > max) max = current;
-    }
-  }
-  return max;
-}
-
-/**
- * Whether `text` should bypass the markdown pipeline because rendering it
- * there would risk locking the tab. See the constants above for the why.
- */
-function isPathologicalText(text: string): boolean {
-  return (
-    text.length > MAX_MARKDOWN_TEXT_LENGTH || longestUnbrokenRun(text) > MAX_UNBROKEN_TOKEN_LENGTH
-  );
-}
 
 /**
  * Plain, break-anywhere fallback for a pathological text block — no markdown.
@@ -611,7 +582,7 @@ export function FilePathAwareMessageResponse({
   // plain break-anywhere text instead. Both call sites (assistant text blocks
   // and the user bubble) flow through here, so this one guard covers both.
   const pathological = useMemo(
-    () => isString && isPathologicalText(children as string),
+    () => isString && isPathologicalMarkdownText(children as string),
     [isString, children],
   );
   if (pathological) {

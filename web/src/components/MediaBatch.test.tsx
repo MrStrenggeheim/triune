@@ -4,6 +4,8 @@ import { afterEach, expect, it } from "vitest";
 import {
   groupAdjacentMedia,
   isVisualAttachment,
+  isVisualOnlyMarkdown,
+  isVisualOnlyMessage,
   MediaBatchItems,
   mediaPreviewSize,
   remarkMediaBatches,
@@ -11,6 +13,40 @@ import {
 import { InlineImage } from "./SessionImage";
 
 afterEach(cleanup);
+
+it.each([
+  ["![one](one.png)", true],
+  ["![one](one.png) ![two](two.png)", true],
+  ["![one](one.png)\n\n![two](two.png)", true],
+  ["![one][asset]\n\n[asset]: one.png", true],
+  ["![one][missing]", false],
+  ["![one](one.png)\n\nCaption", false],
+  ["Before ![one](one.png)", false],
+  ["```markdown\n![one](one.png)\n```", false],
+  ["<img src=one.png>", false],
+  ["\\![one](one.png)", false],
+  ["![unfinished](one.png", false],
+  ["[File](notes.txt) ![one](one.png)", false],
+  ["![one]()", false],
+  ["![blocked](https://example.com/image.png)", false],
+  ["![blocked](data:image/png;base64,abc)", false],
+  ["![one](one.png)\n\n" + " ".repeat(50_000), false],
+])("uses Markdown syntax to classify visual-only content: %s", (text, visual) => {
+  expect(isVisualOnlyMarkdown(text)).toBe(visual);
+  expect(isVisualOnlyMarkdown(text)).toBe(visual);
+});
+
+it("combines attachments and authored images only when every visible part is media", () => {
+  const image = { filename: "first.png", file_id: "first" };
+  expect(isVisualOnlyMessage("![second](second.png)", [image])).toBe(true);
+  expect(isVisualOnlyMessage("", [image])).toBe(true);
+  expect(isVisualOnlyMessage("", [])).toBe(false);
+  expect(isVisualOnlyMessage("Caption", [image])).toBe(false);
+  expect(isVisualOnlyMessage("![second](second.png)", [{ filename: "notes.txt" }])).toBe(false);
+  expect(isVisualOnlyMessage("![second](second.png)", [{ ...image, error: "Unavailable" }])).toBe(
+    false,
+  );
+});
 
 it("groups only adjacent visual items without crossing intervening prose or files", () => {
   const items = [

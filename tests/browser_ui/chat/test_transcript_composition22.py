@@ -58,7 +58,7 @@ def test_media_slots_agent_bar_and_table_survive_reload(
     ]
     buffer = io.BytesIO()
     Image.new("RGBA", (240, 160), (104, 81, 139, 80)).save(buffer, format="PNG")
-    for name in ("first", "second", "third", "fourth", "notes"):
+    for name in ("first", "second", "third", "fourth", "fifth", "notes"):
         is_image = name != "notes"
         filename = name + (".png" if is_image else ".txt")
         mime = "image/png" if is_image else "text/plain"
@@ -73,10 +73,21 @@ def test_media_slots_agent_bar_and_table_survive_reload(
                 body=data, content_type=content_type
             ),
         )
-    for name in ("first", "second", "separator", "third", "notes", "fourth"):
+    for name in ("first", "second", "third", "separator", "fourth", "notes", "fifth"):
         if name == "separator":
             items.append(
                 message_item(name, "assistant", "Visible media boundary", response_id="turn")
+            )
+            continue
+        if name in ("second", "third", "fifth"):
+            source = f"/v1/sessions/{chat.session_id}/resources/files/{name}/content"
+            markdown = (
+                f"![{name}][preview]\n\n[preview]: {source}"
+                if name == "third"
+                else f"![{name}]({source})"
+            )
+            items.append(
+                message_item("media-" + name, "assistant", markdown, response_id="image-" + name)
             )
             continue
         item = message_item("media-" + name, "assistant", "", response_id="attachment-" + name)
@@ -92,14 +103,18 @@ def test_media_slots_agent_bar_and_table_survive_reload(
     chat.set_items(list(reversed(items)))
     page.goto(chat.url)
     expect(page.get_by_label("Message the agent")).to_be_visible(timeout=30_000)
-    for name in ("first", "second", "third", "fourth"):
+    for name in ("first", "second", "third", "fourth", "fifth"):
         expect(page.get_by_role("img", name=name + ".png", exact=True)).to_have_js_property(
             "naturalWidth", 240
         )
     rows = page.locator("[data-media-batch]")
     expect(rows).to_have_count(1)
-    expect(rows.get_by_role("img")).to_have_count(2)
-    for name in ("third", "fourth"):
+    expect(rows.get_by_role("img")).to_have_count(3)
+    expect(rows.get_by_test_id("assistant-text-section")).to_have_count(3)
+    assert rows.get_by_test_id("assistant-text-section").evaluate_all(
+        "nodes => nodes.map(node => node.dataset.searchItemId)"
+    ) == ["media-first", "media-second", "media-third"]
+    for name in ("fourth", "fifth"):
         assert page.get_by_role("img", name=name + ".png", exact=True).evaluate(
             "node => node.closest('[data-media-batch]') === null"
         )

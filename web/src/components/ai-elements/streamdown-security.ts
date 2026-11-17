@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { cjk } from "@streamdown/cjk";
 import { createMathPlugin } from "@streamdown/math";
 import { triuneMermaid as mermaid } from "./mermaidTheme";
@@ -259,20 +260,17 @@ function restoreGitHubAttachmentImages() {
 }
 
 export const WORKSPACE_IMAGE_ATTR = "data-omnigent-image";
+/** Source accepted by the workspace-image renderer; authorization remains in its resource loader. */
+export function workspaceImageSource(source: string): string | null {
+  const src = parseSessionFileSource(source)?.path ?? source;
+  return NON_FILE_HREF.test(src) || src.includes("?") || src.includes("#") ? null : src;
+}
 function parkWorkspaceImages() {
   return (tree: HastElement) =>
     visitElements(tree, (node) => {
       const original = node.properties?.src;
-      const stored = typeof original === "string" ? parseSessionFileSource(original) : null;
-      const src = stored?.path ?? original;
-      if (
-        node.tagName !== "img" ||
-        typeof src !== "string" ||
-        NON_FILE_HREF.test(src) ||
-        src.includes("?") ||
-        src.includes("#")
-      )
-        return;
+      const src = typeof original === "string" ? workspaceImageSource(original) : null;
+      if (node.tagName !== "img" || src === null) return;
       node.tagName = "omnigent-workspace-image";
       node.properties = { alt: node.properties?.alt, [WORKSPACE_IMAGE_ATTR]: decodeFilePath(src) };
     });
