@@ -19,7 +19,7 @@ def test_approval_migration_roundtrip_preserves_parent_data_and_single_head(tmp_
     conversation = conversations.create_conversation(title="preserved existing conversation")
     conversations.set_labels(conversation.id, {"preserved": "label value"})
     config = _build_alembic_config(uri)
-    assert ScriptDirectory.from_config(config).get_heads() == ["ad1b2c3d4e5f"]
+    assert ScriptDirectory.from_config(config).get_heads() == ["pq1a2b3c4d5e"]
     with engine.begin() as connection:
         config.attributes["connection"] = connection
         command.downgrade(config, "bq1a2b3c4d5e")

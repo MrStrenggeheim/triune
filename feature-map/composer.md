@@ -745,6 +745,7 @@ Local/native waiter resolution remains separate; missing receiver evidence keeps
 - Secret answers reach the provider unchanged, but canonical receipt history records only answered/redacted state and never saves secret drafts locally.
 - Question receipt identities use the sanitized request, so secret defaults influence neither stored text nor submission digests.
 - Receipt and echo correlation require trusted submission identity; matching answer text or a repeated `question_0` key is insufficient.
+- Pending-input pages use a response/position index while preserving status, order, tenant scope and retry semantics; `tests/stores/test_pending_conversation_inputs.py` covers both single and split databases.
 
 - The Arclet dbcert preflight needs both the updated desktop shell and web UI,
   with Databricks-internal features enabled for the managed server. Browsers,

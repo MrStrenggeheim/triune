@@ -5,7 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import select, text
+from sqlalchemy import event, insert, select, text
 
 from omnigent.db.db_models import SqlConversationItem, workspace_scope
 from omnigent.entities.conversation import MessageData, NewConversationItem, StartupInputOptions
@@ -15,14 +15,20 @@ from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConver
 
 
 def _input(message="saved prompt", **kwargs):
+    stable_id = kwargs.pop("stable_id", uuid4().hex)
     return NewConversationItem(
         type="message",
         response_id=PENDING_INPUT_RESPONSE_ID,
         status="in_progress",
-        stable_id=uuid4().hex,
+        stable_id=stable_id,
         data=MessageData(role="user", content=[{"type": "input_text", "text": message}]),
         **kwargs,
     )
+
+
+@pytest.fixture(params=["conversation_store", "split_db_conversation_store"])
+def pending_store(request: pytest.FixtureRequest) -> SqlAlchemyConversationStore:
+    return request.getfixturevalue(request.param)
 
 
 def test_restart_and_concurrent_submission_claims(db_uri):
@@ -109,7 +115,7 @@ def test_bound_pending_read_and_failed_claim_does_not_change_history(db_uri):
             ),
             {"id": bytes.fromhex(session.id), "response": PENDING_INPUT_RESPONSE_ID},
         ).all()
-    assert "ix_conversation_items_response_id" in str(plan)
+    assert "ix_conversation_items_pending_position" in str(plan)
 
 
 def test_host_pagination_and_workspace_isolation(db_uri):
@@ -207,8 +213,8 @@ def test_pending_payload_and_options_use_item_encoding_hooks(db_uri):
     assert restarted.list_items(session.id).data == [receipt]
 
 
-def test_pending_input_pages_continue_in_submission_order(db_uri):
-    store = SqlAlchemyConversationStore(db_uri)
+def test_pending_input_pages_continue_in_submission_order(pending_store):
+    store = pending_store
     session = store.create_conversation()
     saved = store.append(session.id, [_input() for _ in range(5)])
     first, cursor = store.list_pending_inputs_page(session.id, limit=2)
@@ -221,3 +227,114 @@ def test_pending_input_pages_continue_in_submission_order(db_uri):
     assert [item.id for item in store.list_pending_inputs(session.id)] == [
         item.id for item in saved
     ]
+
+
+def test_pending_pages_preserve_states_retries_and_same_ids_across_tenants(pending_store):
+    store = pending_store
+    conversation_id = uuid4().hex
+    inputs = [_input(str(i), stable_id=f"{i + 1:032x}") for i in range(8)]
+    expected = {}
+    for workspace in (0, 17):
+        with workspace_scope(workspace):
+            store.create_conversation(conversation_id=conversation_id)
+            # Interleave history so pending cursors traverse dense, shared positions.
+            saved = []
+            for item in inputs:
+                store.append(
+                    conversation_id,
+                    [NewConversationItem(type="message", response_id="history", data=item.data)],
+                )
+                saved.extend(store.append(conversation_id, [item]))
+            assert all(item.deduplicated for item in store.append(conversation_id, inputs))
+            for item, status in zip(
+                saved[1:4], ("incomplete", "failed", "completed"), strict=True
+            ):
+                assert store.transition_pending_input(
+                    conversation_id, item.id, expected="in_progress", status=status
+                )
+            expected[workspace] = store.list_pending_inputs(conversation_id)
+            assert [item.status for item in expected[workspace]][:4] == [
+                "in_progress",
+                "incomplete",
+                "failed",
+                "completed",
+            ]
+    with workspace_scope(17):
+        assert store.transition_pending_input(
+            conversation_id, inputs[2].stable_id, expected="failed", status="in_progress"
+        )
+        assert not store.transition_pending_input(
+            conversation_id, inputs[2].stable_id, expected="failed", status="in_progress"
+        )
+        expected[17] = store.list_pending_inputs(conversation_id)
+    for workspace in (17, 0, 17):
+        with workspace_scope(workspace):
+            actual, cursor = [], None
+            for _ in range(4):
+                page, cursor = store.list_pending_inputs_page(
+                    conversation_id, after=cursor, limit=3
+                )
+                actual.extend(page)
+                if cursor is None:
+                    break
+            assert cursor is None and actual == expected[workspace]
+            assert [item.id for item in actual] == [item.stable_id for item in inputs]
+            assert len(store.list_items(conversation_id).data) == len(inputs)
+            assert store.list_pending_inputs_page(conversation_id, after=15) == ([], None)
+    with workspace_scope(99):
+        assert store.list_pending_inputs_page(conversation_id) == ([], None)
+
+
+def test_pending_page_index_bounds_history_scan(pending_store):
+    store = pending_store
+    if store._conv_engine.dialect.name != "sqlite":
+        pytest.skip("SQLite EXPLAIN and VM instruction check")
+    conversation = store.create_conversation()
+    with store._conv_engine.begin() as connection:
+        connection.execute(
+            insert(SqlConversationItem),
+            [
+                {
+                    "conversation_id": conversation.id,
+                    "id": f"{i:032x}",
+                    "created_at": i,
+                    "response_id": PENDING_INPUT_RESPONSE_ID if i >= 29990 else "history",
+                    "position": i,
+                    "status": 2,
+                    "type": 1,
+                    "data": '{"role":"user","content":[]}',
+                    "search_text": "",
+                }
+                for i in range(30000)
+            ],
+        )
+    steps, queries, drivers = [0], [], []
+
+    def tick():
+        steps[0] += 1
+        return 0
+
+    def before(connection, cursor, statement, params, context, many):
+        if statement.lstrip().upper().startswith("SELECT"):
+            queries.append((statement, params))
+            drivers.append(cursor.connection)
+            cursor.connection.set_progress_handler(tick, 1)
+
+    event.listen(store._conv_engine, "before_cursor_execute", before)
+    try:
+        first, cursor = store.list_pending_inputs_page(conversation.id, limit=6)
+        second, end = store.list_pending_inputs_page(conversation.id, after=cursor, limit=6)
+    finally:
+        event.remove(store._conv_engine, "before_cursor_execute", before)
+        for driver in drivers:
+            driver.set_progress_handler(None, 0)
+    assert cursor == 29995 and end is None
+    assert [item.id for item in first + second] == [f"{i:032x}" for i in range(29990, 30000)]
+    assert len(queries) == 2 and steps[0] < 1000, f"Unbounded pending page: {steps[0]} VM steps"
+    with store._conv_engine.connect() as connection:
+        plans = [
+            str(connection.exec_driver_sql("EXPLAIN QUERY PLAN " + sql, params).all())
+            for sql, params in queries
+        ]
+    assert all("ix_conversation_items_pending_position" in plan for plan in plans)
+    assert all("TEMP B-TREE" not in plan for plan in plans)

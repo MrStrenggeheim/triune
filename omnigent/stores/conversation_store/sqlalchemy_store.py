@@ -151,7 +151,10 @@ from omnigent.stores.conversation_store.overrides import (
 from omnigent.stores.conversation_store.overrides import (
     encode_session_overrides as _encode_session_overrides,
 )
-from omnigent.stores.conversation_store.schema import ensure_activity_label_index
+from omnigent.stores.conversation_store.schema import (
+    ensure_activity_label_index,
+    ensure_pending_input_index,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -1002,6 +1005,7 @@ class SqlAlchemyConversationStore(ConversationStore):
         )
         if self._conv_engine is not self._engine:
             ensure_activity_label_index(self._conv_engine)
+            ensure_pending_input_index(self._conv_engine)
         self._conv_session = make_named_managed_session_maker(
             self._conv_engine,
             query_name_prefix="omnigent.conversation_store",

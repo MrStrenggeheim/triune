@@ -1012,6 +1012,15 @@ class SqlConversationItem(ConversationBase):
             "response_id",
             "id",
         ),
+        # Pending pages filter one response and read in submission order.
+        Index(
+            "ix_conversation_items_pending_position",
+            "workspace_id",
+            "conversation_id",
+            "response_id",
+            "position",
+            "id",
+        ),
         # Latest-message previews scan one type per conversation ordered by
         # position DESC (list_latest_message_items_for_conversations). Ordering
         # type before position lets the scan seek to (workspace_id,

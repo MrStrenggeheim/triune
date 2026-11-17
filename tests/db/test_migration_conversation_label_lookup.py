@@ -14,9 +14,12 @@ from alembic.operations import Operations
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.schema import CreateIndex
 
-from omnigent.db.db_models import SqlConversationLabel
+from omnigent.db.db_models import SqlConversationItem, SqlConversationLabel
 from omnigent.db.utils import _build_alembic_config
-from omnigent.stores.conversation_store.schema import ensure_activity_label_index
+from omnigent.stores.conversation_store.schema import (
+    ensure_activity_label_index,
+    ensure_pending_input_index,
+)
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
 
 _MIGRATION = "omnigent.db.migrations.versions.bq1a2b3c4d5e_index_conversation_labels_by_value"
@@ -87,12 +90,29 @@ def test_existing_split_database_recovers_missing_index(tmp_path: Path) -> None:
     assert reopened.get_conversation(child.id).labels == {"k": "v"}
 
 
+@pytest.mark.parametrize(
+    "migration_name,model,index_name,ensure_index",
+    [
+        (_MIGRATION, SqlConversationLabel, _INDEX, ensure_activity_label_index),
+        (
+            "omnigent.db.migrations.versions.pq1a2b3c4d5e_index_pending_conversation_inputs",
+            SqlConversationItem,
+            "ix_conversation_items_pending_position",
+            ensure_pending_input_index,
+        ),
+    ],
+)
 @pytest.mark.parametrize("invalid", [None, '"tenant"."failed_index"'])
 def test_postgres_index_builds_concurrently_and_recovers_invalid(
-    monkeypatch: pytest.MonkeyPatch, invalid: str | None
+    monkeypatch: pytest.MonkeyPatch,
+    invalid: str | None,
+    migration_name,
+    model,
+    index_name,
+    ensure_index,
 ) -> None:
-    migration = import_module(_MIGRATION)
-    index = next(i for i in SqlConversationLabel.__table__.indexes if i.name == _INDEX)
+    migration = import_module(migration_name)
+    index = next(i for i in model.__table__.indexes if i.name == index_name)
     create = str(CreateIndex(index, if_not_exists=True).compile(dialect=postgresql.dialect()))
     expected = create.replace("CREATE INDEX", "CREATE INDEX CONCURRENTLY", 1)
     connection = MagicMock()
@@ -100,7 +120,7 @@ def test_postgres_index_builds_concurrently_and_recovers_invalid(
     engine = MagicMock()
     engine.dialect.name = "postgresql"
     engine.connect.return_value.execution_options.return_value.__enter__.return_value = connection
-    ensure_activity_label_index(engine)
+    ensure_index(engine)
     engine.connect.return_value.execution_options.assert_called_once_with(
         isolation_level="AUTOCOMMIT"
     )
@@ -108,7 +128,7 @@ def test_postgres_index_builds_concurrently_and_recovers_invalid(
     assert ddl == ([f"DROP INDEX CONCURRENTLY {invalid}"] if invalid else []) + [expected]
     query, params = connection.execute.call_args.args
     assert "i.indrelid = to_regclass(:table)" in str(query)
-    assert params == {"table": "conversation_labels", "name": _INDEX}
+    assert params == {"table": model.__tablename__, "name": index_name}
 
     operations = MagicMock()
     operations.get_bind.return_value = connection
@@ -117,3 +137,11 @@ def test_postgres_index_builds_concurrently_and_recovers_invalid(
     monkeypatch.setattr(migration, "op", operations)
     migration.upgrade()
     assert [str(call.args[0]) for call in operations.execute.call_args_list] == ddl
+    operations.get_context.return_value.autocommit_block.assert_called_once_with()
+    operations.get_context.return_value.autocommit_block.reset_mock()
+    migration.downgrade()
+    operations.get_context.return_value.autocommit_block.assert_called_once_with()
+    expected_drop = {"table_name": model.__tablename__, "postgresql_concurrently": True}
+    if model is SqlConversationItem:
+        expected_drop["if_exists"] = True
+    operations.drop_index.assert_called_once_with(index_name, **expected_drop)
