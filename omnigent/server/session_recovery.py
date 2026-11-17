@@ -8,13 +8,35 @@ import asyncio
 import hashlib
 import json
 from collections.abc import AsyncGenerator, Awaitable, Callable
-from typing import Any
+from typing import Any, cast
 
 from omnigent.entities.conversation import ConversationItem
 from omnigent.runtime import inflight_text, session_stream
 from omnigent.stores.conversation_store import ConversationStore
 
 _REPLAY_PAGE_SIZE = 200
+MAX_INITIAL_LIMIT = 200
+MAX_SAFE_POSITION = (1 << 53) - 1
+
+
+def valid_window_options(initial_limit: Any, window_start_position: Any) -> bool:
+    """Share strict window validation between SSE and WebSocket subscriptions."""
+    return (
+        initial_limit is None
+        or (
+            isinstance(initial_limit, int)
+            and not isinstance(initial_limit, bool)
+            and 1 <= initial_limit <= MAX_SAFE_POSITION
+        )
+    ) and (
+        window_start_position is None
+        or (
+            initial_limit is not None
+            and isinstance(window_start_position, int)
+            and not isinstance(window_start_position, bool)
+            and 0 <= window_start_position <= MAX_SAFE_POSITION
+        )
+    )
 
 
 class SessionRecovery:
@@ -30,6 +52,8 @@ class SessionRecovery:
         after_position: int = -1,
         after_revision: int | None = None,
         stream_epoch: str | None = None,
+        initial_limit: int | None = None,
+        window_start_position: int | None = None,
         project: Callable[[list[ConversationItem]], Awaitable[list[ConversationItem]]]
         | None = None,
     ) -> None:
@@ -43,9 +67,64 @@ class SessionRecovery:
         self.after_position = after_position
         self.after_revision = after_revision
         self.after_epoch = stream_epoch
+        if not valid_window_options(initial_limit, window_start_position):
+            raise ValueError("Invalid transcript window options")
+        self.initial_limit = min(initial_limit, MAX_INITIAL_LIMIT) if initial_limit else None
+        self.window_start_position = window_start_position
         self._baseline_revision = session_stream.item_revision(session_id)[0]
         self._checkpoint_revision: int | None = None
         self._checkpoint: dict[str, Any] = {}
+
+    async def _window(
+        self, highwater: int
+    ) -> tuple[dict[str, Any], list[ConversationItem] | None]:
+        if self.initial_limit is None:
+            return {}, None
+        if self.window_start_position is not None:
+            await self.authorize()
+            summary = await asyncio.to_thread(
+                self.store.item_checkpoint,
+                self.session_id,
+                after_position=self.window_start_position - 1,
+                through_position=highwater,
+            )
+            return {
+                "window_start_position": self.window_start_position,
+                "window_item_count": summary["item_count"],
+                "has_older_items": summary["has_older_items"],
+                "first_item_id": summary["first_item_id"],
+            }, None
+        latest: list[ConversationItem] = []
+        through = highwater
+        has_older = False
+        while len(latest) < self.initial_limit and through >= 0:
+            await self.authorize()
+            page = await asyncio.to_thread(
+                self.store.list_items,
+                self.session_id,
+                order="desc",
+                limit=min(_REPLAY_PAGE_SIZE, self.initial_limit - len(latest)),
+                through_position=through,
+            )
+            latest.extend(page.data)
+            has_older = page.has_more
+            if not page.has_more:
+                break
+            assert page.data[-1].position is not None
+            through = page.data[-1].position - 1
+        latest.reverse()
+        self.window_start_position = latest[0].position if latest else 0
+        return {
+            "window_start_position": self.window_start_position,
+            "window_item_count": len(latest),
+            "has_older_items": has_older,
+            "first_item_id": latest[0].id if latest else None,
+        }, latest
+
+    def _check_window_revision(self, revision: int) -> None:
+        # Never complete an authoritative range after deletion/promotion changed membership.
+        if session_stream.item_revision(self.session_id)[1] > revision:
+            raise ConnectionError("Transcript window changed during recovery")
 
     @staticmethod
     def _fingerprint(item: dict[str, Any]) -> bytes:
@@ -69,12 +148,16 @@ class SessionRecovery:
             or (self.after_revision < reset_revision and mutations is None)
             or self.after_position > checkpoint["last_position"]
         )
+        window, latest = await self._window(checkpoint["last_position"])
+        if window:
+            self._check_window_revision(revision)
         boundary = {
             "type": "session.sync",
             "reset": reset,
             "item_revision": revision,
             "reset_revision": reset_revision,
             **checkpoint,
+            **window,
             "stream_epoch": inflight_text.stream_epoch(),
         }
         yield {**boundary, "phase": "start"}
@@ -84,12 +167,28 @@ class SessionRecovery:
                 saved = await asyncio.to_thread(self.store.get_item, self.session_id, item_id)
                 if saved is None or saved.position is None or saved.position > self.after_position:
                     continue
+                if window and saved.position < window["window_start_position"]:
+                    continue
                 items = await self.project([saved]) if self.project is not None else [saved]
                 for saved in items:
                     item = saved.to_api_dict()
                     self._replayed[saved.id] = self._fingerprint(item)
                     yield {"type": "response.output_item.done", "item": item}
         after_position = -1 if reset else self.after_position
+        if window:
+            after_position = max(after_position, window["window_start_position"] - 1)
+        replayed_count = 0
+        if latest is not None:
+            await self.authorize()
+            # Persisted window rows already have canonical positions.
+            selected = [item for item in latest if cast(int, item.position) > after_position]
+            items = await self.project(selected) if self.project is not None else selected
+            for saved in items:
+                item = saved.to_api_dict()
+                self._replayed[saved.id] = self._fingerprint(item)
+                replayed_count += 1
+                yield {"type": "response.output_item.done", "item": item}
+            after_position = checkpoint["last_position"]
         while after_position < checkpoint["last_position"]:
             await self.authorize()
             page = await asyncio.to_thread(
@@ -103,11 +202,16 @@ class SessionRecovery:
             for saved in items:
                 item = saved.to_api_dict()
                 self._replayed[saved.id] = self._fingerprint(item)
+                replayed_count += 1
                 yield {"type": "response.output_item.done", "item": item}
             if not page.has_more:
                 break
             assert page.data[-1].position is not None
             after_position = page.data[-1].position
+        if window:
+            self._check_window_revision(revision)
+            if reset and replayed_count != window["window_item_count"]:
+                raise ConnectionError("Transcript window membership changed during recovery")
         self._baseline_revision = revision
         yield {**boundary, "phase": "complete"}
 
@@ -170,6 +274,13 @@ class SessionRecovery:
                     "created_by": saved.created_by,
                 },
             }
+        if (
+            self.initial_limit is not None
+            and self.window_start_position is not None
+            and saved.position is not None
+            and saved.position < self.window_start_position
+        ):
+            return None
         # A stale queued commit can follow a newer replayed update.
         if self.project is not None:
             [saved] = await self.project([saved])

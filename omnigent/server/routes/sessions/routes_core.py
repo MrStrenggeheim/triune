@@ -2114,7 +2114,10 @@ def register_core_routes(
         return PaginatedList(
             data=[
                 {
-                    **item.model_dump(exclude_none=True),
+                    # Keep the key's byte order without projecting activity twice.
+                    **item.model_dump(
+                        exclude_none=True, exclude={"activity": set(SessionActivity.model_fields)}
+                    ),
                     **(
                         {"activity": item.activity.model_dump()}
                         if item.activity is not None
@@ -2382,7 +2385,9 @@ def register_core_routes(
                 reason="authentication required",
             )
         await websocket.accept()
-        await websocket.send_text(json.dumps({"type": "capabilities", "transcript_stream": 1}))
+        await websocket.send_text(
+            json.dumps({"type": "capabilities", "transcript_stream": 1, "transcript_window": 1})
+        )
         _logger.info(
             "session-updates stream connected",
             extra=debug_event("session_updates", phase="connected"),

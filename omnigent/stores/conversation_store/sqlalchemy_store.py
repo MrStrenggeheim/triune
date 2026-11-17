@@ -1498,6 +1498,7 @@ class SqlAlchemyConversationStore(ConversationStore):
             for row in meta_rows
         }
 
+    @shared_read_scope()
     def get_conversations(
         self, conversation_ids: list[str], *, include_execution_state: bool = True
     ) -> dict[str, Conversation]:
@@ -2991,7 +2992,11 @@ class SqlAlchemyConversationStore(ConversationStore):
         mark_items_changed(conversation_id, reset=reset, item_id=item_id)
 
     def item_checkpoint(
-        self, conversation_id: str, *, through_position: int | None = None
+        self,
+        conversation_id: str,
+        *,
+        through_position: int | None = None,
+        after_position: int | None = None,
     ) -> dict[str, Any]:
         """Return committed count and tail identity in one body-free statement."""
         criteria = [
@@ -3001,6 +3006,9 @@ class SqlAlchemyConversationStore(ConversationStore):
         ]
         if through_position is not None:
             criteria.append(SqlConversationItem.position <= through_position)
+        older_criteria = list(criteria)
+        if after_position is not None:
+            criteria.append(SqlConversationItem.position > after_position)
         tail_id = (
             select(SqlConversationItem.id)
             .where(*criteria)
@@ -3008,15 +3016,34 @@ class SqlAlchemyConversationStore(ConversationStore):
             .limit(1)
             .scalar_subquery()
         )
+        columns: list[ColumnElement[Any]] = [
+            func.count(SqlConversationItem.id),
+            func.coalesce(func.max(SqlConversationItem.position), -1),
+            tail_id,
+        ]
+        if after_position is not None:
+            columns.extend(
+                [
+                    select(SqlConversationItem.id)
+                    .where(*criteria)
+                    .order_by(SqlConversationItem.position.asc())
+                    .limit(1)
+                    .scalar_subquery(),
+                    select(SqlConversationItem.id)
+                    .where(*older_criteria, SqlConversationItem.position <= after_position)
+                    .exists(),
+                ]
+            )
         with self._conv_session("item_checkpoint") as session:
-            count, position, item_id = session.execute(
-                select(
-                    func.count(SqlConversationItem.id),
-                    func.coalesce(func.max(SqlConversationItem.position), -1),
-                    tail_id,
-                ).where(*criteria)
-            ).one()
-        return {"last_position": position, "item_count": count, "last_item_id": item_id}
+            result = session.execute(select(*columns).where(*criteria)).one()
+        checkpoint = {
+            "last_position": result[1],
+            "item_count": result[0],
+            "last_item_id": result[2],
+        }
+        if after_position is not None:
+            checkpoint.update(first_item_id=result[3], has_older_items=result[4])
+        return checkpoint
 
     @staticmethod
     def _resolve_item_cursor_position(
@@ -3718,6 +3745,7 @@ class SqlAlchemyConversationStore(ConversationStore):
 
         return stmt, qualifying_ids
 
+    @shared_read_scope()
     def list_conversations(
         self,
         limit: int = 20,

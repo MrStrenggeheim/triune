@@ -4394,6 +4394,10 @@ class SessionSyncEvent(_SSEEventBase):
     item_count: int = Field(ge=0)
     last_item_id: str | None = None
     stream_epoch: str
+    window_start_position: int | None = Field(default=None, ge=0)
+    window_item_count: int | None = Field(default=None, ge=0)
+    has_older_items: bool | None = None
+    first_item_id: str | None = None
 
 
 class PresenceViewer(BaseModel):

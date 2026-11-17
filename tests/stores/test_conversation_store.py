@@ -8721,6 +8721,65 @@ def test_get_conversation_keeps_distinct_query_names(
 
 
 @pytest.mark.parametrize("store_fixture", ["conversation_store", "split_db_conversation_store"])
+@pytest.mark.parametrize("method", ["get_conversations", "list_conversations"])
+@pytest.mark.parametrize("include_execution_state", [False, True])
+def test_bulk_reads_share_checkouts_per_call_and_keep_fresh_metadata(
+    request, store_fixture, method, include_execution_state
+):
+    from omnigent.db.utils import _shared_read_sessions
+    from omnigent.server.auth import LEVEL_OWNER
+    from omnigent.stores.permission_store.sqlalchemy_store import SqlAlchemyPermissionStore
+
+    store = request.getfixturevalue(store_fixture)
+    permissions = SqlAlchemyPermissionStore(store.storage_location)
+    permissions.ensure_user("bulk-reader")
+    rows = [
+        store.create_conversation(title=f"bulk-{i}", runner_id=f"runner-{i}") for i in range(2)
+    ]
+    for row in rows:
+        permissions.grant("bulk-reader", row.id, LEVEL_OWNER)
+        store.set_labels(row.id, {"tag": row.title})
+    engines = {store._engine, store._conv_engine}
+
+    def read():
+        counters = [_count_checkouts(engine) for engine in engines]
+        try:
+            if method == "get_conversations":
+                result = list(
+                    store.get_conversations(
+                        [row.id for row in rows],
+                        include_execution_state=include_execution_state,
+                    ).values()
+                )
+            else:
+                result = store.list_conversations(
+                    accessible_by="bulk-reader",
+                    include_execution_state=include_execution_state,
+                ).data
+        finally:
+            for _, detach in counters:
+                detach()
+        assert [count[0] for count, _ in counters] == [1] * len(engines)
+        assert _shared_read_sessions.get() is None
+        return {row.id: row for row in result}
+
+    initial = read()
+    assert set(initial) == {row.id for row in rows}
+    assert initial[rows[0].id].runner_id == "runner-0"
+    assert initial[rows[0].id].labels == {"tag": "bulk-0"}
+    store.set_session_live_status(rows[0].id, "failed")
+    store.set_pending_elicitation_count(rows[0].id, 2)
+    store.set_labels(rows[0].id, {"tag": "fresh"})
+    permissions.revoke("bulk-reader", rows[1].id)
+    refreshed = read()
+    assert refreshed[rows[0].id].live_status == "failed"
+    assert refreshed[rows[0].id].pending_elicitation_count == 2
+    assert refreshed[rows[0].id].labels == {"tag": "fresh"}
+    if method == "list_conversations":
+        assert set(refreshed) == {rows[0].id}
+
+
+@pytest.mark.parametrize("store_fixture", ["conversation_store", "split_db_conversation_store"])
 def test_branch_tree_and_exact_boundary_survive_reopen(
     request: pytest.FixtureRequest,
     store_fixture: str,

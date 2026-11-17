@@ -203,6 +203,46 @@ def test_watch_returns_snapshot_of_accessible_sessions(app: FastAPI, stores) -> 
         assert items[s1]["host_online"] is None
 
 
+def test_list_activity_serializes_once_with_byte_identical_nulls(app, stores, monkeypatch):
+    from omnigent.server.schemas import SessionActivity, SessionListItem
+
+    sid = _seed_session(stores, owner=ALICE, title="activity serialization")
+    stores[0].create_conversation(parent_conversation_id=sid, agent_id="a" * 32)
+    item_dump, activity_dump = SessionListItem.model_dump, SessionActivity.model_dump
+    legacy = True
+    projections = []
+
+    def dump_item(self, *args, **kwargs):
+        if legacy:
+            kwargs.pop("exclude", None)
+        result = item_dump(self, *args, **kwargs)
+        if result.get("activity"):
+            projections.append(result["activity"])
+        return result
+
+    def dump_activity(self, *args, **kwargs):
+        result = activity_dump(self, *args, **kwargs)
+        projections.append(result)
+        return result
+
+    monkeypatch.setattr(SessionListItem, "model_dump", dump_item)
+    monkeypatch.setattr(SessionActivity, "model_dump", dump_activity)
+    with TestClient(app) as client:
+        url = "/v1/sessions?visibility=mine&limit=30"
+        headers = {"X-Forwarded-Email": ALICE}
+        before = client.get(url, headers=headers)
+        assert before.status_code == 200
+        assert len(projections) == 2
+        legacy = False
+        projections.clear()
+        after = client.get(url, headers=headers)
+        assert after.status_code == 200 and after.content == before.content
+        assert len(projections) == 1
+        child = after.json()["data"][0]["activity"]["descendants"][0]
+        for field in ("viewer_last_seen", "branch_source_id", "project_id", "owner"):
+            assert field in child and child[field] is None
+
+
 def test_light_summary_payloads_equal_full_reads_and_keep_authority_and_freshness(
     app: FastAPI, stores, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1208,7 +1248,7 @@ def test_descendant_own_facts_counts_and_viewer_seeds_match_rows_and_ws(
 
 
 def _recv_transcript(ws, session_id, event_type, *, phase=None):
-    for _ in range(100):
+    for _ in range(1000):
         frame = _recv_until(ws, {"session.event", "session.error"})
         if frame["session_id"] != session_id:
             continue
@@ -1269,7 +1309,11 @@ def test_multiplex_replay_watch_presence_and_unsubscribe(app, stores, monkeypatc
     with TestClient(app).websocket_connect(
         "/v1/sessions/updates", headers={"X-Forwarded-Email": ALICE}
     ) as ws:
-        assert ws.receive_json() == {"type": "capabilities", "transcript_stream": 1}
+        assert ws.receive_json() == {
+            "type": "capabilities",
+            "transcript_stream": 1,
+            "transcript_window": 1,
+        }
         ws.send_json({"type": "watch", "session_ids": [first, second]})
         assert len(_recv_until(ws, {"snapshot"})["items"]) == 2
         ws.send_json({"type": "subscribe", "session_id": first})
@@ -1304,7 +1348,10 @@ def test_multiplex_replay_watch_presence_and_unsubscribe(app, stores, monkeypatc
 
 
 @pytest.mark.timeout(20)
-def test_multiplex_authorization_and_active_revocation_are_member_scoped(app, stores):
+@pytest.mark.parametrize("initial_limit", [None, 100])
+def test_multiplex_authorization_and_active_revocation_are_member_scoped(
+    app, stores, initial_limit
+):
     from omnigent.runtime import session_stream
 
     first = _seed_session(stores, owner=ALICE, title="first")
@@ -1313,8 +1360,8 @@ def test_multiplex_authorization_and_active_revocation_are_member_scoped(app, st
     with TestClient(app).websocket_connect(
         "/v1/sessions/updates", headers={"X-Forwarded-Email": ALICE}
     ) as ws:
-        _subscribe(ws, first)
-        _subscribe(ws, second)
+        _subscribe(ws, first, initial_limit=initial_limit)
+        _subscribe(ws, second, initial_limit=initial_limit)
         ws.send_json({"type": "subscribe", "session_id": secret})
         error = _recv_until(ws, {"session.error"})
         assert error["session_id"] == secret and error["code"] == "not_found"
@@ -1345,6 +1392,83 @@ def test_multiplex_authorization_and_active_revocation_are_member_scoped(app, st
         )
         ws.send_json({"type": "watch", "session_ids": [second]})
         assert _recv_until(ws, {"snapshot"})["items"][0]["id"] == second
+
+
+@pytest.mark.parametrize("change", ["rebind", "reroute", "disconnect", "revoke", "delete"])
+async def test_stream_authorization_reuses_fresh_conversation_and_rejects_changes(
+    app, stores, monkeypatch, change
+):
+    from unittest.mock import AsyncMock, Mock
+
+    from starlette.requests import Request
+
+    from omnigent.errors import OmnigentError
+    from omnigent.runner.routing import RunnerRouter
+
+    store, agents, permissions = stores
+    sid = _seed_session(stores, owner=ALICE, title="runner authorization")
+    store.set_runner_id(sid, "original-runner")
+    registry = Mock()
+    runner = RunnerRouter(registry=registry, conversation_store=store)
+    client_for_runner = Mock(return_value=object())
+    monkeypatch.setattr(runner, "_client_for_runner", client_for_runner)
+    ensure = AsyncMock()
+    monkeypatch.setattr(sessions_routes, "_ensure_runner_relay_ready", ensure)
+    router = create_sessions_router(
+        conversation_store=store,
+        agent_store=agents,
+        auth_provider=UnifiedAuthProvider(source="header"),
+        permission_store=permissions,
+        runner_router=runner,
+    )
+    endpoint = next(
+        route.endpoint for route in router.routes if route.path.endswith("/{session_id}/stream")
+    )
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": f"/v1/sessions/{sid}/stream",
+            "headers": [(b"x-forwarded-email", ALICE.encode())],
+            "app": app,
+        }
+    )
+    await endpoint(
+        request=request,
+        session_id=sid,
+        idle=False,
+        after_position=-1,
+        after_revision=None,
+        stream_epoch=None,
+        initial_limit=100,
+        window_start_position=None,
+    )
+    read = Mock(wraps=store.get_conversation)
+    route = Mock(wraps=runner.client_for_session_resources)
+    monkeypatch.setattr(store, "get_conversation", read)
+    monkeypatch.setattr(runner, "client_for_session_resources", route)
+    await request.state.stream_authorize()
+    # Access and binding each remain fresh; routing must not load a third copy.
+    assert read.call_count == 2
+    current = route.call_args.kwargs["conversation"]
+    assert current.id == sid and current.runner_id == "original-runner"
+    assert current is not ensure.call_args.kwargs["conversation"]
+    route.reset_mock()
+    if change == "rebind":
+        store.clear_runner_id(sid)
+        assert store.set_runner_id(sid, "replacement-runner")
+    elif change == "reroute":
+        client_for_runner.return_value = object()
+    elif change == "disconnect":
+        registry.get.return_value = None
+    elif change == "revoke":
+        permissions.revoke(ALICE, sid)
+    else:
+        await store.delete_conversation(sid)
+    with pytest.raises(OmnigentError if change in {"revoke", "delete"} else ConnectionError):
+        await request.state.stream_authorize()
+    if change in {"rebind", "revoke", "delete"}:
+        route.assert_not_called()
 
 
 @pytest.mark.timeout(20)
@@ -1429,3 +1553,93 @@ def test_multiplex_validates_cursor_and_caps_memberships(app, stores, monkeypatc
         ws.send_json({"type": "presence", "session_id": second, "idle": True})
         ws.send_json({"type": "unsubscribe", "session_id": first})
         assert _recv_until(ws, {"session.unsubscribed"})["session_id"] == first
+
+
+@pytest.mark.timeout(20)
+def test_multiplex_negotiated_window_validation_and_expanded_resume(app, stores):
+    from omnigent.entities import MessageData, NewConversationItem
+
+    sid = _seed_session(stores, owner=ALICE, title="window")
+    originals = stores[0].append(
+        sid,
+        [
+            NewConversationItem(
+                type="message",
+                response_id="turn",
+                data=MessageData(
+                    role="user",
+                    content=[{"type": "input_text", "text": str(index)}],
+                ),
+            )
+            for index in range(301)
+        ],
+    )
+    with TestClient(app).websocket_connect(
+        "/v1/sessions/updates", headers={"X-Forwarded-Email": ALICE}
+    ) as ws:
+        complete = _subscribe(ws, sid, initial_limit=100)
+        assert complete["window_item_count"] == 100
+        assert complete["item_count"] == 301
+        assert complete["window_start_position"] == 201
+        assert complete["first_item_id"] == originals[201].id
+        for options in (
+            {"initial_limit": 0},
+            {"initial_limit": True},
+            {"initial_limit": 1.5},
+            {"initial_limit": "100"},
+            {"initial_limit": 2**53},
+            {"initial_limit": 100, "window_start_position": -1},
+            {"initial_limit": 100, "window_start_position": True},
+            {"initial_limit": 100, "window_start_position": 2**53},
+            {"window_start_position": 0},
+        ):
+            ws.send_json({"type": "subscribe", "session_id": sid, **options})
+            assert _recv_until(ws, {"session.error"})["code"] == "invalid_input"
+        complete = _subscribe(ws, sid, initial_limit=100, window_start_position=2)
+        assert complete["window_start_position"] == 2
+        assert complete["window_item_count"] == 299
+        assert complete["first_item_id"] == originals[2].id
+        assert complete["has_older_items"]
+        complete = _subscribe(ws, sid, initial_limit=999)
+        assert complete["window_item_count"] == 200
+        complete = _subscribe(ws, sid)
+        assert complete["item_count"] == 301
+        assert complete["window_item_count"] is None
+
+
+@pytest.mark.timeout(20)
+def test_sse_window_query_validation_and_shared_recovery_wiring(app, stores, monkeypatch):
+    sid = _seed_session(stores, owner=ALICE, title="SSE window")
+    captured = []
+
+    async def finite_stream(request, session_id, *args, recovery, **kwargs):
+        captured.append(recovery)
+        async for event in recovery.events():
+            yield "data: " + json.dumps(event) + "\n\n"
+
+    monkeypatch.setattr(
+        "omnigent.server.routes.sessions.routes_events._stream_live_events", finite_stream
+    )
+    with TestClient(app) as client:
+        url = f"/v1/sessions/{sid}/stream"
+        headers = {"X-Forwarded-Email": ALICE}
+        for query in (
+            "initial_limit=0",
+            "initial_limit=true",
+            "initial_limit=1.5",
+            "initial_limit=9007199254740992",
+            "initial_limit=100&window_start_position=-1",
+            "initial_limit=100&window_start_position=9007199254740992",
+        ):
+            assert client.get(url + "?" + query, headers=headers).status_code == 422
+        from omnigent.errors import ErrorCode, OmnigentError
+
+        with pytest.raises(OmnigentError) as invalid:
+            client.get(url + "?window_start_position=0", headers=headers)
+        assert invalid.value.code == ErrorCode.INVALID_INPUT
+        response = client.get(url + "?initial_limit=999&window_start_position=0", headers=headers)
+        assert response.status_code == 200, response.text
+        assert captured[-1].enabled
+        assert captured[-1].initial_limit == 200
+        assert captured[-1].window_start_position == 0
+        assert '"window_item_count": 0' in response.text

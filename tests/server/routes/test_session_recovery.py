@@ -537,3 +537,434 @@ async def test_updated_item_uses_current_saved_position_without_losing_state_fra
         "environment_id": "default",
     }
     assert await recovery.prepare(state) is state
+
+
+async def test_window_cold_100_of_10000_decodes_only_window_and_legacy_reads_all(
+    saved, monkeypatch
+):
+    store, sid = saved
+    originals = store.append(sid, [_message(str(index)) for index in range(10000)])
+    read = Mock(wraps=store.list_items)
+    decode = Mock(wraps=store._decode_item_data_batch)
+    monkeypatch.setattr(store, "list_items", read)
+    monkeypatch.setattr(store, "_decode_item_data_batch", decode)
+    frames = await _events(SessionRecovery(store, sid, _allowed, enabled=True, initial_limit=100))
+    assert [frame["item"]["id"] for frame in frames if "item" in frame] == [
+        item.id for item in originals[-100:]
+    ]
+    assert frames[0] == {**frames[-1], "phase": "start"}
+    assert frames[-1]["item_count"] == 10000
+    assert frames[-1]["window_item_count"] == 100
+    assert frames[-1]["window_start_position"] == 9900
+    assert frames[-1]["has_older_items"]
+    assert frames[-1]["first_item_id"] == originals[-100].id
+    read.assert_called_once_with(sid, order="desc", limit=100, through_position=9999)
+    assert sum(len(call.args[0]) for call in decode.call_args_list) == 100
+    read.reset_mock()
+    decode.reset_mock()
+    legacy = await _events(SessionRecovery(store, sid, _allowed, enabled=True))
+    assert len([frame for frame in legacy if "item" in frame]) == 10000
+    assert "window_item_count" not in legacy[-1]
+    assert sum(len(call.args[0]) for call in decode.call_args_list) == 10000
+    assert all(call.kwargs["limit"] == 200 for call in read.call_args_list)
+
+
+@pytest.mark.parametrize("limit,expected", [(1, 1), (100, 100), (200, 200), (999, 200)])
+async def test_window_limits_and_hidden_canonical_first_row(saved, limit, expected):
+    store, sid = saved
+    pending = _message(response_id=PENDING_INPUT_RESPONSE_ID)
+    hidden = _message("hidden metadata")
+    hidden.data.is_meta = True
+    originals = store.append(sid, [pending, hidden, *[_message() for _ in range(199)]])
+    frames = await _events(
+        SessionRecovery(store, sid, _allowed, enabled=True, initial_limit=limit)
+    )
+    assert len([frame for frame in frames if "item" in frame]) == expected
+    assert frames[-1]["item_count"] == 200
+    assert frames[-1]["window_item_count"] == expected
+    assert frames[-1]["first_item_id"] == originals[-expected].id
+    assert frames[-1]["has_older_items"] == (expected < 200)
+
+
+async def test_expanded_window_reset_keeps_requested_start_across_bounded_pages(
+    saved, monkeypatch
+):
+    store, sid = saved
+    originals = store.append(sid, [_message(str(index)) for index in range(1000)])
+    read = Mock(wraps=store.list_items)
+    monkeypatch.setattr(store, "list_items", read)
+    frames = await _events(
+        SessionRecovery(
+            store,
+            sid,
+            _allowed,
+            enabled=True,
+            initial_limit=100,
+            window_start_position=123,
+            after_position=999,
+            after_revision=0,
+            stream_epoch="previous-process",
+        )
+    )
+    assert frames[0]["reset"]
+    assert frames[-1]["window_start_position"] == 123
+    assert frames[-1]["window_item_count"] == 877
+    assert frames[-1]["first_item_id"] == originals[123].id
+    assert frames[-1]["has_older_items"]
+    assert [frame["item"]["id"] for frame in frames if "item" in frame] == [
+        item.id for item in originals[123:]
+    ]
+    assert read.call_count == 5
+    assert all(call.kwargs["limit"] == 200 for call in read.call_args_list)
+    assert all(call.kwargs["through_position"] == 999 for call in read.call_args_list)
+
+
+async def test_window_delta_and_live_tail_ignore_old_mutation_outside_loaded_range(saved):
+    store, sid = saved
+    originals = store.append(
+        sid,
+        [
+            NewConversationItem(
+                type="resource_event",
+                response_id="turn",
+                data=ResourceEventData(
+                    event_type="session.subagent.returned",
+                    resource_id=f"child-{index}",
+                    resource_type="session",
+                    resource={"dispatch_id": f"dispatch-{index}", "task_input": "original"},
+                ),
+            )
+            for index in range(10)
+        ],
+    )
+    revision = session_stream.item_revision(sid)[0]
+    for item in (originals[1], originals[8]):
+        store.enrich_resource_event(
+            sid, item.id, {**item.data.resource, "task_input": "expanded original task"}
+        )
+    recovery = SessionRecovery(
+        store,
+        sid,
+        _allowed,
+        enabled=True,
+        initial_limit=3,
+        window_start_position=7,
+        after_position=9,
+        after_revision=revision,
+        stream_epoch=inflight_text.stream_epoch(),
+    )
+    frames = await _events(recovery)
+    assert not frames[0]["reset"]
+    assert [frame["item"]["id"] for frame in frames if "item" in frame] == [originals[8].id]
+    assert frames[1]["item"]["resource"]["task_input"] == "expanded original task"
+    assert frames[-1]["window_item_count"] == 3
+    assert (
+        await recovery.prepare(
+            {"type": "response.output_item.updated", "item": {"id": originals[1].id}}
+        )
+        is None
+    )
+    assert (
+        await recovery.prepare(
+            {"type": "response.output_item.done", "item": originals[8].to_api_dict()}
+        )
+        is None
+    )
+    [new] = store.append(sid, [_message("new tail")])
+    assert (await recovery.prepare({"type": "response.output_item.done", "item": {"id": new.id}}))[
+        "item"
+    ]["id"] == new.id
+
+
+def _delete_canonical(store, sid, item_id):
+    from sqlalchemy import delete
+
+    from omnigent.db.db_models import SqlConversationItem, current_workspace_id
+
+    with store._conv_session("test_delete_canonical") as session:
+        session.execute(
+            delete(SqlConversationItem).where(
+                SqlConversationItem.workspace_id == current_workspace_id(),
+                SqlConversationItem.conversation_id == sid,
+                SqlConversationItem.id == item_id,
+            )
+        )
+    session_stream.mark_items_changed(sid, reset=True)
+
+
+async def test_window_reset_preserves_deleted_earliest_lower_bound_and_truthful_counts(saved):
+    store, sid = saved
+    originals = store.append(sid, [_message() for _ in range(10)])
+    _delete_canonical(store, sid, originals[5].id)
+    frames = await _events(
+        SessionRecovery(
+            store,
+            sid,
+            _allowed,
+            enabled=True,
+            initial_limit=3,
+            window_start_position=5,
+        )
+    )
+    assert frames[-1]["window_start_position"] == 5
+    assert frames[-1]["window_item_count"] == 4
+    assert frames[-1]["item_count"] == 9
+    assert frames[-1]["first_item_id"] == originals[6].id
+    assert frames[-1]["has_older_items"]
+    assert [frame["item"]["position"] for frame in frames if "item" in frame] == [6, 7, 8, 9]
+
+
+@pytest.mark.parametrize("start", [None, 0, 9])
+async def test_empty_window_metadata(saved, start):
+    store, sid = saved
+    frames = await _events(
+        SessionRecovery(
+            store,
+            sid,
+            _allowed,
+            enabled=True,
+            initial_limit=100,
+            window_start_position=start,
+        )
+    )
+    assert frames[-1]["window_item_count"] == 0
+    assert frames[-1]["window_start_position"] == (start or 0)
+    assert frames[-1]["first_item_id"] is None
+    assert not frames[-1]["has_older_items"]
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+@pytest.mark.parametrize("change", ["deletion", "promotion", "mutation"])
+async def test_window_reset_interleaving_never_claims_complete(saved, explicit, change):
+    store, sid = saved
+    originals = store.append(
+        sid,
+        [
+            _message(response_id=PENDING_INPUT_RESPONSE_ID),
+            *[_message() for _ in range(8)],
+            NewConversationItem(
+                type="resource_event",
+                response_id="turn",
+                data=ResourceEventData(
+                    event_type="session.subagent.returned",
+                    resource_id="child",
+                    resource_type="session",
+                    resource={"dispatch_id": "dispatch", "task_input": "original"},
+                ),
+            ),
+        ],
+    )
+    recovery = SessionRecovery(
+        store,
+        sid,
+        _allowed,
+        enabled=True,
+        initial_limit=3,
+        window_start_position=7 if explicit else None,
+    )
+    frames = recovery.events()
+    async with contextlib.aclosing(frames):
+        assert (await anext(frames))["window_item_count"] == 3
+        if change == "deletion":
+            _delete_canonical(store, sid, originals[7].id)
+        elif change == "promotion":
+            store.append(sid, [_message("accepted", replaces_pending_id=originals[0].id)])
+        else:
+            store.enrich_resource_event(
+                sid, originals[-1].id, {"dispatch_id": "dispatch", "task_input": "new longer task"}
+            )
+        emitted = []
+        with pytest.raises(ConnectionError, match="changed during recovery"):
+            async for frame in frames:
+                emitted.append(frame)
+        assert not any(frame.get("phase") == "complete" for frame in emitted)
+
+
+async def test_window_subscribe_highwater_append_overlap_and_tail_dedup(saved, monkeypatch):
+    store, sid = saved
+    originals = store.append(sid, [_message() for _ in range(10)])
+    original_read = store.list_items
+    appended = []
+
+    def read(*args, **kwargs):
+        assert session_stream.has_subscribers(sid)
+        assert kwargs["through_position"] == 9
+        [new] = store.append(sid, [_message("after fence")])
+        appended.append(new)
+        for item in (originals[-1], new):
+            session_stream.publish(
+                sid, {"type": "response.output_item.done", "item": item.to_api_dict()}
+            )
+        return original_read(*args, **kwargs)
+
+    monkeypatch.setattr(store, "list_items", read)
+    recovery = SessionRecovery(store, sid, _allowed, enabled=True, initial_limit=3)
+    stream = _stream_live_events(_Connected(), sid, recovery=recovery)
+    events = []
+    async with contextlib.aclosing(stream):
+        while not appended or not any(
+            event.get("item", {}).get("id") == appended[0].id for event in events
+        ):
+            frame = await asyncio.wait_for(anext(stream), timeout=2)
+            events.append(json.loads(frame.split("data: ", 1)[1]))
+    assert [event["item"]["id"] for event in events if "item" in event] == [
+        *[item.id for item in originals[-3:]],
+        appended[0].id,
+    ]
+    assert (
+        next(event for event in events if event.get("phase") == "complete")["last_position"] == 9
+    )
+    assert not session_stream.has_subscribers(sid)
+
+
+async def test_window_pages_reauthorize_before_read_and_projection(saved, monkeypatch):
+    store, sid = saved
+    store.append(sid, [_message() for _ in range(500)])
+    count = 0
+
+    async def authorize():
+        nonlocal count
+        count += 1
+        if count == 4:
+            raise OmnigentError("Revoked", code=ErrorCode.NOT_FOUND)
+
+    read = Mock(wraps=store.list_items)
+    monkeypatch.setattr(store, "list_items", read)
+    with pytest.raises(OmnigentError):
+        await _events(
+            SessionRecovery(
+                store,
+                sid,
+                authorize,
+                enabled=True,
+                initial_limit=100,
+                window_start_position=0,
+            )
+        )
+    assert read.call_count == 1
+
+
+async def test_window_question_receipt_identity_redaction_and_old_pending_consumption(saved):
+    from omnigent.runtime.pending_inputs import make_pending_id
+    from omnigent.server.routes._question_receipts import record_question_receipt
+
+    store, sid = saved
+    [pending] = store.append(sid, [_message(response_id=PENDING_INPUT_RESPONSE_ID)])
+    params = {
+        "ask_user_question": {
+            "questions": [
+                {
+                    "id": "credential",
+                    "question": "Credential?",
+                    "isSecret": True,
+                    "textInput": {"default": "private-default"},
+                },
+            ]
+        }
+    }
+    result = {"action": "accept", "content": {"credential": "private-answer"}}
+    receipts = [
+        await record_question_receipt(store, sid, eid, params, result)
+        for eid in ("question-first", "question-second")
+    ]
+    assert await record_question_receipt(store, sid, "question-second", params, result) is None
+    recovery = SessionRecovery(store, sid, _allowed, enabled=True, initial_limit=1)
+    cold = await _events(recovery)
+    assert cold[1]["item"] == receipts[-1]
+    assert cold[-1]["first_item_id"] == receipts[-1]["id"]
+    assert cold[-1]["window_item_count"] == 1 and cold[-1]["item_count"] == 2
+    assert receipts[0]["id"] != receipts[1]["id"]
+    # A consumed input outside the window still settles its exact optimistic identity.
+    [consumed] = store.append(sid, [_message("accepted", replaces_pending_id=pending.id)])
+    pending_id = make_pending_id(sid, pending.id)
+    control = await recovery.prepare(
+        {
+            "type": "session.input.consumed",
+            "data": {"item_id": consumed.id, "cleared_pending_id": pending_id},
+        }
+    )
+    assert control["data"]["item_id"] == consumed.id and control["data"]["position"] == 0
+    assert control["data"]["cleared_pending_id"] == pending_id
+    assert (
+        await recovery.prepare(
+            {"type": "response.output_item.done", "item": consumed.to_api_dict()}
+        )
+        is None
+    )
+    assert (await recovery.prepare({"type": "session.heartbeat"}))["reconcile_required"]
+    expanded = await _events(
+        SessionRecovery(
+            store,
+            sid,
+            _allowed,
+            enabled=True,
+            initial_limit=1,
+            window_start_position=1,
+            after_position=2,
+            after_revision=cold[-1]["item_revision"],
+            stream_epoch=inflight_text.stream_epoch(),
+        )
+    )
+    assert expanded[-1]["reset"] and expanded[-1]["item_count"] == 3
+    assert [frame["item"] for frame in expanded if "item" in frame] == receipts
+    assert expanded[-1]["window_item_count"] == 2 and expanded[-1]["has_older_items"]
+    assert "private-answer" not in json.dumps(expanded)
+    assert "private-default" not in json.dumps(expanded)
+
+
+@pytest.mark.parametrize("allowed", [False, True])
+async def test_window_activity_projection_preserves_membership_and_source_permissions(
+    saved, allowed
+):
+    from omnigent.server.subagent_activity import recover_subagent_activity
+
+    store, sid = saved
+    store.append(sid, [_message("older")])
+    child = store.create_conversation(parent_conversation_id=sid)
+    [source] = store.append(child.id, [_message("authorized child task")])
+    [activity] = store.append(
+        sid,
+        [
+            NewConversationItem(
+                type="resource_event",
+                response_id="turn",
+                data=ResourceEventData(
+                    event_type="session.subagent.delegated",
+                    resource_id=child.id,
+                    resource_type="session",
+                    resource={
+                        "dispatch_id": "dispatch",
+                        "task_input_ref": {"conversation_id": child.id, "item_id": source.id},
+                    },
+                ),
+            )
+        ],
+    )
+    checked = []
+
+    async def can_read(source_id):
+        checked.append(source_id)
+        return allowed
+
+    async def project(items):
+        return await recover_subagent_activity(sid, items, store, can_read)
+
+    recovery = SessionRecovery(
+        store, sid, _allowed, enabled=True, initial_limit=1, project=project
+    )
+    frames = await _events(recovery)
+    projected = frames[1]["item"]
+    assert checked == [child.id]
+    assert projected["id"] == frames[-1]["first_item_id"] == activity.id
+    assert projected["position"] == activity.position
+    assert frames[-1]["window_item_count"] == 1 and frames[-1]["item_count"] == 2
+    assert projected["resource"].get("task_input") == (
+        "authorized child task" if allowed else None
+    )
+    assert "task_input" not in store.get_item(sid, activity.id).data.resource
+    assert (
+        await recovery.prepare(
+            {"type": "response.output_item.done", "item": activity.to_api_dict()}
+        )
+        is None
+    )

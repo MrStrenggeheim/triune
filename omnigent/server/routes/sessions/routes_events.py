@@ -3857,6 +3857,8 @@ def register_events_routes(
         after_position: int | None = Query(default=None, ge=-1),
         after_revision: int | None = Query(default=None, ge=0),
         stream_epoch: str | None = None,
+        initial_limit: int | None = Query(default=None, ge=1, le=9007199254740991),
+        window_start_position: int | None = Query(default=None, ge=0, le=9007199254740991),
     ) -> StreamingResponse:
         """
         Subscribe to the session's live SSE event stream.
@@ -3886,6 +3888,10 @@ def register_events_routes(
         :returns: An SSE :class:`StreamingResponse`.
         :raises OmnigentError: 404 if no session exists.
         """
+        from omnigent.server.session_recovery import SessionRecovery, valid_window_options
+
+        if not valid_window_options(initial_limit, window_start_position):
+            raise OmnigentError("Invalid transcript window options", code=ErrorCode.INVALID_INPUT)
         user_id = _get_user_id(request, auth_provider)
         access = await _require_access_and_level(
             user_id, session_id, LEVEL_READ, permission_store, conversation_store
@@ -3911,8 +3917,6 @@ def register_events_routes(
             conversation=conv,
         )
 
-        from omnigent.server.session_recovery import SessionRecovery
-
         async def authorize_stream() -> None:
             await _require_access_and_level(
                 user_id, session_id, LEVEL_READ, permission_store, conversation_store
@@ -3924,7 +3928,9 @@ def register_events_routes(
                 # Reconnect through the normal strict runner preparation path.
                 raise ConnectionError("Session runner changed during stream")
             if runner_router is not None:
-                current_client = await _get_runner_client(session_id, runner_router)
+                current_client = await _get_runner_client(
+                    session_id, runner_router, conversation=current
+                )
                 if current_client is None and current.runner_id:
                     await _raise_if_runner_on_another_replica(
                         current, request.app.state, conversation_store
@@ -3956,10 +3962,12 @@ def register_events_routes(
             conversation_store,
             session_id,
             authorize_stream,
-            enabled=after_position is not None,
+            enabled=after_position is not None or initial_limit is not None,
             after_position=after_position if after_position is not None else -1,
             after_revision=after_revision,
             stream_epoch=stream_epoch,
+            initial_limit=initial_limit,
+            window_start_position=window_start_position,
             project=project_items,
         )
 

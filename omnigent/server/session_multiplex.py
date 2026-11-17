@@ -17,6 +17,7 @@ from starlette.responses import StreamingResponse
 from omnigent.errors import OmnigentError
 from omnigent.runtime import session_stream
 from omnigent.server import presence
+from omnigent.server.session_recovery import valid_window_options
 
 _logger = logging.getLogger(__name__)
 _MAX_MEMBERSHIPS = 32
@@ -145,6 +146,8 @@ class SessionMultiplex:
         after_revision = message.get("after_revision")
         epoch = message.get("stream_epoch")
         idle = message.get("idle", False)
+        initial_limit = message.get("initial_limit")
+        window_start_position = message.get("window_start_position")
         valid = (
             isinstance(after_position, int)
             and not isinstance(after_position, bool)
@@ -159,6 +162,7 @@ class SessionMultiplex:
             )
             and (epoch is None or (isinstance(epoch, str) and len(epoch) <= 256))
             and isinstance(idle, bool)
+            and valid_window_options(initial_limit, window_start_position)
         )
         if not valid:
             await self.send(
@@ -174,7 +178,16 @@ class SessionMultiplex:
         member = _Membership(presence={"idle": idle})
         self.members[session_id] = member
         member.task = asyncio.create_task(
-            self._pump(session_id, member, after_position, after_revision, epoch, idle),
+            self._pump(
+                session_id,
+                member,
+                after_position,
+                after_revision,
+                epoch,
+                idle,
+                initial_limit,
+                window_start_position,
+            ),
             name=f"session-transcript:{session_id}",
         )
         return True
@@ -187,6 +200,8 @@ class SessionMultiplex:
         after_revision: int | None,
         epoch: str | None,
         idle: bool,
+        initial_limit: int | None,
+        window_start_position: int | None,
     ) -> None:
         try:
             # Both endpoints belong to this router; use the same authorization,
@@ -205,6 +220,8 @@ class SessionMultiplex:
                 after_position=after_position,
                 after_revision=after_revision,
                 stream_epoch=epoch,
+                initial_limit=initial_limit,
+                window_start_position=window_start_position,
             )
             member.authorize = request.state.stream_authorize
             # This endpoint returns our async generator of unencoded SSE strings.

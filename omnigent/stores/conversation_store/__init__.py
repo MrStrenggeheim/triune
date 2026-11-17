@@ -833,9 +833,13 @@ class ConversationStore(ABC):
         ...
 
     def item_checkpoint(
-        self, conversation_id: str, *, through_position: int | None = None
+        self,
+        conversation_id: str,
+        *,
+        through_position: int | None = None,
+        after_position: int | None = None,
     ) -> dict[str, Any]:
-        """Summarize committed item membership without reading message bodies."""
+        """Summarize committed membership; a lower bound also returns first ID/older state."""
         raise NotImplementedError
 
     @abstractmethod
