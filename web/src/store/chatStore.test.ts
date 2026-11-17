@@ -18670,6 +18670,63 @@ describe("chatStore — elicitations across stream drops and re-publishes", () =
     vi.useRealTimers();
   });
 
+  it.each(["buffered", "live", "reconnect", "empty reconnect"])(
+    "keeps an original runner attempt held via %s and never posts an old answer",
+    async (source) => {
+      const sid = "conv_held_review";
+      const eid = "elic_held_review";
+      seedSession(sid, []);
+      const { sinks, controller, loop } = await openLoop(sid);
+      const raw = pendingElicitationRaw(eid, "Approve?");
+      sinks[0]!.push(sse("response.elicitation_request", raw));
+      if (source !== "buffered") await drainAsync();
+      const delivery = {
+        state: "unconfirmed",
+        session_id: sid,
+        elicitation_id: eid,
+        attempt_id: "a".repeat(64),
+        runner_id: "runner",
+        owner_kind: "harness",
+      };
+      raw.params = { ...(raw.params as Record<string, unknown>), runner_delivery: delivery };
+      if (source === "reconnect") {
+        seedPendingElicitations(sid, [raw]);
+        sinks.at(-1)!.error();
+      } else sinks[0]!.push(sse("response.elicitation_request", raw));
+      await drainAsync();
+      if (source === "empty reconnect") {
+        seedPendingElicitations(sid, []);
+        sinks.at(-1)!.error();
+        await drainAsync();
+      }
+      expect(elicitationCards()).toHaveLength(1);
+      expect(elicitationCards()[0]).toMatchObject({
+        status: "pending",
+        response: null,
+        runnerDelivery: delivery,
+      });
+      fetchMock.mockClear();
+      await useChatStore
+        .getState()
+        .submitApproval(eid, "accept", { secret: "SYNTHETIC-old-answer" });
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(elicitationCards()[0]!.status).toBe("pending");
+      sinks
+        .at(-1)!
+        .push(sse("response.elicitation_resolved", { elicitation_id: eid, action: "accept" }));
+      await drainAsync();
+      expect(elicitationCards()[0]!.status).toBe("responded");
+      sinks.at(-1)!.push(sse("response.elicitation_request", raw));
+      await drainAsync();
+      expect(elicitationCards()[0]!.status).toBe("responded");
+      seedPendingElicitations(sid, [raw]);
+      sinks.at(-1)!.error();
+      await drainAsync();
+      expect(elicitationCards()[0]!.status).toBe("responded");
+      await abortLoop(sinks, controller, loop);
+    },
+  );
+
   it("updates one Kiro card through sending, retry and receipt, without reviving it", async () => {
     seedSession("conv_kiro_updates", []);
     const { sinks, loop } = await openLoop("conv_kiro_updates");

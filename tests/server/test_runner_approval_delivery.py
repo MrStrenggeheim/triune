@@ -769,3 +769,116 @@ async def test_identity_change_after_reservation_cannot_consume_or_replay(
         await fresh.reconcile(b.sid, "question", original)
     assert fresh.store.read(b.sid, "question") == original
     assert len(_posts(b)) == posts and not b.future.done()
+
+
+async def test_operator_recheck_lost_ack_settles_original_exactly_once(boundary, caplog):
+    b = boundary
+    b.transport.mode = "after"
+    secret = "SYNTHETIC-operator-review-answer"
+    response = await b.client.post(
+        b.path + "/resolve", json={"action": "accept", "content": {"secret": secret}}
+    )
+    assert response.status_code == 503
+    await b.future
+    original = b.service.store.read(b.sid, "question")
+    attempt_id = original["identity"]["attempt_id"]
+    before = list(b.transport.calls)
+    stale = await b.client.get(b.path, params={"delivery_attempt_id": "stale-attempt"})
+    assert stale.status_code == 409 and b.transport.calls == before
+    for _ in range(2):
+        result = await b.client.get(b.path, params={"delivery_attempt_id": attempt_id})
+        assert result.status_code == 200
+        assert result.json() == {
+            "status": "resolved",
+            "delivery_state": "confirmed",
+            "delivery_attempt_id": attempt_id,
+        }
+    assert b.service.store.read(b.sid, "question")["state"] == "accepted"
+    assert len(_posts(b)) == 1
+    assert len(b.store.list_items(b.sid).data) == 1
+    assert pending_elicitations.count_for(b.sid) == 0
+    encoded = result.text + json.dumps(held_event(original)) + caplog.text
+    assert secret not in encoded
+    assert hashlib.sha256(secret.encode()).hexdigest() not in encoded
+
+
+async def test_operator_recheck_missing_receipt_holds_and_denies_access(boundary):
+    b = boundary
+    b.transport.mode = "before"
+    assert (
+        await b.client.post(b.path + "/resolve", json={"action": "decline"})
+    ).status_code == 503
+    original = b.service.store.read(b.sid, "question")
+    query = {"delivery_attempt_id": original["identity"]["attempt_id"]}
+    for _ in range(2):
+        result = await b.client.get(b.path, params=query)
+        assert result.status_code == 200
+        review = result.json()["runner_delivery"]
+        assert set(review) == {
+            "state",
+            "session_id",
+            "elicitation_id",
+            "attempt_id",
+            "runner_id",
+            "owner_kind",
+        }
+        assert review["attempt_id"] == query["delivery_attempt_id"]
+        assert "SYNTHETIC-secret-default" not in result.text
+    for user in ["reader", "stranger"]:
+        before = list(b.transport.calls)
+        result = await b.client.get(b.path, params=query, headers={"X-Forwarded-Email": user})
+        assert result.status_code in {403, 404}
+        assert b.transport.calls == before
+    assert len(_posts(b)) == 1 and not b.future.done()
+    assert b.service.store.read(b.sid, "question") == original
+    assert pending_elicitations.count_for(b.sid) == 1
+
+
+@pytest.mark.parametrize("change", ["revoke", "binding", "client", "cancel"])
+async def test_operator_recheck_inflight_change_keeps_hold(boundary, monkeypatch, change):
+    b = boundary
+    b.transport.mode = "after"
+    assert (
+        await b.client.post(b.path + "/resolve", json={"action": "decline"})
+    ).status_code == 503
+    await b.future
+    original = b.service.store.read(b.sid, "question")
+    entered, unblock = asyncio.Event(), asyncio.Event()
+    actual = b.transport.handle_async_request
+
+    async def blocked(request):
+        response = await actual(request)
+        if request.method == "GET" and request.url.path.endswith(
+            original["identity"]["attempt_id"]
+        ):
+            entered.set()
+            await unblock.wait()
+        return response
+
+    monkeypatch.setattr(b.transport, "handle_async_request", blocked)
+    task = asyncio.create_task(
+        b.client.get(b.path, params={"delivery_attempt_id": original["identity"]["attempt_id"]})
+    )
+    await asyncio.wait_for(entered.wait(), 5)
+    if change == "revoke":
+        b.permissions.revoke("owner", b.parent.id)
+    elif change == "binding":
+        b.store.clear_runner_id(b.sid)
+        b.store.set_runner_id(b.sid, "foreign-runner")
+    elif change == "client":
+        monkeypatch.setitem(b.router._clients, "configured-runner", Mock())
+    else:
+        task.cancel()
+    unblock.set()
+    if change == "cancel":
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    else:
+        response = await task
+        assert response.status_code in ({403, 404} if change == "revoke" else {200})
+        if change != "revoke":
+            assert response.json()["runner_delivery"]["state"] == "unconfirmed"
+    assert b.service.store.read(b.sid, "question") == original
+    assert pending_elicitations.count_for(b.sid) == 1
+    assert not b.store.list_items(b.sid).data
+    assert len(_posts(b)) == 1

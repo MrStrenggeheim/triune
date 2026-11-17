@@ -979,6 +979,7 @@ function* processEvent(state: ReducerState, event: StreamEvent): Generator<AnyBl
             : ctx(state),
         elicitationId: event.elicitationId,
         ...(event.nativeDelivery ? { nativeDelivery: event.nativeDelivery } : {}),
+        ...(event.runnerDelivery ? { runnerDelivery: event.runnerDelivery } : {}),
         targetSessionId: event.targetSessionId,
         message: event.message,
         phase: event.phase,

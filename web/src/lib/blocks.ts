@@ -1,4 +1,5 @@
 // Modified for Triune.
+import type { RunnerApprovalDelivery } from "./runnerApprovalDelivery";
 import type { MessageCommunication } from "./messageCommunication";
 import type { TranscriptAnchor } from "./transcriptOrder";
 import type { ChatAttachmentContent } from "./chatAttachments";
@@ -641,6 +642,7 @@ export interface ResponseEndBlock {
  */
 export interface ElicitationBlock {
   nativeDelivery?: NativePermissionDelivery;
+  runnerDelivery?: RunnerApprovalDelivery;
   /** Positive native resolution evidence; snapshot absence alone is insufficient. */
   nativeDeliveryResolved?: boolean;
   type: "elicitation";

@@ -1,3 +1,4 @@
+# Modified for Triune.
 """Elicitation routes: resolve and get elicitations."""
 
 from __future__ import annotations
@@ -150,6 +151,7 @@ def register_elicitations_routes(
         request: Request,
         session_id: str,
         elicitation_id: str,
+        delivery_attempt_id: str | None = None,
     ) -> dict[str, Any]:
         """
         Return the state of a pending elicitation as JSON.
@@ -183,23 +185,51 @@ def register_elicitations_routes(
             if conv is None:
                 raise _session_not_found()
 
-        from omnigent.errors import OmnigentError
+        from omnigent.errors import ErrorCode, OmnigentError
         from omnigent.server.approval_deliveries import ApprovalDeliveries, held_event
 
         deliveries = ApprovalDeliveries(conversation_store, runner_router)
         attempt = await asyncio.to_thread(deliveries.store.read, session_id, elicitation_id)
+        if delivery_attempt_id is not None and (
+            attempt is None or attempt["identity"]["attempt_id"] != delivery_attempt_id
+        ):
+            raise OmnigentError("The original delivery attempt changed.", code=ErrorCode.CONFLICT)
+
+        async def authorize_reconciliation() -> None:
+            await _require_access_and_level(
+                user_id,
+                session_id,
+                ELICITATION_RESOLVE_LEVEL,
+                permission_store,
+                conversation_store,
+            )
+
         receipt_unconfirmed = False
         if attempt is not None:
             if attempt["state"] == "held":
                 pending_elicitations.record_publish(session_id, held_event(attempt))
             try:
-                await deliveries.reconcile(session_id, elicitation_id, attempt)
+                await deliveries.reconcile(
+                    session_id, elicitation_id, attempt, authorize=authorize_reconciliation
+                )
             except OmnigentError:
+                await authorize_reconciliation()
                 receipt_unconfirmed = True
         found = pending_elicitations.lookup(elicitation_id, conversation_id=session_id)
         if found is None:
             resolution = pending_elicitations.native_resolution_for(session_id, elicitation_id)
-            return {"status": "resolved", **({"resolution": resolution} if resolution else {})}
+            return {
+                "status": "resolved",
+                **({"resolution": resolution} if resolution else {}),
+                **(
+                    {
+                        "delivery_state": "confirmed",
+                        "delivery_attempt_id": attempt["identity"]["attempt_id"],
+                    }
+                    if attempt is not None and not receipt_unconfirmed
+                    else {}
+                ),
+            }
 
         _conv_id, event = found
         params_value = event.get("params")
@@ -215,7 +245,7 @@ def register_elicitations_routes(
             "content_preview": params.get("content_preview", ""),
             **{
                 key: params[key]
-                for key in ("native_delivery", "permission_directories")
+                for key in ("native_delivery", "permission_directories", "runner_delivery")
                 if key in params
             },
         }

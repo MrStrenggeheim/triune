@@ -1,5 +1,10 @@
+// Modified for Triune.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("@/lib/identity", async (original) => ({
+  ...(await original<typeof identity>()),
+  authenticatedFetch: vi.fn(),
+}));
 vi.mock("@/hooks/useScopeCache", () => import("@/test/mockScopeCache"));
 import { SidebarDataProvider } from "@/hooks/useSidebarData";
 // Tests for the Inbox page (`/inbox`) — the cross-session list of pending
@@ -17,6 +22,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { InboxPage } from "./InboxPage";
+import * as identity from "@/lib/identity";
 import type * as approvalCard from "@/components/blocks/ApprovalCard";
 import type { ComponentProps } from "react";
 import type { Conversation } from "@/hooks/useConversations";
@@ -35,7 +41,7 @@ vi.mock("@/components/blocks/ApprovalCard", async (importActual) => {
   const actual = await importActual<typeof approvalCard>();
   return {
     ApprovalCard: (props: ComponentProps<typeof actual.ApprovalCard>) => {
-      if (props.nativeDelivery || props.permissionDirectories)
+      if (props.nativeDelivery || props.runnerDelivery || props.permissionDirectories)
         return <actual.ApprovalCard {...props} />;
       const { elicitationId, message, status, allowAutoMode, onSubmit, requester } = props;
       return (
@@ -860,5 +866,49 @@ it("recovers a native request after an empty snapshot without reloading", async 
     cleanup();
     queryClient.clear();
     vi.useRealTimers();
+  }
+});
+
+it("uses shared delivery review in the Inbox and rechecks the original session without approving", async () => {
+  const row = conversation();
+  const delivery = {
+    state: "unconfirmed",
+    session_id: "original-child",
+    elicitation_id: "eli_1",
+    attempt_id: "a".repeat(64),
+    runner_id: "runner",
+    owner_kind: "harness",
+  };
+  vi.mocked(conversationsHook.useConversations).mockReturnValue(conversationsStub([row]));
+  vi.mocked(sessionsApi.getSession).mockResolvedValue({
+    pendingElicitations: [rawElicitation("eli_1", "Review?", { runner_delivery: delivery })],
+  } as unknown as Awaited<ReturnType<typeof sessionsApi.getSession>>);
+  const recheckPath = `/v1/sessions/original-child/elicitations/eli_1?delivery_attempt_id=${delivery.attempt_id}`;
+  const recheck = vi.mocked(identity.authenticatedFetch).mockImplementation(async (path) => {
+    if (path === recheckPath)
+      return new Response(JSON.stringify({ status: "pending", runner_delivery: delivery }));
+    if (typeof path === "string" && path.startsWith("/v1/sessions?"))
+      return new Response(JSON.stringify({ data: [], has_more: false }));
+    throw new Error(`Unexpected request: ${String(path)}`);
+  });
+  try {
+    renderPage();
+    expect(await screen.findByText("Delivery unknown")).toBeVisible();
+    // The shared sidebar loads distinct Mine and Shared pinned-session scopes.
+    expect(recheck.mock.calls).toEqual([
+      ["/v1/sessions?order=desc&sort_by=updated_at&limit=30&visibility=mine&pinned=true"],
+      ["/v1/sessions?order=desc&sort_by=updated_at&limit=30&visibility=shared&pinned=true"],
+    ]);
+    fireEvent.click(screen.getByRole("button", { name: "Recheck delivery" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("stays held");
+    expect(recheck).toHaveBeenCalledTimes(3);
+    expect(recheck).toHaveBeenNthCalledWith(
+      3,
+      recheckPath,
+      expect.objectContaining({ method: "GET", signal: expect.any(AbortSignal) }),
+    );
+    expect(sessionsApi.approve).not.toHaveBeenCalled();
+  } finally {
+    recheck.mockReset();
   }
 });

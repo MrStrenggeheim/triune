@@ -1,4 +1,5 @@
 // Modified for Triune.
+import { parseRunnerApprovalDelivery } from "./runnerApprovalDelivery";
 import { readMessageCommunication } from "./messageCommunication";
 import { itemPosition } from "./transcriptOrder";
 import { parseNativePermissionDelivery } from "./nativePermissionDelivery";
@@ -1270,6 +1271,7 @@ function parseEventPayload(rawType: string, data: Record<string, unknown>): Stre
       ...(p.native_delivery
         ? { nativeDelivery: parseNativePermissionDelivery(p.native_delivery) }
         : {}),
+      runnerDelivery: parseRunnerApprovalDelivery(p.runner_delivery),
       elicitationId,
       targetSessionId:
         typeof targetSessionId === "string" && targetSessionId ? targetSessionId : null,

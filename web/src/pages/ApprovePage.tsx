@@ -1,3 +1,4 @@
+// Modified for Triune.
 /**
  * Standalone approval page for URL-mode elicitations.
  *
@@ -16,6 +17,10 @@
  *   or the id is unknown.
  */
 
+import {
+  parseRunnerApprovalDelivery,
+  type RunnerApprovalDelivery,
+} from "@/lib/runnerApprovalDelivery";
 import { ApprovalCard } from "@/components/blocks/ApprovalCard";
 import {
   parseNativePermissionDelivery,
@@ -38,6 +43,7 @@ interface ElicitationData {
   policy_name?: string;
   content_preview?: string;
   native_delivery?: NativePermissionDelivery;
+  runner_delivery?: RunnerApprovalDelivery;
   permission_directories?: string[];
 }
 
@@ -84,6 +90,7 @@ export function ApprovePage() {
         const data: ElicitationData = await res.json();
         if (cancelled) return;
         data.native_delivery = parseNativePermissionDelivery(data.native_delivery);
+        data.runner_delivery = parseRunnerApprovalDelivery(data.runner_delivery);
         nativeDeliverySeen ||= Boolean(data.native_delivery) || data.resolution === "unanswered";
         polling =
           (nativeDeliverySeen && data.resolution !== "confirmed") ||
@@ -222,7 +229,9 @@ export function ApprovePage() {
       )}
 
       {state.kind === "pending" &&
-        (state.data.native_delivery || Boolean(state.data.permission_directories?.length)) && (
+        (state.data.native_delivery ||
+          state.data.runner_delivery ||
+          Boolean(state.data.permission_directories?.length)) && (
           <ApprovalCard
             elicitationId={elicitationId!}
             message={state.data.message ?? ""}
@@ -233,12 +242,14 @@ export function ApprovePage() {
             status="pending"
             response={null}
             nativeDelivery={state.data.native_delivery}
+            runnerDelivery={state.data.runner_delivery}
             permissionDirectories={state.data.permission_directories}
             onSubmit={(_id, action, content, meta) => void submit(action, content, meta)}
           />
         )}
       {state.kind === "pending" &&
         !state.data.native_delivery &&
+        !state.data.runner_delivery &&
         !state.data.permission_directories?.length && (
           <Alert className="flex flex-col gap-3 py-4 px-5">
             <AlertTitle className="flex items-center gap-2 text-ui">

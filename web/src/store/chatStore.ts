@@ -3879,6 +3879,7 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
     const originalBlock = scopedState.blocks.find(
       (b): b is ElicitationBlock => b.type === "elicitation" && b.elicitationId === elicitationId,
     );
+    if (originalBlock?.runnerDelivery) return;
     if (
       originalBlock?.nativeDelivery &&
       (originalBlock.status !== "pending" || originalBlock.nativeDelivery.state === "sending")
@@ -6202,6 +6203,17 @@ function reconcileElicitationBlocks(
       (candidate): candidate is ElicitationBlock =>
         candidate.type === "elicitation" && candidate.elicitationId === b.elicitationId,
     );
+    if (currentDelivery?.runnerDelivery && preGapCards.get(b.elicitationId) === b) {
+      if (
+        b.runnerDelivery?.attempt_id === currentDelivery.runnerDelivery.attempt_id &&
+        b.status === "responded"
+      )
+        return b;
+      changed = true;
+      return { ...currentDelivery, ctx: b.ctx };
+    }
+    // Snapshot absence is not an exact receipt for an unknown runner attempt.
+    if (b.runnerDelivery) return b;
     if (b.nativeDelivery && preGapCards.get(b.elicitationId) !== b) return b;
     if (
       currentDelivery?.nativeDelivery &&
@@ -7762,6 +7774,15 @@ function revivePendingElicitationBlock(
     if (idx === -1) return {};
     const target = s.blocks[idx] as ElicitationBlock;
     if (target.nativeDeliveryResolved) return {};
+    if (incoming?.runnerDelivery) {
+      if (
+        target.runnerDelivery?.attempt_id === incoming.runnerDelivery.attempt_id &&
+        target.status === "responded"
+      )
+        return {};
+      const updated = { ...incoming, ctx: target.ctx };
+      return { blocks: [...s.blocks.slice(0, idx), updated, ...s.blocks.slice(idx + 1)] };
+    }
     if (incoming?.nativeDelivery) {
       if (target.status === "responded" && target.response?.action !== "auto_resolved") return {};
       const updated = { ...incoming, ctx: target.ctx };
@@ -8121,7 +8142,8 @@ export async function pumpStreamEvents(
           (b) => b.type === "elicitation" && b.elicitationId === eid,
         );
         if (buffered !== -1) {
-          if (block.nativeDelivery) buffer[buffered] = { ...block, ctx: buffer[buffered].ctx };
+          if (block.nativeDelivery || block.runnerDelivery)
+            buffer[buffered] = { ...block, ctx: buffer[buffered].ctx };
           continue;
         }
         if (get().blocks.some((b) => b.type === "elicitation" && b.elicitationId === eid)) {

@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { TooltipButton } from "@/components/ui/tooltip";
 /**
  * Inbox page (``/inbox``) — every approval prompt waiting on the user,
@@ -388,6 +389,7 @@ export function InboxPage() {
           <SessionLine title={title} detail={agentLabel !== title ? agentLabel : undefined} />
           <ApprovalCard
             elicitationId={elicitationId}
+            runnerDelivery={item.elicitation.runnerDelivery}
             message={item.elicitation.message}
             phase={item.elicitation.phase}
             policyName={item.elicitation.policyName}
@@ -403,7 +405,11 @@ export function InboxPage() {
                   }
                 : item.elicitation.nativeDelivery
             }
-            status={verdict && !item.elicitation.nativeDelivery ? "responded" : "pending"}
+            status={
+              verdict && !item.elicitation.nativeDelivery && !item.elicitation.runnerDelivery
+                ? "responded"
+                : "pending"
+            }
             response={verdict ?? null}
             askUserQuestion={item.elicitation.askUserQuestion}
             exitPlanMode={item.elicitation.exitPlanMode}

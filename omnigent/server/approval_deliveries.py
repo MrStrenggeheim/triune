@@ -11,6 +11,7 @@ import copy
 import hashlib
 import logging
 import secrets
+from collections.abc import Awaitable, Callable
 from typing import Any
 from urllib.parse import quote
 
@@ -45,6 +46,10 @@ def held_event(record: dict[str, Any]) -> dict[str, Any]:
     event["params"]["runner_delivery"] = {
         "state": "unconfirmed",
         "attempt_id": record["identity"]["attempt_id"],
+        **{
+            key: record["identity"][key]
+            for key in ("session_id", "elicitation_id", "runner_id", "owner_kind")
+        },
     }
     return event
 
@@ -326,7 +331,12 @@ class ApprovalDeliveries:
         await self._finish(session_id, elicitation_id, record, current_client)
 
     async def reconcile(
-        self, session_id: str, elicitation_id: str, record: dict[str, Any]
+        self,
+        session_id: str,
+        elicitation_id: str,
+        record: dict[str, Any],
+        *,
+        authorize: Callable[[], Awaitable[Any]] | None = None,
     ) -> None:
         if record["state"] == "accepted":
             await self._finish(session_id, elicitation_id, record, None)
@@ -356,6 +366,18 @@ class ApprovalDeliveries:
                 "The original approval receipt is unavailable; no verdict was replayed.",
                 code=ErrorCode.RUNNER_UNAVAILABLE,
             )
+        current_runner, current_client, current = await self._client(session_id)
+        if (
+            current_runner != identity["runner_id"]
+            or current.runner_id != record["conversation_binding"]
+            or current_client is not client
+        ):
+            raise OmnigentError(
+                "The original approval runner changed; the attempt remains held.",
+                code=ErrorCode.CONFLICT,
+            )
+        if authorize is not None:
+            await authorize()
         await self._finish(session_id, elicitation_id, record, client)
 
     async def _finish(

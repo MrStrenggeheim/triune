@@ -1,3 +1,4 @@
+// Modified for Triune.
 // Tests for the standalone URL-mode ApprovePage
 // (`/approve/:sessionId/:elicitationId`). The page is driven entirely by a
 // single `authenticatedFetch` helper (mocked here) for both the initial GET
@@ -405,3 +406,30 @@ it.each([false, true])(
     }
   },
 );
+
+it("uses the shared delivery review for an unknown runner attempt without a verdict POST", async () => {
+  const delivery = {
+    state: "unconfirmed",
+    session_id: "conv1",
+    elicitation_id: "elic1",
+    attempt_id: "a".repeat(64),
+    runner_id: "runner",
+    owner_kind: "harness",
+  };
+  vi.mocked(identity.authenticatedFetch).mockResolvedValue(
+    jsonResponse({
+      status: "pending",
+      message: "SYNTHETIC-secret-preview",
+      runner_delivery: delivery,
+    }),
+  );
+  renderPage();
+  expect(await screen.findByText("Delivery unknown")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Recheck delivery" }));
+  expect(await screen.findByRole("status")).toHaveTextContent("stays held");
+  expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
+  expect(screen.queryByText("SYNTHETIC-secret-preview")).toBeNull();
+  expect(
+    vi.mocked(identity.authenticatedFetch).mock.calls.every((call) => call[1]?.method !== "POST"),
+  ).toBe(true);
+});

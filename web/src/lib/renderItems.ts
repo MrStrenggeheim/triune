@@ -1,4 +1,5 @@
 // Modified for Triune; inherited notices remain applicable.
+import type { RunnerApprovalDelivery } from "./runnerApprovalDelivery";
 import { canonicalSubagentCards } from "./subagentActivity";
 import { projectionStructureStamp, type TranscriptAnchor } from "./transcriptOrder";
 import { messageInputKind, type MessageCommunication } from "./messageCommunication";
@@ -140,6 +141,7 @@ export type RenderItem =
   | {
       kind: "elicitation";
       nativeDelivery?: NativePermissionDelivery;
+      runnerDelivery?: RunnerApprovalDelivery;
       itemId: string | null;
       elicitationId: string;
       targetSessionId?: string | null;
@@ -1911,6 +1913,7 @@ function buildAssistantItems(
       items.push({
         kind: "elicitation",
         ...(b.nativeDelivery ? { nativeDelivery: b.nativeDelivery } : {}),
+        ...(b.runnerDelivery ? { runnerDelivery: b.runnerDelivery } : {}),
         itemId: b.ctx.itemId,
         elicitationId: b.elicitationId,
         targetSessionId: b.targetSessionId,

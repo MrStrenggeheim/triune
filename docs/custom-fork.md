@@ -277,6 +277,10 @@ Evidence: `artifacts/overnight-20261116/initial-chunks/{handoff.md,counts.json}`
 Retries query that original receipt; acceptance commits its redacted question receipt and count changes before publishing resolution.
 Receipt-release progress survives restart and retries metadata cleanup without resending answers; local/native waiters retain their separate resolution paths.
 The additive `ad1b2c3d4e5f` migration follows `bq1a2b3c4d5e`; unknown delivery remains held rather than inferred from text, time or a generic HTTP success.
+`APPROVAL-UNKNOWN-REVIEW-17` adds Delivery unknown to the shared approval card, with a metadata-only review dialog and Recheck delivery on desktop, mobile, Inbox and standalone approval pages.
+Recheck uses the existing authenticated elicitation GET with the original attempt ID; only its exact trusted receipt settles the hold, and access or runner changes during the request keep it held.
+The action never resends an answer, grants a new decision or removes an unknown hold; parent integration and release verification remain pending.
+An empty reconnect snapshot keeps unknown delivery held; a stale copy of the same attempt cannot reopen a card after its resolution event.
 Independent source review and 105 combined integration checks passed; synthetic ASGI/restart proofs do not establish live-provider or multi-process hard-kill behavior.
 Evidence: `artifacts/overnight-20261116/race-audit/implementation/APPROVAL-HANDOFF.md` and `approval-review/FOLLOWUP.md`.
 

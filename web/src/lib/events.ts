@@ -1,4 +1,5 @@
 // Modified for Triune.
+import type { RunnerApprovalDelivery } from "./runnerApprovalDelivery";
 import type { MessageCommunication } from "./messageCommunication";
 import type { NativePermissionDelivery } from "./nativePermissionDelivery";
 // Mirrors sdks/python-client/omnigent_client/_events.py.
@@ -184,6 +185,7 @@ export interface PolicyDenied {
 
 export interface ElicitationRequest {
   nativeDelivery?: NativePermissionDelivery;
+  runnerDelivery?: RunnerApprovalDelivery;
   type: "elicitation_request";
   elicitationId: string;
   /**

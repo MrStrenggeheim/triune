@@ -33,6 +33,8 @@
 //      on `POST /v1/sessions/{id}/elicitations/{eid}/resolve`,
 //   3. rolls back to "pending" on network error.
 
+import { ApprovalDeliveryReview } from "./ApprovalDeliveryReview";
+import type { RunnerApprovalDelivery } from "@/lib/runnerApprovalDelivery";
 import type { NativePermissionDelivery } from "@/lib/nativePermissionDelivery";
 import { useContext, useState } from "react";
 import {
@@ -152,6 +154,7 @@ function SubagentRequesterLine({ sessionId, ancestorSessionId }: SubagentRequest
 
 interface ApprovalCardProps {
   nativeDelivery?: NativePermissionDelivery;
+  runnerDelivery?: RunnerApprovalDelivery;
   elicitationId: string;
   message: string;
   phase: string;
@@ -248,6 +251,7 @@ interface ApprovalCardProps {
 const EMPTY_CODEX_PERSIST_MODES: CodexPersistMode[] = [];
 
 export function ApprovalCard({
+  runnerDelivery,
   nativeDelivery,
   elicitationId,
   message,
@@ -612,6 +616,16 @@ export function ApprovalCard({
   );
 
   const requesterLine = requester ? <SubagentRequesterLine {...requester} /> : null;
+
+  if (runnerDelivery && status === "pending") {
+    return (
+      <ApprovalDeliveryReview
+        key={JSON.stringify(runnerDelivery)}
+        delivery={runnerDelivery}
+        className={className}
+      />
+    );
+  }
 
   if (status === "pending" && nativeDelivery && nativeDelivery.state !== "ready") {
     const unconfirmed = nativeDelivery.state === "unconfirmed";
@@ -1078,6 +1092,7 @@ export function ElicitationCard({
       questionPresentation={questionPresentation}
       elicitationId={item.elicitationId}
       nativeDelivery={item.nativeDelivery}
+      runnerDelivery={item.runnerDelivery}
       message={item.message}
       phase={item.phase}
       policyName={item.policyName}
