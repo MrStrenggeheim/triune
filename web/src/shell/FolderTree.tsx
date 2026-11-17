@@ -945,7 +945,7 @@ function FolderTreeInner({
   // When a search query is active, render a flat filtered list instead of the tree.
   if (searchQuery.trim().length > 0) {
     if (isSearching && !searchResults) {
-      return <ContentSkeleton label="Searching folders…" rows={3} />;
+      return <ContentSkeleton label="Searching…" rows={3} />;
     }
     if (isSearchError) {
       return (
