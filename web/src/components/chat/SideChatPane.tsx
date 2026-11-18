@@ -1,3 +1,5 @@
+import { useStartupInputReceipts } from "./StartupInputReceipts";
+import { mergeStartupInputReceipts } from "@/lib/startupInputReceipts";
 // Modified for Triune; inherited notices remain applicable.
 import { observeChatScroll, useChatScrollPreference } from "@/lib/chatScrollPreference";
 import { useTranscriptConvergenceDisplay } from "@/hooks/useTranscriptConvergenceDisplay";
@@ -262,6 +264,10 @@ export function SideChatPane({
     [blocks, inherited],
   );
 
+  const { rows: startupReceipts, control: receiptControl } = useStartupInputReceipts(
+    pending ? null : childId,
+    state.hasStartupInputReceipts,
+  );
   const bubbleCacheRef = useRef<BubbleCache>(createBubbleCache());
   const bubbles = useMemo<Bubble[]>(() => {
     const committed = stripGatedSubagentRoutingChips(
@@ -276,12 +282,16 @@ export function SideChatPane({
       ),
       subagentRoutingOverride,
     );
-    if (pendingUserMessages.length === 0) return committed;
-    return mergePendingBubbles(
-      committed,
-      buildPendingBubbles(pendingUserMessages, getCurrentAuthorId()),
-    );
+    const withPending =
+      pendingUserMessages.length === 0
+        ? committed
+        : mergePendingBubbles(
+            committed,
+            buildPendingBubbles(pendingUserMessages, getCurrentAuthorId()),
+          );
+    return mergeStartupInputReceipts(withPending, startupReceipts, pendingUserMessages);
   }, [
+    startupReceipts,
     visibleBlocks,
     activeResponse,
     interruptedResponseIds,
@@ -352,6 +362,7 @@ export function SideChatPane({
       <div className="side-chat-backdrop flex h-full min-h-0 flex-col">
         <div ref={transcriptRef} className="flex min-h-0 flex-1 flex-col overflow-y-auto px-3 py-4">
           <div ref={contentRef} className="flex min-h-full shrink-0 flex-col">
+            {receiptControl}
             {fullSession && state.hasMoreHistory && (
               <Button
                 variant="ghost"
@@ -605,10 +616,10 @@ function SideChatComposer({
   });
   useEffect(
     () =>
-      registerQuoteDestination(childId, (addition) => {
+      registerQuoteDestination(childId, (addition, trailingGap) => {
         updateComposer(childId, (current) => ({
           ...current,
-          text: appendDraftText(current.text, addition),
+          text: appendDraftText(current.text, addition, trailingGap),
         }));
         tailTextareaRef.current?.focus();
       }),

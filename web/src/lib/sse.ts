@@ -1043,6 +1043,9 @@ function parseEventPayload(rawType: string, data: Record<string, unknown>): Stre
       servers,
     } satisfies SessionMcpStartupEvent;
   }
+  if (eventType === "session.startup_inputs.changed" && typeof data.conversation_id === "string") {
+    return { type: "startup_input_receipts_changed", conversationId: data.conversation_id };
+  }
   if (eventType === "session.input.consumed") {
     // Nested envelope: `{type, data: {item_id, type, data}}`.
     const inner = data.data;

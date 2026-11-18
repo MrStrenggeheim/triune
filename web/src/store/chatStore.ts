@@ -1,4 +1,5 @@
 // Modified for Triune.
+import { startupInputReceiptKey } from "@/lib/startupInputReceipts";
 import {
   readTranscriptReaderCheckpoint,
   recordTranscriptLoadedRange,
@@ -1121,6 +1122,7 @@ export interface ConversationState {
   sandboxActionDismissed: string | null;
   /** Managed startup accepts sends durably before its first harness dispatch. */
   startupPending: boolean;
+  hasStartupInputReceipts: boolean;
   /**
    * Native MCP startup progress, cleared when startup settles or live
    * assistant text arrives. Failures/cancellations stay in host diagnostics,
@@ -1478,6 +1480,15 @@ export interface ChatActions {
 export interface ChatState extends ConversationState, AppChatState, ChatActions {}
 
 let queryClient: QueryClient | null = null;
+
+function refreshStartupInputReceipts(id: string) {
+  const client = queryClient;
+  if (!client) return;
+  const filter = { queryKey: startupInputReceiptKey(id) };
+  if (!client.getQueryCache().find({ ...filter, exact: false })) return;
+  // An invalidation alone can reuse an initial in-flight read from before Stop.
+  void client.cancelQueries(filter).then(() => client.invalidateQueries(filter));
+}
 
 // Any semantic stream event makes a snapshot already in flight potentially
 // stale. Heartbeats are filtered before this revision is bumped.
@@ -2512,6 +2523,7 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
   sandboxStatus: null,
   sandboxActionDismissed: null,
   startupPending: false,
+  hasStartupInputReceipts: false,
   mcpStartup: null,
   mcpStartupLaunch: { pending: false, dismissed: false },
   abortController: null,
@@ -5315,6 +5327,7 @@ function sessionBindingPatch(
     ConversationState,
     | "mcpStartupLaunch"
     | "sessionModelSeeded"
+    | "hasStartupInputReceipts"
     | "llmModel"
     | "sessionModelOverride"
     | "sandboxActionDismissed"
@@ -5344,6 +5357,7 @@ function sessionBindingPatch(
   | "sandboxStatus"
   | "sandboxActionDismissed"
   | "startupPending"
+  | "hasStartupInputReceipts"
   | "mcpStartup"
   | "mcpStartupLaunch"
 > {
@@ -5385,6 +5399,9 @@ function sessionBindingPatch(
     // "ready" with saved inputs left: a native first input awaits its transcript
     // receipt, and the server still saves new messages behind it.
     startupPending: sessionStartupPending(session),
+    hasStartupInputReceipts:
+      state.hasStartupInputReceipts ||
+      session.labels?.["omnigent.startup_inputs_retained"] === "true",
     ...mcpStartupSnapshotPatch(session, state, launchBeforeFetch),
   };
 }
@@ -6189,9 +6206,15 @@ function reconnectStatusPatch(
       }
     }
   }
+  const hasStartupInputReceipts =
+    s.hasStartupInputReceipts || session.labels?.["omnigent.startup_inputs_retained"] === "true";
+  if (hasStartupInputReceipts && s.conversationId) {
+    refreshStartupInputReceipts(s.conversationId);
+  }
   const patch: Partial<ChatState> = {
     sessionStatus: session.status,
     startupPending: sessionStartupPending(session),
+    hasStartupInputReceipts,
     workspaceSwitching: session.workspaceSwitching ?? false,
     ...mcpStartupSnapshotPatch(session, s, launchBeforeFetch),
     ...launchSnapshotPatch(session, s),
@@ -10663,7 +10686,15 @@ export function handleSessionEvent(event: StreamEvent, streamConversationId?: st
       // without a fresh transition, would strand the queue forever.
       return;
     }
+    case "startup_input_receipts_changed":
+      if (sourceConversationId !== event.conversationId) return;
+      applyToConversation({ hasStartupInputReceipts: true });
+      refreshStartupInputReceipts(event.conversationId);
+      return;
     case "session_input_consumed":
+      if (sourceConversationId) {
+        refreshStartupInputReceipts(sourceConversationId);
+      }
       markInputLifecycle("consumed", {
         conversationId: sourceConversationId,
         pendingId: event.clearedPendingId ?? undefined,

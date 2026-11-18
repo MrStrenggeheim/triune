@@ -973,12 +973,31 @@ def test_pane_draft_admission_retry_and_late_owner(
             )
             admitted.append(global_chat)
             handled.add(pending[2])
-            pending[2].fulfill(json={"id": global_chat.session_id})
+            input_id = "saved-first-message"
+            global_chat.update_session(
+                pending_inputs=[
+                    {
+                        "pending_id": "startup-queue-entry",
+                        "item_id": input_id,
+                        "position": 0,
+                        "content": [{"type": "input_text", "text": "Global startup input"}],
+                    }
+                ]
+            )
+            pending[2].fulfill(json={"id": global_chat.session_id, "initial_input_id": input_id})
             expect(global_input).to_have_count(0)
             expect(page).to_have_url(global_chat.url)
             expect(_view(page, "Global accepted")).to_be_visible()
             assert _saved_dock(page)["activeConversationId"] == global_chat.session_id
             expect(page.get_by_role("tab", name="Pane accepted", exact=True)).to_have_count(0)
+            initial = (
+                _view(page, "Global accepted")
+                .locator('[data-role="user"]')
+                .filter(has_text="Global startup input")
+            )
+            expect(initial).to_have_count(1)
+            page.reload()
+            expect(initial).to_have_count(1)
             _navigate_chat(page, first)
             expect(_view(page, "Pane accepted")).to_be_visible()
         assert first.event_posts == [] and second.event_posts == []

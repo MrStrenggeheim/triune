@@ -3551,8 +3551,8 @@ function ComposerImpl(
     if (!conversationId) return;
     return registerQuoteDestination(
       conversationId,
-      (addition) => {
-        editText(null, (current) => appendDraftText(current, addition));
+      (addition, trailingGap) => {
+        editText(null, (current) => appendDraftText(current, addition, trailingGap));
         dirtyRef.current = true;
         textareaRef.current = tailTextareaRef.current;
         if (focusedRef.current) tailTextareaRef.current?.focus();

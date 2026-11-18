@@ -1,5 +1,6 @@
 // Modified for Triune.
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { appendDraftText, registerQuoteDestination } from "@/lib/quoteDraftDestinations";
 import { Profiler } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ConversationScopeContext } from "@/components/chat/conversationScope";
@@ -1132,4 +1133,53 @@ it("renders a restored pending peer with attribution instead of a human bubble",
   expect(screen.queryByText(/Unconfirmed|accepted/)).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Copy link" })).not.toBeInTheDocument();
   expect(screen.queryByText("human-account")).not.toBeInTheDocument();
+});
+
+it.each([
+  ["cancelled_before_sending", "Cancelled before sending"],
+  ["delivery_unknown", "Delivery unknown"],
+] as const)("restores %s to its scoped draft without submitting", (state, label) => {
+  const text = "  retain this exactly  \n";
+  const content = [{ type: "input_text" as const, text }];
+  const bubble: Bubble = {
+    kind: "user",
+    itemId: "stable",
+    userAuthored: true,
+    content,
+    startupReceipt: {
+      state,
+      reason: "interrupt",
+      item_id: "stable",
+      position: 8,
+      created_at: 1,
+      cancelled_at: 2,
+      content,
+    },
+  };
+  const insert = vi.fn();
+  const unregister = registerQuoteDestination("receipt-child", insert);
+  const send = vi.spyOn(useChatStore.getState(), "send");
+  try {
+    render(
+      <MemoryRouter>
+        <QueryClientProvider client={new QueryClient()}>
+          <TooltipProvider>
+            <ConversationScopeContext.Provider value="receipt-child">
+              <BubbleView bubble={bubble} />
+            </ConversationScopeContext.Provider>
+          </TooltipProvider>
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+    expect(screen.getByText(label)).toBeVisible();
+    expect(screen.getByTestId("message-bubble")).toHaveAttribute("data-input-receipt", state);
+    fireEvent.click(screen.getByRole("button", { name: "Restore text to draft" }));
+    expect(insert).toHaveBeenCalledWith(text, false);
+    expect(appendDraftText("", text, false)).toBe(text);
+    expect(appendDraftText("existing", text, false)).toBe("existing\n\n" + text);
+    expect(send).not.toHaveBeenCalled();
+  } finally {
+    unregister();
+    send.mockRestore();
+  }
 });

@@ -3,6 +3,7 @@ import type { RunnerApprovalDelivery } from "./runnerApprovalDelivery";
 import { canonicalSubagentCards } from "./subagentActivity";
 import { projectionStructureStamp, type TranscriptAnchor } from "./transcriptOrder";
 import { messageInputKind, type MessageCommunication } from "./messageCommunication";
+import type { StartupInputReceipt } from "./startupInputReceipts";
 import type { ChatAttachmentContent } from "./chatAttachments";
 import type { NativePermissionDelivery } from "./nativePermissionDelivery";
 // Block walker — converts a flat `AnyBlock[]` into a list of bubble
@@ -179,6 +180,7 @@ export type RenderItem =
 export type Bubble = (
   | {
       kind: "user";
+      startupReceipt?: StartupInputReceipt;
       userAuthored?: boolean;
       isMeta?: boolean;
       communication?: MessageCommunication;
@@ -2126,6 +2128,7 @@ export function bubblesEqual(a: Bubble, b: Bubble): boolean {
   if (a.kind === "user" && b.kind === "user") {
     if (
       a.itemId !== b.itemId ||
+      a.startupReceipt !== b.startupReceipt ||
       a.aliases !== b.aliases ||
       Boolean(a.pending) !== Boolean(b.pending) ||
       Boolean(a.awaitingAgent) !== Boolean(b.awaitingAgent) ||

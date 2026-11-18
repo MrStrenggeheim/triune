@@ -1,3 +1,5 @@
+import { useStartupInputReceipts } from "./StartupInputReceipts";
+import { mergeStartupInputReceipts } from "@/lib/startupInputReceipts";
 // Modified for Triune.
 import { useTranscriptConvergenceDisplay } from "@/hooks/useTranscriptConvergenceDisplay";
 import { useResourceViewId } from "@/lib/panelFolder";
@@ -227,6 +229,11 @@ function TranscriptImpl({
   // cache so a streaming append rebuilds only the active bubble, reusing the
   // finalized prefix by reference. Pending user messages (POSTed but not yet
   // acked) render as trailing user bubbles so the input is visible immediately.
+  const hasReceipts = useChatStore((s) => s.hasStartupInputReceipts);
+  const { rows: startupReceipts, control: receiptControl } = useStartupInputReceipts(
+    conversationId,
+    hasReceipts,
+  );
   const bubbleCacheRef = useRef<BubbleCache>(createBubbleCache());
   const bubbles = useMemo<Bubble[]>(() => {
     const committed = stripGatedSubagentRoutingChips(
@@ -241,12 +248,16 @@ function TranscriptImpl({
       ),
       subagentRoutingOverride,
     );
-    if (pendingUserMessages.length === 0) return committed;
-    return mergePendingBubbles(
-      committed,
-      buildPendingBubbles(pendingUserMessages, getCurrentAuthorId()),
-    );
+    const withPending =
+      pendingUserMessages.length === 0
+        ? committed
+        : mergePendingBubbles(
+            committed,
+            buildPendingBubbles(pendingUserMessages, getCurrentAuthorId()),
+          );
+    return mergeStartupInputReceipts(withPending, startupReceipts, pendingUserMessages);
   }, [
+    startupReceipts,
     visibleBlocks,
     activeResponse,
     interruptedResponseIds,
@@ -513,6 +524,7 @@ function TranscriptImpl({
               CHAT_COLUMN_WIDTH,
             )}
           >
+            {receiptControl}
             {/* Scroll helpers — must live inside StickToBottom to access context. */}
             <ConversationScrollRefBridge onScroller={setScroller} />
             {canLoadHistory && (

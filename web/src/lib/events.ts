@@ -1099,6 +1099,7 @@ export type StreamEvent = (
   | SessionTerminalPendingEvent
   | SessionSandboxStatusEvent
   | SessionMcpStartupEvent
+  | { type: "startup_input_receipts_changed"; conversationId: string }
   | SessionInputConsumedEvent
   | SessionInterruptedEvent
   | SessionCreatedEvent

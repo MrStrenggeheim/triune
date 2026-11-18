@@ -13,11 +13,11 @@ import {
 
 const destinations = new Map<
   string,
-  { insert: (text: string) => void; quote?: (text: string) => void }
+  { insert: (text: string, trailingGap?: boolean) => void; quote?: (text: string) => void }
 >();
 export function registerQuoteDestination(
   id: string,
-  insert: (text: string) => void,
+  insert: (text: string, trailingGap?: boolean) => void,
   quote?: (text: string) => void,
 ): () => void {
   const destination = { insert, quote };
@@ -26,14 +26,24 @@ export function registerQuoteDestination(
     if (destinations.get(id) === destination) destinations.delete(id);
   };
 }
-export function appendDraftText(text: string, addition: string): string {
-  return text ? `${text}\n\n${addition}\n\n` : `${addition}\n\n`;
+export function appendDraftText(text: string, addition: string, trailingGap = true): string {
+  return (text ? `${text}\n\n${addition}` : addition) + (trailingGap ? "\n\n" : "");
 }
+
+export function restoreStartupInputText(id: string, text: string): void {
+  insertDraft(id, text, false, false);
+}
+
 /** Insert only; this module never sends or changes conversation parentage. */
 export function insertQuoteDraft(id: string, text: string, asQuote = false): void {
+  insertDraft(id, text, asQuote, true);
+}
+
+function insertDraft(id: string, text: string, asQuote: boolean, trailingGap: boolean) {
   const mounted = destinations.get(id);
   if (mounted) {
-    (asQuote ? (mounted.quote ?? mounted.insert) : mounted.insert)(text);
+    if (!trailingGap) mounted.insert(text, false);
+    else (asQuote ? (mounted.quote ?? mounted.insert) : mounted.insert)(text);
     return;
   }
   const existing = getSessionDraft(id);
@@ -45,7 +55,7 @@ export function insertQuoteDraft(id: string, text: string, asQuote = false): voi
       : {
           ...draft,
           quotes: draft.quotes ?? [],
-          text: appendDraftText(draft.text, text),
+          text: appendDraftText(draft.text, text, trailingGap),
         }),
     files: side?.files ?? existing?.files ?? [],
   };

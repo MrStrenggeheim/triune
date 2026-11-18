@@ -1,3 +1,4 @@
+import { restoreStartupInputText } from "@/lib/quoteDraftDestinations";
 import { useTranscriptDisclosureAnchor } from "@/hooks/useTranscriptDisclosureAnchor";
 import { useResourceViewId } from "@/lib/panelFolder";
 import {
@@ -700,6 +701,7 @@ export const BubbleView = memo(
       return (
         <UserBubble
           bubble={bubble}
+          recoveryDisabled={recoveryDisabled}
           origin={inputKind === "human" ? "human" : inputKind === "system" ? "system" : "external"}
         />
       );
@@ -815,6 +817,7 @@ function SystemBubble({ bubble }: { bubble: Extract<Bubble, { kind: "user" }> })
 }
 
 interface UserBubbleProps {
+  recoveryDisabled?: boolean;
   bubble: Extract<Bubble, { kind: "user" }>;
   origin: "human" | "system" | "external";
 }
@@ -839,7 +842,7 @@ function UserBubble(props: UserBubbleProps) {
   );
 }
 
-function UserBubbleContent({ bubble, origin }: UserBubbleProps) {
+function UserBubbleContent({ bubble, origin, recoveryDisabled }: UserBubbleProps) {
   const preserveDisclosure = useTranscriptDisclosureAnchor();
   const human = origin === "human";
   const useChatStore = useConversationChatStore();
@@ -1051,10 +1054,36 @@ function UserBubbleContent({ bubble, origin }: UserBubbleProps) {
           )}
         </MessageContent>
       </div>
+      {bubble.startupReceipt && (
+        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          <span>
+            {bubble.startupReceipt.state === "delivery_unknown"
+              ? "Delivery unknown"
+              : "Cancelled before sending"}
+          </span>
+          {!recoveryDisabled &&
+            sessionId &&
+            bubble.content.some((part) => part.type === "input_text" && part.text.length > 0) && (
+              <Button
+                size="xs"
+                variant="ghost"
+                onClick={() => {
+                  const originalText = bubble.content
+                    .filter((part) => part.type === "input_text")
+                    .map((part) => part.text)
+                    .join("");
+                  restoreStartupInputText(sessionId, originalText);
+                }}
+              >
+                Restore text to draft
+              </Button>
+            )}
+        </div>
+      )}
       {origin !== "system" && (
         <MessageFooter
           text={text}
-          messageId={bubble.pending ? null : bubble.itemId}
+          messageId={bubble.pending || bubble.startupReceipt ? null : bubble.itemId}
           conversationId={sessionId}
           createdAtS={bubble.createdAtS}
         />
@@ -1088,6 +1117,7 @@ function UserBubbleContent({ bubble, origin }: UserBubbleProps) {
       from={human ? "user" : "assistant"}
       data-testid="message-bubble"
       data-role={human ? "user" : origin}
+      data-input-receipt={bubble.startupReceipt?.state}
       data-user-message-id={human ? bubble.itemId : undefined}
       data-message-id={bubble.itemId}
       className={cn(
