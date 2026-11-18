@@ -2034,7 +2034,7 @@ def test_stored_output_exact_delivery_or_terminal_size_error(app, stores, resume
 
 
 @pytest.mark.timeout(30)
-@pytest.mark.parametrize("transport", ["websocket", "sse"])
+@pytest.mark.parametrize("transport", ["websocket", "sse", "feed2"])
 def test_oversized_saved_item_reference_is_ordered_exact_and_authorized(
     app, stores, monkeypatch, transport
 ):
@@ -2092,6 +2092,7 @@ def test_oversized_saved_item_reference_is_ordered_exact_and_authorized(
                         "session_id": sid,
                         "initial_limit": 100,
                         "item_references": True,
+                        **({"subscription_id": "large-body"} if transport == "feed2" else {}),
                     }
                 )
                 while True:
@@ -2133,6 +2134,11 @@ def test_oversized_saved_item_reference_is_ordered_exact_and_authorized(
         assert (ref["item_id"], ref["position"]) == (saved.id, saved.position)
         assert ref["header"]["type"] == "response.output_item.done" and "item" not in ref["header"]
         path = f"/v1/sessions/{sid}/items/{saved.id}/stream-content"
+        if transport == "feed2":
+            header = ref["header"]["tool_output"]
+            assert (
+                header["id"] == saved.id and header["call_id"] == "call" and "output" not in header
+            )
         params = {"sha256": ref["sha256"], "position": ref["position"]}
         result = client.get(path, params=params, headers=headers)
         assert result.status_code == 200 and result.json() == saved.to_api_dict()

@@ -480,7 +480,9 @@ class SessionRecovery:
             [saved] = await self.project([saved])
         item = saved.to_api_dict()
         fingerprint = self._fingerprint(item)
-        if self._replayed.get(item_id) == fingerprint:
+        if self._replayed.get(item_id) == fingerprint and (
+            self.journal is None or change_revision <= self._baseline_revision
+        ):
             return None
         self._replayed.pop(item_id, None)
         return {**event, "item": item}

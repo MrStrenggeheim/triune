@@ -1120,3 +1120,35 @@ async def test_prejournal_database_keeps_existing_history_and_rolls_back_to_lega
     assert journal.revision(sid) == 1
     legacy = await _events(SessionRecovery(store, sid, _allowed, enabled=True, initial_limit=5))
     assert [event["item"]["id"] for event in legacy if "item" in event] == [old.id, new.id]
+
+
+async def test_versioned_snapshot_including_a_later_append_still_acknowledges_its_change(
+    saved, monkeypatch
+):
+    store, sid = saved
+    [first] = store.append(sid, [_message("first")])
+    recovery = SessionRecovery(
+        store, sid, _allowed, enabled=True, journal=store.transcript_journal, initial_limit=10
+    )
+    checkpoint = recovery.checkpoint
+    later = []
+
+    async def racing_checkpoint(revision):
+        later.extend(store.append(sid, [_message("arrives before the snapshot read")]))
+        return await checkpoint(revision)
+
+    monkeypatch.setattr(recovery, "checkpoint", racing_checkpoint)
+    frames = await _events(recovery)
+    assert frames[-1]["item_revision"] == 1 and frames[-1]["last_position"] == 1
+    assert [row["id"] for frame in frames for row in frame.get("items", ())] == [
+        first.id,
+        later[0].id,
+    ]
+    assert (
+        await recovery.prepare({"type": "response.output_item.done", "item": {"id": first.id}})
+        is None
+    )
+    delivery = await recovery.prepare(
+        {"type": "response.output_item.done", "item": {"id": later[0].id}}
+    )
+    assert delivery["_change_revision"] == 2
