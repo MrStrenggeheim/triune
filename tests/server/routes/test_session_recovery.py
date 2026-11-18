@@ -1152,3 +1152,39 @@ async def test_versioned_snapshot_including_a_later_append_still_acknowledges_it
         {"type": "response.output_item.done", "item": {"id": later[0].id}}
     )
     assert delivery["_change_revision"] == 2
+
+
+async def test_replayed_final_suppresses_only_its_own_pre_ready_native_preview(saved, monkeypatch):
+    store, sid = saved
+    final = NewConversationItem(
+        type="message",
+        response_id="active",
+        data=MessageData(
+            role="assistant",
+            agent="fixture",
+            phase="final_answer",
+            stream_message_id="finished-preview",
+            content=[{"type": "output_text", "text": "final answer"}],
+        ),
+    )
+    recovery = SessionRecovery(
+        store, sid, _allowed, journal=store.transcript_journal, enabled=True, initial_limit=100
+    )
+    old_preview = {
+        "type": "response.output_text.delta",
+        "message_id": "finished-preview",
+        "delta": "old prefix",
+        "delta_index": 1,
+    }
+    current_preview = {**old_preview, "message_id": "still-working"}
+    checkpoint = recovery.checkpoint
+
+    async def finish_after_registration(revision):
+        store.append(sid, [final])
+        return await checkpoint(revision)
+
+    monkeypatch.setattr(recovery, "checkpoint", finish_after_registration)
+    frames = await _events(recovery)
+    assert frames[-1]["item_count"] == 1 and frames[-1]["item_revision"] == 0
+    assert await recovery.prepare(old_preview) is None
+    assert await recovery.prepare(current_preview) == current_preview

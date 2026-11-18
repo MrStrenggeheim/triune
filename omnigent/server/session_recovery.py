@@ -158,6 +158,7 @@ class SessionRecovery:
         self.branch = branch
         self.epoch = feed_epoch() if journal is not None else inflight_text.stream_epoch()
         self._replayed: dict[str, bytes] = {}
+        self._replayed_native_messages: set[str] = set()
         self._in_replay = False
         self.after_position = after_position
         self.after_revision = after_revision
@@ -236,6 +237,14 @@ class SessionRecovery:
                     if (self.journal is not None and event["type"] == "response.output_item.done")
                     else None
                 )
+                if (
+                    item is not None
+                    and item.get("type") == "message"
+                    and item.get("role") == "assistant"
+                ):
+                    message_id = item.get("stream_message_id")
+                    if isinstance(message_id, str) and message_id:
+                        self._replayed_native_messages.add(message_id)
                 cost = len(json.dumps(item)) if item is not None else 0
                 if rows and (
                     item is None
@@ -407,6 +416,13 @@ class SessionRecovery:
             return event
         if self._in_replay:
             return event
+        if (
+            event_type == "response.output_text.delta"
+            and isinstance(event.get("message_id"), str)
+            and event["message_id"] in self._replayed_native_messages
+        ):
+            # A final can commit between pre-ready preview capture and the saved-window read.
+            return None
         if event_type == "session.heartbeat":
             await self.authorize()
             revision, reset_revision = session_stream.item_revision(self.session_id)
