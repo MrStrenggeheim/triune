@@ -1125,4 +1125,13 @@ export type StreamEvent = (
       header: Record<string, unknown>;
     }
   | { type: "session_transport_error"; code: string }
-) & { position?: number; createdAtS?: number; committedItem?: Record<string, unknown> };
+) & {
+  changeRevision?: number;
+  position?: number;
+  createdAtS?: number;
+  committedItem?: Record<string, unknown>;
+};
+
+/** Trusted resource attachment carried only on locally decoded tool output rows. */
+export const savedToolBody = Symbol("saved tool body");
+export type SavedToolBody = Extract<StreamEvent, { type: "session_item_reference" }>;

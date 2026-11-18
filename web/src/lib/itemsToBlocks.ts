@@ -1,5 +1,6 @@
 // Modified for Triune; inherited notices remain applicable.
 import { messageSearchSource } from "./messageSearchSource";
+import { savedToolBody } from "./events";
 import { itemPosition } from "./transcriptOrder";
 import { readMessageCommunication } from "./messageCommunication";
 import { attachmentsFromContent } from "./chatAttachments";
@@ -431,6 +432,7 @@ function functionCallOutputToBlock(item: FunctionCallOutputItem): ToolResultBloc
     callId: item.call_id,
     agentName: ctx.agent ?? "",
     output: item.output,
+    ...(item[savedToolBody] ? { [savedToolBody]: item[savedToolBody] } : {}),
   };
 }
 

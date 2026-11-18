@@ -27,12 +27,14 @@ from tests.browser_ui.conftest import BrowserContract
 
 
 @pytest.mark.parametrize("width", [1440, 390], ids=["desktop", "phone"])
+@pytest.mark.parametrize("versioned", [False, True], ids=["legacy", "feed2"])
 def test_readiness_heartbeat_waits_for_history_then_displays_live_progress(
     page: Page,
     workspace_journey: WorkspaceJourney,
     browser_contract: BrowserContract,
     browser_errors: list[str],
     width: int,
+    versioned: bool,
 ) -> None:
     """A delayed initial replay must keep its subscription after the ready heartbeat."""
     chat = workspace_journey.chats[0]
@@ -42,6 +44,15 @@ def test_readiness_heartbeat_waits_for_history_then_displays_live_progress(
         "phase": "final_answer",
     }
     chat.set_items([saved])
+    history_reads = []
+    page.on(
+        "request",
+        lambda request: (
+            history_reads.append(request.url)
+            if urlparse(request.url).path.endswith(f"/sessions/{chat.session_id}/items")
+            else None
+        ),
+    )
     sockets: list[WebSocketRoute] = []
     subscriptions: list[dict] = []
     boundary = {
@@ -51,12 +62,23 @@ def test_readiness_heartbeat_waits_for_history_then_displays_live_progress(
         "item_count": 1,
         "item_revision": 1,
         "reset_revision": 0,
-        "stream_epoch": "ready-first-browser",
+        "stream_epoch": "feed2:browser" if versioned else "ready-first-browser",
     }
 
     def event(payload: dict) -> None:
         sockets[-1].send(
-            json.dumps({"type": "session.event", "session_id": chat.session_id, "event": payload})
+            json.dumps(
+                {
+                    "type": "session.event",
+                    "session_id": chat.session_id,
+                    "event": payload,
+                    **(
+                        {"subscription_id": subscriptions[-1]["subscription_id"]}
+                        if versioned
+                        else {}
+                    ),
+                }
+            )
         )
 
     def attach(socket: WebSocketRoute) -> None:
@@ -69,7 +91,23 @@ def test_readiness_heartbeat_waits_for_history_then_displays_live_progress(
                 event({"type": "session.heartbeat", **boundary})
 
         socket.on_message(received)
-        socket.send(json.dumps({"type": "capabilities", "transcript_stream": 1}))
+        socket.send(
+            json.dumps(
+                {
+                    "type": "capabilities",
+                    "transcript_stream": 1,
+                    **(
+                        {
+                            "transcript_window": 1,
+                            "transcript_feed": 2,
+                            "transcript_feed_default": 2,
+                        }
+                        if versioned
+                        else {}
+                    ),
+                }
+            )
+        )
 
     browser_contract.websocket("**/v1/sessions/updates*", attach)
     page.add_init_script("""(() => {
@@ -94,7 +132,11 @@ def test_readiness_heartbeat_waits_for_history_then_displays_live_progress(
     page.wait_for_timeout(250)
     assert len(subscriptions) == 1
     event({"type": "session.sync", "phase": "start", "reset": True, **boundary})
-    event({"type": "response.output_item.done", "item": saved})
+    event(
+        {"type": "session.snapshot_page", "items": [saved]}
+        if versioned
+        else {"type": "response.output_item.done", "item": saved}
+    )
     event({"type": "session.sync", "phase": "complete", "reset": True, **boundary})
     view = _view(page, "Chat A")
     expect(view.get_by_text("Saved reply", exact=True)).to_be_visible()
@@ -116,8 +158,29 @@ def test_readiness_heartbeat_waits_for_history_then_displays_live_progress(
             "phase": "commentary",
         }
         canonical.append(live)
-        event({"type": "response.output_item.done", "item": live})
+        event(
+            {
+                "type": "response.output_item.done",
+                "item": live,
+                **({"_change_revision": position + 1} if versioned else {}),
+            }
+        )
         expect(view.get_by_text(f"Live progress {position}", exact=True)).to_be_visible()
+    if versioned:
+        event(
+            {
+                "type": "session.heartbeat",
+                **boundary,
+                "item_count": 3,
+                "last_position": 2,
+                "item_revision": 3,
+                "last_item_id": canonical[-1]["id"],
+                "reconcile_required": False,
+            }
+        )
+        page.wait_for_function("window.__readyHeartbeatCount === 2")
+        # The sidebar may read one latest item for its preview.
+        assert all(parse_qs(urlparse(url).query).get("limit") == ["1"] for url in history_reads)
     assert len(subscriptions) == 1
     expect(composer).to_have_value("Preserve my draft")
     page.evaluate("window.dispatchEvent(new Event('focus'))")
@@ -131,10 +194,10 @@ def test_readiness_heartbeat_waits_for_history_then_displays_live_progress(
         last_item_id=canonical[-1]["id"],
         item_count=3,
         item_revision=3,
-        stream_epoch="ready-first-reconnected",
+        stream_epoch="feed2:reconnected" if versioned else "ready-first-reconnected",
     )
     sockets[-1].close(code=1012, reason="Fixture server restart")
-    page.wait_for_function("window.__readyHeartbeatCount >= 2")
+    page.wait_for_function("n => window.__readyHeartbeatCount >= n", arg=3 if versioned else 2)
     page.wait_for_timeout(250)
     assert len(subscriptions) == 2
     expect(view.get_by_text("Live progress 2", exact=True)).to_be_visible()

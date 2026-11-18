@@ -1,4 +1,5 @@
 // Modified for Triune; inherited notices remain applicable.
+import type { SavedToolBody, savedToolBody } from "./events";
 // TypeScript types mirroring the server's `ConversationItem` discriminated
 // union, plus fetch helpers for cursor-paginated history loading.
 //
@@ -60,6 +61,7 @@ export interface FunctionCallItem extends BaseItem {
 }
 
 export interface FunctionCallOutputItem extends BaseItem {
+  [savedToolBody]?: SavedToolBody;
   type: "function_call_output";
   call_id: string;
   output: string;

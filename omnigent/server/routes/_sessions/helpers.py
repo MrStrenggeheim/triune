@@ -9839,7 +9839,12 @@ async def _iter_live_events(
     their precedence. SSE alone encodes events and intentional completion.
     """
     from omnigent.runtime.stream_queue import StreamEvent
-    from omnigent.server.session_recovery import saved_event_reference, validate_sync_complete
+    from omnigent.server.session_recovery import (
+        SnapshotPage,
+        is_snapshot_page,
+        saved_event_reference,
+        validate_sync_complete,
+    )
 
     item_references = (
         recovery is not None
@@ -9907,7 +9912,11 @@ async def _iter_live_events(
                         event_type = event.get("type")
                         if not isinstance(event_type, str):
                             raise ValueError("session stream event missing string type")
-                        validated = _SERVER_STREAM_EVENT_ADAPTER.validate_python(event)
+                        validated = (
+                            SnapshotPage.model_validate(event)
+                            if is_snapshot_page(event)
+                            else _SERVER_STREAM_EVENT_ADAPTER.validate_python(event)
+                        )
                         if recovery is not None and not getattr(
                             getattr(request, "state", None), "multiplex", False
                         ):
@@ -9920,8 +9929,21 @@ async def _iter_live_events(
                 if time.monotonic() >= deadline:
                     raise session_stream.SubscriberOverflowError
                 wire = validated.model_dump(mode="json")
+                if recovery is not None and recovery.journal is not None:
+                    for key in (
+                        "_change_revision",
+                        "_recorded_at_ms",
+                        "_publication_revision",
+                        "fork_boundary",
+                    ):
+                        if key in event:
+                            wire[key] = event[key]
                 if item_references:
-                    wire = saved_event_reference(wire, session_id)
+                    wire = saved_event_reference(
+                        wire,
+                        session_id,
+                        feed_v2=recovery is not None and recovery.journal is not None,
+                    )
                 yield StreamEvent(wire, deadline, check)
     finally:
         # The non-None checks besides presence_token's are type

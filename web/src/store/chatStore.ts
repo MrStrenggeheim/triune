@@ -20,6 +20,8 @@ import {
   type TranscriptCursor,
   type TranscriptResponse,
 } from "@/lib/sessionUpdatesSocket";
+import { deferredToolOutputs, referencedOutputHeader } from "@/lib/deferredToolOutput";
+import { savedToolBody } from "@/lib/events";
 import { readReferencedEvent, readTranscriptEvents } from "@/lib/transcriptEventStream";
 import {
   normalizeTranscript,
@@ -5667,8 +5669,7 @@ async function bindStream(
     }).finally(() => {
       initialStreamOpened();
       controller.signal.removeEventListener("abort", initialStreamOpened);
-      if (current()) set({ abortController: null });
-      controller.abort();
+      settleBinding();
     });
 
     observing = true;
@@ -5716,7 +5717,9 @@ async function bindStream(
       set({ loadingConversation: false });
       return;
     }
-    if (stateBeforeFetch.blocks.length > 0) {
+    const versionedBootstrap =
+      multiplexed && hasSlot && sessionUpdatesSocket.supportsVersionedFeed();
+    if (stateBeforeFetch.blocks.length > 0 && !versionedBootstrap) {
       // Reobserve the existing window without clearing older loaded pages or
       // replaying a send/scroll intent through a loading-state remount.
       await reconcileOnReconnect(
@@ -5742,14 +5745,17 @@ async function bindStream(
     // the reader sees as the transcript shifting seconds after it settled.
     const [session, page] = await Promise.all([
       readBootstrapSnapshot(),
-      fetchSessionItemsPage(id, { limit: INITIAL_WINDOW_ITEMS }),
+      versionedBootstrap
+        ? Promise.resolve({ items: [], hasMore: false })
+        : fetchSessionItemsPage(id, { limit: INITIAL_WINDOW_ITEMS }),
     ]);
     if (!current()) return settleBinding();
     if (!bootstrapCurrent()) {
       set({ loadingConversation: false });
       return;
     }
-    const canonicalReplayWon = conversationSynchronization(controller).cursor !== cursorBeforeFetch;
+    const canonicalReplayWon =
+      versionedBootstrap || conversationSynchronization(controller).cursor !== cursorBeforeFetch;
     const items = canonicalReplayWon ? [] : page.items;
     const snapshotNativeMessageIds = nativeCompletedMessageIds(items);
     snapshotNativeMessageIds.forEach((messageId) => ignoredNativeMessageIds.add(messageId));
@@ -5897,7 +5903,8 @@ async function bindStream(
         ...(unsentDraft !== null && state.failedSendDraft === null
           ? { failedSendDraft: unsentDraft }
           : {}),
-        loadingConversation: false,
+        loadingConversation:
+          versionedBootstrap && !state.transcriptCheckpoint && state.blocks.length === 0,
         hasMoreHistory: canonicalReplayWon ? get().hasMoreHistory : page.hasMore,
         oldestItemId: canonicalReplayWon ? get().oldestItemId : oldestItemId,
         historyWindowStartPosition: canonicalReplayWon
@@ -7627,6 +7634,7 @@ export async function startStreamPump(
       liveAttempt = attempt;
       const receiptScope = transcriptReaderScope();
       let synchronization: SynchronizationAttempt | undefined;
+      let releaseAdmission: (() => void) | undefined;
       try {
         const idle = presenceIdle.idleNow();
         let streamRes: Response | TranscriptResponse;
@@ -7652,6 +7660,7 @@ export async function startStreamPump(
               : {}),
           };
           if (sessionUpdatesSocket.supportsTranscripts()) {
+            releaseAdmission = await sessionUpdatesSocket.reserveMembership(attempt.signal);
             synchronization = conversationSynchronization(controller).begin(
               true,
               (retry, reason) => {
@@ -7675,6 +7684,7 @@ export async function startStreamPump(
                   if (transcriptReaderScope() === receiptScope && synchronization!.current)
                     recordStreamReceipt(id, synchronization!, event);
                 },
+                synchronization.identity.attemptId,
               )
             : null;
           if (!shared) {
@@ -7892,6 +7902,7 @@ export async function startStreamPump(
           markLivePreviewsInterrupted(id, set);
         }
       } finally {
+        releaseAdmission?.();
         synchronization?.stop();
         liveAttempt = null;
         observationController.signal.removeEventListener("abort", onOuterAbort);
@@ -8508,6 +8519,31 @@ export async function pumpStreamEvents(
         requestResume?.(retry);
       },
     );
+  const bodyController = new AbortController();
+  const bodySignal = AbortSignal.any([controller.signal, bodyController.signal]);
+  const scanSavedBodies = deferredToolOutputs(
+    id,
+    bodySignal,
+    () => get().blocks,
+    () =>
+      !bodySignal.aborted &&
+      replay.current &&
+      get().abortController === binding &&
+      transcriptCursorScope(id) === cursorScope &&
+      !isConversationDisposed(id),
+    (ref, output, verified) => {
+      set((state) => {
+        const at = transcriptIndex(state.blocks).items.get(ref.itemId);
+        if (at === undefined) return {};
+        const block = state.blocks[at];
+        if (block.type !== "tool_result" || block[savedToolBody] !== ref) return {};
+        const blocks = state.blocks.slice();
+        blocks[at] = { ...block, output, [savedToolBody]: verified ? undefined : ref };
+        return { blocks };
+      });
+    },
+  );
+  scanSavedBodies();
   const rawEvents = (async function* () {
     const source = structured
       ? readTranscriptEvents(body as ReadableStream<StreamEvent>)
@@ -8517,7 +8553,9 @@ export async function pumpStreamEvents(
       if (controller.signal.aborted || !replay.current) return;
       let event: StreamEvent = received;
       if (received.type === "session_item_reference") {
-        event = await readReferencedEvent(id, received, controller.signal);
+        event =
+          referencedOutputHeader(received) ??
+          (await readReferencedEvent(id, received, controller.signal));
         const owner = binding ?? controller;
         if (event.type === "session_transport_error" && isRetryableTranscriptError(event.code)) {
           const previous = failedReferenceReads.get(owner);
@@ -8544,6 +8582,25 @@ export async function pumpStreamEvents(
           : undefined;
       yield event;
       if (event.type === "session_transport_error") return;
+      if (
+        received.type === "session_item_reference" ||
+        (event.type === "session_sync" && event.phase === "complete")
+      )
+        scanSavedBodies();
+      // The event iterator resumes only after its consumer has processed this row.
+      const revision = received.changeRevision;
+      const position = itemPosition(event.position ?? event.committedItem?.position);
+      if (
+        revision !== undefined &&
+        position !== undefined &&
+        replay.current &&
+        get().abortController === binding &&
+        transcriptCursorScope(id) === cursorScope
+      ) {
+        flush();
+        const cursor = replay.appliedChange(revision, position);
+        if (cursor) set({ transcriptCheckpoint: { scope: cursorScope, cursor } });
+      }
       if (
         event.type === "session_item_updated" &&
         previousItemBlocks !== undefined &&
@@ -8724,6 +8781,7 @@ export async function pumpStreamEvents(
           replay.checkpointAccepted
         ) {
           set({
+            loadingConversation: false,
             transcriptCheckpoint: {
               scope: cursorScope,
               cursor: conversationSynchronization(get().abortController ?? controller).cursor!,
@@ -8805,7 +8863,7 @@ export async function pumpStreamEvents(
 
   // Drain the buffer (+ optional trailing block) into one `blocks` append,
   // applying any sidecar state in the same commit. No-ops if switched away.
-  const flush = (trailing?: AnyBlock, extra?: Partial<ChatState>): void => {
+  function flush(trailing?: AnyBlock, extra?: Partial<ChatState>): void {
     scheduler.cancel();
     flushLiveText();
     if (isConversationDisposed(id)) {
@@ -8880,7 +8938,7 @@ export async function pumpStreamEvents(
           : [...s.blocks, ...fresh],
       };
     });
-  };
+  }
 
   try {
     for await (const block of stream.reduce(events)) {
@@ -9100,6 +9158,7 @@ export async function pumpStreamEvents(
     flush();
     return "dropped";
   } finally {
+    bodyController.abort();
     replay.stop();
     // Drop any pending frame + its buffered blocks so a queued flush
     // can't apply this stream's blocks after switchTo bound another.

@@ -969,3 +969,154 @@ async def test_window_activity_projection_preserves_membership_and_source_permis
         )
         is None
     )
+
+
+async def test_versioned_replay_and_live_cursor_share_atomic_sqlite_revision(saved):
+    from sqlalchemy import delete
+
+    from omnigent.db.db_models import SqlConversationItem
+    from omnigent.server.session_recovery import feed_epoch
+
+    store, sid = saved
+    journal = store.transcript_journal
+    assert journal is not None
+    rows = store.append(sid, [_message(str(i)) for i in range(40)])
+    with pytest.raises(RuntimeError, match="rollback"):
+        with store._conv_session("test_rollback_transcript_change") as session:
+            session.execute(
+                delete(SqlConversationItem).where(SqlConversationItem.id == rows[-1].id)
+            )
+            raise RuntimeError("rollback")
+    assert journal.revision(sid) == 40
+    assert store.get_item(sid, rows[-1].id) == rows[-1]
+    recovery = SessionRecovery(
+        store, sid, _allowed, enabled=True, journal=journal, initial_limit=40
+    )
+    frames = await _events(recovery)
+    pages = [event["items"] for event in frames if event["type"] == "session.snapshot_page"]
+    assert list(map(len, pages)) == [32, 8]
+    assert [item["id"] for page in pages for item in page] == [row.id for row in rows]
+    assert frames[-1]["item_revision"] == 40 and frames[-1]["stream_epoch"] == feed_epoch()
+    [new] = store.append(sid, [_message("live")])
+    frame = await recovery.prepare({"type": "response.output_item.done", "item": {"id": new.id}})
+    assert frame["_change_revision"] == 41
+    assert frame["item"]["position"] == 40
+    heartbeat = await recovery.prepare({"type": "session.heartbeat"})
+    assert heartbeat["item_revision"] == frame["_change_revision"]
+    assert not heartbeat["reconcile_required"]
+    resumed = await _events(
+        SessionRecovery(
+            store,
+            sid,
+            _allowed,
+            enabled=True,
+            journal=journal,
+            initial_limit=40,
+            after_position=40,
+            after_revision=41,
+            stream_epoch=feed_epoch(),
+        )
+    )
+    assert [event["phase"] for event in resumed] == ["start", "complete"]
+    assert not resumed[-1]["reset"]
+    _delete_canonical(store, sid, rows[10].id)
+    reset = await _events(
+        SessionRecovery(
+            store,
+            sid,
+            _allowed,
+            enabled=True,
+            journal=journal,
+            initial_limit=40,
+            after_position=40,
+            after_revision=41,
+            stream_epoch=feed_epoch(),
+        )
+    )
+    assert reset[-1]["reset"] and reset[-1]["item_revision"] == 42
+
+
+async def test_versioned_amendment_replays_the_old_position_and_resets_expired_cursor(saved):
+    from omnigent.server.session_recovery import feed_epoch
+
+    store, sid = saved
+    journal = store.transcript_journal
+    assert journal is not None
+    [resource] = store.append(
+        sid,
+        [
+            NewConversationItem(
+                type="resource_event",
+                response_id="turn",
+                data=ResourceEventData(
+                    event_type="session.subagent.returned",
+                    resource_id="child",
+                    resource_type="agent",
+                    resource={"result_text": "short"},
+                ),
+            )
+        ],
+    )
+    assert journal.revision(sid) == 1
+    store.enrich_resource_event(
+        sid, resource.id, {"result_text": "a longer final", "result_finality": "adapter_result"}
+    )
+    (change,) = journal.changes(sid, 1)
+    assert (change.item_id, change.position, change.revision) == (resource.id, 0, 2)
+    resumed = await _events(
+        SessionRecovery(
+            store,
+            sid,
+            _allowed,
+            enabled=True,
+            journal=journal,
+            initial_limit=10,
+            after_position=0,
+            after_revision=1,
+            stream_epoch=feed_epoch(),
+        )
+    )
+    assert not resumed[-1]["reset"]
+    assert resumed[1]["items"][0]["resource"]["result_text"] == "a longer final"
+    store.append(sid, [_message() for _ in range(300)])
+    assert len(journal.changes(sid, -1)) == 256
+    reset = await _events(
+        SessionRecovery(
+            store,
+            sid,
+            _allowed,
+            enabled=True,
+            journal=journal,
+            initial_limit=10,
+            after_position=0,
+            after_revision=1,
+            stream_epoch=feed_epoch(),
+        )
+    )
+    assert reset[-1]["reset"] and reset[-1]["window_item_count"] == 10
+    with workspace_scope(123):
+        assert journal.changes(sid, -1) == [] and journal.revision(sid) == 0
+
+
+async def test_prejournal_database_keeps_existing_history_and_rolls_back_to_legacy_reader(
+    saved, db_uri
+):
+    store, sid = saved
+    with store._conv_engine.begin() as connection:
+        for name in ("append", "amend", "remove", "cleanup"):
+            connection.exec_driver_sql(f"DROP TRIGGER triune_transcript_{name}")
+        connection.exec_driver_sql("DROP TABLE triune_transcript_changes")
+    [old] = store.append(sid, [_message("existing allocation")])
+    upgraded = SqlAlchemyConversationStore(db_uri)
+    journal = upgraded.transcript_journal
+    assert journal is not None and journal.revision(sid) == 0
+    initial = await _events(
+        SessionRecovery(upgraded, sid, _allowed, enabled=True, journal=journal, initial_limit=5)
+    )
+    assert [item["id"] for page in initial if "items" in page for item in page["items"]] == [
+        old.id
+    ]
+    [new] = upgraded.append(sid, [_message("new allocation")])
+    assert journal.revision(sid) == 1
+    legacy = await _events(SessionRecovery(store, sid, _allowed, enabled=True, initial_limit=5))
+    assert [event["item"]["id"] for event in legacy if "item" in event] == [old.id, new.id]

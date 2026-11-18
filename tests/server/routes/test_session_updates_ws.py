@@ -1309,11 +1309,9 @@ def test_multiplex_replay_watch_presence_and_unsubscribe(app, stores, monkeypatc
     with TestClient(app).websocket_connect(
         "/v1/sessions/updates", headers={"X-Forwarded-Email": ALICE}
     ) as ws:
-        assert ws.receive_json() == {
-            "type": "capabilities",
-            "transcript_stream": 1,
-            "transcript_window": 1,
-        }
+        capabilities = ws.receive_json()
+        assert capabilities["type"] == "capabilities"
+        assert capabilities["transcript_stream"] == capabilities["transcript_window"] == 1
         ws.send_json({"type": "watch", "session_ids": [first, second]})
         assert len(_recv_until(ws, {"snapshot"})["items"]) == 2
         ws.send_json({"type": "subscribe", "session_id": first})
@@ -1537,7 +1535,7 @@ def test_multiplex_runner_preparation_fails_before_subscribing(app, stores, monk
 def test_multiplex_validates_cursor_and_caps_memberships(app, stores, monkeypatch):
     from omnigent.runtime import session_stream
 
-    monkeypatch.setattr("omnigent.server.session_multiplex._MAX_MEMBERSHIPS", 1)
+    monkeypatch.setattr("omnigent.server.session_multiplex.MAX_MEMBERSHIPS", 1)
     first = _seed_session(stores, owner=ALICE, title="active")
     second = _seed_session(stores, owner=ALICE, title="over limit")
     with TestClient(app).websocket_connect(
@@ -2252,3 +2250,41 @@ async def test_broker_overflow_while_completion_waits_for_writer_is_terminal(mon
         release_writer.set()
         await mux.close()
     assert not session_stream.has_subscribers("writer-overflow")
+
+
+@pytest.mark.timeout(20)
+def test_negotiated_membership_ignores_retired_unsubscribe(app, stores, monkeypatch):
+    from omnigent.entities import MessageData, NewConversationItem
+    from omnigent.runtime import session_stream
+
+    monkeypatch.setenv("TRIUNE_TRANSCRIPT_FEED", "canary")
+    sid = _seed_session(stores, owner=ALICE, title="generation")
+    with TestClient(app).websocket_connect(
+        "/v1/sessions/updates", headers={"X-Forwarded-Email": ALICE}
+    ) as ws:
+        caps = ws.receive_json()
+        assert caps["transcript_feed"] == 2 and caps["transcript_feed_default"] == 1
+        _subscribe(ws, sid, subscription_id="old", initial_limit=100)
+        _subscribe(ws, sid, subscription_id="active", initial_limit=100)
+        ws.send_json({"type": "unsubscribe", "session_id": sid, "subscription_id": "old"})
+        item = stores[0].append(
+            sid,
+            [
+                NewConversationItem(
+                    type="message",
+                    response_id="test",
+                    data=MessageData(
+                        role="user", content=[{"type": "input_text", "text": "still live"}]
+                    ),
+                )
+            ],
+        )[0]
+        session_stream.publish(
+            sid, {"type": "response.output_item.done", "item": item.to_api_dict()}
+        )
+        while True:
+            frame = _recv_until(ws, {"session.event", "session.error"})
+            assert frame["subscription_id"] == "active" and frame["type"] == "session.event", frame
+            if frame["event"]["type"] == "response.output_item.done":
+                assert frame["event"]["_change_revision"] == 1
+                break

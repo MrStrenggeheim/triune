@@ -41,6 +41,9 @@ export class SynchronizationAttempt {
   private syncGeneration = 0;
   private receivedSyncGeneration = 0;
   private progressPosition = -1;
+  private gapTimer?: ReturnType<typeof setTimeout>;
+  private gapTarget = 0;
+  private readonly appliedPositions = new Map<number, number>();
   private readonly replay = new TranscriptReplay();
   private deadline: ReturnType<typeof setTimeout> | undefined;
   private stopped = false;
@@ -100,6 +103,7 @@ export class SynchronizationAttempt {
   recover(retry: boolean, reason: RecoveryReason): void {
     if (!this.current || this.recovering) return;
     this.recovering = true;
+    clearTimeout(this.gapTimer);
     this.owner.phase = "recovering";
     clearTimeout(this.deadline);
     this.onRecover?.(retry, reason);
@@ -108,6 +112,19 @@ export class SynchronizationAttempt {
   heartbeat(event: Extract<StreamEvent, { type: "session_heartbeat" }>): void {
     if (!this.current || this.awaiting || this.recovering) return;
     const cursor = this.owner.cursor;
+    if (
+      cursor?.stream_epoch?.startsWith("feed2:") &&
+      event.streamEpoch === cursor.stream_epoch &&
+      !event.reconcileRequired &&
+      event.itemRevision !== undefined &&
+      cursor.after_revision !== undefined &&
+      event.itemRevision > cursor.after_revision
+    ) {
+      // A heartbeat reads committed storage while a matching live publication may be in flight.
+      this.gapTarget = Math.max(this.gapTarget, event.itemRevision);
+      this.gapTimer ??= setTimeout(() => this.recover(false, "diverged"), 2000);
+      return;
+    }
     if (!cursor) {
       this.owner.cursor = { after_position: -1 };
       this.recover(false, "diverged");
@@ -123,10 +140,50 @@ export class SynchronizationAttempt {
     }
   }
 
+  /** Join out-of-order publications only after each change has passed through the reducer. */
+  appliedChange(revision: number, position: number): TranscriptCursor | undefined {
+    const cursor = this.owner.cursor;
+    if (
+      !this.current ||
+      this.awaiting ||
+      !cursor?.stream_epoch?.startsWith("feed2:") ||
+      cursor.after_revision === undefined ||
+      !Number.isSafeInteger(revision) ||
+      !Number.isSafeInteger(position) ||
+      position < 0 ||
+      revision <= cursor.after_revision
+    )
+      return;
+    if (revision - cursor.after_revision > 256) {
+      this.recover(false, "diverged");
+      return;
+    }
+    this.appliedPositions.set(revision, position);
+    let through = cursor.after_revision;
+    let lastPosition = cursor.after_position;
+    while (this.appliedPositions.has(through + 1)) {
+      through++;
+      lastPosition = Math.max(lastPosition, this.appliedPositions.get(through)!);
+      this.appliedPositions.delete(through);
+    }
+    if (through === cursor.after_revision) return;
+    if (through >= this.gapTarget) {
+      clearTimeout(this.gapTimer);
+      this.gapTimer = undefined;
+      this.gapTarget = 0;
+    }
+    this.owner.cursor = { ...cursor, after_revision: through, after_position: lastPosition };
+    return this.owner.cursor;
+  }
+
   accept(event: StreamEvent, blocks: AnyBlock[]): AnyBlock[] | null {
     if (!this.current || this.recovering) return null;
     if (event.type === "session_sync" && event.phase === "start") {
       this.syncGeneration++;
+      this.appliedPositions.clear();
+      clearTimeout(this.gapTimer);
+      this.gapTimer = undefined;
+      this.gapTarget = 0;
       this.awaiting = true;
       this.owner.phase = "replaying";
       this.armDeadline();
@@ -159,6 +216,7 @@ export class SynchronizationAttempt {
 
   stop(): void {
     this.stopped = true;
+    clearTimeout(this.gapTimer);
     clearTimeout(this.deadline);
     if (this.owner.owns(this)) this.owner.phase = "stopped";
   }
