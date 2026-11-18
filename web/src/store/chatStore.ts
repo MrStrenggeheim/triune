@@ -7549,10 +7549,26 @@ export async function startStreamPump(
       statusReconcileInFlight = false;
     });
   };
+  const reconcileBusySession = () => {
+    const state = get();
+    if (
+      state.sessionStatus === "running" ||
+      state.sessionStatus === "waiting" ||
+      state.status === "streaming" ||
+      state.activeResponse?.state === "streaming" ||
+      state.backgroundTaskCount > 0
+    )
+      runGuardedStatusReconcile();
+  };
   const statusReconcileTimer =
-    typeof window === "undefined" || (sharedSocket ?? sessionUpdatesSocket.supportsTranscripts())
+    typeof window === "undefined"
       ? null
-      : window.setInterval(runGuardedStatusReconcile, ACTIVE_SESSION_STATUS_RECONCILE_INTERVAL_MS);
+      : window.setInterval(
+          (sharedSocket ?? sessionUpdatesSocket.supportsTranscripts())
+            ? reconcileBusySession
+            : runGuardedStatusReconcile,
+          ACTIVE_SESSION_STATUS_RECONCILE_INTERVAL_MS,
+        );
   // Pending post-reconnect catch-up timers. Tracked so each reconnect cancels
   // the previous burst before scheduling a new one — otherwise recurring
   // reconnects (the ~5-min ingress recycle) would accumulate timers on the
@@ -7855,6 +7871,8 @@ export async function startStreamPump(
           replayPrefixes,
           () => {
             failedOpens = 0;
+            // Transcript replay recovers saved items. A turn can have ended during the gap.
+            if (multiplexedAttempts.has(attempt)) reconcileBusySession();
           },
           expectsInitialSync,
           multiplexedAttempts.has(attempt),

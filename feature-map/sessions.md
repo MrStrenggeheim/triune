@@ -917,6 +917,7 @@ A deployment may set `TRIUNE_TRANSCRIPT_FEED_MODE_FILE` to an absolute regular f
 New authenticated connections read its mode after an atomic replacement. A missing, invalid or wrong-release override disables the versioned feed.
 An enrolled browser selects `2` in local storage under `triune:transcript-feed`; selecting `1` keeps its legacy reader.
 
+A visible chat that still shows activity checks session status when transcript replay completes and every 60 seconds while it still appears busy.
 The membership generation scopes every data/error/close frame.
 Cold subscription sends a bounded saved window in size-limited pages, followed by the active preview and live tail.
 A scoped SQLite trigger journals item identities, mutation times and contiguous revisions in the writing transaction; each conversation retains 256 revisions.
