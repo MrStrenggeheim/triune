@@ -112,6 +112,9 @@ The versioned feed sends the initial window once, applies contiguous journal rev
 A slow referenced tool result can hydrate separately from its ordered header.
 Codex MCP calls retain stable call and result identities; shell inventory publishes independently of chat previews.
 The local journal is additive and its changes commit with their corresponding item mutations.
+Identified browser commands have workspace-, conversation- and actor-scoped receipts.
+A repeated request returns its accepted result; an ambiguous downstream outcome requires reconciliation.
+Once an enrolled run qualifies, a release-specific mode file can enable feed 2 on subsequent handshakes without restarting sessions.
 
 An optional timed observation run requires both `TRIUNE_STREAM_OBSERVE_UNTIL_MS` (UTC epoch milliseconds) and `TRIUNE_STREAM_OBSERVE_DIR` (private directory).
 Expiry stops new collection automatically.
