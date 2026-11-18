@@ -650,7 +650,11 @@ describe("AssistantBubble error retry", () => {
     expect(url).toBe("/v1/sessions/conv_retry/events");
     expect(JSON.parse(init.body as string)).toEqual({
       type: "message",
-      data: { role: "user", content: [{ type: "input_text", text: continuation }] },
+      data: {
+        role: "user",
+        continuation_of: "resp_failed",
+        content: [{ type: "input_text", text: continuation }],
+      },
     });
     expect(useChatStore.getState().failedSendDraft).toBe(draft);
 
@@ -673,7 +677,11 @@ describe("AssistantBubble error retry", () => {
     expect(url).toBe("/v1/sessions/conv_retry/events");
     expect(JSON.parse(init.body as string)).toEqual({
       type: "message",
-      data: { role: "user", content: [{ type: "input_text", text: continuation }] },
+      data: {
+        role: "user",
+        continuation_of: "resp_failed",
+        content: [{ type: "input_text", text: continuation }],
+      },
     });
   });
 
@@ -688,7 +696,11 @@ describe("AssistantBubble error retry", () => {
     expect(url).toBe("/v1/sessions/conv_retry/events");
     expect(JSON.parse(init.body as string)).toEqual({
       type: "message",
-      data: { role: "user", content: [{ type: "input_text", text: continuation }] },
+      data: {
+        role: "user",
+        continuation_of: "resp_failed",
+        content: [{ type: "input_text", text: continuation }],
+      },
     });
   });
 

@@ -1734,6 +1734,17 @@ class SqlScheduledTaskRun(OmnigentBase):
     )
 
 
+class SqlSessionCommandReceipt(OmnigentBase):
+    """Claim and acknowledgement of a client operation; request bodies remain ephemeral."""
+
+    __tablename__ = "omnigent_session_command_receipts"
+    workspace_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    conversation_id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    operation_key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    acknowledgement: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
 class SqlApprovalDelivery(OmnigentBase):
     """Durable redacted approval attempts, partitioned by workspace and conversation."""
 

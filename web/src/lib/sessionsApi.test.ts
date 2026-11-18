@@ -1855,6 +1855,16 @@ describe("continueFailedTurn", () => {
     await first;
   });
 
+  it("binds an error-card continuation to its failed response across repeated calls", async () => {
+    fetchMock.mockResolvedValue(mockJsonResponse({ queued: true }));
+    await continueFailedTurn("chat", "failed-response");
+    await continueFailedTurn("chat", "failed-response");
+    for (const [, options] of fetchMock.mock.calls) {
+      expect(new Headers(options?.headers).get("Idempotency-Key")).toBe("continue-turn");
+      expect(JSON.parse(String(options?.body)).data.continuation_of).toBe("failed-response");
+    }
+  });
+
   it("rejects policy denials so the error card remains actionable", async () => {
     fetchMock.mockResolvedValueOnce(mockJsonResponse({ queued: false, denied: true }));
 

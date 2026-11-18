@@ -481,6 +481,7 @@ def get_or_create_engine(db_uri: str) -> Engine:
             if db_uri not in _engine_cache:
                 engine = _create_engine(db_uri)
                 _initialize_or_verify_schema(engine, db_uri)
+                _ensure_command_receipt_table(engine)
                 from omnigent.runtime.telemetry import instrument_sqlalchemy_engine
 
                 instrument_sqlalchemy_engine(engine)
@@ -765,6 +766,23 @@ def _verify_db_revision_is_supported(
             f"(found revision {current!r}, latest supported revision {head!r}). "
             "Upgrade Triune before using this database."
         ) from exc
+
+
+def _ensure_command_receipt_table(engine: Engine) -> None:
+    """Support command receipts on existing databases while keeping rollback at the same head."""
+    from sqlalchemy import inspect
+    from sqlalchemy.schema import CreateTable
+
+    from omnigent.db.db_models import OmnigentBase
+
+    table = OmnigentBase.metadata.tables["omnigent_session_command_receipts"]
+    with query_name_scope("omnigent.session_command.ensure_schema"):
+        if inspect(engine).has_table(table.name):
+            return
+        with engine.begin() as connection:
+            if is_cockroachdb(engine.dialect.name):
+                _prepare_crdb_schema_transaction(connection, _crdb_server_version(engine))
+            connection.execute(CreateTable(table, if_not_exists=True))
 
 
 def _initialize_or_verify_schema(engine: Engine, db_uri: str) -> None:

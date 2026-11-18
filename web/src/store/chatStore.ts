@@ -3512,7 +3512,8 @@ const createChatState = (get: () => ChatState): ChatState => ({
       }
       // A coded error confirms refusal; a transport failure leaves delivery
       // unknown unless this retries a previously refused send.
-      const answeredWithRefusal = err instanceof ApiError && err.code !== null;
+      const answeredWithRefusal =
+        err instanceof ApiError && err.code !== null && err.code !== "command_outcome_unknown";
       let serverRefused = answeredWithRefusal || retriesRefusedSend;
       const draftState =
         draftSessionId === null ? get() : (setterForState(draftSessionId) ?? get());
