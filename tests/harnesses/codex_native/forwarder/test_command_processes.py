@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,65 @@ from omnigent.terminals.history import MAX_OUTPUT_BYTES
 from tests._helpers.polling import poll_until_async
 from tests.harnesses.codex_native.forwarder._support import _RecordingClient
 from tests.harnesses.codex_native.session._support import _write_forwarder_bridge
+
+
+@pytest.mark.asyncio
+async def test_held_inventory_cannot_delay_tool_output_or_completion(monkeypatch) -> None:
+    client = _RecordingClient()
+    state = fwd._CodexForwarderState()
+    delta = fwd._OutputTextDeltaCoalescer(client, "chat")
+    shell = {"id": "shell", "type": "commandExecution", "command": "echo", "status": "inProgress"}
+    entered, release = asyncio.Event(), asyncio.Event()
+    sent = []
+
+    async def hold_inventory(client, session_id, snapshot):
+        sent.append(snapshot)
+        entered.set()
+        await release.wait()
+        return True
+
+    monkeypatch.setattr(fwd, "_publish_command_snapshot", hold_inventory)
+    try:
+        await fwd._sync_command_processes(client, "chat", shell, state)
+        await asyncio.wait_for(entered.wait(), timeout=2)
+        await delta.append("answer", message_id="answer")
+        await delta.append("plan", message_id="plan")
+        await delta.append_reasoning("summary", started=True)
+        await fwd._maybe_handle_delta_event(
+            client,
+            session_id="chat",
+            bridge_dir=None,
+            method="item/commandExecution/outputDelta",
+            params={"turnId": "t", "itemId": "shell", "delta": "captured"},
+            delta_coalescer=delta,
+            forwarder_state=state,
+        )
+        await asyncio.wait_for(
+            fwd._handle_completed_event(
+                client,
+                session_id="chat",
+                params={"turnId": "t", "item": {**shell, "status": "completed"}},
+                delta_coalescer=delta,
+                forwarder_state=state,
+            ),
+            timeout=2,
+        )
+        assert [body["type"] for _, body in client.posts] == [
+            "external_output_text_delta",
+            "external_output_text_delta",
+            "external_output_reasoning_delta",
+            "external_tool_output_delta",
+            "external_conversation_item",
+            "external_conversation_item",
+        ]
+        assert not delta._dropping_until_barrier
+        assert len(sent) == 1
+    finally:
+        release.set()
+        await state.command_processes.close()
+        await delta.close()
+    assert [s["background_task_count"] for s in sent] == [1, 0]
+    assert sent[-1]["shell_resources"][0]["output"] == "captured"
 
 
 @pytest.mark.asyncio
@@ -64,6 +124,7 @@ async def test_background_output_flushes_without_an_active_assistant_turn(tmp_pa
         assert not any(body["type"] == "external_tool_output_delta" for _, body in client.posts)
     finally:
         await coalescer.close()
+        await state.command_processes.close()
 
 
 @pytest.mark.asyncio
@@ -91,6 +152,7 @@ async def test_completed_output_does_not_reappend_queued_deltas() -> None:
         assert state.command_processes.resources["one"]["status"] == "completed"
     finally:
         await coalescer.close()
+        await state.command_processes.close()
 
 
 @pytest.mark.asyncio

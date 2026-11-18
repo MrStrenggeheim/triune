@@ -765,6 +765,7 @@ class _CodexForwarderState:
     async def close_child_streams(self) -> None:
         """Drain child output while the forwarder's HTTP client is still open."""
         await asyncio.gather(
+            *(stream.state.command_processes.close() for stream in self.child_streams.values()),
             *(stream.delta_coalescer.close() for stream in self.child_streams.values()),
             *(stream.elicitation_tracker.close() for stream in self.child_streams.values()),
         )
@@ -1339,7 +1340,6 @@ class _DeltaChunk:
     delta: str
     tool_call_id: str | None = None
     reasoning_started: bool | None = None
-    shell_resources_only: bool = False
 
 
 def _resolve_marker(done: asyncio.Future[None]) -> None:
@@ -1428,39 +1428,17 @@ class _OutputTextDeltaCoalescer:
         self._next_index_by_message_id: dict[str, int] = {}
         self._queued_chars = 0
         self._dropping_until_barrier = False
-        self._shell_flush_at: float | None = None
-        self._pending_shells: dict[int, tuple[CodexCommandProcesses, set[str]]] = {}
 
     async def observe_shell_output(
         self, processes: CodexCommandProcesses, call_id: str, delta: str
     ) -> None:
         """Capture ordered output even after its assistant turn ends."""
-        async with processes.sync_lock:
-            if call_id not in processes.resources:
-                return
-            processes.observe_output(call_id, delta)
-        key = id(processes)
-        pending = self._pending_shells.setdefault(key, (processes, set()))
-        pending[1].add(call_id)
-        if self._shell_flush_at is None:
-            self._shell_flush_at = asyncio.get_running_loop().time() + 0.2
-        self._ensure_worker()
-        self._queue.put_nowait(_DeltaChunk(None, "", shell_resources_only=True))
-
-    async def _flush_shell_inventory(self, *, force: bool = False) -> None:
-        loop = asyncio.get_running_loop()
-        if not self._pending_shells or (
-            not force and self._shell_flush_at is not None and loop.time() < self._shell_flush_at
-        ):
+        if not processes.capture_output(call_id, delta):
             return
-        for key, (processes, resource_ids) in list(self._pending_shells.items()):
-            async with processes.sync_lock:
-                snapshot = processes.snapshot(resource_ids=sorted(resource_ids))
-                if snapshot is None or await _publish_command_snapshot(
-                    self._client, self._session_id, processes, snapshot
-                ):
-                    self._pending_shells.pop(key, None)
-        self._shell_flush_at = loop.time() + 2 if self._pending_shells else None
+        processes.schedule_publication(
+            lambda snapshot: _publish_command_snapshot(self._client, self._session_id, snapshot),
+            output_id=call_id,
+        )
 
     async def append(self, delta: str, *, message_id: str | None = None) -> None:
         """
@@ -1701,15 +1679,11 @@ class _OutputTextDeltaCoalescer:
             timeout = None
             if buffer and flush_deadline is not None:
                 timeout = max(0.0, flush_deadline - loop.time())
-            if self._shell_flush_at is not None:
-                shell_timeout = max(0.0, self._shell_flush_at - loop.time())
-                timeout = shell_timeout if timeout is None else min(timeout, shell_timeout)
             try:
                 item = await asyncio.wait_for(self._queue.get(), timeout=timeout)
             except TimeoutError:
                 if not self._dropping_until_barrier:
                     await self._flush_buffer(buffer, chunk=buffer_chunk)
-                await self._flush_shell_inventory()
                 buffer = []
                 buffer_chunk = None
                 buffered_chars = 0
@@ -1717,8 +1691,6 @@ class _OutputTextDeltaCoalescer:
                 continue
             if isinstance(item, _DeltaChunk):
                 self._queued_chars -= len(item.delta)
-                if item.shell_resources_only:
-                    continue
                 if self._dropping_until_barrier:
                     buffer = []
                     buffer_chunk = None
@@ -1764,7 +1736,6 @@ class _OutputTextDeltaCoalescer:
             if isinstance(item, _DeltaFlushBarrier):
                 if not self._dropping_until_barrier:
                     await self._flush_buffer(buffer, chunk=buffer_chunk)
-                await self._flush_shell_inventory(force=True)
                 buffer = []
                 buffer_chunk = None
                 buffered_chars = 0
@@ -1774,7 +1745,6 @@ class _OutputTextDeltaCoalescer:
                 continue
             if not self._dropping_until_barrier:
                 await self._flush_buffer(buffer, chunk=buffer_chunk)
-            await self._flush_shell_inventory(force=True)
             self._dropping_until_barrier = False
             _resolve_marker(item.done)
             return
@@ -2400,10 +2370,12 @@ async def supervise_forwarder(
                         event=event,
                     )
                     if rotated:
-                        forwarder_state.note_parent_rotation(target.session_id)
                         subscribe_task.cancel()
                         with contextlib.suppress(asyncio.CancelledError):
                             await subscribe_task
+                        await forwarder_state.command_processes.close()
+                        forwarder_state.command_processes = CodexCommandProcesses()
+                        forwarder_state.note_parent_rotation(target.session_id)
                         # Fresh thread after a /clear rotation — start its
                         # own active signal so the new subscription parks
                         # until the rotated thread's first turn.
@@ -2467,6 +2439,7 @@ async def supervise_forwarder(
             with contextlib.suppress(asyncio.CancelledError):
                 await side_chat_task
             await forwarder_state.close_child_streams()
+            await forwarder_state.command_processes.close()
             await client.close()
 
 
@@ -3319,8 +3292,19 @@ async def _handle_event(
             # ``item/completed`` guard below remains the backstop for the
             # resume-backfill path, which replays only ``item/completed``.
             await _ensure_user_message_posted(client, route_session_id, params, event_state)
-        elif isinstance(item, dict) and item.get("type") == "commandExecution":
-            await _sync_command_processes(client, route_session_id, item, event_state)
+        elif isinstance(item, dict) and item.get("type") in {"commandExecution", "mcpToolCall"}:
+            if item["type"] == "commandExecution":
+                await _sync_command_processes(client, route_session_id, item, event_state)
+            item_id = item.get("id")
+            if (
+                isinstance(item_id, str)
+                and event_state is not None
+                and (
+                    item_id in event_state.posted_tool_calls
+                    or _source_id(params, item) in event_state.synced_item_keys
+                )
+            ):
+                return
             call_id = await _post_tool_call_item(client, route_session_id, params, item)
             if call_id is not None and event_state is not None:
                 event_state.note_tool_call_posted(call_id)
@@ -5553,6 +5537,13 @@ async def _handle_completed_item_inner(
         "Codex forwarder observed completed item: turn_id=%s item_type=%s",
         turn_id,
         item_type,
+        extra=debug_event(
+            "codex_item_observed",
+            session_id=session_id,
+            turn_id=turn_id,
+            native_item_id=item.get("id"),
+            native_item_type=item_type,
+        ),
     )
     # Child-spawn items register sessions; they do not append transcript records
     # and must not go through the dedup gate.
@@ -5653,14 +5644,20 @@ async def _handle_completed_item_inner(
                 file_observer_bridge_dir if file_observer_bridge_dir is not None else bridge_dir,
                 item,
             )
-        await _post_tool_item(
-            client,
-            session_id,
-            params,
-            item,
-            forwarder_state=forwarder_state,
-            source_id=source_id,
-        )
+        posted = False
+        try:
+            posted = await _post_tool_item(
+                client,
+                session_id,
+                params,
+                item,
+                forwarder_state=forwarder_state,
+                source_id=source_id,
+            )
+        finally:
+            if not posted and forwarder_state is not None:
+                # Both halves have stable source IDs; replay can repair a partial delivery.
+                forwarder_state.synced_item_keys.discard(source_id)
 
 
 async def _maybe_persist_interrupted_partial_text(
@@ -6787,7 +6784,29 @@ async def _post_tool_call_item(
         response_id=_response_id(params),
         source_id=f"{source_id}:call",
     )
+    _record_tool_disposition(session_id, params, tool_call.call_id, "call", posted)
     return tool_call.call_id if posted else None
+
+
+def _record_tool_disposition(
+    session_id: str, params: _JsonObject, call_id: str, phase: str, posted: bool
+) -> None:
+    """Correlate native tool boundaries with delivery without recording tool payloads."""
+    disposition = "accepted" if posted else "unconfirmed"
+    _logger.info(
+        "Codex transcript tool %s %s: call_id=%s",
+        phase,
+        disposition,
+        call_id,
+        extra=debug_event(
+            "codex_tool_delivery",
+            session_id=session_id,
+            turn_id=_turn_id_from_payload(params),
+            native_item_id=call_id,
+            tool_phase=phase,
+            disposition=disposition,
+        ),
+    )
 
 
 async def _post_tool_item(
@@ -6798,7 +6817,7 @@ async def _post_tool_item(
     *,
     forwarder_state: _CodexForwarderState | None,
     source_id: str,
-) -> None:
+) -> bool:
     """
     Mirror one completed Codex built-in tool call into Omnigent history.
 
@@ -6816,11 +6835,11 @@ async def _post_tool_item(
         "command": "/bin/zsh -lc 'pwd'", "aggregatedOutput": "/repo\n",
         "exitCode": 0}``.
     :param forwarder_state: Optional state tracking calls posted at item start.
-    :returns: None.
+    :returns: Whether the completed result was acknowledged.
     """
     tool_call = _codex_tool_call_from_item(item)
     if tool_call is None:
-        return
+        return False
     if forwarder_state is None or not forwarder_state.take_posted_tool_call(tool_call.call_id):
         if (
             await _post_tool_call_item(
@@ -6832,8 +6851,8 @@ async def _post_tool_item(
             )
             is None
         ):
-            return
-    await _post_external_item(
+            return False
+    posted = await _post_external_item(
         client,
         session_id,
         item_type="function_call_output",
@@ -6841,6 +6860,8 @@ async def _post_tool_item(
         response_id=_response_id(params),
         source_id=f"{source_id}:output",
     )
+    _record_tool_disposition(session_id, params, tool_call.call_id, "output", posted)
+    return posted
 
 
 async def _post_plan_item(
@@ -7239,16 +7260,32 @@ def _image_generation_tool_call(call_id: str, item: _JsonObject) -> _CodexToolCa
     )
 
 
-# Codex built-in tool item types this forwarder mirrors into Omnigent history.
-# ``mcpToolCall`` is intentionally absent: its event shape has not been
-# verified, so it is logged-but-skipped rather than mirrored with guessed
-# fields. Add it here once its real shape is captured.
+def _mcp_tool_call(call_id: str, item: _JsonObject) -> _CodexToolCall | None:
+    """Mirror native MCP identity and outcome without copying private connector payloads."""
+    server, tool = item.get("server"), item.get("tool")
+    if not isinstance(server, str) or not server or not isinstance(tool, str) or not tool:
+        _logger.warning("Codex mcpToolCall missing server or tool: call_id=%s", call_id)
+        return None
+    result = item.get("result")
+    status = item.get("status")
+    if item.get("error") is not None or (isinstance(result, dict) and result.get("isError")):
+        outcome = "failed"
+    elif isinstance(status, str) and status in {"completed", "failed", "cancelled", "inProgress"}:
+        outcome = status
+    else:
+        outcome = ""
+    return _CodexToolCall(
+        call_id=call_id, name=f"mcp__{server}__{tool}", arguments={}, output=outcome
+    )
+
+
 _TOOL_ITEM_BUILDERS: dict[str, _ToolItemBuilder] = {
     "commandExecution": _command_execution_tool_call,
     "fileChange": _file_change_tool_call,
     "webSearch": _web_search_tool_call,
     "imageView": _image_view_tool_call,
     "imageGeneration": _image_generation_tool_call,
+    "mcpToolCall": _mcp_tool_call,
 }
 _TOOL_ITEM_TYPES = frozenset(_TOOL_ITEM_BUILDERS)
 
@@ -7487,27 +7524,28 @@ async def _sync_command_processes(
     if forwarder_state is None:
         return
     processes = forwarder_state.command_processes
-    async with processes.sync_lock:
-        snapshot = processes.observe(item, session_id=session_id)
-        if snapshot is None:
-            return
-        await _publish_command_snapshot(client, session_id, processes, snapshot)
+    call_id = item.get("id")
+    if not isinstance(call_id, str):
+        return
+    before = processes.resources.get(call_id)
+    processes.observe(item, session_id=session_id)
+    if before != processes.resources.get(call_id):
+        processes.schedule_publication(
+            lambda snapshot: _publish_command_snapshot(client, session_id, snapshot)
+        )
+        await asyncio.sleep(0)
 
 
 async def _publish_command_snapshot(
     client: httpx.AsyncClient,
     session_id: str,
-    processes: CodexCommandProcesses,
     snapshot: _JsonObject,
 ) -> bool:
     response = await _post_session_event(
         client, session_id, event_type="external_session_background_tasks", data=snapshot
     )
     _log_failed_session_event_post("external_session_background_tasks", response)
-    if response is not None and response.status_code < 400:
-        processes.posted = snapshot
-        return True
-    return False
+    return response is not None and response.status_code < 400
 
 
 async def _post_external_session_todos(
