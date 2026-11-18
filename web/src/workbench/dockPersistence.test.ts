@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import {
   addDockView,
+  arrangeDockViews,
   closeDockView,
   createDockLayout,
   parseDockLayout,
@@ -148,6 +149,19 @@ const explorer: DockView = {
 };
 
 describe("automatic conversation layout migration", () => {
+  it("applies a preset with global pins to only the selected session, including empty panes on reload", () => {
+    const a = addDockView(createDockLayout([conversation("A")]), explorer, { edge: "right" });
+    const state = pinDockView(createDockPersistence(a), explorer.id);
+    const b = navigateDockConversation(state, "B");
+    const preset = arrangeDockViews(composeDockLayout(b), "thirds");
+    const saved = applyDockLayout(b, preset, true);
+    const restored = parseDockPersistence(JSON.stringify(saved))!;
+    expect(composeDockLayout(restored)).toEqual(preset);
+    expect(composeDockLayout(navigateDockConversation(restored, "A"))).toEqual(a);
+    const altered = applyDockLayout(restored, resizeDockSplit(preset, [], 0.4));
+    expect(composeDockLayout(navigateDockConversation(altered, "A"))).toEqual(a);
+    expect(composeDockLayout(altered).tree).toEqual(resizeDockSplit(preset, [], 0.4).tree);
+  });
   it.each([null, "A"])(
     "migrates the legacy shared arrangement for owner %s without losing saved B or pins",
     (activeConversationId) => {

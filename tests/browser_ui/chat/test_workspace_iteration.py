@@ -30,6 +30,64 @@ from tests.browser_ui.chat.test_unified_workspace import (
 from tests.browser_ui.conftest import BrowserContract
 
 
+@pytest.mark.parametrize("width", [1440, 390], ids=["desktop", "mobile"])
+def test_session_layout_presets(
+    page: Page, workspace_journey: WorkspaceJourney, output_path: str, width: int
+) -> None:
+    first = workspace_journey.chats[0]
+    first.contract.json(f"/v1/hosts/{first.host_id}/filesystem", list_payload([]))
+    page.set_viewport_size({"width": width, "height": 900})
+    page.goto(first.url)
+    composer = _view(page, "Chat A").get_by_label("Message the agent")
+    composer.fill("Keep this draft through layout changes")
+    header = page.get_by_role("banner", name="Application")
+    presets = header.get_by_role("button", name="Layout presets")
+    bell = header.get_by_role("button", name="Notifications")
+    assert box(presets)["x"] + box(presets)["width"] <= box(bell)["x"]
+    presets.click()
+    page.get_by_role("menuitem", name="Three columns").click()
+    expect(composer).to_have_value("Keep this draft through layout changes")
+    if width > 640:
+        empty = page.locator(".dock-pane").filter(has_text="Open a chat or tool to get started.")
+        expect(empty).to_have_count(2)
+        empty.first.get_by_role("button", name="Open view", exact=True).click()
+        page.get_by_role("menuitem", name="New chat", exact=True).click()
+        expect(empty).to_have_count(1)
+        dividers = page.get_by_role("separator", name="Resize panes")
+        before = [box(divider)["x"] for divider in dividers.all()]
+        divider = box(dividers.first)
+        x = divider["x"] + divider["width"] / 2
+        y = divider["y"] + divider["height"] / 2
+        page.mouse.move(x, y)
+        page.mouse.down()
+        page.mouse.move(x + 40, y, steps=8)
+        page.mouse.up()
+        assert box(dividers.first)["x"] == pytest.approx(before[0] + 40, abs=2)
+        assert box(dividers.last)["x"] == pytest.approx(before[1], abs=1)
+        dividers.last.press("ArrowRight")
+        assert box(dividers.first)["x"] == pytest.approx(before[0] + 40, abs=2)
+        assert box(dividers.last)["x"] > before[1]
+    else:
+        expect(page.locator(".dock-pane:visible")).to_have_count(1)
+    saved = _saved_dock(page)
+    layout = next(
+        chat["layout"] for chat in saved["chats"] if chat["conversationId"] == first.session_id
+    )
+    assert len(layout["panes"]) == 3
+    _capture(page, output_path, "three-column-layout")
+    page.reload()
+    expect(composer).to_have_value("Keep this draft through layout changes")
+    restored = _saved_dock(page)
+    assert (
+        next(
+            chat["layout"]
+            for chat in restored["chats"]
+            if chat["conversationId"] == first.session_id
+        )
+        == layout
+    )
+
+
 def test_sidebar_drop_and_open_to_side_keep_chat_layout_ownership(
     page: Page, workspace_journey: WorkspaceJourney, output_path: str, browser_errors: list[str]
 ) -> None:

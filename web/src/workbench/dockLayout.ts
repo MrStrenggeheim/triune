@@ -1,9 +1,9 @@
 // Modified for Triune.
 import type { SplitEdge } from "@/grid/gridLayout";
 import {
-  clampSplitRatio,
+  MIN_SPLIT_RATIO,
   removeTerminalLayoutKey,
-  resizeTerminalSplit,
+  terminalLayoutGeometry,
   terminalLayoutKeys,
   type TerminalLayout,
 } from "@/lib/terminalSplitLayout";
@@ -57,6 +57,53 @@ export function createDockLayout(views: DockView[] = [], paneId = "main"): DockL
 
 export function dockPaneForView(layout: DockLayout, viewId: string): DockPane | undefined {
   return layout.panes.find((pane) => pane.viewIds.includes(viewId));
+}
+
+export const dockPresets = {
+  single: "Single panel",
+  columns: "Two columns",
+  thirds: "Three columns",
+  rows: "Two rows",
+  grid: "Four-panel grid",
+} as const;
+export type DockPreset = keyof typeof dockPresets;
+
+/** Preserve reading and tab order, including tabs hidden behind the selection. */
+export function arrangeDockViews(layout: DockLayout, preset: DockPreset): DockLayout {
+  const ids = layout.tree ? terminalLayoutKeys(layout.tree) : [];
+  const count = { single: 1, columns: 2, thirds: 3, rows: 2, grid: 4 }[preset];
+  const ordered = ids.flatMap((id) => layout.panes.find((pane) => pane.id === id)!.viewIds);
+  const focused = layout.panes.find((pane) => pane.id === layout.focusedPaneId)?.selectedViewId;
+  const paneIds = ids.slice(0, count);
+  for (let index = 1; paneIds.length < count; index++) {
+    const id = `pane-${index}`;
+    if (!paneIds.includes(id)) paneIds.push(id);
+  }
+  const panes = paneIds.map((id, index) => {
+    const viewIds = ordered.slice(index, index === count - 1 ? undefined : index + 1);
+    return {
+      id,
+      viewIds,
+      selectedViewId: focused && viewIds.includes(focused) ? focused : (viewIds[0] ?? null),
+    };
+  });
+  const [a, b, c, d] = paneIds;
+  const split = (
+    axis: "rows" | "columns",
+    first: TerminalLayout,
+    second: TerminalLayout,
+    ratio = 0.5,
+  ): TerminalLayout => ({ axis, ratio, children: [first, second] });
+  let tree: TerminalLayout = a;
+  if (preset === "thirds") tree = split("columns", a, split("columns", b, c), 1 / 3);
+  else if (preset === "grid") tree = split("rows", split("columns", a, b), split("columns", c, d));
+  else if (preset !== "single") tree = split(preset, a, b);
+  return {
+    ...layout,
+    tree,
+    panes,
+    focusedPaneId: panes.find((pane) => focused && pane.viewIds.includes(focused))?.id ?? a,
+  };
 }
 
 export function focusDockPane(layout: DockLayout, paneId: string): DockLayout {
@@ -225,14 +272,80 @@ export function resizeDockSplit(
   path: readonly number[],
   ratio: number,
 ): DockLayout {
-  if (layout.tree === null) return layout;
-  let node = layout.tree;
-  for (const index of path) {
-    if (typeof node === "string" || (index !== 0 && index !== 1)) return layout;
-    node = node.children[index];
-  }
-  if (typeof node === "string") return layout;
-  return { ...layout, tree: resizeTerminalSplit(layout.tree, path, ratio) };
+  if (!layout.tree || !Number.isFinite(ratio)) return layout;
+  const resize = (node: TerminalLayout, depth: number): TerminalLayout => {
+    if (typeof node === "string") return node;
+    if (depth < path.length) {
+      const index = path[depth];
+      if (index !== 0 && index !== 1) return node;
+      const child = resize(node.children[index], depth + 1);
+      if (child === node.children[index]) return node;
+      const children: [TerminalLayout, TerminalLayout] = [...node.children];
+      children[index] = child;
+      return { ...node, children };
+    }
+    const [min, max] = dockResizeBounds(node);
+    const next = Math.min(max, Math.max(min, ratio));
+    if (next === node.ratio) return node;
+    // Re-express each fixed interior boundary within the newly sized parent.
+    const fit = (
+      child: TerminalLayout,
+      start: number,
+      end: number,
+      from: number,
+      to: number,
+    ): TerminalLayout => {
+      if (typeof child === "string" || (start === from && end === to)) return child;
+      if (child.axis !== node.axis)
+        return {
+          ...child,
+          children: [
+            fit(child.children[0], start, end, from, to),
+            fit(child.children[1], start, end, from, to),
+          ],
+        };
+      const cut = start + (end - start) * child.ratio;
+      return {
+        ...child,
+        ratio: (cut - from) / (to - from),
+        children: [
+          fit(child.children[0], start, cut, from, cut),
+          fit(child.children[1], cut, end, cut, to),
+        ],
+      };
+    };
+    return {
+      ...node,
+      ratio: next,
+      children: [
+        fit(node.children[0], 0, node.ratio, 0, next),
+        fit(node.children[1], node.ratio, 1, next, 1),
+      ],
+    };
+  };
+  const tree = resize(layout.tree, 0);
+  return tree === layout.tree ? layout : { ...layout, tree };
+}
+
+/** The two adjacent spans share the same minimum regardless of binary split order. */
+export function dockResizeBounds(node: Exclude<TerminalLayout, string>): [number, number] {
+  const columns = node.axis === "columns";
+  const adjacent = (subtree: TerminalLayout, end: boolean) => {
+    const panes = terminalLayoutGeometry(subtree).panes;
+    return Math.min(
+      ...panes
+        .filter((rect) => {
+          const start = columns ? rect.left : rect.top;
+          const size = columns ? rect.width : rect.height;
+          return end ? Math.abs(start + size - 100) < 1e-8 : start === 0;
+        })
+        .map((rect) => (columns ? rect.width : rect.height) / 100),
+    );
+  };
+  const first = node.ratio * adjacent(node.children[0], true);
+  const second = (1 - node.ratio) * adjacent(node.children[1], false);
+  const minimum = (first + second) * MIN_SPLIT_RATIO;
+  return [node.ratio - Math.max(0, first - minimum), node.ratio + Math.max(0, second - minimum)];
 }
 
 /** Keeps geometry and selection for a subset, collapsing empty branches. */
@@ -327,7 +440,8 @@ export function parseDockLayout(value: unknown): DockLayout | undefined {
       (node.axis === "rows" || node.axis === "columns") &&
       typeof node.ratio === "number" &&
       Number.isFinite(node.ratio) &&
-      clampSplitRatio(node.ratio) === node.ratio &&
+      node.ratio > 0 &&
+      node.ratio < 1 &&
       Array.isArray(node.children) &&
       node.children.length === 2 &&
       node.children.every((child) => validTree(child, depth + 1))

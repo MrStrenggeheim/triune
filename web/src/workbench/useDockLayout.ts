@@ -3,6 +3,7 @@ import { conversationRegistry, type ConversationRegistry } from "@/store/convers
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   addDockView,
+  arrangeDockViews,
   closeDockView,
   dockPaneForView,
   parseDockLayout,
@@ -12,6 +13,7 @@ import {
   type DockLayout,
   type DockLayoutUpdate,
   type DockPlacement,
+  type DockPreset,
   type DockView,
   type SplitEdge,
 } from "./dockLayout";
@@ -193,6 +195,12 @@ export function useDockLayout({
       setLayout((layout) => addDockView(layout, view, placement));
     },
     [setLayout],
+  );
+
+  const applyPreset = useCallback(
+    (preset: DockPreset) =>
+      commit((state) => applyDockLayout(state, arrangeDockViews(layoutFor(state), preset), true)),
+    [commit, layoutFor],
   );
   const focusView = useCallback(
     (id: string) => {
@@ -408,6 +416,7 @@ export function useDockLayout({
     hasChatLayout: state.chats.some((chat) => chat.conversationId === state.activeConversationId),
     error: session.error,
     setLayout,
+    applyPreset,
     addView,
     focusView,
     restoreConversationViews,

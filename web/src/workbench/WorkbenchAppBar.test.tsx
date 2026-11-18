@@ -8,12 +8,14 @@ afterEach(cleanup);
 
 it("reuses the small leading-icon button without forcing a large mobile face and preserves Open actions", () => {
   const run = vi.fn();
+  const preset = vi.fn();
   render(
     <WorkbenchAppBar
       sidebarOpen
       onToggleSidebar={vi.fn()}
       onSearch={vi.fn()}
       onSettings={vi.fn()}
+      onLayoutPreset={preset}
       openActions={[{ id: "files", label: "Files", icon: FileIcon, run }]}
     />,
   );
@@ -37,4 +39,9 @@ it("reuses the small leading-icon button without forcing a large mobile face and
   fireEvent.pointerDown(button, { button: 0, pointerType: "mouse", ctrlKey: false });
   fireEvent.click(screen.getByRole("menuitem", { name: "Files" }));
   expect(run).toHaveBeenCalledOnce();
+  const layouts = screen.getByRole("button", { name: "Layout presets" });
+  expect(layouts.nextElementSibling?.tagName).toBe("BUTTON");
+  fireEvent.pointerDown(layouts, { button: 0, pointerType: "mouse", ctrlKey: false });
+  fireEvent.click(screen.getByRole("menuitem", { name: "Three columns" }));
+  expect(preset).toHaveBeenCalledWith("thirds");
 });

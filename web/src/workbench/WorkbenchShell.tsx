@@ -13,8 +13,7 @@ import {
 import { useSessionComposerFocus } from "./useSessionComposerFocus";
 import { useStartupConversation } from "./useStartupConversation";
 import { focusedResourceTarget } from "./resourceTarget";
-import { OpenViewMenu } from "./OpenViewMenu";
-import { Button } from "@/components/ui/button";
+import { EmptyDockPane } from "./OpenViewMenu";
 import { CapturedFileActions } from "./CapturedFileActions";
 import { CapturedFileGate, capturedFileQuery } from "./CapturedFileGate";
 import { fetchChatFileLocation } from "@/lib/chatFileReferences";
@@ -1775,6 +1774,7 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
                     }}
                     onSettings={() => navigate("/settings")}
                     openActions={openActions}
+                    onLayoutPreset={showDock ? dock.applyPreset : undefined}
                   />
                 )}
                 <div className="relative flex min-h-0 min-w-0 flex-1">
@@ -1825,25 +1825,15 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
                         onPinView={(id) => dock.pinView(id)}
                         onUnpinView={(id) => dock.unpinView(id)}
                       />
-                      {!dock.layout.views.length && (
-                        <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 p-6 text-center">
-                          <p className="text-xl text-muted-foreground">
-                            Open a chat or tool to get started.
-                          </p>
-                          <OpenViewMenu
-                            actions={openActions}
-                            open={emptyViewMenuOpen}
-                            onOpenChange={setEmptyViewMenuOpen}
-                            onSelect={(action) =>
-                              action.id === "new-chat" ? createPaneChat() : action.run()
-                            }
-                          >
-                            <Button variant="default">
-                              <PlusIcon className="size-4" />
-                              Open view
-                            </Button>
-                          </OpenViewMenu>
-                        </div>
+                      {dock.layout.tree === null && (
+                        <EmptyDockPane
+                          actions={openActions}
+                          open={emptyViewMenuOpen}
+                          onOpenChange={setEmptyViewMenuOpen}
+                          onSelect={(action) =>
+                            action.id === "new-chat" ? createPaneChat() : action.run()
+                          }
+                        />
                       )}
                     </div>
                     {active && !showDock && (

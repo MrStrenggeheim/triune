@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { terminalLayoutGeometry, terminalLayoutKeys } from "@/lib/terminalSplitLayout";
 import {
   addDockView,
+  arrangeDockViews,
   closeDockView,
   createDockLayout,
   dockPaneForView,
@@ -13,6 +14,7 @@ import {
   sameDockResource,
   selectDockView,
   type DockView,
+  type DockLayout,
 } from "./dockLayout";
 import {
   applyDockLayout,
@@ -34,6 +36,67 @@ const view = (id: string, kind = "editor"): DockView => ({
 });
 
 describe("dock layout operations", () => {
+  it.each([0, 1, 3, 5])("arranges all %i open views and retains their identities", (count) => {
+    const views = Array.from({ length: count }, (_, index) => view(String(index)));
+    const original = createDockLayout(views);
+    let layout = arrangeDockViews(original, "thirds");
+    expect(layout.panes.map((pane) => pane.viewIds)).toEqual(
+      [views.slice(0, 1), views.slice(1, 2), views.slice(2)].map((group) =>
+        group.map((item) => item.id),
+      ),
+    );
+    for (const preset of ["grid", "single", "columns", "rows", "thirds"] as const) {
+      layout = arrangeDockViews(layout, preset);
+      expect(layout.views).toBe(original.views);
+      expect(layout.panes.flatMap((pane) => pane.viewIds)).toEqual(views.map((item) => item.id));
+      expect(parseDockLayout(JSON.parse(JSON.stringify(layout)))).toEqual(layout);
+    }
+  });
+
+  it.each([false, true])(
+    "moves only adjacent edges in either equivalent split tree (%s)",
+    (firstGrouped) => {
+      const layout = arrangeDockViews(
+        createDockLayout(["a", "b", "c"].map((id) => view(id))),
+        "thirds",
+      );
+      const [a, b, c] = layout.panes.map((pane) => pane.id);
+      if (firstGrouped)
+        layout.tree = {
+          axis: "columns",
+          ratio: 2 / 3,
+          children: [{ axis: "columns", ratio: 0.5, children: [a, b] }, c],
+        };
+      const widths = (target: DockLayout) =>
+        terminalLayoutGeometry(target.tree!).panes.map(
+          (pane) => Math.round(pane.width * 100) / 100,
+        );
+      expect(
+        widths(resizeDockSplit(layout, firstGrouped ? [0] : [], firstGrouped ? 0.6 : 0.4)),
+      ).toEqual([40, 26.67, 33.33]);
+      expect(
+        widths(resizeDockSplit(layout, firstGrouped ? [] : [1], firstGrouped ? 0.6 : 0.4)),
+      ).toEqual([33.33, 26.67, 40]);
+      const limited = resizeDockSplit(layout, firstGrouped ? [0] : [], 1);
+      expect(widths(limited)).toEqual([53.33, 13.33, 33.33]);
+      expect(parseDockLayout(limited)).toBe(limited);
+    },
+  );
+
+  it("holds nested parallel boundaries fixed across perpendicular splits", () => {
+    const layout = arrangeDockViews(createDockLayout(), "grid");
+    const before = terminalLayoutGeometry(layout.tree!).panes;
+    layout.tree = { axis: "columns", ratio: 0.25, children: ["side", layout.tree!] };
+    const after = terminalLayoutGeometry(resizeDockSplit(layout, [], 0.35).tree!).panes;
+    expect(after.slice(1).map((rect) => [rect.left, rect.top, rect.width, rect.height])).toEqual(
+      before.map((rect) => [
+        rect.left === 0 ? 35 : 62.5,
+        rect.top,
+        rect.left === 0 ? 27.5 : 37.5,
+        rect.height,
+      ]),
+    );
+  });
   it("keeps selecting the same focused view idempotent while preserving explicit pane focus", () => {
     const layout = addDockView(createDockLayout([view("a"), view("b")]), view("c"), {
       edge: "right",

@@ -1,5 +1,13 @@
 // Modified for Triune.
-import { PlusIcon, SearchIcon, type LucideIcon } from "lucide-react";
+import { Columns2Icon, PlusIcon, SearchIcon, type LucideIcon } from "lucide-react";
+import { HeaderActionButton } from "@/components/HeaderActionButton";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { dockPresets, type DockPreset } from "./dockLayout";
 import { Button } from "@/components/ui/button";
 import { MOD_KEY } from "@/components/KeyboardShortcut";
 import { NotificationBell } from "@/components/NotificationCenter";
@@ -22,12 +30,14 @@ export function WorkbenchAppBar({
   onToggleSidebar,
   onSearch,
   openActions,
+  onLayoutPreset,
 }: {
   sidebarOpen: boolean;
   onToggleSidebar: () => void;
   onSearch: () => void;
   onSettings?: () => void;
   openActions: WorkbenchOpenAction[];
+  onLayoutPreset?: (preset: DockPreset) => void;
 }) {
   const appName = useAppName();
   const bar = useRef<HTMLElement>(null);
@@ -98,6 +108,20 @@ export function WorkbenchAppBar({
             </Button>
           </OpenViewMenu>
         </div>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <HeaderActionButton aria-label="Layout presets" disabled={!onLayoutPreset}>
+              <Columns2Icon />
+            </HeaderActionButton>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            {(Object.keys(dockPresets) as DockPreset[]).map((preset) => (
+              <DropdownMenuItem key={preset} onSelect={() => onLayoutPreset?.(preset)}>
+                {dockPresets[preset]}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
         <NotificationBell />
       </div>
     </header>

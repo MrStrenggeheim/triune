@@ -33,6 +33,10 @@ export interface DockPersistence {
   /** Last composed topology reserves exact pinned-pane positions and sizes. */
   pinFrame?: DockLayout;
   pinFrameOwner?: string | null;
+  /** A manually chosen preset may move global pins in this session only. */
+  presetFrames?: (Pick<DockLayout, "tree" | "panes" | "focusedPaneId"> & {
+    owner: string | null;
+  })[];
   pinEdge: SplitEdge;
   /** Fraction reserved for global pins. */
   pinRatio: number;
@@ -191,6 +195,17 @@ export function composeDockLayout(state: DockPersistence): DockLayout {
   const pinned = new Set(state.pins.views.map((view) => view.id));
   const unpinned = filterDockLayout(localDockLayout(state), (view) => !pinned.has(view.id));
   const local = pinned.size ? withoutEmptyPanes(unpinned) : unpinned;
+  const preset = state.presetFrames?.find((frame) => frame.owner === state.activeConversationId);
+  if (preset && pinned.size) {
+    const composed = parseDockLayout({
+      version: 1,
+      tree: preset.tree,
+      panes: preset.panes,
+      focusedPaneId: preset.focusedPaneId,
+      views: [...local.views, ...state.pins.views],
+    });
+    if (composed) return composed;
+  }
   if (state.pinFrame && pinned.size) {
     const composed = composePinnedFrame(
       state.pinFrame,
@@ -237,12 +252,40 @@ export function composeDockLayout(state: DockPersistence): DockLayout {
 }
 
 /** Editing a composed layout never writes another conversation's snapshot. */
-export function applyDockLayout(state: DockPersistence, layout: DockLayout): DockPersistence {
+export function applyDockLayout(
+  state: DockPersistence,
+  layout: DockLayout,
+  sessionPreset = false,
+): DockPersistence {
   if (!parseDockLayout(layout)) throw new Error("Invalid dock layout");
   const pinned = new Set(state.pins.views.map((view) => view.id));
   const pins = withoutEmptyPanes(filterDockLayout(layout, (view) => pinned.has(view.id)));
   const unpinned = filterDockLayout(layout, (view) => !pinned.has(view.id));
   const local = pins.views.length ? withoutEmptyPanes(unpinned) : unpinned;
+  const previousFrames = state.presetFrames ?? [];
+  if (
+    (sessionPreset || previousFrames.some((frame) => frame.owner === state.activeConversationId)) &&
+    pinned.size > 0 &&
+    pins.views.length === pinned.size
+  ) {
+    const { tree, panes, focusedPaneId } = layout;
+    const next = withLocal(
+      {
+        ...state,
+        presetFrames: [
+          ...previousFrames.filter((frame) => frame.owner !== state.activeConversationId),
+          { owner: state.activeConversationId, tree, panes, focusedPaneId },
+        ],
+        focusedViewId: panes.find((pane) => pane.id === focusedPaneId)?.selectedViewId ?? null,
+      },
+      local,
+    );
+    if (next.pinFrame) {
+      const retained = new Set(retainedDockViews(next).map((view) => view.id));
+      next.pinFrame = filterDockLayout(next.pinFrame, (view) => retained.has(view.id));
+    }
+    return next;
+  }
   let pinEdge = state.pinEdge;
   let pinRatio = state.pinRatio;
   // A mixed tab group stays in its respective area; an outer split moves the reservation.
@@ -283,6 +326,7 @@ export function applyDockLayout(state: DockPersistence, layout: DockLayout): Doc
     {
       ...state,
       pins,
+      presetFrames: pinned.size !== pins.views.length ? undefined : state.presetFrames,
       pinFrame: pins.views.length ? layout : undefined,
       pinFrameOwner: pins.views.length ? state.activeConversationId : undefined,
       pinEdge,
@@ -328,6 +372,7 @@ export function pinDockView(
   return {
     ...state,
     pins,
+    presetFrames: undefined,
     pinEdge: edge,
     pinFrame: layout,
     pinFrameOwner: state.activeConversationId,
@@ -338,7 +383,7 @@ export function unpinDockView(state: DockPersistence, viewId: string): DockPersi
   if (!state.pins.views.some((view) => view.id === viewId)) return state;
   const layout = composeDockLayout(state);
   const pins = withoutEmptyPanes(filterDockLayout(state.pins, (item) => item.id !== viewId));
-  return applyDockLayout({ ...state, pins }, layout);
+  return applyDockLayout({ ...state, pins, presetFrames: undefined }, layout);
 }
 
 export function parseDockPersistence(raw: string): DockPersistence | undefined {
@@ -357,6 +402,11 @@ export function parseDockPersistence(raw: string): DockPersistence | undefined {
         typeof value.pinFrameOwner === "string"
       ) ||
       !Array.isArray(value.chats) ||
+      (value.presetFrames !== undefined &&
+        (!Array.isArray(value.presetFrames) ||
+          value.presetFrames.some(
+            (frame) => !frame || !(typeof frame.owner === "string" || frame.owner === null),
+          ))) ||
       !["left", "right", "top", "bottom"].includes(value.pinEdge) ||
       !Number.isFinite(value.pinRatio) ||
       clampSplitRatio(value.pinRatio) !== value.pinRatio ||

@@ -34,7 +34,7 @@ import {
 import { Pin, PlusIcon } from "lucide-react";
 import { CloseButton } from "@/components/CloseButton";
 import { TooltipButton } from "@/components/ui/tooltip";
-import { OpenViewMenu } from "./OpenViewMenu";
+import { EmptyDockPane, OpenViewMenu } from "./OpenViewMenu";
 import { middleClickHandlers } from "@/lib/middleClick";
 import type { WorkbenchOpenAction } from "./WorkbenchAppBar";
 import { HeaderActionButton } from "@/components/HeaderActionButton";
@@ -48,9 +48,6 @@ import {
   ContextMenuSeparator,
 } from "@/components/ui/context-menu";
 import {
-  clampSplitRatio,
-  MAX_SPLIT_RATIO,
-  MIN_SPLIT_RATIO,
   terminalLayoutGeometry,
   type TerminalDivider,
   type TerminalRect,
@@ -798,6 +795,14 @@ function DockPaneChrome({
           )}
         </WorkspaceTabsScroller>
       </div>
+      {!pane.viewIds.length && openActions && (
+        <div className="pointer-events-auto absolute inset-x-0 bottom-0 top-[var(--dock-header-height)]">
+          <EmptyDockPane
+            actions={openActions}
+            onSelect={(action) => (onOpenAction ? onOpenAction(pane.id, action) : action.run())}
+          />
+        </div>
+      )}
       {dragging && (
         <div className="dock-drop-overlay">
           <DockDropZone paneId={pane.id} dropTarget={dropTarget} />
@@ -1115,9 +1120,9 @@ function DockDivider({
       role="separator"
       aria-label="Resize panes"
       aria-orientation={columns ? "vertical" : "horizontal"}
-      aria-valuemin={MIN_SPLIT_RATIO * 100}
-      aria-valuemax={MAX_SPLIT_RATIO * 100}
-      aria-valuenow={Math.round(ratio * 100)}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={Math.round(offset)}
       tabIndex={0}
       className="dock-divider"
       data-resizing={resizing}
@@ -1152,9 +1157,7 @@ function DockDivider({
           ? ((event.clientX - bounds.left) / bounds.width) * 100
           : ((event.clientY - bounds.top) / bounds.height) * 100;
         onResize(
-          clampSplitRatio(
-            columns ? (position - area.left) / area.width : (position - area.top) / area.height,
-          ),
+          columns ? (position - area.left) / area.width : (position - area.top) / area.height,
           false,
         );
       }}
@@ -1167,7 +1170,7 @@ function DockDivider({
           : { ArrowUp: -1, ArrowDown: 1 }[event.key];
         if (step !== undefined) {
           event.preventDefault();
-          onResize(ratio + step * 0.05, true);
+          onResize(ratio + (step * 5) / (columns ? area.width : area.height), true);
         }
       }}
     />

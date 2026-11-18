@@ -1,5 +1,7 @@
 // Triune additions: PolyForm Noncommercial 1.0.0; see LICENSING.md.
-import type { ReactElement } from "react";
+import type { ComponentProps, ReactElement } from "react";
+import { PlusIcon } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -40,5 +42,19 @@ export function OpenViewMenu({
         ))}
       </DropdownMenuContent>
     </DropdownMenu>
+  );
+}
+
+export function EmptyDockPane(props: Omit<ComponentProps<typeof OpenViewMenu>, "children">) {
+  return (
+    <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 p-6 text-center">
+      <p className="text-xl text-muted-foreground">Open a chat or tool to get started.</p>
+      <OpenViewMenu {...props}>
+        <Button variant="default">
+          <PlusIcon className="size-4" />
+          Open view
+        </Button>
+      </OpenViewMenu>
+    </div>
   );
 }
