@@ -30,7 +30,7 @@ afterEach(() => {
 });
 
 describe("scoped chat store", () => {
-  it("keeps a root-opened binding when initial metadata becomes ready", () => {
+  it("keeps a root-opened binding when initial metadata becomes ready", async () => {
     metadata.loading = true;
     const entry = conversationRegistry.acquire("initial");
     const ensure = vi
@@ -44,6 +44,7 @@ describe("scoped chat store", () => {
         <span>Initial reader</span>
       </ScopedChatStoreProvider>,
     );
+    await act(async () => {});
     expect(ensure).not.toHaveBeenCalled();
     const controller = new AbortController();
     const draft = { conversationId: "initial", text: "Keep draft", files: [] };
@@ -61,14 +62,16 @@ describe("scoped chat store", () => {
         <span>Initial reader</span>
       </ScopedChatStoreProvider>,
     );
+    await act(async () => {});
     expect(controller.signal.aborted).toBe(false);
     expect(entry.getState().abortController).toBe(controller);
     expect(ensure).toHaveBeenCalledOnce();
     expect(entry.getState()).toMatchObject({ failedSendDraft: draft, oldestItemId: "anchor" });
     view.unmount();
+    await act(async () => {});
     expect(controller.signal.aborted).toBe(true);
   });
-  it("changes focused send ownership without rebinding continuously visible panes", () => {
+  it("changes focused send ownership without rebinding continuously visible panes", async () => {
     const aborted = vi.fn();
     const ensure = vi
       .spyOn(chatStore, "ensureConversationStreamed")
@@ -108,12 +111,15 @@ describe("scoped chat store", () => {
       );
     }
     const view = render(<Panes firstFocused />);
+    await act(async () => {});
     const controllers = ["first", "second"].map(
       (id) => conversationRegistry.peek(id)!.getState().abortController,
     );
     for (let index = 0; index < 10; index++) {
       const firstFocused = index % 2 !== 0;
       view.rerender(<Panes firstFocused={firstFocused} />);
+      // eslint-disable-next-line no-await-in-loop -- Each focus transition commits before its send.
+      await act(async () => {});
       const target = firstFocused ? "first" : "second";
       fireEvent.click(screen.getByRole("button", { name: `Send ${target}` }));
       expect(send).toHaveBeenLastCalledWith("hello", "agent", undefined, {
@@ -128,10 +134,11 @@ describe("scoped chat store", () => {
       ["first", "second"].map((id) => conversationRegistry.peek(id)!.getState().abortController),
     ).toEqual(controllers);
     view.unmount();
+    await act(async () => {});
     expect(aborted).toHaveBeenCalledTimes(2);
   });
 
-  it("keeps another visible owner's stream and recovers the retained reader on reveal", () => {
+  it("keeps another visible owner's stream and recovers the retained reader on reveal", async () => {
     const entry = conversationRegistry.acquire("shared");
     const draft = { conversationId: "shared", text: "unsent", files: [] };
     entry.setState({ failedSendDraft: draft, oldestItemId: "reader-anchor" });
@@ -156,25 +163,30 @@ describe("scoped chat store", () => {
       );
     }
     const view = render(<Owners visible second />);
+    await act(async () => {});
     const original = entry.getState().abortController!;
     view.rerender(<Owners visible={false} second />);
+    await act(async () => {});
     expect(original.signal.aborted).toBe(false);
     view.rerender(<Owners visible={false} second={false} />);
+    await act(async () => {});
     expect(original.signal.aborted).toBe(true);
     view.rerender(<Owners visible second={false} />);
+    await act(async () => {});
     const resumed = entry.getState().abortController!;
     expect(resumed).not.toBe(original);
     expect(resumed.signal.aborted).toBe(false);
-    expect(ensure).toHaveBeenCalledTimes(3);
+    expect(ensure).toHaveBeenCalledTimes(2);
     expect(entry.getState()).toMatchObject({
       failedSendDraft: draft,
       oldestItemId: "reader-anchor",
     });
     view.unmount();
+    await act(async () => {});
     expect(resumed.signal.aborted).toBe(true);
   });
 
-  it("leaves route-driven observation establishment to the provider after visibility cleanup", () => {
+  it("leaves route-driven observation establishment to the provider after visibility cleanup", async () => {
     const entry = conversationRegistry.acquire("reader");
     const draft = { conversationId: "reader", text: "Retained draft", files: [] };
     entry.setState({ failedSendDraft: draft, oldestItemId: "older-anchor" });
@@ -202,15 +214,19 @@ describe("scoped chat store", () => {
       );
     }
     const view = render(<Reader visible pathname="/a" />);
+    await act(async () => {});
     expect(opened).toHaveLength(1);
     view.rerender(<Reader visible={false} pathname="/b" />);
+    await act(async () => {});
     expect(opened[0]!.signal.aborted).toBe(true);
     ensure.mockClear();
     const beforeReveal = opened.length;
     // The hidden child's URL effect runs before its provider is revealed.
     view.rerender(<Reader visible={false} pathname="/a" />);
+    await act(async () => {});
     expect(ensure).not.toHaveBeenCalled();
     view.rerender(<Reader visible pathname="/a" />);
+    await act(async () => {});
     expect(opened).toHaveLength(beforeReveal + 1);
     expect(opened.at(-1)!.signal.aborted).toBe(false);
     expect(entry.getState()).toMatchObject({
@@ -218,10 +234,11 @@ describe("scoped chat store", () => {
       oldestItemId: "older-anchor",
     });
     view.unmount();
+    await act(async () => {});
     expect(opened.at(-1)!.signal.aborted).toBe(true);
   });
 
-  it("detaches when a remembered layout hides while preserving its scoped state", () => {
+  it("detaches when a remembered layout hides while preserving its scoped state", async () => {
     const entry = conversationRegistry.acquire("remembered");
     const controller = new AbortController();
     const draft = { conversationId: "remembered", text: "still typing", files: [] };
@@ -231,11 +248,13 @@ describe("scoped chat store", () => {
         <span>remembered editor</span>
       </ScopedChatStoreProvider>,
     );
+    await act(async () => {});
     view.rerender(
       <ScopedChatStoreProvider conversationId="remembered" focused={false} visible={false}>
         <span>remembered editor</span>
       </ScopedChatStoreProvider>,
     );
+    await act(async () => {});
     expect(controller.signal.aborted).toBe(true);
     expect(conversationRegistry.peek("remembered")).toBe(entry);
     expect(createScopedChatStore("remembered").getState()).toMatchObject({
@@ -243,6 +262,29 @@ describe("scoped chat store", () => {
       oldestItemId: "reader",
     });
     expect(screen.getByText("remembered editor")).toBeInTheDocument();
+  });
+
+  it("moves a visible chat between pane instances without replacing its subscription", async () => {
+    const ensure = vi
+      .spyOn(chatStore, "ensureConversationStreamed")
+      .mockImplementation(async (id) => {
+        conversationRegistry.acquire(id).setState({ abortController: new AbortController() });
+      });
+    const pane = (key: string) => (
+      <ScopedChatStoreProvider key={key} conversationId="shared" visible focused>
+        <span>{key}</span>
+      </ScopedChatStoreProvider>
+    );
+    const view = render(pane("left"));
+    await act(async () => {});
+    const controller = conversationRegistry.peek("shared")!.getState().abortController!;
+    view.rerender(pane("right"));
+    await act(async () => {});
+    expect(ensure).toHaveBeenCalledTimes(1);
+    expect(controller.signal.aborted).toBe(false);
+    view.unmount();
+    await act(async () => {});
+    expect(controller.signal.aborted).toBe(true);
   });
 
   it("does not notify other scopes for primary fields but still shares globals and queues", () => {

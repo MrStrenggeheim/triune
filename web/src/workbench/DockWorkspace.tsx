@@ -1,4 +1,5 @@
 // Modified for Triune.
+import { VisibleConversation } from "./ConversationDemand";
 import {
   Fragment,
   memo,
@@ -80,6 +81,7 @@ export interface DockViewVisibility {
 }
 
 export interface DockWorkspaceProps {
+  observeConversations?: boolean;
   /** Hidden workbenches retain resources while suspending their presentation work. */
   active?: boolean;
   openActions?: WorkbenchOpenAction[];
@@ -362,6 +364,24 @@ function DockSurface(props: DockWorkspaceProps) {
           .filter((pane) => !compact || pane.id === layout.focusedPaneId)
           .flatMap((pane) => (pane.selectedViewId ? [pane.selectedViewId] : [])),
   );
+  const selectedChats = new Map<string, boolean>();
+  if (props.observeConversations) {
+    for (const viewId of visibleIds) {
+      const view = allViews.get(viewId);
+      const id = view?.resource.conversationId;
+      if (
+        view?.kind === "conversation" &&
+        typeof id === "string" &&
+        !view.resource.unavailableReason &&
+        !view.resource.draftId
+      ) {
+        const focused = layout.panes.some(
+          (pane) => pane.id === layout.focusedPaneId && pane.selectedViewId === viewId,
+        );
+        selectedChats.set(id, focused || !!selectedChats.get(id));
+      }
+    }
+  }
   const residentViews = useResidentDockViews(
     allViews,
     visibleIds,
@@ -425,6 +445,10 @@ function DockSurface(props: DockWorkspaceProps) {
           setExternalOver(null);
         }}
       >
+        {[...selectedChats].map(([id, focused]) => (
+          <VisibleConversation key={id} id={id} focused={focused} />
+        ))}
+
         {error && (
           <div role="alert" className="dock-error">
             {error}

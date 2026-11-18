@@ -1,4 +1,5 @@
 // Modified for Triune.
+import { useConversationDemand } from "@/workbench/ConversationDemand";
 import {
   useDiscardComposerFocus,
   useRequestedComposerFocus,
@@ -514,7 +515,7 @@ export function ChatPage({
       );
       return;
     }
-    void useChatStore.getState().switchTo(urlConvId ?? null);
+    void useChatStore.getState().switchTo(urlConvId ?? null, { observe: false });
   }, [urlConvId, navigate, pathname, search, rebasePath, useChatStore]);
 
   useConversationRedirect(urlConvId, !scoped || focused);
@@ -701,6 +702,7 @@ export function ChatPage({
   // the hook is skipped on renders that hit the loading/error branches,
   // tripping React's "rendered fewer hooks than expected".
   const { session: activeSession, isLoading: sessionLoading } = useSession(sessionConvId ?? null);
+  useConversationDemand(!scoped && visible ? sessionConvId : undefined, !sessionLoading, focused);
 
   // Orchestrator-only: polly's children inherit its agentName, so the gate
   // needs the session predicate (parent linkage), not a bare name check. An

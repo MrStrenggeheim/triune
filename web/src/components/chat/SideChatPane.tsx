@@ -81,6 +81,7 @@ import { readAlwaysSteer } from "@/lib/alwaysSteerPreferences";
 import { shouldQueueSend } from "@/lib/messageQueue";
 import { attachmentAccept, clipboardFiles, validateAttachments } from "@/lib/attachments";
 import { useServerInfo } from "@/lib/CapabilitiesContext";
+import { useConversationDemand } from "@/workbench/ConversationDemand";
 import { useConversationEntryState } from "@/hooks/useConversationEntryState";
 import { useAutoGrowTextarea } from "@/hooks/useAutoGrowTextarea";
 import { useDictationInsert } from "@/hooks/useDictationInsert";
@@ -162,6 +163,7 @@ export function SideChatPane({
   onStart,
   readOnly: restoredReadOnly = false,
   fullSession = false,
+  visible = true,
 }: {
   childId: string;
   selectionParentId?: string;
@@ -170,11 +172,12 @@ export function SideChatPane({
   readOnly?: boolean;
   /** Display an existing session with its complete history and scoped composer. */
   fullSession?: boolean;
+  visible?: boolean;
 }) {
   const pending = isPendingSideChat(childId);
   const starting = useChatStore((s) => s.sideChatComposers[childId]?.starting ?? false);
   // The server seals a side chat whose fork died with its runner.
-  const { session } = useSession(pending ? null : childId);
+  const { session, isLoading: metadataLoading } = useSession(pending ? null : childId);
   const readOnly = restoredReadOnly || session?.labels?.["omnigent.closed"] === "true";
   useLayoutEffect(() => {
     if (!selectionParentId || readOnly || starting) return;
@@ -186,12 +189,7 @@ export function SideChatPane({
       }
     };
   }, [childId, selectionParentId, readOnly, starting]);
-  // Open the child's stream once (real tabs only) so it hydrates and streams
-  // here. The store guards a double-bind and re-binds a failed entry, so
-  // re-mounts / tab switches / retries are cheap.
-  useEffect(() => {
-    if (!pending) void ensureConversationStreamed(childId);
-  }, [pending, childId]);
+  useConversationDemand(!pending && visible ? childId : undefined, !metadataLoading, false);
   // A real tab reads the child entry; a pending tab has none (null → empty).
   const state = useConversationEntryState(pending ? null : childId);
   const {

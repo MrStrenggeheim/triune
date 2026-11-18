@@ -1162,6 +1162,7 @@ function WorkspacePanelImpl({
     selectedSideChat === null ? null : (
       <SideChatPane
         key={selectedSideChat}
+        visible={!inert && (isMobile ? mobileSideChatsOpen : open && sideChatSelected)}
         childId={selectedSideChat}
         selectionParentId={
           (isMobile ? mobileSideChatsOpen : open && sideChatSelected) ? conversationId : undefined

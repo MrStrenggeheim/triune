@@ -86,11 +86,13 @@ function ConversationSearchBar({ conversationId }: { conversationId: string }) {
 export const ConversationView = memo(function ConversationView({
   conversationId,
   visible = true,
+  workspaceManaged = false,
   focused,
   children,
 }: {
   conversationId: string;
   visible?: boolean;
+  workspaceManaged?: boolean;
   focused?: boolean;
   children?: ReactNode;
 }) {
@@ -101,6 +103,7 @@ export const ConversationView = memo(function ConversationView({
       key={conversationId}
       conversationId={conversationId}
       visible={visible}
+      workspaceManaged={workspaceManaged}
       focused={isFocused}
     >
       <ComposerShelfVisibilityProvider>

@@ -48,7 +48,7 @@ import { getBasePath } from "@/lib/basePath";
 // before grouping assistant work, preserving draft ownership and stable keys.
 
 import type { InfiniteData, QueryClient } from "@tanstack/react-query";
-import { create } from "zustand";
+import { createStore, useStore, type StoreApi, type UseBoundStore } from "zustand";
 import type {
   AnyBlock,
   ElicitationBlock,
@@ -436,7 +436,7 @@ export function beginLocalConversation(
   });
   useChatStore.setState({ conversationId: tempConvId });
   conversationRegistry.setActive(tempConvId);
-  mirrorActiveEntry();
+  publishActiveChat();
   return { tempConvId, pendingMsgTempId, createToken };
 }
 
@@ -503,7 +503,7 @@ export function hydrateLocalConversation(
   if (stillViewing) {
     useChatStore.setState({ conversationId: realId });
     conversationRegistry.setActive(realId);
-    mirrorActiveEntry();
+    publishActiveChat();
     navigate(`/c/${realId}`, { replace: true });
   }
 
@@ -1348,7 +1348,7 @@ export interface ChatActions {
     opts?: SendOptions,
   ) => Promise<void>;
   stop: (conversationId?: string) => void;
-  switchTo: (conversationId: string | null) => Promise<void>;
+  switchTo: (conversationId: string | null, options?: { observe?: boolean }) => Promise<void>;
   submitApproval: (
     elicitationId: string,
     action: "accept" | "decline" | "cancel",
@@ -2048,7 +2048,7 @@ export function bindConversationForTest(
   }
   const entry = conversationRegistry.acquire(id);
   if (state !== undefined) entry.setState(state);
-  mirrorActiveEntry();
+  publishActiveChat();
   return { set: entrySetter(entry), get: entryGetter(entry) };
 }
 
@@ -2445,7 +2445,7 @@ function cachedEffortFamilyForSession(
   return catalog.effortFamilies[session.harness] ?? null;
 }
 
-export const useChatStore = create<ChatState>((_rootSet, get) => ({
+const createChatState = (get: () => ChatState): ChatState => ({
   conversationId: null,
   redirectToConversationId: null,
   blocks: [],
@@ -3819,9 +3819,9 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
     }
   },
 
-  switchTo: async (conversationId) => {
+  switchTo: async (conversationId, { observe = true } = {}) => {
     if (get().conversationId === conversationId) {
-      if (conversationId !== null) await ensureConversationStreamed(conversationId);
+      if (observe && conversationId !== null) await ensureConversationStreamed(conversationId);
       return;
     }
 
@@ -3870,7 +3870,7 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
         return;
       }
       conversationRegistry.acquire(conversationId);
-      mirrorActiveEntry();
+      publishActiveChat();
       return;
     }
 
@@ -3889,7 +3889,8 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
     }
     // Paint whatever the entry already holds. For a live entry that is the
     // current transcript; for a fresh one it is the initial state.
-    mirrorActiveEntry();
+    publishActiveChat();
+    if (!observe) return;
     if (wasLive) {
       // Legacy streams can stay open on the wrong replica without delivering
       // events. Revalidate them and newly revealed views against saved history;
@@ -4399,7 +4400,62 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
       pageSet({ loadingMoreHistory: false, hasMoreHistory: false });
     }
   },
-}));
+});
+
+const applicationStore = createStore<ChatState>(() => createChatState(readActiveChat));
+/** App-wide commands and queues; reading this channel never subscribes panes to the focused transcript. */
+export const chatApplication = {
+  getState: applicationStore.getState,
+  subscribe: applicationStore.subscribe,
+};
+
+let lastApplication: ChatState | undefined;
+let lastConversation: ConversationState | undefined;
+let lastSnapshot: ChatState;
+
+/** Standalone callers select the active registry entry without copying stream writes into another store. */
+function readActiveChat(): ChatState {
+  const app = applicationStore.getState();
+  const conversation = app.conversationId
+    ? conversationRegistry.peek(app.conversationId)?.getState()
+    : undefined;
+  if (app !== lastApplication || conversation !== lastConversation) {
+    lastApplication = app;
+    lastConversation = conversation;
+    lastSnapshot = conversation ? { ...app, ...conversation } : app;
+  }
+  return lastSnapshot;
+}
+
+const listeners = new Set<(state: ChatState, previous: ChatState) => void>();
+let publishedSnapshot = readActiveChat();
+function publishActiveChat() {
+  const previous = publishedSnapshot;
+  const next = readActiveChat();
+  if (next === previous) return;
+  publishedSnapshot = next;
+  for (const listener of listeners) listener(next, previous);
+}
+applicationStore.subscribe(publishActiveChat);
+const publishIfActive = (id: string) => {
+  if (applicationStore.getState().conversationId === id) publishActiveChat();
+};
+conversationRegistry.subscribe(publishIfActive);
+conversationRegistry.subscribeDisposed(publishIfActive);
+
+const chatApi: StoreApi<ChatState> = {
+  ...applicationStore,
+  getState: readActiveChat,
+  subscribe: (listener) => {
+    listeners.add(listener);
+    return () => listeners.delete(listener);
+  },
+};
+export const useChatStore: UseBoundStore<StoreApi<ChatState>> = Object.assign(
+  <T = ChatState>(select: (state: ChatState) => T = (state) => state as unknown as T) =>
+    useStore(chatApi, select),
+  chatApi,
+);
 
 // ── Store-action setter ──────────────────────────────────
 //
@@ -4411,9 +4467,6 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
 //
 // Declared after the store because it closes over `useChatStore`; hoisting makes
 // it available to the actions above, which only ever run after module init.
-// zustand's own `set` (`_rootSet`) is unused: it writes the root store, which is
-// a projection of the active entry, so a write there would be overwritten by the
-// next mirror.
 function setActive(partial: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>)): void {
   const active = conversationRegistry.getActive();
   if (active === null) {
@@ -4567,10 +4620,8 @@ type Setter = ((
 };
 type Getter = () => ChatState;
 
-// zustand's unwrapped setter, captured before the routing wrapper below
-// replaces it. Writes the root store's own fields with no re-splitting — used by
-// the mirror and by the app-global half of a routed patch.
-const rootSetState = useChatStore.setState;
+// App-global fields and the provisional landing composer have no conversation entry.
+const rootSetState = applicationStore.setState;
 
 // ── Origin-wide stream slots ─────────────────────────────
 //
@@ -4825,7 +4876,7 @@ function adoptPreSessionState(entry: ConversationEntry): void {
 function entryGetter(entry: ConversationEntry): Getter {
   return () =>
     ({
-      ...useChatStore.getState(),
+      ...applicationStore.getState(),
       ...entry.getState(),
       // The root's `conversationId` names what's ON SCREEN. For an entry it
       // must name the entry itself, so code reading `get().conversationId`
@@ -4895,25 +4946,10 @@ function entrySetter(entry: ConversationEntry): Setter {
 }
 
 /**
- * Project an entry's state onto the root store so components keep reading flat
- * fields (`useChatStore((s) => s.blocks)`) without knowing about entries.
- *
- * One-directional by design — entry → root, never back. A bidirectional mirror
- * would make "which copy is the truth" ambiguous the moment they disagreed.
- */
-function mirrorActiveEntry(): void {
-  const activeId = useChatStore.getState().conversationId;
-  if (activeId === null) return;
-  const entry = conversationRegistry.peek(activeId);
-  if (entry === undefined) return;
-  rootSetState(entry.getState() as Parameters<typeof rootSetState>[0]);
-}
-
-/**
  * Bind a conversation's live stream WITHOUT making it the on-screen
  * conversation, so a side chat can stream in its Workspace-rail tab beside the
  * still-active main chat. The cold path of `switchTo` minus
- * `setActive`/`mirrorActiveEntry` — it hydrates the entry and opens its stream,
+ * `setActive`/`publishActiveChat` — it hydrates the entry and opens its stream,
  * but the root projection (what `useChatStore` reads) keeps pointing at the main
  * chat; a side-chat surface reads the child entry via `useConversationEntryState`.
  *
@@ -4933,7 +4969,7 @@ export async function ensureConversationStreamed(id: string): Promise<void> {
     // controller WITHOUT setting a load error, so an error-free entry can still
     // be dead — reusing it would strand a remounted pane on stale state. This
     // mirrors switchTo's `isConversationStreamCurrent` liveness gate.
-    if (existing.getState().loadingConversation || isConversationStreamCurrent(id)) return;
+    if (isConversationStreamCurrent(id)) return;
     abortConversationStream(existing);
   }
   const entry = conversationRegistry.acquire(id);
@@ -4970,7 +5006,7 @@ useChatStore.setState = ((partial: unknown, replace?: boolean) => {
       if (nextId !== null) {
         conversationRegistry.acquire(nextId);
         // A default-valued patch may not notify; project the new entry even then.
-        mirrorActiveEntry();
+        publishActiveChat();
       }
     }
   }
@@ -4988,17 +5024,10 @@ useChatStore.setState = ((partial: unknown, replace?: boolean) => {
     rootSetState(appPatch as unknown as Parameters<typeof rootSetState>[0]);
   }
   if (Object.keys(conversationPatch).length > 0) {
-    // The entry's change notification mirrors this back onto the root store.
+    // Active and scoped readers select this same entry.
     entrySetter(active)(conversationPatch as Partial<ConversationState>);
   }
 }) as typeof useChatStore.setState;
-
-// Keep the root store's flat fields in step with whichever entry is on screen.
-conversationRegistry.subscribe((id) => {
-  if (useChatStore.getState().conversationId !== id) return;
-  const state = conversationRegistry.peek(id)?.getState();
-  if (state !== undefined) rootSetState(state as Parameters<typeof rootSetState>[0]);
-});
 
 // A side chat's queue drains off its own entry, since no page effect watches it.
 const entryDrainedQueues = new Set<string>();
@@ -5126,7 +5155,7 @@ async function ensureBoundSession(
     });
     useChatStore.setState({ conversationId: sessionId });
     conversationRegistry.setActive(sessionId);
-    mirrorActiveEntry();
+    publishActiveChat();
     opts?.onConversationCreated?.(sessionId);
     queryClient?.invalidateQueries({ queryKey: ["conversations"] });
     await bindStream(sessionId, entrySetter(entry), entryGetter(entry));

@@ -35,7 +35,6 @@ import { Link, useParams } from "@/lib/routing";
 import { SidebarOpenButton } from "@/shell/SidebarOpenButton";
 import { Button } from "@/components/ui/button";
 import { useChatStore } from "@/store/chatStore";
-import { conversationRegistry } from "@/store/conversationRegistry";
 import { cn } from "@/lib/utils";
 import { readSessionWorkspaceState, writeSessionWorkspaceState } from "@/lib/sessionWorkspaceState";
 import { readDefaultWorkspacePanelOpen } from "@/lib/workspacePanelPreferences";
@@ -393,14 +392,10 @@ export function GridWorkspace({
   const grids = useGridSessions();
   const { gridId } = useParams<{ gridId: string }>();
   const layout = grids?.activeGrid?.layout;
-  // All visible panes must survive LRU eviction when the fourth stream opens.
+  // Grid navigation clears the standalone selection.
   useEffect(() => {
     if (!grids?.enabled || !gridId || !layout) return;
     void useChatStore.getState().switchTo(null);
-    const release = gridPanes(layout).map(({ sessionId }) =>
-      conversationRegistry.retain(sessionId),
-    );
-    return () => release.forEach((unretain) => unretain());
   }, [grids?.enabled, gridId, layout]);
   if (!grids) return content;
   if (!gridId)
