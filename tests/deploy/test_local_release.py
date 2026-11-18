@@ -211,7 +211,7 @@ def deployment(tmp_path: Path):
     original = (_ROOT / "deploy/local/omnigent-stable-update").read_text()
     script = tmp_path / "deploy"
     original = original.replace("/home/agent/apps/omnigent", str(app))
-    original = original.replace(str(_ROOT), str(source))
+    original = original.replace("source=/home/agent/projects/triune", f"source={source}")
     original = original.replace("/home/agent", str(home))
     lines = original.splitlines()
     lines = [
