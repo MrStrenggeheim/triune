@@ -475,6 +475,7 @@ class _SubprocessEntry:
         harness: str,
         model: str | None = None,
         acp_config: dict[str, str] | None = None,
+        explicit_full_access: bool = False,
     ) -> None:
         self.process = process
         self.client = client
@@ -482,6 +483,7 @@ class _SubprocessEntry:
         self.harness = harness
         self.model = model
         self.acp_config = acp_config or {}
+        self.explicit_full_access = explicit_full_access
         self.last_used_at: float = 0.0
 
 
@@ -1078,6 +1080,16 @@ class HarnessProcessManager:
         """
         return conversation_id in self._in_flight_response_ids
 
+    def active_turn_has_full_access(self, conversation_id: str) -> bool:
+        """Only a live subprocess that actually launched in bypass mode confirms access."""
+        entry = self._entries.get(conversation_id)
+        return bool(
+            entry
+            and entry.process.returncode is None
+            and entry.explicit_full_access
+            and self.has_active_turn(conversation_id)
+        )
+
     def note_activity(self, conversation_id: str) -> None:
         """Refresh the idle lease for an existing harness subprocess.
 
@@ -1371,6 +1383,14 @@ class HarnessProcessManager:
                 # liveness to the heartbeat path.
                 timeout=httpx.Timeout(5.0, read=None),
             )
+            from omnigent.acp_cli_harnesses import ACP_CLI_HARNESSES
+
+            mode_env = {
+                "claude-sdk": "HARNESS_CLAUDE_SDK_PERMISSION_MODE",
+                "cursor": "HARNESS_CURSOR_PERMISSION_MODE",
+            }.get(harness)
+            if harness == "acp" or harness.startswith("acp:") or harness in ACP_CLI_HARNESSES:
+                mode_env = "HARNESS_ACP_PERMISSION_MODE"
             return _SubprocessEntry(
                 process=process,
                 client=client,
@@ -1382,6 +1402,8 @@ class HarnessProcessManager:
                 # process env var, not re-read per turn.
                 model=(env or {}).get(_model_env_key(harness)),
                 acp_config=_acp_startup_config(env) if harness == "acp" else None,
+                explicit_full_access=mode_env is not None
+                and effective_env.get(mode_env) == "bypassPermissions",
             )
         except BaseException:
             # From spawn onward the process must have exactly one owner:

@@ -84,8 +84,7 @@ _ASK_ON_ADD_POLICY_SPEC = FunctionPolicySpec(
     ),
 )
 
-# Same posture for the scheduled-task tools in SCHEDULED_TASK_APPROVAL_TOOLS:
-# an agent cannot create or update unattended work without user approval.
+# Scheduling mutations require confirmation unless the bound runner attests Full Access.
 # Listing and deleting tasks stay ungated.
 _ASK_ON_SCHEDULED_TASK_CHANGE_SPEC = FunctionPolicySpec(
     name="__ask_on_scheduled_task_change",
@@ -436,9 +435,7 @@ def any_policies_apply(
     :returns: ``False`` when the engine would have an empty policy list and
         ``evaluate()`` would unconditionally return ALLOW/UNSPECIFIED.
     """
-    # The engine unconditionally injects _REQUIRED_APPROVAL_SPECS, so their
-    # TOOL_CALL events must always reach it: never fast-path sys_add_policy
-    # or the scheduled-task mutation tools.
+    # Always evaluate policy changes and scheduling mutations, including other guardrails.
     if phase == Phase.TOOL_CALL and (
         tool_name == "sys_add_policy" or tool_name in SCHEDULED_TASK_APPROVAL_TOOLS
     ):
@@ -509,6 +506,7 @@ def build_policy_engine(
     conversation_store: ConversationStore,
     conversation: Conversation | None = None,
     expected_agent_id: str | None = None,
+    scheduling_runner_id: str | None = None,
     connection_override: dict[str, str] | None = None,
     default_policies: list[PolicySpec] | None = None,
     policy_store: PolicyStore | None = None,
@@ -636,11 +634,6 @@ def build_policy_engine(
     admin_policy_specs: list[PolicySpec] = db_default_policy_specs + list(default_policies or [])
     all_policy_specs = session_policy_specs + agent_policy_specs + admin_policy_specs
 
-    # Mandatory approval guards: appended unconditionally so sys_add_policy
-    # and scheduled-task create/update always ask the user, even when no
-    # other guardrails are declared.
-    all_policy_specs.extend(_REQUIRED_APPROVAL_SPECS)
-
     label_defs = dict((guardrails.labels or {}) if guardrails else {})
     # One conversation read (``conv``, resolved above for policy
     # inheritance) and ONE spawn-tree load feed everything below: labels,
@@ -730,12 +723,7 @@ def build_policy_engine(
     child_guardrails = child_spec.guardrails if child_spec is not None else None
     if child_guardrails is not None and child_guardrails.policies:
         agent_policy_specs = agent_policy_specs + list(child_guardrails.policies)
-        all_policy_specs = (
-            session_policy_specs
-            + agent_policy_specs
-            + admin_policy_specs
-            + list(_REQUIRED_APPROVAL_SPECS)
-        )
+        all_policy_specs = session_policy_specs + agent_policy_specs + admin_policy_specs
         if child_guardrails.labels:
             # Child label schemas ADD keys; the parent's schema wins on a
             # collision so a child cannot loosen a parent-declared label
@@ -752,12 +740,12 @@ def build_policy_engine(
         # policy to a child cannot reorder the authoritative root pipeline.
         child_policy_specs = [p for p in session_policy_specs if p not in root_policy_specs]
         session_policy_specs = root_policy_specs + child_policy_specs
-        all_policy_specs = (
-            session_policy_specs
-            + agent_policy_specs
-            + admin_policy_specs
-            + list(_REQUIRED_APPROVAL_SPECS)
-        )
+        all_policy_specs = session_policy_specs + agent_policy_specs + admin_policy_specs
+    # Only the runtime bound to this conversation can confirm this call's access.
+    if scheduling_runner_id and conv and conv.runner_id == scheduling_runner_id:
+        all_policy_specs.append(_ASK_ON_ADD_POLICY_SPEC)
+    else:
+        all_policy_specs.extend(_REQUIRED_APPROVAL_SPECS)
     root_conv = (
         conv
         if root_conversation_id == conversation_id

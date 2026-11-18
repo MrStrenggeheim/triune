@@ -351,15 +351,7 @@ async def child_control_capabilities(
         return unavailable_child_capabilities("native_child_not_loaded", state=state or "unknown")
     active_turn_id = None
     if state == "active":
-        turns = await codex_client.request(
-            "thread/turns/list",
-            {"threadId": child_thread_id, "limit": 1, "itemsView": "summary"},
-        )
-        turn_result = turns.get("result")
-        data = turn_result.get("data", []) if isinstance(turn_result, dict) else []
-        for turn in data if isinstance(data, list) else []:
-            if isinstance(turn, dict) and turn.get("status") == "inProgress":
-                active_turn_id = turn.get("id")
+        active_turn_id = await current_native_turn_id(codex_client, child_thread_id)
         if not isinstance(active_turn_id, str) or not active_turn_id:
             return unavailable_child_capabilities("active_turn_unknown", state="active")
     direct_input = side_fork
@@ -394,6 +386,24 @@ async def child_control_capabilities(
     }
     capabilities["reason"] = None if direct_input else direct_reason
     return capabilities
+
+
+async def current_native_turn_id(client: CodexAppServerClient, thread_id: str) -> str | None:
+    """Return the exact in-progress turn on a loaded native thread."""
+    response = await client.request(
+        "thread/turns/list", {"threadId": thread_id, "limit": 1, "itemsView": "summary"}
+    )
+    result = response.get("result")
+    turns = result.get("data") if isinstance(result, dict) else None
+    if not isinstance(turns, list) or len(turns) != 1 or not isinstance(turns[0], dict):
+        return None
+    turn = turns[0]
+    turn_id = turn.get("id")
+    return (
+        turn_id
+        if turn.get("status") == "inProgress" and isinstance(turn_id, str) and turn_id
+        else None
+    )
 
 
 def _child_multi_agent_version(thread: Mapping[str, Any]) -> str | None:

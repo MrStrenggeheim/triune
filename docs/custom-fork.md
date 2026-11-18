@@ -104,7 +104,9 @@ The server produces structured events once for WebSocket and SSE adapters, and t
 Membership queues bound events, serialized bytes and residence time; physical writes have a deadline, and expensive authorization or list reads run outside the physical writer.
 Authorization is refreshed after any writer wait; revoked or rebound memberships cannot publish queued frames under an earlier check.
 Ready senders take FIFO turns; the final fresh authorization handoff is capped at one second and a physical socket write at five seconds.
-The serialized-event budget accommodates maximum tool output including JSON escaping; individually unsupported payloads stop with an export instruction rather than retrying unchanged forever.
+The 8 MiB serialized-event budget covers maximum tool output including JSON escaping.
+For larger saved items, the browser negotiates an ordered reference on WebSocket or SSE and retrieves the complete body by session, item ID, position and SHA-256 before advancing its checkpoint.
+The exact read repeats session and referenced-source authorization, streams 64 KiB chunks and rejects changed content.
 Saved items reconcile by exact ID and committed conversation position; pending previews retain explicit anchors until their own committed identity replaces them.
 Missing positioned activity updates insert once in canonical order; loaded cards enrich in place, while unpositioned legacy updates retain bounded recovery and truthful failure notices.
 Reconnect resumes from position, revision and stream-epoch cursors: trusted same-epoch recovery point-reads tracked old-card changes and replays the appended tail.
@@ -375,7 +377,8 @@ Evidence: `artifacts/overnight-20261116/{history-read-audit/REPORT.md,history-re
 
 `PERMISSION-INTERRUPT` replaces terminal permission injection with the loaded native runtime's structured settings RPC.
 The picker configures native execution for subsequent turns, including while another turn runs; Stop remains a separate user action for urgent restrictions.
-Triune action policies, including scheduling approvals, remain independent.
+Scheduling uses the calling turn’s applied permission scope and checks all configured Triune guardrails.
+See [agent scheduling](AUTOMATIONS.md) for binding and approval behavior.
 The runtime handshake must report Codex 0.164.0 or newer, and native profile discovery must explicitly allow the selected built-in profile.
 The native forwarder's observed configuration owns labels and restart arguments; delayed PATCH replies cannot overwrite newer observations.
 Timeouts after dispatch report an unknown outcome without rollback, relaunch, automatic resume or guessed menu input.

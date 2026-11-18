@@ -370,6 +370,7 @@ from omnigent.server.routes._sessions.helpers import (
     _wait_for_runner_client,
 )
 from omnigent.server.runner_session_init import RunnerSessionInitializer
+from omnigent.server.scheduling_permissions import scheduling_full_access
 from omnigent.server.schemas import (
     BackgroundTaskInfo,
     ChildSessionSummary,
@@ -10624,8 +10625,16 @@ async def _evaluate_policy_with_fresh_engine(
 ) -> tuple[PolicyEngine, PolicyResult]:
     """Build and evaluate atomically against persisted policy state."""
     async with _policy_evaluation_lock(session_id):
+        confirmed = await scheduling_full_access(
+            conv, ctx.phase, ctx.tool_name, get_server_runner_router()
+        )
         engine = await asyncio.to_thread(
-            _build_policy_engine_from_spec, spec, session_id, conversation_store, conv
+            _build_policy_engine_from_spec,
+            spec,
+            session_id,
+            conversation_store,
+            conv,
+            **({"scheduling_runner_id": conv.runner_id} if confirmed else {}),
         )
         return engine, await engine.evaluate(ctx)
 

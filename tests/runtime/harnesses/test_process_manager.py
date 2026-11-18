@@ -324,6 +324,38 @@ async def test_get_client_spawns_and_serves(
         await manager.shutdown()
 
 
+@pytest.mark.parametrize(
+    ("harness", "mode", "confirmed"),
+    [
+        ("claude-sdk", "bypassPermissions", True),
+        ("claude-sdk", "auto", False),
+        ("cursor", "bypassPermissions", True),
+        ("acp:probe", "bypassPermissions", True),
+        ("test", "bypassPermissions", False),
+    ],
+)
+async def test_scheduling_mode_belongs_to_the_live_harness_turn(
+    manager: HarnessProcessManager,
+    monkeypatch: pytest.MonkeyPatch,
+    harness: str,
+    mode: str,
+    confirmed: bool,
+) -> None:
+    monkeypatch.setitem(_HARNESS_MODULES, harness, _TEST_HARNESS_MODULE)
+    env = {f"HARNESS_{prefix}_PERMISSION_MODE": mode for prefix in ("CLAUDE_SDK", "ACP", "CURSOR")}
+    await manager.start()
+    try:
+        await manager.get_client("owner", harness, env=env)
+        assert not manager.active_turn_has_full_access("owner")
+        manager.mark_in_flight("owner", "turn")
+        assert manager.active_turn_has_full_access("owner") is confirmed
+        assert not manager.active_turn_has_full_access("child")
+        manager.clear_in_flight("owner")
+        assert not manager.active_turn_has_full_access("owner")
+    finally:
+        await manager.shutdown()
+
+
 async def test_get_client_emits_harness_started_event(
     manager: HarnessProcessManager,
     caplog: pytest.LogCaptureFixture,

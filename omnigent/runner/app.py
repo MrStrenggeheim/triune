@@ -6492,6 +6492,71 @@ def create_runner_app(
         server_client, _codex_native_bridge_state_for_session
     )
 
+    @app.get(
+        "/v1/sessions/{parent_id}/native-children/{child_id}/current-turn/scheduling-permissions"
+    )
+    async def child_scheduling_permissions(parent_id: str, child_id: str) -> Response:
+        observed = await native_child_controls.handle(
+            parent_id, child_id, scheduling_permissions=True
+        )
+        return JSONResponse(
+            content={
+                "session_id": child_id,
+                "runner_id": runner_id,
+                "full_access": observed.status_code == 200
+                and json.loads(bytes(observed.body)).get("full_access") is True,
+            }
+        )
+
+    @app.get("/v1/sessions/{conversation_id}/current-turn/scheduling-permissions")
+    async def current_scheduling_permissions(conversation_id: str) -> Response:
+        from websockets.exceptions import WebSocketException
+
+        from omnigent.harnesses.codex_native.app_server import (
+            CodexAppServerResponseError,
+            client_for_transport,
+        )
+        from omnigent.runner.scheduling_permissions import codex_turn_has_full_access
+
+        full_access = False
+        if _session_harness_name(conversation_id) == "codex-native":
+            state = await _codex_native_bridge_state_for_session(
+                conversation_id, action="scheduling permissions"
+            )
+            if state is not None:
+                client = client_for_transport(
+                    state.socket_path, client_name="triune-scheduling-permissions"
+                )
+                try:
+                    async with asyncio.timeout(2):
+                        await client.connect()
+                        full_access = await codex_turn_has_full_access(
+                            client, state.thread_id, state.codex_home, state.active_turn_id
+                        )
+                except (
+                    CodexAppServerResponseError,
+                    WebSocketException,
+                    TimeoutError,
+                    OSError,
+                    ValueError,
+                ):
+                    _logger.info(
+                        "Current Codex scheduling permission unavailable for %s",
+                        conversation_id,
+                        exc_info=True,
+                    )
+                finally:
+                    await client.close()
+        elif process_manager is not None:
+            full_access = process_manager.active_turn_has_full_access(conversation_id)
+        return JSONResponse(
+            content={
+                "session_id": conversation_id,
+                "runner_id": runner_id,
+                "full_access": full_access,
+            }
+        )
+
     @app.get("/v1/sessions/{parent_id}/native-children/{child_id}/capabilities")
     async def get_native_child_capabilities(parent_id: str, child_id: str) -> Response:
         return await native_child_controls.handle(parent_id, child_id)

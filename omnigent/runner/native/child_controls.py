@@ -53,12 +53,17 @@ class NativeChildControls:
         return None
 
     async def handle(
-        self, parent_id: str, child_id: str, body: dict[str, Any] | None = None
+        self,
+        parent_id: str,
+        child_id: str,
+        body: dict[str, Any] | None = None,
+        *,
+        scheduling_permissions: bool = False,
     ) -> JSONResponse:
         """Inspect availability, or execute a targeted action with bounded native I/O."""
         try:
             async with asyncio.timeout(5):
-                return await self._handle(parent_id, child_id, body)
+                return await self._handle(parent_id, child_id, body, scheduling_permissions)
         except CodexAppServerResponseError as exc:
             detail = exc.message or "Native child control was rejected."
             missing = "thread not found" in detail.casefold()
@@ -82,7 +87,11 @@ class NativeChildControls:
             )
 
     async def _handle(
-        self, parent_id: str, child_id: str, body: dict[str, Any] | None
+        self,
+        parent_id: str,
+        child_id: str,
+        body: dict[str, Any] | None,
+        scheduling_permissions: bool = False,
     ) -> JSONResponse:
         child = await self._child(parent_id, child_id)
         if child is None:
@@ -116,6 +125,22 @@ class NativeChildControls:
                     capabilities = await side_chat.child_control_capabilities(
                         client, thread_id, state.thread_id
                     )
+                    if scheduling_permissions and capabilities.get("active_turn_id"):
+                        from omnigent.runner.scheduling_permissions import (
+                            codex_turn_has_full_access,
+                        )
+
+                        return JSONResponse(
+                            content={
+                                "full_access": await codex_turn_has_full_access(
+                                    client,
+                                    thread_id,
+                                    state.codex_home,
+                                    capabilities["active_turn_id"],
+                                    mapped_child=True,
+                                )
+                            }
+                        )
                     if body is not None:
                         return await self._act(client, thread_id, capabilities, body)
                 finally:

@@ -98,6 +98,7 @@ from omnigent.server.routes._sessions.orchestration import (
     _spawn_gateway_backed,
     _spawn_native_blocked_notice_forward,
 )
+from omnigent.server.scheduling_permissions import scheduling_full_access
 from omnigent.server.schemas import (
     ElicitationRequestParams,
 )
@@ -908,7 +909,7 @@ def register_hooks_routes(
             _caps.policy_llm_connection_factory() if _caps.policy_llm_connection_factory else None
         )
 
-        def _build_engine(preloaded_conv: Conversation | None = None) -> PolicyEngine:
+        async def _build_engine(preloaded_conv: Conversation | None = None) -> PolicyEngine:
             """
             Build a policy engine for this session from the loaded spec.
 
@@ -925,6 +926,14 @@ def register_hooks_routes(
                 persisted state for ``session_id``.
             """
             return build_policy_engine(
+                scheduling_runner_id=conv.runner_id
+                if await scheduling_full_access(
+                    conv,
+                    phase,
+                    data.get("name") if isinstance(data, dict) else None,
+                    runner_router or get_server_runner_router(),
+                )
+                else None,
                 spec=loaded.spec,
                 conversation_id=session_id,
                 conversation_store=conversation_store,
@@ -938,7 +947,7 @@ def register_hooks_routes(
                 host_connection=_host_conn,
             )
 
-        engine = _build_engine(conv)
+        engine = await _build_engine(conv)
         # Use the turn-initiating human's identity (persisted at forward time)
         # so per-user policies gate on the correct actor even when the HTTP
         # caller is the runner's service-account credential.  Falls back to
@@ -992,7 +1001,7 @@ def register_hooks_routes(
                 deciding_policy = result.deciding_policy
                 assert deciding_policy is not None
                 async with _native_ask_gate_lock(session_id, deciding_policy):
-                    engine = _build_engine()
+                    engine = await _build_engine()
                     result = await engine.evaluate(ctx, read_only=is_read_only)
                     if result.action == PolicyAction.ASK and phase in (
                         Phase.TOOL_CALL,

@@ -30,7 +30,20 @@ To provision a fresh sandbox per firing, set `execution_target: "managed_sandbox
 
 `max_cost_usd` is a positive per-firing budget. Each fired session gets its own cost-budget policy, which blocks subsequent requests and tool calls once recorded spend reaches the cap. It does not interrupt an in-progress model turn: spend can overshoot before the next check, and denying a native tool call does not terminate the turn. Omit the field to attach no automation-specific cap; other applicable policies still apply.
 
-**Agent tools.** An agent can manage automations itself with `sys_scheduled_task_create`, `sys_scheduled_task_list`, `sys_scheduled_task_update`, and `sys_scheduled_task_delete` -- so an agent can schedule its own follow-up work. The create and update tools expose the same `permission_mode`, `max_cost_usd`, and `execution_target` controls. Because they persist or change unattended work, every agent call to `sys_scheduled_task_create` or `sys_scheduled_task_update` parks on an approval prompt in the session, even when no other guardrails apply. The prompt lists the requested settings (agent, schedule, timezone, host, execution target, permission mode, cost cap) and the prompt's length, and the card's argument preview shows the request itself, truncated after 1,024 characters; review them before approving. This also holds inside an automation's own run: if its agent creates or updates another automation, that call waits for approval too and is denied when nobody answers before the approval timeout. `sys_scheduled_task_list` and `sys_scheduled_task_delete` are not gated this way, and changes you make directly in the UI or REST API keep their existing authorization rules.
+**Agent tools.** Agents manage their own automations with `sys_scheduled_task_create`, `sys_scheduled_task_list`, `sys_scheduled_task_update` and `sys_scheduled_task_delete`.
+Create and update use the selected agent, schedule, permission mode, cost limit and execution target.
+
+Creating or updating unattended work requires approval unless the bound runner confirms Full Access for the calling turn.
+The approval card includes the requested settings, prompt length and a preview of the arguments.
+Unanswered approvals expire, including during unattended runs.
+The task's requested permission mode applies to its future executions.
+Session guardrails, task ownership and API access checks still apply.
+
+Codex native supplies an exact applied turn record.
+A root relay shared by multiple loaded threads requires approval because the relay omits the issuing thread's identity.
+A specifically mapped native child uses its own active turn.
+Regular Claude SDK, Cursor and ACP subprocesses can confirm an explicit bypass setting while serving the session's turn.
+Claude native and other harnesses without an authoritative current-turn observation display the approval card.
 
 Agent calls to `sys_scheduled_task_create` and `sys_scheduled_task_update`
 require interactive approval before persisting future work. Review the agent,
