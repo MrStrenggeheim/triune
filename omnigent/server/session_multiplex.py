@@ -27,6 +27,7 @@ from omnigent.runtime.stream_queue import (
 )
 from omnigent.server import presence
 from omnigent.server.session_recovery import valid_window_options, validate_sync_complete
+from omnigent.server.stream_observation import new_wire_observation
 
 _logger = logging.getLogger(__name__)
 MAX_MEMBERSHIPS = 32
@@ -105,6 +106,7 @@ class SessionMultiplex:
         self._write_available.set()
         self._ready: deque[object] = deque()
         self._broken = False
+        self._observation = new_wire_observation()
 
     async def send(
         self,
@@ -112,6 +114,7 @@ class SessionMultiplex:
         authorize: Callable[[], Awaitable[None]] | None = None,
         current: Callable[[], bool] | None = None,
     ) -> None:
+        started = time.monotonic() if self._observation else 0.0
         # Initial authorization is independent: an unready member owns no turn.
         await asyncio.sleep(0)
         if authorize is not None:
@@ -139,8 +142,14 @@ class SessionMultiplex:
             # No suspension from final authorization through physical socket claim.
             self._writing = True
             try:
+                writing = time.monotonic() if self._observation else 0.0
                 async with asyncio.timeout(_WRITE_TIMEOUT_S):
                     await self._sender(frame)
+                if self._observation is not None:
+                    sent = time.monotonic()
+                    self._observation.delivered(
+                        frame, (sent - started) * 1000, (sent - writing) * 1000
+                    )
             except asyncio.CancelledError:
                 # ASGI send cancellation leaves delivery uncertain; no sibling may
                 # reuse the writer until this physical socket is made terminal.

@@ -91,9 +91,14 @@ def register_items_routes(
         if not stream_observation_capability():
             raise _session_not_found()
         user_id = _get_user_id(request, auth_provider)
-        await _require_access_and_level(
+        access = await _require_access_and_level(
             user_id, session_id, LEVEL_READ, permission_store, conversation_store
         )
+        if (
+            access.conversation is None
+            and await asyncio.to_thread(conversation_store.get_conversation, session_id) is None
+        ):
+            raise _session_not_found()
         await asyncio.to_thread(save_display_batch, session_id, body)
         return {"accepted": len(body.records)}
 

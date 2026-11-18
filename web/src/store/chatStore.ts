@@ -8470,6 +8470,7 @@ function recordStreamReceipt(id: string, replay: SynchronizationAttempt, event: 
   recordConvergence("received", {
     conversationId: id,
     ...replay.receivedIdentity(event),
+    revision: event.changeRevision,
     itemId: typeof event.committedItem?.id === "string" ? event.committedItem.id : undefined,
     position: itemPosition(event.committedItem?.position ?? event.position),
     kind:
@@ -8598,6 +8599,24 @@ export async function pumpStreamEvents(
         transcriptCursorScope(id) === cursorScope
       ) {
         flush();
+        const itemId =
+          event.committedItem?.id ??
+          (event.type === "session_item_updated" ? event.item.id : undefined);
+        if (typeof itemId === "string") {
+          const blocks = get().blocks;
+          const index = transcriptIndex(blocks).items.get(itemId);
+          if (index !== undefined) {
+            stampConvergenceBlocks([blocks[index]!], { ...replay.identity, revision });
+            recordConvergence("accepted", {
+              conversationId: id,
+              ...replay.identity,
+              kind: "item",
+              itemId,
+              position,
+              revision,
+            });
+          }
+        }
         const cursor = replay.appliedChange(revision, position);
         if (cursor) set({ transcriptCheckpoint: { scope: cursorScope, cursor } });
       }
@@ -8612,7 +8631,10 @@ export async function pumpStreamEvents(
           (block) => block.ctx.itemId === event.item.id && !previousItemBlocks?.has(block),
         );
         if (updated.length) {
-          stampConvergenceBlocks(updated, replay.identity);
+          stampConvergenceBlocks(updated, {
+            ...replay.identity,
+            revision: received.changeRevision,
+          });
           recordConvergence("accepted", {
             conversationId: id,
             ...replay.identity,

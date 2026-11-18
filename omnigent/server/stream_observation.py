@@ -138,6 +138,7 @@ class WireObservation:
             )
             position = item.get("position", event.get("last_position"))
             revision = event.get("_change_revision", event.get("item_revision"))
+            recorded = event.get("_recorded_at_ms")
             self.pending.append(
                 (
                     now,
@@ -147,6 +148,7 @@ class WireObservation:
                     item_key,
                     position if type(position) is int else None,
                     revision if type(revision) is int else None,
+                    recorded if type(recorded) is int else None,
                     round(elapsed_ms, 2),
                     round(write_ms, 2),
                     self.dropped,
@@ -178,9 +180,10 @@ class WireObservation:
             db.execute(
                 "CREATE TABLE IF NOT EXISTS writes (at INTEGER, conversation TEXT, "
                 "membership TEXT, kind TEXT, item TEXT, position INTEGER, revision INTEGER, "
-                "admission_and_write_ms REAL, write_ms REAL, dropped INTEGER)"
+                "recorded_at_ms INTEGER, admission_and_write_ms REAL, "
+                "write_ms REAL, dropped INTEGER)"
             )
-            db.executemany("INSERT INTO writes VALUES (?,?,?,?,?,?,?,?,?,?)", rows)
+            db.executemany("INSERT INTO writes VALUES (?,?,?,?,?,?,?,?,?,?,?)", rows)
 
 
 def new_wire_observation() -> WireObservation | None:

@@ -2512,6 +2512,7 @@ def register_core_routes(
                 reason="authentication required",
             )
         from omnigent.server.session_multiplex import MAX_MEMBERSHIPS, SessionMultiplex
+        from omnigent.server.stream_observation import stream_observation_capability
 
         await websocket.accept()
         feed_mode = os.environ.get("TRIUNE_TRANSCRIPT_FEED", "canary")
@@ -2519,10 +2520,14 @@ def register_core_routes(
             getattr(conversation_store, "transcript_journal", None), TranscriptJournal
         )
         capabilities = {"type": "capabilities", "transcript_stream": 1, "transcript_window": 1}
+        capabilities.update(stream_observation_capability())
         if feed_available:
+            # The entry-chat hint chooses an explicitly enrolled tab; every membership still authorizes.
+            enrolled = os.environ.get("TRIUNE_TRANSCRIPT_CANARY_CHAT")
+            canary = bool(enrolled and websocket.query_params.get("entry_chat") == enrolled)
             capabilities.update(
                 transcript_feed=2,
-                transcript_feed_default=2 if feed_mode == "2" else 1,
+                transcript_feed_default=2 if feed_mode == "2" or canary else 1,
                 transcript_memberships=MAX_MEMBERSHIPS,
             )
         await websocket.send_text(json.dumps(capabilities))

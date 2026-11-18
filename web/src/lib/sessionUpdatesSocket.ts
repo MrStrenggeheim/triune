@@ -20,6 +20,7 @@
 import { isHostRoutingEnabled, resolveWebSocketUrl } from "@/lib/host";
 import { modalHostId, isModalHostResolved } from "@/lib/sessionHost";
 import type { SessionListWireItem } from "@/lib/sessionListCache";
+import { configureConvergenceExport } from "./convergenceDiagnostics";
 import { parseEvent } from "./sse";
 import { transcriptEventStream } from "./transcriptEventStream";
 import type { StreamEvent } from "./events";
@@ -37,6 +38,7 @@ export type SessionUpdatesFrame =
       transcript_stream?: number;
       transcript_window?: number;
       transcript_feed?: number;
+      transcript_observation_until_ms?: number;
       transcript_feed_default?: number;
       transcript_memberships?: number;
     };
@@ -126,12 +128,12 @@ function nextReconnectDelay(failedAttempts: number): number {
  * @returns The fully-qualified WebSocket URL.
  */
 function buildUpdatesUrl(): string {
-  const path = "/v1/sessions/updates";
-  if (!isHostRoutingEnabled()) return resolveWebSocketUrl(path);
-  const sliceKey = modalHostId();
-  return resolveWebSocketUrl(
-    sliceKey ? `${path}?omnigent_slice_key=${encodeURIComponent(sliceKey)}` : path,
-  );
+  const url = new URL(resolveWebSocketUrl("/v1/sessions/updates"));
+  const entry = window.location.pathname.match(/\/c\/([a-f0-9]{32})\/?$/i)?.[1];
+  if (entry) url.searchParams.set("entry_chat", entry);
+  const slice = isHostRoutingEnabled() ? modalHostId() : null;
+  if (slice) url.searchParams.set("omnigent_slice_key", slice);
+  return url.toString();
 }
 
 /**
@@ -498,6 +500,7 @@ class SessionUpdatesSocket {
     }
     if (!frame || typeof frame !== "object") return;
     if (frame.type === "capabilities") {
+      configureConvergenceExport(frame.transcript_observation_until_ms ?? 0);
       this.transcriptCapability = frame.transcript_stream === 1;
       this.transcriptWindowCapability = frame.transcript_window === 1;
       this.membershipLimit =

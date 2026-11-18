@@ -2294,3 +2294,17 @@ def test_negotiated_membership_ignores_retired_unsubscribe(app, stores, monkeypa
             if frame["event"]["type"] == "response.output_item.done":
                 assert frame["event"]["_change_revision"] == 1
                 break
+
+
+def test_enrolled_tab_and_expiring_display_observation(app, monkeypatch, tmp_path):
+    monkeypatch.setenv("TRIUNE_TRANSCRIPT_FEED", "canary")
+    monkeypatch.setenv("TRIUNE_TRANSCRIPT_CANARY_CHAT", "fixture-chat")
+    monkeypatch.setenv("TRIUNE_STREAM_OBSERVE_DIR", str(tmp_path))
+    monkeypatch.setenv("TRIUNE_STREAM_OBSERVE_UNTIL_MS", "4102444800000")
+    for entry, expected in [("other", 1), ("fixture-chat", 2)]:
+        with TestClient(app).websocket_connect(
+            f"/v1/sessions/updates?entry_chat={entry}", headers={"X-Forwarded-Email": ALICE}
+        ) as ws:
+            caps = ws.receive_json()
+            assert caps["transcript_feed_default"] == expected
+            assert caps["transcript_observation_until_ms"] == 4102444800000

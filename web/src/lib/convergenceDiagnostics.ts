@@ -15,6 +15,7 @@ const kinds = ["sync", "heartbeat", "item", "delta", "state", "render"] as const
 const reasons = ["diverged", "invalid_sync", "deadline", "transport"] as const;
 type Stage = (typeof stages)[number];
 export interface ConvergenceIdentity {
+  revision?: number;
   bindingId?: string;
   attemptId?: string;
   attemptGeneration?: number;

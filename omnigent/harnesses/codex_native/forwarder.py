@@ -6740,7 +6740,7 @@ async def _post_agent_message(
         item_data={
             "role": "assistant",
             "agent": _AGENT_NAME,
-            "phase": item.get("phase"),
+            **({"phase": item["phase"]} if item.get("phase") is not None else {}),
             **({"execution": execution} if execution is not None else {}),
             "content": [{"type": "output_text", "text": text}],
         },
