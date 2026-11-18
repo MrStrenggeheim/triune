@@ -229,6 +229,7 @@ from omnigent.server.schemas import (
     UpdateSessionRequest,
 )
 from omnigent.server.session_orchestration import require_orchestration_source
+from omnigent.server.transcript_feed_mode import transcript_feed_mode
 from omnigent.stores import AgentStore, ConversationStore
 from omnigent.stores.artifact_store import ArtifactStore
 from omnigent.stores.comment_store import CommentStore
@@ -2515,7 +2516,7 @@ def register_core_routes(
         from omnigent.server.stream_observation import stream_observation_capability
 
         await websocket.accept()
-        feed_mode = os.environ.get("TRIUNE_TRANSCRIPT_FEED", "canary")
+        feed_mode = await asyncio.to_thread(transcript_feed_mode)
         feed_available = feed_mode in {"canary", "2"} and isinstance(
             getattr(conversation_store, "transcript_journal", None), TranscriptJournal
         )

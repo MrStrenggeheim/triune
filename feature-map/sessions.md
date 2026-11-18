@@ -913,6 +913,8 @@ Exact item-cursor resolution includes its primary-key timestamp so SQLite uses a
 
 SQLite deployments advertise the new WebSocket feed when `TRIUNE_TRANSCRIPT_FEED` is `canary` (default) or `2`.
 Value `2` enables it by default; value `1` disables negotiation.
+A deployment may set `TRIUNE_TRANSCRIPT_FEED_MODE_FILE` to an absolute regular file named `<packaged full commit>.mode`.
+New authenticated connections read its mode after an atomic replacement. A missing, invalid or wrong-release override disables the versioned feed.
 An enrolled browser selects `2` in local storage under `triune:transcript-feed`; selecting `1` keeps its legacy reader.
 
 The membership generation scopes every data/error/close frame.

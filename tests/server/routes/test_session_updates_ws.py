@@ -2308,3 +2308,38 @@ def test_enrolled_tab_and_expiring_display_observation(app, monkeypatch, tmp_pat
             caps = ws.receive_json()
             assert caps["transcript_feed_default"] == expected
             assert caps["transcript_observation_until_ms"] == 4102444800000
+
+
+def test_feed_mode_file_is_release_scoped_and_rechecked_on_authenticated_handshake(
+    app, monkeypatch, tmp_path
+):
+    from omnigent.server import transcript_feed_mode
+
+    commit = "a" * 40
+    monkeypatch.setattr(transcript_feed_mode, "_installed_commit", lambda: commit)
+    override = tmp_path / f"{commit}.mode"
+    monkeypatch.setenv("TRIUNE_TRANSCRIPT_FEED_MODE_FILE", str(override))
+    monkeypatch.setenv("TRIUNE_TRANSCRIPT_FEED", "2")
+    with TestClient(app) as client:
+
+        def capabilities():
+            with client.websocket_connect(
+                "/v1/sessions/updates", headers={"X-Forwarded-Email": ALICE}
+            ) as ws:
+                return ws.receive_json()
+
+        assert "transcript_feed" not in capabilities()
+        override.write_text("canary\n")
+        assert capabilities()["transcript_feed_default"] == 1
+        incoming = tmp_path / "incoming"
+        incoming.write_text("2\n")
+        incoming.replace(override)
+        assert capabilities()["transcript_feed_default"] == 2
+        for content in ("unknown", "2\ntrailing", "2" * 128, "1"):
+            override.write_text(content)
+            assert "transcript_feed" not in capabilities()
+        override.write_text("2")
+        monkeypatch.setattr(transcript_feed_mode, "_installed_commit", lambda: "b" * 40)
+        assert "transcript_feed" not in capabilities()
+        monkeypatch.delenv("TRIUNE_TRANSCRIPT_FEED_MODE_FILE")
+        assert capabilities()["transcript_feed_default"] == 2
