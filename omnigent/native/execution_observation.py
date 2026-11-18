@@ -27,9 +27,7 @@ def claude_execution(message: object) -> dict[str, Any] | None:
     return {"model": model, "source": "claude_response"}
 
 
-def codex_turn_context(
-    path: Path, turn_id: str, *, max_bytes: int = _TAIL_BYTES
-) -> dict[str, Any] | None:
+def codex_turn_context(path: Path, turn_id: str, *, max_bytes: int) -> dict[str, Any] | None:
     """Find an exact native turn record, scanning backwards with bounded time and memory."""
     deadline = time.monotonic() + 1.5
     try:
@@ -73,7 +71,7 @@ def codex_turn_context(
 
 def codex_turn_execution(path: Path, turn_id: str) -> dict[str, Any] | None:
     """Read the model and effort reported for this exact turn."""
-    payload = codex_turn_context(path, turn_id)
+    payload = codex_turn_context(path, turn_id, max_bytes=_TAIL_BYTES)
     if payload is None:
         return None
     model = concrete_reported_model(payload.get("model"))
