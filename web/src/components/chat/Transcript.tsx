@@ -11,7 +11,6 @@ import {
   type TranscriptViewSnapshot,
 } from "@/lib/transcriptReaderCheckpoint";
 import { subagentCardItemIds } from "@/lib/subagentActivity";
-import { projectPendingTranscript } from "@/lib/transcriptOrder";
 import {
   hasTranscriptScrollOwner,
   useTranscriptDisclosureAnchor,
@@ -32,20 +31,13 @@ import {
   ConversationScrollButton,
 } from "@/components/ai-elements/conversation";
 import { cn } from "@/lib/utils";
-import { getCurrentAuthorId } from "@/lib/identity";
 import { hasCommandModifier } from "@/lib/hotkeys";
 import { isSystemUserContent } from "@/lib/systemMessage";
 import { isTerminalCommandInput, type AnyBlock } from "@/lib/blocks";
 import type { ConversationBranch } from "@/lib/conversationBranches";
 import { hasInheritedHistory, inheritedHistoryEnd } from "@/lib/inheritedHistory";
 import { TooltipButton } from "@/components/ui/tooltip";
-import {
-  type Bubble,
-  type BubbleCache,
-  buildBubbles,
-  createBubbleCache,
-  liveCandidateAssistantIndex,
-} from "@/lib/renderItems";
+import { type Bubble, buildBubbles, liveCandidateAssistantIndex } from "@/lib/renderItems";
 import { TranscriptScrollbar } from "@/pages/TranscriptScrollbar";
 import { TurnRail, type Turn } from "@/pages/TurnRail";
 import { StreamBudgetBanner } from "@/components/StreamBudgetBanner";
@@ -76,15 +68,11 @@ import {
   AwaitingAgentMessages,
   partitionAwaitingAgentBubbles,
   bubbleKey,
-  buildPendingBubbles,
+  useTranscriptBubbles,
   collectPendingElicitations,
-  computeIsWorking,
   extractUserText,
   isSystemBubble,
-  mergePendingBubbles,
-  reorderCommittedRequestElicitations,
   shouldShowWorkingIndicator,
-  stripGatedSubagentRoutingChips,
   stripPendingElicitations,
 } from "@/components/chat/chatBubbleParts";
 import {
@@ -227,33 +215,14 @@ function TranscriptImpl({
   // cache so a streaming append rebuilds only the active bubble, reusing the
   // finalized prefix by reference. Pending user messages (POSTed but not yet
   // acked) render as trailing user bubbles so the input is visible immediately.
-  const bubbleCacheRef = useRef<BubbleCache>(createBubbleCache());
-  const bubbles = useMemo<Bubble[]>(() => {
-    const committed = stripGatedSubagentRoutingChips(
-      reorderCommittedRequestElicitations(
-        buildBubbles(
-          projectPendingTranscript(visibleBlocks, pendingUserMessages, getCurrentAuthorId()),
-          activeResponse,
-          bubbleCacheRef.current,
-          interruptedResponseIds,
-          computeIsWorking(sessionStatus),
-        ),
-      ),
-      subagentRoutingOverride,
-    );
-    if (pendingUserMessages.length === 0) return committed;
-    return mergePendingBubbles(
-      committed,
-      buildPendingBubbles(pendingUserMessages, getCurrentAuthorId()),
-    );
-  }, [
-    visibleBlocks,
+  const bubbles = useTranscriptBubbles({
+    blocks: visibleBlocks,
     activeResponse,
     interruptedResponseIds,
     pendingUserMessages,
     subagentRoutingOverride,
     sessionStatus,
-  ]);
+  });
 
   const pendingElicitations = useMemo(() => collectPendingElicitations(bubbles), [bubbles]);
   const searchSources = useMemo(

@@ -136,7 +136,7 @@ import {
 } from "@/lib/sideChat";
 import { shouldQueueSend } from "@/lib/messageQueue";
 import { readAlwaysSteer } from "@/lib/alwaysSteerPreferences";
-import { shouldHideQuoteSubchatHistory } from "@/lib/inheritedHistory";
+import { shouldHideSubchatHistory } from "@/lib/inheritedHistory";
 import { useNativeChildCapabilities } from "@/hooks/useNativeChildCapabilities";
 import { nativeChildReadOnlyReason, type NativeChildCapabilities } from "@/lib/nativeChildControls";
 import { skillInvocationPrefix } from "@/lib/harnessSetup";
@@ -1257,10 +1257,7 @@ export function ChatPage({
   const mainAgent = (
     <MainAgentSurface
       branch={activeSession?.branch}
-      hideInheritedHistory={shouldHideQuoteSubchatHistory(
-        activeSession?.labels,
-        activeSession?.branch,
-      )}
+      hideInheritedHistory={shouldHideSubchatHistory(activeSession?.labels, activeSession?.branch)}
       conversationId={urlConvId ?? null}
       hostId={activeSession?.hostId ?? activeConv?.host_id ?? null}
       status={status}

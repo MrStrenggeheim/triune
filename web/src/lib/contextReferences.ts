@@ -3,7 +3,7 @@
 import { authenticatedFetch } from "./identity";
 import { withBasePath } from "./basePath";
 
-export { QUOTE_SUBCHAT_HISTORY_LABEL, shouldHideQuoteSubchatHistory } from "./inheritedHistory";
+export { QUOTE_SUBCHAT_HISTORY_LABEL, shouldHideSubchatHistory } from "./inheritedHistory";
 
 export type ReferenceScope = "whole" | "last_answer" | "messages" | "quote";
 export const referenceScopeLabels: Record<ReferenceScope, string> = {

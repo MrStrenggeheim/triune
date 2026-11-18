@@ -4,6 +4,10 @@ Activity combines the selected chat's main agent and subagents with recorded she
 
 ## Sub-features
 
+- Main chat and subchat share the same pending-input anchors and ordered message projection.
+- A subchat hides inherited rows through its server-issued fork boundary; a legacy fork with unknown provenance keeps readable rows.
+- A visible message or interactive row separates adjacent work disclosures, and the narration preference controls whether commentary stays visible after settlement.
+
 - `agents`: retain the existing agent tree, graph and navigation within the expanded Activity panel.
 - `shells`: live shell sessions open their existing terminal; completed sessions open retained output and exit details.
 - `commands`: captured noninteractive commands appear as command executions rather than fabricated interactive terminals.

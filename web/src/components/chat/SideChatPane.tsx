@@ -22,27 +22,17 @@ import { MessagesSquareIcon, TriangleAlertIcon } from "lucide-react";
 import { ContentSkeleton } from "@/components/ui/loading";
 import { toast } from "@/lib/notifications";
 import { useQueryClient } from "@tanstack/react-query";
-import { getCurrentAuthorId } from "@/lib/identity";
-import {
-  type Bubble,
-  type BubbleCache,
-  buildBubbles,
-  createBubbleCache,
-  liveCandidateAssistantIndex,
-} from "@/lib/renderItems";
+import { inheritedHistoryEnd, shouldHideSubchatHistory } from "@/lib/inheritedHistory";
+import { liveCandidateAssistantIndex } from "@/lib/renderItems";
 import {
   BubbleView,
   WorkingIndicator,
   AwaitingAgentMessages,
   partitionAwaitingAgentBubbles,
   bubbleKey,
-  buildPendingBubbles,
-  computeIsWorking,
+  useTranscriptBubbles,
   computeIsTurnActive,
-  mergePendingBubbles,
-  reorderCommittedRequestElicitations,
   shouldShowWorkingIndicator,
-  stripGatedSubagentRoutingChips,
 } from "@/components/chat/chatBubbleParts";
 import {
   ChatComposer,
@@ -109,30 +99,6 @@ import { ConversationScopeContext } from "@/components/chat/conversationScope";
 /** A `pending:` tab has no child session yet; its first send creates the fork. */
 function isPendingSideChat(id: string): boolean {
   return id.startsWith("pending:");
-}
-
-// The forked-in item ids to hide are captured once per child and PERSISTED, so
-// leaving the tab (which unmounts this pane) or reloading doesn't recapture the
-// side chat's own completed turns as inherited history and blank the transcript.
-// ponytail: one small localStorage key per child; entries are tiny id lists,
-// orphaned on child deletion — prune only if this ever grows.
-function inheritedBoundaryKey(childId: string): string {
-  return `omnigent.sideChatInherited:${childId}`;
-}
-function readInheritedBoundary(childId: string): Set<string> | null {
-  try {
-    const raw = localStorage.getItem(inheritedBoundaryKey(childId));
-    return raw ? new Set(JSON.parse(raw) as string[]) : null;
-  } catch {
-    return null;
-  }
-}
-function writeInheritedBoundary(childId: string, ids: Set<string>): void {
-  try {
-    localStorage.setItem(inheritedBoundaryKey(childId), JSON.stringify([...ids]));
-  } catch {
-    // Storage disabled/full — the boundary just won't survive a reload.
-  }
 }
 
 // Accurate for every harness: a side chat is a fork that stays out of the main
@@ -205,88 +171,21 @@ export function SideChatPane({
     conversationLoadError,
   } = state;
 
-  // Hide the forked-in history: snapshot the item ids present once hydration
-  // settles, then render only what arrives after (the side chat's own turns).
-  // GENERIC forks only — they copy the parent transcript. A native Codex child
-  // already holds only its own turns (context lives in the native thread), so
-  // filtering there would wrongly hide the side chat's first question.
-  const filterHistory = !fullSession && !usesNativeSideChatFork(sessionHarness);
-  // Load the persisted boundary when the child changes (mount / rekey); the
-  // in-mount ref avoids re-reading storage every render and tracks whether we've
-  // actually observed a load run, so we don't capture a boundary on the initial
-  // pre-load render.
-  const boundaryRef = useRef<{
-    childId: string;
-    ids: Set<string> | null;
-    loadSeen: boolean;
-  } | null>(null);
-  if (boundaryRef.current === null || boundaryRef.current.childId !== childId) {
-    boundaryRef.current = {
-      childId,
-      ids: filterHistory && !pending ? readInheritedBoundary(childId) : null,
-      loadSeen: false,
-    };
-  }
-  if (loadingConversation) boundaryRef.current.loadSeen = true;
-  // Capture once, when the fork's load has actually completed — even if it is
-  // EMPTY (a parent with no history), so the side chat's first message isn't
-  // mistaken for inherited history and hidden. Snapshot the inherited item ids
-  // and persist so later mounts/reloads hide the same set, not new turns.
-  if (
-    boundaryRef.current.ids === null &&
-    !pending &&
-    filterHistory &&
-    boundaryRef.current.loadSeen &&
-    !loadingConversation &&
-    conversationLoadError === null
-  ) {
-    const ids = new Set(
-      blocks
-        .map((b) => (b as { ctx?: { itemId?: string | null } }).ctx?.itemId)
-        .filter((id): id is string => typeof id === "string"),
-    );
-    boundaryRef.current.ids = ids;
-    writeInheritedBoundary(childId, ids);
-  }
-  const inherited = boundaryRef.current.ids;
-  const visibleBlocks = useMemo(
-    () =>
-      inherited === null
-        ? blocks
-        : blocks.filter((b) => {
-            const id = (b as { ctx?: { itemId?: string | null } }).ctx?.itemId;
-            return !(typeof id === "string" && inherited.has(id));
-          }),
-    [blocks, inherited],
-  );
+  const branch = session?.branch;
+  const hideInherited = !fullSession || shouldHideSubchatHistory(session?.labels, branch);
+  const visibleBlocks = useMemo(() => {
+    const end = hideInherited ? inheritedHistoryEnd(blocks, branch) : -1;
+    return end < 0 ? blocks : blocks.slice(end + 1);
+  }, [blocks, branch, hideInherited]);
 
-  const bubbleCacheRef = useRef<BubbleCache>(createBubbleCache());
-  const bubbles = useMemo<Bubble[]>(() => {
-    const committed = stripGatedSubagentRoutingChips(
-      reorderCommittedRequestElicitations(
-        buildBubbles(
-          visibleBlocks,
-          activeResponse,
-          bubbleCacheRef.current,
-          interruptedResponseIds,
-          computeIsWorking(sessionStatus),
-        ),
-      ),
-      subagentRoutingOverride,
-    );
-    if (pendingUserMessages.length === 0) return committed;
-    return mergePendingBubbles(
-      committed,
-      buildPendingBubbles(pendingUserMessages, getCurrentAuthorId()),
-    );
-  }, [
-    visibleBlocks,
+  const bubbles = useTranscriptBubbles({
+    blocks: visibleBlocks,
     activeResponse,
     interruptedResponseIds,
     pendingUserMessages,
     subagentRoutingOverride,
     sessionStatus,
-  ]);
+  });
 
   const { streamBubbles, awaitingAgentBubbles } = useMemo(
     () => partitionAwaitingAgentBubbles(bubbles),

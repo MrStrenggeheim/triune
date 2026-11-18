@@ -115,6 +115,7 @@ Readiness heartbeats wait for an already-requested history synchronization inste
 An explicit binding/attempt synchronization owner accepts only validated replay completion and bounds incomplete synchronization independently of heartbeat traffic.
 Ancillary resource snapshots no longer hold the live tail; canonical replay still preserves its captured high-water boundary and rejects incomplete recovery.
 Content-free convergence diagnostics correlate received, accepted and displayed identities across reloads, with bounded retention and authenticated viewer scope.
+Chat and subchat project pending inputs and settled work in the same chronological order, with inherited rows filtered by the saved fork boundary.
 Displayed samples come from committed visible DOM rows; they do not equate store publication with screen presentation or claim physical display timing.
 Fallback history reads cancel on focus return, hiding or disposal and have a fifteen-second deadline, so pending snapshots cannot prevent live observation from resuming.
 Pending snapshots retain accepted input identities independently of position; reconnect merges their local copies and consumes each exact receipt once, preserving repeated intentional inputs.
