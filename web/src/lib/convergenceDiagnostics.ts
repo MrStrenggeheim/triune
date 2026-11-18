@@ -1,4 +1,6 @@
 // Required Notice: Copyright 2026 MrStrenggeheim. Triune (https://github.com/MrStrenggeheim/triune).
+export { configureConvergenceExport } from "./convergenceExport";
+import { enqueueConvergenceReceipt } from "./convergenceExport";
 import { getCurrentUserId } from "./identity";
 import { getOmnigentServerIdentity } from "./host";
 import { resourceViewStorageScope } from "./resourceViewStorage";
@@ -21,6 +23,9 @@ export interface ConvergenceIdentity {
 interface Detail extends ConvergenceIdentity {
   conversationId: string;
   itemId?: string;
+  viewId?: string;
+  ordinal?: number;
+  folded?: boolean;
   kind?: (typeof kinds)[number];
   reason?: (typeof reasons)[number];
   position?: number;
@@ -83,12 +88,14 @@ function sanitize(value: unknown): RecordEntry | undefined {
     conversationId: raw.conversationId,
     at: raw.at,
   };
-  for (const key of ["bindingId", "attemptId", "itemId"] as const)
+  for (const key of ["bindingId", "attemptId", "itemId", "viewId"] as const)
     if (validId(raw[key])) record[key] = raw[key];
+  if (typeof raw.folded === "boolean") record.folded = raw.folded;
   if (kinds.includes(raw.kind as Detail["kind"] & string)) record.kind = raw.kind as Detail["kind"];
   if (reasons.includes(raw.reason as Detail["reason"] & string))
     record.reason = raw.reason as Detail["reason"];
   for (const key of [
+    "ordinal",
     "position",
     "revision",
     "count",
@@ -189,6 +196,7 @@ export function recordConvergence(stage: Stage, detail: Detail): void {
     value.dropped++;
     return;
   }
+  enqueueConvergenceReceipt(record);
   if (stage === "accepted") {
     const key = JSON.stringify([record.conversationId, record.itemId ?? null]);
     accepted.delete(key);
@@ -224,7 +232,11 @@ export function readConvergenceDiagnostics(): Journal {
 /** Called by a mounted transcript after React commits its visible rows. */
 export function recordTranscriptDisplayed(
   conversationId: string,
-  detail: Pick<Detail, "position" | "itemId" | "count"> & ConvergenceIdentity,
+  detail: Pick<
+    Detail,
+    "position" | "itemId" | "count" | "viewId" | "ordinal" | "folded" | "revision"
+  > &
+    ConvergenceIdentity,
   expectedScope = resourceViewStorageScope(),
 ): void {
   if (expectedScope !== resourceViewStorageScope()) return;

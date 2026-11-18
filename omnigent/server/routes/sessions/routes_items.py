@@ -55,6 +55,11 @@ from omnigent.server.schemas import (
     PaginatedList,
 )
 from omnigent.server.session_recovery import saved_item_bytes
+from omnigent.server.stream_observation import (
+    DisplayBatch,
+    save_display_batch,
+    stream_observation_capability,
+)
 from omnigent.server.subagent_activity import recover_subagent_activity
 from omnigent.stores import AgentStore, ConversationStore
 from omnigent.stores.permission_store import PermissionStore
@@ -78,6 +83,19 @@ def register_items_routes(
         auth_provider=auth_provider,
         permission_store=permission_store,
     )
+
+    @router.post("/sessions/{session_id}/display-receipts", include_in_schema=False)
+    async def display_receipts(
+        request: Request, session_id: str, body: DisplayBatch
+    ) -> dict[str, int]:
+        if not stream_observation_capability():
+            raise _session_not_found()
+        user_id = _get_user_id(request, auth_provider)
+        await _require_access_and_level(
+            user_id, session_id, LEVEL_READ, permission_store, conversation_store
+        )
+        await asyncio.to_thread(save_display_batch, session_id, body)
+        return {"accepted": len(body.records)}
 
     @router.get(
         "/sessions/{session_id}/items",

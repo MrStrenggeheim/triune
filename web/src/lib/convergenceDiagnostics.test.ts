@@ -136,3 +136,24 @@ it("fences a delayed digest/write and stale renderer callback across viewer chan
   ).toEqual(["new-chat"]);
   expect(localStorage.getItem(diagnostics.CONVERGENCE_STORAGE_KEY)).not.toContain("old-chat");
 });
+
+it("exports individual receipts using opaque identities before local journal coalescing", async () => {
+  const send = vi.fn().mockResolvedValue(new Response("{}"));
+  vi.doMock("./identity", () => ({ getCurrentUserId: () => viewer.id, authenticatedFetch: send }));
+  try {
+    const diagnostics = await import("./convergenceDiagnostics");
+    diagnostics.configureConvergenceExport(Date.now() + 60000);
+    const receipt = { conversationId: "conv", itemId: "synthetic-item", kind: "item" as const };
+    diagnostics.recordConvergence("received", receipt);
+    diagnostics.recordConvergence("received", receipt);
+    await vi.advanceTimersByTimeAsync(2100);
+    await vi.waitFor(() => expect(send).toHaveBeenCalledOnce());
+    const body = JSON.parse(send.mock.calls[0]![1].body);
+    expect(body.records.map((row: { seq: number }) => row.seq)).toEqual([1, 2]);
+    expect(body.records[0].item).toMatch(/^[a-f0-9]{32}$/);
+    expect(JSON.stringify(body)).not.toContain("synthetic-item");
+    diagnostics.configureConvergenceExport(0);
+  } finally {
+    vi.doUnmock("./identity");
+  }
+});
