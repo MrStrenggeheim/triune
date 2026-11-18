@@ -15919,6 +15919,61 @@ describe("chatStore — startStreamPump reconnect loop", () => {
     await loop;
   });
 
+  it("settles a missed Codex completion when a shared transcript resumes", async () => {
+    const id = "resumed-codex";
+    seedSession(id, []);
+    const controller = new AbortController();
+    const bound = bindConversationForTest(id, {
+      abortController: controller,
+      sessionStatus: "running",
+      status: "streaming",
+      activeResponse: { responseId: "codex_finished", state: "streaming", error: null },
+    });
+    const sink = pushableStream();
+    const open = vi
+      .spyOn(sessionUpdatesSocket, "openTranscript")
+      .mockResolvedValue(structuredResponse(new Response(sink.stream)));
+    const loop = startStreamPump(
+      id,
+      controller,
+      bound.set,
+      bound.get,
+      new Set(),
+      true,
+      controller,
+      undefined,
+      true,
+    );
+    try {
+      await drainAsync();
+      const boundary = {
+        reset: true,
+        stream_epoch: "feed2:test",
+        item_revision: 0,
+        reset_revision: 0,
+        item_count: 0,
+        last_position: -1,
+        last_item_id: null,
+      };
+      sink.push(sse("session.sync", { ...boundary, phase: "start" }));
+      sink.push(sse("session.sync", { ...boundary, phase: "complete" }));
+      await drainAsync();
+      expect(bound.get().transcriptCheckpoint?.cursor.stream_epoch).toBe("feed2:test");
+      expect(bound.get()).toMatchObject({
+        sessionStatus: "idle",
+        status: "idle",
+        activeResponse: { state: "completed" },
+      });
+      expect(open).toHaveBeenCalledTimes(1);
+    } finally {
+      controller.abort();
+      sink.close();
+      await drainAsync(2);
+      await loop;
+      open.mockRestore();
+    }
+  });
+
   it("reconciles status when a heartbeat-only stream misses the idle event", async () => {
     seedSession("conv_heartbeat_gap", []);
     const sink = pushableStream();
