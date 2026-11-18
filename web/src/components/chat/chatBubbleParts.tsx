@@ -1280,7 +1280,7 @@ function AssistantBubble({
         ) {
           throw new Error("Wait for the current turn to finish before retrying");
         }
-        await continueFailedTurn(conversationId);
+        await continueFailedTurn(conversationId, bubble.responseId);
         return;
       }
       try {
@@ -1296,7 +1296,14 @@ function AssistantBubble({
         throw error;
       }
     },
-    [conversationId, scopedConversationId, isLastAssistant, queryClient, useChatStore],
+    [
+      conversationId,
+      scopedConversationId,
+      isLastAssistant,
+      queryClient,
+      useChatStore,
+      bubble.responseId,
+    ],
   );
 
   if (bubble.items.length === 0) return null;

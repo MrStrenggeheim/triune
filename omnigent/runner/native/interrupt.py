@@ -364,7 +364,9 @@ class NativeInterruptRunner:
         self._pending_interrupts: dict[str, str | None] = {}
         self._pending_interrupt_timers: dict[str, asyncio.TimerHandle] = {}
 
-    async def interrupt(self, harness_name: str | None, conv_id: str) -> Response | None:
+    async def interrupt(
+        self, harness_name: str | None, conv_id: str, expected_response_id: str | None = None
+    ) -> Response | None:
         """Dispatch an interrupt to the harness's bridge.
 
         :returns: A response when this harness has an interrupt handler, else
@@ -378,7 +380,7 @@ class NativeInterruptRunner:
         if key == "claude":
             return await self._claude_interrupt(conv_id)
         if key == "codex":
-            return await self._codex_interrupt(conv_id)
+            return await self._codex_interrupt(conv_id, expected_response_id)
         if key == "opencode":
             return await self._opencode_interrupt(conv_id)
         spec = _UNIFORM_INTERRUPT.get(key)
@@ -702,7 +704,9 @@ class NativeInterruptRunner:
             )
         return Response(status_code=204)
 
-    async def _codex_interrupt(self, conv_id: str) -> Response:
+    async def _codex_interrupt(
+        self, conv_id: str, expected_response_id: str | None = None
+    ) -> Response:
         from omnigent.harnesses.codex_native.app_server import (
             CodexAppServerResponseError,
             client_for_transport,
@@ -716,6 +720,12 @@ class NativeInterruptRunner:
         )
 
         state, bridge_dir = await self._codex_bridge_state_for_session(conv_id, action="interrupt")
+        if expected_response_id is not None and (
+            state is None
+            or not state.active_turn_id
+            or expected_response_id != f"codex_{state.active_turn_id}"
+        ):
+            return JSONResponse(status_code=409, content={"error": "active_turn_changed"})
         if state is None:
             return Response(status_code=204)
         pending_mcp = cancel_pending_mcp_startup(bridge_dir)

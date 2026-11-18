@@ -8,13 +8,15 @@ import { findAgentTerminal, useTerminals } from "@/hooks/useTerminals";
 export function ScopedConversationTerminal({
   conversationId,
   children,
+  chatOnly = false,
 }: {
   conversationId: string;
   children: ReactNode;
+  chatOnly?: boolean;
 }) {
   const { session } = useSession(conversationId);
   const [view, setView] = useState<TerminalFirstView>("chat");
-  const terminalFirst = session?.labels?.["omnigent.ui"] === "terminal";
+  const terminalFirst = !chatOnly && session?.labels?.["omnigent.ui"] === "terminal";
   const { terminals } = useTerminals(terminalFirst ? conversationId : null, { workspace: null });
   const terminal = findAgentTerminal(terminals);
   const value = useMemo(

@@ -81,6 +81,85 @@ def _move_cell(
     expect(ghost).to_have_count(0)
 
 
+def test_restored_grid_panes_share_the_full_chat_and_target_their_own_session(
+    page: Page, browser_contract: BrowserContract
+) -> None:
+    with ExitStack() as stack:
+        chats = [
+            stack.enter_context(
+                contextmanager(chat_session_handle)(page, browser_contract, session_id=sid)
+            )
+            for sid in ("grid-first", "grid-second")
+        ]
+        for chat in chats:
+            browser_contract.json(
+                f"/v1/sessions/{chat.session_id}/resources/shells", list_payload([])
+            )
+            chat.set_items(
+                [
+                    message_item(
+                        f"{chat.session_id}-row",
+                        "assistant",
+                        chat.session_id,
+                        response_id="grid-turn",
+                    )
+                ]
+            )
+        chats[1].update_session(labels={"omnigent.startup_inputs_retained": "true"})
+        browser_contract.json(
+            "/v1/sessions/grid-second/startup-input-receipts",
+            {
+                "data": [
+                    {
+                        "item_id": "second-receipt",
+                        "position": 1,
+                        "created_at": 1704067201,
+                        "cancelled_at": 1704067210,
+                        "reason": "stop",
+                        "state": "cancelled_before_sending",
+                        "content": [{"type": "input_text", "text": "Retained second input"}],
+                    }
+                ],
+                "has_more": False,
+            },
+        )
+        browser_contract.json(
+            "/v1/info", {"single_user": True, "features": {"grid_sessions_display_ui": True}}
+        )
+        browser_contract.json(
+            "/v1/sessions", list_payload([chat.session_snapshot() for chat in chats])
+        )
+        page.add_init_script("""localStorage.setItem(
+          'omnigent:session-grids:'+location.origin+':local',
+          JSON.stringify([{id:'parity',layout:{axis:'columns',children:['grid-first','grid-second']}}])
+        )""")
+        page.goto(browser_contract.base_url + "/grid/parity")
+        first, second = [
+            page.locator(f'[data-grid-session="{chat.session_id}"]') for chat in chats
+        ]
+        for pane, chat in zip((first, second), chats, strict=True):
+            expect(
+                pane.get_by_role("log").get_by_text(chat.session_id, exact=True)
+            ).to_be_visible()
+            expect(pane.get_by_label("Message the agent")).to_be_visible()
+        first.get_by_label("Message the agent").fill("Keep the first draft")
+        expect(first.get_by_text("Retained second input", exact=True)).to_have_count(0)
+        second.locator('[data-message-id="second-receipt"]').get_by_role(
+            "button", name="Restore text to draft", exact=True
+        ).click()
+        expect(second.get_by_label("Message the agent")).to_have_value("Retained second input")
+        expect(first.get_by_label("Message the agent")).to_have_value("Keep the first draft")
+        second.get_by_label("Message the agent").fill("Send only to second")
+        second.get_by_test_id("side-chat-send").click()
+        expect(second.get_by_label("Message the agent")).to_have_value("")
+        expect(first.get_by_label("Message the agent")).to_have_value("Keep the first draft")
+        expect(
+            second.get_by_role("log").get_by_text("Send only to second", exact=True)
+        ).to_be_visible()
+        assert all(post["body"]["type"] != "message" for post in chats[0].event_posts)
+        assert sum(post["body"]["type"] == "message" for post in chats[1].event_posts) == 1
+
+
 def test_session_grid_drag_persist_live_updates_and_close(
     page: Page, browser_contract: BrowserContract, output_path: str
 ) -> None:

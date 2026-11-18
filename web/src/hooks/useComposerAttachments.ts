@@ -31,7 +31,7 @@ export interface ComposerAttachmentsApi {
    * Validating wholesale replacement: the list becomes the accepted files
    * and the rejections become the notice. For input of unknown provenance.
    */
-  replaceFiles: (incoming: File[]) => void;
+  replaceFiles: (incoming: File[]) => File[];
   /**
    * Verbatim wholesale replacement for already-trusted files — re-validating
    * could silently drop them. Leaves the notice untouched.
@@ -107,6 +107,7 @@ export function useComposerAttachments({
     const { accepted, errors } = validateAttachments(incoming, policyRef.current);
     setFiles(accepted);
     setAttachmentError(errors.length > 0 ? errors.join("\n") : null);
+    return accepted;
   }, []);
 
   const restoreFiles = useCallback((restored: File[]) => {

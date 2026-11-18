@@ -18,6 +18,7 @@ import type { MessageContentBlock } from "./blocks";
 import type { McpServerStartup } from "./events";
 import { authenticatedFetch, getCurrentUserId } from "./identity";
 import { getBasePath } from "./basePath";
+import { randomUUID } from "./randomUUID";
 import { getOmnigentServerIdentity, getOmnigentHostConfig } from "./host";
 import { isAndroidShell, isElectronShell, isIOSShell } from "@/lib/nativeBridge";
 import {
@@ -1538,12 +1539,20 @@ export async function postEvent(
   event: SessionEventInput,
   opts?: { holdWhenHostOffline?: boolean; requestId?: string },
 ): Promise<PostEventResponse> {
+  const requestId =
+    opts?.requestId ??
+    (event.type === "message" &&
+    event.data.role === "user" &&
+    "stable_id" in event.data &&
+    typeof event.data.stable_id === "string"
+      ? event.data.stable_id
+      : undefined);
   const res = await authenticatedFetch(`/v1/sessions/${encodeURIComponent(sessionId)}/events`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       ...backgroundSessionTitlesRequestHeaders(),
-      ...(opts?.requestId ? { "Idempotency-Key": opts.requestId } : {}),
+      ...(requestId ? { "Idempotency-Key": requestId } : {}),
       ...(opts?.holdWhenHostOffline ? { [HOST_OFFLINE_HOLD_HEADER]: "on" } : {}),
     },
     body: JSON.stringify(event),
@@ -1633,13 +1642,19 @@ export function interrupt(
  * hard-kills the tmux pane the `claude` binary runs in — the analog
  * of exiting from inside tmux, but driven from the web UI.
  */
-export function stopSession(sessionId: string): Promise<PostEventResponse> {
-  return postEvent(sessionId, { type: "stop_session", data: {} });
+export function stopSession(
+  sessionId: string,
+  requestId: string = randomUUID(),
+): Promise<PostEventResponse> {
+  return postEvent(sessionId, { type: "stop_session", data: {} }, { requestId });
 }
 
 /** Reconnect or relaunch the existing runner without replaying user input. */
-export function retrySession(sessionId: string): Promise<PostEventResponse> {
-  return postEvent(sessionId, { type: "retry_session", data: {} });
+export function retrySession(
+  sessionId: string,
+  requestId: string = randomUUID(),
+): Promise<PostEventResponse> {
+  return postEvent(sessionId, { type: "retry_session", data: {} }, { requestId });
 }
 
 // Multiple error cards can describe the same failed turn.
@@ -1650,30 +1665,36 @@ const failedTurnContinuations = new Map<string, Promise<void>>();
  * transient gateway error) without replaying the original prompt or tools —
  * the runner itself is healthy, only the turn died.
  */
-export function continueFailedTurn(sessionId: string): Promise<void> {
-  const pending = failedTurnContinuations.get(sessionId);
+export function continueFailedTurn(sessionId: string, responseId?: string): Promise<void> {
+  const operation = JSON.stringify([sessionId, responseId]);
+  const pending = failedTurnContinuations.get(operation);
   if (pending) return pending;
 
-  const retry = postEvent(sessionId, {
-    type: "message",
-    data: {
-      role: "user",
-      content: [
-        {
-          type: "input_text",
-          text: "Please continue from where you left off.",
-        },
-      ],
+  const retry = postEvent(
+    sessionId,
+    {
+      type: "message",
+      data: {
+        role: "user",
+        ...(responseId ? { continuation_of: responseId } : {}),
+        content: [
+          {
+            type: "input_text",
+            text: "Please continue from where you left off.",
+          },
+        ],
+      },
     },
-  })
+    responseId ? { requestId: "continue-turn" } : undefined,
+  )
     .then((result) => {
       if (result.denied) throw new Error("The retry was blocked by a policy");
       if (!result.queued) throw new Error("The retry was not accepted");
     })
     .finally(() => {
-      failedTurnContinuations.delete(sessionId);
+      failedTurnContinuations.delete(operation);
     });
-  failedTurnContinuations.set(sessionId, retry);
+  failedTurnContinuations.set(operation, retry);
   return retry;
 }
 

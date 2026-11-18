@@ -13,6 +13,12 @@ import { useChatStore } from "@/store/chatStore";
  */
 export const ConversationScopeContext = createContext<string | null>(null);
 
+/** Embedding hosts can limit permissions; every established pane renders the same chat. */
+export const EmbeddedChatContext = createContext<{
+  subchat: boolean;
+  readOnlyReason: string | null;
+} | null>(null);
+
 /**
  * The conversation id a bubble action should target: the scoped child when
  * inside a `ConversationScopeContext.Provider`, else the root store's active

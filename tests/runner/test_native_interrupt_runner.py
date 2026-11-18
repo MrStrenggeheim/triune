@@ -579,6 +579,15 @@ async def test_codex_interrupt_noop_when_no_bridge_state() -> None:
     assert isinstance(resp, Response) and resp.status_code == 204
 
 
+async def test_codex_interrupt_with_old_turn_requires_matching_bridge_state() -> None:
+    runner, _ = _make_runner()
+    response = await runner.interrupt(
+        "codex-native", "conversation", expected_response_id="codex_old"
+    )
+    assert response is not None
+    assert response.status_code == 409
+
+
 @pytest.mark.asyncio
 async def test_claude_stop_is_idempotent_without_advertised_tmux(
     monkeypatch: pytest.MonkeyPatch,

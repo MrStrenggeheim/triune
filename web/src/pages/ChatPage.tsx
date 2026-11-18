@@ -13,7 +13,13 @@ import {
   useConversationChatVisible,
   useIsScopedConversation,
 } from "@/workbench/ScopedChatStore";
-import { registerQuoteDestination, appendDraftText } from "@/lib/quoteDraftDestinations";
+import {
+  registerQuoteDestination,
+  appendDraftText,
+  insertQuoteDraft,
+} from "@/lib/quoteDraftDestinations";
+import { EmbeddedChatContext } from "@/components/chat/conversationScope";
+import { useQueryClient } from "@tanstack/react-query";
 import { FILE_ANNOTATION_EVENT, type FileAnnotation } from "@/shell/FileSelectionMenu";
 import { WorkspaceSwitchControl } from "@/components/composer/WorkspaceSwitchControl";
 import { SelectionPopup } from "@/components/chat/SelectionPopup";
@@ -35,6 +41,7 @@ import {
   forwardRef,
   memo,
   useCallback,
+  useContext,
   useEffect,
   useImperativeHandle,
   useLayoutEffect,
@@ -95,7 +102,7 @@ import { useSessionModelLabel } from "@/hooks/useSessionModelLabel";
 import { useModelPickerHotkey } from "@/hooks/useModelPickerHotkey";
 import { useFocusComposerHotkey } from "@/hooks/useFocusComposerHotkey";
 import { useAutoGrowTextarea } from "@/hooks/useAutoGrowTextarea";
-import { useDictationInsert } from "@/hooks/useDictationInsert";
+import { useReplyDictation } from "@/hooks/useReplyDictation";
 import {
   derivePermissionLevel,
   isOwnerLevel,
@@ -110,6 +117,7 @@ import { codexEffortLevelsForModel, findNativeModelOption } from "@/lib/codexNat
 import { modelConfigurationSourceRows } from "@/lib/modelConfigurationSource";
 import {
   takeFailedSendDraft,
+  ensureConversationStreamed,
   composerAttachmentKey,
   consumePendingInitialPrompt,
   holdsInitialDraft,
@@ -235,6 +243,7 @@ import {
   getSessionHost,
   sessionRoutingHostId,
   subscribeSessionHostChanges,
+  parentIdFromLabels,
 } from "@/lib/sessionHost";
 import { HostBadge } from "@/components/HostBadge";
 import {
@@ -428,6 +437,8 @@ export function ChatPage({
 }: { conversationId?: string; visible?: boolean } = {}) {
   const useChatStore = useConversationChatStore();
   const scoped = useIsScopedConversation();
+  const embedded = useContext(EmbeddedChatContext);
+  const queryClient = useQueryClient();
   const focused = useConversationChatFocused();
   const { conversationId: routeConvId } = useParams<{ conversationId: string }>();
   const urlConvId = scopedConversationId ?? routeConvId;
@@ -1045,7 +1056,7 @@ export function ChatPage({
       ) {
         return chat.enqueueMessage(text, files, replyDraft);
       }
-      void useChatStore.getState().send(text, agentId, files, {
+      const delivery = useChatStore.getState().send(text, agentId, files, {
         replyDraft,
         ...(nativeCapabilities?.can_steer
           ? {
@@ -1061,6 +1072,11 @@ export function ChatPage({
           navigate(`/c/${newId}`, { replace: true });
         },
       });
+      if (embedded?.subchat && urlConvId) {
+        void delivery.finally(() =>
+          queryClient.invalidateQueries({ queryKey: ["session", urlConvId] }),
+        );
+      }
     },
     [
       agentId,
@@ -1071,6 +1087,8 @@ export function ChatPage({
       isNativeChild,
       nativeCapabilities?.can_steer,
       nativeCapabilities?.active_turn_id,
+      embedded,
+      queryClient,
       isUnreachable,
       reconnect,
       navigate,
@@ -1111,8 +1129,13 @@ export function ChatPage({
   );
 
   const onStop = useCallback(() => {
-    useChatStore.getState().stop();
-  }, [useChatStore]);
+    const model = useChatStore.getState();
+    if (embedded?.readOnlyReason) return;
+    void model.stop(
+      urlConvId,
+      Boolean(embedded?.subchat && usesNativeSideChatFork(model.sessionHarness)),
+    );
+  }, [useChatStore, embedded, urlConvId]);
 
   // A client-only conversation has no server session to POST to yet. Keep the
   // composer editable so the user can draft the next message during creation,
@@ -1124,11 +1147,12 @@ export function ChatPage({
     nativeCapabilities,
   );
   const readOnlyReason =
-    isNativeChild &&
+    embedded?.readOnlyReason ??
+    (isNativeChild &&
     nativeControls.isError &&
     !(activeSession?.labels?.["omnigent.closed"] === "true")
       ? "This sub-agent's controls are unavailable; its history remains readable"
-      : structuralReadOnlyReason;
+      : structuralReadOnlyReason);
   // Once present, the live session snapshot is authoritative. Memoized so the
   // derived props it feeds (modelPickerKind, effortLevels, wrapperLabel) keep a
   // stable identity across the switch's re-render burst.
@@ -1257,7 +1281,9 @@ export function ChatPage({
   const mainAgent = (
     <MainAgentSurface
       branch={activeSession?.branch}
-      hideInheritedHistory={shouldHideSubchatHistory(activeSession?.labels, activeSession?.branch)}
+      hideInheritedHistory={
+        embedded?.subchat || shouldHideSubchatHistory(activeSession?.labels, activeSession?.branch)
+      }
       conversationId={urlConvId ?? null}
       hostId={activeSession?.hostId ?? activeConv?.host_id ?? null}
       status={status}
@@ -1636,6 +1662,7 @@ const MainAgentSurface = memo(function MainAgentSurfaceImpl({
   const visible = useConversationChatVisible();
   const focused = useConversationChatFocused();
   const terminalFirst = useTerminalFirst();
+  const embedded = useContext(EmbeddedChatContext);
   // Streaming-hot subscriptions and the bubble pipeline live in <Transcript>.
   // The turn rail is a hover minimap with no mobile affordance (CSS-hidden
   // under `md`). Gate its MOUNT — not just its visibility — on the viewport so
@@ -1871,53 +1898,59 @@ const MainAgentSurface = memo(function MainAgentSurfaceImpl({
           )}
 
           <ConnectionIndicator liveness={liveness} onShowReconnectHelp={onShowReconnectHelp} />
-          <Composer
-            ref={composerRef}
-            disabled={disabled}
-            status={status}
-            isWorking={isWorking}
-            onSend={onSend}
-            onNewSession={onNewSession}
-            onSendSlashCommand={handleSendSlashCommand}
-            onStop={onStop}
-            agents={agents}
-            selectedAgentId={selectedAgentId}
-            permissionLevel={permissionLevel}
-            readOnlyReason={readOnlyReason}
-            sendDisabledReason={sendDisabledReason}
-            effortLevels={effortLevels}
-            showEffort={showEffort}
-            showModels={showModels}
-            modelPickerKind={modelPickerKind}
-            codexModelOptions={codexModelOptions}
-            inferenceConfigured={inferenceConfigured}
-            inferenceError={inferenceError}
-            modelsFromLaunchPreview={modelsFromLaunchPreview}
-            modelLabelOptions={modelLabelOptions}
-            showCodexPlanMode={showCodexPlanMode}
-            showClaudePermissionMode={showClaudePermissionMode}
-            showCodexApprovalMode={showCodexApprovalMode}
-            showGoalControl={showGoalControl}
-            runnerOnline={runnerOnline}
-            runnerStarting={
-              sandboxStatus?.stage !== "failed" &&
-              (sandboxLaunching || liveness.kind === "starting")
-            }
-            showClaudeGoalControl={showClaudeGoalControl}
-            showPollyCodexGoalControl={showPollyCodexGoalControl}
-            isTerminalFirst={isTerminalFirst}
-            isNativeWrapper={isNativeWrapper}
-            unreachable={
-              !(readOnlyReason === null && nativeCodingAgentForSubagentWrapper(wrapperLabel)) &&
-              !sandboxLaunching &&
-              (liveness.kind === "host_offline" || liveness.kind === "local_stranded")
-            }
-            onShowReconnectHelp={onShowReconnectHelp}
-            costRoutingEligible={costRoutingEligible}
-            subagentRoutingEligible={subagentRoutingEligible}
-            subAgentLabel={subAgentLabel}
-            wrapperLabel={wrapperLabel}
-          />
+          {embedded && isComposerReadOnly(permissionLevel, readOnlyReason, sendDisabledReason) ? (
+            <p className="p-3 text-center text-sm text-muted-foreground">
+              {readOnlyReason ?? "You have read-only access to this session"}
+            </p>
+          ) : (
+            <Composer
+              ref={composerRef}
+              disabled={disabled}
+              status={status}
+              isWorking={isWorking}
+              onSend={onSend}
+              onNewSession={onNewSession}
+              onSendSlashCommand={handleSendSlashCommand}
+              onStop={onStop}
+              agents={agents}
+              selectedAgentId={selectedAgentId}
+              permissionLevel={permissionLevel}
+              readOnlyReason={readOnlyReason}
+              sendDisabledReason={sendDisabledReason}
+              effortLevels={effortLevels}
+              showEffort={showEffort}
+              showModels={showModels}
+              modelPickerKind={modelPickerKind}
+              codexModelOptions={codexModelOptions}
+              inferenceConfigured={inferenceConfigured}
+              inferenceError={inferenceError}
+              modelsFromLaunchPreview={modelsFromLaunchPreview}
+              modelLabelOptions={modelLabelOptions}
+              showCodexPlanMode={showCodexPlanMode}
+              showClaudePermissionMode={showClaudePermissionMode}
+              showCodexApprovalMode={showCodexApprovalMode}
+              showGoalControl={showGoalControl}
+              runnerOnline={runnerOnline}
+              runnerStarting={
+                sandboxStatus?.stage !== "failed" &&
+                (sandboxLaunching || liveness.kind === "starting")
+              }
+              showClaudeGoalControl={showClaudeGoalControl}
+              showPollyCodexGoalControl={showPollyCodexGoalControl}
+              isTerminalFirst={isTerminalFirst}
+              isNativeWrapper={isNativeWrapper}
+              unreachable={
+                !(readOnlyReason === null && nativeCodingAgentForSubagentWrapper(wrapperLabel)) &&
+                !sandboxLaunching &&
+                (liveness.kind === "host_offline" || liveness.kind === "local_stranded")
+              }
+              onShowReconnectHelp={onShowReconnectHelp}
+              costRoutingEligible={costRoutingEligible}
+              subagentRoutingEligible={subagentRoutingEligible}
+              subAgentLabel={subAgentLabel}
+              wrapperLabel={wrapperLabel}
+            />
+          )}
         </>
       )}
     </>
@@ -1960,6 +1993,13 @@ function ConversationLoadError({
           : {error.message}
         </p>
         {/* Route to the home composer ("/"), which owns session creation. */}
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => void ensureConversationStreamed(conversationId)}
+        >
+          Retry
+        </Button>
         <Button type="button" variant="outline" onClick={() => navigate("/")}>
           Start a new chat
         </Button>
@@ -2133,7 +2173,7 @@ export function buildSlashCommandMap(
     m[name] = name === "/model" && supportsModelReset ? `${description} | default` : description;
   }
   for (const skill of skills) {
-    m[`${skillPrefix}${skill.name}`] = skillMenuDescription(skill);
+    m[`${skillPrefix}${skill.name}`] ??= skillMenuDescription(skill);
   }
   return m;
 }
@@ -2405,6 +2445,7 @@ function ComposerImpl(
   const workbenchRef = useRef(workbench);
   workbenchRef.current = workbench;
   const [subchatBusy, setSubchatBusy] = useState(false);
+  const embedded = useContext(EmbeddedChatContext);
   const composerMounted = useRef(true);
   useEffect(() => {
     composerMounted.current = true;
@@ -2505,7 +2546,6 @@ function ComposerImpl(
   }, []);
   // Declared after textareaRef so dictation can place the caret after the
   // text it inserts (and insert at the caret rather than the draft's end).
-  const dictation = useDictationInsert(value, setValue, textareaRef);
   // Highlight overlay mirroring the textarea; scroll-synced so the tinted
   // `/skill` token stays aligned once the draft grows past the visible rows.
   const backdropRef = useRef<HTMLDivElement>(null);
@@ -2534,6 +2574,16 @@ function ComposerImpl(
   // Harness/agent identity shown in the status tray below the card, separate
   // from the composer's read-only model/effort label.
   const sessionHarness = useChatStore((s) => s.sessionHarness);
+  const interruptPhase = useChatStore((s) => s.interruptRequest?.phase);
+  const interruptUnavailable = useChatStore(
+    (s) =>
+      s.interruptRequest?.phase === "sending" ||
+      Boolean(
+        embedded?.subchat &&
+        usesNativeSideChatFork(s.sessionHarness) &&
+        s.activeResponse?.state !== "streaming",
+      ),
+  );
   const nativeTerminalSession = useChatStore((s) => s.isNativeTerminalSession);
   const subAgentName = useChatStore((s) => s.subAgentName);
   const brainHarnessLabels = useBrainHarnessLabels();
@@ -2557,6 +2607,7 @@ function ComposerImpl(
   // tabs and coming back restores the draft. The shared draft store also lets
   // the sidebar surface which sessions have unfinished composer content.
   const conversationId = useChatStore((s) => s.conversationId);
+  const dictation = useReplyDictation(conversationId, draft, activeTextId, editText, textareaRef);
   const queuedMessages = useChatStore((s) => s.queuedMessages);
   const sessionStatus = useChatStore((s) => s.sessionStatus);
   const boundAgentId = useChatStore((s) => s.boundAgentId);
@@ -2787,8 +2838,6 @@ function ComposerImpl(
   // the input, which would delete the draft. Only save when the user
   // has actually changed the value since the last restore.
   const dirtyRef = useRef(false);
-  // Composer text captured when voice dictation starts, so Esc can revert to it.
-  const voiceSnapshotRef = useRef("");
   // On mobile, programmatic focus immediately summons the software keyboard.
   // Keep desktop's fast-type affordance, but let mobile users explicitly tap
   // the composer when switching back from Terminal or changing sessions.
@@ -2902,26 +2951,35 @@ function ComposerImpl(
 
   const terminalPending = useChatStore((s) => s.terminalPending);
   const hostOnline = useSessionHostOnline(composerSessionId ?? undefined);
+  const skillParentId =
+    embedded?.subchat && !(composerSession?.hostId && composerSession.workspace)
+      ? parentIdFromLabels(composerSession?.labels ?? undefined)
+      : null;
+  const skillParent = useSession(skillParentId);
+  const skillSession =
+    composerSession?.hostId && composerSession.workspace ? composerSession : skillParent.session;
   const {
     skills,
     skillsStatus,
     refetch: refreshSkills,
   } = useSkills({
     target:
-      composerSession?.id && composerSession.hostId && composerSession.workspace
+      skillSession?.id && skillSession.hostId && skillSession.workspace
         ? {
-            sessionId: composerSession.id,
+            sessionId: composerSessionId ?? skillSession.id,
             scope: {
-              hostId: composerSession.hostId,
-              harness: composerSession.harness,
-              workspace: composerSession.workspace,
-              agentId: composerSession.agentId,
-              subAgentName: composerSession.subAgentName,
+              hostId: skillSession.hostId,
+              harness: skillSession.harness,
+              workspace: skillSession.workspace,
+              agentId: skillSession.agentId,
+              subAgentName: skillSession.subAgentName,
             },
           }
         : null,
     enabled: !isReadOnly && hostOnline !== false,
-    starting: !isReadOnly && (runnerStarting || terminalPending),
+    starting:
+      !isReadOnly &&
+      (runnerStarting || terminalPending || Boolean(skillParentId && skillParent.isLoading)),
   });
   // ``/model`` writes ``conv.model_override`` (the same column the REPL's
   // ``/model`` and native pickers write). In-process harnesses re-resolve
@@ -3129,7 +3187,7 @@ function ComposerImpl(
     // Re-check live delivery and preserve any newer input before consuming the failure.
     const failed = takeFailedSendDraft(
       failedSendDraft.conversationId,
-      valueRef.current.trim() !== "" || filesRef.current.length > 0,
+      valueRef.current.trim() !== "" || draft.quotes.length > 0 || filesRef.current.length > 0,
     );
     if (!failed) return;
     pendingFailedSendRestore.current = failed.stableId
@@ -3138,9 +3196,22 @@ function ComposerImpl(
     replaceText(failed.text, failed.replyDraft);
     textareaRef.current = tailTextareaRef.current;
     dirtyRef.current = true;
-    if (failed.files.length > 0) attachmentsRef.current.replaceFiles(failed.files);
+    if (failed.files.length > 0) {
+      const accepted = attachmentsRef.current.replaceFiles(failed.files);
+      const restored = useChatStore.getState().restoredSendDraft;
+      if (
+        accepted.length !== failed.files.length &&
+        restored?.stableId === failed.stableId &&
+        restored
+      ) {
+        useChatStore.setState({
+          pendingRetryStableId: null,
+          restoredSendDraft: { ...restored, files: accepted },
+        });
+      }
+    }
     if (focusedRef.current && !isMobileRef.current) textareaRef.current?.focus();
-  }, [failedSendDraft, conversationId, settledConversationId, replaceText, draft]);
+  }, [failedSendDraft, conversationId, settledConversationId, replaceText, draft, useChatStore]);
 
   // Retract a restored failed-send draft once its send proves delivered (its
   // committed item arrived over the stream or a reconnect snapshot). Edits win:
@@ -3679,10 +3750,7 @@ function ComposerImpl(
       const store = useChatStore.getState();
       const target = store.sideChatSelectionTarget;
       if (target?.parentId === sourceId) {
-        store.updateSideChatComposer(target.childId, (current) => ({
-          ...current,
-          ...appendReplyQuote(current, selectedText),
-        }));
+        insertQuoteDraft(target.childId, selectedText, true);
       } else {
         store.openSideChatWithDraft(newPendingSideChatId(), selectedText, sourceId);
       }
@@ -3755,6 +3823,14 @@ function ComposerImpl(
     if (composerLockedByBtw || queueSubmitPendingRef.current.has(draftConversationIdRef.current))
       return;
     const trimmed = fullText.trim();
+    if (
+      slashCompletion.pendingCompletion &&
+      !isNativeWrapper &&
+      !draft.quotes.length &&
+      !files.length &&
+      !mentionedItems.length
+    )
+      return;
     const sideCommand = workbench && draft.text.trimStart().match(/^\/side(?:\s+|$)/i);
     if (sideCommand) {
       const child = { ...draft, text: draft.text.trimStart().slice(sideCommand[0].length) };
@@ -4207,6 +4283,7 @@ function ComposerImpl(
             if (backdropRef.current) backdropRef.current.scrollTop = e.currentTarget.scrollTop;
           },
           "aria-label": "Message the agent",
+          "data-testid": embedded ? "side-chat-input" : undefined,
           "aria-keyshortcuts": nextFromSelected === null ? undefined : "Shift+Tab",
           placeholder: workspaceSwitching
             ? "Finish the workspace change before sending"
@@ -4409,6 +4486,14 @@ function ComposerImpl(
               />
               {/* Inline slash-command feedback: errors and /help output */}
               {commandError !== null && <ComposerFeedbackRow>{commandError}</ComposerFeedbackRow>}
+              {interruptPhase === "unconfirmed" && (
+                <ComposerFeedbackRow tone="error">
+                  Interrupt could not be confirmed.{" "}
+                  <Button type="button" variant="link" size="sm" onClick={onStop}>
+                    Check active turn
+                  </Button>
+                </ComposerFeedbackRow>
+              )}
             </>
           ),
         }}
@@ -4472,12 +4557,8 @@ function ComposerImpl(
                 className="size-8 md:size-7"
                 enableHotkey
                 disabled={disabled || isReadOnly || hasPendingElicitation || composerLockedByBtw}
-                onVoiceStart={() => {
-                  voiceSnapshotRef.current = value;
-                }}
-                onVoiceDiscard={() => {
-                  setValue(voiceSnapshotRef.current);
-                }}
+                onVoiceStart={dictation.begin}
+                onVoiceDiscard={dictation.discard}
                 onTranscript={(text) => {
                   dictation.appendFinal(text);
                   dirtyRef.current = true;
@@ -4615,9 +4696,16 @@ function ComposerImpl(
                   <TooltipTrigger asChild>
                     <ComposerSendButton
                       interrupt={showInterruptButton}
+                      data-testid={
+                        embedded
+                          ? showInterruptButton
+                            ? "side-chat-interrupt"
+                            : "side-chat-send"
+                          : undefined
+                      }
                       disabled={
                         showInterruptButton
-                          ? isReadOnly
+                          ? isReadOnly || interruptUnavailable
                           : !hasDraft ||
                             disabled ||
                             isReadOnly ||

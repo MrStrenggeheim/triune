@@ -3,10 +3,10 @@ import { restoreReplyDraft, serializeReplyDraft, snapshotReplyDraft } from "@/li
 import { useChatStore } from "@/store/chatStore";
 
 /** The full composer already reads primary drafts; carry any older side-pane draft into it. */
-export function migrateConversationDraft(conversationId: string): void {
+export function migrateConversationDraft(conversationId: string, preserveSeed = false): void {
   const store = useChatStore.getState();
   const side = store.sideChatComposers[conversationId];
-  const seed = store.sideChatDrafts[conversationId];
+  const seed = preserveSeed ? undefined : store.sideChatDrafts[conversationId];
   if (!side && !seed) return;
   const primary = getSessionDraft(conversationId);
   const draft = restoreReplyDraft(primary?.text ?? "", primary?.replyDraft);
@@ -30,5 +30,5 @@ export function migrateConversationDraft(conversationId: string): void {
     files: [...new Set([...(primary?.files ?? []), ...(side?.files ?? [])])],
   });
   store.clearSideChatComposer(conversationId);
-  store.clearSideChatDraft(conversationId);
+  if (!preserveSeed) store.clearSideChatDraft(conversationId);
 }

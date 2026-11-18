@@ -6792,8 +6792,18 @@ class SqlAlchemyConversationStore(ConversationStore):
             self._invalidate_items(deleted_id, reset=True)
 
         def delete_metadata(session: Session) -> None:
-            from omnigent.db.db_models import SqlApprovalDelivery, SqlApprovalDeliveryTarget
+            from omnigent.db.db_models import (
+                SqlApprovalDelivery,
+                SqlApprovalDeliveryTarget,
+                SqlSessionCommandReceipt,
+            )
 
+            session.execute(
+                delete(SqlSessionCommandReceipt).where(
+                    SqlSessionCommandReceipt.workspace_id == current_workspace_id(),
+                    SqlSessionCommandReceipt.conversation_id.in_(subtree_ids),
+                )
+            )
             session.execute(
                 delete(SqlApprovalDeliveryTarget).where(
                     SqlApprovalDeliveryTarget.workspace_id == current_workspace_id(),

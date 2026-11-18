@@ -926,3 +926,11 @@ Large tool results publish their header immediately and resolve the authorized, 
 
 Server coverage lives in `tests/server/routes/test_session_recovery.py` and `test_session_updates_ws.py`.
 The desktop and phone journey in `tests/browser_ui/chat/test_transcript_multiplex.py` covers both negotiated and legacy transports.
+
+
+### Command receipts and scoped interrupts
+
+Retry a send after a lost HTTP acknowledgement: its original receipt returns and the conversation contains one input.
+Continue on a saved failed response; repeating the same acknowledged command must not create a second turn.
+An uncertain downstream outcome stays visible until reconciled.
+Interrupt a child while the parent continues and verify that a stale stop cannot cancel the next child turn.

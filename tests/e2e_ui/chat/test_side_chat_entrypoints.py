@@ -22,6 +22,66 @@ from tests.e2e_ui.conftest import configure_mock_llm, fetch_with_retry, open_rig
 _ASSISTANT = '[data-testid="message-bubble"][data-role="assistant"]'
 
 
+def test_established_grid_subchat_keeps_parent_draft_and_streams_only_the_child(
+    page: Page,
+    seeded_session: tuple[str, str],
+    runner_id: str,
+    mock_llm_server_url: str,
+) -> None:
+    base_url, parent = seeded_session
+    parent_question = f"parent-{parent}"
+    parent_answer = "Parent-only answer"
+    reply = "Completed child work"
+    configure_mock_llm(
+        mock_llm_server_url,
+        [{"text": parent_answer}, {"text": reply}],
+        key=parent_question,
+        match=parent_question,
+    )
+    page.goto(f"{base_url}/c/{parent}")
+    _send_parent(page, parent_question, parent_answer)
+    created = httpx.post(
+        f"{base_url}/v1/sessions/{parent}/fork", json={"side_chat": True}, timeout=15
+    )
+    created.raise_for_status()
+    child = created.json()["id"]
+    try:
+        bound = httpx.patch(
+            f"{base_url}/v1/sessions/{child}", json={"runner_id": runner_id}, timeout=15
+        )
+        bound.raise_for_status()
+        grid = [{"id": "shared-chat", "layout": {"axis": "columns", "children": [parent, child]}}]
+        page.add_init_script(
+            "localStorage.setItem('omnigent:session-grids:'+location.origin+':local',"
+            + json.dumps(json.dumps(grid))
+            + ")"
+        )
+
+        def enable_grid(route: Route) -> None:
+            response = fetch_with_retry(route)
+            info = response.json()
+            info.setdefault("features", {})["grid_sessions_display_ui"] = True
+            route.fulfill(response=response, json=info)
+
+        page.route("**/v1/info", enable_grid)
+        page.goto(f"{base_url}/grid/shared-chat")
+        parent_pane = page.locator(f'[data-grid-session="{parent}"]')
+        child_pane = page.locator(f'[data-grid-session="{child}"]')
+        expect(parent_pane.get_by_text(parent_answer, exact=True)).to_be_visible(timeout=15_000)
+        expect(child_pane.get_by_label("Message the agent")).to_be_visible()
+        expect(child_pane.get_by_text(parent_answer, exact=True)).to_have_count(0)
+        prompt = f"{parent_question} child follow-up {child}"
+        parent_pane.get_by_label("Message the agent").fill("Unsent parent draft")
+        child_pane.get_by_label("Message the agent").fill(prompt)
+        child_pane.get_by_test_id("side-chat-send").click()
+        expect(child_pane.locator(_ASSISTANT).filter(has_text=reply)).to_be_visible(timeout=30_000)
+        expect(parent_pane.get_by_label("Message the agent")).to_have_value("Unsent parent draft")
+        assert reply in json.dumps(_items(base_url, child))
+        assert reply not in json.dumps(_items(base_url, parent))
+    finally:
+        httpx.delete(f"{base_url}/v1/sessions/{child}", timeout=10).raise_for_status()
+
+
 @pytest.fixture
 def side_chat_forks(page: Page, seeded_session: tuple[str, str]) -> Iterator[list[str]]:
     """Track real forks and remove them from the fixture-owned server afterward."""

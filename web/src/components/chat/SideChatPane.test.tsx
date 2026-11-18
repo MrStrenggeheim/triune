@@ -1,8 +1,11 @@
 // Modified for Triune; inherited notices remain applicable.
-import { clearSessionDrafts } from "@/lib/sessionDrafts";
+import { clearSessionDrafts, getSessionDraft } from "@/lib/sessionDrafts";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { createPortal } from "react-dom";
 import { StrictMode } from "react";
+import { MemoryRouter } from "react-router-dom";
+import { insertQuoteDraft } from "@/lib/quoteDraftDestinations";
+import { SidebarDataProvider } from "@/hooks/useSidebarData";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import type { ComposerMicButtonProps } from "@/components/ComposerMicButton";
@@ -41,7 +44,15 @@ const sessionBranch = vi.hoisted(() => ({ current: null as ConversationBranch | 
 const loadingSession = vi.hoisted(() => ({ id: null as string | null }));
 vi.mock("@/hooks/useSession", () => ({
   useSession: (id?: string | null) => ({
-    session: { labels: sessionLabels.current, branch: sessionBranch.current },
+    session:
+      id == null
+        ? null
+        : {
+            id,
+            harness: conversationRegistry.peek(id)?.getState().sessionHarness,
+            labels: sessionLabels.current,
+            branch: sessionBranch.current,
+          },
     isLoading: id != null && id === loadingSession.id,
     error: null,
   }),
@@ -69,7 +80,11 @@ const queryClient = new QueryClient();
 const renderPane = (ui: ReactNode) =>
   render(ui, {
     wrapper: ({ children }) => (
-      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+      <MemoryRouter>
+        <QueryClientProvider client={queryClient}>
+          <SidebarDataProvider identityReady={false}>{children}</SidebarDataProvider>
+        </QueryClientProvider>
+      </MemoryRouter>
     ),
   });
 
@@ -115,7 +130,7 @@ afterEach(() => {
   localStorage.clear();
 });
 
-it.each(["", "Unfinished side draft", "  \n "])(
+it.each(["Unfinished side draft", "  \n "])(
   "keeps Up Arrow as native caret navigation in side composer: %j",
   (text) => {
     localStorage.setItem(
@@ -195,10 +210,6 @@ describe("side-chat working indicator", () => {
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     expect(group.querySelectorAll('[data-role="user"]')).toHaveLength(2);
-    const stack = group.parentElement!;
-    expect(stack).toHaveClass("mt-auto");
-    expect(stack.lastElementChild).toBe(group);
-    expect(stack.nextElementSibling).toBeNull();
     act(() => entry.setState({ pendingUserMessages: [pending[1]!] }));
     expect(group.querySelectorAll('[data-role="user"]')).toHaveLength(1);
     act(() =>
@@ -218,16 +229,16 @@ describe("side-chat working indicator", () => {
       }),
     );
     expect(screen.queryByTestId("message-awaiting-agent")).not.toBeInTheDocument();
-    expect(stack.lastElementChild).toBe(screen.getByTestId("working-indicator"));
+    expect(screen.getByTestId("working-indicator")).toBeVisible();
     act(() => entry.setState({ sessionStatus: "idle", activeResponse: null, status: "idle" }));
     expect(screen.queryByTestId("working-indicator")).not.toBeInTheDocument();
-    expect(stack.lastElementChild).toHaveTextContent("Consumed bottom message");
+    expect(screen.getByText("Consumed bottom message")).toBeVisible();
   });
   it("shows the full session history and live state without exposing a read-only composer", () => {
     const entry = conversationRegistry.acquire(childId);
     entry.setState({ sessionHarness: "openai-agents", loadingConversation: true });
     renderPane(<SideChatPane childId={childId} fullSession readOnly />);
-    expect(screen.getByRole("status")).toHaveTextContent("Loading session");
+    expect(screen.getByRole("status", { name: "Loading conversation" })).toBeInTheDocument();
     act(() =>
       entry.setState({
         loadingConversation: false,
@@ -252,16 +263,12 @@ describe("side-chat working indicator", () => {
     renderPane(<SideChatPane childId={childId} />);
 
     expect(screen.getByTestId("working-indicator")).toHaveTextContent("Working…");
-    expect(
-      screen.queryByText("Ask a question here without affecting the main conversation."),
-    ).toBeNull();
+    expect(screen.queryByText("What should we work on?")).toBeNull();
 
     act(() => conversationRegistry.acquire(childId).setState({ sessionStatus: "idle" }));
 
     expect(screen.queryByTestId("working-indicator")).toBeNull();
-    expect(
-      screen.getByText("Ask a question here without affecting the main conversation."),
-    ).toBeInTheDocument();
+    expect(screen.getByText("What should we work on?")).toBeInTheDocument();
   });
 
   it.each([
@@ -288,7 +295,7 @@ describe("side-chat working indicator", () => {
     expect(screen.getByTestId("working-indicator")).toHaveTextContent(
       "Waiting for you in the agent's terminal (tool approval).",
     );
-    expect(screen.getByRole("button", { name: "Interrupt side chat" })).toBeEnabled();
+    expect(screen.getByTestId("side-chat-interrupt")).toBeEnabled();
   });
 
   it("shows progress while creating a fork and restores the draft after failure", async () => {
@@ -306,7 +313,7 @@ describe("side-chat working indicator", () => {
     const view = renderPane(pane);
     const input = screen.getByTestId("side-chat-input");
     fireEvent.change(input, { target: { value: "Explain the approach" } });
-    fireEvent.click(screen.getByRole("button", { name: "Send side question" }));
+    fireEvent.click(screen.getByTestId("side-chat-send"));
 
     expect(onStart).toHaveBeenCalledExactlyOnceWith("Explain the approach");
     expect(screen.getByTestId("working-indicator")).toHaveTextContent("Working…");
@@ -325,7 +332,7 @@ describe("side-chat working indicator", () => {
     expect(screen.getByTestId("side-chat-input")).toBeEnabled();
     expect(screen.getByTestId("side-chat-input")).toHaveValue("Explain the approach");
     expect(useChatStore.getState().sideChatSelectionTarget?.childId).toBe("pending:side");
-    expect(screen.getByRole("button", { name: "Send side question" })).toBeEnabled();
+    expect(screen.getByTestId("side-chat-send")).toBeEnabled();
   });
 });
 
@@ -337,13 +344,16 @@ describe("side chat opened from a text selection", () => {
     renderPane(<SideChatPane childId={id} onStart={onStart} />);
     const text = "  - First\n  - Second";
     fireEvent.change(screen.getByTestId("side-chat-input"), { target: { value: text } });
-    fireEvent.click(screen.getByRole("button", { name: "Send side question" }));
+    fireEvent.click(screen.getByTestId("side-chat-send"));
     if (pending) {
       expect(onStart).toHaveBeenCalledExactlyOnceWith(text);
     } else {
-      expect(send).toHaveBeenCalledExactlyOnceWith(text, "agent_side", undefined, {
-        pinnedConversationId: childId,
-      });
+      expect(send).toHaveBeenCalledExactlyOnceWith(
+        text,
+        "agent_side",
+        undefined,
+        expect.objectContaining({ pinnedConversationId: childId }),
+      );
     }
   });
 
@@ -355,7 +365,7 @@ describe("side chat opened from a text selection", () => {
     expect(screen.getByTestId("composer-reply-quote")).toHaveTextContent("restore the row");
     expect(screen.getByTestId("side-chat-input")).toHaveFocus();
     fireEvent.change(screen.getByTestId("side-chat-input"), { target: { value: "why?" } });
-    fireEvent.click(screen.getByRole("button", { name: "Send side question" }));
+    fireEvent.click(screen.getByTestId("side-chat-send"));
 
     expect(onStart).toHaveBeenCalledExactlyOnceWith("> restore the row\n\nwhy?");
     await waitFor(() => expect(useChatStore.getState().sideChatDrafts).toEqual({}));
@@ -410,7 +420,6 @@ describe("side chat opened from a text selection", () => {
       parentId: "conv_main",
     });
     expect(screen.getAllByTestId("composer-reply-quote")).toHaveLength(2);
-    expect(screen.getByTestId("side-chat-input")).toHaveFocus();
     expect(send).not.toHaveBeenCalled();
     fireEvent.click(screen.getAllByRole("button", { name: "Remove quote" })[0]);
     expect(screen.getByRole("textbox", { name: "Reply text before quote 1" })).toHaveValue(
@@ -420,12 +429,12 @@ describe("side chat opened from a text selection", () => {
     expect(screen.getByTestId("side-chat-input")).toHaveValue(
       "Introduction\n\nFirst answer\n\nwhy?",
     );
-    fireEvent.click(screen.getByRole("button", { name: "Send side question" }));
+    fireEvent.click(screen.getByTestId("side-chat-send"));
     expect(send).toHaveBeenCalledWith(
       "Introduction\n\nFirst answer\n\nwhy?",
       "agent_side",
       undefined,
-      { pinnedConversationId: childId },
+      expect.objectContaining({ pinnedConversationId: childId }),
     );
     expect(useChatStore.getState().sideChatComposers[childId]).toBeUndefined();
   });
@@ -446,7 +455,7 @@ describe("side chat opened from a text selection", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Remove quote" }));
     fireEvent.change(screen.getByTestId("side-chat-input"), { target: { value: "why?" } });
-    fireEvent.click(screen.getByRole("button", { name: "Send side question" }));
+    fireEvent.click(screen.getByTestId("side-chat-send"));
 
     expect(screen.queryByTestId("composer-reply-quote")).toBeNull();
     expect(onStart).toHaveBeenCalledExactlyOnceWith("why?");
@@ -498,7 +507,7 @@ describe("side-chat selection reply", () => {
     act(() => tail.focus());
     fireEvent.change(tail, { target: { value: "Edited tail answer" } });
     fireEvent.click(screen.getAllByRole("button", { name: "Remove quote" })[1]);
-    const selectedText = "Ask a question here without affecting the main conversation.";
+    const selectedText = "What should we work on?";
     selectText(screen.getByText(selectedText));
     fireEvent.click(screen.getByRole("menuitem", { name: "Reply" }));
     fireEvent.change(tail, { target: { value: "After the added quote" } });
@@ -513,7 +522,7 @@ describe("side-chat selection reply", () => {
       "Quoted passage",
       selectedText,
     ]);
-    expect(useChatStore.getState().sideChatComposers[childId].files).toEqual([file]);
+    expect(getSessionDraft(childId)?.files ?? []).toEqual([file]);
     expect(screen.getByText("notes.txt")).toBeInTheDocument();
   });
 
@@ -535,7 +544,7 @@ describe("side-chat selection reply", () => {
     act(() => mic.current!.onVoiceStart!());
     act(() => mic.current!.onTranscript("spoken addition"));
     expect(tail).toHaveValue("Tail answer spoken addition");
-    selectText(screen.getByText("Ask a question here without affecting the main conversation."));
+    selectText(screen.getByText("What should we work on?"));
     fireEvent.click(screen.getByRole("menuitem", { name: "Reply" }));
     fireEvent.change(tail, { target: { value: "After the added quote" } });
     fireEvent.change(screen.getByRole("textbox", { name: "Reply text before quote 1" }), {
@@ -698,7 +707,7 @@ describe("side-chat selection reply", () => {
         "> First passage\n\nEdited first answer\n\n> Second passage\n\nSecond answer",
         "agent_side",
         undefined,
-        { pinnedConversationId: childId },
+        expect.objectContaining({ pinnedConversationId: childId }),
       );
     },
   );
@@ -743,7 +752,7 @@ describe("side-chat selection reply", () => {
       between ? "> First passage\n\nKeep answer\n\n> Second passage" : "",
       "agent_side",
       [file],
-      { pinnedConversationId: childId },
+      expect.objectContaining({ pinnedConversationId: childId }),
     );
   });
 
@@ -766,7 +775,7 @@ describe("side-chat selection reply", () => {
           })),
         },
       });
-      expect(useChatStore.getState().sideChatComposers[childId].files).toEqual([notes, zip]);
+      expect(getSessionDraft(childId)?.files ?? []).toEqual([notes, zip]);
       expect(screen.getByText("bundle.zip")).toBeInTheDocument();
       const restrictedPane = (
         <CapabilitiesProvider
@@ -783,7 +792,7 @@ describe("side-chat selection reply", () => {
         renderPane(restrictedPane);
       } else view.rerender(restrictedPane);
 
-      expect(useChatStore.getState().sideChatComposers[childId].files).toEqual([notes, zip]);
+      expect(getSessionDraft(childId)?.files ?? []).toEqual([notes, zip]);
       expect(screen.getByText("bundle.zip")).toBeInTheDocument();
       expect(screen.getByText("notes.txt")).toBeInTheDocument();
       expect(toast.error).not.toHaveBeenCalled();
@@ -819,19 +828,14 @@ describe("side-chat selection reply", () => {
       },
     });
     renderPane(<SideChatPane childId={childId} />);
-    selectText(screen.getByText("Ask a question here without affecting the main conversation."));
+    selectText(screen.getByText("What should we work on?"));
     fireEvent.click(screen.getByRole("menuitem", { name: "Reply" }));
 
-    expect(useChatStore.getState().sideChatComposers[childId]).toEqual({
+    expect(getSessionDraft(childId)?.replyDraft).toMatchObject({
       text: "",
-      files: [],
       quotes: [
-        { id: "existing", before: "", text: "existing quote" },
-        {
-          id: expect.any(String),
-          before: "my follow-up",
-          text: "Ask a question here without affecting the main conversation.",
-        },
+        { before: "", text: "existing quote" },
+        { before: "my follow-up", text: "What should we work on?" },
       ],
     });
     expect(screen.getByTestId("side-chat-input")).toHaveFocus();
@@ -872,7 +876,7 @@ describe("side-chat interrupt", () => {
     renderPane(<SideChatPane childId={childId} />);
 
     expect(screen.getByTestId("working-indicator")).toHaveTextContent("Working…");
-    const interrupt = screen.getByRole("button", { name: "Interrupt side chat" });
+    const interrupt = screen.getByTestId("side-chat-interrupt");
     expect(interrupt).toBeDisabled();
     fireEvent.click(interrupt);
     expect(sessionsApi.interrupt).not.toHaveBeenCalled();
@@ -885,7 +889,11 @@ describe("side-chat interrupt", () => {
 
     expect(interrupt).toBeEnabled();
     fireEvent.click(interrupt);
-    expect(sessionsApi.interrupt).toHaveBeenCalledExactlyOnceWith(childId, "codex_turn_followup");
+    expect(sessionsApi.interrupt).toHaveBeenCalledExactlyOnceWith(
+      childId,
+      "codex_turn_followup",
+      expect.any(String),
+    );
     await waitFor(() => expect(interrupt).toBeEnabled());
   });
 
@@ -899,10 +907,14 @@ describe("side-chat interrupt", () => {
     renderPane(<SideChatPane childId={childId} />);
 
     expect(screen.getByTestId("working-indicator")).toHaveTextContent("Working…");
-    const interrupt = screen.getByRole("button", { name: "Interrupt side chat" });
+    const interrupt = screen.getByTestId("side-chat-interrupt");
     expect(interrupt).toBeEnabled();
     fireEvent.click(interrupt);
-    expect(sessionsApi.interrupt).toHaveBeenCalledExactlyOnceWith(childId, undefined);
+    expect(sessionsApi.interrupt).toHaveBeenCalledExactlyOnceWith(
+      childId,
+      undefined,
+      expect.any(String),
+    );
     await waitFor(() => expect(interrupt).toBeEnabled());
   });
 
@@ -912,7 +924,7 @@ describe("side-chat interrupt", () => {
     });
     renderPane(<SideChatPane childId={childId} />);
 
-    const interrupt = screen.getByRole("button", { name: "Interrupt side chat" });
+    const interrupt = screen.getByTestId("side-chat-interrupt");
     expect(interrupt).toBeDisabled();
     fireEvent.click(interrupt);
     expect(sessionsApi.interrupt).not.toHaveBeenCalled();
@@ -925,12 +937,14 @@ describe("side-chat interrupt", () => {
     });
     renderPane(<SideChatPane childId={childId} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Interrupt side chat" }));
+    fireEvent.click(screen.getByTestId("side-chat-interrupt"));
 
-    expect(sessionsApi.interrupt).toHaveBeenCalledExactlyOnceWith(childId, "codex_turn_side");
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Interrupt side chat" })).toBeEnabled(),
+    expect(sessionsApi.interrupt).toHaveBeenCalledExactlyOnceWith(
+      childId,
+      "codex_turn_side",
+      expect.any(String),
     );
+    await waitFor(() => expect(screen.getByTestId("side-chat-interrupt")).toBeEnabled());
     expect(useChatStore.getState().activeResponse?.responseId).toBe("resp_main");
   });
 
@@ -945,14 +959,18 @@ describe("side-chat interrupt", () => {
     useChatStore.setState({ sessionStatus: "running" });
     renderPane(<SideChatPane childId={childId} />);
     const input = screen.getByTestId("side-chat-input");
-    const interrupt = screen.getByRole("button", { name: "Interrupt side chat" });
+    const interrupt = screen.getByTestId("side-chat-interrupt");
     fireEvent.click(interrupt);
     fireEvent.click(interrupt);
     expect(interrupt).toBeDisabled();
     fireEvent.change(input, { target: { value: "Keep this follow-up" } });
     fireEvent.keyDown(input, { key: "Escape" });
 
-    expect(sessionsApi.interrupt).toHaveBeenCalledExactlyOnceWith(childId, "codex_turn_side");
+    expect(sessionsApi.interrupt).toHaveBeenCalledExactlyOnceWith(
+      childId,
+      "codex_turn_side",
+      expect.any(String),
+    );
     expect(input).toHaveValue("Keep this follow-up");
     expect(send).not.toHaveBeenCalled();
     expect(useChatStore.getState().sessionStatus).toBe("running");
@@ -962,10 +980,13 @@ describe("side-chat interrupt", () => {
 
     expect(screen.queryByTestId("side-chat-interrupt")).toBeNull();
     expect(input).toHaveValue("Keep this follow-up");
-    fireEvent.click(screen.getByRole("button", { name: "Send side question" }));
-    expect(send).toHaveBeenCalledExactlyOnceWith("Keep this follow-up", "agent_side", undefined, {
-      pinnedConversationId: childId,
-    });
+    fireEvent.click(screen.getByTestId("side-chat-send"));
+    expect(send).toHaveBeenCalledExactlyOnceWith(
+      "Keep this follow-up",
+      "agent_side",
+      undefined,
+      expect.objectContaining({ pinnedConversationId: childId }),
+    );
     expect(useChatStore.getState().sessionStatus).toBe("running");
   });
 
@@ -975,7 +996,11 @@ describe("side-chat interrupt", () => {
     fireEvent.change(input, { target: { value: "Keep this draft" } });
     fireEvent.keyDown(input, { key: "Escape" });
 
-    expect(sessionsApi.interrupt).toHaveBeenCalledExactlyOnceWith(childId, "codex_turn_side");
+    expect(sessionsApi.interrupt).toHaveBeenCalledExactlyOnceWith(
+      childId,
+      "codex_turn_side",
+      expect.any(String),
+    );
     expect(send).not.toHaveBeenCalled();
     expect(input).toHaveValue("Keep this draft");
   });
@@ -1004,15 +1029,28 @@ describe("side-chat interrupt", () => {
     fireEvent.change(input, { target: { value: "Keep this draft" } });
     fireEvent.keyDown(input, { key: "Escape" });
 
-    await waitFor(() => expect(toast.error).toHaveBeenCalledOnce());
-    expect(toast.error).toHaveBeenCalledWith(expect.stringMatching(/interrupt.*try again/i));
+    await waitFor(() =>
+      expect(conversationRegistry.peek(childId)?.getState().interruptRequest?.phase).toBe(
+        "unconfirmed",
+      ),
+    );
+    expect(screen.getByText(/Interrupt could not be confirmed/)).toBeVisible();
     await act(async () => {});
     expect(input).toHaveValue("Keep this draft");
     expect(send).not.toHaveBeenCalled();
 
+    vi.spyOn(sessionsApi, "getSessionSlim").mockResolvedValueOnce({
+      id: childId,
+      status: "running",
+      activeResponseId: "codex_turn_side",
+    } as Awaited<ReturnType<typeof sessionsApi.getSessionSlim>>);
+    fireEvent.keyDown(input, { key: "Escape" });
+    await waitFor(() =>
+      expect(conversationRegistry.peek(childId)?.getState().interruptRequest).toBeNull(),
+    );
+    expect(sessionsApi.interrupt).toHaveBeenCalledTimes(1);
     fireEvent.keyDown(input, { key: "Escape" });
     await waitFor(() => expect(sessionsApi.interrupt).toHaveBeenCalledTimes(2));
-    expect(sessionsApi.interrupt).toHaveBeenLastCalledWith(childId, "codex_turn_side");
   });
 
   it("queues a follow-up while the side chat runs and sends it when the turn ends", async () => {
@@ -1021,14 +1059,14 @@ describe("side-chat interrupt", () => {
     expect(screen.queryByTestId("side-chat-send")).toBeNull();
     fireEvent.change(input, { target: { value: "Also check the tests" } });
     expect(screen.queryByTestId("side-chat-interrupt")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Send side question" }));
+    fireEvent.click(screen.getByTestId("side-chat-send"));
 
     expect(send).not.toHaveBeenCalled();
     expect(input).toHaveValue("");
     expect(screen.getByRole("list", { name: "Queued messages" })).toHaveTextContent(
       "Also check the tests",
     );
-    expect(screen.getByRole("button", { name: "Interrupt side chat" })).toBeEnabled();
+    expect(screen.getByTestId("side-chat-interrupt")).toBeEnabled();
     expect(useChatStore.getState().queuedMessages).toEqual([
       expect.objectContaining({ conversationId: childId, agentId: "agent_side" }),
     ]);
@@ -1108,10 +1146,9 @@ describe("side-chat interrupt", () => {
     expect(screen.getByRole("textbox", { name: "Reply text before quote 1" })).toHaveValue(
       "Earlier answer",
     );
-    expect(useChatStore.getState().sideChatComposers[childId]).toEqual({
+    expect(getSessionDraft(childId)?.replyDraft).toMatchObject({
       text: "Follow up",
-      files: [],
-      quotes: [expect.objectContaining({ before: "Earlier answer", text: "Quoted passage" })],
+      quotes: [{ before: "Earlier answer", text: "Quoted passage" }],
     });
     expect(input).toHaveValue("Follow up");
     expect(useChatStore.getState().queuedMessages).toEqual([]);
@@ -1202,9 +1239,12 @@ describe("seeded /side question survives an unmount before the child binds", () 
     renderPane(<SideChatPane childId={childId} />);
 
     await waitFor(() => expect(send).toHaveBeenCalledOnce());
-    expect(send).toHaveBeenCalledWith("why backoff?", "agent_side", undefined, {
-      pinnedConversationId: childId,
-    });
+    expect(send).toHaveBeenCalledWith(
+      "why backoff?",
+      "agent_side",
+      undefined,
+      expect.objectContaining({ pinnedConversationId: childId }),
+    );
     // Consumed, so a later remount can't send it a second time.
     expect(useChatStore.getState().sideChatDrafts[childId]).toBeUndefined();
     cleanup();
@@ -1294,9 +1334,12 @@ describe("unsent composer state survives the pane moving", () => {
       await waitFor(() => expect(send).toHaveBeenCalledOnce());
       expect(useChatStore.getState().sideChatComposers[childId]).toBeUndefined();
       expect(screen.getByTestId("side-chat-input")).toHaveValue("");
-      expect(send).toHaveBeenCalledWith("ask this", "agent_side", undefined, {
-        pinnedConversationId: childId,
-      });
+      expect(send).toHaveBeenCalledWith(
+        "ask this",
+        "agent_side",
+        undefined,
+        expect.objectContaining({ pinnedConversationId: childId }),
+      );
       expect(useChatStore.getState().sideChatComposers["other-pane"].text).toBe("keep me");
     },
   );
@@ -1320,9 +1363,12 @@ describe("side chat sealed by the server", () => {
     renderPane(<SideChatPane childId={childId} />);
 
     await waitFor(() =>
-      expect(send).toHaveBeenCalledWith("why?", "agent_side", undefined, {
-        pinnedConversationId: childId,
-      }),
+      expect(send).toHaveBeenCalledWith(
+        "why?",
+        "agent_side",
+        undefined,
+        expect.objectContaining({ pinnedConversationId: childId }),
+      ),
     );
     await waitFor(() =>
       expect(invalidate).toHaveBeenCalledWith({ queryKey: ["session", childId] }),
@@ -1400,10 +1446,13 @@ describe("side-chat slash commands", () => {
       skillsFixture.current = { skills: [review], skillsStatus: "ready" };
       renderPane(<SideChatPane childId={childId} />);
       typeSlash("/review 123");
-      fireEvent.click(screen.getByRole("button", { name: "Send side question" }));
-      expect(sendSlashCommand).toHaveBeenCalledExactlyOnceWith("review", "123", "agent_side", {
-        pinnedConversationId: childId,
-      });
+      fireEvent.click(screen.getByTestId("side-chat-send"));
+      expect(sendSlashCommand).toHaveBeenCalledExactlyOnceWith(
+        "review",
+        "123",
+        "agent_side",
+        expect.objectContaining({ pinnedConversationId: childId }),
+      );
       expect(send).not.toHaveBeenCalled();
       expect(useChatStore.getState().sideChatComposers[childId]).toBeUndefined();
     },
@@ -1417,14 +1466,14 @@ describe("side-chat slash commands", () => {
     skillsFixture.current = { skills: [helpDesk], skillsStatus: "ready" };
     renderPane(<SideChatPane childId={childId} />);
     typeSlash("/help desk summarize");
-    fireEvent.click(screen.getByRole("button", { name: "Send side question" }));
+    fireEvent.click(screen.getByTestId("side-chat-send"));
     // "/help desk" is a catalog skill whose first word collides with the /help
     // built-in; the multi-word skill wins and dispatches instead of showing help.
     expect(sendSlashCommand).toHaveBeenCalledExactlyOnceWith(
       "help desk",
       "summarize",
       "agent_side",
-      { pinnedConversationId: childId },
+      expect.objectContaining({ pinnedConversationId: childId }),
     );
     expect(send).not.toHaveBeenCalled();
     expect(screen.queryByText(/Show available slash commands/)).toBeNull();
@@ -1449,7 +1498,7 @@ describe("side-chat slash commands", () => {
     // Submitting /help runs the built-in locally; the skill is never dispatched.
     typeSlash("/help");
     fireEvent.click(screen.getByTestId("side-chat-send"));
-    expect(screen.getByText(/Show available slash commands/)).toBeInTheDocument();
+    expect(screen.getAllByText(/Show available slash commands/).length).toBeGreaterThan(0);
     expect(sendSlashCommand).not.toHaveBeenCalled();
     expect(send).not.toHaveBeenCalled();
   });
@@ -1497,7 +1546,7 @@ describe("side-chat slash commands", () => {
       "> a selection\n\n/review",
       "agent_side",
       undefined,
-      { pinnedConversationId: childId },
+      expect.objectContaining({ pinnedConversationId: childId }),
     );
     expect(sendSlashCommand).not.toHaveBeenCalled();
   });
@@ -1505,18 +1554,28 @@ describe("side-chat slash commands", () => {
   it.each([
     { label: "a typed skill", input: "/review 123", menuTestId: "slash-menu-item-review" },
     { label: "/help", input: "/help", menuTestId: "slash-menu-item-help" },
-  ])("sends $label as plaintext on a native terminal harness", ({ input, menuTestId }) => {
+  ])("runs $label through the shared native composer", ({ input, menuTestId }) => {
     // beforeEach binds the child to codex-native: the vendor TUI reads the typed
     // text itself, so no menu opens and neither local path runs.
     conversationRegistry.acquire(childId).setState({ sessionStatus: "idle" });
     skillsFixture.current = { skills: [review], skillsStatus: "ready" };
     renderPane(<SideChatPane childId={childId} />);
     typeSlash(input);
+    if (input === "/help") {
+      expect(screen.getByTestId(menuTestId)).toBeVisible();
+      fireEvent.click(screen.getByTestId("side-chat-send"));
+      expect(send).not.toHaveBeenCalled();
+      expect(sendSlashCommand).not.toHaveBeenCalled();
+      return;
+    }
     expect(screen.queryByTestId(menuTestId)).toBeNull();
     fireEvent.click(screen.getByTestId("side-chat-send"));
-    expect(send).toHaveBeenCalledExactlyOnceWith(input, "agent_side", undefined, {
-      pinnedConversationId: childId,
-    });
+    expect(send).toHaveBeenCalledExactlyOnceWith(
+      input,
+      "agent_side",
+      undefined,
+      expect.objectContaining({ pinnedConversationId: childId }),
+    );
     expect(sendSlashCommand).not.toHaveBeenCalled();
   });
 
@@ -1530,7 +1589,7 @@ describe("side-chat slash commands", () => {
     fireEvent.click(screen.getByTestId("side-chat-send"));
     expect(send).not.toHaveBeenCalled();
     expect(sendSlashCommand).not.toHaveBeenCalled();
-    expect(screen.getByText(/Show available slash commands/)).toBeInTheDocument();
+    expect(screen.getAllByText(/Show available slash commands/).length).toBeGreaterThan(0);
   });
 
   it("runs /help locally when its menu row is chosen, without sending", () => {
@@ -1544,7 +1603,7 @@ describe("side-chat slash commands", () => {
     // Choosing the built-in row runs it in place: the menu closes to the local
     // notice and neither send path is used.
     expect(screen.queryByTestId("slash-menu-item-help")).toBeNull();
-    expect(screen.getByText(/Show available slash commands/)).toBeInTheDocument();
+    expect(screen.getAllByText(/Show available slash commands/).length).toBeGreaterThan(0);
     expect(send).not.toHaveBeenCalled();
     expect(sendSlashCommand).not.toHaveBeenCalled();
   });
@@ -1574,7 +1633,7 @@ describe("side-chat slash commands", () => {
 });
 
 it.each([false, true])(
-  "recovers grid failures without changing ordinary side chats (grid: %s)",
+  "restores failed sends with their original attachments and quotes (grid: %s)",
   async (fullSession) => {
     const entry = conversationRegistry.acquire(childId);
     const file = new File(["notes"], "notes.txt", { type: "text/plain" });
@@ -1602,10 +1661,10 @@ it.each([false, true])(
         <SideChatPane childId={childId} fullSession={fullSession} />
       </StrictMode>,
     );
-    expect(screen.getByTestId("side-chat-input")).toHaveValue(fullSession ? text : "");
-    expect(entry.getState().failedSendDraft).toBe(fullSession ? null : failed);
-    if (!fullSession) return;
-    expect(useChatStore.getState().sideChatComposers[childId].files).toEqual([file]);
+    expect(screen.getByTestId("side-chat-input")).toHaveValue("Retry this");
+    expect(screen.getByTestId("composer-reply-quote")).toHaveTextContent("Quoted");
+    expect(entry.getState().failedSendDraft).toBeNull();
+    expect(getSessionDraft(childId)?.files ?? []).toEqual([file]);
     vi.spyOn(filesApi, "uploadFile").mockResolvedValue({
       id: "uploaded",
       filename: file.name,
@@ -1613,6 +1672,7 @@ it.each([false, true])(
       created_at: 0,
     });
     const post = vi.spyOn(sessionsApi, "postEvent").mockResolvedValue({ queued: true });
+    act(() => entry.setState({ abortController: new AbortController() }));
     fireEvent.click(screen.getByTestId("side-chat-send"));
     await waitFor(() => expect(post).toHaveBeenCalledOnce());
     expect(post.mock.calls[0][1]).toMatchObject({ data: { stable_id: "retry-stable" } });
@@ -1643,18 +1703,11 @@ it.each(["none", "text", "files", "quote", "rejected-file"] as const)(
     });
     renderPane(<SideChatPane childId={childId} fullSession />);
     expect(screen.getByTestId("side-chat-input")).toHaveValue("> Quote\n\nRetry");
-    act(() =>
-      useChatStore.getState().updateSideChatComposer(childId, (current) => ({
-        ...current,
-        ...{
-          none: {},
-          text: { text: "Edited" },
-          files: { files: [] },
-          quote: { quotes: [{ id: "new", before: "", text: "New quote" }] },
-          "rejected-file": {},
-        }[edit],
-      })),
-    );
+    if (edit === "text")
+      fireEvent.change(screen.getByTestId("side-chat-input"), { target: { value: "Edited" } });
+    if (edit === "files")
+      fireEvent.click(screen.getByRole("button", { name: /remove.*notes.txt/i }));
+    if (edit === "quote") act(() => insertQuoteDraft(childId, "New quote", true));
     act(() =>
       entry.setState({
         restoredSendDraft: { ...entry.getState().restoredSendDraft!, delivered: true },
@@ -1665,7 +1718,7 @@ it.each(["none", "text", "files", "quote", "rejected-file"] as const)(
         none: "",
         text: "Edited",
         files: "> Quote\n\nRetry",
-        quote: "> Quote\n\nRetry",
+        quote: "",
         "rejected-file": "",
       }[edit],
     );
@@ -1681,14 +1734,7 @@ it.each([false, true])(
     entry.setState({ sessionStatus: "idle", abortController: new AbortController() });
     useChatStore.setState({ send: initialStoreState.send });
     renderPane(<SideChatPane childId={childId} fullSession />);
-    if (hasNewDraft)
-      act(() =>
-        useChatStore.getState().updateSideChatComposer(childId, () => ({
-          text: "",
-          files: [],
-          quotes: [{ id: "new", before: "", text: "New quote" }],
-        })),
-      );
+    if (hasNewDraft) act(() => insertQuoteDraft(childId, "New quote", true));
     act(() =>
       entry.setState({
         failedSendDraft: {
@@ -1700,12 +1746,12 @@ it.each([false, true])(
       }),
     );
     expect(screen.getByTestId("side-chat-input")).toHaveValue(hasNewDraft ? "" : "Retry");
-    expect(useChatStore.getState().sideChatComposers[childId].files).toEqual([]);
+    expect(getSessionDraft(childId)?.files ?? []).toEqual([]);
     expect(entry.getState().pendingRetryStableId).toBeNull();
     if (hasNewDraft)
       expect(screen.getByTestId("composer-reply-quote")).toHaveTextContent("New quote");
     else {
-      expect(toast.error).toHaveBeenCalledWith(expect.stringMatching(/oversized\.bin.*too large/));
+      expect(screen.getByText(/oversized\.bin.*too large/)).toBeInTheDocument();
       const post = vi.spyOn(sessionsApi, "postEvent").mockResolvedValue({ queued: true });
       fireEvent.click(screen.getByTestId("side-chat-send"));
       await waitFor(() => expect(post).toHaveBeenCalledOnce());

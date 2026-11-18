@@ -971,6 +971,10 @@ def register_events_routes(
         """
         with contextlib.ExitStack() as in_flight:
             if isinstance(body, list):
+                if request.headers.get("Idempotency-Key"):
+                    raise OmnigentError(
+                        "Command receipts require one event.", code=ErrorCode.INVALID_INPUT
+                    )
                 if not body:
                     raise OmnigentError(
                         "session event batch must not be empty",
@@ -1008,13 +1012,108 @@ def register_events_routes(
                     )
                     acks.extend({"queued": False, "item_id": item_id} for item_id in item_ids)
                 return [await ack_with_position(session_id, ack) for ack in acks]
-            ack = await _post_event_impl(
-                request,
-                session_id,
-                body,
-                in_flight=in_flight if body.type in {"message", "session_message"} else None,
+
+            async def dispatch() -> dict[str, Any]:
+                submitted = body
+                if body.type == "message" and "continuation_of" in body.data:
+                    from uuid import NAMESPACE_URL, uuid5
+
+                    data = dict(body.data)
+                    target = data.pop("continuation_of")
+                    data["stable_id"] = uuid5(
+                        NAMESPACE_URL, f"triune:continue:{session_id}:{target}"
+                    ).hex
+                    submitted = body.model_copy(update={"data": data})
+                ack = await _post_event_impl(
+                    request,
+                    session_id,
+                    submitted,
+                    in_flight=in_flight if body.type in {"message", "session_message"} else None,
+                )
+                return await ack_with_position(session_id, ack)
+
+            key = request.headers.get("Idempotency-Key")
+            if key is None:
+                if "continuation_of" in body.data:
+                    raise OmnigentError(
+                        "Turn continuation requires a command identity.",
+                        code=ErrorCode.INVALID_INPUT,
+                    )
+                return await dispatch()
+            if body.type not in {
+                "message",
+                _INTERRUPT_TYPE,
+                _STOP_SESSION_TYPE,
+                _RETRY_SESSION_TYPE,
+            } or (body.type == "message" and body.data.get("role") != "user"):
+                raise OmnigentError(
+                    "Unsupported keyed session command.", code=ErrorCode.INVALID_INPUT
+                )
+            user_id, conv = await _authorized_conversation(request, session_id)
+            if body.type == _STOP_SESSION_TYPE or (
+                body.type == _RETRY_SESSION_TYPE and body.data.get("resume_interrupted_turn")
+            ):
+                await _require_access(
+                    user_id, session_id, LEVEL_OWNER, permission_store, conversation_store
+                )
+            from omnigent.native.child_controls import native_child_provider
+            from omnigent.server.session_command_receipts import (
+                SessionCommandReceipts,
+                require_failed_response,
             )
-            return await ack_with_position(session_id, ack)
+
+            if body.type in {"message", _INTERRUPT_TYPE, _STOP_SESSION_TYPE} and (
+                native_child_provider(conv.kind, conv.labels) is not None
+            ):
+                if not conv.parent_conversation_id:
+                    raise OmnigentError("native_child_mapping_missing", code=ErrorCode.CONFLICT)
+                await _require_access(
+                    user_id,
+                    conv.parent_conversation_id,
+                    LEVEL_EDIT,
+                    permission_store,
+                    conversation_store,
+                )
+            target = body.data.get("continuation_of")
+            if target is not None and (
+                body.type != "message"
+                or not isinstance(target, str)
+                or not target
+                or len(target) > 256
+            ):
+                raise OmnigentError(
+                    "Invalid failed response identity.", code=ErrorCode.INVALID_INPUT
+                )
+
+            async def check_target() -> None:
+                if not isinstance(target, str):
+                    return
+                if _session_status_cache.get(session_id, conv.live_status) in {
+                    "launching",
+                    "running",
+                    "waiting",
+                } or (
+                    conv.pending_elicitation_count or pending_elicitations.count_for(session_id)
+                ):
+                    raise OmnigentError(
+                        "Wait for the current turn before continuing.", code=ErrorCode.CONFLICT
+                    )
+                await asyncio.to_thread(
+                    require_failed_response, conversation_store, session_id, target
+                )
+
+            if isinstance(target, str):
+                from uuid import NAMESPACE_URL, uuid5
+
+                key = "continue:" + uuid5(NAMESPACE_URL, target).hex
+            return await SessionCommandReceipts(conversation_store.storage_location).execute(
+                session_id,
+                user_id,
+                key,
+                body,
+                dispatch,
+                check_target if target is not None else None,
+            )
 
     router.include_router(event_router)
 
@@ -2049,6 +2148,7 @@ def register_events_routes(
             interrupt_payload: dict[str, Any] = {"type": "interrupt"}
             codex_child = conv.kind == "sub_agent" and _is_codex_native_subagent(conv)
             response_id = None
+            active_id = _session_active_response_cache.get(session_id)
             queued_pending_ids: list[str] = []
             if codex_child:
                 # Native child boundaries come from the Codex forwarder.
@@ -2089,11 +2189,18 @@ def register_events_routes(
                     codex_side_turn_id=response_id.removeprefix("codex_"),
                 )
             else:
-                _publish_interrupted(session_id)
-                # Fence the cancelled turn (see _interrupt_fenced_sessions).
-                _interrupt_fenced_sessions.add(session_id)
-                # Read before the forward so a message sent after Stop stays live;
-                # marked only if the interrupt lands, else the turn may still run them.
+                requested_id = body.data.get("response_id")
+                if requested_id is not None and (
+                    not isinstance(requested_id, str) or not requested_id
+                ):
+                    raise OmnigentError(
+                        "Invalid interrupt response ID.", code=ErrorCode.INVALID_INPUT
+                    )
+                if requested_id and active_id and requested_id != active_id:
+                    raise OmnigentError("The active turn changed.", code=ErrorCode.CONFLICT)
+                response_id = requested_id or active_id
+                if response_id:
+                    interrupt_payload["response_id"] = response_id
                 queued_pending_ids = pending_inputs.pending_ids(session_id)
             runner_client = await _get_runner_client(
                 target_session_id,
@@ -2101,6 +2208,8 @@ def register_events_routes(
             )
             interrupt_delivered = False
             if runner_client is not None:
+                if not codex_child and _session_active_response_cache.get(session_id) != active_id:
+                    raise OmnigentError("The active turn changed.", code=ErrorCode.CONFLICT)
                 try:
                     interrupt_resp = await runner_client.post(
                         f"/v1/sessions/{target_session_id}/events",
@@ -2120,11 +2229,17 @@ def register_events_routes(
                         "Couldn't interrupt the side chat. Please try again.",
                         code=ErrorCode.RUNNER_UNAVAILABLE,
                     )
-                # The turn keeps running and nothing else lifts the fence —
-                # remove it so the turn's remaining output isn't dropped.
-                _interrupt_fenced_sessions.discard(session_id)
-            elif not codex_child:
+                raise OmnigentError(
+                    "Runner did not confirm the interrupt. Check the active turn before retrying.",
+                    code=ErrorCode.RUNNER_UNAVAILABLE,
+                )
+            if not codex_child:
                 pending_inputs.mark_interrupted(session_id, queued_pending_ids)
+                current_id = _session_active_response_cache.get(session_id)
+                if current_id == active_id:
+                    _interrupt_fenced_sessions.add(session_id)
+                if response_id or current_id == active_id:
+                    _publish_interrupted(session_id, response_id=response_id)
             if stop_codex_side_chat:
                 await asyncio.to_thread(
                     conversation_store.set_labels,
