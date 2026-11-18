@@ -342,6 +342,7 @@ _CODE_TO_CATEGORY: dict[str, ErrorCategory] = {
     # WRONG_REPLICA is a routing/sharding artifact we own. It is expected and
     # self-healing, so it must not page: keep alert severity a separate axis.
     ErrorCode.WRONG_REPLICA: ErrorCategory.SERVER,
+    ErrorCode.COMMAND_OUTCOME_UNKNOWN: ErrorCategory.SERVER,
     # A valid request the caller cannot fix by retry or re-input; the
     # deployment/host must change.
     ErrorCode.RUNNER_UNAVAILABLE: ErrorCategory.CONFIG,
@@ -387,6 +388,7 @@ _CODE_TO_IMPACT: dict[str, ErrorImpact] = {
     ErrorCode.UNAUTHORIZED: ErrorImpact.BLOCKING,
     ErrorCode.INTERNAL_ERROR: ErrorImpact.BLOCKING,
     ErrorCode.HARNESS_PROTOCOL_VIOLATION: ErrorImpact.BLOCKING,
+    ErrorCode.COMMAND_OUTCOME_UNKNOWN: ErrorImpact.BLOCKING,
     # Launch-time hard stops: the task cannot start until the host/deploy changes.
     ErrorCode.RUNNER_CAPABILITY_MISMATCH: ErrorImpact.BLOCKING,
     ErrorCode.HARNESS_NOT_CONFIGURED: ErrorImpact.BLOCKING,
@@ -435,6 +437,7 @@ _CODE_TO_PHASE: dict[str, ErrorPhase] = {
     ErrorCode.ALREADY_EXISTS: ErrorPhase.REQUEST,
     ErrorCode.CONFLICT: ErrorPhase.REQUEST,
     ErrorCode.WRONG_REPLICA: ErrorPhase.ROUTING,
+    ErrorCode.COMMAND_OUTCOME_UNKNOWN: ErrorPhase.ROUTING,
     ErrorCode.RUNNER_UNAVAILABLE: ErrorPhase.RUNNER_LAUNCH,
     ErrorCode.HOST_OFFLINE: ErrorPhase.RUNNER_LAUNCH,
     ErrorCode.RUNNER_CAPABILITY_MISMATCH: ErrorPhase.RUNNER_LAUNCH,
