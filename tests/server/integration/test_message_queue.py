@@ -205,6 +205,35 @@ async def test_recovery_reuses_native_claim_without_replaying_an_uncertain_input
         await restarted.shutdown()
 
 
+async def test_retained_startup_input_neither_completes_nor_replays_queued_turn(queue_env: _Env):
+    env = queue_env
+    sid = await session(env)
+    body = message("keep until explicit resend")
+    path = f"/v1/sessions/{sid}/queued-messages"
+    assert (await env.client.post(path, json=body)).status_code == 201
+    startup = env.app.state.startup_inputs
+    entered = asyncio.Event()
+    calls = []
+
+    async def uncertain(context, session_id, event):
+        assert await context.claim(env.conv_store, session_id)
+        calls.append(event.data["stable_id"])
+        entered.set()
+        await asyncio.Future()
+
+    startup.dispatch = uncertain
+    await startup.message_queue.status(env.app, sid, "idle", "prior")
+    await asyncio.wait_for(entered.wait(), 5)
+    await startup.cancel(sid, "interrupt")
+    for _ in range(2):
+        await startup.message_queue.recover(env.app, sid)
+        [held] = (await env.client.get(path)).json()["data"]
+        assert held["requiresRetry"] and "Startup stopped" in held["deliveryError"]
+    assert len(calls) == 1
+    [saved] = env.conv_store.list_startup_receipts(sid, before=None, limit=1)
+    assert saved.id == calls[0] and saved.data.startup_options.receipt.state == "delivery_unknown"
+
+
 async def test_server_stream_completion_drives_queue_without_an_http_subscriber(
     queue_env: _Env, monkeypatch
 ):

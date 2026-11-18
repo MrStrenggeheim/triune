@@ -2034,7 +2034,9 @@ def register_events_routes(
             )
             startup = getattr(request.app.state, "startup_inputs", None)
             if startup is not None:
-                await startup.cancel(session_id)
+                await startup.cancel(
+                    session_id, "interrupt" if body.type == _INTERRUPT_TYPE else "stop"
+                )
         stop_codex_side_chat = (
             body.type == _STOP_SESSION_TYPE
             and _is_codex_native_subagent(conv)

@@ -413,6 +413,7 @@ from omnigent.spec.types import (
 from omnigent.stores import AgentStore, ConversationStore
 from omnigent.stores.artifact_store import ArtifactStore
 from omnigent.stores.conversation_store import (
+    NON_TRANSCRIPT_RESPONSE_IDS,
     PINNED_LABEL_KEY,
     RUNNER_LIVENESS_TTL_S,
     SIDE_CHAT_LABEL_KEY,
@@ -3366,7 +3367,9 @@ async def _persist_external_conversation_item_unlocked(
         # as undelivered. Items that never touch the queue skip the lookup; their
         # retries are absorbed by the idempotent append below.
         existing = await asyncio.to_thread(conversation_store.get_item, session_id, item.stable_id)
-        if existing is not None:
+        if existing is not None and not (
+            item.exact_startup_receipt and existing.response_id in NON_TRANSCRIPT_RESPONSE_IDS
+        ):
             return existing.id
     if _drains_pending_inputs(item) and STARTUP_LABEL in conv.labels:
         await restore_pending_inputs(conversation_store, session_id)
@@ -3406,6 +3409,7 @@ async def _persist_external_conversation_item_unlocked(
         and item.data.role == "user"
         and not item.data.is_meta
         and item.data.communication is None
+        and not item.exact_startup_receipt
         and not _is_native_interrupt_record(item.data)
     ):
         # Match the mirror to its entry by text: a pasted message the TUI never
@@ -3477,7 +3481,11 @@ async def _persist_external_conversation_item_unlocked(
             # No pending entry — direct terminal input. Fall back to the
             # identity authenticated on the forwarder's own request.
             item = item.model_copy(update={"created_by": created_by})
-    elif item.type == "slash_command" and isinstance(item.data, SlashCommandData):
+    elif (
+        not item.exact_startup_receipt
+        and item.type == "slash_command"
+        and isinstance(item.data, SlashCommandData)
+    ):
         # A command typed in the web composer was queued as plain text but comes back
         # as a slash_command item; a plugin skill typed ``/simplify`` is recorded as
         # ``/<plugin>:simplify``. Drain its own entry so it is not mistaken for a lost message.
@@ -7338,7 +7346,12 @@ async def _forward_event_to_runner(
     turn_id = f"turn_{uuid.uuid4().hex}"
     # A web send is persisted under its client stable id (see _web_send_stable_id).
     item = _build_new_item(body, turn_id, created_by=created_by, adopt_stable_id=True)
-    item = item.model_copy(update={"replaces_pending_id": startup_input_id})
+    item = item.model_copy(
+        update={
+            "replaces_pending_id": startup_input_id,
+            "exact_startup_receipt": startup_input_id is not None,
+        }
+    )
     persisted_items = await asyncio.to_thread(
         conversation_store.append,
         session_id,

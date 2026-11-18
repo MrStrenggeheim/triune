@@ -11,7 +11,7 @@ import re
 import weakref
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from starlette.datastructures import Headers
@@ -32,13 +32,13 @@ from omnigent.server.host_registry import HostConnection, HostRegistry
 from omnigent.server.schemas import SessionEventInput, SessionStartupInput
 from omnigent.stores.conversation_store import (
     PENDING_INPUT_RESPONSE_ID,
+    STARTUP_LABEL,
     ConversationNotFoundError,
     ConversationStore,
 )
 from omnigent.stores.host_store import host_is_live
 
 _logger = logging.getLogger(__name__)
-STARTUP_LABEL = "omnigent.startup"
 
 
 def initial_input_id(session_id: str) -> str:
@@ -187,6 +187,8 @@ class ManagedStartupInputs:
             raise OmnigentError(
                 "This input id already belongs to a different message", code=ErrorCode.CONFLICT
             )
+        if saved[0].deduplicated:
+            return saved[0]
         if first:
             await asyncio.to_thread(
                 self.conversations.set_labels, session_id, {STARTUP_LABEL: "pending"}
@@ -480,7 +482,13 @@ class ManagedStartupInputs:
 
                     receipt = _build_new_item(
                         event, "startup_command", created_by=item.created_by
-                    ).model_copy(update={"stable_id": item.id, "replaces_pending_id": item.id})
+                    ).model_copy(
+                        update={
+                            "stable_id": item.id,
+                            "replaces_pending_id": item.id,
+                            "exact_startup_receipt": True,
+                        }
+                    )
                     [saved] = await asyncio.to_thread(
                         self.conversations.append, session_id, [receipt]
                     )
@@ -512,7 +520,7 @@ class ManagedStartupInputs:
                 (
                     "Delivery could not be confirmed, so later messages wait behind it. "
                     "Check the terminal; if the agent never got it, press Stop, which "
-                    "also clears the waiting messages, then send them again. "
+                    "retains the waiting messages for recovery. "
                     if uncertain
                     else "The message is saved but could not be delivered. "
                 )
@@ -546,32 +554,25 @@ class ManagedStartupInputs:
                 )
         return changed
 
-    async def cancel(self, session_id: str) -> None:
-        items = await asyncio.to_thread(self.conversations.list_pending_inputs, session_id)
-        conv = await asyncio.to_thread(self.conversations.get_conversation, session_id)
-        if not items and (conv is None or conv.labels.get(STARTUP_LABEL) != "pending"):
-            return
-        await asyncio.to_thread(
-            self.conversations.set_labels, session_id, {STARTUP_LABEL: "cancelled"}
+    async def cancel(self, session_id: str, reason: Literal["stop", "interrupt"]) -> None:
+        from omnigent.runtime import session_stream
+
+        retained = await asyncio.to_thread(
+            self.conversations.cancel_startup_inputs, session_id, reason=reason
         )
-        key = (current_workspace_id(), session_id)
-        task = self._deliveries.get(key)
+        for input_id in retained:
+            pending_inputs.resolve(
+                session_id, pending_inputs.make_pending_id(session_id, input_id)
+            )
+        if retained:
+            session_stream.publish(
+                session_id,
+                {"type": "session.startup_inputs.changed", "conversation_id": session_id},
+            )
+        task = self._deliveries.get((current_workspace_id(), session_id))
         if task is not None:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
-        for item in items:
-            if item.status == "incomplete":
-                pending_inputs.mark_interrupted(
-                    session_id, [pending_inputs.make_pending_id(session_id, item.id)]
-                )
-            else:
-                await asyncio.to_thread(
-                    self.conversations.transition_pending_input,
-                    session_id,
-                    item.id,
-                    expected=item.status,
-                    status=None,
-                )
 
     async def _report_failure(
         self, session_id: str, failure_id: str, message: str, *, sandbox_failure: bool = False

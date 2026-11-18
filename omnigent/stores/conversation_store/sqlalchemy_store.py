@@ -102,6 +102,11 @@ from omnigent.entities.branch import (
     branch_labels,
     conversation_branch,
 )
+from omnigent.entities.conversation import (
+    SlashCommandData,
+    StartupInputOptions,
+    StartupInputReceipt,
+)
 from omnigent.entities.subchat import SUBCHAT_HISTORY_LABEL, SUBCHAT_POLICY_LABEL
 from omnigent.errors import ErrorCode, OmnigentError, StaleCursorError
 from omnigent.native.native_coding_agents import native_coding_agent_for_wrapper_label
@@ -117,10 +122,14 @@ from omnigent.stores.conversation_store import (
     FORK_SOURCE_EXTERNAL_SESSION_LABEL_KEY,
     FORK_SOURCE_LABEL_KEY,
     MAX_PENDING_INPUTS,
+    NON_TRANSCRIPT_RESPONSE_IDS,
     PENDING_INPUT_RESPONSE_ID,
     PINNED_LABEL_KEY,
     PROJECT_LABEL_KEY,
+    RETAINED_STARTUP_RESPONSE_ID,
     SIDE_CHAT_LABEL_KEY,
+    STARTUP_INPUTS_RETAINED_LABEL,
+    STARTUP_LABEL,
     ConversationAlreadyExistsError,
     ConversationNotFoundError,
     ConversationStore,
@@ -945,6 +954,7 @@ def _ranked_latest_message_items(conversation_ids: list[str] | Select) -> Subque
             SqlConversationItem.workspace_id == current_workspace_id(),
             SqlConversationItem.conversation_id.in_(conversation_ids),
             SqlConversationItem.type == encode_item_type("message"),
+            SqlConversationItem.response_id != RETAINED_STARTUP_RESPONSE_ID,
         )
         .subquery()
     )
@@ -2464,6 +2474,7 @@ class SqlAlchemyConversationStore(ConversationStore):
             .where(
                 SqlConversationItem.workspace_id == current_workspace_id(),
                 SqlConversationItem.type == encode_item_type("message"),
+                SqlConversationItem.response_id != RETAINED_STARTUP_RESPONSE_ID,
                 contains(SqlConversationItem.search_text),
             )
         )
@@ -2709,6 +2720,75 @@ class SqlAlchemyConversationStore(ConversationStore):
         with self._session("list_host_conversations") as session:
             return list(session.scalars(query.order_by(SqlConversationMetadata.id).limit(limit)))
 
+    def _startup_rows(self, conversation_id: str, response_id: str):
+        return select(SqlConversationItem).where(
+            SqlConversationItem.workspace_id == current_workspace_id(),
+            SqlConversationItem.conversation_id == conversation_id,
+            SqlConversationItem.response_id == response_id,
+        )
+
+    def cancel_startup_inputs(
+        self, conversation_id: str, *, reason: Literal["stop", "interrupt"]
+    ) -> list[str]:
+        def write(session: Session) -> list[str]:
+            self._lock_conversation(session, conversation_id)
+            rows = list(
+                session.scalars(
+                    self._startup_rows(conversation_id, PENDING_INPUT_RESPONSE_ID).where(
+                        SqlConversationItem.status != encode_item_status("completed")
+                    )
+                )
+            )
+            label = session.get(
+                SqlConversationLabel, (current_workspace_id(), conversation_id, STARTUP_LABEL)
+            )
+            if not rows and (label is None or label.value != "pending"):
+                return []
+            cancelled_at = now_epoch()
+            decoded = self._decode_item_data_batch([row.data for row in rows])
+            for row, data_json in zip(rows, decoded, strict=True):
+                item = _to_item(row, data_json)
+                if not isinstance(item.data, (MessageData, SlashCommandData)):
+                    raise ValueError("Unexpected startup input type")
+                receipt = StartupInputReceipt(
+                    state="delivery_unknown"
+                    if item.status == "incomplete"
+                    else "cancelled_before_sending",
+                    reason=reason,
+                    cancelled_at=cancelled_at,
+                )
+                options = (item.data.startup_options or StartupInputOptions()).model_copy(
+                    update={"receipt": receipt}
+                )
+                row.data = self._encode_item_data(
+                    item.data.model_copy(update={"startup_options": options}).model_dump_json()
+                )
+                row.response_id = RETAINED_STARTUP_RESPONSE_ID
+            updates = {STARTUP_LABEL: "cancelled"}
+            if rows:
+                updates[STARTUP_INPUTS_RETAINED_LABEL] = "true"
+            _upsert_labels(session, conversation_id, updates, cancelled_at)
+            return [row.id for row in rows]
+
+        return run_write_transaction(self._conv_session_immediate, "cancel_startup_inputs", write)
+
+    def list_startup_receipts(
+        self, conversation_id: str, *, before: int | None, limit: int
+    ) -> list[ConversationItem]:
+        query = self._startup_rows(conversation_id, RETAINED_STARTUP_RESPONSE_ID)
+        if before is not None:
+            query = query.where(SqlConversationItem.position < before)
+        with self._conv_session("list_startup_receipts") as session:
+            rows = list(
+                session.scalars(query.order_by(SqlConversationItem.position.desc()).limit(limit))
+            )
+        return [
+            _to_item(row, data)
+            for row, data in zip(
+                rows, self._decode_item_data_batch([row.data for row in rows]), strict=True
+            )
+        ]
+
     def list_pending_inputs_page(
         self,
         conversation_id: str,
@@ -2719,11 +2799,7 @@ class SqlAlchemyConversationStore(ConversationStore):
         # The cursor is the last returned position. The response-id index bounds
         # the read to the conversation's pending rows (append caps them at
         # MAX_PENDING_INPUTS), so ordering them by position stays small.
-        query = select(SqlConversationItem).where(
-            SqlConversationItem.workspace_id == current_workspace_id(),
-            SqlConversationItem.conversation_id == conversation_id,
-            SqlConversationItem.response_id == PENDING_INPUT_RESPONSE_ID,
-        )
+        query = self._startup_rows(conversation_id, PENDING_INPUT_RESPONSE_ID)
         if after is not None:
             query = query.where(SqlConversationItem.position > after)
         with self._conv_session("list_pending_inputs") as session:
@@ -2987,7 +3063,7 @@ class SqlAlchemyConversationStore(ConversationStore):
                 .where(
                     SqlConversationItem.workspace_id == current_workspace_id(),
                     SqlConversationItem.conversation_id == conversation_id,
-                    SqlConversationItem.response_id != PENDING_INPUT_RESPONSE_ID,
+                    SqlConversationItem.response_id.not_in(NON_TRANSCRIPT_RESPONSE_IDS),
                 )
             )
             if after_position is not None:
@@ -3067,7 +3143,7 @@ class SqlAlchemyConversationStore(ConversationStore):
         criteria = [
             SqlConversationItem.workspace_id == current_workspace_id(),
             SqlConversationItem.conversation_id == conversation_id,
-            SqlConversationItem.response_id != PENDING_INPUT_RESPONSE_ID,
+            SqlConversationItem.response_id.not_in(NON_TRANSCRIPT_RESPONSE_IDS),
         ]
         if through_position is not None:
             criteria.append(SqlConversationItem.position <= through_position)
@@ -3261,6 +3337,10 @@ class SqlAlchemyConversationStore(ConversationStore):
         from omnigent.entities.conversation import MessageData
         from omnigent.stores.host_store import HostStore
 
+        if any(item.response_id == RETAINED_STARTUP_RESPONSE_ID for item in items):
+            raise OmnigentError(
+                "Reserved startup receipt response ID", code=ErrorCode.INVALID_INPUT
+            )
         if any(isinstance(item.data, MessageData) for item in items):
             conversation = self.get_conversations(
                 [conversation_id], include_execution_state=False
@@ -3375,7 +3455,7 @@ class SqlAlchemyConversationStore(ConversationStore):
                     row
                     for row in existing_rows
                     if not (
-                        row.id in replaced_ids and row.response_id == PENDING_INPUT_RESPONSE_ID
+                        row.id in replaced_ids and row.response_id in NON_TRANSCRIPT_RESPONSE_IDS
                     )
                 ]
                 existing_by_id = {row.id: row for row in existing_rows}
@@ -3408,11 +3488,28 @@ class SqlAlchemyConversationStore(ConversationStore):
                         SqlConversationItem.workspace_id == workspace_id,
                         SqlConversationItem.conversation_id == conversation_id,
                         SqlConversationItem.id == item.replaces_pending_id,
-                        SqlConversationItem.response_id == PENDING_INPUT_RESPONSE_ID,
+                        SqlConversationItem.response_id.in_(NON_TRANSCRIPT_RESPONSE_IDS),
                     )
                     .limit(1)
                 )
                 if row is not None:
+                    if row.response_id == RETAINED_STARTUP_RESPONSE_ID:
+                        [decoded] = self._decode_item_data_batch([row.data])
+                        original = _to_item(row, decoded)
+                        options = (
+                            original.data.startup_options
+                            if isinstance(original.data, (MessageData, SlashCommandData))
+                            else None
+                        )
+                        if (
+                            not item.exact_startup_receipt
+                            or not options
+                            or not options.receipt
+                            or options.receipt.state != "delivery_unknown"
+                        ):
+                            raise OmnigentError(
+                                "Startup input has already been stopped", code=ErrorCode.CONFLICT
+                            )
                     replacements[cast(str, prepared["id"])] = (row.position, row.created_at)
                     session.execute(
                         delete(SqlConversationItem).where(
@@ -3430,6 +3527,14 @@ class SqlAlchemyConversationStore(ConversationStore):
                 and item.stable_id not in existing_by_id
             }
             if new_pending:
+                label = session.get(
+                    SqlConversationLabel, (workspace_id, conversation_id, STARTUP_LABEL)
+                )
+                if label is not None and label.value == "cancelled":
+                    raise OmnigentError(
+                        "Startup was stopped before this input was accepted",
+                        code=ErrorCode.CONFLICT,
+                    )
                 queued = list(
                     session.scalars(
                         select(SqlConversationItem.id)
@@ -5931,7 +6036,7 @@ class SqlAlchemyConversationStore(ConversationStore):
         so a forked session keeps a single identity across storage backends)."""
         if up_to_response_id is not None and up_to_item_id is not None:
             raise ValueError("Choose either up_to_item_id or up_to_response_id")
-        if up_to_response_id == PENDING_INPUT_RESPONSE_ID:
+        if up_to_response_id in NON_TRANSCRIPT_RESPONSE_IDS:
             raise ValueError("Pending input is not a committed fork boundary")
         now = now_epoch()
         new_conv_id = conversation_id
@@ -6048,7 +6153,7 @@ class SqlAlchemyConversationStore(ConversationStore):
                         SqlConversationItem.workspace_id == current_workspace_id(),
                         SqlConversationItem.conversation_id == source_conversation_id,
                         SqlConversationItem.id == up_to_item_id,
-                        SqlConversationItem.response_id != PENDING_INPUT_RESPONSE_ID,
+                        SqlConversationItem.response_id.not_in(NON_TRANSCRIPT_RESPONSE_IDS),
                     )
                 ).scalar_one_or_none()
                 if cutoff_position is None:
@@ -6063,7 +6168,7 @@ class SqlAlchemyConversationStore(ConversationStore):
                 .where(
                     SqlConversationItem.workspace_id == current_workspace_id(),
                     SqlConversationItem.conversation_id == source_conversation_id,
-                    SqlConversationItem.response_id != PENDING_INPUT_RESPONSE_ID,
+                    SqlConversationItem.response_id.not_in(NON_TRANSCRIPT_RESPONSE_IDS),
                 )
                 .order_by(SqlConversationItem.position.asc())
             )

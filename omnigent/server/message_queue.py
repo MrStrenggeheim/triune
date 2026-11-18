@@ -21,7 +21,10 @@ from omnigent.runtime import pending_elicitations, session_stream
 from omnigent.server.message_queue_store import MessageQueueStore
 from omnigent.server.schemas import SessionEventInput
 from omnigent.server.startup_inputs import ManagedStartupInputs, StartupInputContext, input_content
-from omnigent.stores.conversation_store import PENDING_INPUT_RESPONSE_ID
+from omnigent.stores.conversation_store import (
+    PENDING_INPUT_RESPONSE_ID,
+    RETAINED_STARTUP_RESPONSE_ID,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -276,6 +279,13 @@ class DurableMessageQueue:
             item = await asyncio.to_thread(
                 self.startup.conversations.get_item, session_id, inflight
             )
+            if item is not None and item.response_id == RETAINED_STARTUP_RESPONSE_ID:
+                await self.hold(
+                    session_id,
+                    inflight,
+                    "Startup stopped. Restore the saved input to send it again.",
+                )
+                return
             if item is not None and item.response_id != PENDING_INPUT_RESPONSE_ID:
 
                 def consumed(state: dict[str, Any], _: Any) -> None:
@@ -358,7 +368,13 @@ class DurableMessageQueue:
                 or input_content(item) != message["event"]["data"]["content"]
             ):
                 raise ValueError("Input identity belongs to a different message")
-            if item.response_id != PENDING_INPUT_RESPONSE_ID:
+            if item.response_id == RETAINED_STARTUP_RESPONSE_ID:
+                await self.hold(
+                    session_id,
+                    message["stableId"],
+                    "Startup stopped. Restore the saved input to send it again.",
+                )
+            elif item.response_id != PENDING_INPUT_RESPONSE_ID:
                 await self.recover(app, session_id)
             elif item.status == "in_progress":
                 self.startup.schedule_delivery(app, session_id, item)

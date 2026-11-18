@@ -5003,6 +5003,13 @@ class SessionResourceDeletedEvent(_SSEEventBase):
     session_id: str
 
 
+class SessionStartupInputsChangedEvent(_SSEEventBase):
+    """Retained startup input receipts changed; authorized readers may refresh."""
+
+    type: Literal["session.startup_inputs.changed"]
+    conversation_id: str
+
+
 class SessionChildSessionUpdatedEvent(_SSEEventBase):
     """
     A child (sub-agent) session's status changed — pushed to the PARENT.
@@ -5177,6 +5184,7 @@ ServerStreamEvent = Annotated[
     | SessionResourceCreatedEvent
     | SessionResourceDeletedEvent
     | SessionChildSessionUpdatedEvent
+    | SessionStartupInputsChangedEvent
     | SessionChangedFilesInvalidatedEvent
     | SessionTerminalActivityEvent
     # ── Transient (SSE-only) — incremental token deltas ────────

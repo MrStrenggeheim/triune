@@ -31,6 +31,11 @@ and steers messages while the agent is busy.
 - `attention-shelf`: original inset tray above input, with Questions, Approvals, Notices, Shells, Agents and Plan; no chevrons, measured compact labels, hidden when empty.
 - `child-controls`: current runtime capabilities enable native child replies or steering; unsupported children keep a disabled composer with a reason.
 - `initial-input-recovery`: retain the first prompt, attachment bytes and create identity across failed startup/reload; clear drafts on acceptance.
+- Stop and Interrupt retain each startup input at its transcript position.
+  Waiting inputs show **Cancelled before sending**.
+  Submitted inputs show **Delivery unknown** until their exact runner receipt arrives.
+- **Restore text to draft** copies the saved text into the composer for the user to send explicitly.
+- Startup cancellation and late-receipt recovery: `tests/server/integration/test_managed_startup_inputs.py::test_stop_retains_waiting_and_submitted_inputs_through_restart` and `tests/browser_ui/chat/test_recovery_activity_contract.py::test_cancelled_startup_inputs_survive_reload_and_restore_to_draft`.
 - `quote-subchat`: Ask Subchat and Send to new subchat create once, seed an unsent quote and open beside before runner readiness, without confirmation or internal JSON.
 - `inherited-history`: quote-created forks hide their inherited prefix behind Show history; explicit forks retain normal defaults and child messages stay visible.
 - `working-shimmer`: opacity crossfades retain the working animation without per-frame text-background painting; reduced motion remains static.

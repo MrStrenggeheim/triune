@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 from omnigent.errors import OmnigentError
 from omnigent.server.auth import LEVEL_EDIT, LEVEL_READ
 from omnigent.server.routes._auth_helpers import require_access_and_level, require_user
-from omnigent.stores.conversation_store import PENDING_INPUT_RESPONSE_ID
+from omnigent.stores.conversation_store import NON_TRANSCRIPT_RESPONSE_IDS
 from omnigent.util.uuid import InvalidUuidError, normalize_uuid, uuid_to_bytes
 
 MAX_REFERENCE_ITEMS = 500
@@ -66,7 +66,7 @@ def capture_items(
         stored = store.get_item(source_id, item_id)
         return (
             stored
-            if stored is not None and stored.response_id != PENDING_INPUT_RESPONSE_ID
+            if stored is not None and stored.response_id not in NON_TRANSCRIPT_RESPONSE_IDS
             else None
         )
 

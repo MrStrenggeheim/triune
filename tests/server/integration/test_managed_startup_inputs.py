@@ -459,15 +459,40 @@ async def test_stop_before_host_ready_cancels_all_saved_inputs(
     assert forwarded == []
 
 
-async def test_stop_cancels_local_dispatch_and_clears_saved_input(startup_env: _Env) -> None:
+@pytest.mark.parametrize("action, reason", [("stop_session", "stop"), ("interrupt", "interrupt")])
+async def test_stop_retains_waiting_and_submitted_inputs_through_restart(
+    startup_env: _Env, action: str, reason: str, db_uri: str
+) -> None:
+    from starlette.datastructures import Headers
+
+    from omnigent.runner.identity import RUNNER_TUNNEL_TOKEN_HEADER, token_bound_runner_id
+    from omnigent.server.startup_inputs import restore_pending_inputs
+
     env = startup_env
     session_id = await _create(env)
     startup = env.app.state.startup_inputs
-    entry = _bind(env, session_id)
+    submitted = _bind(env, session_id)
+    waiting = []
+    for text in ("First waiting input", "Second waiting input"):
+        waiting.append(
+            await startup.enqueue(
+                session_id,
+                SessionEventInput(
+                    type="message",
+                    data={"role": "user", "content": [{"type": "input_text", "text": text}]},
+                ),
+                user_id=None,
+                headers=Headers(),
+                first=False,
+            )
+        )
     entered = asyncio.Event()
     stopped = asyncio.Event()
 
-    async def dispatch(*_: Any) -> dict[str, bool | str]:
+    async def dispatch(
+        context: StartupInputContext, sid: str, _: SessionEventInput
+    ) -> dict[str, bool | str]:
+        assert await context.claim(env.conv_store, sid)
         entered.set()
         try:
             await asyncio.Future()
@@ -476,14 +501,118 @@ async def test_stop_cancels_local_dispatch_and_clears_saved_input(startup_env: _
         return {"queued": True}
 
     startup.dispatch = dispatch
-    delivery = asyncio.create_task(startup._deliver(env.app, session_id, entry))
+    delivery = asyncio.create_task(startup._deliver(env.app, session_id, submitted))
     await asyncio.wait_for(entered.wait(), timeout=5)
-    response = await env.client.post(
-        f"/v1/sessions/{session_id}/events", json={"type": "interrupt"}
-    )
+    url = f"/v1/sessions/{session_id}"
+
+    async def receipts() -> list[dict[str, Any]]:
+        response = await env.client.get(url + "/startup-input-receipts")
+        assert response.status_code == 200, response.text
+        return response.json()["data"]
+
+    response = await env.client.post(url + "/events", json={"type": action})
     assert response.status_code == 202, response.text
     assert stopped.is_set() and delivery.cancelled()
+    retained = await receipts()
+    assert [
+        (row["item_id"], row["position"], row["created_at"], row["state"], row["content"])
+        for row in retained
+    ] == [
+        (item.id, item.position, item.created_at, state, item.data.content)
+        for item, state in [
+            (waiting[1], "cancelled_before_sending"),
+            (waiting[0], "cancelled_before_sending"),
+            (submitted, "delivery_unknown"),
+        ]
+    ]
+    assert all(
+        row["reason"] == reason and row["cancelled_at"] >= row["created_at"] for row in retained
+    )
+    assert len({row["cancelled_at"] for row in retained}) == 1
+    page = (await env.client.get(url + "/startup-input-receipts", params={"limit": 1})).json()
+    assert page == {"data": retained[:1], "has_more": True}
+    assert (
+        await env.client.get(
+            url + "/startup-input-receipts", params={"before_position": retained[0]["position"]}
+        )
+    ).json()["data"] == retained[1:]
     assert env.conv_store.list_pending_inputs(session_id) == []
+    assert env.conv_store.list_items(session_id).data == []
+    assert (
+        env.conv_store.get_conversation(session_id).labels["omnigent.startup_inputs_retained"]
+        == "true"
+    )
+    assert (await env.client.post(url + "/events", json={"type": "interrupt"})).status_code == 202
+    await startup.shutdown()
+    reopened = SqlAlchemyConversationStore(db_uri)
+    restarted = ManagedStartupInputs(reopened, env.app.state.host_registry)
+    env.app.state.startup_inputs = restarted
+    assert [
+        row.id for row in reopened.list_startup_receipts(session_id, before=None, limit=100)
+    ] == [row["item_id"] for row in retained]
+    calls = []
+
+    async def unexpected(*args):
+        calls.append(args)
+        return {}
+
+    restarted.dispatch = unexpected
+    pending_inputs.reset_for_tests()
+    await restore_pending_inputs(env.conv_store, session_id)
+    for item in [submitted, *waiting]:
+        await restarted._deliver(env.app, session_id, item)
+    assert not await restarted.retry(session_id)
+    assert calls == [] and await receipts() == retained
+    assert (
+        not (await env.client.get(url, params={"refresh_state": "false"}))
+        .json()
+        .get("pending_inputs")
+    )
+    # A same-text transcript observation has no receipt identity.
+    await _simulate_transcript_forwarder_echo(env.client, session_id, _TEXT)
+    assert await receipts() == retained
+
+    token = "bound-startup-receipt"
+    env.conv_store.set_runner_id(session_id, token_bound_runner_id(token))
+    event = {
+        "type": "external_conversation_item",
+        "data": {
+            "item_type": "message",
+            "item_data": {"role": "user", "content": submitted.data.content},
+            "input_stable_id": submitted.id,
+            "source_id": "late-receipt",
+            "response_id": "native-turn",
+        },
+    }
+    assert (await env.client.post(url + "/events", json=event)).status_code == 403
+    headers = {RUNNER_TUNNEL_TOKEN_HEADER: token}
+    for rejected in (
+        {**event, "data": {**event["data"], "input_stable_id": waiting[0].id}},
+        {
+            **event,
+            "data": {
+                **event["data"],
+                "item_data": {
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "Unrelated body"}],
+                },
+            },
+        },
+    ):
+        assert (
+            await env.client.post(url + "/events", json=rejected, headers=headers)
+        ).status_code == 409
+        assert await receipts() == retained
+    response = await env.client.post(url + "/events", json=event, headers=headers)
+    assert response.status_code == 202, response.text
+    assert await receipts() == retained[:2]
+    assert (await env.client.post(url + "/events", json=event, headers=headers)).status_code == 202
+    confirmed = [
+        row
+        for row in env.conv_store.list_items(session_id).data
+        if getattr(row.data, "input_stable_id", None) == submitted.id
+    ]
+    assert len(confirmed) == 1 and confirmed[0].position == submitted.position
 
 
 async def test_uncertain_native_submission_is_not_retried_on_restart(startup_env: _Env) -> None:

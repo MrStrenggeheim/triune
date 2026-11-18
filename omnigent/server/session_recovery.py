@@ -13,7 +13,7 @@ from typing import Any, cast
 from omnigent.entities.conversation import ConversationItem
 from omnigent.runtime import inflight_text, session_stream
 from omnigent.runtime.stream_queue import MAX_STREAM_BYTES
-from omnigent.stores.conversation_store import ConversationStore
+from omnigent.stores.conversation_store import NON_TRANSCRIPT_RESPONSE_IDS, ConversationStore
 
 _REPLAY_PAGE_SIZE = 200
 MAX_INITIAL_LIMIT = 200
@@ -219,7 +219,12 @@ class SessionRecovery:
             for item_id in mutations or ():
                 await self.authorize()
                 saved = await asyncio.to_thread(self.store.get_item, self.session_id, item_id)
-                if saved is None or saved.position is None or saved.position > self.after_position:
+                if (
+                    saved is None
+                    or saved.response_id in NON_TRANSCRIPT_RESPONSE_IDS
+                    or saved.position is None
+                    or saved.position > self.after_position
+                ):
                     continue
                 if window and saved.position < window["window_start_position"]:
                     continue
@@ -320,6 +325,8 @@ class SessionRecovery:
         if not isinstance(item_id, str):
             return event
         saved = await asyncio.to_thread(self.store.get_item, self.session_id, item_id)
+        if saved is not None and saved.response_id in NON_TRANSCRIPT_RESPONSE_IDS:
+            return None
         if saved is None:
             if event.get("_requires_saved_item"):
                 raise session_stream.SubscriberEventTooLargeError

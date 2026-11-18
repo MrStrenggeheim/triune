@@ -7030,6 +7030,64 @@
         "title": "ResponseObject",
         "type": "object"
       },
+      "RetainedStartupInput": {
+        "properties": {
+          "cancelled_at": {
+            "format": "int64",
+            "title": "Cancelled At",
+            "type": "integer"
+          },
+          "content": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Content",
+            "type": "array"
+          },
+          "created_at": {
+            "format": "int64",
+            "title": "Created At",
+            "type": "integer"
+          },
+          "item_id": {
+            "title": "Item Id",
+            "type": "string"
+          },
+          "position": {
+            "format": "int64",
+            "title": "Position",
+            "type": "integer"
+          },
+          "reason": {
+            "enum": [
+              "stop",
+              "interrupt"
+            ],
+            "title": "Reason",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "cancelled_before_sending",
+              "delivery_unknown"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state",
+          "reason",
+          "cancelled_at",
+          "item_id",
+          "position",
+          "created_at",
+          "content"
+        ],
+        "title": "RetainedStartupInput",
+        "type": "object"
+      },
       "RetryErrorDetail": {
         "description": "Error block carried by `RetryEvent` and `ErrorEvent`.\n\nMirrors the shape that `llm_retry.py` and `tool_retry.py`\nemit today \u2014 flat `code` / `message` plus an optional\n`detail` for provider-specific structured fields.",
         "properties": {
@@ -7975,6 +8033,7 @@
             "session.runtime_notice": "#/components/schemas/RuntimeNoticeObservedEvent",
             "session.runtime_notices": "#/components/schemas/RuntimeNoticesChangedEvent",
             "session.sandbox_status": "#/components/schemas/SessionSandboxStatusEvent",
+            "session.startup_inputs.changed": "#/components/schemas/SessionStartupInputsChangedEvent",
             "session.status": "#/components/schemas/SessionStatusEvent",
             "session.superseded": "#/components/schemas/SessionSupersededEvent",
             "session.sync": "#/components/schemas/SessionSyncEvent",
@@ -8076,6 +8135,9 @@
           },
           {
             "$ref": "#/components/schemas/SessionChildSessionUpdatedEvent"
+          },
+          {
+            "$ref": "#/components/schemas/SessionStartupInputsChangedEvent"
           },
           {
             "$ref": "#/components/schemas/SessionChangedFilesInvalidatedEvent"
@@ -11321,6 +11383,54 @@
         "title": "SessionSandboxStatusEvent",
         "type": "object"
       },
+      "SessionStartupInputsChangedEvent": {
+        "description": "Retained startup input receipts changed; authorized readers may refresh.",
+        "properties": {
+          "conversation_id": {
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
+          },
+          "sequence_number": {
+            "anyOf": [
+              {
+                "format": "int64",
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Sequence Number"
+          },
+          "type": {
+            "const": "session.startup_inputs.changed",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "conversation_id"
+        ],
+        "title": "SessionStartupInputsChangedEvent",
+        "type": "object"
+      },
       "SessionStatusEvent": {
         "description": "Session lifecycle status transition.\n\nEmitted by the runtime / session route handler at every\ntransition between `launching` / `running` / `waiting` /\n`idle` / `failed`. Wire shape is\nFLAT (not enveloped): `{\"type\": \"session.status\", \"conversation_id\": \"...\", \"status\": \"...\", \"sequence_number\": null}`.\n\nThe `waiting` value is emitted by the runtime's parent agent\nloop when it parks on the `async_work_complete` drain\n(`_drain_async_completions(block_for_one=True)` in\n`omnigent/runtime/workflow.py`) \u2014 i.e. while the parent\nturn is suspended waiting for background tools or sub-agents\nto complete. Per the session-rearchitecture spec \u00a73\n(\"Event types and direction\"), `waiting` is the\nsession-status companion of the spec's `turn.waiting`\ntransient \u2014 clients should render the session as actively\nblocked-on-async-work, distinct from `running`. When the\ndrain wakes (a child completed), the runtime emits a follow-up\n`running` to resume.",
         "properties": {
@@ -12448,6 +12558,16 @@
             ],
             "title": "Model Override"
           },
+          "receipt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StartupInputReceipt"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "tools": {
             "anyOf": [
               {
@@ -12465,6 +12585,60 @@
           }
         },
         "title": "StartupInputOptions",
+        "type": "object"
+      },
+      "StartupInputReceipt": {
+        "description": "Durable disposition of an input retained when startup was stopped.",
+        "properties": {
+          "cancelled_at": {
+            "format": "int64",
+            "title": "Cancelled At",
+            "type": "integer"
+          },
+          "reason": {
+            "enum": [
+              "stop",
+              "interrupt"
+            ],
+            "title": "Reason",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "cancelled_before_sending",
+              "delivery_unknown"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state",
+          "reason",
+          "cancelled_at"
+        ],
+        "title": "StartupInputReceipt",
+        "type": "object"
+      },
+      "StartupInputReceiptPage": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/RetainedStartupInput"
+            },
+            "title": "Data",
+            "type": "array"
+          },
+          "has_more": {
+            "title": "Has More",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "data",
+          "has_more"
+        ],
+        "title": "StartupInputReceiptPage",
         "type": "object"
       },
       "StoreHarnessCredentialRequest": {
@@ -22703,6 +22877,78 @@
           }
         },
         "summary": "Get Session Sign In Link",
+        "tags": [
+          "sessions"
+        ]
+      }
+    },
+    "/v1/sessions/{session_id}/startup-input-receipts": {
+      "get": {
+        "description": "Return retained startup messages in descending position order for this session.",
+        "operationId": "list_startup_input_receipts_v1_sessions__session_id__startup_input_receipts_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "before_position",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Before Position"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StartupInputReceiptPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Startup Input Receipts",
         "tags": [
           "sessions"
         ]

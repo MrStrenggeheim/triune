@@ -291,12 +291,23 @@ class Conversation:
 # ── Conversation item data types ───────────────────────
 
 
+class StartupInputReceipt(BaseModel):
+    """Durable disposition of an input retained when startup was stopped."""
+
+    state: Literal["cancelled_before_sending", "delivery_unknown"]
+    reason: Literal["stop", "interrupt"]
+    cancelled_at: int
+
+
 class StartupInputOptions(BaseModel):
     """Request options retained only while a startup input awaits delivery."""
 
     model_override: str | None = None
     tools: list[dict[str, Any]] | None = None
     background_titles_enabled: bool = False
+    receipt: StartupInputReceipt | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 class ExecutionObservation(BaseModel):
@@ -926,6 +937,7 @@ class NewConversationItem(BaseModel):
     stable_id: str | None = None
     status: Literal["completed", "in_progress", "incomplete", "failed"] = "completed"
     replaces_pending_id: str | None = Field(default=None, exclude=True)
+    exact_startup_receipt: bool = Field(default=False, exclude=True)
 
     @model_validator(mode="after")
     def check_type_matches_data(self) -> NewConversationItem:

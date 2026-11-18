@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+from typing import Any
 
 from fastapi import (
     APIRouter,
@@ -13,7 +14,9 @@ from fastapi import (
     Request,
 )
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
+from omnigent.entities.conversation import MessageData, SlashCommandData, StartupInputReceipt
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.runtime.policies.approval import _ELICITATION_MODE
 from omnigent.server._elicitation_registry import (
@@ -57,7 +60,20 @@ from omnigent.server.schemas import (
 from omnigent.server.session_recovery import saved_item_bytes
 from omnigent.server.subagent_activity import recover_subagent_activity
 from omnigent.stores import AgentStore, ConversationStore
+from omnigent.stores.conversation_store import NON_TRANSCRIPT_RESPONSE_IDS
 from omnigent.stores.permission_store import PermissionStore
+
+
+class RetainedStartupInput(StartupInputReceipt):
+    item_id: str
+    position: int
+    created_at: int
+    content: list[dict[str, Any]]
+
+
+class StartupInputReceiptPage(BaseModel):
+    data: list[RetainedStartupInput]
+    has_more: bool
 
 
 def register_items_routes(
@@ -78,6 +94,53 @@ def register_items_routes(
         auth_provider=auth_provider,
         permission_store=permission_store,
     )
+
+    @router.get("/sessions/{session_id}/startup-input-receipts")
+    async def list_startup_input_receipts(
+        request: Request,
+        session_id: str,
+        before_position: int | None = Query(default=None, ge=0),
+        limit: int = Query(default=100, ge=1, le=100),
+    ) -> StartupInputReceiptPage:
+        """Return retained startup messages in descending position order for this session."""
+        from omnigent.server.startup_inputs import input_content
+
+        user_id = _get_user_id(request, auth_provider)
+        access = await _require_access_and_level(
+            user_id, session_id, LEVEL_READ, permission_store, conversation_store
+        )
+        if (
+            access.conversation is None
+            and await asyncio.to_thread(conversation_store.get_conversation, session_id) is None
+        ):
+            raise _session_not_found()
+        rows = await asyncio.to_thread(
+            conversation_store.list_startup_receipts,
+            session_id,
+            before=before_position,
+            limit=limit + 1,
+        )
+        data = []
+        for row in rows[:limit]:
+            options = (
+                row.data.startup_options
+                if isinstance(row.data, (MessageData, SlashCommandData))
+                else None
+            )
+            if options is None or options.receipt is None:
+                raise ValueError("Retained startup input is missing its receipt")
+            if row.position is None:
+                raise ValueError("Retained startup input is missing its position")
+            data.append(
+                RetainedStartupInput(
+                    item_id=row.id,
+                    position=row.position,
+                    created_at=row.created_at,
+                    **options.receipt.model_dump(),
+                    content=input_content(row),
+                )
+            )
+        return StartupInputReceiptPage(data=data, has_more=len(rows) > limit)
 
     @router.get(
         "/sessions/{session_id}/items",
@@ -179,7 +242,11 @@ def register_items_routes(
 
         await authorize(session_id)
         saved = await asyncio.to_thread(conversation_store.get_item, session_id, item_id)
-        if saved is None or saved.position != position:
+        if (
+            saved is None
+            or saved.response_id in NON_TRANSCRIPT_RESPONSE_IDS
+            or saved.position != position
+        ):
             raise OmnigentError("Saved item changed", code=ErrorCode.CONFLICT)
         sources = {session_id}
 

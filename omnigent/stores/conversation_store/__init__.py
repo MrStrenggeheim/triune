@@ -8,7 +8,7 @@ import time
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, TypedDict
+from typing import TYPE_CHECKING, Any, Literal, TypedDict
 
 from omnigent.entities import (
     Agent,
@@ -21,6 +21,10 @@ from omnigent.session_import import IMPORT_PROVENANCE_LABEL_KEYS
 
 # Pending inputs share the item store, but are not harness transcript history yet.
 PENDING_INPUT_RESPONSE_ID = "pending_input"
+RETAINED_STARTUP_RESPONSE_ID = "retained_startup_input"
+NON_TRANSCRIPT_RESPONSE_IDS = (PENDING_INPUT_RESPONSE_ID, RETAINED_STARTUP_RESPONSE_ID)
+STARTUP_LABEL = "omnigent.startup"
+STARTUP_INPUTS_RETAINED_LABEL = "omnigent.startup_inputs_retained"
 MAX_PENDING_INPUTS = 100
 
 if TYPE_CHECKING:
@@ -455,6 +459,18 @@ class ConversationStore(ABC):
             items.extend(page)
             if after is None:
                 return items
+
+    def cancel_startup_inputs(
+        self, conversation_id: str, *, reason: Literal["stop", "interrupt"]
+    ) -> list[str]:
+        """Atomically close startup and retain its waiting and submitted input identities."""
+        raise NotImplementedError
+
+    def list_startup_receipts(
+        self, conversation_id: str, *, before: int | None, limit: int
+    ) -> list[ConversationItem]:
+        """Read retained inputs newest first, excluding them from delivery and ordinary history."""
+        raise NotImplementedError
 
     def transition_pending_input(
         self,

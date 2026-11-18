@@ -285,6 +285,40 @@ def test_pending_pages_preserve_states_retries_and_same_ids_across_tenants(pendi
         assert store.list_pending_inputs_page(conversation_id) == ([], None)
 
 
+def test_retained_and_legacy_completed_pending_pages_stay_separate(pending_store):
+    store = pending_store
+    sid = store.create_conversation().id
+    original = [_input(f"entry {n}") for n in range(6)]
+    for n in [0, 2, 4]:
+        original[n] = original[n].model_copy(update={"status": "completed"})
+    rows = store.append(sid, original)
+    assert store.transition_pending_input(
+        sid, rows[3].id, expected="in_progress", status="incomplete"
+    )
+    assert set(store.cancel_startup_inputs(sid, reason="stop")) == {rows[n].id for n in [1, 3, 5]}
+    legacy, cursor = store.list_pending_inputs_page(sid, limit=2)
+    assert [row.id for row in legacy] == [rows[0].id, rows[2].id] and cursor == rows[2].position
+    assert store.list_pending_inputs_page(sid, after=cursor, limit=2) == ([rows[4]], None)
+    receipts = store.list_startup_receipts(sid, before=None, limit=2)
+    assert [(row.id, row.data.startup_options.receipt.state) for row in receipts] == [
+        (rows[5].id, "cancelled_before_sending"),
+        (rows[3].id, "delivery_unknown"),
+    ]
+    assert [
+        row.id for row in store.list_startup_receipts(sid, before=receipts[-1].position, limit=2)
+    ] == [rows[1].id]
+    assert store.cancel_startup_inputs(sid, reason="interrupt") == []
+    assert store.transition_pending_input(sid, rows[0].id, expected="completed", status="failed")
+    assert not store.transition_pending_input(
+        sid, rows[3].id, expected="incomplete", status="in_progress"
+    )
+    assert store.list_items(sid).data == [] and store.item_checkpoint(sid)["item_count"] == 0
+    forked = store.fork_conversation(sid)
+    assert store.list_items(forked.id).data == []
+    assert store.list_pending_inputs(forked.id) == []
+    assert store.list_startup_receipts(forked.id, before=None, limit=2) == []
+
+
 def test_pending_page_index_bounds_history_scan(pending_store):
     store = pending_store
     if store._conv_engine.dialect.name != "sqlite":

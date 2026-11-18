@@ -202,11 +202,28 @@ def _peer_message_input(
 
 def peer_acknowledgement(item: ConversationItem) -> dict[str, bool | str]:
     """Distinguish durable acceptance from a proven native transcript receipt."""
-    from omnigent.stores.conversation_store import PENDING_INPUT_RESPONSE_ID
+    from omnigent.stores.conversation_store import (
+        PENDING_INPUT_RESPONSE_ID,
+        RETAINED_STARTUP_RESPONSE_ID,
+    )
 
     assert isinstance(item.data, MessageData) and item.data.communication is not None
     origin = item.data.communication
     state = "unknown"
+    if item.response_id == RETAINED_STARTUP_RESPONSE_ID:
+        assert (
+            isinstance(item.data, MessageData)
+            and item.data.startup_options
+            and item.data.startup_options.receipt
+        )
+        record = item.data.startup_options.receipt
+        return {
+            "queued": False,
+            "message_id": origin.message_id,
+            "item_id": item.id,
+            "delivery_state": "unknown" if record.state == "delivery_unknown" else "failed",
+            "receipt": record.state,
+        }
     if item.response_id == PENDING_INPUT_RESPONSE_ID:
         state = {"in_progress": "queued", "incomplete": "unknown", "failed": "failed"}.get(
             item.status, "failed"
@@ -232,12 +249,84 @@ def correlate_native_peer_input(
     import re
 
     from omnigent.native.communication import peer_model_content
-    from omnigent.stores.conversation_store import PENDING_INPUT_RESPONSE_ID
+    from omnigent.stores.conversation_store import (
+        NON_TRANSCRIPT_RESPONSE_IDS,
+        PENDING_INPUT_RESPONSE_ID,
+        RETAINED_STARTUP_RESPONSE_ID,
+    )
 
     if not isinstance(input_id, str) or re.fullmatch(r"[0-9a-f]{32}", input_id) is None:
         raise OmnigentError("Invalid native input identity", code=ErrorCode.INVALID_INPUT)
     saved = conversations.get_item(session_id, input_id)
+    # A stopped startup no longer supplies a text/FIFO match. Only the bound
+    # runner's exact input identity can confirm its previously submitted row.
+    from omnigent.entities.conversation import SlashCommandData
+    from omnigent.server.startup_inputs import input_content
+
+    options = (
+        saved.data.startup_options
+        if saved is not None and isinstance(saved.data, (MessageData, SlashCommandData))
+        else None
+    )
+    receipt = (
+        options.receipt
+        if options and saved is not None and saved.response_id == RETAINED_STARTUP_RESPONSE_ID
+        else None
+    )
     origin = saved.data.communication if saved and isinstance(saved.data, MessageData) else None
+    if receipt is not None:
+        assert saved is not None
+        if receipt.state != "delivery_unknown":
+            raise OmnigentError("Input was cancelled before submission", code=ErrorCode.CONFLICT)
+        if origin is None:
+            original_content = input_content(saved)
+            if isinstance(item.data, MessageData):
+                expected = [
+                    block.get("text")
+                    for block in original_content
+                    if block.get("type") == "input_text"
+                ]
+                actual = [
+                    block.get("text")
+                    for block in item.data.content
+                    if block.get("type") == "input_text"
+                ]
+                if (
+                    item.data.role != "user"
+                    or item.data.is_meta
+                    or item.data.communication is not None
+                    or actual != expected
+                ):
+                    raise OmnigentError(
+                        "Startup receipt does not match its input", code=ErrorCode.CONFLICT
+                    )
+                data = item.data.model_copy(
+                    update={
+                        "content": original_content,
+                        "user_authored": True,
+                        "input_stable_id": input_id,
+                    }
+                )
+            elif (
+                isinstance(item.data, SlashCommandData)
+                and isinstance(saved.data, SlashCommandData)
+                and (item.data.name, item.data.arguments)
+                == (saved.data.name, saved.data.arguments)
+            ):
+                data = item.data
+            else:
+                raise OmnigentError(
+                    "Startup receipt does not match its input", code=ErrorCode.CONFLICT
+                )
+            return item.model_copy(
+                update={
+                    "stable_id": item.stable_id or saved.id,
+                    "replaces_pending_id": saved.id,
+                    "exact_startup_receipt": True,
+                    "created_by": saved.created_by,
+                    "data": data,
+                }
+            )
     if origin is None or origin.kind not in {"peer", "system"}:
         return item
     assert saved is not None and isinstance(saved.data, MessageData)
@@ -257,9 +346,13 @@ def correlate_native_peer_input(
         or item.data.communication is not None
         or item.data.is_meta
         or item.data.content not in expected_content
-        or (saved.response_id == PENDING_INPUT_RESPONSE_ID and saved.status != "incomplete")
         or (
-            saved.response_id != PENDING_INPUT_RESPONSE_ID
+            saved.response_id == PENDING_INPUT_RESPONSE_ID
+            and saved.status != "incomplete"
+            and receipt is None
+        )
+        or (
+            saved.response_id not in NON_TRANSCRIPT_RESPONSE_IDS
             and origin.kind != "system"
             and (
                 saved.response_id != item.response_id
@@ -275,8 +368,9 @@ def correlate_native_peer_input(
         update={
             "stable_id": saved.id,
             "replaces_pending_id": (
-                saved.id if saved.response_id == PENDING_INPUT_RESPONSE_ID else None
+                saved.id if saved.response_id in NON_TRANSCRIPT_RESPONSE_IDS else None
             ),
+            "exact_startup_receipt": True,
             "created_by": None,
             "data": item.data.model_copy(
                 update={
