@@ -1,3 +1,4 @@
+// Modified for Triune.
 // Shared model + sidebar body for the Settings surface.
 //
 // Entering /settings doesn't swap out the conversations sidebar card — the
@@ -9,7 +10,6 @@
 import { useEffect } from "react";
 import {
   ArchiveIcon,
-  ArrowLeftIcon,
   BlocksIcon,
   BotIcon,
   DownloadIcon,
@@ -41,6 +41,7 @@ import { customAgentsSettingsEnabled, isSingleUserMode } from "@/lib/capabilitie
 import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { isElectronShell } from "@/lib/nativeBridge";
 import { cn } from "@/lib/utils";
+import { SidebarSettingsFooter } from "./SidebarHeaderActions";
 import { SIDEBAR_ROW } from "./sidebarStyles";
 
 export type SettingsSectionId =
@@ -97,10 +98,7 @@ interface SettingsNavGroup {
  * Nav groups for the current deploy. The Account section appears whenever the
  * deploy has a login session (accounts OR OIDC/SSO — i.e. a `login_url`
  * exists), so an SSO user can see who they're signed in as and sign out; it's
- * absent only in header single-user mode. The Admin group (Members / Policies)
- * appears for admins in ANY multi-user mode since both accounts and OIDC share
- * the `users.is_admin` flag and the server enforces admin on every route; the
- * Desktop group (Local CLI) appears only in the Electron shell.
+ * absent in header single-user mode. Members and Policies retain their admin gates.
  */
 export function settingsNavGroups(
   hasAuthSession: boolean,
@@ -135,11 +133,6 @@ export function settingsNavGroups(
   if (mcpEnabled) {
     general.splice(2, 0, { id: "mcp", label: "MCP", icon: PlugIcon });
   }
-  if (hasAuthSession) {
-    // Account leads the group when present — it's the most-visited section
-    // on a deploy with sign-in.
-    general.unshift({ id: "account", label: "Account", icon: UserCogIcon });
-  }
   const groups: SettingsNavGroup[] = [{ title: "General", items: general }];
   if (customAgentsEnabled) {
     groups.push({
@@ -157,24 +150,18 @@ export function settingsNavGroups(
       ],
     });
   }
-  // Admin: server-wide management, admin-only. Nested here as sub-categories
-  // (rather than links out of the Account section) so entering them stays
-  // inside /settings — the sidebar keeps the settings nav instead of snapping
-  // back to the conversation list. Gated on `isAdmin` alone (not
-  // `accountsEnabled`) so the surface also appears under OIDC/SSO, the one
-  // mode where there's otherwise no admin chrome at all. Members runs
-  // read-only under OIDC (no password actions); Policies is identical.
+  const adminItems: SettingsNavItem[] = [];
+  if (hasAuthSession) adminItems.push({ id: "account", label: "Account", icon: UserCogIcon });
   if (isAdmin) {
     // Members (manage other accounts) and Sharing (grant sessions to other
     // users) have no meaning in single-user mode — there are no other users —
     // so drop both from the nav there. Policies stays: global policies apply
     // to a solo user's own sessions too.
-    const adminItems: SettingsNavItem[] = [];
     if (!isSingleUser) adminItems.push({ id: "members", label: "Members", icon: UsersIcon });
     adminItems.push({ id: "policies", label: "Policies", icon: ShieldCheckIcon });
     if (!isSingleUser) adminItems.push({ id: "sharing", label: "Sharing", icon: Share2Icon });
-    groups.push({ title: "Admin", items: adminItems });
   }
+  if (adminItems.length) groups.push({ title: "Admin", items: adminItems });
   groups.push({
     title: "Archived",
     items: [{ id: "archived", label: "Archived sessions", icon: ArchiveIcon }],
@@ -254,7 +241,7 @@ function useSettingsNavGroups(): SettingsNavGroup[] {
   const hasAuthSession = info !== "loading" && info.login_url !== null;
   // Admin gating for the Members / Policies sub-categories. Sourced from
   // `/v1/me` (mode-agnostic) so the group appears for admins under OIDC too,
-  // not just accounts deploys. Non-admins never see it.
+  // not just accounts deploys.
   const isAdmin = useIsAdmin();
   const integrationsEnabled =
     info !== "loading" && (info.enabled_connections ?? []).some((provider) => provider !== "mcp");
@@ -310,28 +297,7 @@ export function SettingsSidebarBody({
 
   return (
     <>
-      {/* settings-sidebar-header carries the same traffic-light clearance the
-      home sidebar's header row gets: with the sidebar now starting at the
-      window's top edge on the macOS shell, this Back row would otherwise sit
-      underneath the window controls (see index.css). Inert elsewhere. */}
-      <div className="settings-sidebar-header px-3 pt-3">
-        <Button
-          asChild
-          variant="ghost"
-          className={cn(
-            SIDEBAR_ROW,
-            "w-fit justify-start border-0 font-normal text-muted-foreground",
-          )}
-        >
-          {/* Return to the previous conversation or home; the shell restores
-          the sidebar state captured when Settings opened. */}
-          <Link to={settingsReturnPath} componentId="settings.back_to_omnigent">
-            <ArrowLeftIcon className="ui-icon" />
-            Back
-          </Link>
-        </Button>
-      </div>
-      <nav className="flex flex-1 flex-col gap-4 overflow-y-auto px-3 py-3">
+      <nav className="settings-sidebar-header flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-3 py-3">
         {groups.map((group) => (
           <div key={group.title} className="flex flex-col">
             <h2 className="flex h-7 items-center px-2 text-sm font-normal text-muted-foreground">
@@ -378,6 +344,7 @@ export function SettingsSidebarBody({
           </div>
         ))}
       </nav>
+      <SidebarSettingsFooter returnPath={settingsReturnPath} />
     </>
   );
 }

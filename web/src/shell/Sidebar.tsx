@@ -1,3 +1,4 @@
+import "./sidebarSessionControls.css";
 import { ContentSkeleton } from "@/components/ui/loading";
 import { copySessionLink } from "@/lib/sessionShareLink";
 import { middleClickHandlers } from "@/lib/middleClick";
@@ -132,7 +133,12 @@ import {
   useRebasePath,
   useSearchParams,
 } from "@/lib/routing";
-import { SidebarHeaderActions, SidebarSettingsButton } from "./SidebarHeaderActions";
+import {
+  SidebarActionGroup,
+  SidebarHeaderActions,
+  SidebarNavAction,
+  SidebarSettingsFooter,
+} from "./SidebarHeaderActions";
 import { SidebarToggle, mobileSidebarToggleStyle } from "./SidebarToggle";
 import omnigentWordmark from "@/assets/omnigent-wordmark.svg";
 import { Button } from "@/components/ui/button";
@@ -313,8 +319,6 @@ import { SessionActionMenuItem } from "@/components/SessionActionMenuItem";
 import { useSessionActionRestrictions } from "@/hooks/useSessionActionRestrictions";
 import {
   sidebarChildInset,
-  SIDEBAR_STATUS_VISUAL,
-  SIDEBAR_MENU_VISUAL,
   SIDEBAR_ROW,
   SIDEBAR_HEADING,
   SIDEBAR_HOVER_HIGHLIGHT,
@@ -1228,29 +1232,14 @@ function SidebarImpl({
               inert={contextSearch?.open || undefined}
               aria-hidden={contextSearch?.open || undefined}
             >
-              <div
-                className="flex flex-col gap-px px-2 pt-2 pb-0"
-                data-testid="sidebar-primary-nav"
-              >
+              <SidebarActionGroup testId="sidebar-primary-nav">
                 {/* "New session" routes to the home composer ("/"), which now owns
             session creation end-to-end (host/workspace/worktree chips +
             send). Rendered as a Link so cmd/middle-click opens it in a new
             tab; onNavClick still closes the sidebar on a plain mobile tap. */}
-                <Button
-                  asChild
-                  className={cn(
-                    // px-2 + gap-2 puts the icon on the sidebar's left (red) column
-                    // and the label on the label (blue) column — matching section
-                    // headers and project folders. border-0 drops the Button base's
-                    // transparent 1px border so the icon lands exactly on that
-                    // column, flush with the Inbox row and folder rows.
-                    SIDEBAR_ROW,
-                    "density-row",
-                    "group/new-session w-full justify-start border-0 font-normal",
-                    SIDEBAR_HOVER_HIGHLIGHT,
-                    isNewChatPage && SIDEBAR_ACTIVE_HIGHLIGHT,
-                  )}
-                  variant="ghost"
+                <SidebarNavAction
+                  active={isNewChatPage}
+                  className="group/new-session"
                   data-testid="new-chat-button"
                 >
                   {/* New session always creates a session the viewer owns, which
@@ -1279,23 +1268,8 @@ function SidebarImpl({
                       className="pointer-events-none absolute top-1/2 right-2 -translate-y-1/2 opacity-0 transition-opacity group-focus-visible/new-session:opacity-100 [&_kbd]:w-auto [&_kbd]:min-w-4 [&_kbd]:px-0.5 [&_kbd]:font-sans [&_kbd]:text-[10px] [@media((hover:hover)_and_(pointer:fine))]:group-hover/new-session:opacity-100"
                     />
                   </Link>
-                </Button>
-                {/* Keep Scheduled in the primary nav group with the same row treatment as New session. */}
-                <Button
-                  asChild
-                  className={cn(
-                    // Same shared nav-row construct as "New session" / "Inbox" so
-                    // the active-pill, hover, insets, icon column, and text weight
-                    // all match post-refactor.
-                    SIDEBAR_ROW,
-                    "density-row",
-                    "w-full justify-start border-0 font-normal",
-                    SIDEBAR_HOVER_HIGHLIGHT,
-                    isTasksPage && SIDEBAR_ACTIVE_HIGHLIGHT,
-                  )}
-                  variant="ghost"
-                  data-testid="scheduled-tasks-nav"
-                >
+                </SidebarNavAction>
+                <SidebarNavAction active={isTasksPage} data-testid="scheduled-tasks-nav">
                   <Link to="/tasks" onClick={onNavClick} componentId="sidebar.tasks">
                     <ClockIcon
                       className={cn(
@@ -1307,7 +1281,7 @@ function SidebarImpl({
                     />
                     Automations
                   </Link>
-                </Button>
+                </SidebarNavAction>
                 <Button
                   asChild
                   variant="ghost"
@@ -1415,7 +1389,7 @@ function SidebarImpl({
                     </Link>
                   </Button>
                 )}
-              </div>
+              </SidebarActionGroup>
 
               {/* Keep the list scrollable above the persistent footer. */}
               <div className="relative flex min-h-0 flex-1 flex-col">
@@ -1465,20 +1439,11 @@ function SidebarImpl({
                 </nav>
               </div>
 
-              {/* Native-shell server picker, pinned below the scrolling session
-          list. Self-hiding: renders nothing outside a shell with the picker
-          bridge (see SidebarServerPicker), so browsers keep an unchanged
-          sidebar that ends with the list. */}
-              <div
-                className="flex shrink-0 items-center px-3 py-[var(--list-gap)]"
-                data-testid="sidebar-settings-footer"
-              >
-                <SidebarSettingsButton />
-              </div>
-              <SidebarServerPicker />
+              <SidebarSettingsFooter />
             </div>
           </>
         )}
+        {!contextSearch?.open && <SidebarServerPicker />}
       </aside>
     </>
   );
@@ -2259,8 +2224,7 @@ function ConversationList({
   // Scope-active flags: which section owns the current selection UI (checkboxes
   // + bulk-action bar). Only one is true at a time unless the selection is unified.
   const sessionsSelecting = selectionMode && selectionScope === "sessions";
-  // With sidebar_grouping_ui on, the default grouping's one "Select sessions" (on
-  // the Projects header) selects project folders, Shared and Sessions together.
+  // The default grouping selects project folders, Shared and Sessions together.
   const unifiedSelection = groupingUi && !grouped;
   const projectsSelecting =
     selectionMode && (selectionScope === "projects" || (unifiedSelection && sessionsSelecting));
@@ -2792,30 +2756,6 @@ function ConversationList({
         onProjectAssigned={expandProject}
       />
     ) : undefined;
-  // The filter stays reachable while bulk-selecting; switching scope just exits
-  // selection. Only the "select" entry point hides, being already active.
-  const selectSessionsButton = (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-xs"
-          aria-label="Select sessions"
-          data-testid="toggle-selection-mode"
-          className="text-muted-foreground"
-          onClick={(event) => {
-            event.stopPropagation();
-            onEnterSelectionMode("sessions");
-          }}
-        >
-          <ListChecksIcon className="size-3.5" />
-        </Button>
-      </TooltipTrigger>
-      <TooltipContent side="bottom">Select sessions</TooltipContent>
-    </Tooltip>
-  );
-  // A unified selection puts "Select sessions" on the Projects header instead.
   const sessionsHeaderActions = !selectionMode ? (
     <div className="flex items-center gap-0.5">
       <Tooltip>
@@ -2843,7 +2783,15 @@ function ConversationList({
         </TooltipTrigger>
         <TooltipContent side="bottom">New session</TooltipContent>
       </Tooltip>
-      {!unifiedSelection && selectSessionsButton}
+      <SectionActionsMenu label="Session list actions" testId="session-list-actions">
+        <DropdownMenuItem
+          onSelect={() => onEnterSelectionMode("sessions")}
+          data-testid="toggle-selection-mode"
+        >
+          <ListChecksIcon className="size-3.5" />
+          Select sessions
+        </DropdownMenuItem>
+      </SectionActionsMenu>
     </div>
   ) : undefined;
   const sessionsFilterMenu = (
@@ -3070,41 +3018,39 @@ function ConversationList({
                         }
                         headerAction={
                           !selectionMode ? (
-                            <>
-                              <ProjectHeaderActions
-                                onOrderChange={(manual) => {
-                                  const ranks = new Map(
-                                    projectOrder.data?.ordered_project_ids?.map((id, index) => [
-                                      id,
-                                      index,
-                                    ]),
-                                  );
-                                  const restored = [...projects].sort(
-                                    (a, b) =>
-                                      (ranks.get(a.id ?? "") ?? Infinity) -
-                                      (ranks.get(b.id ?? "") ?? Infinity),
-                                  );
-                                  saveOrder.mutate(manual ? restored : null);
-                                }}
-                                manualOrder={projectOrder.data?.sort_mode === "manual"}
-                                orderDisabled={saveOrder.isPending || !projectOrder.data}
-                                projectNames={sections.projectGroups.map((group) => group.name)}
-                                collapsed={effectiveCollapsedSections.includes("Projects")}
-                                expandedProjects={expandedProjects}
-                                // A unified selection starts from the header's own button.
-                                hasProjectSessions={
-                                  !unifiedSelection &&
-                                  sections.projectGroups.some(
-                                    (group) => group.conversations.length > 0,
-                                  )
-                                }
-                                onExpandAll={expandAllProjects}
-                                onCollapseAll={collapseAllProjects}
-                                onProjectCreated={expandProject}
-                                onEnterSelectionMode={() => onEnterSelectionMode("projects")}
-                              />
-                              {unifiedSelection && selectSessionsButton}
-                            </>
+                            <ProjectHeaderActions
+                              onOrderChange={(manual) => {
+                                const ranks = new Map(
+                                  projectOrder.data?.ordered_project_ids?.map((id, index) => [
+                                    id,
+                                    index,
+                                  ]),
+                                );
+                                const restored = [...projects].sort(
+                                  (a, b) =>
+                                    (ranks.get(a.id ?? "") ?? Infinity) -
+                                    (ranks.get(b.id ?? "") ?? Infinity),
+                                );
+                                saveOrder.mutate(manual ? restored : null);
+                              }}
+                              manualOrder={projectOrder.data?.sort_mode === "manual"}
+                              orderDisabled={saveOrder.isPending || !projectOrder.data}
+                              projectNames={sections.projectGroups.map((group) => group.name)}
+                              collapsed={effectiveCollapsedSections.includes("Projects")}
+                              expandedProjects={expandedProjects}
+                              hasProjectSessions={
+                                unifiedSelection ||
+                                sections.projectGroups.some(
+                                  (group) => group.conversations.length > 0,
+                                )
+                              }
+                              onExpandAll={expandAllProjects}
+                              onCollapseAll={collapseAllProjects}
+                              onProjectCreated={expandProject}
+                              onEnterSelectionMode={() =>
+                                onEnterSelectionMode(unifiedSelection ? "sessions" : "projects")
+                              }
+                            />
                           ) : undefined
                         }
                       >
@@ -3810,6 +3756,37 @@ function SessionFilterMenu({
   );
 }
 
+function SectionActionsMenu({
+  label,
+  testId,
+  children,
+}: {
+  label: string;
+  testId: string;
+  children: ReactNode;
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          aria-label={label}
+          data-testid={testId}
+          className="text-muted-foreground"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <MoreHorizontalIcon className="size-3.5" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="min-w-40">
+        {children}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 function ProjectHeaderActions({
   onOrderChange,
   manualOrder,
@@ -3848,63 +3825,48 @@ function ProjectHeaderActions({
     <div className="flex items-center gap-0.5">
       <NewProjectButton onCreated={onProjectCreated} />
       {showMenu && (
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-xs"
-              aria-label="Project list actions"
-              data-testid="project-list-actions"
-              className="text-muted-foreground"
-              onClick={(event) => event.stopPropagation()}
-            >
-              <MoreHorizontalIcon className="size-3.5" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="min-w-40">
-            <DropdownMenuSub>
-              <DropdownMenuSubTrigger disabled={orderDisabled}>
-                Sort projects by
-              </DropdownMenuSubTrigger>
-              <DropdownMenuSubContent className="min-w-40">
-                <DropdownMenuRadioGroup
-                  value={manualOrder ? "manual" : "alphabetical"}
-                  onValueChange={(value) => onOrderChange(value === "manual")}
-                >
-                  <DropdownMenuRadioItem value="alphabetical">Alphabetically</DropdownMenuRadioItem>
-                  <DropdownMenuRadioItem value="manual">Manual order</DropdownMenuRadioItem>
-                </DropdownMenuRadioGroup>
-              </DropdownMenuSubContent>
-            </DropdownMenuSub>
-            {/* Gated independently: each hides only when it would be a no-op, so
+        <SectionActionsMenu label="Project list actions" testId="project-list-actions">
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger disabled={orderDisabled}>
+              Sort projects by
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent className="min-w-40">
+              <DropdownMenuRadioGroup
+                value={manualOrder ? "manual" : "alphabetical"}
+                onValueChange={(value) => onOrderChange(value === "manual")}
+              >
+                <DropdownMenuRadioItem value="alphabetical">Alphabetically</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="manual">Manual order</DropdownMenuRadioItem>
+              </DropdownMenuRadioGroup>
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+          {/* Gated independently: each hides only when it would be a no-op, so
                 a mixed set offers both. */}
-            {showExpandControls && !allExpanded && (
-              <DropdownMenuItem
-                data-testid="expand-all-projects"
-                onSelect={() => onExpandAll(projectNames)}
-              >
-                <Maximize2Icon className="size-3.5" />
-                Expand all
-              </DropdownMenuItem>
-            )}
-            {showExpandControls && anyExpanded && (
-              <DropdownMenuItem data-testid="collapse-all-projects" onSelect={onCollapseAll}>
-                <Minimize2Icon className="size-3.5" />
-                Collapse all
-              </DropdownMenuItem>
-            )}
-            {hasProjectSessions && (
-              <DropdownMenuItem
-                data-testid="projects-select-sessions"
-                onSelect={() => onEnterSelectionMode()}
-              >
-                <ListChecksIcon className="size-3.5" />
-                Select sessions
-              </DropdownMenuItem>
-            )}
-          </DropdownMenuContent>
-        </DropdownMenu>
+          {showExpandControls && !allExpanded && (
+            <DropdownMenuItem
+              data-testid="expand-all-projects"
+              onSelect={() => onExpandAll(projectNames)}
+            >
+              <Maximize2Icon className="size-3.5" />
+              Expand all
+            </DropdownMenuItem>
+          )}
+          {showExpandControls && anyExpanded && (
+            <DropdownMenuItem data-testid="collapse-all-projects" onSelect={onCollapseAll}>
+              <Minimize2Icon className="size-3.5" />
+              Collapse all
+            </DropdownMenuItem>
+          )}
+          {hasProjectSessions && (
+            <DropdownMenuItem
+              data-testid="projects-select-sessions"
+              onSelect={() => onEnterSelectionMode()}
+            >
+              <ListChecksIcon className="size-3.5" />
+              Select sessions
+            </DropdownMenuItem>
+          )}
+        </SectionActionsMenu>
       )}
     </div>
   );
@@ -5084,8 +5046,6 @@ function ConversationRowImpl({
   const statusIcons = [statusGroups.attention, statusGroups.activity].filter(
     (state): state is SidebarStatus => state !== null,
   );
-  const firstStatus = statusIcons.length === 2 ? statusIcons[0] : null;
-  const menuStatus = statusIcons.at(-1);
   const statusDescription = [
     ...sessionStates.map((state) => describeSessionState(state).ariaLabel),
     showDraftIndicator && "Draft",
@@ -5524,6 +5484,9 @@ function ConversationRowImpl({
           <ContextMenuTrigger asChild>
             <div
               data-sidebar-row-controls
+              data-rest-controls={
+                Boolean(treeControl || statusIcons.length || showUpdated) || undefined
+              }
               className={cn(
                 "flex shrink-0 items-center",
                 SIDEBAR_INDICATOR_GAP,
@@ -5536,81 +5499,74 @@ function ConversationRowImpl({
                   <SessionUpdatedLabel updatedAt={conversation.updated_at} />
                 </span>
               )}
-              {(firstStatus || isOwner) && (
-                <div
-                  className={cn(
-                    "relative shrink-0 size-6 [@media(pointer:coarse)]:size-11",
-                    !firstStatus &&
-                      "hidden [@media((hover:hover)_and_(pointer:fine))]:group-has-[:focus-visible]/conversation:inline-flex [@media((hover:hover)_and_(pointer:fine))]:group-data-[menu-open]/conversation:inline-flex [@media((hover:hover)_and_(pointer:fine))]:group-[[data-input=mouse]:hover]/conversation:inline-flex",
-                  )}
+              {treeControl && (
+                <span className="sidebar-session-children inline-flex shrink-0">{treeControl}</span>
+              )}
+              {statusDescription && (
+                <span id={statusDescriptionId} className="sr-only">
+                  {statusDescription}
+                </span>
+              )}
+              {statusIcons.map((status, index) => (
+                <Button
+                  key={status.kind}
+                  type="button"
+                  variant="ghost"
+                  size="icon-xs"
+                  tabIndex={-1}
+                  aria-label="Session status"
+                  aria-describedby={statusDescriptionId}
+                  aria-haspopup="menu"
+                  aria-expanded={menuOpen}
+                  tooltipDescription={statusDescription || undefined}
+                  className="sidebar-session-status shrink-0 text-muted-foreground [@media(pointer:coarse)]:size-11"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setMenuOpen(true);
+                  }}
                 >
-                  {firstStatus && (
+                  <span
+                    data-testid={
+                      index === 0 && statusIcons.length === 2
+                        ? "conversation-secondary-indicator"
+                        : "conversation-indicators"
+                    }
+                    className="inline-flex"
+                  >
+                    <SessionStateBadge state={status} compact tooltip={false} />
+                  </span>
+                </Button>
+              ))}
+              {isOwner && (
+                <Tooltip disableHoverableContent>
+                  <TooltipContent>{isArchived ? "Unarchive" : "Archive"}</TooltipContent>
+                  <TooltipTrigger asChild>
                     <Button
                       type="button"
                       variant="ghost"
                       size="icon-xs"
-                      tabIndex={-1}
-                      aria-label="Session status"
-                      aria-describedby={statusDescription ? statusDescriptionId : undefined}
-                      aria-haspopup="menu"
-                      aria-expanded={menuOpen}
-                      tooltipDescription={statusDescription || undefined}
-                      className="relative size-full text-muted-foreground"
-                      onClick={(event) => {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        setMenuOpen(true);
+                      aria-label={isArchived ? "Unarchive conversation" : "Archive conversation"}
+                      data-testid="quick-archive-conversation"
+                      className="sidebar-session-archive shrink-0 text-muted-foreground"
+                      onClick={(e) => {
+                        // Keep the toggle click off the surrounding Link (no navigation).
+                        e.preventDefault();
+                        e.stopPropagation();
+                        if (!isArchived) {
+                          runArchive();
+                        } else {
+                          runUnarchive();
+                        }
                       }}
                     >
-                      <span
-                        data-testid="conversation-secondary-indicator"
-                        className={cn(
-                          "pointer-events-none absolute inset-0 flex items-center justify-center",
-                          SIDEBAR_STATUS_VISUAL,
-                        )}
-                      >
-                        <SessionStateBadge state={firstStatus} compact tooltip={false} />
-                      </span>
+                      {isArchived ? (
+                        <ArchiveRestoreIcon className="size-3.5" data-icon-size="14" />
+                      ) : (
+                        <ArchiveIcon className="size-3.5" data-icon-size="14" />
+                      )}
                     </Button>
-                  )}
-                  {isOwner && (
-                    <Tooltip disableHoverableContent>
-                      <TooltipContent>{isArchived ? "Unarchive" : "Archive"}</TooltipContent>
-                      <TooltipTrigger asChild>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon-xs"
-                          aria-label={
-                            isArchived ? "Unarchive conversation" : "Archive conversation"
-                          }
-                          data-testid="quick-archive-conversation"
-                          className={cn(
-                            "absolute inset-0 z-10 text-muted-foreground opacity-0 pointer-events-none [@media(pointer:coarse)]:hidden",
-                            SIDEBAR_MENU_VISUAL,
-                            "group-has-[:focus-visible]/conversation:pointer-events-auto group-data-[menu-open]/conversation:pointer-events-auto [@media((hover:hover)_and_(pointer:fine))]:group-[[data-input=mouse]:hover]/conversation:pointer-events-auto",
-                          )}
-                          onClick={(e) => {
-                            // Keep the toggle click off the surrounding Link (no navigation).
-                            e.preventDefault();
-                            e.stopPropagation();
-                            if (!isArchived) {
-                              runArchive();
-                            } else {
-                              runUnarchive();
-                            }
-                          }}
-                        >
-                          {isArchived ? (
-                            <ArchiveRestoreIcon className="size-3.5" data-icon-size="14" />
-                          ) : (
-                            <ArchiveIcon className="size-3.5" data-icon-size="14" />
-                          )}
-                        </Button>
-                      </TooltipTrigger>
-                    </Tooltip>
-                  )}
-                </div>
+                  </TooltipTrigger>
+                </Tooltip>
               )}
               <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
                 <DropdownMenuTrigger asChild>
@@ -5622,38 +5578,13 @@ function ConversationRowImpl({
                     tooltipDescription={statusDescription || undefined}
                     aria-describedby={statusDescription ? statusDescriptionId : undefined}
                     data-testid="conversation-actions"
-                    className="relative shrink-0 text-muted-foreground [@media(pointer:coarse)]:size-11"
+                    className="sidebar-session-more shrink-0 text-muted-foreground [@media(pointer:coarse)]:size-11"
                     onClick={(event) => {
                       event.preventDefault();
                       event.stopPropagation();
                     }}
                   >
-                    {statusDescription && (
-                      <span id={statusDescriptionId} className="sr-only">
-                        {statusDescription}
-                      </span>
-                    )}
-                    <span
-                      data-testid="conversation-indicators"
-                      className={cn(
-                        "pointer-events-none absolute inset-0 flex items-center justify-center",
-                        SIDEBAR_STATUS_VISUAL,
-                      )}
-                    >
-                      {menuStatus && (
-                        <SessionStateBadge state={menuStatus} compact tooltip={false} />
-                      )}
-                    </span>
-                    <span
-                      aria-hidden
-                      className={cn(
-                        "pointer-events-none absolute inset-0 flex items-center justify-center opacity-0",
-                        !menuStatus && "[@media(pointer:coarse)]:opacity-100",
-                        SIDEBAR_MENU_VISUAL,
-                      )}
-                    >
-                      <MoreHorizontalIcon className="size-3.5" data-icon-size="14" />
-                    </span>
+                    <MoreHorizontalIcon className="size-3.5" data-icon-size="14" />
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="min-w-44">
@@ -5664,17 +5595,6 @@ function ConversationRowImpl({
                   />
                 </DropdownMenuContent>
               </DropdownMenu>
-              {treeControl && (
-                <span
-                  className={cn(
-                    "flex shrink-0 opacity-0 pointer-events-none [@media(pointer:coarse)]:opacity-100 [@media(pointer:coarse)]:pointer-events-auto",
-                    SIDEBAR_MENU_VISUAL,
-                    "group-has-[:focus-visible]/conversation:pointer-events-auto group-data-[menu-open]/conversation:pointer-events-auto [@media((hover:hover)_and_(pointer:fine))]:group-[[data-input=mouse]:hover]/conversation:pointer-events-auto",
-                  )}
-                >
-                  {treeControl}
-                </span>
-              )}
             </div>
           </ContextMenuTrigger>
           <ContextMenuContent className="min-w-44">

@@ -312,3 +312,19 @@ def test_older_host_payload_without_argument_values_is_accepted():
     assert result.args is None
     assert result.configured_args is None
     assert result.environment is None
+
+
+def test_installed_version_uses_configured_executable(tmp_path, monkeypatch):
+    from omnigent.onboarding.harness_install import installed_harness_version
+
+    binary = tmp_path / "codex"
+    binary.write_text('#!/bin/sh\n[ "$1" = "--version" ] && echo "0.127.1"\n')
+    binary.chmod(0o755)
+    monkeypatch.setattr(
+        startup,
+        "load_global_config",
+        lambda: {
+            "harness": {"codex-native": {"command": str(binary)}},
+        },
+    )
+    assert installed_harness_version("codex-native") == "0.127.1"

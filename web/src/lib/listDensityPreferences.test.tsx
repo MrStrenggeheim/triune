@@ -44,8 +44,8 @@ describe("list density", () => {
       localStorage.clear();
       window.dispatchEvent(new StorageEvent("storage", { key: null }));
     });
-    expect(result.current).toBe("comfortable");
-    expect(document.documentElement).toHaveAttribute("data-list-density", "comfortable");
+    expect(result.current).toBe("compact");
+    expect(document.documentElement).toHaveAttribute("data-list-density", "compact");
   });
 
   it("updates both embedded roots without touching the host document", () => {
@@ -73,12 +73,12 @@ describe("list density", () => {
 
   it("round-trips settings and updates mounted consumers during import", () => {
     const { result } = renderHook(useListDensity);
-    act(() => writeListDensity("compact"));
+    act(() => writeListDensity("comfortable"));
     const exported = collectSettings()!;
     act(() => applyImportedSettings({ version: 1, settings: {} }));
-    expect(result.current).toBe("comfortable");
-    act(() => applyImportedSettings(exported));
     expect(result.current).toBe("compact");
-    expect(document.documentElement).toHaveAttribute("data-list-density", "compact");
+    act(() => applyImportedSettings(exported));
+    expect(result.current).toBe("comfortable");
+    expect(document.documentElement).toHaveAttribute("data-list-density", "comfortable");
   });
 });

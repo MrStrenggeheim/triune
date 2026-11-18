@@ -1,0 +1,29 @@
+/* SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0 */
+/* Required Notice: Copyright 2026 MrStrenggeheim. Triune (https://github.com/MrStrenggeheim/triune). */
+.sidebar-session-archive {
+  display: none;
+}
+
+@media (min-width: 768px) and (hover: hover) and (pointer: fine) {
+  .sidebar-session-children {
+    order: 1;
+  }
+
+  .sidebar-session-more,
+  .sidebar-row-surface [data-sidebar-row-controls]:not([data-rest-controls]) {
+    display: none;
+  }
+
+  .sidebar-row-surface:is([data-input="mouse"]:hover, :has(:focus-visible), [data-menu-open]) {
+    & [data-sidebar-row-controls] {
+      display: flex;
+    }
+    & .sidebar-session-archive,
+    & .sidebar-session-more {
+      display: inline-flex;
+    }
+    & .sidebar-session-status {
+      display: none;
+    }
+  }
+}

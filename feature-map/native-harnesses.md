@@ -71,7 +71,10 @@ implements them separately, so a fix for one harness does not reach the others.
   Env wrappers are split into these fields, without a duplicate raw invocation.
   Sessions can add to or override these host defaults. Project config can
   choose the default harness, but commands and arguments come only from user config.
-  Other harnesses keep their credential card only.
+  Other harnesses keep their credential card.
+  The harness detail header reads the installed version from the selected host.
+  Update runs the supported installer, including for an already configured harness.
+  Manual-only harnesses show host update instructions and a readiness recheck.
 - `skill-contents`: open plain or plugin skills to read their SKILL.md markdown,
   with loading, truncation, unavailable-host, and older-server states.
 - `codex-plugin-skills`: enabled Codex plugin skills remain selectable in both

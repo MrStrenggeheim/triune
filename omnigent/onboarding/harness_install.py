@@ -659,6 +659,34 @@ def _all_harness_name_to_key() -> dict[str, str]:
     return merged
 
 
+def installed_harness_version(harness: str) -> str | None:
+    """Read the version of the selected native executable on this host."""
+    from omnigent.config import load_global_config
+    from omnigent.harness_aliases import canonicalize_harness
+    from omnigent.harness_startup_config import resolve_harness_args, resolve_harness_command
+    from omnigent.host.harness_startup import SUPPORTED_HARNESSES, describe_harness_startup
+
+    harness = canonicalize_harness(harness) or harness
+    spec = required_cli_for_harness(harness)
+    if spec is None:
+        return None
+    if harness in SUPPORTED_HARNESSES:
+        startup = describe_harness_startup(harness)
+        binary = startup.resolved_path
+        args = startup.args
+        if startup.environment is None:
+            return None
+    else:
+        config = load_global_config()
+        command = resolve_harness_command(harness, default=spec.binary, cfg=config)
+        args = resolve_harness_args(harness, (), cfg=config)
+        binary = resolve_cli_binary(command)
+    if not binary or (args and Path(binary).name != spec.binary):
+        # A wrapper taking another program as an argument may report its own version.
+        return None
+    return _harness_cli_version_string(spec, binary)
+
+
 def required_cli_for_harness(harness: str) -> HarnessInstallSpec | None:
     """Return the CLI a harness needs on ``PATH`` to launch, or ``None``.
 
@@ -1155,6 +1183,8 @@ def try_install_harness_cli(key: str) -> HarnessInstallResult:
     except OSError as exc:
         return HarnessInstallResult(False, f"install command failed to run: {exc}")
     invalidate_harness_probe_caches()
+    if result.returncode != 0:
+        return HarnessInstallResult(False, f"installer exited with code {result.returncode}")
     # harness_install_command would have raised for a spec-less key, so spec is
     # non-None past this point.
     assert spec is not None
@@ -1177,8 +1207,6 @@ def try_install_harness_cli(key: str) -> HarnessInstallResult:
         if resolved_dir not in path_entries:
             os.environ["PATH"] = os.pathsep.join([resolved_dir, *path_entries])
         return HarnessInstallResult(True, None)
-    if result.returncode != 0:
-        return HarnessInstallResult(False, f"installer exited with code {result.returncode}")
     return HarnessInstallResult(
         False, f"installer completed but {spec.binary!r} could not be found"
     )

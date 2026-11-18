@@ -1,11 +1,11 @@
+// Modified for Triune.
 import { renderSidebar } from "@/test/sidebarTestHelpers";
 import { conversation as conv, conversationPage } from "@/test/sidebarMockHelpers";
 // Behaviour tests for the mobile sidebar drawer shape: it stops short of the
 // right edge so a strip of the chat stays visible, tapping that strip dismisses
-// it (replacing the collapse toggle, which is now desktop-only), and Search /
-// Settings float at the top and bottom of the drawer.
+// it (replacing the collapse toggle, which is now desktop-only), and Settings stays in the footer.
 
-import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Conversation } from "@/hooks/useConversations";
 
@@ -100,136 +100,13 @@ describe("mobile sidebar drawer", () => {
     );
   });
 
-  it("floats Settings at the bottom and omits the duplicate header toggle", () => {
+  it("keeps the labeled Settings link below the session list and outside its scroller", () => {
     renderSidebar();
-
-    // Sidebar Search is paused; Settings retains its float below the list.
-    const headerActions = screen.getByTestId("sidebar-header-actions");
-    expect(within(headerActions).queryByTestId("sidebar-search-button")).toBeNull();
-
-    const float = screen.getByTestId("sidebar-settings-float");
-    expect(float).toHaveAttribute("href", "/settings");
-    expect(float.closest("a, button")).toHaveClass("absolute", "bottom-3", "md:hidden");
-
-    // The header-row Settings copy is desktop-only; the application bar owns the toggle.
-    expect(screen.getByTestId("settings-button")).toHaveClass("max-md:hidden");
-    expect(within(headerActions).queryByRole("button", { name: "Close sidebar" })).toBeNull();
-  });
-
-  it("keeps the Settings float icon-only while sidebar Search is paused", () => {
-    renderSidebar();
-
-    expect(screen.queryByTestId("sidebar-search-button")).toBeNull();
-    const settings = screen.getByTestId("sidebar-settings-float").closest("a, button")!;
-
-    for (const button of [settings]) {
-      expect(button).toHaveClass("max-md:size-11", "max-md:text-foreground");
-      expect(button).not.toHaveClass("sidebar-glass-chip", "max-md:rounded-full");
-    }
-  });
-
-  it("gives the session list a gutter so the last row clears the floating action", () => {
-    // The action doesn't scroll, so without this it would cover the last row,
-    // hiding its title and state badge and blocking the tap target.
-    renderSidebar();
-
-    expect(screen.getByRole("navigation")).toHaveClass("max-md:pb-16");
-  });
-});
-
-/**
- * Simulate the iOS native shell and its live visual viewport. The keyboard
- * "opens" by shrinking the visual viewport below the layout viewport
- * (window.innerHeight); useIOSNativeKeyboardInset reads the delta. Pass
- * visibleHeight === layoutHeight to model a closed keyboard (inset 0).
- */
-function setIOSViewport(layoutHeight: number, visibleHeight: number): void {
-  (window as unknown as Record<string, unknown>).omnigentNative = { kind: "ios" };
-  vi.stubGlobal("innerHeight", layoutHeight);
-  vi.stubGlobal("visualViewport", {
-    offsetTop: 0,
-    height: visibleHeight,
-    addEventListener: vi.fn(),
-    removeEventListener: vi.fn(),
-  });
-}
-
-// The mobile drawer is a `fixed inset-0` overlay that the iOS shell-lock (which
-// only resizes flow content inside .app-shell) can't lift above the soft
-// keyboard. It pads its own bottom by the keyboard inset so the session list
-// stays fully scrollable while an inline rename holds the keyboard up —
-// without it the last rows sit behind the keyboard and can never be reached.
-describe("mobile sidebar drawer keyboard inset", () => {
-  afterEach(() => {
-    delete (window as unknown as Record<string, unknown>).omnigentNative;
-    vi.unstubAllGlobals();
-    vi.restoreAllMocks();
-  });
-
-  it("pads the drawer bottom by the keyboard inset when the iOS keyboard is open", () => {
-    setIOSViewport(844, 508); // keyboard covers 336px of the 844px layout
-    renderSidebar();
-
-    expect(screen.getByRole("complementary", { name: "Conversations" })).toHaveStyle({
-      paddingBottom: "336px",
-    });
-  });
-
-  it("applies no bottom padding when the keyboard is closed", () => {
-    setIOSViewport(844, 844); // visible viewport fills the layout — no keyboard
-    renderSidebar();
-
-    expect(screen.getByRole("complementary", { name: "Conversations" }).style.paddingBottom).toBe(
-      "",
-    );
-  });
-
-  it("applies no bottom padding for a sub-threshold viewport delta", () => {
-    // A small visual-viewport shrink (browser chrome shifting, not a
-    // keyboard) sits below the hook's inset threshold and must not pad.
-    setIOSViewport(844, 804); // 40px delta — below the 80px threshold
-    renderSidebar();
-
-    expect(screen.getByRole("complementary", { name: "Conversations" }).style.paddingBottom).toBe(
-      "",
-    );
-  });
-
-  it("leaves the list scroll alone when the keyboard opens for focus outside it", () => {
-    // Focused rename rows are re-centered in Sidebar.rowActions.test.tsx.
-    setIOSViewport(844, 844);
-    renderSidebar();
-    const composer = document.createElement("textarea");
-    document.body.appendChild(composer);
-    composer.focus();
-    const scrollIntoView = vi.spyOn(Element.prototype, "scrollIntoView");
-
-    act(() => {
-      (window.visualViewport as unknown as { height: number }).height = 508;
-      window.dispatchEvent(new Event("resize"));
-    });
-
-    expect(screen.getByRole("complementary", { name: "Conversations" })).toHaveStyle({
-      paddingBottom: "336px",
-    });
-    expect(scrollIntoView).not.toHaveBeenCalled();
-    composer.remove();
-  });
-
-  it("applies no bottom padding off the iOS shell even when the viewport shrinks", () => {
-    // A shrunk visual viewport but no iOS shell marker: the browser/Electron
-    // keyboard is handled by normal layout, so the drawer must not pad itself.
-    vi.stubGlobal("innerHeight", 844);
-    vi.stubGlobal("visualViewport", {
-      offsetTop: 0,
-      height: 508,
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
-    });
-    renderSidebar();
-
-    expect(screen.getByRole("complementary", { name: "Conversations" }).style.paddingBottom).toBe(
-      "",
-    );
+    const footer = screen.getByTestId("sidebar-settings-footer");
+    const settings = within(footer).getByRole("link", { name: "Settings" });
+    expect(settings).toHaveAttribute("href", "/settings");
+    expect(settings).toHaveClass("density-row", "w-full");
+    expect(screen.getByRole("navigation")).not.toContainElement(footer);
+    expect(screen.getByTestId("sidebar-primary-nav")).not.toContainElement(settings);
   });
 });

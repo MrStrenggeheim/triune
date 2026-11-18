@@ -151,6 +151,7 @@ from omnigent.onboarding.harness_install import (
     harness_cli_installed,
     harness_cli_version,
     harness_setup_hint,
+    installed_harness_version,
     invalidate_harness_probe_caches,
     try_install_harness_cli,
     ui_install_key,
@@ -3083,9 +3084,8 @@ class HostProcess:
         ``omnigent setup``) uses, then recomputes readiness so the result frame
         carries a fresh ``configured_harnesses`` map. The ``ui_install_key``
         guard re-checks the allowlist as defence in depth against a spoofed
-        frame. Idempotent: an already-installed, version-compatible CLI skips
-        the install. An outdated CLI runs the installer again to upgrade in
-        place. Runs off the event loop (it shells out / probes ``PATH``).
+        frame. Install skips compatible binaries. Explicit updates and
+        outdated binaries run the installer in place on a worker thread.
 
         :param frame: The install request frame. ``frame.harness`` is a UI
             harness identifier, e.g. ``"claude"``.
@@ -3099,7 +3099,7 @@ class HostProcess:
                 status="failed",
                 error=f"harness {frame.harness!r} is not installable from the UI",
             )
-        if harness_cli_installed(key):
+        if not frame.update and harness_cli_installed(key):
             # Already installed — skip the slow npm re-resolve and just report
             # current readiness (which may still be "needs-auth", e.g. codex).
             _logger.info("Harness %s already installed; skipping install", frame.harness)
@@ -3122,7 +3122,9 @@ class HostProcess:
             request_id=frame.request_id,
             status="ok",
             configured_harnesses=configured_harness_map(),
-            version=harness_cli_version(key)[0],
+            version=installed_harness_version(frame.harness)
+            if frame.update
+            else harness_cli_version(key)[0],
             gateway_inference=gateway_inference_map(),
         )
 
@@ -3413,6 +3415,10 @@ class HostProcess:
         from omnigent.host.harness_startup import describe_harness_startup
 
         try:
+            if frame.version_only:
+                return HostHarnessStartupResultFrame(
+                    frame.request_id, version=installed_harness_version(frame.harness)
+                )
             return HostHarnessStartupResultFrame(
                 frame.request_id, describe_harness_startup(frame.harness)
             )

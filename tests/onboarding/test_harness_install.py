@@ -1,3 +1,4 @@
+# Modified for Triune.
 """Tests for :mod:`omnigent.onboarding.harness_install`."""
 
 from __future__ import annotations
@@ -744,7 +745,30 @@ def test_try_install_harness_cli_manual_only() -> None:
     assert reason is not None and "automatically" in reason
 
 
-def test_try_install_harness_cli_nonzero_exit(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(
+    "harness", ["cursor-native", "kiro-native", "goose-native", "hermes-native"]
+)
+def test_installed_harness_version_for_manual_install(harness: str, monkeypatch, tmp_path):
+    spec = hi.required_cli_for_harness(harness)
+    assert spec is not None and hi.ui_install_key(harness) is None
+    monkeypatch.setenv("PATH", str(tmp_path))
+    assert hi.installed_harness_version(harness) is None
+    binary = tmp_path / spec.binary
+    binary.touch()
+    binary.chmod(0o755)
+
+    def report_version(argv, **kwargs):
+        assert argv == [str(binary), "--version"]
+        return subprocess.CompletedProcess(argv, 0, stdout="2.3.4", stderr="")
+
+    monkeypatch.setattr(hi.subprocess, "run", report_version)
+    assert hi.installed_harness_version(harness) == "2.3.4"
+
+
+@pytest.mark.parametrize("old_binary", [None, "/usr/bin/codex"])
+def test_try_install_harness_cli_nonzero_exit(
+    monkeypatch: pytest.MonkeyPatch, old_binary: str | None
+) -> None:
     """A non-zero installer exit with the binary still absent → ``(False, reason)``.
 
     Surfaces the installer's exit code so a failed npm install is actionable.
@@ -759,6 +783,7 @@ def test_try_install_harness_cli_nonzero_exit(monkeypatch: pytest.MonkeyPatch) -
         "run",
         lambda argv, **k: subprocess.CompletedProcess(args=argv, returncode=1),
     )
+    monkeypatch.setattr(hi, "resolve_cli_binary", lambda _: old_binary)
     installed, reason = hi.try_install_harness_cli(OPENAI_FAMILY)
     assert installed is False
     assert reason is not None and "code 1" in reason

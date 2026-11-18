@@ -46,9 +46,3 @@ export function sidebarChildInset(depth: number): string {
     ? `calc(var(--list-row-padding-inline) + 8px + var(--list-row-gap) + ${depth - 1} * ${SIDEBAR_TREE_INDENT})`
     : "0px";
 }
-
-/** These visual layers share a permanently mounted menu trigger. */
-export const SIDEBAR_STATUS_VISUAL =
-  "group-has-[:focus-visible]/conversation:opacity-0 group-data-[menu-open]/conversation:opacity-0 [@media((hover:hover)_and_(pointer:fine))]:group-[[data-input=mouse]:hover]/conversation:opacity-0";
-export const SIDEBAR_MENU_VISUAL =
-  "group-has-[:focus-visible]/conversation:opacity-100 group-data-[menu-open]/conversation:opacity-100 [@media((hover:hover)_and_(pointer:fine))]:group-[[data-input=mouse]:hover]/conversation:opacity-100";

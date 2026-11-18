@@ -89,9 +89,7 @@ def test_footer_settings_tab_geometry_and_notification_disclosure(
     if appearance[0] == "desktop":
         page.mouse.move(0, 0)
         before = box(expander)
-        expect(
-            parent_row.locator('[data-testid="conversation-actions"] > [aria-hidden]')
-        ).to_have_css("opacity", "0")
+        expect(parent_row.get_by_test_id("conversation-actions")).to_be_hidden()
         parent_row.hover()
         archive = box(parent_row.get_by_test_id("quick-archive-conversation"))
         more_action = box(parent_row.get_by_test_id("conversation-actions"))
@@ -102,6 +100,16 @@ def test_footer_settings_tab_geometry_and_notification_disclosure(
         assert more_action["x"] - archive["x"] - archive["width"] == pytest.approx(
             expected_gap, abs=1
         )
+    else:
+        expect(parent_row.get_by_test_id("conversation-actions")).to_be_visible()
+        expect(parent_row.get_by_test_id("quick-archive-conversation")).to_be_hidden()
+    _capture(page, output_path, "sessions-footer")
+    settings_box = box(settings)
+    settings.click()
+    back = navigation.get_by_role("link", name="Back", exact=True)
+    assert box(back) == pytest.approx(settings_box, abs=1)
+    _capture(page, output_path, "settings-back")
+    back.click()
     expander.click()
     page.clock.pause_at(page.evaluate("Date.now() + 1000"))
     for chat in (second, first):
@@ -163,3 +171,69 @@ def test_footer_settings_tab_geometry_and_notification_disclosure(
     expect(page).to_have_url(browser_contract.base_url + "/settings/general")
     _capture(page, output_path, "sidebar-settings-navigation")
     assert browser_errors == []
+
+
+def test_harness_update_in_selected_host_header(
+    page: Page,
+    workspace_journey: WorkspaceJourney,
+    browser_contract: BrowserContract,
+    appearance: tuple[str, str, str],
+    output_path: str,
+) -> None:
+    chat = workspace_journey.chats[0]
+    host = chat.host_id
+    harness = "qwen-native"
+    installed = {"version": "1.0.0"}
+    browser_contract.json(
+        "/v1/info",
+        {"features": {"harness_install": True}, "installable_harnesses": [harness]},
+    )
+    browser_contract.json(
+        "/v1/hosts",
+        {
+            "hosts": [
+                {
+                    "host_id": host,
+                    "owner": "e2e",
+                    "name": "Test host",
+                    "status": "online",
+                    "configured_harnesses": {harness: True, "kiro-native": True},
+                }
+            ]
+        },
+    )
+    browser_contract.json(f"/v1/hosts/{host}/harnesses/{harness}/version", installed)
+    browser_contract.json(f"/v1/hosts/{host}/harnesses/kiro-native/version", {"version": "3.2.1"})
+
+    def update(request):
+        assert request.url.endswith("/install?update=true")
+        installed["version"] = "1.1.0"
+        return {
+            "object": "harness_install",
+            "harness": harness,
+            "version": installed["version"],
+            "configured_harnesses": {harness: True, "kiro-native": True},
+            "gateway_inference": {},
+        }
+
+    browser_contract.json(f"/v1/hosts/{host}/harnesses/{harness}/install", update, method="POST")
+    for slug, name, version in [(harness, "Qwen", "1.0.0"), ("kiro-native", "Kiro", "3.2.1")]:
+        page.goto(f"{chat.base_url}/settings/harnesses/{slug}")
+        title = page.get_by_role("heading", level=1, name=name)
+        button = page.get_by_role("button", name="Update", exact=True)
+        label = page.get_by_text(version, exact=True)
+        expect(label).to_be_visible()
+        expect(label.locator("..")).to_contain_text("Configured")
+        for density in ("compact", "comfortable"):
+            _set_density(page, density)
+            title_box, button_box = box(title), box(button)
+            assert title_box["x"] + title_box["width"] <= button_box["x"]
+            assert abs(title_box["y"] - button_box["y"]) <= title_box["height"]
+        _capture(page, output_path, f"{slug}-detail")
+        button.click()
+        if slug == harness:
+            expect(page.get_by_text("1.1.0", exact=True)).to_be_visible()
+        else:
+            expect(page.get_by_role("dialog")).to_contain_text(
+                "original installer or package manager"
+            )

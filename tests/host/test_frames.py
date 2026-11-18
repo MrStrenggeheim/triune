@@ -1,3 +1,4 @@
+# Modified for Triune.
 """Tests for host tunnel frame encode/decode."""
 
 from __future__ import annotations
@@ -2056,7 +2057,8 @@ def test_create_dir_result_error_round_trip() -> None:
     assert decoded.error == "directory already exists"
 
 
-def test_install_harness_frame_round_trip() -> None:
+@pytest.mark.parametrize("update", [True, False])
+def test_install_harness_frame_round_trip(update: bool) -> None:
     """
     Verify HostInstallHarnessFrame survives encode → decode.
 
@@ -2066,11 +2068,13 @@ def test_install_harness_frame_round_trip() -> None:
     original = HostInstallHarnessFrame(
         request_id="req_install_1",
         harness="claude",
+        update=update,
     )
     decoded = decode_host_frame(encode_host_frame(original))
     assert isinstance(decoded, HostInstallHarnessFrame)
     assert decoded.request_id == "req_install_1"
     assert decoded.harness == "claude"
+    assert decoded.update is update
 
 
 def test_install_harness_result_success_round_trip() -> None:

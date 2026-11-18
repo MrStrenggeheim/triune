@@ -1,4 +1,5 @@
-import { renderSidebar } from "@/test/sidebarTestHelpers";
+// Modified for Triune.
+import { renderSidebar, selectSessionsFromMenu } from "@/test/sidebarTestHelpers";
 import { conversation as conv, conversationPage } from "@/test/sidebarMockHelpers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -65,7 +66,7 @@ describe("scope filter during selection mode", () => {
   it("keeps the filter menu reachable after entering selection mode", () => {
     renderSidebar();
 
-    fireEvent.click(screen.getByRole("button", { name: "Select sessions" }));
+    selectSessionsFromMenu();
 
     // In selection mode the bulk-action bar is up...
     expect(screen.getByRole("button", { name: "Exit selection mode" })).toBeInTheDocument();
@@ -78,7 +79,7 @@ describe("scope filter during selection mode", () => {
     renderSidebar();
 
     // Enter selection mode and pick the owned session.
-    fireEvent.click(screen.getByRole("button", { name: "Select sessions" }));
+    selectSessionsFromMenu();
     fireEvent.click(screen.getByRole("link", { name: /conv_mine/ }));
     expect(screen.getByText("1 selected")).toBeInTheDocument();
 
@@ -98,7 +99,7 @@ describe("scope filter during selection mode", () => {
 
     // Select on the Shared tab first.
     switchTo("sidebar-tab-shared");
-    fireEvent.click(screen.getByRole("button", { name: "Select sessions" }));
+    selectSessionsFromMenu();
     fireEvent.click(screen.getByRole("link", { name: /conv_shared/ }));
     expect(screen.getByText("1 selected")).toBeInTheDocument();
 
@@ -106,7 +107,7 @@ describe("scope filter during selection mode", () => {
     // zero count — the shared row's selection did not bleed across.
     switchTo("sidebar-tab-mine");
     expect(screen.queryByText("1 selected")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Select sessions" }));
+    selectSessionsFromMenu();
     expect(screen.getByText("0 selected")).toBeInTheDocument();
   });
 
@@ -115,7 +116,7 @@ describe("scope filter during selection mode", () => {
 
     // Enter selection mode on the Shared tab and pick the shared session.
     switchTo("sidebar-tab-shared");
-    fireEvent.click(screen.getByRole("button", { name: "Select sessions" }));
+    selectSessionsFromMenu();
     fireEvent.click(screen.getByRole("link", { name: /conv_shared/ }));
     expect(screen.getByText("1 selected")).toBeInTheDocument();
 

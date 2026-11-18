@@ -1,3 +1,4 @@
+# Modified for Triune.
 """In-memory registry of live host WebSocket connections.
 
 Each server replica maintains one :class:`HostRegistry` tracking
@@ -39,6 +40,7 @@ from omnigent.db.account_authority import (
 from omnigent.db.db_models import InvalidUuidError, current_workspace_id, uuid_to_bytes
 from omnigent.host.frames import (
     CAP_CODEX_SIDE_CHAT,
+    HostHarnessStartupResultFrame,
     HostHelloFrame,
     HostMcpServersResultFrame,
     HostMcpToolsResultFrame,
@@ -48,7 +50,6 @@ from omnigent.host.frames import (
     HostTerminalResultFrame,
     HostTerminalStreamFrame,
 )
-from omnigent.host.harness_startup import HarnessStartup
 from omnigent.runner.transports.ws_tunnel.diagnostics import OutboundFrame, TunnelDiagnostics
 
 _logger = logging.getLogger(__name__)
@@ -502,8 +503,8 @@ class HostConnection:
     pending_skills: dict[str, asyncio.Future[HostSkillsResultFrame]] = field(
         default_factory=dict,
     )
-    pending_harness_startup: dict[str, asyncio.Future[HarnessStartup | None]] = field(
-        default_factory=dict
+    pending_harness_startup: dict[str, asyncio.Future[HostHarnessStartupResultFrame | None]] = (
+        field(default_factory=dict)
     )
     pending_plugins: dict[str, asyncio.Future[HostPluginsResultFrame]] = field(
         default_factory=dict

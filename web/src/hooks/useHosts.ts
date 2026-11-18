@@ -1,3 +1,4 @@
+// Modified for Triune.
 import {
   useMutation,
   useMutationState,
@@ -209,9 +210,10 @@ export async function refreshHarnessesOnHost(hostId: string): Promise<RefreshHar
 export async function installHarnessOnHost(
   hostId: string,
   harness: string,
+  update = false,
 ): Promise<InstallHarnessResult> {
   const res = await authenticatedFetch(
-    `/v1/hosts/${encodeURIComponent(hostId)}/harnesses/${encodeURIComponent(harness)}/install`,
+    `/v1/hosts/${encodeURIComponent(hostId)}/harnesses/${encodeURIComponent(harness)}/install${update ? "?update=true" : ""}`,
     { method: "POST" },
   );
   if (!res.ok) throw await apiErrorFromResponse(res);
@@ -242,11 +244,11 @@ export function installHarnessMutationKey(hostId: string): readonly unknown[] {
   return ["install-harness", hostId];
 }
 
-export function useInstallHarness(hostId: string) {
+export function useInstallHarness(hostId: string, update = false) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationKey: installHarnessMutationKey(hostId),
-    mutationFn: (harness: string) => installHarnessOnHost(hostId, harness),
+    mutationFn: (harness: string) => installHarnessOnHost(hostId, harness, update),
     onSuccess: (result) => {
       // Patch the refreshed readiness into every ["hosts", …] cache entry
       // (filtered + unfiltered) so the badge updates immediately. This lives at
@@ -383,6 +385,23 @@ export function useDetectedCredentials(hostId: string | null | undefined, enable
       return Array.isArray(body.credentials) ? body.credentials : [];
     },
     enabled: enabled && !!hostId,
+    staleTime: 30_000,
+  });
+}
+
+export function useHarnessVersion(hostId: string | undefined, harness: string) {
+  return useQuery({
+    queryKey: ["harness-version", hostId, harness],
+    enabled: !!hostId,
+    queryFn: async ({ signal }): Promise<string | null> => {
+      const res = await authenticatedFetch(
+        `/v1/hosts/${encodeURIComponent(hostId!)}/harnesses/${encodeURIComponent(harness)}/version`,
+        { signal },
+      );
+      if (!res.ok) throw await apiErrorFromResponse(res);
+      return ((await res.json()) as { version: string | null }).version;
+    },
+    retry: false,
     staleTime: 30_000,
   });
 }

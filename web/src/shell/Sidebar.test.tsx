@@ -1,3 +1,4 @@
+import { selectSessionsFromMenu } from "@/test/sidebarTestHelpers";
 // Modified for Triune; inherited notices remain applicable.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -924,11 +925,10 @@ describe("Sidebar session list", () => {
     );
     expect(within(headerActions).queryByRole("link", { name: "Settings" })).toBeNull();
 
-    expect(settings).toHaveAttribute("aria-label", "Settings");
-    expect(settings).toHaveAttribute("data-size", "icon-xs");
-    expect(settings).toHaveClass("size-6", "rounded-[8px]");
-    expect(settings.querySelector("svg")).toHaveClass("size-4");
-    expect(settings.querySelector("svg")).not.toHaveClass("ui-icon");
+    expect(settings).toHaveAccessibleName("Settings");
+    expect(settings).toHaveTextContent("Settings");
+    expect(settings).toHaveClass("sidebar-row", "density-row", "w-full");
+    expect(settings.querySelector("svg")).toHaveClass("ui-icon");
     expect(within(headerActions).queryByRole("button", { name: "Close sidebar" })).toBeNull();
     expect(within(headerActions).queryByTestId("inbox-button")).toBeNull();
   });
@@ -1081,9 +1081,9 @@ describe("Sidebar session list", () => {
     expect(newSession).not.toHaveTextContent("New session");
 
     const selectSessions = within(sessionsSection!).getByRole("button", {
-      name: "Select sessions",
+      name: "Session list actions",
     });
-    expect(selectSessions).toHaveAttribute("data-testid", "toggle-selection-mode");
+    expect(selectSessions).toHaveAttribute("data-testid", "session-list-actions");
     expect(selectSessions).toHaveAttribute("data-size", "icon-xs");
     expect(selectSessions).toHaveClass("text-muted-foreground", "hover:text-foreground");
     expect(selectSessions).not.toHaveTextContent("Select sessions");
@@ -1091,11 +1091,11 @@ describe("Sidebar session list", () => {
       newSession.compareDocumentPosition(selectSessions) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     expect(selectSessions.parentElement).toHaveClass("flex", "gap-0.5");
-    expect(selectSessions.parentElement?.parentElement).toHaveClass(
-      "[@media((hover:hover)_and_(pointer:fine))]:md:opacity-0",
-      "[@media((hover:hover)_and_(pointer:fine))]:md:group-hover/header:opacity-100",
-      "[@media((hover:hover)_and_(pointer:fine))]:md:group-has-[[data-header-controls]:focus-within]/header:opacity-100",
-      "[@media((hover:hover)_and_(pointer:fine))]:md:group-has-[[data-testid=session-filter][aria-expanded=true]]/header:opacity-100",
+    expect(selectSessions.parentElement?.parentElement?.className).toContain(
+      "group-has-[[data-header-controls]_:focus-visible]/header:opacity-100",
+    );
+    expect(selectSessions.parentElement?.parentElement?.className).toContain(
+      "group-[[data-input=mouse]:hover]/header:opacity-100",
     );
 
     const filterSessions = within(sessionsSection!).getByRole("button", {
@@ -1109,9 +1109,11 @@ describe("Sidebar session list", () => {
     expect(filterPersistentAction).toHaveClass("pointer-events-auto", "flex");
     expect(filterPersistentAction.parentElement).toHaveClass("absolute", "right-1", "flex");
 
-    fireEvent.click(selectSessions);
+    selectSessionsFromMenu();
     expect(screen.getByRole("button", { name: "Exit selection mode" })).toBeInTheDocument();
-    expect(within(sessionsSection!).queryByRole("button", { name: "Select sessions" })).toBeNull();
+    expect(
+      within(sessionsSection!).queryByRole("button", { name: "Session list actions" }),
+    ).toBeNull();
     expect(within(sessionsSection!).queryByRole("link", { name: "New session" })).toBeNull();
   });
 
@@ -3296,7 +3298,7 @@ describe("Sidebar view options", () => {
     // The first group carries every list control: filter, Select and New session.
     const firstGroup = groupSection(titles[0]);
     expect(within(firstGroup).getByTestId("session-filter")).toBeTruthy();
-    expect(within(firstGroup).getByTestId("toggle-selection-mode")).toBeTruthy();
+    expect(within(firstGroup).getByTestId("session-list-actions")).toBeTruthy();
     expect(within(firstGroup).getByTestId("sessions-new-session")).toBeTruthy();
   });
 
@@ -3352,14 +3354,14 @@ describe("Sidebar view options", () => {
     ]);
     renderGroupingSidebar();
     fireEvent.click(screen.getByRole("button", { name: /^Customer X/ }));
-    fireEvent.click(screen.getByTestId("toggle-selection-mode"));
+    selectSessionsFromMenu();
     expect(screen.getByRole("button", { name: "Exit selection mode" })).toBeInTheDocument();
 
     // Grouped views hide Projects (and its bulk bar), so selection ends.
     openViewSubmenu("session-grouping-menu");
     fireEvent.click(screen.getByTestId("session-grouping-updated"));
     expect(screen.queryByRole("button", { name: "Exit selection mode" })).toBeNull();
-    expect(screen.getByTestId("toggle-selection-mode")).toBeInTheDocument();
+    expect(screen.getByTestId("session-list-actions")).toBeInTheDocument();
   });
 
   it.each([
@@ -3831,7 +3833,7 @@ describe("sidebar_grouping_ui release flag", () => {
     expect(
       screen.getAllByRole("button", { name: "Group, sort, and filter sessions" }),
     ).toHaveLength(1);
-    expect(screen.getAllByRole("button", { name: "Select sessions" })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "Session list actions" })).toHaveLength(1);
     const sessions = screen.getByRole("button", { name: "Sessions" }).closest("section")!;
     expect(within(sessions).getByTestId("session-filter")).toBeInTheDocument();
     expect(within(sessions).queryByTestId("toggle-selection-mode")).toBeNull();
@@ -3842,7 +3844,8 @@ describe("sidebar_grouping_ui release flag", () => {
     expect(filter.closest("[data-header-controls]")).toHaveClass("absolute", "right-1");
     expect(filter.closest(".md\\:opacity-0")).toBeNull();
 
-    fireEvent.click(within(projects).getByTestId("toggle-selection-mode"));
+    fireEvent.pointerDown(within(projects).getByTestId("project-list-actions"), { button: 0 });
+    fireEvent.click(screen.getByTestId("projects-select-sessions"));
     expect(screen.getByRole("button", { name: "Exit selection mode" })).toBeInTheDocument();
     expect(within(projects).getByRole("button", { name: "Filter projects" })).toBe(filter);
   });
@@ -3913,13 +3916,9 @@ describe("sidebar_grouping_ui release flag", () => {
     selectSessionFilter("all");
     fireEvent.click(screen.getByRole("button", { name: /^Alpha/ }));
 
-    // The Projects menu no longer offers its own, folder-only selection.
-    openProjectsMenu();
-    expect(screen.queryByTestId("projects-select-sessions")).toBeNull();
-    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
-
     const projects = screen.getByRole("button", { name: "Projects" }).closest("section")!;
-    fireEvent.click(within(projects).getByTestId("toggle-selection-mode"));
+    fireEvent.pointerDown(within(projects).getByTestId("project-list-actions"), { button: 0 });
+    fireEvent.click(screen.getByTestId("projects-select-sessions"));
     for (const name of ["conv_filed", "conv_mine", "conv_shared"]) {
       fireEvent.click(screen.getByRole("link", { name: new RegExp(name) }));
     }
@@ -3975,7 +3974,7 @@ describe("sidebar_grouping_ui release flag", () => {
     // Shared carries New session when Sessions isn't shown; Select stays on Projects.
     const shared = screen.getByRole("button", { name: "Shared" }).closest("section")!;
     expect(within(shared).getByTestId("sessions-new-session")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Select sessions" }));
+    selectSessionsFromMenu();
     fireEvent.click(screen.getByRole("link", { name: /conv_shared/ }));
     expect(screen.getByText("1 selected")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Exit selection mode" })).toBeInTheDocument();

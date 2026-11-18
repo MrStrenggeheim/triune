@@ -433,12 +433,12 @@ describe("conversation actions and pin menu", () => {
     expect(screen.getByTestId("pin-conversation")).not.toHaveClass("md:hidden");
   });
 
-  it("keeps status in the menu button with a complete accessible description", () => {
+  it("gives the status and adjacent menu a complete accessible description", () => {
     mockConversations([{ ...CONV, pending_elicitations_count: 3 }]);
     renderSidebar();
     const trigger = screen.getByTestId("conversation-actions");
     expect(trigger).toHaveAccessibleDescription("3 approval prompts waiting");
-    const badge = within(trigger).getByTestId("session-state-badge");
+    const badge = within(trigger.closest("li")!).getByTestId("session-state-badge");
     expect(badge).toHaveAttribute("aria-label", "3 approval prompts waiting");
     expect(badge).not.toHaveTextContent("Needs response");
     expect(badge).not.toHaveAttribute("data-slot", "tooltip-trigger");
@@ -456,9 +456,8 @@ describe("conversation actions and pin menu", () => {
     const row = kebab.closest("li")!;
     expect(row.innerHTML).not.toContain("group-focus-within");
     expect(kebab).toHaveClass("focus-visible:ring-3");
-    expect(screen.getByTestId("conversation-indicators").className).toContain(
-      "group-has-[:focus-visible]/conversation:opacity-0",
-    );
+    expect(kebab).toHaveClass("sidebar-session-more");
+    expect(screen.queryByTestId("conversation-indicators")).toBeNull();
     fireEvent.pointerDown(row, { pointerType: "touch", pointerId: 1 });
     expect(row).toHaveAttribute("data-input", "touch");
     expect(screen.getByRole("complementary", { name: "Conversations" })).toHaveAttribute(
@@ -1536,12 +1535,12 @@ describe("two compact status groups", () => {
     },
   );
 
-  it("opens the same menu with one tap on either status and reuses the Archive cell", () => {
+  it("opens the same menu with one tap on a status beside the independent actions", () => {
     mocks.isMobile = true;
     mockConversations([{ ...CONV, status: "running", pending_elicitations_count: 2 }]);
     renderSidebar(CONV.id);
     const currentLink = screen.getByRole("link", { name: "My Session" });
-    const status = screen.getByRole("button", { name: "Session status" });
+    const status = screen.getAllByRole("button", { name: "Session status" })[0];
     const archive = screen.getByTestId("quick-archive-conversation");
     expect(status.parentElement).toBe(archive.parentElement);
     expect(status).toHaveAccessibleDescription(

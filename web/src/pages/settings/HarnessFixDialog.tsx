@@ -64,7 +64,7 @@ export function HarnessFixDialog(props: HarnessFixDialogProps) {
   const hostId = host.host_id;
   const hostName = host.name;
   const queryClient = useQueryClient();
-  const { mutateAsync: installHarness } = useInstallHarness(hostId);
+  const { mutateAsync: installHarness } = useInstallHarness(hostId, mode === "update");
   const info = useServerInfo();
   const setupSteps = useHarnessSetupSteps();
   const canonicalHarness = canonicalNativeHarness(harness);
@@ -284,7 +284,11 @@ export function HarnessFixDialog(props: HarnessFixDialogProps) {
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogContent className="gap-0 overflow-hidden rounded-[20px] p-0 sm:max-w-[440px]">
         <DialogHeader className="px-6 pt-6 pb-4">
-          <DialogTitle>{dialogTitle(mode, phase, harnessLabel, hostName)}</DialogTitle>
+          <DialogTitle>
+            {requiresManualSetup && mode === "update" && phase === "setup"
+              ? `Update ${harnessLabel} on ${hostName}`
+              : dialogTitle(mode, phase, harnessLabel, hostName)}
+          </DialogTitle>
         </DialogHeader>
 
         <div className="flex flex-col gap-5 px-6 pb-2">
@@ -333,6 +337,7 @@ export function HarnessFixDialog(props: HarnessFixDialogProps) {
             />
           ) : phase === "setup" ? (
             <SetupCommand
+              manualUpdate={requiresManualSetup && mode === "update"}
               harnessLabel={harnessLabel}
               hostName={hostName}
               stillNotReady={stillNotReady}
@@ -510,7 +515,7 @@ function ProgressState({
     <>
       <DialogDescription>
         {mode === "update"
-          ? `Updating ${harnessLabel} to the latest version on ${hostName}.`
+          ? `Updating ${harnessLabel} on ${hostName}.`
           : `Installing ${harnessLabel} on ${hostName}.`}{" "}
         This can take a few minutes.
       </DialogDescription>
@@ -582,18 +587,29 @@ function SetupCommand({
   harnessLabel,
   hostName,
   stillNotReady,
+  manualUpdate,
 }: {
   harnessLabel: string;
   hostName: string;
   stillNotReady: boolean;
+  manualUpdate: boolean;
 }) {
   return (
     <>
-      <DialogDescription>
-        Run <code className="font-mono text-foreground">triune setup</code> on {hostName} to finish
-        setting up {harnessLabel}.
-      </DialogDescription>
-      <CommandRow command="triune setup" label="Copy triune setup" />
+      {manualUpdate ? (
+        <DialogDescription>
+          Update {harnessLabel} on {hostName} using its original installer or package manager. Then
+          choose Check again to refresh the installed version and readiness.
+        </DialogDescription>
+      ) : (
+        <>
+          <DialogDescription>
+            Run <code className="font-mono text-foreground">triune setup</code> on {hostName} to
+            finish setting up {harnessLabel}.
+          </DialogDescription>
+          <CommandRow command="triune setup" label="Copy triune setup" />
+        </>
+      )}
       {stillNotReady && (
         <p role="status" className="text-sm text-destructive">
           {harnessLabel} still isn’t ready on {hostName}.

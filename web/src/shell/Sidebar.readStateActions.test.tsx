@@ -1,4 +1,5 @@
-import { renderSidebar } from "@/test/sidebarTestHelpers";
+// Modified for Triune.
+import { renderSidebar, selectSessionsFromMenu } from "@/test/sidebarTestHelpers";
 import { conversationPage } from "@/test/sidebarMockHelpers";
 // Tests for the read-state actions in the sidebar's session menus:
 //   1. A row's kebab always offers exactly one read-state action — "Mark as
@@ -68,7 +69,7 @@ function openKebab(row: HTMLElement) {
 }
 
 function enterSelectionModeAndSelect(titles: string[]) {
-  fireEvent.click(screen.getByRole("button", { name: "Select sessions" }));
+  selectSessionsFromMenu();
   for (const title of titles) {
     fireEvent.click(screen.getByRole("link", { name: new RegExp(title) }));
   }
@@ -125,7 +126,7 @@ describe("bulk-selection read-state action", () => {
     fireEvent.click(screen.getByTestId("bulk-mark-read"));
 
     // The action concludes the selection, like Archive / Move / Delete.
-    expect(screen.getByRole("button", { name: "Select sessions" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Session list actions" })).toBeInTheDocument();
     expect(unreadDot(rowFor("Session Alpha"))).toBeNull();
     expect(unreadDot(rowFor("Session Beta"))).toBeNull();
   });
@@ -138,14 +139,14 @@ describe("bulk-selection read-state action", () => {
 
     fireEvent.click(screen.getByTestId("bulk-mark-unread"));
 
-    expect(screen.getByRole("button", { name: "Select sessions" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Session list actions" })).toBeInTheDocument();
     expect(unreadDot(rowFor("Session Alpha"))).not.toBeNull();
     expect(unreadDot(rowFor("Session Beta"))).not.toBeNull();
   });
 
   it("disables Mark as unread at zero selection", () => {
     renderSidebar();
-    fireEvent.click(screen.getByRole("button", { name: "Select sessions" }));
+    selectSessionsFromMenu();
 
     expect(screen.getByTestId("bulk-mark-unread")).toBeDisabled();
     fireEvent.click(screen.getByRole("link", { name: /Session Alpha/ }));

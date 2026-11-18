@@ -135,7 +135,7 @@ export function ArtifactFrame({
     function theme() {
       return {
         mode: themeModeRef.current,
-        density: (hostRoot.dataset.listDensity === "compact" ? "compact" : "comfortable") as
+        density: (hostRoot.dataset.listDensity === "comfortable" ? "comfortable" : "compact") as
           "comfortable" | "compact",
         variables: getArtifactThemeVariables(node!),
       };

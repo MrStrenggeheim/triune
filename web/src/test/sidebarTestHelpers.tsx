@@ -1,6 +1,7 @@
+// Modified for Triune.
 /** Standard mounted Sidebar with a fresh query cache for each test. */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { vi } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -22,4 +23,12 @@ export function renderSidebar(
       </SidebarDataProvider>
     </QueryClientProvider>,
   );
+}
+
+export function selectSessionsFromMenu() {
+  fireEvent.pointerDown(screen.getByRole("button", { name: "Session list actions" }), {
+    button: 0,
+    ctrlKey: false,
+  });
+  fireEvent.click(screen.getByRole("menuitem", { name: "Select sessions" }));
 }

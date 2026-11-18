@@ -1,3 +1,4 @@
+# Modified for Triune.
 """Host tunnel frame schema for ``omnigent host``.
 
 Host-specific frame kinds, all JSON (see :class:`HostFrameKind`),
@@ -67,6 +68,7 @@ CAP_CODEX_SIDE_CHAT = "codex_side_chat"
 # The host answers ``host.mcp_servers`` with its user-level MCP inventory:
 CAP_MCP_INVENTORY = "mcp_inventory"
 CAP_HARNESS_STARTUP = "harness_startup"
+CAP_HARNESS_UPDATE = "harness_update"
 CAP_PLUGINS = "plugins"
 CAP_SKILL_CONTENT = "skill_content"
 CAP_MCP_TOOLS = "mcp_tools"
@@ -86,6 +88,7 @@ HOST_CAPABILITIES: list[str] = [
     CAP_MCP_REGISTRY,
     CAP_MCP_INVENTORY,
     CAP_HARNESS_STARTUP,
+    CAP_HARNESS_UPDATE,
     CAP_REFRESH_HARNESSES,
 ]
 
@@ -793,6 +796,7 @@ class HostInstallHarnessFrame:
 
     request_id: str
     harness: str
+    update: bool = False
 
 
 @dataclass
@@ -1112,6 +1116,7 @@ class HostHarnessStartupFrame:
 
     request_id: str
     harness: str
+    version_only: bool = False
 
 
 @dataclass
@@ -1120,6 +1125,7 @@ class HostHarnessStartupResultFrame:
 
     request_id: str
     startup: HarnessStartup | None = None
+    version: str | None = None
 
 
 @dataclass
@@ -1716,6 +1722,7 @@ def encode_host_frame(frame: HostFrame) -> str:
                 "kind": HostFrameKind.INSTALL_HARNESS.value,
                 "request_id": frame.request_id,
                 "harness": frame.harness,
+                **({"update": True} if frame.update else {}),
             }
         )
     if isinstance(frame, HostInstallHarnessResultFrame):
@@ -1931,6 +1938,7 @@ def encode_host_frame(frame: HostFrame) -> str:
                 "kind": HostFrameKind.HARNESS_STARTUP.value,
                 "request_id": frame.request_id,
                 "harness": frame.harness,
+                **({"version_only": True} if frame.version_only else {}),
             }
         )
     if isinstance(frame, HostHarnessStartupResultFrame):
@@ -1939,6 +1947,7 @@ def encode_host_frame(frame: HostFrame) -> str:
                 "kind": HostFrameKind.HARNESS_STARTUP_RESULT.value,
                 "request_id": frame.request_id,
                 "startup": frame.startup.model_dump() if frame.startup is not None else None,
+                "version": frame.version,
             }
         )
     if isinstance(frame, HostMcpServersFrame):
@@ -2362,7 +2371,11 @@ def _decode_known_host_frame(
             return _decode_skills_result(msg)
         case HostFrameKind.HARNESS_STARTUP:
             return HostHarnessStartupFrame(
-                request_id=_required_str(msg, "request_id"), harness=_required_str(msg, "harness")
+                request_id=_required_str(msg, "request_id"),
+                harness=_required_str(msg, "harness"),
+                version_only=_required_bool(msg, "version_only")
+                if "version_only" in msg
+                else False,
             )
         case HostFrameKind.HARNESS_STARTUP_RESULT:
             request_id = _required_str(msg, "request_id")
@@ -2371,7 +2384,9 @@ def _decode_known_host_frame(
             except ValidationError:
                 # Keep correlation so malformed replies fail promptly instead of timing out.
                 startup = None
-            return HostHarnessStartupResultFrame(request_id, startup)
+            return HostHarnessStartupResultFrame(
+                request_id, startup, _optional_nullable_str(msg, "version")
+            )
         case HostFrameKind.MCP_SERVERS:
             return HostMcpServersFrame(request_id=_required_str(msg, "request_id"))
         case HostFrameKind.MCP_SERVERS_RESULT:
@@ -2799,6 +2814,7 @@ def _decode_install_harness(msg: _JsonObject) -> HostInstallHarnessFrame:
     return HostInstallHarnessFrame(
         request_id=_required_str(msg, "request_id"),
         harness=_required_str(msg, "harness"),
+        update=_required_bool(msg, "update") if "update" in msg else False,
     )
 
 

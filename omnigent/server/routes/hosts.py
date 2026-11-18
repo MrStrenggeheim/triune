@@ -1,3 +1,4 @@
+# Modified for Triune.
 """REST API routes for hosts (``/v1/hosts``).
 
 Provides endpoints for listing connected hosts and launching
@@ -38,6 +39,7 @@ from omnigent.entities import Conversation
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.harness_aliases import canonicalize_harness
 from omnigent.host.frames import (
+    CAP_HARNESS_UPDATE,
     CAP_REFRESH_HARNESSES,
     HARNESS_NOT_CONFIGURED_ERROR_CODE,
     WORKSPACE_MISSING_ERROR_CODE,
@@ -357,6 +359,7 @@ async def _proxy_install_harness(
     host_registry: HostRegistry,
     host_conn: HostConnection,
     harness: str,
+    update: bool = False,
 ) -> dict[str, Any]:
     """
     Send a ``host.install_harness`` frame and await the result.
@@ -387,6 +390,7 @@ async def _proxy_install_harness(
         HostInstallHarnessFrame(
             request_id=request_id,
             harness=harness,
+            update=update,
         )
     )
     try:
@@ -1552,6 +1556,7 @@ def create_hosts_router(
         request: Request,
         host_id: str,
         harness: str,
+        update: bool = False,
     ) -> dict[str, Any]:
         """
         Install a missing, npm-installable harness CLI onto a host.
@@ -1571,6 +1576,7 @@ def create_hosts_router(
         :param request: FastAPI request (for auth).
         :param host_id: Host identifier, e.g. ``"host_a1b2c3d4..."``.
         :param harness: Harness identifier to install, e.g. ``"claude"``.
+        :param update: Run the installer even for a compatible installed harness.
         :returns: ``{"object": "harness_install", "harness": ...,
             "configured_harnesses": {...}, "version": str | None,
             "gateway_inference": {...} | None}``
@@ -1624,19 +1630,28 @@ def create_hosts_router(
         # cancelled (client disconnect) mid-install, the shared task keeps
         # running to completion and stays in the map, so a follow-up request
         # coalesces onto it instead of starting a second npm install.
+        if update and CAP_HARNESS_UPDATE not in conn.hello.capabilities:
+            raise HTTPException(409, "update the host to update installed harnesses")
+
         install_key = ui_install_key(harness) or harness
-        existing = conn.inflight_installs.get(install_key)
+        update_key = f"update:{install_key}"
+        if update and (installing := conn.inflight_installs.get(install_key)) is not None:
+            await asyncio.shield(installing)
+        existing = conn.inflight_installs.get(update_key) or conn.inflight_installs.get(
+            install_key
+        )
         if existing is None:
-            task = asyncio.create_task(
+            key = update_key if update else install_key
+            existing = asyncio.create_task(
                 _proxy_install_harness(
                     host_registry=host_registry,
                     host_conn=conn,
                     harness=harness,
+                    update=update,
                 )
             )
-            conn.inflight_installs[install_key] = task
-            task.add_done_callback(lambda _t: conn.inflight_installs.pop(install_key, None))
-            existing = task
+            conn.inflight_installs[key] = existing
+            existing.add_done_callback(lambda _t: conn.inflight_installs.pop(key, None))
         result = await asyncio.shield(existing)
 
         if result.get("status") == "failed":

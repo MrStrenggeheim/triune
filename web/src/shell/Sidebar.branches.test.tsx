@@ -229,12 +229,12 @@ it.each([
     const trigger = within(row).getByRole("button", { name: "Conversation actions" });
     expect(trigger).toHaveAccessibleDescription(expect.stringContaining("Draft"));
     expect(trigger).toHaveAccessibleDescription(expect.stringContaining("New messages"));
-    expect(trigger).toContainElement(indicators);
+    expect(trigger.parentElement).toContainElement(indicators);
     fireEvent.pointerDown(trigger, { button: 0 });
     expect(screen.getByRole("menuitem", { name: "Open to side" })).toBeInTheDocument();
     expect(row).toHaveAttribute("data-menu-open", "true");
     expect(trigger).toHaveAccessibleDescription(expect.stringContaining("Draft"));
-    expect(indicators.className).toContain("group-data-[menu-open]/conversation:opacity-0");
+    expect(indicators.closest("button")).toHaveClass("sidebar-session-status");
   },
 );
 

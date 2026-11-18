@@ -1,5 +1,6 @@
+// Modified for Triune.
 import { conversationPage } from "@/test/sidebarMockHelpers";
-import { renderSidebar } from "@/test/sidebarTestHelpers";
+import { renderSidebar, selectSessionsFromMenu } from "@/test/sidebarTestHelpers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/hooks/useScopeCache", () => import("@/test/mockScopeCache"));
@@ -73,7 +74,7 @@ function mockConversations(conversations: Conversation[]) {
 
 /** Enter selection mode and select every row, then open the delete modal. */
 function selectAllAndOpenDeleteDialog() {
-  fireEvent.click(screen.getByRole("button", { name: "Select sessions" }));
+  selectSessionsFromMenu();
   fireEvent.click(screen.getByRole("link", { name: /Alpha/ }));
   fireEvent.click(screen.getByRole("link", { name: /Beta/ }));
   fireEvent.click(screen.getByRole("link", { name: /Gamma/ }));
@@ -187,7 +188,7 @@ describe("bulk-delete branch list", () => {
     mockConversations([PLAIN]);
     renderSidebar();
 
-    fireEvent.click(screen.getByRole("button", { name: "Select sessions" }));
+    selectSessionsFromMenu();
     fireEvent.click(screen.getByRole("link", { name: /Gamma/ }));
     fireEvent.click(screen.getByTestId("bulk-delete"));
 

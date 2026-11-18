@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { getNotificationSnapshot } from "@/lib/notifications";
 // Integration tests for Settings → Harnesses: real per-host readiness
 // derivation (harnessReadinessOnHost runs unmocked) driving the card status,
@@ -97,6 +98,7 @@ vi.mock("@/hooks/useHosts", async (importActual) => ({
       initialData: hosts,
     });
   },
+  useHarnessVersion: () => ({ data: "2.7.1", isFetching: false }),
   useHarnessStartup: (hostId: string, harness: string) => {
     startupCalls(hostId, harness);
     return { data: startupError ? undefined : startupData, error: startupError, isPending: false };
@@ -551,6 +553,14 @@ describe("Harness details", () => {
     expect(screen.getByTestId("fix-dialog")).toHaveAttribute("data-mode", "reconfigure");
   });
 
+  it("shows the installed version and opens Update for a configured harness", () => {
+    hosts = [{ ...ONLINE, configured_harnesses: { "codex-native": true } }];
+    renderHarnesses("codex-native");
+    expect(screen.getByText("2.7.1").parentElement).toHaveTextContent("Configured");
+    fireEvent.click(screen.getByRole("button", { name: "Update" }));
+    expect(screen.getByTestId("fix-dialog")).toHaveAttribute("data-mode", "update");
+  });
+
   it("uses Update for an outdated harness", () => {
     hosts = [{ ...ONLINE, configured_harnesses: { "codex-native": "version-too-low" } }];
     renderHarnesses("codex-native");
@@ -574,12 +584,11 @@ describe("Harness details", () => {
     expect(screen.getByTestId("fix-dialog")).toHaveAttribute("data-mode", "install");
   });
 
-  it("uses Set up instead of Update for an outdated Cursor harness", () => {
+  it("opens manual update guidance for an outdated Cursor harness", () => {
     hosts = [{ ...ONLINE, configured_harnesses: { "cursor-native": "version-too-low" } }];
     renderHarnesses("cursor-native");
 
-    expect(screen.queryByRole("button", { name: "Update" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Set up" }));
+    fireEvent.click(screen.getByRole("button", { name: "Update" }));
     expect(screen.getByTestId("fix-dialog")).toHaveAttribute("data-mode", "update");
   });
 

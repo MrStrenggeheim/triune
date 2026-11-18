@@ -26,7 +26,10 @@ Conversation and tool views share resizable, dockable panes while keeping their 
 - Use + Open beside desktop application Search, or the subtle plus after the last tab, to add Explorer, Changes, Search, a manual terminal, Agent CLI, Orchestration or Automations.
 - Drag a tab to split; use its own close control, or hover/focus its type icon to pin it across chats.
 - Click a chat to restore its layout; choose Open to side or drag a sidebar chat into a tab group or split edge to add it to the current layout.
-- The app bar has no Layout control; a new chat starts in its own arrangement.
+- Layout presets beside Notifications arrange the current chat in one panel, two or three columns, two rows, or a four-panel grid.
+- Presets distribute views in pane and tab order, placing surplus tabs in the final panel and showing Open view in empty panels.
+- Drag a divider or use its arrow keys to resize adjacent panes while other divider positions stay fixed.
+- A new chat starts in its own arrangement.
 - Expand conversations with children to revisit subchats; use the trailing count/chevron to expand subchats; draft, unread and running markers remain on the right, beside hover actions.
 - Use New subchat in the composer Add menu or `/side` to open a durable child with an unsent draft.
 - Type `@` in a composer, or select text and choose Send to…, to inspect and insert captured context.
@@ -103,7 +106,11 @@ Expect visible focused controls and logical menu focus return without losing sel
 - Appearance density and file-opening schematics: `web/src/pages/SettingsPage.test.tsx` and `tests/browser_ui/chat/test_current_refinement_iteration.py`.
 
 - Closing a view preserves its conversation, shell or schedule; explicit Stop/Delete retains its existing permission and confirmation checks.
-- Workspace headers are 48px Comfortable or 36px Compact; sidebar padding follows the same density setting.
+- Compact is the default density. Saved Comfortable and Compact preferences persist.
+- Workspace headers are 48px Comfortable or 36px Compact. Sidebar padding follows the same density setting.
+- Settings and Back share the footer navigation row. Personal Account appears under Admin for signed-in users.
+- The Sessions header menu offers Select sessions. Child disclosures stay visible on desktop and mobile.
+- Desktop row focus or hover reveals actions in place of status icons. Mobile shows status icons beside More.
 - Desktop tab/container headers and view headers remain separate even with one tab; mobile reuses scrolling tabs across all panes.
 - Type icons live in desktop tabs, and close controls have accessible names without tooltips.
 - Narrow composer workspace labels collapse while the full location stays accessible; the shell reserves each mobile safe-area inset once.
@@ -204,6 +211,7 @@ Compare the same two/four/twelve-chat scenarios when measuring latency; browser/
 - Agent and shell rows open named tabs; historical output never attaches or launches a process.
 - Native child input and steering require current runtime capabilities, independently of transcript readability.
 - Visible chats share one tab-level transcript socket when supported; hidden chats retain state and resume from completed position/revision checkpoints.
+- Both transports recover saved items exceeding 8 MiB through a scoped exact read. The stream tests in `test_session_updates_ws.py` and `chatStore.test.ts` check authorization, exact bytes and checkpoint order.
 - Rejected multiplex subscriptions back off until validated synchronization completes; reconnect tests cover invalid replay and cancellation during the delay.
 - Initial readiness heartbeats preserve the requested history replay; saved history and subsequent live progress appear without repeated subscriptions or page refreshes.
 - A visible unfocused window keeps receiving multiplexed progress; hiding the owning view still releases its observation lease.

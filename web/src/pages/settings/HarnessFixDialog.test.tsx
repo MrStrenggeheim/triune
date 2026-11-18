@@ -112,16 +112,15 @@ describe("HarnessFixDialog", () => {
     async (mode, _state) => {
       renderDialog({ mode, harness: "cursor-native", harnessLabel: "Cursor" });
 
-      expect(screen.getByRole("heading", { name: "Set up Cursor on Local laptop" })).toBeVisible();
-      expect(
-        screen.getByText((_, element) =>
-          Boolean(
-            element?.tagName === "P" &&
-            element.textContent === "Run triune setup on Local laptop to finish setting up Cursor.",
-          ),
-        ),
-      ).toBeVisible();
-      expect(screen.getByRole("button", { name: "Copy triune setup" })).toBeVisible();
+      const title =
+        mode === "update" ? "Update Cursor on Local laptop" : "Set up Cursor on Local laptop";
+      expect(screen.getByRole("heading", { name: title })).toBeVisible();
+      if (mode === "update") {
+        expect(screen.getByText(/using its original installer or package manager/)).toBeVisible();
+        expect(screen.queryByRole("button", { name: "Copy triune setup" })).toBeNull();
+      } else {
+        expect(screen.getByRole("button", { name: "Copy triune setup" })).toBeVisible();
+      }
       expect(
         screen
           .getAllByRole("button", { name: "Close" })
@@ -416,7 +415,7 @@ describe("HarnessFixDialog", () => {
     vi.mocked(authenticatedFetch).mockImplementation(async (input, init) => {
       const url = String(input);
       if (url === "/v1/harnesses") return json(catalog);
-      if (url.endsWith("/install")) {
+      if (url.endsWith("/install?update=true")) {
         expect(init).toEqual({ method: "POST" });
         return json({
           object: "harness_install",
@@ -434,9 +433,7 @@ describe("HarnessFixDialog", () => {
     });
 
     expect(screen.getByRole("heading", { name: "Updating OpenCode…" })).toBeVisible();
-    expect(
-      screen.getByText(/Updating OpenCode to the latest version on Local laptop/),
-    ).toBeVisible();
+    expect(screen.getByText(/Updating OpenCode on Local laptop/)).toBeVisible();
     await waitFor(() =>
       expect(props.onFixed).toHaveBeenCalledWith({
         configuredHarnesses: { "opencode-native": true },
@@ -444,7 +441,7 @@ describe("HarnessFixDialog", () => {
       }),
     );
     expect(authenticatedFetch).toHaveBeenCalledWith(
-      "/v1/hosts/host%2F1/harnesses/opencode-native/install",
+      "/v1/hosts/host%2F1/harnesses/opencode-native/install?update=true",
       { method: "POST" },
     );
   });
@@ -578,7 +575,7 @@ describe("HarnessFixDialog", () => {
     vi.mocked(authenticatedFetch).mockImplementation(async (input) => {
       const url = String(input);
       if (url === "/v1/harnesses") return json(catalog);
-      if (url.endsWith("/install")) {
+      if (url.endsWith("/install?update=true")) {
         return json({
           object: "harness_install",
           harness: "codex-native",
@@ -601,7 +598,7 @@ describe("HarnessFixDialog", () => {
     vi.mocked(authenticatedFetch).mockImplementation(async (input) => {
       const url = String(input);
       if (url === "/v1/harnesses") return json(catalog);
-      if (url.endsWith("/install")) {
+      if (url.endsWith("/install?update=true")) {
         return json({
           object: "harness_install",
           harness: "opencode-native",

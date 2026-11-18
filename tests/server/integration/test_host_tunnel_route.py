@@ -1,3 +1,4 @@
+# Modified for Triune.
 """Integration tests for the host WebSocket tunnel route."""
 
 from __future__ import annotations
@@ -1877,6 +1878,35 @@ async def test_startup_gates_before_dispatch(
     assert not conn.pending_harness_startup
     if state != "offline":
         assert await peer.receive_nothing(timeout=0.01)
+
+
+async def test_harness_version_reads_selected_host_over_tunnel(startup_app):
+    from omnigent.host.frames import (
+        CAP_HARNESS_UPDATE,
+        HostHarnessStartupFrame,
+        HostHarnessStartupResultFrame,
+    )
+
+    client, peer, _, conn, _ = startup_app
+    url = f"/v1/hosts/{_HOST_ID}/harnesses/pi-native/version"
+    assert (await client.get(url)).status_code == 501
+    conn.hello.capabilities.append(CAP_HARNESS_UPDATE)
+    task = asyncio.create_task(client.get(url))
+    outbound = await peer.receive_output(timeout=budget(2.0))
+    frame = decode_host_frame(outbound["text"])
+    assert isinstance(frame, HostHarnessStartupFrame)
+    assert frame.version_only and frame.harness == "pi-native"
+    await peer.send_input(
+        {
+            "type": "websocket.receive",
+            "text": encode_host_frame(
+                HostHarnessStartupResultFrame(frame.request_id, version="0.55.1")
+            ),
+        }
+    )
+    response = await asyncio.wait_for(task, timeout=budget(2.0))
+    assert response.json() == {"version": "0.55.1"}
+    assert not conn.pending_harness_startup
 
 
 @pytest.mark.parametrize(

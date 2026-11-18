@@ -1,3 +1,4 @@
+# Modified for Triune.
 """Tests for the host connect process (launch/stop handling)."""
 
 from __future__ import annotations
@@ -5062,14 +5063,16 @@ def test_handle_install_harness_already_installed_skips_installer(
     assert result.version == "1.18.4"
 
 
-def test_handle_install_harness_upgrades_outdated_cli_in_place(
+@pytest.mark.parametrize("already_compatible", [False, True])
+def test_handle_install_harness_upgrades_in_place(
     monkeypatch: pytest.MonkeyPatch,
+    already_compatible: bool,
 ) -> None:
     """A present but unsupported CLI runs the installer and reports its new version."""
     import omnigent.host.connect as connect
 
     installed: list[str] = []
-    monkeypatch.setattr(connect, "harness_cli_installed", lambda key: False)
+    monkeypatch.setattr(connect, "harness_cli_installed", lambda key: already_compatible)
 
     def _upgrade(key: str) -> tuple[bool, str | None]:
         installed.append(key)
@@ -5081,9 +5084,12 @@ def test_handle_install_harness_upgrades_outdated_cli_in_place(
     )
     monkeypatch.setattr(connect, "configured_harness_map", lambda: {"opencode-native": True})
 
+    monkeypatch.setattr(connect, "installed_harness_version", lambda harness: "1.18.4")
     host = _make_host_process()
     result = host._handle_install_harness(
-        HostInstallHarnessFrame(request_id="upgrade-1", harness="opencode")
+        HostInstallHarnessFrame(
+            request_id="upgrade-1", harness="opencode", update=already_compatible
+        )
     )
 
     assert installed == ["opencode"]

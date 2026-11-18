@@ -835,20 +835,20 @@ describe("SettingsPage", () => {
     );
     const comfortable = screen.getByTestId("list-density-comfortable");
     const compact = screen.getByTestId("list-density-compact");
-    expect(comfortable).toHaveAttribute("aria-pressed", "true");
+    expect(compact).toHaveAttribute("aria-pressed", "true");
     expect(comfortable.querySelector("[aria-hidden]")).toHaveClass("size-4", "gap-1");
     expect(compact.querySelector("[aria-hidden]")).toHaveClass("size-4", "gap-0.5");
     expect(screen.queryByText(/48px rows|36px rows/)).toBeNull();
-    compact.focus();
+    comfortable.focus();
     await userEvent.setup().keyboard("{Enter}");
-    expect(compact).toHaveAttribute("aria-pressed", "true");
-    expect(document.documentElement).toHaveAttribute("data-list-density", "compact");
+    expect(comfortable).toHaveAttribute("aria-pressed", "true");
+    expect(document.documentElement).toHaveAttribute("data-list-density", "comfortable");
     expect(localStorage.getItem("omnigent:ui-font-size")).toBe("15");
     page.unmount();
     renderPage("/settings/appearance");
-    expect(screen.getByTestId("list-density-compact")).toHaveAttribute("aria-pressed", "true");
-    fireEvent.click(screen.getByTestId("list-density-comfortable"));
-    expect(document.documentElement).toHaveAttribute("data-list-density", "comfortable");
+    expect(screen.getByTestId("list-density-comfortable")).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByTestId("list-density-compact"));
+    expect(document.documentElement).toHaveAttribute("data-list-density", "compact");
   });
 
   it("renders the color theme dropdown, defaults to muted violet, and applies a palette on change", () => {
@@ -1042,8 +1042,8 @@ describe("SettingsPage", () => {
     fireEvent.click(screen.getByTestId("startup-new"));
     expect(screen.getByTestId("startup-new")).toHaveAttribute("aria-checked", "true");
 
-    fireEvent.click(screen.getByTestId("list-density-compact"));
-    expect(localStorage.getItem("omnigent:list-density")).toBe("compact");
+    fireEvent.click(screen.getByTestId("list-density-comfortable"));
+    expect(localStorage.getItem("omnigent:list-density")).toBe("comfortable");
 
     // Tweak a representative set of appearance preferences.
     mocks.theme = "dark";
@@ -1090,9 +1090,9 @@ describe("SettingsPage", () => {
     fireEvent.click(screen.getByTestId("reset-appearance-confirm"));
 
     expect(localStorage.getItem("omnigent:list-density")).toBeNull();
-    expect(screen.getByTestId("list-density-comfortable")).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByTestId("list-density-compact")).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByTestId("startup-continue")).toHaveAttribute("aria-checked", "true");
-    expect(document.documentElement).toHaveAttribute("data-list-density", "comfortable");
+    expect(document.documentElement).toHaveAttribute("data-list-density", "compact");
 
     // Mode is restored to "system".
     expect(mocks.setTheme).toHaveBeenCalledWith("system");

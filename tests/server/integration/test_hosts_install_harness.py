@@ -1,3 +1,4 @@
+# Modified for Triune.
 """
 Integration tests for ``POST /v1/hosts/{id}/harnesses/{harness}/install``.
 
@@ -267,7 +268,9 @@ async def test_install_harness_survives_idle_mock_host(
     assert response.json()["configured_harnesses"]["claude"] is True
 
 
+@pytest.mark.parametrize("update", [False, True])
 async def test_install_harness_returns_refreshed_readiness(
+    update: bool,
     install_setup: tuple[
         FastAPI,
         HostRegistry,
@@ -284,7 +287,7 @@ async def test_install_harness_returns_refreshed_readiness(
     reconnect, so the flipped ``configured_harnesses`` entry must
     round-trip through the endpoint.
     """
-    app, _reg, _comm, replies, _drain = install_setup
+    app, registry, _comm, replies, _drain = install_setup
     replies["claude"] = {
         "status": "ok",
         "configured_harnesses": {"claude": True, "claude-native": True},
@@ -292,7 +295,13 @@ async def test_install_harness_returns_refreshed_readiness(
     }
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.post(f"/v1/hosts/{_HOST_ID}/harnesses/claude/install")
+        url = f"/v1/hosts/{_HOST_ID}/harnesses/claude/install"
+        if update:
+            from omnigent.host.frames import CAP_HARNESS_UPDATE
+
+            assert (await client.post(url, params={"update": "true"})).status_code == 409
+            registry.get(_HOST_ID).hello.capabilities.append(CAP_HARNESS_UPDATE)
+        resp = await client.post(url, params={"update": str(update).lower()})
 
     assert resp.status_code == 200
     body = resp.json()

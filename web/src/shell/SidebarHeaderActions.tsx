@@ -1,10 +1,20 @@
-import { PanelLeftOpenIcon, PanelRightOpenIcon, SearchIcon, SettingsIcon } from "lucide-react";
+// Modified for Triune.
+import type { ComponentProps, ReactNode } from "react";
+import {
+  ArrowLeftIcon,
+  PanelLeftOpenIcon,
+  PanelRightOpenIcon,
+  SearchIcon,
+  SettingsIcon,
+} from "lucide-react";
 
 import { ALT_KEY, ARIA_MOD_KEY, MOD_KEY } from "@/components/KeyboardShortcut";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Link } from "@/lib/routing";
 import { cn } from "@/lib/utils";
+
+import { SIDEBAR_ACTIVE_HIGHLIGHT, SIDEBAR_HOVER_HIGHLIGHT, SIDEBAR_ROW } from "./sidebarStyles";
 
 const SIDEBAR_TOGGLE_KEYS = [MOD_KEY, ALT_KEY, "["] as const;
 const SEARCH_KEYS = [MOD_KEY, "K"] as const;
@@ -183,5 +193,76 @@ export function SidebarSettingsButton({
         <span>Settings</span>
       </TooltipContent>
     </Tooltip>
+  );
+}
+
+export function SidebarActionGroup({
+  children,
+  testId,
+  footer = false,
+  className,
+}: {
+  children: ReactNode;
+  testId: string;
+  footer?: boolean;
+  className?: string;
+}) {
+  return (
+    <div
+      className={cn("flex shrink-0 flex-col gap-px px-2", footer ? "pb-2" : "pt-2", className)}
+      data-testid={testId}
+    >
+      {children}
+    </div>
+  );
+}
+
+export function SidebarNavAction({
+  active,
+  className,
+  ...props
+}: ComponentProps<typeof Button> & { active?: boolean }) {
+  return (
+    <Button
+      {...props}
+      asChild
+      variant="ghost"
+      className={cn(
+        SIDEBAR_ROW,
+        "density-row w-full justify-start border-0 font-normal",
+        SIDEBAR_HOVER_HIGHLIGHT,
+        active && SIDEBAR_ACTIVE_HIGHLIGHT,
+        className,
+      )}
+    />
+  );
+}
+
+export function SidebarSettingsFooter({ returnPath }: { returnPath?: string }) {
+  return (
+    <SidebarActionGroup
+      footer
+      testId="sidebar-settings-footer"
+      className={returnPath !== undefined ? "max-md:mr-14" : undefined}
+    >
+      <SidebarNavAction>
+        {returnPath !== undefined ? (
+          <Link to={returnPath} componentId="settings.back_to_omnigent">
+            <ArrowLeftIcon className="ui-icon text-muted-foreground" />
+            Back
+          </Link>
+        ) : (
+          <Link
+            to="/settings"
+            componentId="sidebar.settings"
+            aria-keyshortcuts={`${ARIA_MOD_KEY}+Alt+,`}
+            data-testid="settings-button"
+          >
+            <SettingsIcon className="ui-icon text-muted-foreground" />
+            Settings
+          </Link>
+        )}
+      </SidebarNavAction>
+    </SidebarActionGroup>
   );
 }

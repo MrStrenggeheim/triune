@@ -25,7 +25,7 @@ import { cn } from "@/lib/utils";
 import { useServerInfo } from "@/lib/CapabilitiesContext";
 import { isFeatureEnabled } from "@/lib/capabilities";
 import { ComposerAgentIcon } from "@/shell/NewChatDialog";
-import { useHarnessStartup, useHosts, type Host } from "@/hooks/useHosts";
+import { useHarnessStartup, useHarnessVersion, useHosts, type Host } from "@/hooks/useHosts";
 import { ApiError } from "@/lib/sessionsApi";
 import { INVENTORY_HARNESS_IDS } from "@/hooks/useHarnessInventory";
 import { BRAND_HARNESSES } from "@/components/onboarding/harnessBrand";
@@ -254,6 +254,9 @@ export const SettingsHarnessesSection = () => {
                   : cachedHost,
               ),
             );
+            const versionKey = ["harness-version", fixedHost.host_id, entry.harness];
+            if (version) queryClient.setQueryData(versionKey, version);
+            void queryClient.invalidateQueries({ queryKey: versionKey });
             if (credentialKind) {
               setCredentialKinds((current) => ({
                 ...current,
@@ -389,10 +392,12 @@ function reconfigurationReason(reason: string | null) {
 
 function HarnessStatusText({
   status,
+  installedVersion,
   configuredCredential,
   enhanced,
 }: {
   status: ReturnType<typeof harnessStatus>;
+  installedVersion?: string;
   configuredCredential?: string;
   enhanced: boolean;
 }) {
@@ -400,6 +405,7 @@ function HarnessStatusText({
     return (
       <span className="flex items-center gap-1.5 text-xs">
         <span className="text-green-600 dark:text-green-400">Configured</span>
+        {installedVersion && <span className="text-muted-foreground">{installedVersion}</span>}
         {configuredCredential && (
           <span className="text-muted-foreground">· {configuredCredential}</span>
         )}
@@ -573,6 +579,7 @@ function HarnessDetail({
   onFix: (mode: HarnessFixMode) => void;
 }) {
   const status = harnessStatus(entry.harness, host);
+  const version = useHarnessVersion(host?.host_id, entry.harness);
   const credentialProblem = isCredentialProblem(status.reason);
   const mode = fixMode(status.reason);
   const canFix = canSetup && !!host && !host.sandbox_provider;
@@ -596,10 +603,23 @@ function HarnessDetail({
             <HarnessStatusText
               status={status}
               enhanced={canSetup}
+              installedVersion={
+                version.data || (version.isFetching ? undefined : "Version unavailable")
+              }
               configuredCredential={status.ready && canSetup ? credential.label : undefined}
             />
           </div>
         </div>
+        <Button
+          size="sm"
+          variant="secondary"
+          disabled={
+            !canFix || status.reason === "binary-missing" || status.reason === "unconfigured"
+          }
+          onClick={() => onFix("update")}
+        >
+          Update
+        </Button>
       </div>
       {host && canSetup && <MachineField host={host} />}
     </>
@@ -745,7 +765,7 @@ function HarnessWarning({
         <TriangleAlertIcon className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-500" />
         <p>{copy}</p>
       </div>
-      {!host.sandbox_provider && (
+      {!host.sandbox_provider && mode !== "update" && (
         <Button size="sm" onClick={() => onFix(mode)}>
           {action}
         </Button>

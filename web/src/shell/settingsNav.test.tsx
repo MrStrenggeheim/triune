@@ -1,3 +1,4 @@
+// Modified for Triune.
 // Tests for the Settings nav model + sidebar body (settingsNav).
 //
 // Covers the mobile-specific behavior: keyboard shortcuts is hidden on mobile
@@ -149,7 +150,7 @@ describe("settingsNavGroups", () => {
     }
   });
 
-  it("includes Account (leading) whenever a login session exists (accounts OR OIDC)", () => {
+  it("includes personal Account in Admin whenever a login session exists (accounts OR OIDC)", () => {
     // First arg is hasAuthSession (login_url != null), not accounts-specific.
     // Header single-user (no session) → no Account section.
     expect(
@@ -162,7 +163,12 @@ describe("settingsNavGroups", () => {
       .flatMap((g) => g.items)
       .map((i) => i.id);
     expect(withAccount).toContain("account");
-    expect(withAccount[0]).toBe("account");
+    expect(withAccount[0]).toBe("general");
+    expect(
+      settingsNavGroups(true, false)
+        .find((group) => group.title === "Admin")
+        ?.items.map((item) => item.id),
+    ).toEqual(["account"]);
   });
 
   it("includes the Local CLI section only in the desktop shell", () => {
@@ -194,7 +200,12 @@ describe("settingsNavGroups", () => {
     expect(ids(false, false)).not.toContain("members");
     // Admin on an accounts deploy → all appear, grouped under "Admin".
     const accountsAdmin = settingsNavGroups(true, false, true).find((g) => g.title === "Admin");
-    expect(accountsAdmin?.items.map((i) => i.id)).toEqual(["members", "policies", "sharing"]);
+    expect(accountsAdmin?.items.map((i) => i.id)).toEqual([
+      "account",
+      "members",
+      "policies",
+      "sharing",
+    ]);
     // Admin under OIDC (accountsEnabled false) → still appears. This is the
     // #1489 fix: OIDC previously had no admin chrome at all.
     const oidcAdmin = settingsNavGroups(false, false, true).find((g) => g.title === "Admin");
@@ -254,7 +265,7 @@ describe("SettingsSidebarBody", () => {
       "py-1.5",
       "md:py-1",
       "rounded-[var(--radius-otto-button)]",
-      "w-fit",
+      "w-full",
       "justify-start",
       "border-0",
       "font-normal",

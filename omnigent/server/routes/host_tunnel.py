@@ -1,3 +1,4 @@
+# Modified for Triune.
 """Server-side WebSocket endpoint for host tunnels.
 
 Hosts (machines running ``omnigent host``) connect here via
@@ -1059,7 +1060,7 @@ async def _receive_loop(
         if isinstance(frame, HostHarnessStartupResultFrame):
             startup_future = conn.pending_harness_startup.pop(frame.request_id, None)
             if startup_future is not None and not startup_future.done():
-                startup_future.set_result(frame.startup)
+                startup_future.set_result(frame)
             continue
         if isinstance(frame, HostMcpServersResultFrame):
             mcp_future = conn.pending_mcp_servers.pop(frame.request_id, None)

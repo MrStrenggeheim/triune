@@ -1,9 +1,10 @@
+// Modified for Triune.
 import { useEffect, useSyncExternalStore } from "react";
 import { getThemeRoots } from "./host";
 import "../listDensity.css";
 
 export const LIST_DENSITY_STORAGE_KEY = "omnigent:list-density";
-export const DEFAULT_LIST_DENSITY = "comfortable";
+export const DEFAULT_LIST_DENSITY = "compact";
 export const listDensities = ["compact", "comfortable"] as const;
 export type ListDensity = (typeof listDensities)[number];
 const CHANGE_EVENT = "omnigent:list-density-change";

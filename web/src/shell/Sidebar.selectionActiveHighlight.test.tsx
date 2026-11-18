@@ -1,3 +1,4 @@
+import { selectSessionsFromMenu } from "@/test/sidebarTestHelpers";
 // Modified for Triune.
 import { conversationPage } from "@/test/sidebarMockHelpers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -152,7 +153,7 @@ describe("sidebar active highlight in selection mode", () => {
 
     // Toggle "Select sessions": the active highlight must clear because no row
     // is explicitly selected yet.
-    fireEvent.click(screen.getByRole("button", { name: "Select sessions" }));
+    selectSessionsFromMenu();
     await waitFor(() =>
       expect(rowFor("conv_active").closest("li")).not.toHaveClass("bg-[var(--sidebar-active)]"),
     );
@@ -168,7 +169,7 @@ describe("sidebar active highlight in selection mode", () => {
       expect(rowFor("conv_active").closest("li")).toHaveClass("bg-[var(--sidebar-active)]"),
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Select sessions" }));
+    selectSessionsFromMenu();
 
     // Explicitly select the OTHER row — it gets the highlight; the active row
     // stays unhighlighted because it wasn't selected.

@@ -1,4 +1,5 @@
-import { renderSidebar } from "@/test/sidebarTestHelpers";
+// Modified for Triune.
+import { renderSidebar, selectSessionsFromMenu } from "@/test/sidebarTestHelpers";
 import { conversationPage } from "@/test/sidebarMockHelpers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -50,7 +51,7 @@ function mockConversations(conversations: Conversation[]) {
 /** Enter selection mode and select the (single) session so the
  *  Archive/Delete actions are enabled. */
 function enterSelectionModeAndSelect() {
-  fireEvent.click(screen.getByRole("button", { name: "Select sessions" }));
+  selectSessionsFromMenu();
   // In selection mode the row link toggles selection instead of navigating.
   fireEvent.click(screen.getByRole("link", { name: /My Session/ }));
 }
@@ -199,7 +200,7 @@ describe("bulk-action bar layout", () => {
   it("shows Archive and Delete disabled at zero selection, enabling them once a row is picked", () => {
     renderSidebar();
     // Enter selection mode WITHOUT selecting anything yet.
-    fireEvent.click(screen.getByRole("button", { name: "Select sessions" }));
+    selectSessionsFromMenu();
 
     // All three actions are present up front (not conditionally hidden) but
     // disabled while nothing is selected.
@@ -221,7 +222,7 @@ describe("bulk-action bar layout", () => {
 
   it("renders the row checkbox to the LEFT of the title and removes it on exit", () => {
     renderSidebar();
-    fireEvent.click(screen.getByRole("button", { name: "Select sessions" }));
+    selectSessionsFromMenu();
 
     // The checkbox marker sits at the row's leading edge (left-2), not the
     // trailing edge — so the title indents to make room after it.
@@ -235,7 +236,7 @@ describe("bulk-action bar layout", () => {
     expect(screen.getByText("1 selected")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Exit selection mode" }));
 
-    expect(screen.getByRole("button", { name: "Select sessions" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Session list actions" })).toBeInTheDocument();
     expect(li.querySelector("svg.lucide-square")).toBeNull();
     expect(li.querySelector("svg.lucide-square-check")).toBeNull();
     expect(screen.queryByText(/\d+ selected/)).toBeNull();

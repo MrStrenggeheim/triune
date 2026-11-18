@@ -1,7 +1,7 @@
+# Modified for Triune.
 """Browser e2e for bulk session actions in the sidebar.
 
-Selection is scoped: the ``data-testid="toggle-selection-mode"`` icon on the
-**Sessions** header selects the flat session list, while the Projects header
+The Sessions header menu selects the flat session list, while the Projects header
 kebab's "Select sessions" item (``data-testid="projects-select-sessions"``)
 selects the sessions nested inside project folders. Once active, each row in
 the targeted scope renders a leading checkbox (``SquareCheckIcon`` /
@@ -74,7 +74,7 @@ def test_session_header_action_visibility(
     sessions_header = page.get_by_role("button", name="Sessions", exact=True)
     filter_sessions = page.get_by_role("button", name="Filter sessions")
     new_session = page.get_by_test_id("sessions-new-session")
-    select_sessions = page.get_by_test_id("toggle-selection-mode")
+    select_sessions = page.get_by_test_id("session-list-actions")
     actions_wrapper = select_sessions.locator("..").locator("..")
 
     expect(filter_sessions).to_be_visible()
@@ -99,6 +99,7 @@ def test_session_header_action_visibility(
     expect(select_sessions).to_be_focused()
 
     select_sessions.click()
+    page.get_by_role("menuitem", name="Select sessions").click()
     expect(page.get_by_role("button", name="Exit selection mode")).to_be_visible()
     expect(filter_sessions).to_be_visible()
     filter_sessions.click()
@@ -158,7 +159,9 @@ def test_bulk_archive_moves_session_to_archived(
     expect(row).to_be_visible()
 
     # Enter selection mode and select the row.
-    page.get_by_test_id("toggle-selection-mode").click()
+    page.get_by_role("button", name="Sessions", exact=True).hover()
+    page.get_by_test_id("session-list-actions").click()
+    page.get_by_role("menuitem", name="Select sessions").click()
     row.click()
     expect(page.get_by_text("1 selected")).to_be_visible()
 
@@ -212,7 +215,9 @@ def test_bulk_delete_removes_sessions(
     expect(row).to_be_visible()
 
     # Enter selection mode and select the row.
-    page.get_by_test_id("toggle-selection-mode").click()
+    page.get_by_role("button", name="Sessions", exact=True).hover()
+    page.get_by_test_id("session-list-actions").click()
+    page.get_by_role("menuitem", name="Select sessions").click()
     row.click()
     expect(page.get_by_text("1 selected")).to_be_visible()
 
