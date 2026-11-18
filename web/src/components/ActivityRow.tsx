@@ -164,7 +164,7 @@ export function ActivityRow({
   const row = (
     <div
       data-resource-row=""
-      className={`resource-row ${message ? "activity-message-header gap-2.5" : "density-row gap-2 rounded-[var(--radius-md)] px-2 hover:bg-[var(--workspace-hover-on-content)]"} flex min-w-0 items-center text-sm ${selected ? "bg-[var(--workspace-hover-on-content)] ring-1 ring-ring" : ""}`}
+      className={`resource-row ${message ? "activity-message-header gap-2.5" : "density-row gap-2 rounded-[var(--radius-md)] hover:bg-[var(--workspace-hover-on-content)]"} flex min-w-0 items-center text-sm ${selected ? "bg-[var(--workspace-hover-on-content)] ring-1 ring-ring" : ""}`}
       onClick={(event) => {
         if (!(event.target instanceof Element) || event.target.closest("button, a")) return;
         if (!event.currentTarget.contains(event.target)) return;

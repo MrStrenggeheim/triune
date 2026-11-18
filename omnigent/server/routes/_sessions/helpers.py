@@ -9217,6 +9217,8 @@ def _build_policy_engine_from_spec_impl(
     session_id: str,
     conversation_store: ConversationStore,
     conversation: Conversation | None = None,
+    *,
+    scheduling_runner_id: str | None = None,
 ) -> PolicyEngine:
     """Build an engine for *spec*, reusing a conversation row when held.
 
@@ -9231,6 +9233,7 @@ def _build_policy_engine_from_spec_impl(
         caps.policy_llm_connection_factory() if caps.policy_llm_connection_factory else None
     )
     return build_policy_engine(
+        scheduling_runner_id=scheduling_runner_id,
         spec=spec,
         conversation_id=session_id,
         conversation_store=conversation_store,
@@ -9802,6 +9805,13 @@ async def _encode_live_events(
         try:
             async for event in events:
                 yield _format_sse(event["type"], event)
+        except session_stream.SubscriberEventTooLargeError:
+            if raise_overflow:
+                raise
+            yield _format_sse(
+                "session.transport_error",
+                {"type": "session.transport_error", "code": "stream_event_too_large"},
+            )
         except session_stream.SubscriberOverflowError:
             if raise_overflow:
                 raise
@@ -9829,7 +9839,12 @@ async def _iter_live_events(
     their precedence. SSE alone encodes events and intentional completion.
     """
     from omnigent.runtime.stream_queue import StreamEvent
-    from omnigent.server.session_recovery import validate_sync_complete
+    from omnigent.server.session_recovery import saved_event_reference, validate_sync_complete
+
+    item_references = (
+        recovery is not None
+        and getattr(getattr(request, "state", None), "item_references", False) is True
+    )
 
     # Presence registers before the subscribe loop: the join broadcast
     # fans out to ALREADY-subscribed co-viewers, while this stream
@@ -9857,6 +9872,7 @@ async def _iter_live_events(
         async with contextlib.aclosing(
             session_stream.subscribe(
                 session_id,
+                saved_item_references=item_references,
                 heartbeat_interval_s=_SESSION_STREAM_HEARTBEAT_INTERVAL_S,
                 ready_event={"type": "session.heartbeat"},
                 # In-flight text replay must be captured synchronously at slot
@@ -9903,7 +9919,10 @@ async def _iter_live_events(
                     raise session_stream.SubscriberOverflowError from None
                 if time.monotonic() >= deadline:
                     raise session_stream.SubscriberOverflowError
-                yield StreamEvent(validated.model_dump(mode="json"), deadline, check)
+                wire = validated.model_dump(mode="json")
+                if item_references:
+                    wire = saved_event_reference(wire, session_id)
+                yield StreamEvent(wire, deadline, check)
     finally:
         # The non-None checks besides presence_token's are type
         # narrowing only: a minted token implies both were set above.

@@ -224,6 +224,7 @@ class SessionUpdatesSocket {
     const { window_start_position, ...resume } = cursor;
     this.send({
       type: "subscribe",
+      item_references: true,
       session_id: sessionId,
       ...resume,
       idle,

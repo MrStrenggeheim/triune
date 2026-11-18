@@ -1,3 +1,4 @@
+import { useConversationChatVisible } from "@/workbench/ScopedChatStore";
 // Modified for Triune.
 
 import { useEffect, useRef, useState } from "react";
@@ -55,13 +56,17 @@ function indicatorChild(child: ChildSessionInfo): IndicatorChild | null {
 function statusSummary(items: IndicatorChild[]): string {
   const active = items.filter((item) => item.state === "active").length;
   const parked = items.filter((item) => item.state === "parked").length;
-  const quiet = items.filter((item) => item.state === "quiet").length;
+  const quiet = items.filter(
+    (item) => item.state === "quiet" && !item.child.statusUnavailable,
+  ).length;
+  const unavailable = items.filter((item) => item.child.statusUnavailable).length;
   const errors = items.filter((item) => item.state === "error").length;
   const total = items.length;
   const parts = [
     active > 0 ? `${active} active` : null,
     parked > 0 ? `${parked} awaiting input` : null,
     quiet > 0 ? `${quiet} disconnected` : null,
+    unavailable > 0 ? `${unavailable} unavailable` : null,
     errors > 0 ? `${errors} need${errors === 1 ? "s" : ""} attention` : null,
   ].filter(Boolean);
   return `${total} sub-agent${total === 1 ? "" : "s"}: ${parts.join(", ")}`;
@@ -110,7 +115,8 @@ export function SubagentTaskIndicator({
   conversationId: string | null;
   shelf?: boolean;
 }) {
-  const { children } = useChildSessions(conversationId);
+  const chatVisible = useConversationChatVisible();
+  const { children } = useChildSessions(conversationId, { enabled: chatVisible, reconcile: true });
   const items = children
     .map(indicatorChild)
     .filter((item): item is IndicatorChild => item !== null);
@@ -204,7 +210,7 @@ export function SubagentTaskIndicator({
           }}
           className="resource-popup max-h-[min(24rem,var(--radix-popover-content-available-height))] w-[min(25rem,calc(100vw-2rem))] overflow-y-auto"
         >
-          <ul className="flex flex-col">
+          <ul className="density-list flex flex-col">
             {items.map((item) => (
               <SubagentNavigationRow
                 key={item.child.id}

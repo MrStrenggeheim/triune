@@ -77,7 +77,7 @@ it("renders no permanent shelf when there is no work, required attention or unre
   expect(container).toBeEmptyDOMElement();
   rerender(dock(null));
   expect(container).toBeEmptyDOMElement();
-  expect(useChildSessions).toHaveBeenLastCalledWith(null, 5000);
+  expect(useChildSessions).toHaveBeenLastCalledWith(null, { enabled: true, reconcile: true });
 });
 
 it("shows a compact conditional summary and bounded expansion without changing execution", () => {
@@ -255,7 +255,8 @@ it("renders outgoing peer messages using the inspected conversation's scope", ()
   } as unknown as ReturnType<typeof usePeerMessages>);
   render(dock());
   fireEvent.click(screen.getByRole("button", { name: "Activity · 1 need attention" }));
-  expect(screen.getByRole("link", { name: "Message to conversation" })).toHaveAttribute(
+  expect(screen.getByTestId("peer-message")).toHaveAttribute("data-direction", "sent");
+  expect(screen.getByRole("link", { name: "Open chat beside · Agent" })).toHaveAttribute(
     "href",
     "/c/destination",
   );

@@ -148,8 +148,7 @@ describe("side-chat working indicator", () => {
     const stack = group.parentElement!;
     expect(stack).toHaveClass("mt-auto");
     expect(stack.lastElementChild).toBe(group);
-    expect(stack.nextElementSibling).toHaveAttribute("aria-hidden", "true");
-    expect(stack.nextElementSibling).toHaveClass("h-0", "shrink-0");
+    expect(stack.nextElementSibling).toBeNull();
     act(() => entry.setState({ pendingUserMessages: [pending[1]!] }));
     expect(group.querySelectorAll('[data-role="user"]')).toHaveLength(1);
     act(() =>

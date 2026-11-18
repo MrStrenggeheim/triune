@@ -1,5 +1,10 @@
 // Modified for Triune.
 import {
+  CHAT_SCROLL_KEY,
+  readChatScrollPreference,
+  writeChatScrollPreference,
+} from "./chatScrollPreference";
+import {
   LIST_DENSITY_STORAGE_KEY,
   readListDensity,
   writeListDensity,
@@ -35,6 +40,7 @@ import {
 /** localStorage keys that constitute exportable user preferences. */
 const EXPORTABLE_KEYS = [
   STARTUP_DESTINATION_KEY,
+  CHAT_SCROLL_KEY,
   LIST_DENSITY_STORAGE_KEY,
   "omnigent:ui-font-size",
   "omnigent:ui-font-family",
@@ -175,6 +181,7 @@ export function applyImportedSettings(imported: ExportedSettings): number {
   }
   writeListDensity(readListDensity());
   writeStartupDestination(readStartupDestination());
+  writeChatScrollPreference(readChatScrollPreference());
   const nextPins = readPinnedWorkspaceTabs();
   const removedPins = previousPins.filter((tab) => !nextPins.includes(tab));
   unpinSessionWorkspaceTabs(removedPins);

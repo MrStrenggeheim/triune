@@ -1,5 +1,9 @@
 // Modified for Triune.
-import { serializeContextReference, type ContextReference } from "./contextReferences";
+import {
+  serializeContextReference,
+  referenceIdentity,
+  type ComposerReference,
+} from "./contextReferences";
 import type { ComposerAttachment } from "@/store/chatStore";
 import { nativeCodingAgentForHarness } from "@/lib/nativeCodingAgents";
 
@@ -32,11 +36,11 @@ export interface MentionState {
  * type: a chip drained from ``pendingComposerAttachments`` is a ``MentionItem``
  * unchanged.
  */
-export type MentionItem = ComposerAttachment & { reference?: ContextReference };
+export type MentionItem = ComposerAttachment & { reference?: ComposerReference };
 
 /** Serialize a tagged item to the path string that goes inside its marker. */
 export function mentionItemPath(item: MentionItem): string {
-  if (item.reference) return `chat:${item.reference.snapshot_id}`;
+  if (item.reference) return `chat:${referenceIdentity(item.reference)}`;
   if (item.lineRange) return `${item.path}:${item.lineRange.start}-${item.lineRange.end}`;
   return item.isDir ? `${item.path}/` : item.path;
 }

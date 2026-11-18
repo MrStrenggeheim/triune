@@ -422,8 +422,13 @@ describe("BackgroundTaskIndicator", () => {
     fireEvent.click(badge());
     expect(screen.getByText(command)).toHaveClass("truncate");
     expect(screen.getByText(command)).toHaveAttribute("title", command);
-    expect(screen.getByText(output.trim())).toHaveClass("truncate");
-    expect(screen.getByText(output.trim())).toHaveAttribute("title", output);
+    expect(screen.getByText(output.trim()).closest(".resource-description")).toHaveClass(
+      "truncate",
+    );
+    expect(screen.getByText(output.trim()).closest(".resource-description")).toHaveAttribute(
+      "title",
+      output,
+    );
     expect(screen.queryByRole("button", { name: /Expand command/ })).toBeNull();
   });
 

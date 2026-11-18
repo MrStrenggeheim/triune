@@ -1,6 +1,12 @@
 // Modified for Triune.
-import { useQueries, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
-import { useCallback, useSyncExternalStore } from "react";
+import {
+  queryOptions,
+  useQueries,
+  useQuery,
+  useQueryClient,
+  type QueryClient,
+} from "@tanstack/react-query";
+import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
 import { authenticatedFetch } from "@/lib/identity";
 import { setSessionParent } from "@/lib/sessionHost";
 import { isTempConvId } from "@/lib/tempConversationId";
@@ -27,6 +33,7 @@ export interface ChildSessionError {
  * tolerated and ignored.
  */
 export interface ChildSessionInfo {
+  statusUnavailable?: boolean;
   created_at?: number;
   updated_at?: number;
   agent_name?: string | null;
@@ -212,7 +219,10 @@ interface UseChildSessionsResult {
  * Exported for unit testing of the HTTP-shape contract; production
  * code should call ``useChildSessions``.
  */
-export async function fetchChildSessions(sessionId: string): Promise<ChildSessionInfo[]> {
+export async function fetchChildSessions(
+  sessionId: string,
+  signal?: AbortSignal,
+): Promise<ChildSessionInfo[]> {
   const rows: ChildSessionWire[] = [];
   const cursors = new Set<string>();
   let after: string | undefined;
@@ -220,6 +230,7 @@ export async function fetchChildSessions(sessionId: string): Promise<ChildSessio
     // eslint-disable-next-line no-await-in-loop -- Each cursor comes from the preceding page.
     const res = await authenticatedFetch(
       `/v1/sessions/${encodeURIComponent(sessionId)}/child_sessions${after ? `?after=${encodeURIComponent(after)}` : ""}`,
+      { signal },
     );
     if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
     // eslint-disable-next-line no-await-in-loop -- Read this page before choosing the next cursor.
@@ -254,69 +265,165 @@ export async function fetchChildSessions(sessionId: string): Promise<ChildSessio
   }));
 }
 
-/**
- * Live child-session list for a conversation, served by
- * ``GET /v1/sessions/{id}/child_sessions``.
- *
- * The ``session.created`` handler in ``chatStore.ts`` invalidates
- * this query key on each spawn so newly-created child sessions
- * appear without waiting for the next poll or a manual refresh.
- *
- * :param conversationId: Parent session/conversation identifier,
- *     or ``null`` to disable the query.
- * :param pollMs: Optional poll interval in milliseconds. When set,
- *     the query refetches every ``pollMs`` ms (paused while the
- *     tab is backgrounded). The execution-logs panel passes a value
- *     here so the dropdown updates when new sub-agents spawn;
- *     callers that just need a snapshot (the rail card) can omit it.
- */
-export function useChildSessions(
-  conversationId: string | null,
-  pollMs?: number | null,
-  options: { enabled?: boolean } = {},
-): UseChildSessionsResult {
-  const sessionId = isTempConvId(conversationId) ? null : conversationId;
-  const { data, isLoading, error } = useQuery({
-    queryKey:
-      sessionId === null
-        ? ["conversation", null, "child_sessions"]
-        : childSessionsQueryKey(sessionId),
-    queryFn: () => fetchChildSessions(sessionId as string),
-    enabled: sessionId !== null && options.enabled !== false,
+function childListOptions(parentId: string | null, enabled: boolean) {
+  const queryKey = ["conversation", parentId, "child_sessions"];
+  return queryOptions({
+    queryKey,
+    enabled: enabled && !!parentId,
     staleTime: 60_000,
     retry: false,
     refetchOnMount: false,
-    refetchInterval: options.enabled === false ? false : (pollMs ?? false),
+    refetchOnWindowFocus: "always",
+    refetchOnReconnect: "always",
+    queryFn: async ({ client, signal }) => {
+      const baseline = client.getQueryData<ChildSessionInfo[]>(queryKey);
+      const rows = await fetchChildSessions(
+        parentId!,
+        AbortSignal.any([signal, AbortSignal.timeout(15_000)]),
+      );
+      const current = client.getQueryData<ChildSessionInfo[]>(queryKey);
+      if (!current) return rows;
+      // A live update may arrive while a paginated snapshot is in flight.
+      const before = new Map(baseline?.map((child) => [child.id, child]));
+      const latest = new Map(current.map((child) => [child.id, child]));
+      const merged = rows.map((row) => {
+        const cached = latest.get(row.id);
+        latest.delete(row.id);
+        return cached &&
+          (cached !== before.get(row.id) ||
+            (cached.updated_at !== undefined &&
+              row.updated_at !== undefined &&
+              cached.updated_at > row.updated_at))
+          ? cached
+          : row;
+      });
+      return merged.concat([...latest.values()].filter((child) => child !== before.get(child.id)));
+    },
   });
+}
+
+function needsRefresh(child: ChildSessionInfo) {
+  return (
+    child.busy ||
+    child.pending_elicitations_count > 0 ||
+    ["launching", "running", "in_progress", "queued"].includes(child.current_task_status ?? "") ||
+    child.last_task_error?.code === "runner_disconnected"
+  );
+}
+
+function availableRows(rows: ChildSessionInfo[] = [], unavailable: boolean) {
+  return unavailable
+    ? rows.map((child) => (needsRefresh(child) ? { ...child, statusUnavailable: true } : child))
+    : rows;
+}
+
+// Cards, shelf and Orchestration share one clock and one in-flight query per parent.
+const refreshClocks = new WeakMap<QueryClient, Map<string, { leases: number; timer: number }>>();
+
+function watchParent(client: QueryClient, parentId: string) {
+  let clocks = refreshClocks.get(client);
+  if (!clocks) refreshClocks.set(client, (clocks = new Map()));
+  let clock = clocks.get(parentId);
+  if (!clock) {
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "hidden") return;
+      void client.refetchQueries(
+        { queryKey: childSessionsQueryKey(parentId), exact: true, type: "active" },
+        { cancelRefetch: false },
+      );
+    }, 5_000);
+    clocks.set(parentId, (clock = { leases: 0, timer }));
+  }
+  clock.leases++;
+  return () => {
+    if (--clock.leases > 0) return;
+    window.clearInterval(clock.timer);
+    clocks.delete(parentId);
+    const key = childSessionsQueryKey(parentId);
+    const query = client.getQueryCache().find({ queryKey: key, exact: true });
+    if (query && !query.isActive() && query.state.fetchStatus === "fetching") {
+      void client.cancelQueries({ queryKey: key, exact: true });
+    }
+  };
+}
+
+/** Observe the parent's cache; active or unresolved resources share a five-second refresh. */
+export function useChildSessions(
+  conversationId: string | null,
+  options: {
+    enabled?: boolean;
+    reconcile?: boolean;
+    unresolvedChild?: string;
+    dispatchId?: string;
+  } = {},
+): UseChildSessionsResult {
+  const client = useQueryClient();
+  const parentId = isTempConvId(conversationId) ? null : conversationId;
+  const enabled = options.enabled !== false && !!parentId;
+  const query = useQuery(childListOptions(parentId, enabled));
+  const previousDispatch = useRef(options.dispatchId);
+  const wasEnabled = useRef(enabled);
+  useEffect(() => {
+    const newDispatch = previousDispatch.current !== options.dispatchId;
+    previousDispatch.current = options.dispatchId;
+    if (enabled && (!wasEnabled.current || newDispatch)) {
+      void client.refetchQueries(
+        { queryKey: childSessionsQueryKey(parentId!), exact: true },
+        { cancelRefetch: false },
+      );
+    }
+    wasEnabled.current = enabled;
+  }, [client, enabled, parentId, options.dispatchId]);
+  const unresolved =
+    options.unresolvedChild &&
+    !query.data?.some(
+      (child) =>
+        child.id === options.unresolvedChild &&
+        (child.current_task_status || child.last_task_error),
+    );
+  const reconcile = enabled && options.reconcile && (unresolved || query.data?.some(needsRefresh));
+  useEffect(
+    () => (reconcile && parentId ? watchParent(client, parentId) : undefined),
+    [client, parentId, reconcile],
+  );
   return {
-    children: data ?? [],
-    isLoading,
-    error: (error as Error | null) ?? null,
+    children: availableRows(query.data, query.isError || query.isPaused),
+    isLoading: query.isLoading,
+    error: query.error,
   };
 }
 
 function useChildLevel(parents: ChildSessionInfo[], enabled: boolean) {
-  return useQueries({
-    queries: parents.map((parent) => ({
-      queryKey: childSessionsQueryKey(parent.id),
-      queryFn: () => fetchChildSessions(parent.id),
-      enabled,
-      staleTime: 60_000,
-      retry: false,
-      refetchOnMount: false,
-      refetchInterval: enabled ? 5_000 : false,
-    })),
+  const client = useQueryClient();
+  const queries = useQueries({
+    queries: parents.map((parent) => childListOptions(parent.id, enabled)),
   });
+  const activeParents = JSON.stringify(
+    enabled
+      ? parents.filter((_, i) => queries[i]?.data?.some(needsRefresh)).map((parent) => parent.id)
+      : [],
+  );
+  useEffect(() => {
+    const stops = (JSON.parse(activeParents) as string[]).map((id) => watchParent(client, id));
+    return () => stops.forEach((stop) => stop());
+  }, [client, activeParents]);
+  return queries;
 }
 
 /** Flat projection of the existing three-level tree; hidden views retain cached rows. */
 export function useChildSessionTree(rootId: string, enabled: boolean): UseChildSessionsResult {
-  const root = useChildSessions(rootId, 5_000, { enabled });
+  const root = useChildSessions(rootId, { enabled, reconcile: true });
   const second = useChildLevel(root.children, enabled);
-  const grandchildren = second.flatMap((query) => query.data ?? []);
+  const grandchildren = second.flatMap((query) =>
+    availableRows(query.data, query.isError || query.isPaused),
+  );
   const third = useChildLevel(grandchildren, enabled);
   const queries = [...second, ...third];
-  const children = [...root.children, ...grandchildren, ...third.flatMap((q) => q.data ?? [])];
+  const children = [
+    ...root.children,
+    ...grandchildren,
+    ...third.flatMap((q) => availableRows(q.data, q.isError || q.isPaused)),
+  ];
   return {
     children: [
       ...new Map(

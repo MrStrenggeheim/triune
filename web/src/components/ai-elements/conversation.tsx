@@ -1,12 +1,13 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
+import { observeChatScroll, useChatScrollPreference } from "@/lib/chatScrollPreference";
 import { cn } from "@/lib/utils";
 import type { UIMessage } from "ai";
 import { ArrowDownIcon, DownloadIcon } from "lucide-react";
 import type { ComponentProps, ReactNode } from "react";
-import { createContext, useCallback, useLayoutEffect, useMemo } from "react";
-import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
+import { createContext, useCallback, useLayoutEffect, useMemo, useState } from "react";
+import { StickToBottom, useStickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
 
 export type ConversationProps = ComponentProps<typeof StickToBottom>;
 
@@ -84,6 +85,43 @@ export const Conversation = ({ className, children, ...props }: ConversationProp
     {typeof children === "function" ? children : <ScrollLockBridge>{children}</ScrollLockBridge>}
   </StickToBottom>
 );
+
+/** Keep explicit jumps and reader checkpoints while the saved preference owns resize-follow. */
+export function TranscriptConversation(props: ConversationProps) {
+  const preference = useChatScrollPreference();
+  const base = useStickToBottom({ initial: false });
+  const { contentRef, scrollRef, stopScroll } = base;
+  const [atBottom, setAtBottom] = useState(true);
+  const readerContentRef = useMemo(
+    () =>
+      Object.assign(
+        (element: HTMLElement | null) => {
+          contentRef.current = element;
+          readerContentRef.current = element;
+        },
+        { current: null as HTMLElement | null },
+      ),
+    [contentRef],
+  );
+  useLayoutEffect(() => {
+    if (!scrollRef.current || !contentRef.current) return;
+    return observeChatScroll(
+      scrollRef.current,
+      contentRef.current,
+      preference === "follow",
+      (atEdge) => {
+        setAtBottom(atEdge);
+        if (!atEdge) stopScroll();
+      },
+    );
+  }, [scrollRef, contentRef, stopScroll, preference]);
+  return (
+    <Conversation
+      {...props}
+      instance={{ ...base, contentRef: readerContentRef, isAtBottom: atBottom }}
+    />
+  );
+}
 
 export type ConversationContentProps = ComponentProps<typeof StickToBottom.Content>;
 

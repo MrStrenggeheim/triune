@@ -15,7 +15,6 @@ import {
   subagentEventStatus,
   recordedSubagentReturn,
   shouldRenderSubagentReply,
-  subagentMatchesChild,
   shortTaskText,
   subagentCardMessages,
   type SubagentActivity,
@@ -76,10 +75,18 @@ function RecordedTask({
   status?: AgentStatus;
 }) {
   const visible = useConversationChatVisible();
-  const { children } = useChildSessions(conversationId, undefined, { enabled: visible });
-  const child = children.find((candidate) => candidate.id === activity.sessionId);
-  const matchesTask = !!child && subagentMatchesChild(activity, child);
   const resource = data.resource as Record<string, unknown> | undefined;
+  const { children } = useChildSessions(conversationId, {
+    enabled: visible,
+    reconcile: true,
+    dispatchId:
+      typeof resource?.card_dispatch_id === "string"
+        ? resource.card_dispatch_id
+        : (activity.dispatchId ?? undefined),
+    unresolvedChild:
+      !status || status.label === "Status unavailable" ? activity.sessionId : undefined,
+  });
+  const child = children.find((candidate) => candidate.id === activity.sessionId);
   const canonical = Array.isArray(resource?.card_dispatches);
   const hasCurrentState =
     child &&
@@ -93,10 +100,10 @@ function RecordedTask({
       activity={activity}
       conversationId={conversationId}
       status={
-        canonical && child && hasCurrentState && matchesTask
+        canonical && child && hasCurrentState
           ? childStatus(child)
           : (status ??
-            (activity.phase === "delegated" && child && hasCurrentState && matchesTask
+            (activity.phase === "delegated" && child && hasCurrentState
               ? childStatus(child)
               : undefined))
       }

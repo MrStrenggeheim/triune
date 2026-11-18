@@ -35,6 +35,8 @@ and steers messages while the agent is busy.
 - `inherited-history`: quote-created forks hide their inherited prefix behind Show history; explicit forks retain normal defaults and child messages stay visible.
 - `working-shimmer`: opacity crossfades retain the working animation without per-frame text-background painting; reduced motion remains static.
 
+- Chat mentions insert a linked chip directly. Its canonical URL accompanies the prompt; opening history requires a separate authorized read. Explicit quote snapshots retain their frozen content.
+- Appearance → Chat defaults controls scrolling in main and side chats. A fresh profile holds its reading position; follow mode tracks growth only at the bottom.
 - `wrap-preferences`: chat code/text, tool/command input and tool/command output remember independent word-wrap choices across reloads.
 - `file-annotations`: Ask in chat from a file selection adds a source-annotated quote to the current draft without sending it.
 

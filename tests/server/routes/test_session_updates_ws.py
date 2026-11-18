@@ -2035,6 +2035,119 @@ def test_stored_output_exact_delivery_or_terminal_size_error(app, stores, resume
         assert stores[0].get_item(sid, saved.id).data.output == text
 
 
+@pytest.mark.timeout(30)
+@pytest.mark.parametrize("transport", ["websocket", "sse"])
+def test_oversized_saved_item_reference_is_ordered_exact_and_authorized(
+    app, stores, monkeypatch, transport
+):
+    import hashlib
+
+    from omnigent.entities import NewConversationItem
+    from omnigent.entities.conversation import FunctionCallOutputData
+    from omnigent.errors import ErrorCode, OmnigentError
+    from omnigent.runtime import session_stream
+    from omnigent.server.routes.sessions import routes_events
+
+    sid = _seed_session(stores, owner=ALICE, title="large referenced item")
+    text = "\0" * (2 * 1048576) + " — exact"
+    [saved] = stores[0].append(
+        sid,
+        [
+            NewConversationItem(
+                type="function_call_output",
+                response_id="turn",
+                data=FunctionCallOutputData(call_id="call", output=text),
+            )
+        ],
+    )
+    headers = {"X-Forwarded-Email": ALICE}
+    events = []
+    with TestClient(app) as client:
+        if transport == "sse":
+            original = routes_events._iter_live_events
+
+            async def through_checkpoint(*args, **kwargs):
+                from contextlib import aclosing
+
+                async with aclosing(original(*args, **kwargs)) as source:
+                    async for frame in source:
+                        yield frame
+                        if frame["type"] == "session.sync" and frame.get("phase") == "complete":
+                            break
+
+            monkeypatch.setattr(routes_events, "_iter_live_events", through_checkpoint)
+            response = client.get(
+                f"/v1/sessions/{sid}/stream?initial_limit=100",
+                headers={**headers, "X-Omnigent-Item-References": "1"},
+            )
+            assert response.status_code == 200 and len(response.content) < 65536
+            events = [
+                json.loads(line[6:])
+                for line in response.text.splitlines()
+                if line.startswith("data: {")
+            ]
+        else:
+            with client.websocket_connect("/v1/sessions/updates", headers=headers) as ws:
+                ws.send_json(
+                    {
+                        "type": "subscribe",
+                        "session_id": sid,
+                        "initial_limit": 100,
+                        "item_references": True,
+                    }
+                )
+                while True:
+                    frame = json.loads(ws.receive_text())
+                    assert frame["type"] != "session.error"
+                    if event := frame.get("event"):
+                        events.append(event)
+                        if event["type"] == "session.sync" and event.get("phase") == "complete":
+                            break
+                # Live delivery enters the subscriber byte cap before projection.
+                session_stream.publish(
+                    sid,
+                    {
+                        "type": "session.input.consumed",
+                        "data": {
+                            "item_id": saved.id,
+                            "type": saved.type,
+                            "data": saved.data.model_dump(),
+                            "cleared_pending_id": "pending-exact",
+                        },
+                    },
+                )
+                consumed = _recv_transcript(ws, sid, "session.item_reference")
+                assert consumed["header"]["data"]["cleared_pending_id"] == "pending-exact"
+                result = client.get(
+                    f"/v1/sessions/{sid}/items/{saved.id}/stream-content",
+                    params={
+                        "sha256": consumed["sha256"],
+                        "position": saved.position,
+                        "consumed": True,
+                    },
+                    headers=headers,
+                )
+                assert result.json() == saved.data.model_dump()
+        refs = [event for event in events if event["type"] == "session.item_reference"]
+        assert len(refs) == 1
+        ref = refs[0]
+        assert events.index(ref) < len(events) - 1 and events[-1]["phase"] == "complete"
+        assert (ref["item_id"], ref["position"]) == (saved.id, saved.position)
+        assert ref["header"]["type"] == "response.output_item.done" and "item" not in ref["header"]
+        path = f"/v1/sessions/{sid}/items/{saved.id}/stream-content"
+        params = {"sha256": ref["sha256"], "position": ref["position"]}
+        result = client.get(path, params=params, headers=headers)
+        assert result.status_code == 200 and result.json() == saved.to_api_dict()
+        assert len(result.content) == ref["byte_length"] > 8 * 1024 * 1024
+        assert hashlib.sha256(result.content).hexdigest() == ref["sha256"]
+        with pytest.raises(OmnigentError) as denied:
+            client.get(path, params=params, headers={"X-Forwarded-Email": BOB})
+        assert denied.value.code in {ErrorCode.FORBIDDEN, ErrorCode.NOT_FOUND}
+        with pytest.raises(OmnigentError) as stale:
+            client.get(path, params={**params, "sha256": "0" * 64}, headers=headers)
+        assert stale.value.code == ErrorCode.CONFLICT
+
+
 @pytest.mark.parametrize("malformed", [False, True])
 def test_publication_preserves_raw_branch_edges_and_overlapping_root_order(app, stores, malformed):
     store, _, permissions = stores

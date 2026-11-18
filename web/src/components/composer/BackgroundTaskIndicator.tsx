@@ -158,7 +158,7 @@ function BackgroundTasksList({
   return (
     <>
       {tasks.length ? (
-        <ul className="flex flex-col">
+        <ul className="density-list flex flex-col">
           {tasks.map((task, index) => (
             <li key={shellFocusId(task) ?? task.id ?? index}>
               <ShellResourceRow

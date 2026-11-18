@@ -40,6 +40,7 @@ _AUTH_HANDOFF_TIMEOUT_S = 1.0
 class _Membership:
     task: asyncio.Task[None] | None = None
     presence: dict[str, Any] = field(default_factory=dict)
+    item_references: bool = False
     closed: bool = False
     authorize: Callable[[], Awaitable[None]] | None = None
     queue: BoundedEventQueue = field(
@@ -63,6 +64,7 @@ class _MembershipRequest(Request):
         self.membership = membership
         self.state.presence_membership = membership.presence
         self.state.multiplex = True
+        self.state.item_references = membership.item_references
 
     async def is_disconnected(self) -> bool:
         # The socket reader exclusively owns receive; never consume its messages here.
@@ -248,7 +250,9 @@ class SessionMultiplex:
             )
             return True
         await self._remove(session_id)
-        member = _Membership(presence={"idle": idle})
+        member = _Membership(
+            presence={"idle": idle}, item_references=message.get("item_references") is True
+        )
         self.members[session_id] = member
         member.task = asyncio.create_task(
             self._pump(

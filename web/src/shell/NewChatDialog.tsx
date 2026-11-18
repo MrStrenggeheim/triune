@@ -5963,7 +5963,7 @@ export function NewChatLandingScreen({ embedded }: { embedded?: EmbeddedNewChat 
               type: "message",
               data: { role: "user", content: [{ type: "input_text", text: initialPrompt }] },
             };
-      let data: { id: string };
+      let data: { id: string; initial_input_id?: string };
 
       if (effectiveAgentId === PENDING_AGENT_ID && pendingAgent) {
         // Custom agents upload their bundle with the session, then launch on the host below.
@@ -6001,7 +6001,7 @@ export function NewChatLandingScreen({ embedded }: { embedded?: EmbeddedNewChat 
           metadata as Parameters<typeof createBundledSession>[1],
           serverOwnsInitialInput ? files : [],
         );
-        data = { id: bundled.id };
+        data = bundled;
         // Register create_session for the custom-agent (bundled) path too —
         // otherwise both sandbox and computer bundled creates emit nothing. Split
         // by the picked host; interactionTelemetry completes/settles the span.
@@ -6174,7 +6174,7 @@ export function NewChatLandingScreen({ embedded }: { embedded?: EmbeddedNewChat 
           sandboxSelected || serverOwnsInitialInput
             ? Promise.resolve(null)
             : nextPushedSession(matchOwnCreate, abortPush.signal);
-        const confirmed = (async (): Promise<{ id: string } | { error: string }> => {
+        const confirmed = (async (): Promise<typeof data | { error: string }> => {
           const response = await createRequest;
           if (!response.ok) {
             if (sandboxPreviewEnabled && response.status === 409) {
@@ -6191,6 +6191,7 @@ export function NewChatLandingScreen({ embedded }: { embedded?: EmbeddedNewChat 
           }
           const created = (await response.json()) as {
             id: string;
+            initial_input_id?: string;
             labels?: Record<string, string>;
           };
           // Route the new session's first requests by its chosen host id
@@ -6198,11 +6199,11 @@ export function NewChatLandingScreen({ embedded }: { embedded?: EmbeddedNewChat 
           // erase a host the session's snapshot already recorded.
           const requestedHostId = sessionRoutingHostId(null, created.labels);
           if (requestedHostId !== null) setSessionHost(created.id, requestedHostId);
-          return { id: created.id };
+          return created;
         })();
         // Once the create answers, its id is authoritative — stop listening.
         void confirmed.finally(() => abortPush.abort()).catch(() => {});
-        const created = await new Promise<{ id: string } | { error: string }>((resolve, reject) => {
+        const created = await new Promise<typeof data | { error: string }>((resolve, reject) => {
           // Only a match settles this; an abort resolves null and leaves the
           // response to decide.
           void pushedRow.then((row) => {
@@ -6224,7 +6225,7 @@ export function NewChatLandingScreen({ embedded }: { embedded?: EmbeddedNewChat 
           else setCreateError(created.error);
           return;
         }
-        data = { id: created.id };
+        data = created;
         // Register create_session (created → first AI activity), split by host.
         // New Chat is the only create path that can produce a managed sandbox;
         // interactionTelemetry completes/settles the span once the session runs.
@@ -6328,6 +6329,7 @@ export function NewChatLandingScreen({ embedded }: { embedded?: EmbeddedNewChat 
           localProject,
           serverOwnsInitialInput,
           clearAcceptedDraft,
+          data.initial_input_id,
         );
         void queryClient.refetchQueries({ queryKey: ["conversations"] });
       } else {
@@ -6786,7 +6788,6 @@ export function NewChatLandingScreen({ embedded }: { embedded?: EmbeddedNewChat 
                     {(mentionOpen || mentionListingPending) && (
                       <ComposerMentionMenu
                         query={mention?.query ?? ""}
-                        destinationId={null}
                         onReference={attachReference}
                         currentDir={mentionDir}
                         activeIndex={mentionIndex}

@@ -12,11 +12,52 @@ from typing import Any, cast
 
 from omnigent.entities.conversation import ConversationItem
 from omnigent.runtime import inflight_text, session_stream
+from omnigent.runtime.stream_queue import MAX_STREAM_BYTES
 from omnigent.stores.conversation_store import ConversationStore
 
 _REPLAY_PAGE_SIZE = 200
 MAX_INITIAL_LIMIT = 200
 MAX_SAFE_POSITION = (1 << 53) - 1
+
+
+def saved_item_bytes(payload: dict[str, Any]) -> bytes:
+    """Canonical HTTP representation shared by the reference and its exact read."""
+    return json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode()
+
+
+def saved_event_reference(event: dict[str, Any], session_id: str) -> dict[str, Any]:
+    """Keep oversized saved bodies out of either wire queue, preserving the event envelope."""
+    kind = event["type"]
+    consumed = kind == "session.input.consumed"
+    if not consumed and kind not in {"response.output_item.done", "response.output_item.updated"}:
+        return event
+    fields = event["data"] if consumed else event["item"]
+    item_id = fields.get("item_id" if consumed else "id")
+    position = fields.get("position")
+    if not isinstance(item_id, str) or not isinstance(position, int):
+        return event
+    # Include both transport envelopes; the SSE encoder also inserts JSON whitespace.
+    if (
+        len(json.dumps({"type": "session.event", "session_id": session_id, "event": event})) + 64
+        <= MAX_STREAM_BYTES
+    ):
+        return event
+    header = dict(event)
+    if consumed:
+        fields = dict(fields)
+        body = fields.pop("data")
+        header["data"] = fields
+    else:
+        body = header.pop("item")
+    serialized = saved_item_bytes(body)
+    return {
+        "type": "session.item_reference",
+        "item_id": item_id,
+        "position": position,
+        "header": header,
+        "sha256": hashlib.sha256(serialized).hexdigest(),
+        "byte_length": len(serialized),
+    }
 
 
 def validate_sync_complete(session_id: str, event: dict[str, Any]) -> None:
@@ -280,6 +321,8 @@ class SessionRecovery:
             return event
         saved = await asyncio.to_thread(self.store.get_item, self.session_id, item_id)
         if saved is None:
+            if event.get("_requires_saved_item"):
+                raise session_stream.SubscriberEventTooLargeError
             # A reset replay must not resurrect a removed item from the queued tail.
             return (
                 None

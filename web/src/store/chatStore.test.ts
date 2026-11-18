@@ -660,6 +660,7 @@ function seedPendingInputs(
   id: string,
   inputs: {
     pending_id: string;
+    item_id?: string;
     content: unknown[];
     created_by?: string;
     communication?: MessageCommunication;
@@ -3743,7 +3744,8 @@ describe("chatStore — navigate-first first send (B1/B2 regressions)", () => {
     seedSession("conv_real");
     seedPendingInputs("conv_real", [
       {
-        pending_id: "saved-input",
+        pending_id: "queue-receipt",
+        item_id: "saved-input",
         content: [{ type: "input_image", file_id: "uploaded-image", filename: "image.png" }],
       },
     ]);
@@ -3761,12 +3763,15 @@ describe("chatStore — navigate-first first send (B1/B2 regressions)", () => {
       undefined,
       undefined,
       true,
+      undefined,
+      "saved-input",
     );
     await settle();
     expect(conversationRegistry.peek("conv_real")!.getState().pendingUserMessages).toMatchObject([
       {
         tempId: begun.pendingMsgTempId,
-        pendingId: "saved-input",
+        pendingId: "queue-receipt",
+        itemId: "saved-input",
         content: [{ file_id: "uploaded-image" }],
       },
     ]);
@@ -14800,6 +14805,86 @@ describe("chatStore — startStreamPump reconnect loop", () => {
     controller.abort();
     await loop;
   });
+
+  it.each(["multiplex", "sse"] as const)(
+    "waits for an exact oversized item before committing the %s checkpoint",
+    async (transport) => {
+      const id = "oversized-ref";
+      const message = "x".repeat(8 * 1024 * 1024) + " exact end";
+      const item = { ...assistantMessage("saved", message), position: 0 };
+      const serialized = JSON.stringify(item);
+      const { createHash } = await import("node:crypto");
+      const digest = createHash("sha256").update(serialized).digest("hex");
+      const checkpoint = {
+        reset: true,
+        stream_epoch: "epoch",
+        item_revision: 1,
+        reset_revision: 0,
+        item_count: 1,
+        last_position: 0,
+        last_item_id: item.id,
+      };
+      seedSession(id, []);
+      const sink = pushableStream();
+      const controller = new AbortController();
+      useChatStore.setState({ conversationId: id, abortController: controller });
+      let deliver!: (value: Response) => void;
+      const normalFetch = fetchMock.getMockImplementation()!;
+      fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) =>
+        String(input).includes("/stream-content?")
+          ? new Promise((resolve) => {
+              deliver = resolve;
+            })
+          : normalFetch(input, init),
+      );
+      const structured = transport === "multiplex";
+      const body = structured ? structuredResponse(new Response(sink.stream)).body! : sink.stream;
+      const pump = pumpStreamEvents(
+        id,
+        body,
+        controller,
+        setState,
+        getState,
+        undefined,
+        new Set(),
+        undefined,
+        new Map(),
+        undefined,
+        true,
+        structured,
+      );
+      try {
+        sink.push(sse("session.sync", { ...checkpoint, phase: "start" }));
+        sink.push(
+          sse("session.item_reference", {
+            item_id: item.id,
+            position: 0,
+            header: { type: "response.output_item.done" },
+            sha256: digest,
+            byte_length: serialized.length,
+          }),
+        );
+        sink.push(sse("session.sync", { ...checkpoint, phase: "complete" }));
+        await vi.advanceTimersByTimeAsync(25);
+        expect(getState().transcriptCheckpoint).toBeNull();
+        expect(getState().blocks.some((block) => block.ctx.itemId === item.id)).toBe(false);
+        deliver(new Response(serialized, { headers: { ETag: `"${digest}"` } }));
+        await vi.advanceTimersByTimeAsync(100);
+        await vi.waitFor(() =>
+          expect(getState().transcriptCheckpoint?.cursor.after_position).toBe(0),
+        );
+        expect(
+          getState().blocks.some(
+            (block) => block.type === "text_done" && block.fullText === message,
+          ),
+        ).toBe(true);
+      } finally {
+        sink.close();
+        controller.abort();
+        await pump;
+      }
+    },
+  );
 
   it.each([
     ["multiplex", false],

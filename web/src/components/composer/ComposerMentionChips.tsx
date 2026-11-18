@@ -42,11 +42,15 @@ export function ComposerMentionChips({
           ) : (
             <FileTextIcon className="size-3 shrink-0" />
           )}
-          {item.reference ? (
+          {item.reference?.version === 2 ? (
+            <a className="max-w-[240px] truncate" href={item.reference.url}>
+              @{item.reference.source_title}
+            </a>
+          ) : item.reference ? (
             <button
               type="button"
               className="max-w-[240px] truncate"
-              onClick={() => setPreview(item.reference!)}
+              onClick={() => item.reference?.version === 1 && setPreview(item.reference)}
             >
               @{item.reference.source_title} · {referenceScopeLabels[item.reference.scope]}
             </button>

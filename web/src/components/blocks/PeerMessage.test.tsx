@@ -448,6 +448,33 @@ describe("trusted peer presentation", () => {
   });
 });
 
+it.each(["review", "implementation"])(
+  "retains errors and removes delivery pills across disclosure and reload in %s",
+  (id) => {
+    const card = (state: MessageCommunication["delivery_state"]) => (
+      <MemoryRouter>
+        <ConversationScopeContext.Provider value={id}>
+          <PeerMessage
+            communication={{ ...communication, delivery_state: state }}
+            itemId="p1"
+            content={[{ type: "input_text", text: "Exact message" }]}
+          />
+        </ConversationScopeContext.Provider>
+      </MemoryRouter>
+    );
+    const view = render(card("queued"));
+    expect(screen.queryByRole("status")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Expand activity" }));
+    expect(screen.queryByRole("status")).toBeNull();
+    view.rerender(card("failed"));
+    expect(screen.getByRole("alert")).toHaveTextContent("Delivery failed");
+    view.unmount();
+    render(card("confirmed"));
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.getByTestId("peer-message")).toHaveAttribute("data-delivery-state", "confirmed");
+  },
+);
+
 it("keeps receipt aliases, queued delivery and exact destination navigation separate from reply-to", () => {
   render(
     <MemoryRouter>
@@ -462,7 +489,8 @@ it("keeps receipt aliases, queued delivery and exact destination navigation sepa
       </ConversationScopeContext.Provider>
     </MemoryRouter>,
   );
-  expect(screen.getByRole("status")).toHaveTextContent("Queued");
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  expect(screen.getByTestId("peer-message")).toHaveAttribute("data-delivery-state", "queued");
   expect(screen.getByTestId("peer-message")).toHaveAttribute(
     "data-message-aliases",
     '["pending-handle"]',

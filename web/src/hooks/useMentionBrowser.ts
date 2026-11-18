@@ -4,7 +4,7 @@ import {
   writeReferenceDraft,
   subscribeReferenceDraft,
 } from "@/lib/contextReferenceDrafts";
-import type { ContextReference } from "@/lib/contextReferences";
+import { referenceIdentity, type ComposerReference } from "@/lib/contextReferences";
 import { toast } from "@/lib/notifications";
 import { type KeyboardEvent, type RefObject, useRef, useState, useEffect } from "react";
 
@@ -41,7 +41,7 @@ export interface MentionBrowser {
   mentionedItems: MentionItem[];
   setMentionedItems: React.Dispatch<React.SetStateAction<MentionItem[]>>;
   /** Attach a file (isDir=false) or whole folder (isDir=true) as a chip. */
-  attachReference: (reference: ContextReference) => void;
+  attachReference: (reference: ComposerReference) => void;
   attachMention: (path: string, isDir: boolean) => void;
   /** Drill into a folder: rewrite the token to ``@<dir>/`` and keep browsing. */
   openMentionDir: (path: string) => void;
@@ -110,10 +110,9 @@ export function useMentionBrowser(params: MentionBrowserParams): MentionBrowser 
       const references = readReferenceDraft(referenceKey);
       setMentionedItems((current) => {
         const existing = current.flatMap((item) =>
-          item.reference ? [item.reference.snapshot_id] : [],
+          item.reference ? [referenceIdentity(item.reference)] : [],
         );
-        if (existing.join() === references.map((reference) => reference.snapshot_id).join())
-          return current;
+        if (existing.join() === references.map(referenceIdentity).join()) return current;
         return [
           ...current.filter((item) => !item.reference),
           ...references.map((reference) => ({
@@ -125,11 +124,14 @@ export function useMentionBrowser(params: MentionBrowserParams): MentionBrowser 
       });
     });
   }, [referenceKey]);
-  const attachReference = (reference: ContextReference) => {
+  const attachReference = (reference: ComposerReference) => {
     if (!mention) return;
     setText(text.slice(0, mention.start) + text.slice(mention.end));
     setMentionedItems((current) => [
-      ...current.filter((item) => item.reference?.snapshot_id !== reference.snapshot_id),
+      ...current.filter(
+        (item) =>
+          !item.reference || referenceIdentity(item.reference) !== referenceIdentity(reference),
+      ),
       { path: reference.source_title, isDir: false, reference },
     ]);
     setMention(null);

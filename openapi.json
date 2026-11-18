@@ -7963,6 +7963,7 @@
             "session.heartbeat": "#/components/schemas/SessionHeartbeatEvent",
             "session.input.consumed": "#/components/schemas/SessionInputConsumedEvent",
             "session.interrupted": "#/components/schemas/SessionInterruptedEvent",
+            "session.item_reference": "#/components/schemas/SessionItemReferenceEvent",
             "session.mcp_startup": "#/components/schemas/SessionMcpStartupEvent",
             "session.model": "#/components/schemas/SessionModelEvent",
             "session.model_options": "#/components/schemas/SessionModelOptionsEvent",
@@ -8114,6 +8115,9 @@
           },
           {
             "$ref": "#/components/schemas/SessionSyncEvent"
+          },
+          {
+            "$ref": "#/components/schemas/SessionItemReferenceEvent"
           },
           {
             "$ref": "#/components/schemas/ElicitationRequestEvent"
@@ -9520,6 +9524,79 @@
         "title": "SessionInterruptedPayload",
         "type": "object"
       },
+      "SessionItemReferenceEvent": {
+        "description": "A negotiated exact read replaces the saved body in this event header.",
+        "properties": {
+          "byte_length": {
+            "exclusiveMinimum": 0,
+            "format": "int64",
+            "title": "Byte Length",
+            "type": "integer"
+          },
+          "framework_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Input Ids"
+          },
+          "header": {
+            "additionalProperties": true,
+            "title": "Header",
+            "type": "object"
+          },
+          "item_id": {
+            "title": "Item Id",
+            "type": "string"
+          },
+          "position": {
+            "format": "int64",
+            "minimum": 0,
+            "title": "Position",
+            "type": "integer"
+          },
+          "sequence_number": {
+            "anyOf": [
+              {
+                "format": "int64",
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Sequence Number"
+          },
+          "sha256": {
+            "title": "Sha256",
+            "type": "string"
+          },
+          "type": {
+            "const": "session.item_reference",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "item_id",
+          "position",
+          "header",
+          "sha256",
+          "byte_length"
+        ],
+        "title": "SessionItemReferenceEvent",
+        "type": "object"
+      },
       "SessionLabelsResponse": {
         "description": "Lightweight response body for `GET /v1/sessions/{id}/labels`.",
         "properties": {
@@ -10729,6 +10806,17 @@
               }
             ],
             "title": "Inference Error"
+          },
+          "initial_input_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Initial Input Id"
           },
           "items": {
             "description": "Committed conversation items in chronological order. Empty for a freshly created session.",
@@ -14962,6 +15050,17 @@
               "title": "Harness",
               "type": "string"
             }
+          },
+          {
+            "description": "Run the installer even for a compatible installed harness.",
+            "in": "query",
+            "name": "update",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Update",
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -15125,7 +15224,6 @@
     },
     "/v1/hosts/{host_id}/harnesses/{harness}/startup": {
       "get": {
-        "description": "Read host launch defaults, configured invocation, and env-wrapper settings.",
         "operationId": "get_harness_startup_v1_hosts__host_id__harnesses__harness__startup_get",
         "parameters": [
           {
@@ -15170,6 +15268,68 @@
           }
         },
         "summary": "Get Harness Startup",
+        "tags": [
+          "hosts"
+        ]
+      }
+    },
+    "/v1/hosts/{host_id}/harnesses/{harness}/version": {
+      "get": {
+        "operationId": "get_harness_version_v1_hosts__host_id__harnesses__harness__version_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "host_id",
+            "required": true,
+            "schema": {
+              "title": "Host Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "harness",
+            "required": true,
+            "schema": {
+              "title": "Harness",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "title": "Response Get Harness Version V1 Hosts  Host Id  Harnesses  Harness  Version Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Harness Version",
         "tags": [
           "hosts"
         ]
@@ -18629,6 +18789,96 @@
           }
         },
         "summary": "List Session Items",
+        "tags": [
+          "sessions"
+        ]
+      }
+    },
+    "/v1/sessions/{session_id}/items/{item_id}/stream-content": {
+      "get": {
+        "description": "Read the exact authorized representation advertised to a transcript subscriber.",
+        "operationId": "get_stream_item_content_v1_sessions__session_id__items__item_id__stream_content_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "position",
+            "required": true,
+            "schema": {
+              "minimum": 0,
+              "title": "Position",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sha256",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
+              "title": "Sha256",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "consumed",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Consumed",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Digest-verified JSON body for the advertised saved item.",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The advertised position or representation changed."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Stream Item Content",
         "tags": [
           "sessions"
         ]
@@ -22566,6 +22816,16 @@
                 }
               ],
               "title": "Window Start Position"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Omnigent-Item-References",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "X-Omnigent-Item-References",
+              "type": "boolean"
             }
           }
         ],

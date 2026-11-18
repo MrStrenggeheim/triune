@@ -5,12 +5,14 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 
 from fastapi import (
     APIRouter,
     Query,
     Request,
 )
+from fastapi.responses import StreamingResponse
 
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.runtime.policies.approval import _ELICITATION_MODE
@@ -52,6 +54,7 @@ from omnigent.server.schemas import (
     ChildSessionList,
     PaginatedList,
 )
+from omnigent.server.session_recovery import saved_item_bytes
 from omnigent.server.subagent_activity import recover_subagent_activity
 from omnigent.stores import AgentStore, ConversationStore
 from omnigent.stores.permission_store import PermissionStore
@@ -145,6 +148,79 @@ def register_items_routes(
             first_id=page.first_id,
             last_id=page.last_id,
             has_more=page.has_more,
+        )
+
+    @router.get(
+        "/sessions/{session_id}/items/{item_id}/stream-content",
+        response_model=None,
+        responses={
+            200: {
+                "description": "Digest-verified JSON body for the advertised saved item.",
+                "headers": {"ETag": {"schema": {"type": "string"}}},
+            },
+            409: {"description": "The advertised position or representation changed."},
+        },
+    )
+    async def get_stream_item_content(
+        request: Request,
+        session_id: str,
+        item_id: str,
+        position: int = Query(ge=0),
+        sha256: str = Query(pattern=r"^[0-9a-f]{64}$"),
+        consumed: bool = False,
+    ) -> StreamingResponse:
+        """Read the exact authorized representation advertised to a transcript subscriber."""
+        user_id = _get_user_id(request, auth_provider)
+
+        async def authorize(source_id: str) -> None:
+            await _require_access_and_level(
+                user_id, source_id, LEVEL_READ, permission_store, conversation_store
+            )
+
+        await authorize(session_id)
+        saved = await asyncio.to_thread(conversation_store.get_item, session_id, item_id)
+        if saved is None or saved.position != position:
+            raise OmnigentError("Saved item changed", code=ErrorCode.CONFLICT)
+        sources = {session_id}
+
+        async def can_read(source_id: str) -> bool:
+            try:
+                await authorize(source_id)
+            except OmnigentError as exc:
+                if exc.code in {ErrorCode.FORBIDDEN, ErrorCode.NOT_FOUND}:
+                    return False
+                raise
+            sources.add(source_id)
+            return True
+
+        if consumed:
+            body = saved_item_bytes(saved.data.model_dump())
+        else:
+            # A page may exhaust its optional enrichment budget and advertise the stored row.
+            body = saved_item_bytes(saved.to_api_dict())
+            if hashlib.sha256(body).hexdigest() != sha256:
+                [projected] = await recover_subagent_activity(
+                    session_id, [saved], conversation_store, can_read
+                )
+                body = saved_item_bytes(projected.to_api_dict())
+        if hashlib.sha256(body).hexdigest() != sha256:
+            raise OmnigentError("Saved item changed", code=ErrorCode.CONFLICT)
+        for source_id in sources:
+            await authorize(source_id)
+
+        async def chunks():
+            for start in range(0, len(body), 65536):
+                yield body[start : start + 65536]
+
+        return StreamingResponse(
+            chunks(),
+            media_type="application/json",
+            headers={
+                "Cache-Control": "no-store",
+                "ETag": f'"{sha256}"',
+                "Content-Length": str(len(body)),
+                "Access-Control-Expose-Headers": "ETag",
+            },
         )
 
     # ── GET /sessions/{session_id}/child_sessions ────────────────

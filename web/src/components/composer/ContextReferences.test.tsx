@@ -81,7 +81,6 @@ it("keeps reference selection and capture actions from submitting the composed d
       <textarea aria-label="Composed draft" defaultValue="Keep this draft" />
       <ComposerMentionMenu
         query=""
-        destinationId="target"
         onReference={vi.fn()}
         currentDir=""
         activeIndex={-1}
@@ -92,21 +91,15 @@ it("keeps reference selection and capture actions from submitting the composed d
     </form>,
   );
   fireEvent.click(await screen.findByRole("button", { name: "Destination" }));
-  fireEvent.click(screen.getByRole("button", { name: "Whole chat" }));
-  fireEvent.click(await screen.findByRole("button", { name: "Add reference" }));
   expect(submit).not.toHaveBeenCalled();
   expect(screen.getByLabelText("Composed draft")).toHaveValue("Keep this draft");
 });
 
-it.each([
-  ["Whole chat", "whole"],
-  ["Last completed answer", "last_answer"],
-] as const)("previews exact %s content and audience before adding", async (label, scope) => {
+it("inserts a link without reading source history", async () => {
   const attach = vi.fn();
   render(
     <ComposerMentionMenu
       query="source"
-      destinationId="target"
       onReference={attach}
       currentDir=""
       activeIndex={-1}
@@ -116,13 +109,18 @@ it.each([
     />,
   );
   fireEvent.click(await screen.findByRole("button", { name: "Destination" }));
-  fireEvent.click(screen.getByRole("button", { name: label }));
-  expect(await screen.findByText(reference.audience)).toBeVisible();
-  expect(api.captureReference).toHaveBeenCalledWith("target", "target", scope, { message_ids: [] });
-  expect(screen.getByText(/Exact \*\*source\*\*/)).toBeVisible();
-  expect(attach).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole("button", { name: "Add reference" }));
-  expect(attach).toHaveBeenCalledWith(reference);
+  const link = {
+    version: 2,
+    source_id: "target",
+    source_title: "Destination",
+    url: `${window.location.origin}/c/target`,
+  } as const;
+  expect(attach).toHaveBeenCalledExactlyOnceWith(link);
+  expect(api.captureReference).not.toHaveBeenCalled();
+  expect(api.referenceRequest).not.toHaveBeenCalled();
+  expect(
+    buildMentionPreamble([{ path: link.source_title, isDir: false, reference: link }], null),
+  ).toBe(`${window.location.origin}/c/target\n\n`);
 });
 
 it("retains reference scope on the chip and serializes exact frozen source", () => {
@@ -187,7 +185,7 @@ it("creates a subchat at the captured item even if the source advances while cho
   expect(create).toHaveBeenCalledTimes(1);
   expect(api.captureReference).toHaveBeenCalledTimes(1);
   expect(useChatStore.getState().sideChatDrafts.child).toBeUndefined();
-  expect(readReferenceDraft("child")[0]?.boundary_id).toBe("item-at-selection");
+  expect(readReferenceDraft("child")[0]).toMatchObject({ boundary_id: "item-at-selection" });
 });
 
 it("uses a mounted destination's current draft and keeps revoked sources out", async () => {
@@ -206,40 +204,6 @@ it("uses a mounted destination's current draft and keeps revoked sources out", a
   fireEvent.click(screen.getByRole("button", { name: "Retry" }));
   await waitFor(() => expect(insert).toHaveBeenCalledTimes(1));
   unregister();
-});
-
-it("chooses explicit messages and never substitutes a summary for an oversized whole chat", async () => {
-  vi.mocked(api.referenceRequest).mockResolvedValue({
-    data: [{ ...reference.items[0], type: "message" }],
-    has_more: false,
-  });
-  vi.mocked(api.captureReference).mockRejectedValueOnce(
-    new Error("Context is too large. Choose messages; nothing was summarized."),
-  );
-  const attach = vi.fn();
-  render(
-    <ComposerMentionMenu
-      query="source"
-      destinationId="target"
-      onReference={attach}
-      currentDir=""
-      activeIndex={-1}
-      entries={[]}
-      onAttach={vi.fn()}
-      onOpenDir={vi.fn()}
-    />,
-  );
-  fireEvent.click(await screen.findByRole("button", { name: "Destination" }));
-  fireEvent.click(screen.getByRole("button", { name: "Whole chat" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent("nothing was summarized");
-  expect(attach).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole("button", { name: "Choose messages" }));
-  fireEvent.click(await screen.findByRole("checkbox"));
-  fireEvent.click(screen.getByRole("button", { name: "Preview selection" }));
-  await screen.findByRole("button", { name: "Add reference" });
-  expect(api.captureReference).toHaveBeenLastCalledWith("target", "target", "messages", {
-    message_ids: ["item-at-selection"],
-  });
 });
 
 it("hydrates inserted snapshot chips into an open composer and restores them after remount", () => {
@@ -280,7 +244,6 @@ it("merges ranked files, folders and chats without selectors or form submission"
       <input type="file" aria-label="Draft files" />
       <ComposerMentionMenu
         query="Destination"
-        destinationId="target"
         onReference={vi.fn()}
         currentDir=""
         activeIndex={0}
@@ -354,7 +317,6 @@ it("cancels stale chat searches when the mention changes", async () => {
   const picker = (query: string) => (
     <ComposerMentionMenu
       query={query}
-      destinationId="target"
       onReference={vi.fn()}
       currentDir=""
       activeIndex={0}
@@ -398,7 +360,6 @@ it("keeps mobile Enter and IME input available without selecting or submitting r
         <textarea aria-label="Mobile draft" defaultValue="Keep @Destination" />
         <ComposerMentionMenu
           query="Destination"
-          destinationId="target"
           onReference={vi.fn()}
           currentDir=""
           activeIndex={0}

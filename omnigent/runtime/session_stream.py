@@ -132,6 +132,27 @@ def item_mutations_since(conversation_id: str, revision: int) -> tuple[str, ...]
 _internal_queues: weakref.WeakSet[asyncio.Queue[Any]] = weakref.WeakSet()
 
 
+def _saved_item_placeholder(event: object) -> dict[str, Any] | None:
+    """Keep the exact item identity until an authorized stream producer can load its body."""
+    if not isinstance(event, dict):
+        return None
+    kind = event.get("type")
+    if kind == "session.input.consumed":
+        field, key = "data", "item_id"
+    elif kind in {"response.output_item.done", "response.output_item.updated"}:
+        field, key = "item", "id"
+    else:
+        return None
+    fields = event.get(field)
+    if not isinstance(fields, dict) or not isinstance(fields.get(key), str):
+        return None
+    header = {
+        k: event[k] for k in ("type", "sequence_number", "framework_input_ids") if k in event
+    }
+    header[field] = {k: fields[k] for k in (key, "position", "cleared_pending_id") if k in fields}
+    return {**header, "_requires_saved_item": True}
+
+
 def _enqueue_or_overflow(
     queue: asyncio.Queue[dict[str, Any] | object],
     item: dict[str, Any] | object,
@@ -143,7 +164,21 @@ def _enqueue_or_overflow(
         queue.put_nowait(item)
         return
     except EventTooLargeError:
-        queue._session_stream_oversized = True  # type: ignore[attr-defined]
+        placeholder = (
+            _saved_item_placeholder(item)
+            if getattr(queue, "_saved_item_references", False)
+            else None
+        )
+        if placeholder is None:
+            queue._session_stream_oversized = True  # type: ignore[attr-defined]
+        else:
+            try:
+                queue.put_nowait(placeholder)
+                return
+            except EventTooLargeError:
+                queue._session_stream_oversized = True  # type: ignore[attr-defined]
+            except asyncio.QueueFull:
+                pass
     except asyncio.QueueFull:
         pass
 
@@ -493,6 +528,7 @@ async def subscribe(
     conversation_id: str,
     *,
     internal: bool = False,
+    saved_item_references: bool = False,
     heartbeat_interval_s: float | None = None,
     ready_event: dict[str, Any] | None = None,
     pre_ready_snapshot: Callable[[], Iterable[dict[str, Any]]] | None = None,
@@ -577,6 +613,7 @@ async def subscribe(
         max_bytes=_SUBSCRIBER_QUEUE_MAX_BYTES,
         max_age=_SUBSCRIBER_QUEUE_MAX_AGE_S,
     )
+    queue._saved_item_references = saved_item_references  # type: ignore[attr-defined]
     loop = asyncio.get_running_loop()
     entry = (queue, loop)
     with _lock:

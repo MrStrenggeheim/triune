@@ -26,7 +26,7 @@ import { flushSync } from "react-dom";
 import { useVirtualizer, type Virtualizer } from "@tanstack/react-virtual";
 import { useStickToBottomContext } from "use-stick-to-bottom";
 import {
-  Conversation,
+  TranscriptConversation,
   ConversationContent,
   ConversationEmptyState,
   ConversationScrollButton,
@@ -72,8 +72,6 @@ import {
   HistoryAutoLoader,
   HistoryLoadingIndicator,
   JumpToTopButton,
-  KeepBottomOnViewportResize,
-  ScrollToBottomOnSend,
   WorkingIndicator,
   AwaitingAgentMessages,
   partitionAwaitingAgentBubbles,
@@ -99,6 +97,7 @@ import {
 export type { TranscriptViewSnapshot } from "@/lib/transcriptReaderCheckpoint";
 
 export interface TranscriptProps {
+  recoveryDisabled?: boolean;
   branch?: ConversationBranch | null;
   /** Opt in only for quote-created subchats; explicit forks retain their normal view. */
   hideInheritedHistory?: boolean;
@@ -112,7 +111,6 @@ export interface TranscriptProps {
   scroller: ConversationScroller | null;
   setScroller: (s: ConversationScroller | null) => void;
   /** Bumped on each local send so the list scrolls back to the bottom. */
-  sendScrollNonce: number;
   hasMoreHistory: boolean;
   loadingMoreHistory: boolean;
   isMobileViewport: boolean;
@@ -122,7 +120,6 @@ export interface TranscriptProps {
   /** True while a managed-sandbox launch is in flight (cold-launch spinner). */
   sandboxLaunching: boolean;
   /** Compatibility resize hook; live transcripts reserve no trailing turn space. */
-  spacerMeasureRef: React.RefObject<(() => void) | null>;
 }
 
 export function isNativeFindShortcut(
@@ -148,6 +145,7 @@ export function isNativeFindShortcut(
  * dialogs bail out via React's normal prop-equality check.
  */
 function TranscriptImpl({
+  recoveryDisabled,
   branch,
   hideInheritedHistory = false,
   hostId,
@@ -155,7 +153,6 @@ function TranscriptImpl({
   containerEl,
   scroller,
   setScroller,
-  sendScrollNonce,
   hasMoreHistory,
   loadingMoreHistory,
   isMobileViewport,
@@ -504,7 +501,7 @@ function TranscriptImpl({
         ref={setConversationEl}
         className="@container/chat relative flex min-h-0 flex-1 overflow-hidden"
       >
-        <Conversation className="chat-scroll-fade flex-1">
+        <TranscriptConversation className="chat-scroll-fade flex-1">
           <ConversationContent
             scrollClassName="transcript-hide-native-scrollbar"
             className={cn(
@@ -517,8 +514,6 @@ function TranscriptImpl({
             )}
           >
             {/* Scroll helpers — must live inside StickToBottom to access context. */}
-            <ScrollToBottomOnSend nonce={sendScrollNonce} />
-            <KeepBottomOnViewportResize />
             <ConversationScrollRefBridge onScroller={setScroller} />
             {canLoadHistory && (
               <HistoryAutoLoader
@@ -561,6 +556,7 @@ function TranscriptImpl({
                 {/* Older pages prepend here while their request is in flight. */}
                 {display.loadingMoreHistory && <HistoryLoadingIndicator />}
                 <VirtualBubbleList
+                  recoveryDisabled={recoveryDisabled}
                   bubbles={display.streamBubbles}
                   diagnosticBlocks={display.diagnosticBlocks}
                   scrollEl={scroller?.el ?? null}
@@ -589,7 +585,7 @@ function TranscriptImpl({
             )}
           </ConversationContent>
           <ConversationScrollButton />
-        </Conversation>
+        </TranscriptConversation>
         {/* Constant-height scrollbar. Sibling of Conversation so it escapes the
         chat-scroll-fade mask. */}
         <TranscriptScrollbar scroller={scroller} />
@@ -743,6 +739,7 @@ function isElAtBottom(el: HTMLElement): boolean {
 }
 
 export const VirtualBubbleList = memo(function VirtualBubbleList({
+  recoveryDisabled,
   bubbles,
   diagnosticBlocks,
   scrollEl,
@@ -756,6 +753,7 @@ export const VirtualBubbleList = memo(function VirtualBubbleList({
   onGeometryChange,
 }: {
   bubbles: Bubble[];
+  recoveryDisabled?: boolean;
   diagnosticBlocks?: AnyBlock[];
   scrollEl: HTMLElement | null;
   lastAssistantIndex: number;
@@ -1439,6 +1437,7 @@ export const VirtualBubbleList = memo(function VirtualBubbleList({
       <div ref={wrapperRef} className="flex w-full flex-col gap-4">
         {bubbles.map((bubble, index) => (
           <BubbleView
+            recoveryDisabled={recoveryDisabled}
             key={rowKey(bubble)}
             bubble={bubble}
             isLastAssistant={index === lastAssistantIndex}
@@ -1479,6 +1478,7 @@ export const VirtualBubbleList = memo(function VirtualBubbleList({
             className="relative"
           >
             <BubbleView
+              recoveryDisabled={recoveryDisabled}
               bubble={bubble}
               isLastAssistant={item.index === lastAssistantIndex}
               showsWorking={showsWorking && item.index === lastAssistantIndex}

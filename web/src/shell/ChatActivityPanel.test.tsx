@@ -113,7 +113,8 @@ function choose(value: string) {
 
 it("moves filters into the existing menu at narrow pane widths and preserves the chosen category", () => {
   let width = 500;
-  let resize = () => {};
+  const resizeCallbacks = new Set<() => void>();
+  const resize = () => resizeCallbacks.forEach((measure) => measure());
   const available = vi
     .spyOn(HTMLElement.prototype, "clientWidth", "get")
     .mockImplementation(function (this: HTMLElement) {
@@ -138,7 +139,7 @@ it("moves filters into the existing menu at narrow pane widths and preserves the
         this.callback = callback;
       }
       observe(target: Element) {
-        if (target.hasAttribute("data-activity-header")) resize = this.callback;
+        if (target.hasAttribute("data-activity-header")) resizeCallbacks.add(this.callback);
       }
       unobserve() {}
       disconnect() {}

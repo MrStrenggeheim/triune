@@ -1,3 +1,4 @@
+import { useConversationChatVisible } from "@/workbench/ScopedChatStore";
 import { useEffect, useId, useState } from "react";
 import { BotIcon, ChevronDownIcon, ChevronRightIcon, TerminalIcon } from "lucide-react";
 import { ActivityRow } from "@/components/ActivityRow";
@@ -196,7 +197,8 @@ function ActivityDockContent({
 }) {
   const scopedId = attention.scopeKey ? conversationId : null;
   const state = useActivityConversationState(scopedId);
-  const children = useChildSessions(scopedId, 5_000);
+  const chatVisible = useConversationChatVisible();
+  const children = useChildSessions(scopedId, { enabled: chatVisible, reconcile: true });
   const shells = useChatActivity(scopedId);
   const peers = usePeerMessages(scopedId);
   const [expanded, setExpanded] = useState(false);

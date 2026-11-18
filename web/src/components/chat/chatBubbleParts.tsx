@@ -9,7 +9,7 @@ import { markInputLifecycle } from "@/lib/inputDiagnostics";
 import { ContentSkeleton, OperationStatus } from "@/components/ui/loading";
 // Modified for Triune.
 import { useWorkbenchActions } from "@/workbench/WorkbenchContext";
-import { useConversationChatStore, useConversationChatVisible } from "@/workbench/ScopedChatStore";
+import { useConversationChatStore } from "@/workbench/ScopedChatStore";
 import { ChatAttachment } from "@/components/ChatAttachment";
 import { ChatSearchRevealContext } from "@/lib/chatSearchHighlights";
 // Bubble rendering, scroll helpers, and the working-indicator cluster for the
@@ -1382,84 +1382,6 @@ function AssistantBubble({
 // Scroll helpers — rendered inside <Conversation> / as its siblings.
 // ---------------------------------------------------------------------------
 
-/**
- * Forces the conversation back to the bottom when this client submits a new
- * message.
- */
-export function ScrollToBottomOnSend({ nonce }: { nonce: number }) {
-  const { scrollToBottom, state } = useStickToBottomContext();
-
-  useLayoutEffect(() => {
-    if (nonce === 0) return;
-    state.escapedFromLock = false;
-    scrollToBottom("instant");
-    const frame = requestAnimationFrame(() => {
-      if (state.isAtBottom && !state.escapedFromLock) scrollToBottom("instant");
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [nonce, scrollToBottom, state]);
-
-  return null;
-}
-
-/** Keep bottom-locked readers pinned when the composer changes viewport height. */
-export function KeepBottomOnViewportResize() {
-  const visible = useConversationChatVisible();
-  const ctx = useStickToBottomContext() as ReturnType<typeof useStickToBottomContext> & {
-    scrollRef?: React.RefObject<HTMLElement>;
-  };
-  const scrollRef = ctx.scrollRef;
-  const state = ctx.state;
-  const scrollToBottom = ctx.scrollToBottom;
-
-  useEffect(() => {
-    const el = scrollRef?.current;
-    if (!el || !visible || typeof ResizeObserver === "undefined") return;
-    const isPhysicallyAtBottom = () => el.scrollHeight - el.clientHeight - el.scrollTop <= 1;
-    let wasBottomLocked = state.isAtBottom && !state.escapedFromLock && isPhysicallyAtBottom();
-    let clientHeight = el.clientHeight;
-    let frame: number | null = null;
-    const isLocked = () => state.isAtBottom && !state.escapedFromLock;
-    const onScroll = () => {
-      wasBottomLocked = isLocked() && isPhysicallyAtBottom();
-    };
-    const observer = new ResizeObserver(() => {
-      const nextHeight = el.clientHeight;
-      if (nextHeight === 0) return;
-      if (nextHeight === clientHeight) return;
-      clientHeight = nextHeight;
-      if (!wasBottomLocked || !isLocked()) return;
-      // Gecko delivers this callback before the frame paints, but the
-      // library's scrollToBottom always lands a frame later (it defers
-      // through a rAF promise), so the shrink paints with the transcript
-      // shoved up before the follow-up pin snaps it back — a visible
-      // bounce on every wrapped composer line. Pin synchronously here
-      // first; the async pins below stay as a safety net for engines that
-      // deliver the callback after paint. Target the library's park
-      // position (one pixel short) so the settle is identical whether our
-      // write or the library's lands last.
-      el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight - 1);
-      scrollToBottom("instant");
-      if (frame !== null) cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(() => {
-        frame = null;
-        if (!wasBottomLocked || !isLocked()) return;
-        el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight - 1);
-        scrollToBottom("instant");
-      });
-    });
-    el.addEventListener("scroll", onScroll, { passive: true });
-    observer.observe(el);
-    return () => {
-      el.removeEventListener("scroll", onScroll);
-      observer.disconnect();
-      if (frame !== null) cancelAnimationFrame(frame);
-    };
-  }, [scrollRef, scrollToBottom, state, visible]);
-
-  return null;
-}
-
 export function HistoryLoadingIndicator() {
   return (
     <ContentSkeleton label="Loading earlier messages" rows={1} className="mx-auto max-w-md py-2" />
@@ -2241,12 +2163,8 @@ export function JumpToTopButton({
 
   return (
     <div
-      // top 50px centers the pill on the chat-scroll-fade border, just below the
-      // h-14 ChatHeader. z-40 > header z-30. On iOS the header/fade shift down by
-      // the safe-area inset, so add --omnigent-inset-top (0px off-shell).
-      style={{ top: "calc(50px + var(--omnigent-inset-top))" }}
       className={cn(
-        "pointer-events-none absolute inset-x-0 z-40 flex justify-center transition-opacity duration-150 max-md:hidden",
+        "pointer-events-none absolute inset-x-0 top-4 z-40 flex justify-center transition-opacity duration-150 max-md:hidden",
         visible ? "opacity-100" : "opacity-0",
       )}
     >

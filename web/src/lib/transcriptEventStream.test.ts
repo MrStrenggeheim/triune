@@ -2,6 +2,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { isRetryableTranscriptError } from "./sessionUpdatesSocket";
 import {
+  readReferencedEvent,
   transcriptEventStream,
   TRANSCRIPT_QUEUE_BYTES,
   TRANSCRIPT_QUEUE_EVENTS,
@@ -10,6 +11,7 @@ import {
 
 const event = { type: "session_transport_error" as const, code: "stream_reconnect" };
 afterEach(() => {
+  vi.unstubAllGlobals();
   vi.clearAllTimers();
   vi.useRealTimers();
 });
@@ -83,4 +85,72 @@ it("delivers a supported 1 MiB output with worst-case JSON escaping and explicit
   });
   expect((await reader.read()).done).toBe(true);
   expect(isRetryableTranscriptError("stream_event_too_large")).toBe(false);
+});
+
+it.each(["digest", "length", "identity", "denied", "changed"] as const)(
+  "rejects an unusable exact read (%s)",
+  async (failure) => {
+    const digest = "0".repeat(64);
+    const body = JSON.stringify({ id: failure === "identity" ? "other" : "item", position: 2 });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(body, {
+            status: failure === "denied" ? 403 : failure === "changed" ? 409 : 200,
+            headers: { etag: failure === "digest" ? "wrong" : `"${digest}"` },
+          }),
+      ),
+    );
+    const outcome = await readReferencedEvent(
+      "parent",
+      {
+        type: "session_item_reference",
+        header: { type: "response.output_item.done" },
+        itemId: "item",
+        position: 2,
+        sha256: digest,
+        byteLength: body.length - (failure === "length" ? 1 : 0),
+      },
+      new AbortController().signal,
+    );
+    expect(outcome).toEqual({
+      type: "session_transport_error",
+      code:
+        failure === "denied"
+          ? "saved_item_unavailable"
+          : failure === "changed"
+            ? "stream_reconnect"
+            : "invalid_item_reference",
+    });
+  },
+);
+
+it("reads a digest- and identity-checked server response on plain HTTP without SubtleCrypto", async () => {
+  vi.stubGlobal("crypto", {});
+  const body = JSON.stringify({
+    id: "saved",
+    position: 2,
+    type: "function_call_output",
+    call_id: "call",
+    output: "kept",
+  });
+  const digest = "a".repeat(64);
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => new Response(body, { headers: { etag: `W/"${digest}"` } })),
+  );
+  const resolved = await readReferencedEvent(
+    "parent",
+    {
+      type: "session_item_reference",
+      header: { type: "response.output_item.done" },
+      itemId: "saved",
+      position: 2,
+      sha256: digest,
+      byteLength: body.length,
+    },
+    new AbortController().signal,
+  );
+  expect(resolved.committedItem).toEqual(JSON.parse(body));
 });

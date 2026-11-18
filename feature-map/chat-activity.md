@@ -43,7 +43,9 @@ Preconditions: use the isolated [verification environment](skills/verify-omnigen
 - After parent freeze/build, narrow an agent popup or Orchestration pane: title detail and preview each stay on one ellipsized line; status and navigation remain reachable.
 - Narrow a task message card below 480px: status and actions move beneath the text without overlap; below 440px resource rows retain accessible status while hiding its visible label.
 - Resize an Orchestration pane until filters move into Options, choose Shells there, then widen it; the inline Shells filter remains selected and the source stays unchanged.
-- Agents/Shells popups use one density-aware frame and the full shared resource row, including partial-detail states and existing focus/Stop behavior.
+- Agents/Shells popups and Orchestration use the same density-aware resource rows, with equal leading and vertical padding and the same navigation and Stop controls.
+- Agent cards, shelf and Orchestration share child snapshots, reconcile on reconnect and refresh active or unresolved children every five seconds while visible.
+- Sent and received peer cards retain delivery tracking and show delivery failures as inline errors.
 - Active and pending Plan items share the empty checkbox; active uses the shared active border and accessible In progress text, while completion keeps the read-only checkmark.
 - Queue, attention and child-context shelf backgrounds continue behind both rounded composer corners; their existing 200ms entrance/exit and reduced-motion behavior remain.
 - Captured native output, query identity and read-only side views: `web/src/hooks/useSessionShellResources.test.tsx` and `web/src/workbench/ShellResourceView.test.tsx`.

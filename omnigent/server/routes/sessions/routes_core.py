@@ -543,10 +543,10 @@ def register_core_routes(
 
     async def _accept_initial_input(
         request: Request, session_id: str, event: SessionEventInput | None, user_id: str | None
-    ) -> None:
+    ) -> str | None:
         """Save a checked first input, deleting the new session if that fails."""
         if event is None:
-            return
+            return None
         startup = request.app.state.startup_inputs
         try:
             form = (
@@ -580,7 +580,10 @@ def register_core_routes(
                         }
                     }
                 )
-            await startup.enqueue(session_id, event, user_id=user_id, headers=request.headers)
+            saved = await startup.enqueue(
+                session_id, event, user_id=user_id, headers=request.headers
+            )
+            return saved.id
         except Exception:
             # The create fails, so leave no session (or uploaded file) for a retry
             # to duplicate.
@@ -1239,7 +1242,9 @@ def register_core_routes(
                     LEVEL_OWNER,
                 )
             resp.permission_level = grant.level
-        await _accept_initial_input(request, resp.id, body.initial_input, user_id)
+        resp.initial_input_id = await _accept_initial_input(
+            request, resp.id, body.initial_input, user_id
+        )
         # Managed host: schedule a BACKGROUND sandbox provision bound
         # to this session and return immediately — provisioning takes
         # tens of seconds and must not block the create POST. The
@@ -1509,7 +1514,7 @@ def register_core_routes(
                 await asyncio.to_thread(
                     permission_store.grant, user_id, result.session_id, LEVEL_OWNER
                 )
-        await _accept_initial_input(
+        result.initial_input_id = await _accept_initial_input(
             request, result.session_id, parsed_metadata.initial_input, user_id
         )
         _announce_session_added(user_id, result.session_id)

@@ -74,7 +74,8 @@ Narrow composer workspace controls collapse to an icon and chevron while retaini
 The shell owns device safe-area insets once; native top clearance uses the application-bar paint and bottom clearance uses the content surface.
 Browser `theme-color` follows the resolved opaque application-bar color, and the standalone status shim paints that surface across the reserved top inset.
 Main and side-chat mobile composers add an 8px Comfortable or 4px Compact content gutter.
-Remove pane docking menus and the app-bar Layout control; mouse hover or keyboard focus replaces the tab type icon with its pin control, without reserving another slot.
+The app bar places Layout presets immediately before Notifications.
+Mouse hover or keyboard focus replaces the tab type icon with its pin control, without reserving another slot.
 Touch tabs switch on the first tap; pinning remains available through the shared context menu.
 Keep the chat content action menu as three dots; place the existing Chat/Terminal switch immediately before it.
 Keep conversation breadcrumbs in the view header.

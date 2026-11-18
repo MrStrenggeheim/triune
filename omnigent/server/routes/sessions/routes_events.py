@@ -11,11 +11,12 @@ import time
 import weakref
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from dataclasses import dataclass
-from typing import Any, Literal, cast
+from typing import Annotated, Any, Literal, cast
 
 import httpx
 from fastapi import (
     APIRouter,
+    Header,
     HTTPException,
     Query,
     Request,
@@ -3855,6 +3856,7 @@ def register_events_routes(
         request: Request,
         session_id: str,
         idle: bool = False,
+        item_references: Annotated[bool, Header(alias="X-Omnigent-Item-References")] = False,
         after_position: int | None = Query(default=None, ge=-1),
         after_revision: int | None = Query(default=None, ge=0),
         stream_epoch: str | None = None,
@@ -3862,6 +3864,7 @@ def register_events_routes(
         window_start_position: int | None = Query(default=None, ge=0, le=9007199254740991),
     ) -> StreamingResponse:
         """Encode the authorized typed session stream as HTTP SSE."""
+        request.state.item_references = item_references
         events = await prepare_session_stream(
             request,
             session_id,

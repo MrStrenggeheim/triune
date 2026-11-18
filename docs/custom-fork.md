@@ -392,3 +392,15 @@ This remains safe when a cached client outlives a server rollback or a remote ru
 Future observations use `session.codex_next_turn_permissions_v1` and `omnigent.codex_native.next_turn_permissions_v1`; the old current-scope label/event receives only an Unknown invalidation.
 Actual `86aca953c` server/runner probes returned 404 for the new route without side effects; its unknown runner event returned 200, while a marked legacy event still attempted Escape.
 Compatibility evidence and the integration delta from the functional candidate are under `artifacts/reliability-audit-20261117/permission-control/compatibility/`.
+
+## Session layout, transcript and settings
+
+The header layout menu redistributes open views and retains each session's tabs and drafts.
+Dragging a divider resizes its two neighbors.
+Settings → Appearance → Chat defaults controls whether answers follow the reader at the bottom; new profiles hold their position.
+
+A chat mention inserts a link immediately.
+New sessions reconcile their first message with the item ID returned by the server.
+Large saved events can travel as authorized item references; the client applies the complete item before advancing its transcript checkpoint.
+
+See [Unified workspace](../feature-map/unified-workspace.md), [Composer](../feature-map/composer.md), [Chat activity](../feature-map/chat-activity.md) and [Native harnesses](../feature-map/native-harnesses.md).

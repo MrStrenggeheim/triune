@@ -20,7 +20,7 @@ import {
   type TranscriptCursor,
   type TranscriptResponse,
 } from "@/lib/sessionUpdatesSocket";
-import { readTranscriptEvents } from "@/lib/transcriptEventStream";
+import { readReferencedEvent, readTranscriptEvents } from "@/lib/transcriptEventStream";
 import {
   normalizeTranscript,
   replaceNativePreviewContent,
@@ -484,6 +484,7 @@ export function hydrateLocalConversation(
   project?: LocalConversationProject,
   initialInputAccepted = false,
   onAccepted?: () => void,
+  initialInputId?: string,
 ): void {
   const shouldSend = !initialInputAccepted && hasPendingLocalMessage(tempConvId);
   const restoredDraft = conversationRegistry.peek(tempConvId)?.getState().failedSendDraft;
@@ -512,7 +513,13 @@ export function hydrateLocalConversation(
         startupPending: true,
         pendingUserMessages: state.pendingUserMessages.map((message) =>
           message.tempId === pendingMsgTempId
-            ? { ...message, posted: true, initialDraft: undefined, serverOwnedInitial: true }
+            ? {
+                ...message,
+                ...(initialInputId ? { stableId: initialInputId, itemId: initialInputId } : {}),
+                posted: true,
+                initialDraft: undefined,
+                serverOwnedInitial: true,
+              }
             : message,
         ),
       }));
@@ -7767,7 +7774,13 @@ export async function startStreamPump(
         consecutive404s = 0;
         presenceIdle.noteReported(idle);
         streamAttemptActivity.set(attempt, Date.now());
-        if (reconnecting) dropEphemeralInFlightBlocks(id, set);
+        if (reconnecting) {
+          dropEphemeralInFlightBlocks(id, set);
+          void queryClient?.invalidateQueries(
+            { queryKey: childSessionsQueryKey(id), exact: true },
+            { cancelRefetch: false },
+          );
+        }
         // Guard the byte stream with a silence watchdog: the server
         // heartbeats every 15 s, so a longer gap means a half-open socket
         // (laptop sleep, network path change, proxy reap). The guard ends
@@ -8435,6 +8448,8 @@ function recordStreamReceipt(id: string, replay: SynchronizationAttempt, event: 
   });
 }
 
+const failedReferenceReads = new WeakMap<AbortController, { digest: string; attempts: number }>();
+
 export async function pumpStreamEvents(
   id: string,
   body: ReadableStream<Uint8Array | StreamEvent>,
@@ -8468,7 +8483,23 @@ export async function pumpStreamEvents(
     const source = structured
       ? readTranscriptEvents(body as ReadableStream<StreamEvent>)
       : parseSseStream(body as ReadableStream<Uint8Array>, sseResult);
-    for await (const event of source) {
+    for await (const received of source) {
+      // Materialize before parsing any later event or accepting its checkpoint.
+      if (controller.signal.aborted || !replay.current) return;
+      let event: StreamEvent = received;
+      if (received.type === "session_item_reference") {
+        event = await readReferencedEvent(id, received, controller.signal);
+        const owner = binding ?? controller;
+        if (event.type === "session_transport_error" && isRetryableTranscriptError(event.code)) {
+          const previous = failedReferenceReads.get(owner);
+          const attempts = previous?.digest === received.sha256 ? previous.attempts + 1 : 1;
+          failedReferenceReads.set(owner, { digest: received.sha256, attempts });
+          if (attempts >= 3)
+            event = { type: "session_transport_error", code: "saved_item_unavailable" };
+        } else if (failedReferenceReads.get(owner)?.digest === received.sha256) {
+          failedReferenceReads.delete(owner);
+        }
+      }
       if (
         controller.signal.aborted ||
         !replay.current ||
@@ -8483,6 +8514,7 @@ export async function pumpStreamEvents(
           ? new Set(get().blocks.filter((block) => block.ctx.itemId === event.item.id))
           : undefined;
       yield event;
+      if (event.type === "session_transport_error") return;
       if (
         event.type === "session_item_updated" &&
         previousItemBlocks !== undefined &&
@@ -8595,7 +8627,9 @@ export async function pumpStreamEvents(
               `transcript unavailable (${event.code})`,
               event.code === "stream_event_too_large"
                 ? "A saved item is too large for live updates. Choose Export from Conversation actions to read its full contents."
-                : undefined,
+                : ["invalid_item_reference", "saved_item_unavailable"].includes(event.code)
+                  ? "A saved item could not be verified. Reopen this conversation to retry, or use Export from Conversation actions."
+                  : undefined,
             );
             set({ status: "idle" });
             sseResult.sawDone = true;
@@ -11224,6 +11258,11 @@ function applyChildSessionUpdated(
     if (!record.code || !record.message) return null;
     return { code: record.code, message: record.message };
   };
+  const cached = current.find((row) => row.id === childId);
+  if (typeof child.updated_at === "number") {
+    if (cached?.updated_at !== undefined && child.updated_at < cached.updated_at) return;
+    patch.updated_at = child.updated_at;
+  }
   if (child.title !== undefined) patch.title = strOrNull(child.title);
   if (child.tool !== undefined) patch.tool = strOrNull(child.tool);
   if (child.session_name !== undefined) patch.session_name = strOrNull(child.session_name);
@@ -11246,6 +11285,7 @@ function applyChildSessionUpdated(
     // update (snapshot/refetch) fills them in.
     const inserted: ChildSessionInfo = {
       id: childId,
+      updated_at: patch.updated_at,
       title: patch.title ?? null,
       task_summary: patch.task_summary ?? null,
       tool: patch.tool ?? null,

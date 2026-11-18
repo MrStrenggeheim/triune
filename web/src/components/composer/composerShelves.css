@@ -120,19 +120,15 @@
   gap: var(--popup-item-gap);
 }
 
-.resource-popup .density-row {
-  padding: var(--popup-item-gap) var(--popup-item-gap) var(--popup-item-gap) 0;
+.activity-row--resource .resource-row {
+  padding-inline-start: var(--list-row-padding-block);
 }
 
-.resource-popup .resource-text {
+.activity-row--resource .resource-text {
   display: flex;
   flex-direction: column;
   justify-content: center;
   gap: var(--popup-text-gap);
-}
-
-.resource-popup > ul {
-  gap: var(--popup-item-gap);
 }
 
 .composer-queue-list {

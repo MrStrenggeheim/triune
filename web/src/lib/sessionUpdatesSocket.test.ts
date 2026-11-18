@@ -276,6 +276,7 @@ describe("sessionUpdatesSocket transcript multiplexing", () => {
       expect(FakeWebSocket.instances).toHaveLength(1);
       expect(latestWs().sent).toContainEqual({
         type: "subscribe",
+        item_references: true,
         session_id: "a",
         after_position: 10,
         after_revision: 22,
@@ -333,6 +334,7 @@ describe("sessionUpdatesSocket transcript multiplexing", () => {
       );
       expect(latestWs().sent.at(-1)).toEqual({
         type: "subscribe",
+        item_references: true,
         session_id: "reader",
         after_position: 9999,
         after_revision: 20,

@@ -64,9 +64,11 @@ export function insertQuoteReference(
   inherited = false,
 ): void {
   const current = readReferenceDraft(id);
-  const alreadyInserted = current.some((item) => item.snapshot_id === reference.snapshot_id);
+  const alreadyInserted = current.some(
+    (item) => item.version === 1 && item.snapshot_id === reference.snapshot_id,
+  );
   writeReferenceDraft(id, [
-    ...current.filter((item) => item.snapshot_id !== reference.snapshot_id),
+    ...current.filter((item) => item.version !== 1 || item.snapshot_id !== reference.snapshot_id),
     { ...reference, inherited_by: inherited ? id : undefined },
   ]);
   if (reference.quote && !alreadyInserted) insertQuoteDraft(id, reference.quote, true);

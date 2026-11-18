@@ -1699,6 +1699,7 @@ describe("openSessionStream", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe("/v1/sessions/conv_abc/stream");
+    expect(new Headers(init.headers).get("X-Omnigent-Item-References")).toBe("1");
     expect(new Headers(init.headers).get("Accept")).toBe("text/event-stream");
     expect(init.signal).toBe(signal);
   });

@@ -1116,5 +1116,13 @@ export type StreamEvent = (
   | UiOpenFileEvent
   | SessionSyncEvent
   | SessionHeartbeatEvent
+  | {
+      type: "session_item_reference";
+      itemId: string;
+      position: number;
+      sha256: string;
+      byteLength: number;
+      header: Record<string, unknown>;
+    }
   | { type: "session_transport_error"; code: string }
 ) & { position?: number; createdAtS?: number; committedItem?: Record<string, unknown> };

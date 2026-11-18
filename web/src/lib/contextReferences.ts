@@ -38,6 +38,18 @@ export interface ContextReference {
   /** Draft-only provenance: this fork already contains the captured source history. */
   inherited_by?: string;
 }
+export interface ChatLink {
+  version: 2;
+  url: string;
+  source_id: string;
+  source_title: string;
+}
+export type ComposerReference = ContextReference | ChatLink;
+
+export function referenceIdentity(reference: ComposerReference): string {
+  return reference.version === 2 ? `link:${reference.source_id}` : reference.snapshot_id;
+}
+
 export interface ReferenceChat {
   message_id?: string;
   snippet?: string;
@@ -118,7 +130,8 @@ export function captureReference(
     },
   );
 }
-export function serializeContextReference(reference: ContextReference): string {
+export function serializeContextReference(reference: ComposerReference): string {
+  if (reference.version === 2) return reference.url;
   if (reference.inherited_by) return "";
   return `[Chat context snapshot]\n${JSON.stringify(reference)}\n[/Chat context snapshot]`;
 }

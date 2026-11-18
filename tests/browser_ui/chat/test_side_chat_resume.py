@@ -10,8 +10,10 @@ from typing import Any
 import pytest
 from playwright.sync_api import Page, Route, expect
 
-from tests.browser_ui.chat.session_contract import ChatSessionContract, list_payload
-from tests.browser_ui.chat.test_bottom_spacing23 import record_side_tail_geometry
+from tests.browser_ui.chat.session_contract import ChatSessionContract, message_item
+from tests.browser_ui.chat.test_bottom_spacing23 import record_tail_geometry
+from tests.browser_ui.chat.test_unified_workspace import WorkspaceJourney
+from tests.browser_ui.chat.test_unified_workspace import workspace_journey as workspace_journey
 
 
 def test_runnerless_side_chat_sends_from_its_direct_url(
@@ -51,13 +53,14 @@ def test_runnerless_side_chat_sends_from_its_direct_url(
 
 def test_side_chat_resume_conflict_refetches_metadata_and_seals_pane(
     page: Page,
-    chat_session_contract: ChatSessionContract,
+    workspace_journey: WorkspaceJourney,
     output_path: str,
 ) -> None:
     """A failed side-chat resume becomes read-only without reloading the app."""
-    chat = chat_session_contract
+    chat, side_chat = workspace_journey.chats
     artifacts = Path(output_path)
-    child_id = "browser-side-child"
+    artifacts.mkdir(parents=True, exist_ok=True)
+    child_id = side_chat.session_id
     child_path = f"/v1/sessions/{child_id}"
     child_gets: list[dict[str, Any]] = []
     retry_posts: list[dict[str, Any]] = []
@@ -65,8 +68,17 @@ def test_side_chat_resume_conflict_refetches_metadata_and_seals_pane(
     child_closed = False
 
     chat.update_session(harness="openai-agents")
+    peer = message_item("peer-child", "user", "Follow up with the side chat.", response_id="peer")
+    peer["communication"] = {
+        "kind": "peer",
+        "message_id": "peer-child",
+        "source_conversation_id": chat.session_id,
+        "destination_conversation_id": child_id,
+        "delivery_state": "confirmed",
+    }
     chat.set_items(
         [
+            peer,
             {
                 "id": "parent-history",
                 "response_id": "parent-response",
@@ -74,20 +86,10 @@ def test_side_chat_resume_conflict_refetches_metadata_and_seals_pane(
                 "role": "user",
                 "status": "completed",
                 "content": [{"type": "input_text", "text": "Parent remains usable."}],
-            }
+            },
         ]
     )
-    child_session = dict(chat._session())
-    child_session.update(
-        {
-            "id": child_id,
-            "agent_id": chat.agent_id,
-            "agent_name": chat.agent_id,
-            "harness": "openai-agents",
-            "status": "failed",
-            "labels": {},
-        }
-    )
+    side_chat.update_session(title="Follow-up side chat", status="failed")
     child_items = [
         {
             "id": "child-history",
@@ -110,6 +112,7 @@ def test_side_chat_resume_conflict_refetches_metadata_and_seals_pane(
         },
     ]
 
+    side_chat.set_items(child_items)
     contract = chat.contract
     base = re.escape(chat.base_url)
     child_session_pattern = re.compile(rf"^{base}{re.escape(child_path)}(?:\?.*)?$")
@@ -118,21 +121,17 @@ def test_side_chat_resume_conflict_refetches_metadata_and_seals_pane(
         if route.request.method != "GET":
             route.fallback()
             return
-        snapshot = dict(child_session)
-        snapshot["labels"] = {"omnigent.closed": "true"} if child_closed else {}
+        snapshot = side_chat.session_snapshot()
+        snapshot["labels"] = {
+            "omnigent.side_chat": "1",
+            "omnigent.side_chat.source_id": chat.session_id,
+        }
+        if child_closed:
+            snapshot["labels"]["omnigent.closed"] = "true"
         child_gets.append({"labels": dict(snapshot["labels"])})
         route.fulfill(status=200, content_type="application/json", body=json.dumps(snapshot))
 
     contract.route(child_session_pattern, get_child_session)
-    contract.json(f"{child_path}/items", lambda _request: list_payload(child_items))
-    contract.json(f"{child_path}/agent", lambda _request: chat._agent())
-    contract.json(f"{child_path}/child_sessions", list_payload([]))
-    contract.json(f"{child_path}/resources/terminals", list_payload([]))
-    contract.response(f"{child_path}/read-state", method="PUT")
-    contract.sse(f"{child_path}/stream")
-    contract.json(f"/v1/sessions/{chat.session_id}/policies", list_payload([]))
-    contract.json("/v1/policy-registry", list_payload([]))
-    contract.json(f"/v1/sessions/{chat.session_id}/owner", {"owner": None})
 
     def retry_child(route: Route) -> None:
         nonlocal child_closed
@@ -162,57 +161,43 @@ def test_side_chat_resume_conflict_refetches_metadata_and_seals_pane(
     contract.route(re.compile(rf"^{base}{re.escape(child_path)}/events$"), retry_child)
 
     page.goto(chat.url)
-    page.evaluate(
-        """state => {
-          localStorage.setItem("omnigent:session-workspace-state", JSON.stringify([state]));
-          localStorage.setItem("omnigent.sideChatInherited:browser-side-child", "[]");
-        }""",
-        {
-            "id": "browser-chat-session",
-            "state": {
-                "open": True,
-                "rightRailTab": "sidechat",
-                "openSideChats": ["browser-side-child"],
-                "selectedSideChatId": "browser-side-child",
-            },
-        },
-    )
-    page.reload()
-    workspace_state = page.evaluate("localStorage.getItem('omnigent:session-workspace-state')")
-    assert workspace_state is not None and '"browser-side-child"' in workspace_state
-    panel_toggle = page.get_by_role("button", name=re.compile("right panel", re.IGNORECASE))
-    if panel_toggle.get_attribute("aria-label") == "Expand right panel":
-        panel_toggle.click()
-    expect(page.get_by_role("tab", name="Side chat 1")).to_be_visible(timeout=10_000)
-    page.get_by_role("tab", name="Side chat 1").click()
-    expect(page.get_by_text("Side-chat history that must remain visible")).to_be_visible(
-        timeout=20_000
-    )
+    page.get_by_test_id("peer-message").get_by_role(
+        "link", name="Follow-up side chat", exact=True
+    ).click()
+    parent = page.locator(f'[data-dock-view="conversation:{chat.session_id}"]')
+    child = page.locator(f'[data-dock-view="conversation:{child_id}"]')
+    expect(parent).to_be_visible()
+    expect(child).to_be_visible()
+    expect(
+        child.get_by_text("Side-chat history that must remain visible.", exact=True)
+    ).to_be_visible(timeout=20_000)
     resume = page.get_by_role("button", name="Resume session", exact=True)
     expect(resume).to_be_visible(timeout=10_000)
     expect(page.get_by_text("Parent remains usable.")).to_be_visible()
-    before_spacing = record_side_tail_geometry(page)
+    before_spacing = record_tail_geometry(page, scope=child)
     (artifacts / "side-before-geometry.json").write_text(json.dumps(before_spacing, indent=2))
     page.screenshot(path=str(artifacts / "side-chat-before.png"), full_page=True)
     metadata_gets_before = len(child_gets)
 
     resume.click()
 
-    expect(page.get_by_text("This side chat has ended and can’t be continued.")).to_be_visible(
+    expect(child.get_by_placeholder("This sub-agent session is closed")).to_be_disabled(
         timeout=10_000
     )
     expect(resume).to_have_count(0)
-    expect(page.get_by_text("Side-chat history that must remain visible")).to_be_visible()
+    expect(
+        child.get_by_text("Side-chat history that must remain visible.", exact=True)
+    ).to_be_visible()
     expect(page.get_by_text("Parent remains usable.")).to_be_visible()
-    parent_composer = page.get_by_placeholder("Send a message…")
+    parent_composer = parent.get_by_label("Message the agent")
     expect(parent_composer).to_be_enabled()
     parent_composer.fill("Parent composer remains editable.")
     expect(parent_composer).to_have_value("Parent composer remains editable.")
     parent_composer.fill("")
     assert retry_posts == [{"type": "retry_session", "data": {}}]
     assert len(child_gets) > metadata_gets_before
-    assert child_gets[-1]["labels"] == {"omnigent.closed": "true"}
-    after_spacing = record_side_tail_geometry(page)
+    assert child_gets[-1]["labels"]["omnigent.closed"] == "true"
+    after_spacing = record_tail_geometry(page, scope=child)
     (artifacts / "side-after-geometry.json").write_text(json.dumps(after_spacing, indent=2))
     for geometry in (before_spacing, after_spacing):
         assert geometry["viewportGap"] == pytest.approx(geometry["padding"], abs=2), geometry

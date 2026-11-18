@@ -141,7 +141,7 @@ export function subagentEventStatus(activity: SubagentActivity): AgentStatus {
   if (["cancelled", "killed", "stopped"].includes(activity.status ?? ""))
     return { activity: "other", label: "Stopped" };
   if (activity.status === "completed") return { activity: "done", label: "Completed" };
-  if (activity.phase === "delegated") return { activity: "other", label: "Started" };
+  if (activity.phase === "delegated") return { activity: "other", label: "Status unavailable" };
   return { activity: "done", label: "Completed" };
 }
 
@@ -363,6 +363,7 @@ export function canonicalSubagentCards(
                 first.data.conversation_id ?? null,
                 first.activity.sessionId,
               ]),
+              card_dispatch_id: latestDispatch,
               card_status: latest.status,
               card_phase: latest.phase,
               card_aliases: group.flatMap((entry) =>

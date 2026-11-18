@@ -181,9 +181,7 @@ export {
   HistoryAutoLoader,
   HistoryLoadingIndicator,
   JumpToTopButton,
-  KeepBottomOnViewportResize,
   LatestTurnSpacer,
-  ScrollToBottomOnSend,
   SessionSharedContext,
   WORKING_MESSAGES,
   WorkingIndicator,
@@ -1759,77 +1757,9 @@ const MainAgentSurface = memo(function MainAgentSurfaceImpl({
       thaw();
     };
   }, [scroller]);
-  const [sendScrollNonce, setSendScrollNonce] = useState(0);
-  const handleSend = useCallback(
-    (...args: Parameters<MainAgentSurfaceProps["onSend"]>) => {
-      setSendScrollNonce((n) => n + 1);
-      onSend(...args);
-    },
-    [onSend],
-  );
-  // Wrap the slash-command sender the same way (scroll to bottom on send).
-  // Gated off for native-wrapper sessions (claude-native / codex-native):
-  // there the composer's `/skill` must reach the vendor TUI as plaintext
-  // (the server has no slash_command path for native sessions). Undefined
-  // → the composer falls through to the plaintext send for these. Keyed
-  // on the wrapper label, NOT `isTerminalFirst` — a terminal-first SDK
-  // session (embedded Omnigent REPL terminal) runs an in-process harness
-  // with the full server-side slash_command path.
   const isTerminalFirst = terminalFirst?.isTerminalFirst === true;
   const isNativeWrapper = terminalFirst?.isNativeWrapper === true;
-  const handleSendSlashCommand = useMemo(
-    () =>
-      onSendSlashCommand && !isNativeWrapper
-        ? (name: string, args: string) => {
-            setSendScrollNonce((n) => n + 1);
-            onSendSlashCommand(name, args);
-          }
-        : undefined,
-    [onSendSlashCommand, isNativeWrapper],
-  );
-
-  // Synchronous bottom re-pin for the composer's growth, called in the same
-  // task as the height change (before any paint — the only ordering Gecko
-  // doesn't paint past; every async pin leaves one intermediate frame).
-  // Guarded by the live lock state, not the public isAtBottom alias, so a
-  // reader who scrolled up mid-stream is never yanked down.
-  // Retain the optional resize hook for embedded transcript callers.
-  const spacerMeasureRef = useRef<(() => void) | null>(null);
-  // Whether the transcript was physically at the bottom as of its last scroll
-  // event. Evaluated lazily-per-event (not at pin time) so the write never
-  // reads the just-shrunk viewport, where any distance readouts are already
-  // off the bottom by the growth amount — an escaped reader must be detected
-  // from their escape scroll, not from the shrink it preceded.
-  const pinnedToBottomRef = useRef(false);
-  useEffect(() => {
-    const scrollEl = scroller?.el;
-    if (!scrollEl) return;
-    const update = () => {
-      pinnedToBottomRef.current =
-        scrollEl.scrollHeight - scrollEl.clientHeight - scrollEl.scrollTop <= 1;
-    };
-    update();
-    scrollEl.addEventListener("scroll", update, { passive: true });
-    return () => scrollEl.removeEventListener("scroll", update);
-  }, [scroller]);
-
-  const pinScrollOnComposerGrowth = useCallback(() => {
-    spacerMeasureRef.current?.();
-    // Read through a local so the linter doesn't flag the DOM write as
-    // a mutation of the outer `scroller` state ref.
-    const scrollEl = scroller?.el;
-    if (!scrollEl) return;
-    const lockState = scroller?.state;
-    if (!lockState?.isAtBottom || lockState.escapedFromLock) return;
-    // A reader who escaped the bottom (or never arrived) keeps their
-    // position: growth must not yank it down.
-    if (!pinnedToBottomRef.current) return;
-    // Park at the same position stick-to-bottom settles on (one pixel short
-    // of the maximum); writing the exact bottom would leave the settle one
-    // pixel lower than the library's park and trail a 1px snap-back.
-    scrollEl.scrollTop = Math.max(0, scrollEl.scrollHeight - scrollEl.clientHeight - 1);
-  }, [scroller]);
-
+  const handleSendSlashCommand = isNativeWrapper ? undefined : onSendSlashCommand;
   // Pre-warm terminal attaches across Chat/Terminal flips and session switches.
   // Hidden overlays retain layout so FitAddon geometry stays stable; the chat
   // surface unmounts while Terminal is shown.
@@ -1906,6 +1836,11 @@ const MainAgentSurface = memo(function MainAgentSurfaceImpl({
           alone — this surface's composer and chrome below bail out. */}
           <ChatImageGalleryProvider conversationId={conversationId}>
             <Transcript
+              recoveryDisabled={isComposerReadOnly(
+                permissionLevel,
+                readOnlyReason,
+                sendDisabledReason,
+              )}
               branch={branch}
               hideInheritedHistory={hideInheritedHistory}
               hostId={hostId}
@@ -1913,14 +1848,12 @@ const MainAgentSurface = memo(function MainAgentSurfaceImpl({
               containerEl={containerEl}
               scroller={scroller}
               setScroller={setScroller}
-              sendScrollNonce={sendScrollNonce}
               hasMoreHistory={hasMoreHistory}
               loadingMoreHistory={loadingMoreHistory}
               isMobileViewport={isMobileViewport}
               showsWorking={showsWorking}
               agentsError={agentsError}
               sandboxLaunching={sandboxLaunching}
-              spacerMeasureRef={spacerMeasureRef}
             />
           </ChatImageGalleryProvider>
           {/* Floating reply button — scoped to the conversation container.
@@ -1944,7 +1877,7 @@ const MainAgentSurface = memo(function MainAgentSurfaceImpl({
             disabled={disabled}
             status={status}
             isWorking={isWorking}
-            onSend={handleSend}
+            onSend={onSend}
             onNewSession={onNewSession}
             onSendSlashCommand={handleSendSlashCommand}
             onStop={onStop}
@@ -1985,7 +1918,6 @@ const MainAgentSurface = memo(function MainAgentSurfaceImpl({
             subagentRoutingEligible={subagentRoutingEligible}
             subAgentLabel={subAgentLabel}
             wrapperLabel={wrapperLabel}
-            onViewportShrinkPinScroll={pinScrollOnComposerGrowth}
           />
         </>
       )}
@@ -4382,7 +4314,6 @@ function ComposerImpl(
               {(mentionOpen || mentionListingPending) && (
                 <ComposerMentionMenu
                   query={mention?.query ?? ""}
-                  destinationId={composerSessionId ?? null}
                   onReference={attachReference}
                   currentDir={mentionDir}
                   activeIndex={mentionIndex}

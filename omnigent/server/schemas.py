@@ -2046,6 +2046,7 @@ class CreatedSessionResponse(BaseModel):
     """
 
     session_id: str
+    initial_input_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
     agent_id: str
     agent_name: str
 
@@ -2459,6 +2460,7 @@ class SessionResponse(BaseModel):
     """
 
     id: str
+    initial_input_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
     agent_id: str
     agent_name: str | None = None
     status: Literal["idle", "running", "waiting", "failed"]
@@ -4379,6 +4381,17 @@ class SessionHeartbeatEvent(_SSEEventBase):
     reset_revision: int | None = Field(default=None, ge=0)
 
 
+class SessionItemReferenceEvent(_SSEEventBase):
+    """A negotiated exact read replaces the saved body in this event header."""
+
+    type: Literal["session.item_reference"]
+    item_id: str
+    position: int = Field(ge=0)
+    header: dict[str, Any]
+    sha256: str
+    byte_length: int = Field(gt=0)
+
+
 class SessionSyncEvent(_SSEEventBase):
     """Canonical replay boundary; reset replaces the client's committed set."""
 
@@ -5180,6 +5193,7 @@ ServerStreamEvent = Annotated[
     | HeartbeatEvent
     | SessionHeartbeatEvent
     | SessionSyncEvent
+    | SessionItemReferenceEvent
     # ── Transient (SSE-only) — synchronous decision request ────
     | ElicitationRequestEvent
     | ElicitationResolvedEvent

@@ -124,7 +124,8 @@ it("uses a mounted composer's structured quote callback without changing its edi
     const [saved] = readReferenceDraft("target");
     expect(saved).toEqual({ ...reference, inherited_by: "target" });
     expect(serializeContextReference(saved!)).toBe("");
-    expect(saved?.items).toEqual(reference.items);
+    if (saved?.version !== 1) throw new Error("Expected a saved quote snapshot");
+    expect(saved.items).toEqual(reference.items);
     expect(saved?.boundary_id).toBe(reference.boundary_id);
     insertQuoteReference("elsewhere", saved!);
     expect(serializeContextReference(readReferenceDraft("elsewhere")[0]!)).toContain(

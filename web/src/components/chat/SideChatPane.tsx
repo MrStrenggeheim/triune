@@ -1,4 +1,5 @@
 // Modified for Triune; inherited notices remain applicable.
+import { observeChatScroll, useChatScrollPreference } from "@/lib/chatScrollPreference";
 import { useTranscriptConvergenceDisplay } from "@/hooks/useTranscriptConvergenceDisplay";
 import { ComposerMentionMenu } from "@/components/composer/ComposerMentionMenu";
 import { ComposerMentionChips } from "@/components/composer/ComposerMentionChips";
@@ -312,11 +313,16 @@ export function SideChatPane({
     undefined,
     visibleBlocks,
   );
-  const bottomRef = useRef<HTMLDivElement>(null);
-  const followTail = useRef(true);
-  useEffect(() => {
-    if (!fullSession || followTail.current) bottomRef.current?.scrollIntoView({ block: "end" });
-  }, [bubbles.length, activeResponse, fullSession]);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const scrollPreference = useChatScrollPreference();
+  useLayoutEffect(() => {
+    if (!transcriptRef.current || !contentRef.current) return;
+    return observeChatScroll(
+      transcriptRef.current,
+      contentRef.current,
+      scrollPreference === "follow",
+    );
+  }, [childId, scrollPreference]);
 
   const loadFailed = !pending && conversationLoadError !== null && bubbles.length === 0;
   const isEmpty = bubbles.length === 0 && !loadingConversation && !loadFailed && !showsWorking;
@@ -344,61 +350,53 @@ export function SideChatPane({
   return (
     <ConversationScopeContext.Provider value={childId}>
       <div className="side-chat-backdrop flex h-full min-h-0 flex-col">
-        <div
-          ref={transcriptRef}
-          className="flex min-h-0 flex-1 flex-col overflow-y-auto px-3 py-4"
-          onScroll={(event) => {
-            const node = event.currentTarget;
-            followTail.current = node.scrollHeight - node.scrollTop - node.clientHeight < 64;
-          }}
-        >
-          {fullSession && state.hasMoreHistory && (
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled={state.loadingMoreHistory}
-              loading={state.loadingMoreHistory}
-              onClick={() => {
-                followTail.current = false;
-                void useChatStore.getState().loadMoreHistory(childId);
-              }}
-            >
-              Load earlier messages
-            </Button>
-          )}
-          {loadFailed ? (
-            <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
-              <TriangleAlertIcon className="size-6 text-muted-foreground" />
-              <p className="text-ui font-medium text-foreground">
-                {fullSession ? "Couldn’t load this session" : "Couldn’t load this side chat"}
-              </p>
-              <p className="max-w-[36ch] text-sm text-muted-foreground">
-                {conversationLoadError?.message ?? "Please try again."}
-              </p>
+        <div ref={transcriptRef} className="flex min-h-0 flex-1 flex-col overflow-y-auto px-3 py-4">
+          <div ref={contentRef} className="flex min-h-full shrink-0 flex-col">
+            {fullSession && state.hasMoreHistory && (
               <Button
-                type="button"
+                variant="ghost"
                 size="sm"
-                variant="outline"
-                className="mt-1"
-                onClick={() => void ensureConversationStreamed(childId)}
+                disabled={state.loadingMoreHistory}
+                loading={state.loadingMoreHistory}
+                onClick={() => {
+                  void useChatStore.getState().loadMoreHistory(childId);
+                }}
               >
-                Retry
+                Load earlier messages
               </Button>
-            </div>
-          ) : fullSession && loadingConversation && bubbles.length === 0 ? (
-            <ContentSkeleton label="Loading session" className="m-auto" />
-          ) : isEmpty ? (
-            <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
-              <MessagesSquareIcon className="size-6 text-muted-foreground" />
-              <p className="text-ui font-medium text-foreground">
-                {fullSession ? "No messages yet" : "Side chat"}
-              </p>
-              {!fullSession && (
-                <p className="max-w-[36ch] text-sm text-muted-foreground">{EMPTY_STATE_BODY}</p>
-              )}
-            </div>
-          ) : (
-            <>
+            )}
+            {loadFailed ? (
+              <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
+                <TriangleAlertIcon className="size-6 text-muted-foreground" />
+                <p className="text-ui font-medium text-foreground">
+                  {fullSession ? "Couldn’t load this session" : "Couldn’t load this side chat"}
+                </p>
+                <p className="max-w-[36ch] text-sm text-muted-foreground">
+                  {conversationLoadError?.message ?? "Please try again."}
+                </p>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="mt-1"
+                  onClick={() => void ensureConversationStreamed(childId)}
+                >
+                  Retry
+                </Button>
+              </div>
+            ) : fullSession && loadingConversation && bubbles.length === 0 ? (
+              <ContentSkeleton label="Loading session" className="m-auto" />
+            ) : isEmpty ? (
+              <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
+                <MessagesSquareIcon className="size-6 text-muted-foreground" />
+                <p className="text-ui font-medium text-foreground">
+                  {fullSession ? "No messages yet" : "Side chat"}
+                </p>
+                {!fullSession && (
+                  <p className="max-w-[36ch] text-sm text-muted-foreground">{EMPTY_STATE_BODY}</p>
+                )}
+              </div>
+            ) : (
               <div className="mt-auto flex shrink-0 flex-col gap-4">
                 {streamBubbles.map((bubble, index) => (
                   <BubbleView
@@ -412,9 +410,8 @@ export function SideChatPane({
                 {shouldShowWorkingIndicator(showsWorking, bubbles) && <WorkingIndicator />}
                 <AwaitingAgentMessages bubbles={awaitingAgentBubbles} />
               </div>
-              <div ref={bottomRef} className="h-0 shrink-0" aria-hidden="true" />
-            </>
-          )}
+            )}
+          </div>
         </div>
         {!readOnly && !starting && (
           <SelectionPopup
@@ -1055,7 +1052,6 @@ function SideChatComposer({
           beforeInput: mention ? (
             <ComposerMentionMenu
               query={mention.query}
-              destinationId={childId}
               onReference={mentionBrowser.attachReference}
               currentDir=""
               activeIndex={-1}

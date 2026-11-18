@@ -260,6 +260,8 @@ def test_provenance_peer_directions_and_reload(
                 **(
                     {
                         "status": "completed",
+                        "result_finality": "final_answer",
+                        "turn_id": "audit-turn",
                         "result_text": (
                             "Compact **cards pass**.\nSecond line.\nThird line.\n\n"
                             "| Check | Result |\n| --- | --- |\n| Footer | Absent |"
@@ -311,10 +313,11 @@ def test_provenance_peer_directions_and_reload(
         received = chat.locator('[data-message-id="received-report"]')
         sent = chat.locator('[data-message-id="sent-request"]')
         for card, direction, attribution, name in (
-            (received, "received", "Jules from Chat B", "Jules"),
-            (sent, "sent", "Orion sent to Chat B", "Orion"),
+            (received, "received", "Chat B from Chat B", "Chat B"),
+            (sent, "sent", "Chat A sent to Chat B", "Chat A"),
         ):
             expect(card).to_have_attribute("data-direction", direction)
+            expect(card.get_by_role("status")).to_have_count(0)
             expect(card.locator("[data-resource-row]")).to_contain_text(attribution)
             expect(card.locator("strong")).to_have_text(name)
             expect(card.get_by_role("link", name="Chat B", exact=True)).to_have_attribute(
@@ -326,24 +329,20 @@ def test_provenance_peer_directions_and_reload(
             if not reload:
                 measurements[f"{direction}-expansion"] = _assert_stable_disclosure(card)
         expect(chat.get_by_test_id("peer-message")).to_have_count(2)
-        expect(chat.get_by_test_id("subagent-activity")).to_have_count(1)
         task = chat.get_by_test_id("subagent-activity")
+        if not task.is_visible():
+            chat.get_by_role("button", name="1 subagent", exact=True).click()
+        expect(task).to_have_count(1)
         expect(task.get_by_role("status", name="Completed", exact=True)).to_be_visible()
-        reply = chat.get_by_test_id("subagent-reply")
-        expect(reply).to_have_count(1)
+        expect(chat.get_by_test_id("subagent-reply")).to_have_count(0)
         _assert_footerless_card(task, controls=3)
-        _assert_footerless_card(reply, controls=3)
         if not reload:
             measurements["task-expansion"] = _assert_stable_disclosure(task)
-            measurements["reply-expansion"] = _assert_stable_disclosure(reply)
             task.get_by_role("button", name="Expand activity", exact=True).click()
             expect(task).to_contain_text("Full captured assignment.")
-            _capture(page, output_path, f"{appearance}-expanded-task")
+            expect(task.get_by_role("table")).to_contain_text("FooterAbsent")
+            _capture(page, output_path, f"{appearance}-expanded-task-and-reply")
             task.get_by_role("button", name="Collapse activity", exact=True).click()
-            reply.get_by_role("button", name="Expand activity", exact=True).click()
-            expect(reply.get_by_role("table")).to_contain_text("FooterAbsent")
-            _capture(page, output_path, f"{appearance}-expanded-reply")
-            reply.get_by_role("button", name="Collapse activity", exact=True).click()
             actions = sent.locator(".resource-actions").locator("a, button")
             fills = []
             for action in actions.all():
@@ -379,7 +378,7 @@ def test_provenance_peer_directions_and_reload(
     )
     _navigate_chat(page, second)
     received = _view(page, "Chat B").get_by_test_id("peer-message")
-    expect(received.locator("[data-resource-row]")).to_contain_text("Orion from Chat A")
+    expect(received.locator("[data-resource-row]")).to_contain_text("Chat A from Chat A")
     _assert_footerless_card(received, controls=3)
     page.reload()
     expect(received).to_have_attribute("data-direction", "received")
@@ -1547,24 +1546,6 @@ def test_iteration5_composer_mention_safety_and_local_caret(
             "next_cursor": None,
         },
     )
-    browser_contract.json(
-        f"/v1/sessions/{second.session_id}/context-reference",
-        {
-            "version": 1,
-            "snapshot_id": "caret-chat-reference",
-            "source_id": second.session_id,
-            "source_title": "Chat B",
-            "destination_id": first.session_id,
-            "scope": "whole",
-            "boundary_id": second.session_id + "-answer",
-            "captured_at": 1704067200,
-            "items": [],
-            "quote": None,
-            "audience": "Browser fixture",
-            "representation": "Exact items",
-        },
-        method="POST",
-    )
     page.goto(first.url)
     chat = _view(page, "Chat A")
     editor = chat.get_by_label("Message the agent", exact=True)
@@ -1596,8 +1577,8 @@ def test_iteration5_composer_mention_safety_and_local_caret(
         assert first.event_posts == []
         editor.fill("Keep @Chat")
         chat_choice.click()
-    picker.get_by_role("button", name="Whole chat", exact=True).click()
-    page.get_by_role("button", name="Add reference", exact=True).click()
+    expect(picker).to_have_count(0)
+    expect(chat.get_by_role("link", name="@Chat B")).to_have_attribute("href", second.url)
     expect(chat.get_by_role("button", name="Remove keep.txt", exact=True)).to_be_visible()
     assert editor.evaluate("element => element.closest('form').dataset.testSubmits") == "0"
     assert first.event_posts == []

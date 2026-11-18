@@ -466,6 +466,35 @@ export function parseEvent(rawType: string, data: Record<string, unknown>): Stre
 function parseEventPayload(rawType: string, data: Record<string, unknown>): StreamEvent | null {
   const eventType = normalizeEventType(rawType);
 
+  if (eventType === "session.item_reference") {
+    const position = itemPosition(data.position);
+    const header = data.header as Record<string, unknown> | null;
+    if (
+      typeof data.item_id !== "string" ||
+      !data.item_id ||
+      position === undefined ||
+      typeof data.sha256 !== "string" ||
+      !/^[a-f0-9]{64}$/.test(data.sha256) ||
+      typeof data.byte_length !== "number" ||
+      !Number.isSafeInteger(data.byte_length) ||
+      data.byte_length <= 0 ||
+      !header ||
+      ![
+        "response.output_item.done",
+        "response.output_item.updated",
+        "session.input.consumed",
+      ].includes(String(header.type))
+    )
+      return { type: "session_transport_error", code: "invalid_item_reference" };
+    return {
+      type: "session_item_reference",
+      itemId: data.item_id,
+      position,
+      sha256: data.sha256,
+      byteLength: data.byte_length,
+      header,
+    };
+  }
   if (eventType === "session.transport_error" && typeof data.code === "string")
     return { type: "session_transport_error", code: data.code };
 

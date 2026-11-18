@@ -1,3 +1,4 @@
+import { useChatScrollPreference, writeChatScrollPreference } from "@/lib/chatScrollPreference";
 import { OperationStatus, ContentSkeleton } from "@/components/ui/loading";
 // Modified for Triune.
 import { SidebarServerPicker as ServerConnectionPicker } from "@/shell/SidebarServerPicker";
@@ -854,6 +855,34 @@ function FileOpeningSchematic({ mode }: { mode: FileOpeningMode }) {
   );
 }
 
+function ChatScrollControl() {
+  const value = useChatScrollPreference();
+  const id = useId();
+  return (
+    <ThemeSubsection
+      title="Chat scrolling"
+      labelId={id}
+      helper="Choose how the transcript moves as an answer grows."
+    >
+      <CardRadioGroup
+        labelledBy={id}
+        value={value}
+        onSelect={writeChatScrollPreference}
+        items={[
+          { value: "stay" as const, testId: "chat-scroll-stay", body: "Stay at current position" },
+          {
+            value: "follow" as const,
+            testId: "chat-scroll-follow",
+            body: "Follow answer when at bottom",
+          },
+        ]}
+        className="grid grid-cols-2 gap-2"
+        cardClassName="min-w-0 p-2.5 text-left"
+      />
+    </ThemeSubsection>
+  );
+}
+
 function StartupDestinationControl() {
   const value = useStartupDestination();
   const id = useId();
@@ -997,6 +1026,7 @@ function AppearanceSection() {
     applyCustomTheme(DEFAULT_CUSTOM_THEME);
 
     writeTranscriptViewDefault(TRANSCRIPT_VIEW_DEFAULT);
+    writeChatScrollPreference("stay");
 
     writeWorkspacePanelDefault(WORKSPACE_PANEL_DEFAULT);
 
@@ -1138,6 +1168,9 @@ function AppearanceSection() {
 
           <SettingsGroup title="Chat defaults" testId="settings-group-chat">
             <TranscriptViewDefaultControl />
+            <div className="mt-4 border-t border-border pt-4">
+              <ChatScrollControl />
+            </div>
             <div className="mt-4 border-t border-border pt-4">
               <HideUnconfiguredHarnessesControl />
             </div>

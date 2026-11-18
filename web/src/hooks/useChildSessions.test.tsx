@@ -1,11 +1,12 @@
 // Modified for Triune.
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { focusManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import type { PropsWithChildren } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { authenticatedFetch } from "@/lib/identity";
 import {
+  childSessionsQueryKey,
   fetchChildSessions,
   useChildSessions,
   useChildSessionTree,
@@ -53,6 +54,7 @@ describe("useChildSessions", () => {
     expect(authenticatedFetch).toHaveBeenNthCalledWith(
       2,
       "/v1/sessions/root/child_sessions?after=newer",
+      { signal: undefined },
     );
   });
 
@@ -63,6 +65,97 @@ describe("useChildSessions", () => {
     await expect(fetchChildSessions("root")).rejects.toThrow("invalid cursor");
     expect(authenticatedFetch).toHaveBeenCalledTimes(2);
   });
+  it("shares one refresh for missed lifecycle changes and preserves a newer live update", async () => {
+    const client = new QueryClient();
+    const key = childSessionsQueryKey("parent");
+    const stale = { id: "child", busy: true, current_task_status: "in_progress" };
+    const done = { ...stale, busy: false, current_task_status: "completed" };
+    client.setQueryData(key, [stale]);
+    let resolve!: (value: Response) => void;
+    vi.mocked(authenticatedFetch).mockImplementation(
+      () =>
+        new Promise((accept) => {
+          resolve = accept;
+        }),
+    );
+    const provider = ({ children }: PropsWithChildren) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    vi.useFakeTimers();
+    try {
+      const { result, rerender, unmount } = renderHook(
+        ({ dispatchId, enabled }) => [
+          useChildSessions("parent", {
+            enabled,
+            reconcile: true,
+            unresolvedChild: "child",
+            dispatchId,
+          }),
+          useChildSessions("parent", { enabled, reconcile: true }),
+        ],
+        { wrapper: provider, initialProps: { dispatchId: "spawn", enabled: true } },
+      );
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10_000);
+      });
+      expect(authenticatedFetch).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        client.setQueryData(key, [done]);
+        resolve(Response.json({ data: [stale] }));
+        await vi.advanceTimersByTimeAsync(10);
+      });
+      expect(result.current.map((q) => q.children[0]?.current_task_status)).toEqual([
+        "completed",
+        "completed",
+      ]);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10_000);
+      });
+      expect(authenticatedFetch).toHaveBeenCalledTimes(1);
+
+      rerender({ dispatchId: "steer", enabled: true });
+      expect(authenticatedFetch).toHaveBeenCalledTimes(2);
+      expect(result.current[0]!.children[0]!.busy).toBe(false);
+      await act(async () => {
+        resolve(Response.json({ data: [stale] }));
+        await vi.advanceTimersByTimeAsync(10);
+      });
+      expect(result.current[0]!.children[0]!.busy).toBe(true);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5_000);
+      });
+      expect(authenticatedFetch).toHaveBeenCalledTimes(3);
+      await act(async () => {
+        resolve(new Response(null, { status: 503 }));
+        await vi.advanceTimersByTimeAsync(10);
+      });
+      expect(result.current[0]!.children[0]!.statusUnavailable).toBe(true);
+      await act(async () => {
+        focusManager.setFocused(false);
+        focusManager.setFocused(true);
+        await vi.advanceTimersByTimeAsync(10);
+      });
+      expect(authenticatedFetch).toHaveBeenCalledTimes(4);
+      await act(async () => {
+        resolve(Response.json({ data: [done] }));
+        await vi.advanceTimersByTimeAsync(10);
+      });
+      expect(result.current[0]!.children[0]!.statusUnavailable).toBeUndefined();
+      expect(result.current[0]!.children[0]!.current_task_status).toBe("completed");
+      rerender({ dispatchId: "steer", enabled: false });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10_000);
+      });
+      expect(authenticatedFetch).toHaveBeenCalledTimes(4);
+      unmount();
+    } finally {
+      focusManager.setFocused(undefined);
+      client.clear();
+      vi.useRealTimers();
+    }
+  });
+
   it("does not fetch child sessions for a provisional conversation", () => {
     const { result } = renderHook(() => useChildSessions("temp:pending-create"), { wrapper });
 
@@ -142,6 +235,8 @@ describe("useDescendantSession", () => {
 
     expect(result.current).toBeNull();
     await waitFor(() => expect(result.current?.task_summary).toBe("Investigate auth flow"));
-    expect(authenticatedFetch).toHaveBeenCalledWith("/v1/sessions/conv_parent/child_sessions");
+    expect(authenticatedFetch).toHaveBeenCalledWith("/v1/sessions/conv_parent/child_sessions", {
+      signal: expect.any(AbortSignal),
+    });
   });
 });

@@ -90,6 +90,7 @@ export function childStatus(child: ChildSessionInfo): AgentStatus {
   // elicitation is still "running" its turn (the future is pending),
   // so checking ``busy`` first would hide the prompt behind a generic
   // "Working" pill — exactly the signal the user needs to act on.
+  if (child.statusUnavailable) return { activity: "disconnected", label: "Status unavailable" };
   if (child.pending_elicitations_count > 0) {
     return { activity: "awaiting", label: "Needs response" };
   }
@@ -99,7 +100,8 @@ export function childStatus(child: ChildSessionInfo): AgentStatus {
   if (child.current_task_status === "launching") {
     return { activity: "launching", label: "Launching" };
   }
-  if (child.busy) return { activity: "working", label: "Working" };
+  if (child.busy || ["running", "in_progress", "queued"].includes(child.current_task_status ?? ""))
+    return { activity: "working", label: "Working" };
   // A runner disconnect/exit is NOT a task failure — branch on the error
   // code before the generic failed paths so it renders the quiet grey
   // disconnected dot instead of the red "Failed" pill.

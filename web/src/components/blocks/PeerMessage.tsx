@@ -1,9 +1,8 @@
 // Modified for Triune.
 import { useAgentPresentation } from "@/hooks/useAgentPresentation";
 import { useContext, useMemo } from "react";
-import { CheckIcon, ClockIcon, CircleAlertIcon, MessageCircleIcon, SendIcon } from "lucide-react";
+import { MessageCircleIcon, SendIcon } from "lucide-react";
 import { QueryClientContext, useQuery } from "@tanstack/react-query";
-import { Badge } from "@/components/ui/badge";
 import { ActivityRow } from "@/components/ActivityRow";
 import { ActivityNavigation } from "@/shell/ChatActivityPanel";
 import {
@@ -181,14 +180,6 @@ function PeerMessageContent({
   const relatedHref = relatedId
     ? `/c/${encodeURIComponent(relatedId)}${relatedItemId ? `?message=${encodeURIComponent(relatedItemId)}` : ""}`
     : undefined;
-  const deliveryLabel =
-    communication.delivery_state === "confirmed"
-      ? "Received"
-      : communication.delivery_state === "failed"
-        ? "Failed"
-        : communication.delivery_state === "unknown"
-          ? "Unknown delivery"
-          : "Queued";
   const menuConversationId =
     conversationId === sourceId
       ? communication.destination_conversation_id
@@ -210,21 +201,11 @@ function PeerMessageContent({
               presentation="message"
               searchItemIds={[itemId, ...(aliases ?? [])]}
               status={
-                <Badge
-                  variant={communication.delivery_state === "failed" ? "destructive" : "secondary"}
-                  role="status"
-                  aria-label={deliveryLabel}
-                  className="w-fit text-xs font-normal"
-                >
-                  {communication.delivery_state === "confirmed" ? (
-                    <CheckIcon aria-hidden="true" />
-                  ) : communication.delivery_state === "failed" ? (
-                    <CircleAlertIcon aria-hidden="true" />
-                  ) : (
-                    <ClockIcon aria-hidden="true" />
-                  )}
-                  <span className="resource-status-text">{deliveryLabel}</span>
-                </Badge>
+                communication.delivery_state === "failed" ? (
+                  <span role="alert" className="text-destructive">
+                    Delivery failed
+                  </span>
+                ) : undefined
               }
               icon={
                 outgoing ? (

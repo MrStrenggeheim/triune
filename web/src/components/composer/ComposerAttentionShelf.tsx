@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ListTodoIcon, MessageCircleQuestionMarkIcon, ShieldCheckIcon } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
-import { useConversationChatStore } from "@/workbench/ScopedChatStore";
+import { useConversationChatStore, useConversationChatVisible } from "@/workbench/ScopedChatStore";
 import type { ElicitationBlock } from "@/lib/blocks";
 import { castAskUserQuestionPayload, parseAskUserQuestionPreview } from "@/lib/askUserQuestion";
 import { ElicitationCard } from "@/components/blocks/ApprovalCard";
@@ -41,7 +41,8 @@ export function ComposerAttentionShelf({
   const useChatStore = useConversationChatStore();
   const conversationId = useChatStore((state) => state.conversationId);
   const backgroundCount = useChatStore((state) => state.backgroundTaskCount);
-  const { children } = useChildSessions(conversationId);
+  const chatVisible = useConversationChatVisible();
+  const { children } = useChildSessions(conversationId, { enabled: chatVisible, reconcile: true });
   const hasAgents = children.some((child) =>
     ["launching", "working", "awaiting", "disconnected", "failed"].includes(
       childStatus(child).activity,

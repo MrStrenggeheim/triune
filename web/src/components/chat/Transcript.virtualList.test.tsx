@@ -145,14 +145,13 @@ it.each([false, true])(
               containerEl={null}
               scroller={null}
               setScroller={() => {}}
-              sendScrollNonce={0}
+
               hasMoreHistory={false}
               loadingMoreHistory={false}
               isMobileViewport
               showsWorking
               agentsError={null}
               sandboxLaunching={false}
-              spacerMeasureRef={{ current: null }}
             />
           </MemoryRouter>
         </QueryClientProvider>,
@@ -234,14 +233,13 @@ it.each(["completed", "working", "pending"] as const)(
             containerEl={null}
             scroller={null}
             setScroller={() => {}}
-            sendScrollNonce={0}
+
             hasMoreHistory={false}
             loadingMoreHistory={false}
             isMobileViewport
             showsWorking={phase !== "completed"}
             agentsError={null}
             sandboxLaunching={false}
-            spacerMeasureRef={{ current: null }}
           />
         </MemoryRouter>
       </QueryClientProvider>
@@ -296,14 +294,13 @@ it.each([false, true])(
               containerEl={null}
               scroller={null}
               setScroller={() => {}}
-              sendScrollNonce={0}
+
               hasMoreHistory={false}
               loadingMoreHistory={false}
               isMobileViewport
               showsWorking
               agentsError={null}
               sandboxLaunching={false}
-              spacerMeasureRef={{ current: null }}
             />
           </MemoryRouter>
         </QueryClientProvider>,
@@ -379,14 +376,13 @@ it("folds only opted-in subchat history and preserves child messages across disc
           containerEl={null}
           scroller={null}
           setScroller={() => {}}
-          sendScrollNonce={0}
+
           hasMoreHistory={false}
           loadingMoreHistory={false}
           isMobileViewport
           showsWorking={false}
           agentsError={null}
           sandboxLaunching={false}
-          spacerMeasureRef={{ current: null }}
         />
       </MemoryRouter>
     </QueryClientProvider>
@@ -1043,14 +1039,13 @@ it("keeps unchanged transcript lists resident across focus changes and scopes na
       containerEl={null}
       scroller={null}
       setScroller={() => {}}
-      sendScrollNonce={0}
+
       hasMoreHistory={false}
       loadingMoreHistory={false}
       isMobileViewport={false}
       showsWorking={false}
       agentsError={null}
       sandboxLaunching={false}
-      spacerMeasureRef={{ current: null }}
     />
   ));
   const panes = (focused: number) => (
@@ -1216,14 +1211,13 @@ it("restores search original-source choices when canonical text arrives after re
           containerEl={null}
           scroller={null}
           setScroller={() => {}}
-          sendScrollNonce={0}
+
           hasMoreHistory={false}
           loadingMoreHistory={false}
           isMobileViewport
           showsWorking={false}
           agentsError={null}
           sandboxLaunching={false}
-          spacerMeasureRef={{ current: null }}
         />
       </MemoryRouter>
     </QueryClientProvider>

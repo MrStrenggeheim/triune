@@ -375,6 +375,7 @@ async def test_external_host_initial_input_is_saved_and_delivered_over_http(
         session_id = response.json()["session_id" if shape == "bundle" else "id"]
         await asyncio.wait_for(dispatched.wait(), timeout=2)
         [pending] = env.conv_store.list_pending_inputs(session_id)
+        assert response.json()["initial_input_id"] == pending.id
         assert pending.status == "in_progress"
         assert env.conv_store.get_conversation(session_id).host_id == host_id
         assert not connection.registered_with_managed_token

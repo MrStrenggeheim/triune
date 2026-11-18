@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 
 import pytest
-from playwright.sync_api import Page, expect
+from playwright.sync_api import Locator, Page, expect
 
 from tests.browser_ui.chat.session_contract import (
     ChatSessionContract,
@@ -16,10 +16,12 @@ from tests.browser_ui.chat.session_contract import (
 )
 
 
-def record_tail_geometry(page: Page, *, scroll_to_bottom: bool = True) -> dict:
-    return page.evaluate(
-        """async scrollToBottom => {
-          const log = [...document.querySelectorAll('[role="log"]')]
+def record_tail_geometry(
+    page: Page, *, scroll_to_bottom: bool = True, scope: Locator | None = None
+) -> dict:
+    return (scope or page.locator("body")).evaluate(
+        """async (root, scrollToBottom) => {
+          const log = [...root.querySelectorAll('[role="log"]')]
             .find(node => node.getBoundingClientRect().height > 0);
           const scroller = log.firstElementChild;
           if (scrollToBottom) scroller.scrollTop = scroller.scrollHeight;
@@ -63,29 +65,6 @@ def record_tail_geometry(page: Page, *, scroll_to_bottom: bool = True) -> dict:
     )
 
 
-def record_side_tail_geometry(page: Page) -> dict:
-    return page.evaluate(
-        """async () => {
-          const pane = [...document.querySelectorAll('.side-chat-backdrop')]
-            .find(node => node.getBoundingClientRect().height > 0);
-          if (!pane) throw new Error('No visible side-chat pane');
-          const scroller = pane.firstElementChild;
-          scroller.scrollTop = scroller.scrollHeight;
-          await new Promise(resolve =>
-            requestAnimationFrame(() => requestAnimationFrame(resolve)));
-          const selector = '[data-testid="message-bubble"], [data-testid="working-indicator"]';
-          const items = [...scroller.querySelectorAll(selector)]
-            .filter(node => node.getBoundingClientRect().height > 0);
-          const last = items.at(-1);
-          if (!last) throw new Error('No displayed side-chat item');
-          const item = last.getBoundingClientRect(), viewport = scroller.getBoundingClientRect();
-          return {viewportGap:viewport.bottom-item.bottom,
-            padding:parseFloat(getComputedStyle(scroller).paddingBottom),
-            scrollRange:scroller.scrollHeight-scroller.clientHeight};
-        }"""
-    )
-
-
 @pytest.mark.parametrize(
     "width,density,theme", [(1440, "comfortable", "light"), (390, "compact", "dark")]
 )
@@ -110,6 +89,7 @@ def test_tail_spacing_survives_pending_reload_and_completion(
     page.set_viewport_size({"width": width, "height": 1000})
     page.emulate_media(reduced_motion="reduce", color_scheme=theme)
     page.add_init_script(
+        "localStorage.setItem('triune:chat-scroll', 'follow');"
         "localStorage.setItem('omnigent:always-steer', 'true');"
         f"localStorage.setItem('omnigent:list-density', {json.dumps(density)});"
         f"localStorage.setItem('web-theme', {json.dumps(theme)});"
@@ -218,3 +198,50 @@ def test_tail_spacing_survives_pending_reload_and_completion(
             geometry,
         )
         assert geometry["distanceToBottom"] <= 2, (phase, geometry)
+
+
+@pytest.mark.parametrize("follow", [False, True], ids=["stay", "follow"])
+def test_growing_answer_respects_saved_reading_position(
+    page: Page, chat_session_contract: ChatSessionContract, follow: bool
+) -> None:
+    chat = chat_session_contract
+    chat.set_items(transcript_items(20))
+    if follow:
+        page.add_init_script("localStorage.setItem('triune:chat-scroll', 'follow')")
+    page.goto(chat.url)
+    chat.wait_for_stream()
+    log = page.get_by_role("log").first
+    scroller = log.locator(":scope > div").first
+    expect(scroller).to_be_visible()
+    record_tail_geometry(page)
+    chat.emit_busy("reading-position")
+    expect(page.get_by_test_id("working-indicator")).to_be_visible()
+    record_tail_geometry(page)
+    for index in range(2):
+        top = scroller.evaluate(
+            """(el, away) => {
+            el.scrollTop = el.scrollHeight - el.clientHeight - (away ? 160 : 0);
+            return el.scrollTop;
+        }""",
+            bool(index),
+        )
+        before = scroller.evaluate("el => el.scrollHeight")
+        item = message_item(
+            f"growing-{index}",
+            "assistant",
+            "Reading position.\n\n" * 40,
+            response_id=f"growth-{index}",
+        )
+        chat.emit({"event": "response.output_item.done", "data": {"item": item}})
+        page.wait_for_function(
+            "([el, before]) => el.scrollHeight > before + 40",
+            arg=[scroller.element_handle(), before],
+        )
+        # Let observers and virtual measurements settle before inspecting the final coordinates.
+        scroller.evaluate(
+            "async () => { for (let i=0; i<8; i++) await new Promise(requestAnimationFrame) }"
+        )
+        if follow and index == 0:
+            assert scroller.evaluate("e => e.scrollHeight - e.clientHeight - e.scrollTop") <= 2
+        else:
+            assert scroller.evaluate("e => e.scrollTop") == pytest.approx(top, abs=2)
