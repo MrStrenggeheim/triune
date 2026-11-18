@@ -8,6 +8,7 @@ import asyncio
 import contextlib
 import dataclasses
 import json
+import os
 import secrets
 import time
 from collections.abc import Callable
@@ -228,6 +229,7 @@ from omnigent.server.schemas import (
     UpdateSessionRequest,
 )
 from omnigent.server.session_orchestration import require_orchestration_source
+from omnigent.server.transcript_feed_mode import transcript_feed_mode
 from omnigent.stores import AgentStore, ConversationStore
 from omnigent.stores.artifact_store import ArtifactStore
 from omnigent.stores.comment_store import CommentStore
@@ -249,6 +251,7 @@ from omnigent.stores.conversation_store.message_search import (
     MessageFilter,
     MessageSearchPage,
 )
+from omnigent.stores.conversation_store.transcript_journal import TranscriptJournal
 from omnigent.stores.file_store import FileStore
 from omnigent.stores.permission_store import PermissionStore
 from omnigent.stores.project_store import ProjectStore
@@ -2509,10 +2512,26 @@ def register_core_routes(
                 code=status.WS_1008_POLICY_VIOLATION,
                 reason="authentication required",
             )
+        from omnigent.server.session_multiplex import MAX_MEMBERSHIPS, SessionMultiplex
+        from omnigent.server.stream_observation import stream_observation_capability
+
         await websocket.accept()
-        await websocket.send_text(
-            json.dumps({"type": "capabilities", "transcript_stream": 1, "transcript_window": 1})
+        feed_mode = await asyncio.to_thread(transcript_feed_mode)
+        feed_available = feed_mode in {"canary", "2"} and isinstance(
+            getattr(conversation_store, "transcript_journal", None), TranscriptJournal
         )
+        capabilities = {"type": "capabilities", "transcript_stream": 1, "transcript_window": 1}
+        capabilities.update(stream_observation_capability())
+        if feed_available:
+            # The entry-chat hint chooses an explicitly enrolled tab; every membership still authorizes.
+            enrolled = os.environ.get("TRIUNE_TRANSCRIPT_CANARY_CHAT")
+            canary = bool(enrolled and websocket.query_params.get("entry_chat") == enrolled)
+            capabilities.update(
+                transcript_feed=2,
+                transcript_feed_default=2 if feed_mode == "2" or canary else 1,
+                transcript_memberships=MAX_MEMBERSHIPS,
+            )
+        await websocket.send_text(json.dumps(capabilities))
         _logger.info(
             "session-updates stream connected",
             extra=debug_event("session_updates", phase="connected"),
@@ -2534,9 +2553,7 @@ def register_core_routes(
             await websocket.send_text(json.dumps(frame))
             last_send_monotonic = time.monotonic()
 
-        from omnigent.server.session_multiplex import SessionMultiplex
-
-        transcript_streams = SessionMultiplex(router, websocket, _send)
+        transcript_streams = SessionMultiplex(router, websocket, _send, feed_v2=feed_available)
 
         async def _emit_list(kind: str, ids: list[str], expected: int) -> None:
             frame: dict[str, Any] = {"type": kind, "items": []}

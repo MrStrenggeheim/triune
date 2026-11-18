@@ -340,6 +340,15 @@ export function mergePlacedPendingBubbles(committed: Bubble[], pending: Bubble[]
 const TEXT_BLOCK_TYPES = new Set(["text_chunk", "text_done"]);
 const REASONING_BLOCK_TYPES = new Set(["reasoning_start", "reasoning_chunk", "reasoning_block"]);
 
+/** Identity shared by paint observations and collapsed activity summaries. */
+export function renderItemIdentity(item: RenderItem): string | undefined {
+  return item.itemId ?? (item.kind === "tool" ? item.execution.callId : undefined);
+}
+
+export function renderGroupMembers(items: RenderItem[]): string {
+  return JSON.stringify(items.map(renderItemIdentity).filter(Boolean));
+}
+
 /**
  * Cross-call reuse cache for `buildBubbles`.
  *

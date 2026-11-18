@@ -1,5 +1,4 @@
 import { useStartupInputReceipts } from "./StartupInputReceipts";
-import { mergeStartupInputReceipts } from "@/lib/startupInputReceipts";
 // Modified for Triune.
 import { useTranscriptConvergenceDisplay } from "@/hooks/useTranscriptConvergenceDisplay";
 import { useResourceViewId } from "@/lib/panelFolder";
@@ -13,7 +12,6 @@ import {
   type TranscriptViewSnapshot,
 } from "@/lib/transcriptReaderCheckpoint";
 import { subagentCardItemIds } from "@/lib/subagentActivity";
-import { projectPendingTranscript } from "@/lib/transcriptOrder";
 import {
   hasTranscriptScrollOwner,
   useTranscriptDisclosureAnchor,
@@ -34,20 +32,13 @@ import {
   ConversationScrollButton,
 } from "@/components/ai-elements/conversation";
 import { cn } from "@/lib/utils";
-import { getCurrentAuthorId } from "@/lib/identity";
 import { hasCommandModifier } from "@/lib/hotkeys";
 import { isSystemUserContent } from "@/lib/systemMessage";
 import { isTerminalCommandInput, type AnyBlock } from "@/lib/blocks";
 import type { ConversationBranch } from "@/lib/conversationBranches";
 import { hasInheritedHistory, inheritedHistoryEnd } from "@/lib/inheritedHistory";
 import { TooltipButton } from "@/components/ui/tooltip";
-import {
-  type Bubble,
-  type BubbleCache,
-  buildBubbles,
-  createBubbleCache,
-  liveCandidateAssistantIndex,
-} from "@/lib/renderItems";
+import { type Bubble, buildBubbles, liveCandidateAssistantIndex } from "@/lib/renderItems";
 import { TranscriptScrollbar } from "@/pages/TranscriptScrollbar";
 import { TurnRail, type Turn } from "@/pages/TurnRail";
 import { StreamBudgetBanner } from "@/components/StreamBudgetBanner";
@@ -78,15 +69,11 @@ import {
   AwaitingAgentMessages,
   partitionAwaitingAgentBubbles,
   bubbleKey,
-  buildPendingBubbles,
+  useTranscriptBubbles,
   collectPendingElicitations,
-  computeIsWorking,
   extractUserText,
   isSystemBubble,
-  mergePendingBubbles,
-  reorderCommittedRequestElicitations,
   shouldShowWorkingIndicator,
-  stripGatedSubagentRoutingChips,
   stripPendingElicitations,
 } from "@/components/chat/chatBubbleParts";
 import {
@@ -234,37 +221,15 @@ function TranscriptImpl({
     conversationId,
     hasReceipts,
   );
-  const bubbleCacheRef = useRef<BubbleCache>(createBubbleCache());
-  const bubbles = useMemo<Bubble[]>(() => {
-    const committed = stripGatedSubagentRoutingChips(
-      reorderCommittedRequestElicitations(
-        buildBubbles(
-          projectPendingTranscript(visibleBlocks, pendingUserMessages, getCurrentAuthorId()),
-          activeResponse,
-          bubbleCacheRef.current,
-          interruptedResponseIds,
-          computeIsWorking(sessionStatus),
-        ),
-      ),
-      subagentRoutingOverride,
-    );
-    const withPending =
-      pendingUserMessages.length === 0
-        ? committed
-        : mergePendingBubbles(
-            committed,
-            buildPendingBubbles(pendingUserMessages, getCurrentAuthorId()),
-          );
-    return mergeStartupInputReceipts(withPending, startupReceipts, pendingUserMessages);
-  }, [
+  const bubbles = useTranscriptBubbles({
     startupReceipts,
-    visibleBlocks,
+    blocks: visibleBlocks,
     activeResponse,
     interruptedResponseIds,
     pendingUserMessages,
     subagentRoutingOverride,
     sessionStatus,
-  ]);
+  });
 
   const pendingElicitations = useMemo(() => collectPendingElicitations(bubbles), [bubbles]);
   const searchSources = useMemo(

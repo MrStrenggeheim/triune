@@ -136,3 +136,50 @@ it("fences stale completion and timer cleanup from a successor attempt", () => {
   expect(current.identity.bindingId).toBe(old.identity.bindingId);
   expect(current.identity.attemptId).not.toBe(old.identity.attemptId);
 });
+
+it("acknowledges contiguous applied changes, including amendments to old positions", () => {
+  const owner = new ConversationSynchronization();
+  const recover = vi.fn();
+  const attempt = owner.begin(true, recover);
+  const opening = { ...start, streamEpoch: "feed2:test" };
+  attempt.accept(opening, []);
+  attempt.accept({ ...opening, phase: "complete" }, []);
+  expect(attempt.appliedChange(4, 3)).toBeUndefined();
+  expect(owner.cursor?.after_revision).toBe(2);
+  expect(attempt.appliedChange(3, 1)).toEqual({
+    after_position: 3,
+    after_revision: 4,
+    stream_epoch: "feed2:test",
+  });
+  expect(attempt.appliedChange(5, 0)?.after_position).toBe(3);
+  attempt.heartbeat({
+    ...heartbeat,
+    streamEpoch: "feed2:test",
+    lastPosition: 3,
+    itemRevision: 5,
+    reconcileRequired: false,
+  });
+  expect(recover).not.toHaveBeenCalled();
+  expect(attempt.appliedChange(5, 0)).toBeUndefined();
+  attempt.heartbeat({
+    ...heartbeat,
+    streamEpoch: "feed2:test",
+    lastPosition: 4,
+    itemRevision: 6,
+    reconcileRequired: false,
+  });
+  expect(recover).not.toHaveBeenCalled();
+  vi.advanceTimersByTime(1000);
+  attempt.appliedChange(6, 4);
+  vi.advanceTimersByTime(2000);
+  expect(recover).not.toHaveBeenCalled();
+  attempt.heartbeat({
+    ...heartbeat,
+    streamEpoch: "feed2:test",
+    lastPosition: 5,
+    itemRevision: 7,
+    reconcileRequired: false,
+  });
+  vi.advanceTimersByTime(2000);
+  expect(recover).toHaveBeenCalledExactlyOnceWith(false, "diverged");
+});

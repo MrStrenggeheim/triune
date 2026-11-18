@@ -165,6 +165,7 @@ from omnigent.stores.conversation_store.schema import (
     ensure_activity_label_index,
     ensure_pending_input_index,
 )
+from omnigent.stores.conversation_store.transcript_journal import TranscriptJournal
 
 _logger = logging.getLogger(__name__)
 
@@ -1045,6 +1046,11 @@ class SqlAlchemyConversationStore(ConversationStore):
             else cast(ColumnElement[Any], SqlConversation.id)
         )
         ensure_fts_table(self._conv_engine)
+        self.transcript_journal = (
+            TranscriptJournal(self._conv_engine)
+            if self._conv_engine.dialect.name == "sqlite"
+            else None
+        )
 
     def _get_meta(
         self, conversation_id: str, *, include_execution_state: bool = True

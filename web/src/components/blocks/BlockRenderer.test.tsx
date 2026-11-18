@@ -139,8 +139,8 @@ it("groups mixed activities once per child, preserves disclosure on status updat
     </MemoryRouter>
   );
   const { rerender } = render(view(false));
-  const prefix = "Ran 3 shell commands, listed 1 directory, started or steered 1 subagent";
-  const trigger = screen.getByRole("button", { name: `${prefix} (1 in progress)` });
+  const prefix = "Ran 3 shell commands, listed 1 directory, 1 subagent";
+  const trigger = screen.getByRole("button", { name: prefix });
   expect(trigger).toHaveAttribute("aria-expanded", "false");
   expect(screen.queryByTestId("subagent-activity")).toBeNull();
   fireEvent.click(trigger);
@@ -757,7 +757,7 @@ describe("BlockRenderer dispatch", () => {
       expect(screen.getByText("All done here.")).toBeDefined();
     });
 
-    it("keeps the answer and follow-up visible beside one turn-level work fold", () => {
+    it("keeps the answer and follow-up between chronological work intervals", () => {
       const items: RenderItem[] = [
         { kind: "reasoning", itemId: "r0", text: "Considering the request.", duration: 4 },
         tool(1, "Bash"),
@@ -767,7 +767,13 @@ describe("BlockRenderer dispatch", () => {
       ];
       render(<BlockRenderer items={items} sessionStatus="idle" workedForS={128} />);
 
-      const fold = screen.getByRole("button", { name: "Worked for 2m 8s" });
+      const [fold, later] = screen.getAllByRole("button", { name: "Worked" });
+      expect(screen.getAllByTestId("turn-worked-fold")).toHaveLength(2);
+      expect(
+        screen
+          .getAllByTestId("turn-worked-fold")
+          .map((row) => JSON.parse(row.dataset.convergenceMembers!)),
+      ).toEqual([["r0", "fc_1"], ["fc_2"]]);
       const answer = screen.getByText("Here is the substantive answer.");
       const followUp = screen.getByText("Quick tick: the check passed.");
       expect(fold).toHaveAttribute("aria-expanded", "false");
@@ -776,9 +782,15 @@ describe("BlockRenderer dispatch", () => {
         answer.compareDocumentPosition(followUp) & Node.DOCUMENT_POSITION_FOLLOWING,
       ).toBeTruthy();
       expect(screen.queryByText("Considering the request.")).toBeNull();
+      expect(answer.compareDocumentPosition(later) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(
+        later.compareDocumentPosition(followUp) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
       fireEvent.click(fold);
+      fireEvent.click(later);
+      expect(document.querySelector('[data-convergence-item-id="r0"]')).toBeVisible();
       expect(fold).toHaveAttribute("aria-expanded", "true");
-      expect(screen.getByText("Ran 1 shell command, called 1 other tool")).toBeDefined();
+      expect(screen.getByText("Ran 1 shell command")).toBeVisible();
       fireEvent.click(screen.getByText(/Thought for/));
       expect(screen.getByText("Considering the request.")).toBeDefined();
       expect(answer).toBeVisible();
@@ -795,7 +807,8 @@ describe("BlockRenderer dispatch", () => {
       ];
       render(<BlockRenderer items={items} sessionStatus="idle" defaultExpanded />);
 
-      const fold = screen.getByRole("button", { name: "Worked" });
+      const [fold, later] = screen.getAllByRole("button", { name: "Worked" });
+      expect(later).toHaveAttribute("aria-expanded", "true");
       expect(fold).toHaveAttribute("aria-expanded", "true");
       expect(screen.getByText("Checking.")).toBeDefined();
       expect(screen.getByText("No conflict.")).toBeDefined();
@@ -816,7 +829,8 @@ describe("BlockRenderer dispatch", () => {
         { kind: "text", itemId: "m2", text: "Merged.", final: true },
       ];
       const view = render(<BlockRenderer items={items} sessionStatus="idle" />);
-      const fold = screen.getByRole("button", { name: "Worked" });
+      const [fold, later] = screen.getAllByRole("button", { name: "Worked" });
+      expect(later).toHaveAttribute("aria-expanded", "false");
       expect(fold).toHaveAttribute("aria-expanded", "false");
 
       view.rerender(<BlockRenderer items={items} sessionStatus="idle" defaultExpanded />);
@@ -895,7 +909,7 @@ describe("BlockRenderer dispatch", () => {
     });
 
     describe("with foldNarration", () => {
-      it("folds narration and work behind one row, leaving the last message", () => {
+      it("folds narration and work on each side of the final message", () => {
         const items: RenderItem[] = [
           { kind: "text", itemId: "m0", text: "I'll write the placeholder first.", final: true },
           tool(1, "Bash"),
@@ -907,9 +921,12 @@ describe("BlockRenderer dispatch", () => {
         ];
         render(<BlockRenderer items={items} sessionStatus="idle" workedForS={24} foldNarration />);
 
-        const fold = screen.getByRole("button", { name: "Worked for 24s" });
-        expect(screen.getAllByTestId("turn-worked-fold")).toHaveLength(1);
+        const [fold, tail] = screen.getAllByRole("button", { name: "Worked" });
+        expect(screen.getAllByTestId("turn-worked-fold")).toHaveLength(2);
         const answer = screen.getByText("Lorem ipsum dolor sit amet.");
+        expect(
+          answer.compareDocumentPosition(tail) & Node.DOCUMENT_POSITION_FOLLOWING,
+        ).toBeTruthy();
         expect(
           fold.compareDocumentPosition(answer) & Node.DOCUMENT_POSITION_FOLLOWING,
         ).toBeTruthy();
@@ -945,16 +962,19 @@ describe("BlockRenderer dispatch", () => {
         });
       });
 
-      it("merges trailing reasoning into the same fold in a turn without tool calls", () => {
+      it("leaves trailing reasoning after the final message", () => {
         const items: RenderItem[] = [
           { kind: "text", itemId: "m0", text: "Gathering context.", final: true },
           { kind: "text", itemId: "m1", text: "Final placeholder answer.", final: true },
           { kind: "reasoning", itemId: "r0", text: "Wrapping up.", duration: 1 },
         ];
         render(<BlockRenderer items={items} sessionStatus="idle" foldNarration />);
-        expect(screen.getAllByTestId("turn-worked-fold")).toHaveLength(1);
-        const fold = screen.getByRole("button", { name: "Worked" });
+        expect(screen.getAllByTestId("turn-worked-fold")).toHaveLength(2);
+        const [fold, tail] = screen.getAllByRole("button", { name: "Worked" });
         const answer = screen.getByText("Final placeholder answer.");
+        expect(
+          answer.compareDocumentPosition(tail) & Node.DOCUMENT_POSITION_FOLLOWING,
+        ).toBeTruthy();
         expect(
           fold.compareDocumentPosition(answer) & Node.DOCUMENT_POSITION_FOLLOWING,
         ).toBeTruthy();
@@ -1448,16 +1468,18 @@ describe("BlockRenderer dispatch", () => {
           <BlockRenderer items={items} sessionStatus="idle" />
         </FileViewerContext.Provider>,
       );
-      expect(screen.getByTestId("turn-worked-fold")).toBeDefined();
+      const [before, after] = screen.getAllByRole("button", { name: "Worked" });
       expect(screen.getByText("Edit landed.")).toBeDefined();
       expect(screen.getByText("Editing the file.")).toBeDefined();
       expect(screen.queryByText(/turn_diff/)).toBeNull();
 
-      // Expanding the Worked row reveals the trace; the diff sits in
-      // the (still-collapsed) tool-run group alongside the shell call.
-      fireEvent.click(screen.getByText("Worked"));
+      expect(
+        before.compareDocumentPosition(screen.getByText("Edit landed.")) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+      fireEvent.click(after);
       expect(screen.getByText("Editing the file.")).toBeDefined();
-      const runLabel = screen.getByText("Ran 1 shell command, called 1 other tool");
+      const runLabel = screen.getByText("Called 1 tool");
       fireEvent.click(runLabel);
       expect(screen.getByText(/turn_diff/)).toBeDefined();
     });
@@ -1525,7 +1547,7 @@ describe("BlockRenderer dispatch", () => {
         );
 
       const expandedNotices = () => {
-        for (const trigger of screen.queryAllByRole("button", { name: /started or steered/i })) {
+        for (const trigger of screen.queryAllByRole("button", { name: /\d+ subagents?/i })) {
           if (trigger.getAttribute("aria-expanded") === "false") fireEvent.click(trigger);
         }
         return noticeLabels();
@@ -1615,7 +1637,9 @@ describe("BlockRenderer dispatch", () => {
           expect(expandedNotices()).toEqual(
             continued ? labels.filter((label) => label === "Completed Peirce") : [],
           );
-          fireEvent.click(screen.getByRole("button", { name: "Worked for 42s" }));
+          for (const fold of screen.getAllByRole("button", { name: /^Worked(?: for 42s)?$/ })) {
+            fireEvent.click(fold);
+          }
           expect(expandedNotices()).toEqual(labels);
         },
       );
@@ -1971,12 +1995,12 @@ describe("BlockRenderer dispatch", () => {
           <BlockRenderer items={items} sessionStatus="idle" turnLifecycle="completed" />
         </FileViewerContext.Provider>,
       );
-      expect(screen.getByTestId("turn-worked-fold")).toBeDefined();
+      const [, tail] = screen.getAllByRole("button", { name: "Worked" });
       // Both messages stay visible while the tool and trailing reasoning fold.
       expect(screen.getByText("Server started on 8838.")).toBeDefined();
       expect(screen.getByText("Checking the CLI.")).toBeDefined();
       expect(screen.queryByText("Finishing checks.")).toBeNull();
-      fireEvent.click(screen.getByRole("button", { name: "Worked" }));
+      fireEvent.click(tail);
       fireEvent.click(screen.getByText(/Thought/));
       expect(screen.getByText("Finishing checks.")).toBeDefined();
     });
@@ -2526,8 +2550,8 @@ describe("BlockRenderer inline file-path linkification", () => {
       "original-item",
       "original-chat",
     );
-    const chip = await screen.findByRole("button", { name: "notes.txt" });
-    expect(chip).toHaveTextContent(/^notes\.txt$/);
+    const chip = await screen.findByRole("button", { name: "the notes" });
+    expect(chip).toHaveTextContent(/^the notes$/);
     expect(fetchMock).toHaveBeenCalledExactlyOnceWith(
       metadataUrl,
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
@@ -2709,6 +2733,7 @@ describe("authoritative message phase folding", () => {
           <BlockRenderer
             key={bubble.stableId}
             items={bubble.items}
+            foldNarration
             turnLifecycle={bubble.lifecycle}
             sessionStatus={streaming ? "running" : "idle"}
             continued={bubble.continued}

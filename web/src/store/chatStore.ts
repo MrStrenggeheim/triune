@@ -21,6 +21,8 @@ import {
   type TranscriptCursor,
   type TranscriptResponse,
 } from "@/lib/sessionUpdatesSocket";
+import { deferredToolOutputs, referencedOutputHeader } from "@/lib/deferredToolOutput";
+import { savedToolBody } from "@/lib/events";
 import { readReferencedEvent, readTranscriptEvents } from "@/lib/transcriptEventStream";
 import {
   normalizeTranscript,
@@ -49,7 +51,7 @@ import { getBasePath } from "@/lib/basePath";
 // before grouping assistant work, preserving draft ownership and stable keys.
 
 import type { InfiniteData, QueryClient } from "@tanstack/react-query";
-import { create } from "zustand";
+import { createStore, useStore, type StoreApi, type UseBoundStore } from "zustand";
 import type {
   AnyBlock,
   ElicitationBlock,
@@ -437,7 +439,7 @@ export function beginLocalConversation(
   });
   useChatStore.setState({ conversationId: tempConvId });
   conversationRegistry.setActive(tempConvId);
-  mirrorActiveEntry();
+  publishActiveChat();
   return { tempConvId, pendingMsgTempId, createToken };
 }
 
@@ -504,7 +506,7 @@ export function hydrateLocalConversation(
   if (stillViewing) {
     useChatStore.setState({ conversationId: realId });
     conversationRegistry.setActive(realId);
-    mirrorActiveEntry();
+    publishActiveChat();
     navigate(`/c/${realId}`, { replace: true });
   }
 
@@ -1350,7 +1352,7 @@ export interface ChatActions {
     opts?: SendOptions,
   ) => Promise<void>;
   stop: (conversationId?: string) => void;
-  switchTo: (conversationId: string | null) => Promise<void>;
+  switchTo: (conversationId: string | null, options?: { observe?: boolean }) => Promise<void>;
   submitApproval: (
     elicitationId: string,
     action: "accept" | "decline" | "cancel",
@@ -2059,7 +2061,7 @@ export function bindConversationForTest(
   }
   const entry = conversationRegistry.acquire(id);
   if (state !== undefined) entry.setState(state);
-  mirrorActiveEntry();
+  publishActiveChat();
   return { set: entrySetter(entry), get: entryGetter(entry) };
 }
 
@@ -2456,7 +2458,7 @@ function cachedEffortFamilyForSession(
   return catalog.effortFamilies[session.harness] ?? null;
 }
 
-export const useChatStore = create<ChatState>((_rootSet, get) => ({
+const createChatState = (get: () => ChatState): ChatState => ({
   conversationId: null,
   redirectToConversationId: null,
   blocks: [],
@@ -3831,9 +3833,9 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
     }
   },
 
-  switchTo: async (conversationId) => {
+  switchTo: async (conversationId, { observe = true } = {}) => {
     if (get().conversationId === conversationId) {
-      if (conversationId !== null) await ensureConversationStreamed(conversationId);
+      if (observe && conversationId !== null) await ensureConversationStreamed(conversationId);
       return;
     }
 
@@ -3882,7 +3884,7 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
         return;
       }
       conversationRegistry.acquire(conversationId);
-      mirrorActiveEntry();
+      publishActiveChat();
       return;
     }
 
@@ -3901,7 +3903,8 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
     }
     // Paint whatever the entry already holds. For a live entry that is the
     // current transcript; for a fresh one it is the initial state.
-    mirrorActiveEntry();
+    publishActiveChat();
+    if (!observe) return;
     if (wasLive) {
       // Legacy streams can stay open on the wrong replica without delivering
       // events. Revalidate them and newly revealed views against saved history;
@@ -4411,7 +4414,62 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
       pageSet({ loadingMoreHistory: false, hasMoreHistory: false });
     }
   },
-}));
+});
+
+const applicationStore = createStore<ChatState>(() => createChatState(readActiveChat));
+/** App-wide commands and queues; reading this channel never subscribes panes to the focused transcript. */
+export const chatApplication = {
+  getState: applicationStore.getState,
+  subscribe: applicationStore.subscribe,
+};
+
+let lastApplication: ChatState | undefined;
+let lastConversation: ConversationState | undefined;
+let lastSnapshot: ChatState;
+
+/** Standalone callers select the active registry entry without copying stream writes into another store. */
+function readActiveChat(): ChatState {
+  const app = applicationStore.getState();
+  const conversation = app.conversationId
+    ? conversationRegistry.peek(app.conversationId)?.getState()
+    : undefined;
+  if (app !== lastApplication || conversation !== lastConversation) {
+    lastApplication = app;
+    lastConversation = conversation;
+    lastSnapshot = conversation ? { ...app, ...conversation } : app;
+  }
+  return lastSnapshot;
+}
+
+const listeners = new Set<(state: ChatState, previous: ChatState) => void>();
+let publishedSnapshot = readActiveChat();
+function publishActiveChat() {
+  const previous = publishedSnapshot;
+  const next = readActiveChat();
+  if (next === previous) return;
+  publishedSnapshot = next;
+  for (const listener of listeners) listener(next, previous);
+}
+applicationStore.subscribe(publishActiveChat);
+const publishIfActive = (id: string) => {
+  if (applicationStore.getState().conversationId === id) publishActiveChat();
+};
+conversationRegistry.subscribe(publishIfActive);
+conversationRegistry.subscribeDisposed(publishIfActive);
+
+const chatApi: StoreApi<ChatState> = {
+  ...applicationStore,
+  getState: readActiveChat,
+  subscribe: (listener) => {
+    listeners.add(listener);
+    return () => listeners.delete(listener);
+  },
+};
+export const useChatStore: UseBoundStore<StoreApi<ChatState>> = Object.assign(
+  <T = ChatState>(select: (state: ChatState) => T = (state) => state as unknown as T) =>
+    useStore(chatApi, select),
+  chatApi,
+);
 
 // ── Store-action setter ──────────────────────────────────
 //
@@ -4423,9 +4481,6 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
 //
 // Declared after the store because it closes over `useChatStore`; hoisting makes
 // it available to the actions above, which only ever run after module init.
-// zustand's own `set` (`_rootSet`) is unused: it writes the root store, which is
-// a projection of the active entry, so a write there would be overwritten by the
-// next mirror.
 function setActive(partial: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>)): void {
   const active = conversationRegistry.getActive();
   if (active === null) {
@@ -4579,10 +4634,8 @@ type Setter = ((
 };
 type Getter = () => ChatState;
 
-// zustand's unwrapped setter, captured before the routing wrapper below
-// replaces it. Writes the root store's own fields with no re-splitting — used by
-// the mirror and by the app-global half of a routed patch.
-const rootSetState = useChatStore.setState;
+// App-global fields and the provisional landing composer have no conversation entry.
+const rootSetState = applicationStore.setState;
 
 // ── Origin-wide stream slots ─────────────────────────────
 //
@@ -4837,7 +4890,7 @@ function adoptPreSessionState(entry: ConversationEntry): void {
 function entryGetter(entry: ConversationEntry): Getter {
   return () =>
     ({
-      ...useChatStore.getState(),
+      ...applicationStore.getState(),
       ...entry.getState(),
       // The root's `conversationId` names what's ON SCREEN. For an entry it
       // must name the entry itself, so code reading `get().conversationId`
@@ -4907,25 +4960,10 @@ function entrySetter(entry: ConversationEntry): Setter {
 }
 
 /**
- * Project an entry's state onto the root store so components keep reading flat
- * fields (`useChatStore((s) => s.blocks)`) without knowing about entries.
- *
- * One-directional by design — entry → root, never back. A bidirectional mirror
- * would make "which copy is the truth" ambiguous the moment they disagreed.
- */
-function mirrorActiveEntry(): void {
-  const activeId = useChatStore.getState().conversationId;
-  if (activeId === null) return;
-  const entry = conversationRegistry.peek(activeId);
-  if (entry === undefined) return;
-  rootSetState(entry.getState() as Parameters<typeof rootSetState>[0]);
-}
-
-/**
  * Bind a conversation's live stream WITHOUT making it the on-screen
  * conversation, so a side chat can stream in its Workspace-rail tab beside the
  * still-active main chat. The cold path of `switchTo` minus
- * `setActive`/`mirrorActiveEntry` — it hydrates the entry and opens its stream,
+ * `setActive`/`publishActiveChat` — it hydrates the entry and opens its stream,
  * but the root projection (what `useChatStore` reads) keeps pointing at the main
  * chat; a side-chat surface reads the child entry via `useConversationEntryState`.
  *
@@ -4945,7 +4983,7 @@ export async function ensureConversationStreamed(id: string): Promise<void> {
     // controller WITHOUT setting a load error, so an error-free entry can still
     // be dead — reusing it would strand a remounted pane on stale state. This
     // mirrors switchTo's `isConversationStreamCurrent` liveness gate.
-    if (existing.getState().loadingConversation || isConversationStreamCurrent(id)) return;
+    if (isConversationStreamCurrent(id)) return;
     abortConversationStream(existing);
   }
   const entry = conversationRegistry.acquire(id);
@@ -4982,7 +5020,7 @@ useChatStore.setState = ((partial: unknown, replace?: boolean) => {
       if (nextId !== null) {
         conversationRegistry.acquire(nextId);
         // A default-valued patch may not notify; project the new entry even then.
-        mirrorActiveEntry();
+        publishActiveChat();
       }
     }
   }
@@ -5000,17 +5038,10 @@ useChatStore.setState = ((partial: unknown, replace?: boolean) => {
     rootSetState(appPatch as unknown as Parameters<typeof rootSetState>[0]);
   }
   if (Object.keys(conversationPatch).length > 0) {
-    // The entry's change notification mirrors this back onto the root store.
+    // Active and scoped readers select this same entry.
     entrySetter(active)(conversationPatch as Partial<ConversationState>);
   }
 }) as typeof useChatStore.setState;
-
-// Keep the root store's flat fields in step with whichever entry is on screen.
-conversationRegistry.subscribe((id) => {
-  if (useChatStore.getState().conversationId !== id) return;
-  const state = conversationRegistry.peek(id)?.getState();
-  if (state !== undefined) rootSetState(state as Parameters<typeof rootSetState>[0]);
-});
 
 // A side chat's queue drains off its own entry, since no page effect watches it.
 const entryDrainedQueues = new Set<string>();
@@ -5138,7 +5169,7 @@ async function ensureBoundSession(
     });
     useChatStore.setState({ conversationId: sessionId });
     conversationRegistry.setActive(sessionId);
-    mirrorActiveEntry();
+    publishActiveChat();
     opts?.onConversationCreated?.(sessionId);
     queryClient?.invalidateQueries({ queryKey: ["conversations"] });
     await bindStream(sessionId, entrySetter(entry), entryGetter(entry));
@@ -5568,7 +5599,7 @@ async function bindStream(
   };
   let observing = false;
   let multiplexed = false;
-  let hasSlot = false;
+  let observingAtBind = false;
   let initialStreamOpened!: () => void;
   const initialStreamReady = new Promise<void>((resolve) => {
     initialStreamOpened = resolve;
@@ -5600,7 +5631,6 @@ async function bindStream(
       if (!bootstrapCurrent()) return settleBinding();
     }
 
-    if (typeof WebSocket !== "undefined") observeTranscriptCapabilities();
     multiplexed =
       typeof WebSocket !== "undefined"
         ? await sessionUpdatesSocket.negotiateTranscript(controller.signal)
@@ -5609,8 +5639,9 @@ async function bindStream(
       typeof document === "undefined" ||
       (document.visibilityState !== "hidden" &&
         (multiplexed || !navigator.locks || document.hasFocus()));
-    hasSlot = mayObserve && (multiplexed || (await acquireStreamSlot(id, controller.signal)));
-    const initialSlot = hasSlot ? heldStreamSlots.get(id) : undefined;
+    observingAtBind =
+      mayObserve && (multiplexed || (await acquireStreamSlot(id, controller.signal)));
+    const initialSlot = !multiplexed && observingAtBind ? heldStreamSlots.get(id) : undefined;
     if (!bootstrapCurrent()) {
       if (initialSlot && heldStreamSlots.get(id) === initialSlot) releaseStreamSlot(id);
       return;
@@ -5628,18 +5659,14 @@ async function bindStream(
     void observeConversationStream({
       signal: controller.signal,
       multiplexed: () => sessionUpdatesSocket.supportsTranscripts(),
-      initialSlot: initialSlot
-        ? observationSlot(initialSlot)
-        : multiplexed && mayObserve
-          ? { release: async () => {} }
-          : undefined,
+      subscribeTransportChanges: (changed) => sessionUpdatesSocket.subscribeCapabilities(changed),
+      initialSlot: initialSlot ? observationSlot(initialSlot) : undefined,
       priority: () => (conversationRegistry.isFocused(id) ? 2 : 1),
-      acquire: async () => {
-        if (sessionUpdatesSocket.supportsTranscripts()) return { release: async () => {} };
-        if (!(await acquireStreamSlot(id, controller.signal))) return null;
+      acquire: async (signal) => {
+        if (!(await acquireStreamSlot(id, signal))) return null;
         return observationSlot(heldStreamSlots.get(id)!);
       },
-      pump: (observation, resumed) =>
+      pump: (observation, resumed, sharedSocket) =>
         startStreamPump(
           id,
           controller,
@@ -5649,14 +5676,14 @@ async function bindStream(
           resumed,
           observation,
           initialStreamOpened,
+          sharedSocket,
         ),
       catchUp: (signal) =>
         reconcileOnReconnect(id, set, get, ignoredNativeMessageIds, true, false, undefined, signal),
     }).finally(() => {
       initialStreamOpened();
       controller.signal.removeEventListener("abort", initialStreamOpened);
-      if (current()) set({ abortController: null });
-      controller.abort();
+      settleBinding();
     });
 
     observing = true;
@@ -5694,7 +5721,7 @@ async function bindStream(
     throw new Error("chatStore.bindStream: queryClient not initialized");
   }
   // A negotiated subscription must register before the authoritative item read.
-  if (multiplexed && hasSlot) await initialStreamReady;
+  if (multiplexed && observingAtBind) await initialStreamReady;
   if (!current()) return settleBinding();
   const snapshotSet: Setter = (patch) => {
     if (bootstrapCurrent()) set(patch);
@@ -5704,7 +5731,9 @@ async function bindStream(
       set({ loadingConversation: false });
       return;
     }
-    if (stateBeforeFetch.blocks.length > 0) {
+    const versionedBootstrap =
+      multiplexed && observingAtBind && sessionUpdatesSocket.supportsVersionedFeed();
+    if (stateBeforeFetch.blocks.length > 0 && !versionedBootstrap) {
       // Reobserve the existing window without clearing older loaded pages or
       // replaying a send/scroll intent through a loading-state remount.
       await reconcileOnReconnect(
@@ -5712,7 +5741,7 @@ async function bindStream(
         snapshotSet,
         get,
         ignoredNativeMessageIds,
-        !hasSlot,
+        !observingAtBind,
         false,
         bootstrapSnapshot
           ? {
@@ -5730,14 +5759,17 @@ async function bindStream(
     // the reader sees as the transcript shifting seconds after it settled.
     const [session, page] = await Promise.all([
       readBootstrapSnapshot(),
-      fetchSessionItemsPage(id, { limit: INITIAL_WINDOW_ITEMS }),
+      versionedBootstrap
+        ? Promise.resolve({ items: [], hasMore: false })
+        : fetchSessionItemsPage(id, { limit: INITIAL_WINDOW_ITEMS }),
     ]);
     if (!current()) return settleBinding();
     if (!bootstrapCurrent()) {
       set({ loadingConversation: false });
       return;
     }
-    const canonicalReplayWon = conversationSynchronization(controller).cursor !== cursorBeforeFetch;
+    const canonicalReplayWon =
+      versionedBootstrap || conversationSynchronization(controller).cursor !== cursorBeforeFetch;
     const items = canonicalReplayWon ? [] : page.items;
     const snapshotNativeMessageIds = nativeCompletedMessageIds(items);
     snapshotNativeMessageIds.forEach((messageId) => ignoredNativeMessageIds.add(messageId));
@@ -5885,7 +5917,8 @@ async function bindStream(
         ...(unsentDraft !== null && state.failedSendDraft === null
           ? { failedSendDraft: unsentDraft }
           : {}),
-        loadingConversation: false,
+        loadingConversation:
+          versionedBootstrap && !state.transcriptCheckpoint && state.blocks.length === 0,
         hasMoreHistory: canonicalReplayWon ? get().hasMoreHistory : page.hasMore,
         oldestItemId: canonicalReplayWon ? get().oldestItemId : oldestItemId,
         historyWindowStartPosition: canonicalReplayWon
@@ -7426,16 +7459,6 @@ export async function hydrateTranscriptReader({
 }
 setTranscriptReaderHydrator(hydrateTranscriptReader);
 
-let observingTranscriptCapabilities = false;
-function observeTranscriptCapabilities(): void {
-  if (observingTranscriptCapabilities) return;
-  observingTranscriptCapabilities = true;
-  sessionUpdatesSocket.subscribeCapabilities(() => {
-    if (!sessionUpdatesSocket.supportsTranscripts()) return;
-    for (const attempt of presenceAttemptControllers)
-      if (!multiplexedAttempts.has(attempt)) attempt.abort();
-  });
-}
 const presenceIdle = createPresenceIdleTracker({
   onFlip: () => {
     sessionUpdatesSocket.reportPresence(presenceIdle.idleNow());
@@ -7520,6 +7543,7 @@ export async function startStreamPump(
   reconcileFirstOpen = false,
   observationController: AbortController = controller,
   onStreamOpened?: () => void,
+  sharedSocket?: boolean,
 ): Promise<void> {
   nativePreviewTombstonesByController.set(controller, ignoredNativeMessageIds);
   let reconcileAfterSlotWait = reconcileFirstOpen;
@@ -7537,7 +7561,7 @@ export async function startStreamPump(
     });
   };
   const statusReconcileTimer =
-    typeof window === "undefined" || sessionUpdatesSocket.supportsTranscripts()
+    typeof window === "undefined" || (sharedSocket ?? sessionUpdatesSocket.supportsTranscripts())
       ? null
       : window.setInterval(runGuardedStatusReconcile, ACTIVE_SESSION_STATUS_RECONCILE_INTERVAL_MS);
   // Pending post-reconnect catch-up timers. Tracked so each reconnect cancels
@@ -7598,7 +7622,7 @@ export async function startStreamPump(
       if (failedOpens > 0) {
         await abortableDelay(nextReconnectDelay(failedOpens), observationController.signal);
         if (observationController.signal.aborted || isConversationDisposed(id)) break;
-      } else if (hasConnected && conversationRegistry.getActive()?.id !== id) {
+      } else if (hasConnected && !sharedSocket && conversationRegistry.getActive()?.id !== id) {
         // Stagger a BACKGROUND conversation's reconnect. The ingress caps every
         // stream at ~5 minutes, and streams opened together recycle together, so
         // without this a tab holding N conversations fires N reconnects — each
@@ -7614,6 +7638,7 @@ export async function startStreamPump(
       const onOuterAbort = () => attempt.abort();
       observationController.signal.addEventListener("abort", onOuterAbort);
       presenceAttemptControllers.add(attempt);
+      if (sharedSocket) multiplexedAttempts.add(attempt);
       // Stamped from attempt start so the wake fast-path can also recycle
       // an open that has hung past the stale window, not just a dead body.
       streamAttemptActivity.set(attempt, Date.now());
@@ -7621,6 +7646,7 @@ export async function startStreamPump(
       liveAttempt = attempt;
       const receiptScope = transcriptReaderScope();
       let synchronization: SynchronizationAttempt | undefined;
+      let releaseAdmission: (() => void) | undefined;
       try {
         const idle = presenceIdle.idleNow();
         let streamRes: Response | TranscriptResponse;
@@ -7645,7 +7671,8 @@ export async function startStreamPump(
                 }
               : {}),
           };
-          if (sessionUpdatesSocket.supportsTranscripts()) {
+          if (sharedSocket ?? sessionUpdatesSocket.supportsTranscripts()) {
+            releaseAdmission = await sessionUpdatesSocket.reserveMembership(attempt.signal);
             synchronization = conversationSynchronization(controller).begin(
               true,
               (retry, reason) => {
@@ -7669,8 +7696,10 @@ export async function startStreamPump(
                   if (transcriptReaderScope() === receiptScope && synchronization!.current)
                     recordStreamReceipt(id, synchronization!, event);
                 },
+                synchronization.identity.attemptId,
               )
             : null;
+          if (!shared && sharedSocket) return;
           if (!shared) {
             synchronization?.stop();
             synchronization = undefined;
@@ -7886,6 +7915,7 @@ export async function startStreamPump(
           markLivePreviewsInterrupted(id, set);
         }
       } finally {
+        releaseAdmission?.();
         synchronization?.stop();
         liveAttempt = null;
         observationController.signal.removeEventListener("abort", onOuterAbort);
@@ -8453,6 +8483,7 @@ function recordStreamReceipt(id: string, replay: SynchronizationAttempt, event: 
   recordConvergence("received", {
     conversationId: id,
     ...replay.receivedIdentity(event),
+    revision: event.changeRevision,
     itemId: typeof event.committedItem?.id === "string" ? event.committedItem.id : undefined,
     position: itemPosition(event.committedItem?.position ?? event.position),
     kind:
@@ -8502,6 +8533,31 @@ export async function pumpStreamEvents(
         requestResume?.(retry);
       },
     );
+  const bodyController = new AbortController();
+  const bodySignal = AbortSignal.any([controller.signal, bodyController.signal]);
+  const scanSavedBodies = deferredToolOutputs(
+    id,
+    bodySignal,
+    () => get().blocks,
+    () =>
+      !bodySignal.aborted &&
+      replay.current &&
+      get().abortController === binding &&
+      transcriptCursorScope(id) === cursorScope &&
+      !isConversationDisposed(id),
+    (ref, output, verified) => {
+      set((state) => {
+        const at = transcriptIndex(state.blocks).items.get(ref.itemId);
+        if (at === undefined) return {};
+        const block = state.blocks[at];
+        if (block.type !== "tool_result" || block[savedToolBody] !== ref) return {};
+        const blocks = state.blocks.slice();
+        blocks[at] = { ...block, output, [savedToolBody]: verified ? undefined : ref };
+        return { blocks };
+      });
+    },
+  );
+  scanSavedBodies();
   const rawEvents = (async function* () {
     const source = structured
       ? readTranscriptEvents(body as ReadableStream<StreamEvent>)
@@ -8511,7 +8567,9 @@ export async function pumpStreamEvents(
       if (controller.signal.aborted || !replay.current) return;
       let event: StreamEvent = received;
       if (received.type === "session_item_reference") {
-        event = await readReferencedEvent(id, received, controller.signal);
+        event =
+          referencedOutputHeader(received) ??
+          (await readReferencedEvent(id, received, controller.signal));
         const owner = binding ?? controller;
         if (event.type === "session_transport_error" && isRetryableTranscriptError(event.code)) {
           const previous = failedReferenceReads.get(owner);
@@ -8539,6 +8597,43 @@ export async function pumpStreamEvents(
       yield event;
       if (event.type === "session_transport_error") return;
       if (
+        received.type === "session_item_reference" ||
+        (event.type === "session_sync" && event.phase === "complete")
+      )
+        scanSavedBodies();
+      // The event iterator resumes only after its consumer has processed this row.
+      const revision = received.changeRevision;
+      const position = itemPosition(event.position ?? event.committedItem?.position);
+      if (
+        revision !== undefined &&
+        position !== undefined &&
+        replay.current &&
+        get().abortController === binding &&
+        transcriptCursorScope(id) === cursorScope
+      ) {
+        flush();
+        const itemId =
+          event.committedItem?.id ??
+          (event.type === "session_item_updated" ? event.item.id : undefined);
+        if (typeof itemId === "string") {
+          const blocks = get().blocks;
+          const index = transcriptIndex(blocks).items.get(itemId);
+          if (index !== undefined) {
+            stampConvergenceBlocks([blocks[index]!], { ...replay.identity, revision });
+            recordConvergence("accepted", {
+              conversationId: id,
+              ...replay.identity,
+              kind: "item",
+              itemId,
+              position,
+              revision,
+            });
+          }
+        }
+        const cursor = replay.appliedChange(revision, position);
+        if (cursor) set({ transcriptCheckpoint: { scope: cursorScope, cursor } });
+      }
+      if (
         event.type === "session_item_updated" &&
         previousItemBlocks !== undefined &&
         typeof event.item.id === "string" &&
@@ -8549,7 +8644,10 @@ export async function pumpStreamEvents(
           (block) => block.ctx.itemId === event.item.id && !previousItemBlocks?.has(block),
         );
         if (updated.length) {
-          stampConvergenceBlocks(updated, replay.identity);
+          stampConvergenceBlocks(updated, {
+            ...replay.identity,
+            revision: received.changeRevision,
+          });
           recordConvergence("accepted", {
             conversationId: id,
             ...replay.identity,
@@ -8718,6 +8816,7 @@ export async function pumpStreamEvents(
           replay.checkpointAccepted
         ) {
           set({
+            loadingConversation: false,
             transcriptCheckpoint: {
               scope: cursorScope,
               cursor: conversationSynchronization(get().abortController ?? controller).cursor!,
@@ -8799,7 +8898,7 @@ export async function pumpStreamEvents(
 
   // Drain the buffer (+ optional trailing block) into one `blocks` append,
   // applying any sidecar state in the same commit. No-ops if switched away.
-  const flush = (trailing?: AnyBlock, extra?: Partial<ChatState>): void => {
+  function flush(trailing?: AnyBlock, extra?: Partial<ChatState>): void {
     scheduler.cancel();
     flushLiveText();
     if (isConversationDisposed(id)) {
@@ -8874,7 +8973,7 @@ export async function pumpStreamEvents(
           : [...s.blocks, ...fresh],
       };
     });
-  };
+  }
 
   try {
     for await (const block of stream.reduce(events)) {
@@ -9094,6 +9193,7 @@ export async function pumpStreamEvents(
     flush();
     return "dropped";
   } finally {
+    bodyController.abort();
     replay.stop();
     // Drop any pending frame + its buffered blocks so a queued flush
     // can't apply this stream's blocks after switchTo bound another.

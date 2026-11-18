@@ -31,7 +31,7 @@ import { useContext, useEffect, useLayoutEffect, useRef, useState } from "react"
 import { ChevronRightIcon } from "lucide-react";
 import { LIVE_ITEM_PREFIX } from "@/lib/blocks";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import type { RenderItem } from "@/lib/renderItems";
+import { renderGroupMembers, renderItemIdentity, type RenderItem } from "@/lib/renderItems";
 import type { SessionStatus } from "@/lib/types";
 import type { ActiveResponse } from "@/store/types";
 import { cn } from "@/lib/utils";
@@ -315,6 +315,8 @@ export function BlockRenderer({
 
   if (showFold) {
     const rendered: ReactNode[] = [];
+    const singleWorkInterval =
+      partition.segments.filter((part) => part.kind === "work").length === 1;
     for (const segment of partition.segments) {
       if (segment.kind === "text") {
         rendered.push(
@@ -332,13 +334,14 @@ export function BlockRenderer({
         );
         continue;
       }
-      // The available duration spans the turn-level work fold.
+      // The duration spans the entire turn, not an individual work interval.
       const firstKey = transcriptDisclosureItemKey(segment.items[0]);
       rendered.push(
         <TurnWorkedFold
           key={`worked:${firstKey ?? segment.startIndex}`}
+          items={segment.items}
           disclosureKey={firstKey ? `worked:${firstKey}` : undefined}
-          workedForS={workedForS}
+          workedForS={singleWorkInterval ? workedForS : undefined}
           animateCollapse={animateCollapse}
           defaultOpen={defaultExpanded}
           searchOpen={segment.items.some(
@@ -517,19 +520,17 @@ type TurnSegment =
   | { kind: "text"; items: RenderItem[]; startIndex: number }
   | { kind: "exempt"; item: RenderItem; index: number };
 
-// A trailing `turn_diff` belongs with earlier work, after the last message.
 const TRAILING_WRAPUP_TOOLS = new Set(["turn_diff"]);
 
-/** Trailing reasoning joins earlier work so live and reloaded views agree. */
+/** Wrap-up alone cannot turn a terminal error into a successful response. */
 function isTrailingWrapup(item: RenderItem): boolean {
   if (item.kind === "reasoning") return true;
   return item.kind === "tool" && TRAILING_WRAPUP_TOOLS.has(item.execution.name);
 }
 
 /**
- * Collect process work into one turn-level fold. Text lacks a reliable
- * final-answer marker, so every completed message stays visible unless
- * `foldNarration` asks to keep only the last one.
+ * A visible message or action ends the current fold. Expanding all folds
+ * must recover the original turn sequence even after it settles.
  */
 function partitionTurn(
   items: RenderItem[],
@@ -538,19 +539,12 @@ function partitionTurn(
 ): TurnPartition {
   const latestStart = latestNewsStart(items, continued);
   const settled = items.slice(0, latestStart);
-  let end = settled.length;
-  const wrapup: RenderItem[] = [];
-  while (end > 0 && isTrailingWrapup(settled[end - 1]!)) {
-    wrapup.unshift(settled[end - 1]!);
-    end -= 1;
-  }
   // Keep the last non-blank message visible, even in a continued bubble.
   const answerIndex = foldNarration
     ? settled.findLastIndex((item) => item.kind === "text" && item.text.trim() !== "")
     : -1;
   const built: TurnSegment[] = [];
-  let work: Extract<TurnSegment, { kind: "work" }> | undefined;
-  for (let i = 0; i < end; i += 1) {
+  for (let i = 0; i < settled.length; i += 1) {
     const item = settled[i]!;
     if (
       isPendingElicitation(item) ||
@@ -564,31 +558,19 @@ function partitionTurn(
     // Blank text after the answer stays with it rather than opening a second fold.
     const visibleText =
       item.kind === "text" &&
-      (item.phase === "final_answer" ||
+      (!foldNarration ||
+        item.phase === "final_answer" ||
         (item.phase !== "commentary" && (answerIndex < 0 || i >= answerIndex)));
     const kind = visibleText ? "text" : "work";
-    if (kind === "work") {
-      if (work) work.items.push(item);
-      else {
-        work = { kind: "work", items: [item], startIndex: i };
-        built.push(work);
-      }
-      continue;
-    }
     const previous = built[built.length - 1];
-    if (previous?.kind === "text") previous.items.push(item);
-    else built.push({ kind: "text", items: [item], startIndex: i });
-  }
-  const segments = built;
-  if (wrapup.length > 0) {
-    if (work) work.items.push(...wrapup);
-    else segments.push({ kind: "work", items: wrapup, startIndex: end });
+    if (previous?.kind === kind) previous.items.push(item);
+    else built.push({ kind, items: [item], startIndex: i });
   }
   const latest =
     latestStart < items.length
       ? { items: items.slice(latestStart), startIndex: latestStart }
       : null;
-  return { segments, latest };
+  return { segments: built, latest };
 }
 
 /**
@@ -658,6 +640,7 @@ function isProvisionalItem(item: RenderItem): boolean {
  * Row expanding + trace shrinking nets a single monotonic shrink.
  */
 function TurnWorkedFold({
+  items,
   disclosureKey,
   workedForS,
   animateCollapse,
@@ -673,6 +656,7 @@ function TurnWorkedFold({
   searchOpen?: boolean;
   searchRequest?: number;
   children: ReactNode;
+  items: RenderItem[];
 }) {
   const label = workedForS !== undefined ? `Worked for ${formatWorkedFor(workedForS)}` : "Worked";
   const [savedOpen, rememberOpen] = useTranscriptDisclosureState(
@@ -718,6 +702,7 @@ function TurnWorkedFold({
       onOpenChange={handleOpenChange}
       className="group/turn-fold not-prose w-full"
       data-testid="turn-worked-fold"
+      data-convergence-members={open ? undefined : renderGroupMembers(items)}
     >
       <div className={cn("turn-fold-row", animateCollapse && "turn-fold-row-enter")}>
         <CollapsibleTrigger className="flex cursor-pointer items-center gap-2 rounded-sm py-1 text-left text-muted-foreground text-chat outline-none transition-colors hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50">
@@ -896,6 +881,7 @@ function renderItem(
       return (
         <ReasoningView
           key={key}
+          itemId={renderItemIdentity(item)}
           text={item.text}
           isStreaming={isReasoningStreaming}
           duration={suppressReasoningDuration ? undefined : item.duration}
@@ -918,6 +904,7 @@ function renderItem(
         <ToolCard
           key={key}
           disclosureKey={transcriptDisclosureItemKey(item)}
+          itemId={renderItemIdentity(item)}
           name={item.execution.name}
           argsSummary={item.execution.argsSummary}
           arguments={item.execution.arguments}
@@ -935,6 +922,7 @@ function renderItem(
         <ToolCard
           key={key}
           disclosureKey={transcriptDisclosureItemKey(item)}
+          itemId={renderItemIdentity(item)}
           name={item.label}
           nativeToolType={item.toolType}
           arguments={Object.fromEntries(

@@ -220,6 +220,110 @@ describe("sessionUpdatesSocket transcript multiplexing", () => {
       event: { type: "response.output_text.delta", delta: text },
     });
 
+  it("holds a known membership through a socket outage and transfers to SSE when the replacement peer has no feed", async () => {
+    ready();
+    const original = latestWs();
+    original.close();
+    expect(sessionUpdatesSocket.supportsTranscripts()).toBe(true);
+    const opening = sessionUpdatesSocket.openTranscript(
+      "resume",
+      new AbortController().signal,
+      { after_position: 0 },
+      false,
+    );
+    await vi.advanceTimersByTimeAsync(5000);
+    const replacement = latestWs();
+    expect(replacement).not.toBe(original);
+    replacement.open();
+    await vi.advanceTimersByTimeAsync(TRANSCRIPT_NEGOTIATION_MS);
+    expect(await opening).toBeNull();
+    expect(replacement.sent.some((f) => f.type === "subscribe")).toBe(false);
+    expect(sessionUpdatesSocket.supportsTranscripts()).toBe(false);
+  });
+
+  it("admits waiting panes in arrival order and removes cancelled waiters", async () => {
+    latestWs().emit({
+      type: "capabilities",
+      transcript_stream: 1,
+      transcript_feed: 2,
+      transcript_feed_default: 2,
+      transcript_memberships: 1,
+    });
+    const holder = await sessionUpdatesSocket.reserveMembership(new AbortController().signal);
+    const hidden = new AbortController();
+    const skipped = sessionUpdatesSocket.reserveMembership(hidden.signal);
+    const granted: string[] = [];
+    const first = sessionUpdatesSocket
+      .reserveMembership(new AbortController().signal)
+      .then((release) => {
+        granted.push("first");
+        return release;
+      });
+    const second = sessionUpdatesSocket
+      .reserveMembership(new AbortController().signal)
+      .then((release) => {
+        granted.push("second");
+        return release;
+      });
+    hidden.abort();
+    await expect(skipped).rejects.toThrow("Aborted");
+    holder();
+    const release = await first;
+    expect(granted).toEqual(["first"]);
+    release();
+    (await second)();
+    expect(granted).toEqual(["first", "second"]);
+  });
+
+  it("ignores retired membership frames while expanding negotiated snapshot rows", async () => {
+    latestWs().emit({
+      type: "capabilities",
+      transcript_stream: 1,
+      transcript_feed: 2,
+      transcript_feed_default: 2,
+    });
+    const first = new AbortController();
+    await sessionUpdatesSocket.openTranscript("chat", first.signal, { after_position: -1 }, false);
+    const old = latestWs().sent.at(-1)!.subscription_id;
+    first.abort();
+    const active = await sessionUpdatesSocket.openTranscript(
+      "chat",
+      new AbortController().signal,
+      { after_position: -1 },
+      false,
+    );
+    const id = latestWs().sent.at(-1)!.subscription_id;
+    expect(typeof id).toBe("string");
+    expect(id).not.toBe(old);
+    latestWs().emit({
+      type: "session.error",
+      session_id: "chat",
+      subscription_id: old,
+      code: "forbidden",
+    });
+    latestWs().emit({
+      type: "session.event",
+      session_id: "chat",
+      subscription_id: id,
+      event: {
+        type: "session.snapshot_page",
+        items: [
+          {
+            type: "message",
+            id: "durable",
+            response_id: "turn",
+            position: 0,
+            role: "user",
+            content: [],
+          },
+        ],
+      },
+    });
+    const reader = active!.body.getReader();
+    expect((await reader.read()).value?.committedItem?.id).toBe("durable");
+    await reader.cancel();
+  });
+
   it("preserves the per-session replica route when host routing is enabled", async () => {
     const routing = vi.spyOn(host, "isHostRoutingEnabled").mockReturnValue(true);
     ready();

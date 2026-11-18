@@ -16,6 +16,7 @@ import { serializeReplyDraft, type StoredReplyDraft } from "@/lib/replyDraft";
 import { ATTACHMENT_SIZE_LIMITS_MB } from "@/lib/attachments";
 import * as sessionsApi from "@/lib/sessionsApi";
 import type * as ChatStoreModule from "@/store/chatStore";
+import type { ConversationBranch } from "@/lib/conversationBranches";
 import { useChatStore, type ChatState } from "@/store/chatStore";
 import { conversationRegistry } from "@/store/conversationRegistry";
 import { itemsToBlocks } from "@/lib/itemsToBlocks";
@@ -35,11 +36,12 @@ vi.mock("@/components/ComposerMicButton", () => ({
   },
 }));
 const sessionLabels = vi.hoisted(() => ({ current: {} as Record<string, string> }));
+const sessionBranch = vi.hoisted(() => ({ current: null as ConversationBranch | null }));
 // A conversation id whose snapshot the mock should report as still loading.
 const loadingSession = vi.hoisted(() => ({ id: null as string | null }));
 vi.mock("@/hooks/useSession", () => ({
   useSession: (id?: string | null) => ({
-    session: { labels: sessionLabels.current },
+    session: { labels: sessionLabels.current, branch: sessionBranch.current },
     isLoading: id != null && id === loadingSession.id,
     error: null,
   }),
@@ -75,6 +77,7 @@ beforeEach(() => {
   clearSessionDrafts();
   sessionStorage.clear();
   sessionLabels.current = {};
+  sessionBranch.current = null;
   loadingSession.id = null;
   conversationRegistry.clear();
   send.mockReset().mockResolvedValue(undefined);
@@ -129,6 +132,53 @@ it.each(["", "Unfinished side draft", "  \n "])(
 );
 
 describe("side-chat working indicator", () => {
+  it.each([true, false])("keeps child rows after cold hydration (known boundary: %s)", (known) => {
+    const entry = conversationRegistry.acquire(childId);
+    entry.setState({
+      sessionHarness: "openai-agents",
+      loadingConversation: true,
+      sessionStatus: "idle",
+    });
+    if (known)
+      sessionBranch.current = {
+        source_conversation_id: "parent",
+        reference_only: false,
+        recovery: "replay",
+        inherited_last_item_id: "inherited",
+        inherited_item_count: 1,
+      };
+    renderPane(<SideChatPane childId={childId} />);
+    act(() =>
+      entry.setState({
+        loadingConversation: false,
+        blocks: itemsToBlocks(
+          ["inherited", "child-first", "child-second"].map((id, position) => ({
+            id,
+            position,
+            type: "message",
+            role: "assistant",
+            response_id: "turn",
+            status: "completed",
+            content: [{ type: "output_text", text: id }],
+          })),
+        ),
+        pendingUserMessages: [
+          {
+            tempId: "pending-input",
+            content: [{ type: "input_text", text: "Interjection" }],
+            anchor: { afterItemId: "child-first", afterPosition: 1, sequence: 1 },
+          },
+        ],
+      }),
+    );
+    const rows = screen.getAllByTestId("message-bubble");
+    expect(rows).toHaveLength(3);
+    expect(rows[0]).toHaveTextContent("child-first");
+    expect(rows[1]).toHaveTextContent("Interjection");
+    expect(rows[2]).toHaveTextContent("child-second");
+    if (known) expect(screen.queryByText("inherited")).toBeNull();
+    else expect(screen.getByText("inherited")).toBeVisible();
+  });
   it.each([false, true])("groups unread inputs below working (full-session: %s)", (fullSession) => {
     const entry = conversationRegistry.acquire(childId);
     const pending = ["first", "second"].map((tempId) => ({

@@ -8,7 +8,7 @@ import {
   hasInheritedHistory,
   inheritedHistoryEnd,
   QUOTE_SUBCHAT_HISTORY_LABEL,
-  shouldHideQuoteSubchatHistory,
+  shouldHideSubchatHistory,
 } from "./inheritedHistory";
 
 const branch: ConversationBranch = {
@@ -30,15 +30,25 @@ function text(itemId: string, fullText = "identical text"): AnyBlock {
 }
 
 describe("inherited history boundary", () => {
+  it("uses the same boundary for a legacy subchat opened by URL or in a grid", () => {
+    const labels = { "omnigent.side_chat": "1", "omnigent.side_chat.source_id": "source" };
+    expect(shouldHideSubchatHistory(labels, branch)).toBe(true);
+    expect(shouldHideSubchatHistory(labels, { ...branch, source_conversation_id: "another" })).toBe(
+      false,
+    );
+    expect(shouldHideSubchatHistory(labels, { ...branch, inherited_last_item_id: null })).toBe(
+      false,
+    );
+  });
   it("hides a quote subchat whose marker matches its original source item", () => {
-    expect(
-      shouldHideQuoteSubchatHistory({ [QUOTE_SUBCHAT_HISTORY_LABEL]: "source-last" }, branch),
-    ).toBe(true);
+    expect(shouldHideSubchatHistory({ [QUOTE_SUBCHAT_HISTORY_LABEL]: "source-last" }, branch)).toBe(
+      true,
+    );
   });
 
   it("does not hide an explicit fork that copied its source subchat's marker", () => {
     expect(
-      shouldHideQuoteSubchatHistory(
+      shouldHideSubchatHistory(
         { [QUOTE_SUBCHAT_HISTORY_LABEL]: "source-last" },
         { ...branch, source_item_id: "copied-last", inherited_last_item_id: "fork-last" },
       ),
@@ -87,9 +97,9 @@ describe("inherited history boundary", () => {
 
 it("binds durable history policy to the new copied boundary", () => {
   const labels = { [SUBCHAT_HISTORY_LABEL]: "copied-last" };
-  expect(shouldHideQuoteSubchatHistory(labels, { ...branch, reference_only: true })).toBe(true);
+  expect(shouldHideSubchatHistory(labels, { ...branch, reference_only: true })).toBe(true);
   expect(
-    shouldHideQuoteSubchatHistory(labels, {
+    shouldHideSubchatHistory(labels, {
       ...branch,
       inherited_last_item_id: "explicit-fork-last",
     }),

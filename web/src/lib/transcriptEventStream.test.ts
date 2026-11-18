@@ -1,4 +1,8 @@
 // Required Notice: Copyright 2026 MrStrenggeheim. Triune (https://github.com/MrStrenggeheim/triune).
+import type { ConversationItem } from "./conversationItems";
+import { savedToolBody } from "./events";
+import { deferredToolOutputs, referencedOutputHeader } from "./deferredToolOutput";
+import { itemsToBlocks } from "./itemsToBlocks";
 import { afterEach, expect, it, vi } from "vitest";
 import { isRetryableTranscriptError } from "./sessionUpdatesSocket";
 import {
@@ -153,4 +157,56 @@ it("reads a digest- and identity-checked server response on plain HTTP without S
     new AbortController().signal,
   );
   expect(resolved.committedItem).toEqual(JSON.parse(body));
+});
+
+it("publishes a saved tool row immediately and verifies its body independently", async () => {
+  const { type, ...raw } = {
+    type: "response.output_item.done",
+    id: "saved",
+    position: 2,
+    response_id: "turn",
+    call_id: "call",
+  };
+  const summary = { ...raw, type: "function_call_output" };
+  const body = JSON.stringify({ ...summary, output: "complete verified output" });
+  const digest = Array.from(
+    new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body))),
+    (byte) => byte.toString(16).padStart(2, "0"),
+  ).join("");
+  const ref = {
+    type: "session_item_reference" as const,
+    header: { type, tool_output: summary },
+    itemId: raw.id,
+    position: raw.position,
+    sha256: digest,
+    byteLength: body.length,
+  };
+  const header = referencedOutputHeader(ref);
+  expect(header?.committedItem?.output).toBe("Loading saved tool output…");
+  const blocks = itemsToBlocks([header!.committedItem as unknown as ConversationItem]);
+  expect(blocks[0].type === "tool_result" && blocks[0][savedToolBody]).toBe(ref);
+  let respond!: (value: Response) => void;
+  const fetchMock = vi.fn(
+    () =>
+      new Promise<Response>((r) => {
+        respond = r;
+      }),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  const published = vi.fn();
+  const scan = deferredToolOutputs(
+    "chat",
+    new AbortController().signal,
+    () => blocks,
+    () => true,
+    published,
+  );
+  scan();
+  scan();
+  await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+  expect(published).not.toHaveBeenCalled();
+  respond(new Response(body, { headers: { etag: `W/"${digest}"` } }));
+  await vi.waitFor(() =>
+    expect(published).toHaveBeenCalledWith(ref, "complete verified output", true),
+  );
 });

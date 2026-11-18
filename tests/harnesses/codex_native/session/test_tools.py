@@ -22,6 +22,57 @@ from tests.harnesses.codex_native.session._support import (
 )
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("server", "tool", "status", "result", "outcome"),
+    [
+        (
+            "basic-memory",
+            "bm_search",
+            "completed",
+            {"content": [], "_meta": "private"},
+            "completed",
+        ),
+        ("omnigent", "sys_session_get_history", "completed", {"isError": True}, "failed"),
+        ("fixture", "lookup", "failed", None, "failed"),
+    ],
+)
+async def test_mcp_tool_start_completion_and_replay(
+    tmp_path, server, tool, status, result, outcome
+):
+    posted = []
+    state = codex_native_forwarder._CodexForwarderState(mcp_startup_settled=True)
+    item = {
+        "type": "mcpToolCall",
+        "id": "call",
+        "server": server,
+        "tool": tool,
+        "arguments": {"secret": "private"},
+    }
+    async with _recording_forwarder_client(posted) as client:
+        ctx = _forwarder_context(client, tmp_path)
+        for method in ("item/started", "item/started", "item/completed", "item/completed"):
+            fields = {"status": status, "result": result} if method == "item/completed" else {}
+            await codex_native_forwarder._handle_event(
+                client,
+                **ctx,
+                event={
+                    "method": method,
+                    "params": {"turnId": "turn", "threadId": "thread", "item": {**item, **fields}},
+                },
+                forwarder_state=state,
+            )
+    rows = [event["data"] for event in posted if event["type"] == "external_conversation_item"]
+    assert [row["source_id"] for row in rows] == [
+        "thread:turn:call:call",
+        "thread:turn:call:output",
+    ]
+    assert [row["item_data"]["call_id"] for row in rows] == ["call", "call"]
+    assert rows[0]["item_data"]["name"] == f"mcp__{server}__{tool}"
+    assert rows[1]["item_data"]["output"] == outcome
+    assert "private" not in json.dumps(posted)
+
+
 def test_forwarder_posts_codex_turn_plan_update_only_to_tasks(tmp_path: Path) -> None:
     """Codex ``turn/plan/updated`` notifications update only the Tasks tab."""
     posted: list[dict[str, Any]] = []
@@ -311,24 +362,26 @@ def test_forwarder_streams_codex_command_output_before_completed_item(tmp_path: 
                     forwarder_state=state,
                 )
             await coalescer.close()
+            await state.command_processes.close()
 
     asyncio.run(run())
 
-    assert [payload["type"] for payload in posted] == [
-        "external_session_background_tasks",
+    inventory = [p["data"] for p in posted if p["type"] == "external_session_background_tasks"]
+    assert inventory[0]["background_task_count"] == 1
+    assert inventory[-1]["background_tasks"] == []
+    assert inventory[-1]["shell_resources"][0]["status"] == "completed"
+    transcript = [p for p in posted if p["type"] != "external_session_background_tasks"]
+    assert [payload["type"] for payload in transcript] == [
         "external_conversation_item",
         "external_tool_output_delta",
-        "external_session_background_tasks",
         "external_conversation_item",
     ]
-    assert posted[0]["data"]["background_task_count"] == 1
-    assert posted[3]["data"] == {"background_task_count": 0, "background_tasks": []}
-    assert posted[1]["data"]["item_type"] == "function_call"
-    assert posted[2] == {
+    assert transcript[0]["data"]["item_type"] == "function_call"
+    assert transcript[1] == {
         "type": "external_tool_output_delta",
         "data": {"call_id": "call_abc123", "delta": "collecting tests..."},
     }
-    assert posted[4]["data"] == {
+    assert transcript[2]["data"] == {
         "item_type": "function_call_output",
         "item_data": {
             "call_id": "call_abc123",

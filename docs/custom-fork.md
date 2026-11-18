@@ -96,6 +96,29 @@ See the unified-workspace feature map for source mappings and desktop/mobile acc
 
 ## Performance and retained views
 
+### Conversation ownership and negotiated recovery
+
+The workspace declares the union of visible conversation IDs after a layout commit.
+Each tab holds one membership per authorized visible conversation; moving a pane preserves its membership and reader state.
+Chat controls target their conversation's registry entry, and subchats filter inherited history before the shared row projection.
+
+Servers with the SQLite change journal advertise feed version 2.
+Set `TRIUNE_TRANSCRIPT_FEED=canary` for per-browser opt-in, `2` for a negotiated default, or `1` for compatibility mode.
+During a canary, `localStorage.setItem("triune:transcript-feed", "2")` before connecting enrolls the browser.
+Set `TRIUNE_TRANSCRIPT_CANARY_CHAT` to enroll tabs opened directly on one named conversation.
+The previous client and SSE paths remain available to compatible clients.
+
+The versioned feed sends the initial window once, applies contiguous journal revisions for appends and amendments, and fences retired memberships by subscription ID.
+A slow referenced tool result can hydrate separately from its ordered header.
+Codex MCP calls retain stable call and result identities; shell inventory publishes independently of chat previews.
+The local journal is additive and its changes commit with their corresponding item mutations.
+
+An optional timed observation run requires both `TRIUNE_STREAM_OBSERVE_UNTIL_MS` (UTC epoch milliseconds) and `TRIUNE_STREAM_OBSERVE_DIR` (private directory).
+Expiry stops new collection automatically.
+Browser receipts contain digest IDs, stages, positions, revisions and viewport order; the server batches physical write measurements outside the critical section.
+Use synthetic content for screenshot checks.
+
+
 Views retain drafts, buffers, undo state and terminal lifecycles while inactive presentation and view-owned polling pause.
 Hidden chat memberships detach without discarding retained state and reconcile missed items when shown again.
 On servers advertising `transcript_stream:1`, one updates WebSocket per browser tab carries list watches, independently authorized transcript memberships and presence.
@@ -115,6 +138,7 @@ Readiness heartbeats wait for an already-requested history synchronization inste
 An explicit binding/attempt synchronization owner accepts only validated replay completion and bounds incomplete synchronization independently of heartbeat traffic.
 Ancillary resource snapshots no longer hold the live tail; canonical replay still preserves its captured high-water boundary and rejects incomplete recovery.
 Content-free convergence diagnostics correlate received, accepted and displayed identities across reloads, with bounded retention and authenticated viewer scope.
+Chat and subchat project pending inputs and settled work in the same chronological order, with inherited rows filtered by the saved fork boundary.
 Displayed samples come from committed visible DOM rows; they do not equate store publication with screen presentation or claim physical display timing.
 Fallback history reads cancel on focus return, hiding or disposal and have a fifteen-second deadline, so pending snapshots cannot prevent live observation from resuming.
 Pending snapshots retain accepted input identities independently of position; reconnect merges their local copies and consumes each exact receipt once, preserving repeated intentional inputs.

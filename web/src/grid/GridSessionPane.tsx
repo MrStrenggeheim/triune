@@ -403,7 +403,12 @@ function GridSessionPaneContent({
           </header>
           <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
             <div className={cn("h-full", showTerminal && "hidden")} inert={showTerminal}>
-              <SideChatPane childId={sessionId} fullSession readOnly={!canEdit} />
+              <SideChatPane
+                childId={sessionId}
+                visible={!showTerminal}
+                fullSession
+                readOnly={!canEdit}
+              />
             </div>
             {terminalFirst && (agentTerminal !== null || showTerminal) && (
               <div

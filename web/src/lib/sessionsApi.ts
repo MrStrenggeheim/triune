@@ -1536,13 +1536,14 @@ const HOST_OFFLINE_HOLD_HEADER = "x-omnigent-hold-when-host-offline";
 export async function postEvent(
   sessionId: string,
   event: SessionEventInput,
-  opts?: { holdWhenHostOffline?: boolean },
+  opts?: { holdWhenHostOffline?: boolean; requestId?: string },
 ): Promise<PostEventResponse> {
   const res = await authenticatedFetch(`/v1/sessions/${encodeURIComponent(sessionId)}/events`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       ...backgroundSessionTitlesRequestHeaders(),
+      ...(opts?.requestId ? { "Idempotency-Key": opts.requestId } : {}),
       ...(opts?.holdWhenHostOffline ? { [HOST_OFFLINE_HOLD_HEADER]: "on" } : {}),
     },
     body: JSON.stringify(event),
@@ -1613,11 +1614,16 @@ export function openSessionStream(
  * stream — clients can mark the bubble interrupted from either.
  * Native side chats include their observed response id to target the exact turn.
  */
-export function interrupt(sessionId: string, responseId?: string): Promise<PostEventResponse> {
-  return postEvent(sessionId, {
-    type: "interrupt",
-    data: responseId ? { response_id: responseId } : {},
-  });
+export function interrupt(
+  sessionId: string,
+  responseId?: string,
+  requestId?: string,
+): Promise<PostEventResponse> {
+  return postEvent(
+    sessionId,
+    { type: "interrupt", data: responseId ? { response_id: responseId } : {} },
+    { requestId },
+  );
 }
 
 /**

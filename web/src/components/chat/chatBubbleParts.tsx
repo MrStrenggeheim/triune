@@ -1,3 +1,4 @@
+import { mergeStartupInputReceipts, type StartupInputReceipt } from "@/lib/startupInputReceipts";
 import { restoreStartupInputText } from "@/lib/quoteDraftDestinations";
 import { useTranscriptDisclosureAnchor } from "@/hooks/useTranscriptDisclosureAnchor";
 import { useResourceViewId } from "@/lib/panelFolder";
@@ -81,6 +82,8 @@ import {
   type Bubble,
   type RenderItem,
   bubblesEqual,
+  buildBubbles,
+  createBubbleCache,
   mergePlacedPendingBubbles,
 } from "@/lib/renderItems";
 import { PeerMessage } from "@/components/blocks/PeerMessage";
@@ -90,7 +93,8 @@ import { Link } from "@/lib/routing";
 import { getCurrentAuthorId } from "@/lib/identity";
 import { QueryClientContext } from "@tanstack/react-query";
 import { ApiError, continueFailedTurn, retrySession } from "@/lib/sessionsApi";
-import type { PendingUserMessage } from "@/store/chatStore";
+import type { ConversationState, PendingUserMessage } from "@/store/chatStore";
+import { projectPendingTranscript } from "@/lib/transcriptOrder";
 import { conversationRegistry } from "@/store/conversationRegistry";
 import { useConversationEntryState } from "@/hooks/useConversationEntryState";
 import { useShallow } from "zustand/react/shallow";
@@ -225,6 +229,57 @@ export function containsDisplayMath(items: RenderItem[]): boolean {
 
 export function containsMermaidDiagram(items: RenderItem[]): boolean {
   return items.some((item) => item.kind === "text" && MERMAID_FENCE_RE.test(item.text));
+}
+
+export function useTranscriptBubbles({
+  blocks,
+  startupReceipts,
+  activeResponse,
+  interruptedResponseIds,
+  pendingUserMessages,
+  subagentRoutingOverride,
+  sessionStatus,
+}: Pick<
+  ConversationState,
+  | "blocks"
+  | "activeResponse"
+  | "interruptedResponseIds"
+  | "pendingUserMessages"
+  | "subagentRoutingOverride"
+  | "sessionStatus"
+> & { startupReceipts: StartupInputReceipt[] }): Bubble[] {
+  const [cache] = useState(createBubbleCache);
+  return useMemo<Bubble[]>(() => {
+    const committed = stripGatedSubagentRoutingChips(
+      reorderCommittedRequestElicitations(
+        buildBubbles(
+          projectPendingTranscript(blocks, pendingUserMessages, getCurrentAuthorId()),
+          activeResponse,
+          cache,
+          interruptedResponseIds,
+          computeIsWorking(sessionStatus),
+        ),
+      ),
+      subagentRoutingOverride,
+    );
+    const withPending =
+      pendingUserMessages.length === 0
+        ? committed
+        : mergePendingBubbles(
+            committed,
+            buildPendingBubbles(pendingUserMessages, getCurrentAuthorId()),
+          );
+    return mergeStartupInputReceipts(withPending, startupReceipts, pendingUserMessages);
+  }, [
+    startupReceipts,
+    cache,
+    blocks,
+    activeResponse,
+    interruptedResponseIds,
+    pendingUserMessages,
+    subagentRoutingOverride,
+    sessionStatus,
+  ]);
 }
 
 /**

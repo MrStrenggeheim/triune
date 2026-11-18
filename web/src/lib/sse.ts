@@ -679,7 +679,12 @@ function parseEventPayload(rawType: string, data: Record<string, unknown>): Stre
       !record.id ||
       typeof record.response_id !== "string" ||
       !record.response_id ||
-      !readSubagentActivity(record)
+      (!readSubagentActivity(record) &&
+        !(
+          record.type !== "resource_event" &&
+          typeof record.type === "string" &&
+          itemPosition(record.position) !== undefined
+        ))
     )
       return null;
     return { type: "session_item_updated", item: record } satisfies SessionItemUpdatedEvent;

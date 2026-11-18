@@ -292,10 +292,13 @@ def test_retained_and_legacy_completed_pending_pages_stay_separate(pending_store
     for n in [0, 2, 4]:
         original[n] = original[n].model_copy(update={"status": "completed"})
     rows = store.append(sid, original)
+    journal = store.transcript_journal
+    assert journal is not None and journal.revision(sid) == 0
     assert store.transition_pending_input(
         sid, rows[3].id, expected="in_progress", status="incomplete"
     )
     assert set(store.cancel_startup_inputs(sid, reason="stop")) == {rows[n].id for n in [1, 3, 5]}
+    assert journal.changes(sid, 0) == []
     legacy, cursor = store.list_pending_inputs_page(sid, limit=2)
     assert [row.id for row in legacy] == [rows[0].id, rows[2].id] and cursor == rows[2].position
     assert store.list_pending_inputs_page(sid, after=cursor, limit=2) == ([rows[4]], None)

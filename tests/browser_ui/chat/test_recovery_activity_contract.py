@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import re
+from itertools import pairwise
 from pathlib import Path
 
 import pytest
@@ -98,6 +99,82 @@ def _complete(chat: ChatSessionContract, response_id: str) -> None:
         }
     )
     chat.emit_idle(response_id)
+
+
+@pytest.mark.parametrize("phase", ["commentary", "final_answer"])
+@pytest.mark.parametrize("fold_narration", [False, True])
+def test_expanded_turn_preserves_tool_and_message_order(
+    page: Page,
+    chat_session_contract: ChatSessionContract,
+    phase: str,
+    fold_narration: bool,
+    pytestconfig: pytest.Config,
+    output_path: str,
+) -> None:
+    chat = chat_session_contract
+    turn = "chronology"
+    saved_preference = str(fold_narration).lower()
+    page.add_init_script(
+        f"localStorage.setItem('omnigent:fold-assistant-narration', '{saved_preference}')"
+    )
+
+    def shell(call_id: str) -> list[dict]:
+        identity = {"response_id": turn, "call_id": call_id, "status": "completed"}
+        return [
+            {
+                **identity,
+                "id": call_id,
+                "type": "function_call",
+                "name": "shell",
+                "arguments": json.dumps({"command": f"echo {call_id}"}),
+            },
+            {
+                **identity,
+                "id": f"{call_id}-result",
+                "type": "function_call_output",
+                "output": "ok",
+            },
+        ]
+
+    items = [
+        message_item("question", "user", "Check ordering", response_id=turn),
+        *shell("first-call"),
+        _native_message("middle", "Middle message", turn, phase),
+        *shell("second-call"),
+        _native_message("answer", "Final message", turn, "final_answer"),
+    ]
+    chat.set_items(list(reversed([{**item, "position": i} for i, item in enumerate(items)])))
+    page.goto(chat.url)
+    middle = page.locator('[data-search-item-id="middle"]')
+    answer = page.locator('[data-search-item-id="answer"]')
+    expect(answer).to_be_visible()
+    fold_middle = phase == "commentary" and fold_narration
+    folds = page.get_by_test_id("turn-worked-fold")
+    expect(folds).to_have_count(1 if fold_middle else 2)
+    if fold_middle:
+        expect(middle).to_have_count(0)
+    else:
+        expect(middle).to_be_visible()
+    capture = pytestconfig.getoption("--screenshot") == "on"
+    if capture:
+        page.screenshot(path=str(Path(output_path) / "chronology-settled.png"))
+    for fold in folds.all():
+        fold.get_by_role("button").first.click()
+    for summary in page.get_by_role("button", name="Ran 1 shell command", exact=True).all():
+        summary.click()
+    rows = [
+        page.locator('[data-convergence-item-id="first-call"]'),
+        middle,
+        page.locator('[data-convergence-item-id="second-call"]'),
+        answer,
+    ]
+    tops = []
+    for row in rows:
+        expect(row).to_be_visible()
+        tops.append(row.evaluate("(node) => node.getBoundingClientRect().top"))
+    assert all(before < after for before, after in pairwise(tops))
+    if capture:
+        page.screenshot(path=str(Path(output_path) / "chronology-expanded.png"))
 
 
 def test_saved_final_recovers_on_healthy_stream_before_newer_turn_without_moving_reader(
@@ -273,9 +350,7 @@ def test_child_activity_keeps_one_card_per_id_in_plain_timeline_and_worked_fold(
     )
 
     def reveal_agent_groups() -> None:
-        for group in transcript.get_by_role(
-            "button", name=re.compile("Started or steered.*subagent")
-        ).all():
+        for group in transcript.get_by_role("button", name=re.compile(r"\d+ subagents?")).all():
             if group.get_attribute("aria-expanded") == "false":
                 group.click()
 
@@ -318,7 +393,7 @@ def test_child_activity_keeps_one_card_per_id_in_plain_timeline_and_worked_fold(
 
     fold.get_by_role("button", name="Worked", exact=False).click()
     expect(fold).to_have_attribute("data-state", "open")
-    group = fold.get_by_role("button", name=re.compile("Started or steered.*subagent"))
+    group = fold.get_by_role("button", name=re.compile(r"\d+ subagents?"))
     expect(group).to_have_count(1)
     expect(group).to_have_attribute("aria-expanded", "false")
     expect(first).to_be_hidden()

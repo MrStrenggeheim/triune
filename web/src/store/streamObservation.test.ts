@@ -441,3 +441,58 @@ it("propagates an unexpected active snapshot failure", async () => {
   await vi.advanceTimersByTimeAsync(STREAM_SNAPSHOT_INTERVAL_MS);
   await rejected;
 });
+
+it("switches between visible-only membership and real legacy admission on negotiated capability changes", async () => {
+  vi.useFakeTimers();
+  vi.stubGlobal("navigator", { locks: {} });
+  const page = browserPage();
+  const browserListeners = vi.spyOn(page.window, "addEventListener");
+  const binding = new AbortController();
+  let shared = true;
+  let capabilityChanged!: () => void;
+  const release = vi.fn(async () => {});
+  const acquire = vi.fn(async () => ({ release }));
+  const catchUp = vi.fn(async () => {});
+  const attempts: { signal: AbortSignal; shared: boolean; resumed: boolean }[] = [];
+  const done = observeConversationStream({
+    ...page,
+    signal: binding.signal,
+    multiplexed: () => shared,
+    subscribeTransportChanges: (callback) => {
+      capabilityChanged = callback;
+      return () => {};
+    },
+    acquire,
+    catchUp,
+    pump: async (controller, resumed, viaSocket) => {
+      attempts.push({ shared: viaSocket, resumed, signal: controller.signal });
+      await new Promise<void>((resolve) => {
+        controller.signal.addEventListener("abort", () => resolve(), { once: true });
+      });
+    },
+  });
+  expect(attempts.map((a) => a.shared)).toEqual([true]);
+  expect(acquire).not.toHaveBeenCalled();
+  expect(browserListeners).not.toHaveBeenCalled();
+  page.show(false);
+  await vi.advanceTimersByTimeAsync(60000);
+  expect(catchUp).not.toHaveBeenCalled();
+  expect(acquire).not.toHaveBeenCalled();
+  page.show(true);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(attempts[1]).toMatchObject({ shared: true, resumed: true });
+  shared = false;
+  capabilityChanged();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(acquire).toHaveBeenCalledTimes(1);
+  expect(attempts[2]).toMatchObject({ shared: false, resumed: true });
+  shared = true;
+  capabilityChanged();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(release).toHaveBeenCalled();
+  expect(attempts[2].signal.aborted).toBe(true);
+  expect(attempts[3]).toMatchObject({ shared: true, resumed: true });
+  expect(acquire).toHaveBeenCalledTimes(1);
+  binding.abort();
+  await done;
+});

@@ -4001,6 +4001,12 @@ def register_events_routes(
             session_id,
             authorize_stream,
             enabled=after_position is not None or initial_limit is not None,
+            branch=conv.branch,
+            journal=(
+                getattr(conversation_store, "transcript_journal", None)
+                if getattr(request.state, "feed_v2", False)
+                else None
+            ),
             after_position=after_position if after_position is not None else -1,
             after_revision=after_revision,
             stream_epoch=stream_epoch,

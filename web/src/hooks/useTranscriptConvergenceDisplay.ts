@@ -1,6 +1,6 @@
 // Triune additions: PolyForm Noncommercial 1.0.0; see LICENSING.md.
 // Required Notice: Copyright 2026 MrStrenggeheim. Triune (https://github.com/MrStrenggeheim/triune).
-import { useEffect, useRef, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useRef, type RefObject } from "react";
 import {
   readBlockConvergenceIdentity,
   recordTranscriptDisplayed,
@@ -19,23 +19,60 @@ export function useTranscriptConvergenceDisplay(
   blocks?: AnyBlock[],
 ): void {
   const lastSample = useRef(0);
+  const viewerScope = resourceViewStorageScope();
+  const viewId = useRef<string | undefined>(undefined);
+  const committed = useRef<
+    {
+      node: HTMLElement;
+      itemId: string;
+      position?: number;
+      folded: boolean;
+      identity: ReturnType<typeof readBlockConvergenceIdentity>;
+    }[]
+  >([]);
+  const resample = useRef<(() => void) | undefined>(undefined);
+  useLayoutEffect(() => {
+    const element = root.current;
+    if (!visible || !element) return;
+    viewId.current ??= crypto.randomUUID();
+    const indexes = blocks ? transcriptIndex(blocks).items : undefined;
+    const nodes = element.querySelectorAll<HTMLElement>(
+      "[data-search-item-id], [data-user-message-id], [data-convergence-item-id], [data-convergence-members]",
+    );
+    committed.current = Array.from(nodes).flatMap((node) => {
+      const id =
+        node.dataset.convergenceItemId ?? node.dataset.searchItemId ?? node.dataset.userMessageId;
+      let ids = id ? [id] : [];
+      const folded =
+        !id && !!node.dataset.convergenceMembers && node.getAttribute("aria-expanded") !== "true";
+      if (folded) {
+        try {
+          const members: unknown = JSON.parse(node.dataset.convergenceMembers!);
+          if (Array.isArray(members))
+            ids = members.filter((member): member is string => typeof member === "string");
+        } catch {
+          /* Ignore incomplete markup. */
+        }
+      }
+      return ids.map((itemId) => {
+        const index = indexes?.get(itemId);
+        const block = blocks && index !== undefined ? blocks[index] : undefined;
+        return {
+          node,
+          itemId,
+          folded,
+          position: block?.ctx.position,
+          identity: block ? readBlockConvergenceIdentity(block) : undefined,
+        };
+      });
+    });
+    resample.current?.();
+  }, [root, conversationId, visible, contentVersion, viewport, blocks]);
+
   useEffect(() => {
     const element = root.current;
     if (!element || !conversationId || !visible) return;
-    const scope = resourceViewStorageScope();
-    const indexes = blocks ? transcriptIndex(blocks).items : undefined;
-    const mounted = Array.from(
-      element.querySelectorAll<HTMLElement>("[data-search-item-id], [data-user-message-id]"),
-    ).map((node) => {
-      const itemId = node.dataset.searchItemId ?? node.dataset.userMessageId;
-      const index = itemId ? indexes?.get(itemId) : undefined;
-      return {
-        node,
-        itemId,
-        identity:
-          blocks && index !== undefined ? readBlockConvergenceIdentity(blocks[index]) : undefined,
-      };
-    });
+    const scope = viewerScope;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let frame: number | undefined;
     const sample = () => {
@@ -53,7 +90,7 @@ export function useTranscriptConvergenceDisplay(
         if (bounds.width <= 0 || bounds.height <= 0) return;
         lastSample.current = performance.now();
         const ids = new Set<string>();
-        for (const { node, itemId, identity } of mounted) {
+        for (const { node, itemId, identity, position, folded } of committed.current) {
           if (!node.isConnected || !itemId || ids.has(itemId)) continue;
           const box = node.getBoundingClientRect();
           if (
@@ -67,7 +104,18 @@ export function useTranscriptConvergenceDisplay(
           )
             continue;
           ids.add(itemId);
-          recordTranscriptDisplayed(conversationId, { itemId, ...identity }, scope);
+          recordTranscriptDisplayed(
+            conversationId,
+            {
+              itemId,
+              ...identity,
+              position,
+              viewId: viewId.current,
+              ordinal: ids.size - 1,
+              folded,
+            },
+            scope,
+          );
           if (ids.size >= 64) break;
         }
       });
@@ -76,15 +124,17 @@ export function useTranscriptConvergenceDisplay(
       if (timer !== undefined || frame !== undefined) return;
       timer = setTimeout(sample, Math.max(0, 250 - (performance.now() - lastSample.current)));
     };
+    resample.current = schedule;
     schedule();
     const scroller = viewport ?? element;
     scroller.addEventListener("scroll", schedule, { passive: true });
     document.addEventListener("visibilitychange", schedule);
     return () => {
+      resample.current = undefined;
       clearTimeout(timer);
       if (frame !== undefined) cancelAnimationFrame(frame);
       scroller.removeEventListener("scroll", schedule);
       document.removeEventListener("visibilitychange", schedule);
     };
-  }, [root, conversationId, visible, contentVersion, viewport, blocks]);
+  }, [root, conversationId, visible, viewport, viewerScope]);
 }

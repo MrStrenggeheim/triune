@@ -1,4 +1,5 @@
 // Modified for Triune.
+import type { SavedToolBody, savedToolBody } from "./events";
 import type { RunnerApprovalDelivery } from "./runnerApprovalDelivery";
 import type { MessageCommunication } from "./messageCommunication";
 import type { TranscriptAnchor } from "./transcriptOrder";
@@ -286,6 +287,7 @@ export interface ToolGroup {
 
 /** A tool result, emitted after the tool executes. */
 export interface ToolResultBlock {
+  [savedToolBody]?: SavedToolBody;
   type: "tool_result";
   ctx: BlockContext;
   name: string;

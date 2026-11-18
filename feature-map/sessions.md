@@ -908,3 +908,21 @@ Exact item-cursor resolution includes its primary-key timestamp so SQLite uses a
 - Grouping and ordering apply to the loaded pages only: an older session joins
   its group once it is paged in. Grouped views hide Projects, so dragging a
   session onto the list never removes it from its project there.
+
+### Versioned transcript feed
+
+SQLite deployments advertise the new WebSocket feed when `TRIUNE_TRANSCRIPT_FEED` is `canary` (default) or `2`.
+Value `2` enables it by default; value `1` disables negotiation.
+A deployment may set `TRIUNE_TRANSCRIPT_FEED_MODE_FILE` to an absolute regular file named `<packaged full commit>.mode`.
+New authenticated connections read its mode after an atomic replacement. A missing, invalid or wrong-release override disables the versioned feed.
+An enrolled browser selects `2` in local storage under `triune:transcript-feed`; selecting `1` keeps its legacy reader.
+
+The membership generation scopes every data/error/close frame.
+Cold subscription sends a bounded saved window in size-limited pages, followed by the active preview and live tail.
+A scoped SQLite trigger journals item identities, mutation times and contiguous revisions in the writing transaction; each conversation retains 256 revisions.
+Expired revisions, deletion or a changed process epoch require a snapshot; acknowledged appends and earlier-position amendments resume from the applied cursor.
+A short grace period lets a live row that races a heartbeat reach the reducer before recovery starts.
+Large tool results publish their header immediately and resolve the authorized, versioned body independently.
+
+Server coverage lives in `tests/server/routes/test_session_recovery.py` and `test_session_updates_ws.py`.
+The desktop and phone journey in `tests/browser_ui/chat/test_transcript_multiplex.py` covers both negotiated and legacy transports.

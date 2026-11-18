@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import re
 import time
 from collections import deque
 from collections.abc import AsyncGenerator, Awaitable, Callable
@@ -26,9 +27,10 @@ from omnigent.runtime.stream_queue import (
 )
 from omnigent.server import presence
 from omnigent.server.session_recovery import valid_window_options, validate_sync_complete
+from omnigent.server.stream_observation import new_wire_observation
 
 _logger = logging.getLogger(__name__)
-_MAX_MEMBERSHIPS = 32
+MAX_MEMBERSHIPS = 32
 _MEMBER_MAX_EVENTS = 128
 _MEMBER_MAX_BYTES = MAX_STREAM_BYTES
 _MEMBER_MAX_AGE_S = 15.0
@@ -40,9 +42,19 @@ _AUTH_HANDOFF_TIMEOUT_S = 1.0
 class _Membership:
     task: asyncio.Task[None] | None = None
     presence: dict[str, Any] = field(default_factory=dict)
+    subscription_id: str | None = None
     item_references: bool = False
     closed: bool = False
     authorize: Callable[[], Awaitable[None]] | None = None
+
+    def envelope(self, session_id: str, kind: str, **payload: Any) -> dict[str, Any]:
+        return {
+            "type": kind,
+            "session_id": session_id,
+            **({"subscription_id": self.subscription_id} if self.subscription_id else {}),
+            **payload,
+        }
+
     queue: BoundedEventQueue = field(
         default_factory=lambda: BoundedEventQueue(
             max_events=_MEMBER_MAX_EVENTS,
@@ -64,6 +76,7 @@ class _MembershipRequest(Request):
         self.membership = membership
         self.state.presence_membership = membership.presence
         self.state.multiplex = True
+        self.state.feed_v2 = membership.subscription_id is not None
         self.state.item_references = membership.item_references
 
     async def is_disconnected(self) -> bool:
@@ -80,7 +93,10 @@ class SessionMultiplex:
         websocket: WebSocket,
         send: Callable[[dict[str, Any]], Awaitable[None]],
         _emit_lock: asyncio.Lock | None = None,
+        *,
+        feed_v2: bool = False,
     ) -> None:
+        self.feed_v2 = feed_v2
         self.router = router
         self.websocket = websocket
         self._sender = send
@@ -90,6 +106,7 @@ class SessionMultiplex:
         self._write_available.set()
         self._ready: deque[object] = deque()
         self._broken = False
+        self._observation = new_wire_observation()
 
     async def send(
         self,
@@ -97,6 +114,7 @@ class SessionMultiplex:
         authorize: Callable[[], Awaitable[None]] | None = None,
         current: Callable[[], bool] | None = None,
     ) -> None:
+        started = time.monotonic() if self._observation else 0.0
         # Initial authorization is independent: an unready member owns no turn.
         await asyncio.sleep(0)
         if authorize is not None:
@@ -124,8 +142,14 @@ class SessionMultiplex:
             # No suspension from final authorization through physical socket claim.
             self._writing = True
             try:
+                writing = time.monotonic() if self._observation else 0.0
                 async with asyncio.timeout(_WRITE_TIMEOUT_S):
                     await self._sender(frame)
+                if self._observation is not None:
+                    sent = time.monotonic()
+                    self._observation.delivered(
+                        frame, (sent - started) * 1000, (sent - writing) * 1000
+                    )
             except asyncio.CancelledError:
                 # ASGI send cancellation leaves delivery uncertain; no sibling may
                 # reuse the writer until this physical socket is made terminal.
@@ -191,17 +215,13 @@ class SessionMultiplex:
                     except OmnigentError as exc:
                         await self._remove(selected_id)
                         await self.send(
-                            {"type": "session.error", "session_id": selected_id, "code": exc.code}
+                            member.envelope(selected_id, "session.error", code=exc.code)
                         )
                         continue
                     except ConnectionError:
                         await self._remove(selected_id)
                         await self.send(
-                            {
-                                "type": "session.error",
-                                "session_id": selected_id,
-                                "code": "stream_reconnect",
-                            }
+                            member.envelope(selected_id, "session.error", code="stream_reconnect")
                         )
                         continue
                 identity = member.presence
@@ -213,10 +233,28 @@ class SessionMultiplex:
             return True
         if not isinstance(session_id, str) or not session_id or len(session_id) > 256:
             return True
-        if kind == "unsubscribe":
-            await self._remove(session_id)
-            await self.send({"type": "session.unsubscribed", "session_id": session_id})
+        subscription_id = message.get("subscription_id") if self.feed_v2 else None
+        if subscription_id is not None and (
+            not isinstance(subscription_id, str)
+            or not re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", subscription_id)
+        ):
             return True
+        if kind == "unsubscribe":
+            previous = self.members.get(session_id)
+            if previous is not None and previous.subscription_id != subscription_id:
+                return True
+            await self._remove(session_id)
+            await self.send(
+                _Membership(subscription_id=subscription_id).envelope(
+                    session_id, "session.unsubscribed"
+                )
+            )
+            return True
+        member = _Membership(
+            subscription_id=subscription_id,
+            presence={"idle": message.get("idle", False)},
+            item_references=message.get("item_references") is True,
+        )
         after_position = message.get("after_position", -1)
         after_revision = message.get("after_revision")
         epoch = message.get("stream_epoch")
@@ -240,19 +278,14 @@ class SessionMultiplex:
             and valid_window_options(initial_limit, window_start_position)
         )
         if not valid:
-            await self.send(
-                {"type": "session.error", "session_id": session_id, "code": "invalid_input"}
-            )
+            await self.send(member.envelope(session_id, "session.error", code="invalid_input"))
             return True
-        if session_id not in self.members and len(self.members) >= _MAX_MEMBERSHIPS:
+        if session_id not in self.members and len(self.members) >= MAX_MEMBERSHIPS:
             await self.send(
-                {"type": "session.error", "session_id": session_id, "code": "subscription_limit"}
+                member.envelope(session_id, "session.error", code="subscription_limit")
             )
             return True
         await self._remove(session_id)
-        member = _Membership(
-            presence={"idle": idle}, item_references=message.get("item_references") is True
-        )
         self.members[session_id] = member
         member.task = asyncio.create_task(
             self._pump(
@@ -284,7 +317,7 @@ class SessionMultiplex:
             member.queue.clear()
             if not self._broken:
                 await self.send(
-                    {"type": "session.error", "session_id": session_id, "code": code},
+                    member.envelope(session_id, "session.error", code=code),
                     current=lambda: not member.closed and self.members.get(session_id) is member,
                 )
 
@@ -322,11 +355,7 @@ class SessionMultiplex:
                         try:
                             await member.queue.put(
                                 StreamEvent(
-                                    {
-                                        "type": "session.event",
-                                        "session_id": session_id,
-                                        "event": event,
-                                    },
+                                    member.envelope(session_id, "session.event", event=event),
                                     getattr(
                                         event, "deadline", time.monotonic() + _MEMBER_MAX_AGE_S
                                     ),

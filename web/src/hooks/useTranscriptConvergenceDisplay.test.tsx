@@ -60,7 +60,18 @@ it("records committed visible identities without content, offscreen or folded ro
   state.attemptId = "successor-attempt";
   act(() => vi.advanceTimersByTime(300));
   expect(state.record.mock.calls).toEqual([
-    ["conversation-a", { itemId: "on-screen", attemptId: "attempt-one" }, "viewer-a"],
+    [
+      "conversation-a",
+      {
+        itemId: "on-screen",
+        attemptId: "attempt-one",
+        ordinal: 0,
+        position: undefined,
+        viewId: expect.any(String),
+        folded: false,
+      },
+      "viewer-a",
+    ],
   ]);
 });
 

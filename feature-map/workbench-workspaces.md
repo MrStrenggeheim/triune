@@ -18,6 +18,14 @@ Follow [Unified workspace](unified-workspace.md) for those entry points; older r
 - `manual-terminals`: user shells belong to the workspace and survive closing a chat; exited history and disconnected state remain distinct.
 - `states`: disconnected or revoked workspaces retain their identity and report unavailable access; they do not silently become the current chat's files.
 
+## Conversation subscription acceptance
+
+Open the same conversation in two panes and move it across a layout boundary.
+Both panes show the same ordered output and keep their own reading positions.
+Closing the first pane leaves the other live; closing the last visible pane releases its membership.
+A subchat uses its stored fork boundary when filtering inherited history.
+Exercise direct, dock, grid and subchat entry points, including a transient disconnect and a pending mid-turn send.
+
 ## How to get to it (user POV)
 
 - Keyboard: Ctrl+B toggles the left sidebar, Ctrl+I toggles the right panel, and Ctrl+J opens an existing manual shell or creates one; macOS uses Command.

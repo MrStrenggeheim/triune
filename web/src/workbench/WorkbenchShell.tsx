@@ -1177,6 +1177,7 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
       else if (view.kind === "conversation" && sessionId)
         content = (
           <ConversationView
+            workspaceManaged
             conversationId={sessionId}
             visible={showDock && visibility.visible}
             focused={visibility.focused}
@@ -1799,6 +1800,7 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
                       inert={!showDock}
                     >
                       <DockWorkspace
+                        observeConversations
                         active={showDock}
                         openActions={openActions}
                         openMenuPaneId={openMenuPaneId}

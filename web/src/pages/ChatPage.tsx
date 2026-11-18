@@ -1,4 +1,5 @@
 // Modified for Triune.
+import { useConversationDemand } from "@/workbench/ConversationDemand";
 import {
   useDiscardComposerFocus,
   useRequestedComposerFocus,
@@ -135,7 +136,7 @@ import {
 } from "@/lib/sideChat";
 import { shouldQueueSend } from "@/lib/messageQueue";
 import { readAlwaysSteer } from "@/lib/alwaysSteerPreferences";
-import { shouldHideQuoteSubchatHistory } from "@/lib/inheritedHistory";
+import { shouldHideSubchatHistory } from "@/lib/inheritedHistory";
 import { useNativeChildCapabilities } from "@/hooks/useNativeChildCapabilities";
 import { nativeChildReadOnlyReason, type NativeChildCapabilities } from "@/lib/nativeChildControls";
 import { skillInvocationPrefix } from "@/lib/harnessSetup";
@@ -514,7 +515,7 @@ export function ChatPage({
       );
       return;
     }
-    void useChatStore.getState().switchTo(urlConvId ?? null);
+    void useChatStore.getState().switchTo(urlConvId ?? null, { observe: false });
   }, [urlConvId, navigate, pathname, search, rebasePath, useChatStore]);
 
   useConversationRedirect(urlConvId, !scoped || focused);
@@ -701,6 +702,7 @@ export function ChatPage({
   // the hook is skipped on renders that hit the loading/error branches,
   // tripping React's "rendered fewer hooks than expected".
   const { session: activeSession, isLoading: sessionLoading } = useSession(sessionConvId ?? null);
+  useConversationDemand(!scoped && visible ? sessionConvId : undefined, !sessionLoading, focused);
 
   // Orchestrator-only: polly's children inherit its agentName, so the gate
   // needs the session predicate (parent linkage), not a bare name check. An
@@ -1255,10 +1257,7 @@ export function ChatPage({
   const mainAgent = (
     <MainAgentSurface
       branch={activeSession?.branch}
-      hideInheritedHistory={shouldHideQuoteSubchatHistory(
-        activeSession?.labels,
-        activeSession?.branch,
-      )}
+      hideInheritedHistory={shouldHideSubchatHistory(activeSession?.labels, activeSession?.branch)}
       conversationId={urlConvId ?? null}
       hostId={activeSession?.hostId ?? activeConv?.host_id ?? null}
       status={status}

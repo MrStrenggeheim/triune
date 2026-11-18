@@ -5,7 +5,7 @@ import { useChatStore } from "@/store/chatStore";
 import { clearReferenceDrafts, readReferenceDraft } from "./contextReferenceDrafts";
 import {
   QUOTE_SUBCHAT_HISTORY_LABEL,
-  shouldHideQuoteSubchatHistory,
+  shouldHideSubchatHistory,
   serializeContextReference,
   type ContextReference,
 } from "./contextReferences";
@@ -35,7 +35,7 @@ it.each([
   [undefined, "captured", false],
 ] as const)("binds history folding marker %s to branch boundary %s", (marker, boundary, hidden) => {
   expect(
-    shouldHideQuoteSubchatHistory(
+    shouldHideSubchatHistory(
       marker === undefined ? {} : { [QUOTE_SUBCHAT_HISTORY_LABEL]: marker },
       {
         source_conversation_id: "source",

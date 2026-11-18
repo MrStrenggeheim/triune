@@ -11,14 +11,9 @@ import {
 import { useSession } from "@/hooks/useSession";
 import { useStore, type StoreApi, type UseBoundStore } from "zustand";
 import { shallow } from "zustand/vanilla/shallow";
-import {
-  ensureConversationStreamed,
-  useChatStore,
-  type ChatActions,
-  type ChatState,
-} from "@/store/chatStore";
+import { chatApplication, useChatStore, type ChatActions, type ChatState } from "@/store/chatStore";
 import { conversationRegistry } from "@/store/conversationRegistry";
-import { refreshConversationObservationPriority } from "@/store/streamObservation";
+import { useConversationDemand } from "./ConversationDemand";
 import { createInitialConversationState, isConversationStateKey } from "@/store/conversationState";
 
 type BoundChatStore = UseBoundStore<StoreApi<ChatState>>;
@@ -26,7 +21,7 @@ type BoundChatStore = UseBoundStore<StoreApi<ChatState>>;
 /** A view reads one registry entry; app-wide queues remain shared and carry their own targets. */
 export function createScopedChatStore(conversationId: string): BoundChatStore {
   const empty = { ...createInitialConversationState(), loadingConversation: true };
-  const root = () => useChatStore.getState();
+  const root = chatApplication.getState;
   const actions: Partial<ChatActions> = {
     send: (text, agentId, files, options) =>
       root().send(text, agentId, files, { ...options, pinnedConversationId: conversationId }),
@@ -112,7 +107,7 @@ export function createScopedChatStore(conversationId: string): BoundChatStore {
         previous = next;
         listener(next, before);
       };
-      const unsubscribeRoot = useChatStore.subscribe(changed);
+      const unsubscribeRoot = chatApplication.subscribe(changed);
       const unsubscribeEntry = conversationRegistry.subscribe((id) => {
         if (id === conversationId) changed();
       });
@@ -139,36 +134,24 @@ export function ScopedChatStoreProvider({
   conversationId,
   focused,
   visible = true,
+  workspaceManaged = false,
   children,
 }: {
   conversationId: string;
   focused: boolean;
   visible?: boolean;
+  workspaceManaged?: boolean;
   children: ReactNode;
 }) {
   const { isLoading: metadataLoading } = useSession(visible ? conversationId : null);
   const store = useMemo(() => createScopedChatStore(conversationId), [conversationId]);
   const root = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    if (!visible || !focused) return;
-    const release = conversationRegistry.retainFocus(conversationId);
-    refreshConversationObservationPriority();
-    return () => {
-      release();
-      refreshConversationObservationPriority();
-    };
-  }, [conversationId, visible, focused]);
-  useEffect(() => {
-    const release = conversationRegistry.retain(conversationId, visible, false);
-    refreshConversationObservationPriority();
-    return () => {
-      release();
-      refreshConversationObservationPriority();
-    };
-  }, [conversationId, visible]);
-  useEffect(() => {
-    if (visible && !metadataLoading) void ensureConversationStreamed(conversationId);
-  }, [conversationId, visible, metadataLoading]);
+  useConversationDemand(
+    visible && !workspaceManaged ? conversationId : undefined,
+    !metadataLoading,
+    focused,
+  );
+  useEffect(() => conversationRegistry.retainHistory(conversationId), [conversationId]);
   return (
     <ScopedChatStoreContext.Provider value={store}>
       <ScopedChatVisibleContext.Provider value={visible}>

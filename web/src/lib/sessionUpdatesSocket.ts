@@ -20,6 +20,7 @@
 import { isHostRoutingEnabled, resolveWebSocketUrl } from "@/lib/host";
 import { modalHostId, isModalHostResolved } from "@/lib/sessionHost";
 import type { SessionListWireItem } from "@/lib/sessionListCache";
+import { configureConvergenceExport } from "./convergenceDiagnostics";
 import { parseEvent } from "./sse";
 import { transcriptEventStream } from "./transcriptEventStream";
 import type { StreamEvent } from "./events";
@@ -32,7 +33,15 @@ export type SessionUpdatesFrame =
   | { type: "hosts_changed" }
   | { type: "projects_changed" }
   | { type: "heartbeat" }
-  | { type: "capabilities"; transcript_stream?: number; transcript_window?: number };
+  | {
+      type: "capabilities";
+      transcript_stream?: number;
+      transcript_window?: number;
+      transcript_feed?: number;
+      transcript_observation_until_ms?: number;
+      transcript_feed_default?: number;
+      transcript_memberships?: number;
+    };
 
 export interface TranscriptCursor {
   after_position: number;
@@ -45,6 +54,7 @@ export const TRANSCRIPT_NEGOTIATION_MS = 750;
 
 export function isRetryableTranscriptError(code: string): boolean {
   return [
+    "subscription_limit",
     "stream_overflow",
     "stream_reconnect",
     "stream_failed",
@@ -60,6 +70,7 @@ export interface TranscriptResponse {
   body: ReadableStream<StreamEvent>;
 }
 type TranscriptSubscription = ReturnType<typeof transcriptEventStream> & {
+  subscriptionId?: string;
   received?: (event: StreamEvent) => void;
 };
 
@@ -117,12 +128,12 @@ function nextReconnectDelay(failedAttempts: number): number {
  * @returns The fully-qualified WebSocket URL.
  */
 function buildUpdatesUrl(): string {
-  const path = "/v1/sessions/updates";
-  if (!isHostRoutingEnabled()) return resolveWebSocketUrl(path);
-  const sliceKey = modalHostId();
-  return resolveWebSocketUrl(
-    sliceKey ? `${path}?omnigent_slice_key=${encodeURIComponent(sliceKey)}` : path,
-  );
+  const url = new URL(resolveWebSocketUrl("/v1/sessions/updates"));
+  const entry = window.location.pathname.match(/\/c\/([a-f0-9]{32})\/?$/i)?.[1];
+  if (entry) url.searchParams.set("entry_chat", entry);
+  const slice = isHostRoutingEnabled() ? modalHostId() : null;
+  if (slice) url.searchParams.set("omnigent_slice_key", slice);
+  return url.toString();
 }
 
 /**
@@ -141,13 +152,51 @@ class SessionUpdatesSocket {
   private watchdogTimer: ReturnType<typeof setTimeout> | null = null;
   private started = false;
   private transcriptCapability: boolean | null = null;
+  private handshakeTimer?: ReturnType<typeof setTimeout>;
   private transcriptWindowCapability = false;
+  private feedVersion = 1;
+  private membershipLimit = Infinity;
+  private reservations = 0;
+  private readonly waitingMemberships = new Set<() => void>();
+
+  /** FIFO per physical tab socket; hidden/cancelled waiters release their place immediately. */
+  reserveMembership(signal: AbortSignal): Promise<() => void> {
+    if (!this.supportsVersionedFeed()) return Promise.resolve(() => {});
+    return new Promise((resolve, reject) => {
+      const abort = () => {
+        this.waitingMemberships.delete(grant);
+        reject(new DOMException("Aborted", "AbortError"));
+      };
+      const grant = () => {
+        signal.removeEventListener("abort", abort);
+        this.waitingMemberships.delete(grant);
+        this.reservations++;
+        let released = false;
+        resolve(() => {
+          if (released) return;
+          released = true;
+          this.reservations--;
+          this.waitingMemberships.values().next().value?.();
+        });
+      };
+      if (signal.aborted) abort();
+      else if (this.reservations < this.membershipLimit && !this.waitingMemberships.size) grant();
+      else {
+        this.waitingMemberships.add(grant);
+        signal.addEventListener("abort", abort, { once: true });
+      }
+    });
+  }
   private readonly capabilityListeners = new Set<() => void>();
   private readonly transcripts = new Map<string, TranscriptSubscription>();
 
   supportsTranscripts(): boolean {
     // This socket is pinned to the modal host; routed sessions retain their own replica path.
     return this.transcriptCapability === true && !isHostRoutingEnabled();
+  }
+
+  supportsVersionedFeed(): boolean {
+    return this.supportsTranscripts() && this.feedVersion === 2;
   }
 
   supportsTranscriptWindows(): boolean {
@@ -164,7 +213,8 @@ class SessionUpdatesSocket {
     if (signal.aborted || typeof WebSocket === "undefined" || isHostRoutingEnabled())
       return Promise.resolve(false);
     if (!this.started && (!isHostRoutingEnabled() || isModalHostResolved())) this.start();
-    if (this.transcriptCapability !== null) return Promise.resolve(this.transcriptCapability);
+    if (this.transcriptCapability !== null && this.handshakeTimer === undefined)
+      return Promise.resolve(this.transcriptCapability);
     return new Promise((resolve) => {
       const finish = () => {
         clearTimeout(timer);
@@ -185,45 +235,42 @@ class SessionUpdatesSocket {
     cursor: TranscriptCursor,
     idle: boolean,
     received?: (event: StreamEvent) => void,
+    attemptId?: string,
   ): Promise<TranscriptResponse | null> {
-    if (!(await this.negotiateTranscript(signal))) return null;
+    // A disconnected shared socket retains ownership. Confirm the replacement peer's
+    // capabilities before opening any membership on that physical connection.
+    /* oxlint-disable no-await-in-loop -- Each replacement socket must finish its own handshake. */
+    while (!signal.aborted) {
+      if (!(await this.negotiateTranscript(signal))) return null;
+      if (signal.aborted) break;
+      if (this.connected && this.handshakeTimer === undefined) break;
+      if (!this.connected) await this.waitForConnected(signal);
+    }
+    /* oxlint-enable no-await-in-loop */
     if (signal.aborted) throw new DOMException("Aborted", "AbortError");
-    // A known compatible server reconnects through this socket; never open a parallel SSE.
-    if (!this.connected)
-      await new Promise<void>((resolve, reject) => {
-        const unsubscribe = this.subscribeStatus(() => {
-          if (this.connected) {
-            cleanup();
-            resolve();
-          }
-        });
-        const abort = () => {
-          cleanup();
-          reject(new DOMException("Aborted", "AbortError"));
-        };
-        const cleanup = () => {
-          unsubscribe();
-          signal.removeEventListener("abort", abort);
-        };
-        signal.addEventListener("abort", abort, { once: true });
-        if (signal.aborted) abort();
-      });
     this.transcripts.get(sessionId)?.close();
     let subscription: TranscriptSubscription;
     const cleanup = () => {
       signal.removeEventListener("abort", abort);
       if (this.transcripts.get(sessionId) !== subscription) return;
       this.transcripts.delete(sessionId);
-      this.send({ type: "unsubscribe", session_id: sessionId });
+      this.send({
+        type: "unsubscribe",
+        session_id: sessionId,
+        subscription_id: subscription.subscriptionId,
+      });
     };
     const abort = () => subscription.close();
     subscription = transcriptEventStream(cleanup);
     subscription.received = received;
+    if (this.supportsVersionedFeed())
+      subscription.subscriptionId = attemptId ?? crypto.randomUUID();
     this.transcripts.set(sessionId, subscription);
     signal.addEventListener("abort", abort, { once: true });
     const { window_start_position, ...resume } = cursor;
     this.send({
       type: "subscribe",
+      subscription_id: subscription.subscriptionId,
       item_references: true,
       session_id: sessionId,
       ...resume,
@@ -236,6 +283,32 @@ class SessionUpdatesSocket {
         : {}),
     });
     return { ok: true, status: 200, headers: new Headers(), body: subscription.body };
+  }
+
+  private waitForConnected(signal: AbortSignal): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const cleanup = () => {
+        unsubscribe();
+        signal.removeEventListener("abort", abort);
+      };
+      const abort = () => {
+        cleanup();
+        reject(new DOMException("Aborted", "AbortError"));
+      };
+      const unsubscribe = this.subscribeStatus(() => {
+        if (this.connected) {
+          cleanup();
+          resolve();
+        }
+      });
+      signal.addEventListener("abort", abort, { once: true });
+      if (signal.aborted) abort();
+    });
+  }
+
+  private clearHandshake(): void {
+    clearTimeout(this.handshakeTimer);
+    this.handshakeTimer = undefined;
   }
 
   reportPresence(idle: boolean): void {
@@ -273,8 +346,10 @@ class SessionUpdatesSocket {
     }
     this.setConnected(false);
     for (const subscription of [...this.transcripts.values()]) subscription.close();
+    this.clearHandshake();
     this.transcriptCapability = null;
     this.transcriptWindowCapability = false;
+    this.feedVersion = 1;
     for (const listener of this.capabilityListeners) listener();
   }
 
@@ -347,6 +422,14 @@ class SessionUpdatesSocket {
     ws.onopen = () => {
       if (this.ws !== ws) return;
       this.failedAttempts = 0;
+      this.clearHandshake();
+      this.handshakeTimer = setTimeout(() => {
+        this.handshakeTimer = undefined;
+        this.transcriptCapability = false;
+        this.transcriptWindowCapability = false;
+        this.feedVersion = 1;
+        for (const listener of [...this.capabilityListeners]) listener();
+      }, TRANSCRIPT_NEGOTIATION_MS);
       this.setConnected(true);
       // Start the silence watchdog: from here we expect at least a
       // heartbeat within the window or we treat the link as dead.
@@ -361,6 +444,7 @@ class SessionUpdatesSocket {
     };
     ws.onclose = () => {
       if (this.ws !== ws) return;
+      this.clearHandshake();
       this.ws = null;
       this.clearWatchdog();
       this.setConnected(false);
@@ -426,8 +510,13 @@ class SessionUpdatesSocket {
     if (typeof event.data !== "string") return;
     let frame:
       | SessionUpdatesFrame
-      | { type: "session.event"; session_id: string; event: Record<string, unknown> }
-      | { type: "session.error"; session_id: string; code: string };
+      | {
+          type: "session.event";
+          session_id: string;
+          subscription_id?: string;
+          event: Record<string, unknown>;
+        }
+      | { type: "session.error"; session_id: string; subscription_id?: string; code: string };
     try {
       frame = JSON.parse(event.data) as typeof frame;
     } catch {
@@ -435,13 +524,33 @@ class SessionUpdatesSocket {
     }
     if (!frame || typeof frame !== "object") return;
     if (frame.type === "capabilities") {
+      this.clearHandshake();
+      configureConvergenceExport(frame.transcript_observation_until_ms ?? 0);
       this.transcriptCapability = frame.transcript_stream === 1;
       this.transcriptWindowCapability = frame.transcript_window === 1;
+      this.membershipLimit =
+        typeof frame.transcript_memberships === "number" &&
+        Number.isSafeInteger(frame.transcript_memberships) &&
+        frame.transcript_memberships > 0
+          ? frame.transcript_memberships
+          : Infinity;
+      let override: string | null = null;
+      try {
+        override = localStorage.getItem("triune:transcript-feed");
+      } catch {
+        // Browsers without persistent storage use server negotiation.
+      }
+      this.feedVersion =
+        frame.transcript_feed === 2 &&
+        override !== "1" &&
+        (override === "2" || frame.transcript_feed_default === 2)
+          ? 2
+          : 1;
       for (const listener of [...this.capabilityListeners]) listener();
     }
     if (frame.type === "session.event" || frame.type === "session.error") {
       const subscription = this.transcripts.get(frame.session_id);
-      if (!subscription) return;
+      if (!subscription || frame.subscription_id !== subscription.subscriptionId) return;
       if (frame.type === "session.error") {
         subscription.received?.({ type: "session_transport_error", code: frame.code });
         subscription.push(
@@ -456,7 +565,31 @@ class SessionUpdatesSocket {
       }
       const payload = frame.event;
       if (!payload || typeof payload !== "object" || typeof payload.type !== "string") return;
+      if (payload.type === "session.snapshot_page" && subscription.subscriptionId) {
+        if (!Array.isArray(payload.items) || payload.items.length > 32) {
+          subscription.push({ type: "session_transport_error", code: "stream_failed" }, 0);
+          return;
+        }
+        for (const item of payload.items) {
+          const parsed = parseEvent("response.output_item.done", { item });
+          if (!parsed) {
+            subscription.push({ type: "session_transport_error", code: "stream_failed" }, 0);
+            return;
+          }
+          subscription.received?.(parsed);
+          subscription.push(parsed, new TextEncoder().encode(JSON.stringify(item)).byteLength);
+        }
+        return;
+      }
       const parsed = parseEvent(payload.type, payload);
+      if (parsed && subscription.subscriptionId) {
+        const field = "_change_revision";
+        const revision =
+          payload[field] ??
+          (parsed.type === "session_item_reference" ? parsed.header[field] : undefined);
+        if (typeof revision === "number" && Number.isSafeInteger(revision) && revision > 0)
+          parsed.changeRevision = revision;
+      }
       if (parsed) {
         subscription.received?.(parsed);
         subscription.push(parsed, new TextEncoder().encode(event.data).byteLength);

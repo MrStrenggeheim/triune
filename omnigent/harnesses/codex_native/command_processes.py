@@ -6,7 +6,10 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import logging
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
 from omnigent.native.shell_resources import (
@@ -18,6 +21,8 @@ from omnigent.native.shell_resources import (
 from omnigent.terminals.history import bounded_output
 from omnigent.util.json_types import JsonObject
 
+_logger = logging.getLogger(__name__)
+
 
 @dataclass
 class CodexCommandProcesses:
@@ -26,9 +31,64 @@ class CodexCommandProcesses:
     commands: dict[str, JsonObject] = field(default_factory=dict)
     resources: dict[str, JsonObject] = field(default_factory=dict)
     posted: JsonObject | None = None
-    sync_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
     _dirty_output: set[str] = field(default_factory=set, repr=False)
     _last_output_publish: float = field(default=0, repr=False)
+    _pending_full: bool = field(default=False, repr=False)
+    _pending_ids: set[str] = field(default_factory=set, repr=False)
+    _publisher: asyncio.Task[None] | None = field(default=None, repr=False)
+    _closing: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
+
+    def schedule_publication(
+        self, publish: Callable[[JsonObject], Awaitable[bool]], *, output_id: str | None = None
+    ) -> None:
+        """Only the inventory publisher waits on acknowledgment of a shell snapshot."""
+        if self._closing.is_set():
+            return
+        if output_id is None or len(self._pending_ids) >= MAX_SHELL_RESOURCES:
+            self._pending_full = True
+            self._pending_ids.clear()
+        elif not self._pending_full:
+            self._pending_ids.add(output_id)
+        if self._publisher is None or self._publisher.done():
+            self._publisher = asyncio.create_task(
+                self._publish_pending(publish), name="codex-shell-inventory"
+            )
+
+    async def _publish_pending(self, publish: Callable[[JsonObject], Awaitable[bool]]) -> None:
+        backoff = 2.0
+        while self._pending_full or self._pending_ids:
+            if not self._pending_full and not self._closing.is_set():
+                await asyncio.sleep(0.2)
+            full, ids = self._pending_full, self._pending_ids
+            self._pending_full, self._pending_ids = False, set()
+            snapshot = self.snapshot(resource_ids=None if full else sorted(ids))
+            if snapshot is None:
+                continue
+            try:
+                delivered = await publish(snapshot)
+            except Exception:
+                _logger.exception("Codex shell inventory publication failed")
+                delivered = False
+            if delivered:
+                self.posted = snapshot
+                backoff = 2.0
+            elif not self._closing.is_set():
+                self._pending_full |= full
+                if not self._pending_full:
+                    self._pending_ids.update(ids)
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(self._closing.wait(), timeout=backoff)
+                backoff = min(30.0, backoff * 2)
+
+    async def close(self) -> None:
+        """Bound the final best-effort inventory flush to an open HTTP client."""
+        self._closing.set()
+        if self._publisher is None:
+            return
+        try:
+            await asyncio.wait_for(self._publisher, timeout=2)
+        except TimeoutError:
+            _logger.warning("Codex shell inventory publication timed out at shutdown")
 
     def observe(
         self,
@@ -106,10 +166,16 @@ class CodexCommandProcesses:
     def observe_output(
         self, item_id: str, delta: str, *, now: float | None = None
     ) -> JsonObject | None:
-        """Append actual stdout/stderr without inventing a shell from an unknown delta."""
+        """Capture output and return a throttled snapshot for snapshot consumers."""
+        if not self.capture_output(item_id, delta):
+            return None
+        return self.flush_output(now=now)
+
+    def capture_output(self, item_id: str, delta: str) -> bool:
+        """Capture stdout/stderr synchronously; only registered shells own output."""
         previous = self.resources.get(item_id)
         if previous is None or not delta:
-            return None
+            return False
         output = previous.get("output")
         captured = bounded_output((output if isinstance(output, str) else "") + delta)
         resource = {
@@ -121,7 +187,7 @@ class CodexCommandProcesses:
         if item_id in self.commands:
             self.commands[item_id] = resource
         self._dirty_output.add(item_id)
-        return self.flush_output(now=now)
+        return True
 
     def flush_output(self, *, now: float | None = None, force: bool = False) -> JsonObject | None:
         """Coalesce output to 200ms; the forwarder's output coalescer flushes a quiet tail."""

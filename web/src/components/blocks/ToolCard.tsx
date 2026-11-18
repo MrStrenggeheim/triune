@@ -54,7 +54,12 @@ import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import type { RenderItem, ToolState } from "@/lib/renderItems";
+import {
+  renderGroupMembers,
+  renderItemIdentity,
+  type RenderItem,
+  type ToolState,
+} from "@/lib/renderItems";
 import { dropTrailingPartialEscape, showControlCharacters, stripAnsi } from "@/lib/ansi";
 import { type ShellOutputFormat, parseShellToolOutput } from "@/lib/shellToolOutput";
 import { terminalSurfaceStyle } from "@/lib/terminalPalette";
@@ -175,6 +180,7 @@ export function getOutputPreview(output: string, expanded = false): OutputPrevie
 }
 
 interface ToolCardProps {
+  itemId?: string;
   /** Presentation identity; never a tool execution or API target. */
   disclosureKey?: string;
   /** Display name for the tool. For native tools, this is the friendly label. */
@@ -198,6 +204,7 @@ interface ToolCardProps {
 }
 
 export function ToolCard({
+  itemId,
   disclosureKey,
   name,
   nativeToolType,
@@ -239,6 +246,7 @@ export function ToolCard({
         setOpen(next);
       }}
       className="group not-prose w-full"
+      data-convergence-item-id={itemId}
     >
       <ToolTriggerRow
         title={title}
@@ -323,6 +331,7 @@ export function ToolGroupSummary({ tools }: { tools: RenderItem[] }) {
         setGroupChoice({ key: firstKey, open: next });
       }}
       className="group/tool-summary not-prose w-full"
+      data-convergence-members={open ? undefined : renderGroupMembers(tools)}
     >
       <CollapsibleTrigger className="flex min-h-7 w-full cursor-pointer items-center gap-1.5 rounded-sm py-0.5 text-left text-muted-foreground text-chat transition-colors hover:text-foreground">
         <span>{label}</span>
@@ -347,6 +356,7 @@ export function ToolGroupSummary({ tools }: { tools: RenderItem[] }) {
             return (
               <ToolCard
                 key={transcriptDisclosureItemKey(item)}
+                itemId={renderItemIdentity(item)}
                 disclosureKey={transcriptDisclosureItemKey(item)}
                 name={item.execution.name}
                 argsSummary={item.execution.argsSummary}
@@ -362,6 +372,7 @@ export function ToolGroupSummary({ tools }: { tools: RenderItem[] }) {
             return (
               <ToolCard
                 key={`native:${item.itemId ?? item.label}`}
+                itemId={renderItemIdentity(item)}
                 disclosureKey={transcriptDisclosureItemKey(item)}
                 name={item.label}
                 nativeToolType={item.toolType}

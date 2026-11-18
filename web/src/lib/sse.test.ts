@@ -164,6 +164,24 @@ describe("parseEvent — response.output_text.delta", () => {
   });
 });
 
+it("decodes complete positioned amendments without converting an edit into a second append", () => {
+  const item = {
+    id: "saved",
+    type: "message",
+    position: 0,
+    response_id: "turn",
+    content: [{ type: "output_text", text: "amended" }],
+  };
+  expect(parseEvent("response.output_item.updated", { item })).toMatchObject({
+    type: "session_item_updated",
+    item,
+    position: 0,
+  });
+  expect(
+    parseEvent("response.output_item.updated", { item: { ...item, position: undefined } }),
+  ).toBeNull();
+});
+
 describe("parseEvent — lifecycle item enrichment", () => {
   const item = {
     id: "task-return",
