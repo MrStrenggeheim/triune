@@ -42,7 +42,7 @@ export function createScopedChatStore(conversationId: string): BoundChatStore {
       // The provider establishes observation after its previous visibility lease
       // is released; a child's route effect must not bind ahead of that cleanup.
     },
-    stop: () => root().stop(conversationId),
+    stop: (_target, requireObservedTurn) => root().stop(conversationId, requireObservedTurn),
     setEffort: (effort) => root().setEffort(effort, conversationId),
     setModel: (model, options) => root().setModel(model, options, conversationId),
     setCostControlMode: (mode) => root().setCostControlMode(mode, conversationId),

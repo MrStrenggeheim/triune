@@ -139,6 +139,8 @@ An explicit binding/attempt synchronization owner accepts only validated replay 
 Ancillary resource snapshots no longer hold the live tail; canonical replay still preserves its captured high-water boundary and rejects incomplete recovery.
 Content-free convergence diagnostics correlate received, accepted and displayed identities across reloads, with bounded retention and authenticated viewer scope.
 Chat and subchat project pending inputs and settled work in the same chronological order, with inherited rows filtered by the saved fork boundary.
+Established rail and grid sessions reuse the full scoped conversation surface and composer; the first question in a pending rail tab creates its fork.
+Interrupt confirmation belongs to the runner and the observed turn; a failed or uncertain request keeps the conversation readable and offers a scoped status check before another attempt.
 Displayed samples come from committed visible DOM rows; they do not equate store publication with screen presentation or claim physical display timing.
 Fallback history reads cancel on focus return, hiding or disposal and have a fifteen-second deadline, so pending snapshots cannot prevent live observation from resuming.
 Pending snapshots retain accepted input identities independently of position; reconnect merges their local copies and consumes each exact receipt once, preserving repeated intentional inputs.

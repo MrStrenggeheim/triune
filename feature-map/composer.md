@@ -1,5 +1,9 @@
 # Composer
 
+Established grid and rail chats use the full conversation composer with an explicit session target.
+Pending rail forks retain their quoted first question until creation succeeds.
+The packaged restored-grid case in `tests/browser_ui/chat/test_session_grid.py` verifies independent drafts and target IDs.
+
 November 17 refinements keep the selected permission-mode caption stable through idle/running changes.
 While running, its hover and dropdown add only “Only applies next turn”; the original mode guidance stays in the hover.
 An active Goal appears after Plan in the attention shelf, including when it is the shelf's only resource.

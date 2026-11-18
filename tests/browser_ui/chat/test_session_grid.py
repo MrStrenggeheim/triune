@@ -81,6 +81,61 @@ def _move_cell(
     expect(ghost).to_have_count(0)
 
 
+def test_restored_grid_panes_share_the_full_chat_and_target_their_own_session(
+    page: Page, browser_contract: BrowserContract
+) -> None:
+    with ExitStack() as stack:
+        chats = [
+            stack.enter_context(
+                contextmanager(chat_session_handle)(page, browser_contract, session_id=sid)
+            )
+            for sid in ("grid-first", "grid-second")
+        ]
+        for chat in chats:
+            browser_contract.json(
+                f"/v1/sessions/{chat.session_id}/resources/shells", list_payload([])
+            )
+            chat.set_items(
+                [
+                    message_item(
+                        f"{chat.session_id}-row",
+                        "assistant",
+                        chat.session_id,
+                        response_id="grid-turn",
+                    )
+                ]
+            )
+        browser_contract.json(
+            "/v1/info", {"single_user": True, "features": {"grid_sessions_display_ui": True}}
+        )
+        browser_contract.json(
+            "/v1/sessions", list_payload([chat.session_snapshot() for chat in chats])
+        )
+        page.add_init_script("""localStorage.setItem(
+          'omnigent:session-grids:'+location.origin+':local',
+          JSON.stringify([{id:'parity',layout:{axis:'columns',children:['grid-first','grid-second']}}])
+        )""")
+        page.goto(browser_contract.base_url + "/grid/parity")
+        first, second = [
+            page.locator(f'[data-grid-session="{chat.session_id}"]') for chat in chats
+        ]
+        for pane, chat in zip((first, second), chats, strict=True):
+            expect(
+                pane.get_by_role("log").get_by_text(chat.session_id, exact=True)
+            ).to_be_visible()
+            expect(pane.get_by_label("Message the agent")).to_be_visible()
+        first.get_by_label("Message the agent").fill("Keep the first draft")
+        second.get_by_label("Message the agent").fill("Send only to second")
+        second.get_by_test_id("side-chat-send").click()
+        expect(second.get_by_label("Message the agent")).to_have_value("")
+        expect(first.get_by_label("Message the agent")).to_have_value("Keep the first draft")
+        expect(
+            second.get_by_role("log").get_by_text("Send only to second", exact=True)
+        ).to_be_visible()
+        assert all(post["body"]["type"] != "message" for post in chats[0].event_posts)
+        assert sum(post["body"]["type"] == "message" for post in chats[1].event_posts) == 1
+
+
 def test_session_grid_drag_persist_live_updates_and_close(
     page: Page, browser_contract: BrowserContract, output_path: str
 ) -> None:

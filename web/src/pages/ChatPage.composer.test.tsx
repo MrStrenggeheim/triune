@@ -4941,9 +4941,8 @@ describe("Composer reply quotes", () => {
     expect(getSessionDraft("conv_test")?.text).toBe(
       "Draft\n\n> Quoted line\n> \n> Another paragraph",
     );
-    expect(screen.getByTestId("composer-reply-quote")).toHaveAttribute(
-      "title",
-      "Quoted line\n\nAnother paragraph",
+    expect(screen.getByTestId("composer-reply-quote")).toHaveTextContent(
+      "Quoted line Another paragraph",
     );
   });
 

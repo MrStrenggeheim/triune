@@ -7014,10 +7014,16 @@ def create_runner_app(
                     _cond.notify_all()
 
         if body_type == "interrupt":
+            requested_id = body.get("response_id")
+            active_id = _live_response_id.get(conversation_id)
+            if requested_id and active_id and requested_id != active_id:
+                return JSONResponse(status_code=409, content={"error": "active_turn_changed"})
             _cancel_claude_prompt_waiter(conversation_id)
             _harness = _session_harness_name(conversation_id)
             resource_registry.note_terminal_control_request(conversation_id, "interrupt")
-            _interrupt_resp = await _native_interrupt_runner.interrupt(_harness, conversation_id)
+            _interrupt_resp = await _native_interrupt_runner.interrupt(
+                _harness, conversation_id, expected_response_id=requested_id
+            )
             if _interrupt_resp is not None:
                 return _interrupt_resp
             await _cancel_inprocess_turn(conversation_id)

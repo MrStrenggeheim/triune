@@ -758,6 +758,11 @@ export interface ConversationState {
   }[];
   /** Lifecycle of the most recent send. `null` when idle pre-send. */
   activeResponse: ActiveResponse | null;
+  interruptRequest: {
+    requestId: string;
+    responseId: string | null;
+    phase: "sending" | "unconfirmed";
+  } | null;
   /**
    * Response ids whose assistant bubbles should remain labelled cancelled.
    *
@@ -1349,7 +1354,7 @@ export interface ChatActions {
     agentId: string,
     opts?: SendOptions,
   ) => Promise<void>;
-  stop: (conversationId?: string) => void;
+  stop: (conversationId?: string, requireObservedTurn?: boolean) => Promise<void>;
   switchTo: (conversationId: string | null, options?: { observe?: boolean }) => Promise<void>;
   submitApproval: (
     elicitationId: string,
@@ -2456,6 +2461,7 @@ const createChatState = (get: () => ChatState): ChatState => ({
   btwSidechat: null,
   queuedMessages: [],
   activeResponse: null,
+  interruptRequest: null,
   interruptedResponseIds: [],
   status: "idle",
   sessionStatus: "idle",
@@ -3748,7 +3754,7 @@ const createChatState = (get: () => ChatState): ChatState => ({
     }
   },
 
-  stop: (targetId) => {
+  stop: async (targetId, requireObservedTurn = false) => {
     const target = actionTarget(get, targetId);
     const state = target.state;
     const sessionId = state.conversationId;
@@ -3775,49 +3781,54 @@ const createChatState = (get: () => ChatState): ChatState => ({
         return;
     }
     if (isTempConvId(sessionId)) return;
-    // Fire-and-forget interrupt; the server emits session.interrupted
-    // + response.incomplete on the open stream, which the pump
-    // translates into the cancelled bubble decoration. We deliberately
-    // do NOT abort the local SSE stream — it remains open across
-    // turns; switchTo or tab unload is the only thing that tears it
-    // down.
-    void interruptSession(sessionId).catch(() => {
-      // Interrupt is best-effort. A network failure here means the
-      // user's cancel won't reach the server, but the local UI already
-      // reflects the user's stop request below.
-    });
-    target.write((s) => {
-      if (s.conversationId !== sessionId) return {};
-      const patch: Partial<ChatState> = {
-        pendingUserMessages: [],
-        status: "idle",
-        sessionStatus: "idle",
-        backgroundTaskCount: 0,
-        backgroundTasks: [],
-        blockedOn: null,
-      };
-      if (s.activeResponse?.state === "streaming") {
-        patch.activeResponse = {
-          ...s.activeResponse,
-          state: "cancelled",
-          error: null,
-        };
+    const entry = conversationRegistry.peek(sessionId);
+    const reader = entry ? entryGetter(entry) : get;
+    const write = entry ? entrySetter(entry) : target.write;
+    const scope = transcriptCursorScope(sessionId);
+    const owns = () =>
+      transcriptCursorScope(sessionId) === scope &&
+      conversationRegistry.peek(sessionId) === entry &&
+      reader().conversationId === sessionId;
+    const responseId =
+      state.activeResponse?.state === "streaming" ? state.activeResponse.responseId : null;
+    if (
+      (requireObservedTurn && !responseId && !state.interruptRequest) ||
+      state.interruptRequest?.phase === "sending"
+    )
+      return;
+    const prior = state.interruptRequest;
+    const request = {
+      requestId: prior?.requestId ?? crypto.randomUUID(),
+      responseId,
+      phase: "sending" as const,
+    };
+    write({ interruptRequest: request });
+    // A failed transfer can still have reached the runner. Read its state before retrying.
+    try {
+      if (prior?.phase === "unconfirmed") {
+        const fresh = await getSessionSlim(sessionId, {
+          refreshState: true,
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (!owns() || reader().interruptRequest !== request) return;
+        const current = reader();
+        if (
+          current.activeResponse === state.activeResponse &&
+          current.sessionStatus === state.sessionStatus
+        ) {
+          write({
+            ...reconnectStatusPatch(fresh, current, current.mcpStartupLaunch, current.todos),
+            interruptRequest: null,
+          });
+        } else write({ interruptRequest: null });
+        // Reconciliation never issues another interrupt; the next deliberate action owns its turn.
+        return;
       }
-      return patch;
-    });
-    // Optimistic, unbacked write: unlike the session.status SSE caller, no
-    // server event backs this, so a poll that interleaves while the turn is
-    // genuinely still running may briefly revert the sidebar dot — the helper's
-    // "never fights the poller" contract doesn't hold here. Self-corrects on the
-    // real idle event.
-    patchConversationStatusInCache(sessionId, "idle");
-    // Mirror the session.status handler: a sub-agent's row lives in its parent's
-    // child-sessions list, not the sidebar, so refresh the rail in lockstep.
-    const snapshot = queryClient?.getQueryData<Session>(["session", sessionId]);
-    if (snapshot?.parentSessionId) {
-      queryClient?.invalidateQueries({
-        queryKey: childSessionsQueryKey(snapshot.parentSessionId),
-      });
+      await interruptSession(sessionId, responseId ?? undefined, request.requestId);
+      if (owns() && reader().interruptRequest === request) write({ interruptRequest: null });
+    } catch {
+      if (!owns() || reader().interruptRequest !== request) return;
+      write({ interruptRequest: { ...request, phase: "unconfirmed" } });
     }
   },
 

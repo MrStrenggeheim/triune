@@ -6,15 +6,17 @@ import { migrateConversationDraft } from "./conversationDraft";
 export function ScopedConversationSurface({
   conversationId,
   visible,
+  preserveSeed = false,
 }: {
   conversationId: string;
   visible: boolean;
+  preserveSeed?: boolean;
 }) {
   const [ready, setReady] = useState(false);
   useLayoutEffect(() => {
-    migrateConversationDraft(conversationId);
+    migrateConversationDraft(conversationId, preserveSeed);
     setReady(true);
-  }, [conversationId]);
+  }, [conversationId, preserveSeed]);
   if (!ready) return null;
   return <ChatPage conversationId={conversationId} visible={visible} />;
 }

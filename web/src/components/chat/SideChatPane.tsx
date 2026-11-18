@@ -1,13 +1,4 @@
-// Modified for Triune; inherited notices remain applicable.
-import { observeChatScroll, useChatScrollPreference } from "@/lib/chatScrollPreference";
-import { useTranscriptConvergenceDisplay } from "@/hooks/useTranscriptConvergenceDisplay";
-import { ComposerMentionMenu } from "@/components/composer/ComposerMentionMenu";
-import { ComposerMentionChips } from "@/components/composer/ComposerMentionChips";
-import { useMentionBrowser } from "@/hooks/useMentionBrowser";
-import { detectMentionAt, buildMentionPreamble, type MentionState } from "@/lib/composerMentions";
-import { registerQuoteDestination, appendDraftText } from "@/lib/quoteDraftDestinations";
-import { getSessionDraft, setSessionDraft } from "@/lib/sessionDrafts";
-import { SelectionPopup } from "./SelectionPopup";
+// Modified for Triune.
 import {
   useCallback,
   useEffect,
@@ -18,450 +9,146 @@ import {
   type ClipboardEvent,
   type KeyboardEvent,
 } from "react";
-import { MessagesSquareIcon, TriangleAlertIcon } from "lucide-react";
-import { ContentSkeleton } from "@/components/ui/loading";
-import { toast } from "@/lib/notifications";
+import { MessagesSquareIcon } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { inheritedHistoryEnd, shouldHideSubchatHistory } from "@/lib/inheritedHistory";
-import { liveCandidateAssistantIndex } from "@/lib/renderItems";
-import {
-  BubbleView,
-  WorkingIndicator,
-  AwaitingAgentMessages,
-  partitionAwaitingAgentBubbles,
-  bubbleKey,
-  useTranscriptBubbles,
-  computeIsTurnActive,
-  shouldShowWorkingIndicator,
-} from "@/components/chat/chatBubbleParts";
-import {
-  ChatComposer,
-  ComposerFeedbackRow,
-  ComposerSendButton,
-  type ComposerKeyIntent,
-} from "@/components/composer/ChatComposer";
-import { ComposerAddMenu } from "@/components/composer/ComposerAddMenu";
-import { ComposerMicButton } from "@/components/ComposerMicButton";
-import {
-  BUILTIN_SLASH_COMMANDS,
-  SlashCommandMenu,
-  isSlashCommandText,
-  matchSlashCommandInvocation,
-  skillDisplayNames,
-  skillMenuDescription,
-} from "@/components/SlashCommandMenu";
-import { ComposerAttachments } from "@/components/ComposerAttachments";
-import { ReplyDraftBlocks } from "@/components/composer/ReplyDraftBlocks";
-import { Button } from "@/components/ui/button";
-import { TooltipProvider } from "@/components/ui/tooltip";
-import {
-  EMPTY_SIDE_CHAT_COMPOSER,
-  ensureConversationStreamed,
-  holdsInitialDraft,
-  isCompactControl,
-  rejectBusyCompact,
-  restoredSendDraftUnchanged,
-  takeFailedSendDraft,
-  type SideChatComposerDraft,
-  useChatStore,
-} from "@/store/chatStore";
-import { conversationRegistry } from "@/store/conversationRegistry";
-import { QueuedMessagesStrip } from "@/pages/QueuedMessagesStrip";
-import { readAlwaysSteer } from "@/lib/alwaysSteerPreferences";
-import { shouldQueueSend } from "@/lib/messageQueue";
-import { attachmentAccept, clipboardFiles, validateAttachments } from "@/lib/attachments";
-import { useServerInfo } from "@/lib/CapabilitiesContext";
-import { useConversationDemand } from "@/workbench/ConversationDemand";
+import { useSession } from "@/hooks/useSession";
 import { useConversationEntryState } from "@/hooks/useConversationEntryState";
 import { useAutoGrowTextarea } from "@/hooks/useAutoGrowTextarea";
-import { useDictationInsert } from "@/hooks/useDictationInsert";
-import { useSession } from "@/hooks/useSession";
-import type { Session } from "@/lib/types";
-import { useSkills } from "@/hooks/useSkills";
-import { useSlashCompletion } from "@/hooks/useSlashCompletion";
-import { useIsMobileViewport } from "@/hooks/useIsMobileViewport";
-import { skillInvocationPrefix } from "@/lib/harnessSetup";
-import { isNativeTerminalSession } from "@/lib/nativeCodingAgents";
-import { usesNativeSideChatFork } from "@/lib/sideChat";
-import { parentIdFromLabels } from "@/lib/sessionHost";
+import { useReplyDictation } from "@/hooks/useReplyDictation";
+import { toast } from "@/lib/notifications";
+import { clipboardFiles } from "@/lib/attachments";
 import {
   appendReplyQuote,
   removeReplyQuote,
   moveReplyQuote,
-  type ReplyDraft,
-  restoreReplyDraft,
   serializeReplyDraft,
-  snapshotReplyDraft,
+  type ReplyDraft,
 } from "@/lib/replyDraft";
-import { interrupt } from "@/lib/sessionsApi";
-import { ConversationScopeContext } from "@/components/chat/conversationScope";
+import { registerQuoteDestination, appendDraftText } from "@/lib/quoteDraftDestinations";
+import { isSlashCommandText } from "@/components/SlashCommandMenu";
+import {
+  ChatComposer,
+  ComposerSendButton,
+  type ComposerKeyIntent,
+} from "@/components/composer/ChatComposer";
+import { ComposerMicButton } from "@/components/ComposerMicButton";
+import { ReplyDraftBlocks } from "@/components/composer/ReplyDraftBlocks";
+import { SelectionPopup } from "./SelectionPopup";
+import { WorkingIndicator } from "./chatBubbleParts";
+import { ConversationScopeContext, EmbeddedChatContext } from "./conversationScope";
+import { ScopedConversationSurface } from "@/workbench/ScopedConversationSurface";
+import { ScopedConversationTerminal } from "@/workbench/ScopedConversationTerminal";
+import { ScopedChatStoreProvider } from "@/workbench/ScopedChatStore";
+import { ComposerShelfVisibilityProvider } from "@/components/composer/ComposerShelfVisibility";
+import { useChatStore, EMPTY_SIDE_CHAT_COMPOSER } from "@/store/chatStore";
 
-/** A `pending:` tab has no child session yet; its first send creates the fork. */
-function isPendingSideChat(id: string): boolean {
-  return id.startsWith("pending:");
+interface SideChatPaneProps {
+  childId: string;
+  selectionParentId?: string;
+  onStart?: (text: string) => Promise<void>;
+  readOnly?: boolean;
+  fullSession?: boolean;
+  visible?: boolean;
+  focused?: boolean;
 }
 
-// Accurate for every harness: a side chat is a fork that stays out of the main
-// thread. It is NOT reliably ephemeral — a non-Codex side chat is a persisted
-// fork (hidden from the sidebar), so the copy doesn't promise it disappears.
-const EMPTY_STATE_BODY = "Ask a question here without affecting the main conversation.";
-
-/**
- * A scoped chat surface for a side-chat, rendered as a Workspace-rail tab beside
- * the still-active main chat.
- *
- * Two phases keyed by `childId`:
- * - **pending** (`pending:*`, no fork yet): shows the empty state + a composer;
- *   the first send calls `onStart`, which creates the fork.
- * - **live** (a real child conversation): streams the child's own registry entry
- *   (not the root store, which only projects the active conversation), reusing
- *   the main transcript's bubble pipeline. The forked-in history is hidden so
- *   the side chat starts visually empty — like Codex's native fork — while the
- *   agent still has the full context. Follow-ups send to the child via
- *   `pinnedConversationId`.
- *
- * @param childId The child conversation id, or a `pending:` placeholder.
- * @param onStart Create the fork from a pending tab's first message.
- */
 export function SideChatPane({
   childId,
   selectionParentId,
   onStart,
-  readOnly: restoredReadOnly = false,
+  readOnly = false,
   fullSession = false,
   visible = true,
-}: {
-  childId: string;
-  selectionParentId?: string;
-  onStart?: (text: string) => Promise<void>;
-  /** A dead, restored Codex side chat: show the transcript without a composer. */
-  readOnly?: boolean;
-  /** Display an existing session with its complete history and scoped composer. */
-  fullSession?: boolean;
-  visible?: boolean;
-}) {
-  const pending = isPendingSideChat(childId);
+  focused = visible,
+}: SideChatPaneProps) {
+  const pending = childId.startsWith("pending:");
   const starting = useChatStore((s) => s.sideChatComposers[childId]?.starting ?? false);
-  // The server seals a side chat whose fork died with its runner.
-  const { session, isLoading: metadataLoading } = useSession(pending ? null : childId);
-  const readOnly = restoredReadOnly || session?.labels?.["omnigent.closed"] === "true";
+  const { session } = useSession(pending || !visible ? null : childId);
+  const sealed = session?.labels?.["omnigent.closed"] === "true";
+  const reason =
+    sealed || (readOnly && !fullSession)
+      ? "This side chat has ended and can’t be continued."
+      : readOnly
+        ? "You have read-only access to this session"
+        : null;
+  const presentation = useMemo(
+    () => ({ subchat: !fullSession, readOnlyReason: reason }),
+    [fullSession, reason],
+  );
   useLayoutEffect(() => {
-    if (!selectionParentId || readOnly || starting) return;
+    if (!visible || !selectionParentId || reason || starting) return;
     const target = { childId, parentId: selectionParentId };
     useChatStore.setState({ sideChatSelectionTarget: target });
     return () => {
-      if (useChatStore.getState().sideChatSelectionTarget === target) {
+      if (useChatStore.getState().sideChatSelectionTarget === target)
         useChatStore.setState({ sideChatSelectionTarget: null });
-      }
     };
-  }, [childId, selectionParentId, readOnly, starting]);
-  useConversationDemand(!pending && visible ? childId : undefined, !metadataLoading, false);
-  // A real tab reads the child entry; a pending tab has none (null → empty).
-  const state = useConversationEntryState(pending ? null : childId);
-  const {
-    blocks,
-    activeResponse,
-    interruptedResponseIds,
-    pendingUserMessages,
-    subagentRoutingOverride,
-    sessionStatus,
-    sessionHarness,
-    boundAgentId,
-    loadingConversation,
-    conversationLoadError,
-  } = state;
-
-  const branch = session?.branch;
-  const hideInherited = !fullSession || shouldHideSubchatHistory(session?.labels, branch);
-  const visibleBlocks = useMemo(() => {
-    const end = hideInherited ? inheritedHistoryEnd(blocks, branch) : -1;
-    return end < 0 ? blocks : blocks.slice(end + 1);
-  }, [blocks, branch, hideInherited]);
-
-  const bubbles = useTranscriptBubbles({
-    blocks: visibleBlocks,
-    activeResponse,
-    interruptedResponseIds,
-    pendingUserMessages,
-    subagentRoutingOverride,
-    sessionStatus,
-  });
-
-  const { streamBubbles, awaitingAgentBubbles } = useMemo(
-    () => partitionAwaitingAgentBubbles(bubbles),
-    [bubbles],
-  );
-  const lastAssistantIndex = liveCandidateAssistantIndex(streamBubbles);
-  const showsWorking =
-    (!readOnly || fullSession) &&
-    (starting || computeIsTurnActive(sessionStatus, state.status === "streaming"));
-  // Native interruption needs an observed turn; local streaming can start before one exists.
-  const interruptReady =
-    !usesNativeSideChatFork(sessionHarness) || activeResponse?.state === "streaming";
-
-  // Keep the newest content in view. A side chat is short and non-virtualized,
-  // so a bottom sentinel scrolled on each change is enough.
-  const transcriptRef = useRef<HTMLDivElement>(null);
-  useTranscriptConvergenceDisplay(
-    transcriptRef,
-    childId,
-    !pending,
-    bubbles,
-    undefined,
-    visibleBlocks,
-  );
-  const contentRef = useRef<HTMLDivElement>(null);
-  const scrollPreference = useChatScrollPreference();
-  useLayoutEffect(() => {
-    if (!transcriptRef.current || !contentRef.current) return;
-    return observeChatScroll(
-      transcriptRef.current,
-      contentRef.current,
-      scrollPreference === "follow",
+  }, [visible, childId, selectionParentId, reason, starting]);
+  if (pending)
+    return (
+      <PendingSubchat
+        key={childId}
+        childId={childId}
+        starting={starting}
+        readOnly={readOnly}
+        onStart={onStart}
+      />
     );
-  }, [childId, scrollPreference]);
-
-  const loadFailed = !pending && conversationLoadError !== null && bubbles.length === 0;
-  const isEmpty = bubbles.length === 0 && !loadingConversation && !loadFailed && !showsWorking;
-
-  const startSideChat = async (text: string) => {
-    if (!onStart) return;
-    // Keep the in-flight tab locked across tab switches and drawer remounts.
-    useChatStore.getState().updateSideChatComposer(childId, (current) => ({
-      ...current,
-      starting: true,
-    }));
-    try {
-      await onStart(text);
-      // The quoted selection now travels with the fork's first message.
-      useChatStore.getState().clearSideChatDraft(childId);
-    } catch {
-      // Re-enable the composer while preserving the draft for retry.
-      useChatStore.getState().updateSideChatComposer(childId, (current) => ({
-        ...current,
-        starting: false,
-      }));
-    }
-  };
-
   return (
-    <ConversationScopeContext.Provider value={childId}>
-      <div className="side-chat-backdrop flex h-full min-h-0 flex-col">
-        <div ref={transcriptRef} className="flex min-h-0 flex-1 flex-col overflow-y-auto px-3 py-4">
-          <div ref={contentRef} className="flex min-h-full shrink-0 flex-col">
-            {fullSession && state.hasMoreHistory && (
-              <Button
-                variant="ghost"
-                size="sm"
-                disabled={state.loadingMoreHistory}
-                loading={state.loadingMoreHistory}
-                onClick={() => {
-                  void useChatStore.getState().loadMoreHistory(childId);
-                }}
-              >
-                Load earlier messages
-              </Button>
-            )}
-            {loadFailed ? (
-              <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
-                <TriangleAlertIcon className="size-6 text-muted-foreground" />
-                <p className="text-ui font-medium text-foreground">
-                  {fullSession ? "Couldn’t load this session" : "Couldn’t load this side chat"}
-                </p>
-                <p className="max-w-[36ch] text-sm text-muted-foreground">
-                  {conversationLoadError?.message ?? "Please try again."}
-                </p>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  className="mt-1"
-                  onClick={() => void ensureConversationStreamed(childId)}
-                >
-                  Retry
-                </Button>
-              </div>
-            ) : fullSession && loadingConversation && bubbles.length === 0 ? (
-              <ContentSkeleton label="Loading session" className="m-auto" />
-            ) : isEmpty ? (
-              <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
-                <MessagesSquareIcon className="size-6 text-muted-foreground" />
-                <p className="text-ui font-medium text-foreground">
-                  {fullSession ? "No messages yet" : "Side chat"}
-                </p>
-                {!fullSession && (
-                  <p className="max-w-[36ch] text-sm text-muted-foreground">{EMPTY_STATE_BODY}</p>
-                )}
-              </div>
-            ) : (
-              <div className="mt-auto flex shrink-0 flex-col gap-4">
-                {streamBubbles.map((bubble, index) => (
-                  <BubbleView
-                    key={bubbleKey(bubble)}
-                    bubble={bubble}
-                    isLastAssistant={index === lastAssistantIndex}
-                    showsWorking={showsWorking}
-                    recoveryDisabled={readOnly}
-                  />
-                ))}
-                {shouldShowWorkingIndicator(showsWorking, bubbles) && <WorkingIndicator />}
-                <AwaitingAgentMessages bubbles={awaitingAgentBubbles} />
-              </div>
-            )}
-          </div>
-        </div>
-        {!readOnly && !starting && (
-          <SelectionPopup
-            containerRef={transcriptRef}
-            onReply={(text) => {
-              useChatStore.getState().updateSideChatComposer(childId, (current) => ({
-                ...current,
-                ...appendReplyQuote(current, text),
-              }));
-            }}
-          />
-        )}
-        {(!fullSession || !readOnly) && (
-          <div className="composer-shelf-stack shrink-0 px-3 pt-3 pb-5">
-            {readOnly ? (
-              <p className="rounded-md border border-border bg-muted/40 px-3 py-2 text-center text-sm text-muted-foreground">
-                This side chat has ended and can’t be continued.
-              </p>
-            ) : (
-              <SideChatComposer
-                fullSession={fullSession}
-                childId={childId}
-                harness={sessionHarness}
-                session={session}
-                agentId={boundAgentId}
-                responseId={activeResponse?.responseId}
-                interruptReady={interruptReady}
-                busy={showsWorking}
-                pending={pending}
-                starting={starting}
-                onStart={onStart ? startSideChat : undefined}
+    <ScopedChatStoreProvider
+      key={childId}
+      conversationId={childId}
+      visible={visible}
+      focused={focused}
+    >
+      <ConversationScopeContext.Provider value={childId}>
+        <EmbeddedChatContext.Provider value={presentation}>
+          <ComposerShelfVisibilityProvider>
+            <ScopedConversationTerminal conversationId={childId} chatOnly>
+              {visible && !fullSession && !reason && session && session.permissionLevel !== 1 && (
+                <SeededSubchatSend conversationId={childId} />
+              )}
+              <ScopedConversationSurface
+                conversationId={childId}
+                visible={visible}
+                preserveSeed={!fullSession}
               />
-            )}
-          </div>
-        )}
-      </div>
-    </ConversationScopeContext.Provider>
+            </ScopedConversationTerminal>
+          </ComposerShelfVisibilityProvider>
+        </EmbeddedChatContext.Provider>
+      </ConversationScopeContext.Provider>
+    </ScopedChatStoreProvider>
   );
 }
 
-/**
- * The side chat's composer. On a live tab it sends to the child via
- * `pinnedConversationId` (so turns land on the side thread, not the main one)
- * with the main composer's affordances (attach, dictation). On a pending tab it
- * has just text + send: the first message creates the fork via `onStart`, and
- * the text is kept if creation fails so it isn't lost.
- */
-function SideChatComposer({
-  fullSession,
-  childId,
-  harness,
-  session,
-  agentId,
-  responseId,
-  interruptReady,
-  busy,
-  pending,
-  starting,
-  onStart,
-}: {
-  fullSession: boolean;
-  childId: string;
-  harness: string | null | undefined;
-  session: Session | null | undefined;
-  agentId: string | null;
-  responseId: string | undefined;
-  interruptReady: boolean;
-  busy: boolean;
-  pending: boolean;
-  starting: boolean;
-  onStart?: (text: string) => Promise<void>;
-}) {
-  const send = useChatStore((s) => s.send);
-  const sendSlashCommand = useChatStore((s) => s.sendSlashCommand);
+/** Claim the first /side question only when its child can accept it. */
+function SeededSubchatSend({ conversationId }: { conversationId: string }) {
+  const seed = useChatStore((s) => s.sideChatDrafts[conversationId]);
+  const agentId = useConversationEntryState(conversationId, (s) => s.boundAgentId);
+  const loading = useConversationEntryState(conversationId, (s) => s.loadingConversation);
   const queryClient = useQueryClient();
-  const clearSideChatDraft = useChatStore((s) => s.clearSideChatDraft);
-  // Unsent text + attachments live in the store, keyed by child id, NOT in
-  // component state: this pane mounts in the desktop rail or the mobile
-  // drawer's portal, so crossing the `md` breakpoint (a phone rotating) moves
-  // it between subtrees and unmounts it, and so does switching rail tabs.
+  useEffect(() => {
+    const store = useChatStore.getState();
+    if (!seed || !agentId || loading || store.sideChatDrafts[conversationId] !== seed) return;
+    store.clearSideChatDraft(conversationId);
+    void store
+      .send(seed, agentId, undefined, { pinnedConversationId: conversationId })
+      .finally(() => queryClient.invalidateQueries({ queryKey: ["session", conversationId] }));
+  }, [conversationId, seed, agentId, loading, queryClient]);
+  return null;
+}
+
+function PendingSubchat({
+  childId,
+  starting,
+  readOnly,
+  onStart,
+}: Pick<SideChatPaneProps, "childId" | "onStart" | "readOnly"> & { starting: boolean }) {
+  const transcriptRef = useRef<HTMLDivElement>(null);
   const composer = useChatStore((s) => s.sideChatComposers[childId]);
-  const { text, files } = composer ?? EMPTY_SIDE_CHAT_COMPOSER;
+  const text = composer?.text ?? "";
   const updateComposer = useChatStore((s) => s.updateSideChatComposer);
-  const clearComposer = useChatStore((s) => s.clearSideChatComposer);
-  const enqueueMessage = useChatStore((s) => s.enqueueMessage);
-  const maybeFlushQueuedHead = useChatStore((s) => s.maybeFlushQueuedHead);
-  const dequeueMessage = useChatStore((s) => s.dequeueMessage);
-  const steerMessage = useChatStore((s) => s.steerMessage);
-  const steerAllQueuedMessages = useChatStore((s) => s.steerAllQueuedMessages);
-  const reorderQueuedMessage = useChatStore((s) => s.reorderQueuedMessage);
-  const allQueuedMessages = useChatStore((s) => s.queuedMessages);
-  const queuedMessages = useMemo(
-    () => allQueuedMessages.filter((message) => message.conversationId === childId),
-    [allQueuedMessages, childId],
-  );
-  // Grid sessions keep waiting for the turn to end; side chats queue like the main composer.
-  const queues = !pending;
-  useEffect(() => {
-    if (queues && queuedMessages.length > 0) maybeFlushQueuedHead(childId);
-  }, [queues, queuedMessages, busy, agentId, childId, maybeFlushQueuedHead]);
-  const info = useServerInfo();
-  const attachmentPolicy = info === "loading" ? null : (info.filesystem_attachments ?? null);
-  useEffect(() => {
-    if (info === "loading") return;
-    const current = useChatStore.getState().sideChatComposers[childId];
-    if (!current) return;
-    const { accepted, errors } = validateAttachments(current.files, attachmentPolicy);
-    if (errors.length === 0) return;
-    updateComposer(childId, (draft) => ({ ...draft, files: accepted }));
-    errors.forEach((message) => toast.error(message));
-  }, [attachmentPolicy, childId, info, updateComposer]);
-  const { failedSendDraft, restoredSendDraft } = useConversationEntryState(
-    fullSession ? childId : null,
-  );
-  useEffect(() => {
-    if (!fullSession || !failedSendDraft) return;
-    const current = useChatStore.getState().sideChatComposers[childId] ?? EMPTY_SIDE_CHAT_COMPOSER;
-    const failed = takeFailedSendDraft(
-      childId,
-      !!(current.text.trim() || current.files.length || current.quotes?.length),
-    );
-    if (!failed) return;
-    const { accepted, errors } = validateAttachments(failed.files, attachmentPolicy);
-    errors.forEach((message) => toast.error(message));
-    updateComposer(childId, () => ({ text: failed.text, files: accepted }));
-    // Track the displayed draft for delivery; filtered files require a fresh send ID.
-    const entry = conversationRegistry.peek(childId)!;
-    const restored = entry.getState().restoredSendDraft;
-    if (restored)
-      entry.setState({
-        restoredSendDraft: { ...restored, files: accepted, replyDraft: undefined },
-        pendingRetryStableId: errors.length > 0 ? null : entry.getState().pendingRetryStableId,
-      });
-  }, [fullSession, childId, failedSendDraft, updateComposer, attachmentPolicy]);
-  useEffect(() => {
-    if (!fullSession || !restoredSendDraft?.delivered) return;
-    const entry = conversationRegistry.peek(childId);
-    const restored = entry?.getState().restoredSendDraft;
-    if (!restored?.delivered || restored.conversationId !== childId) return;
-    const current = useChatStore.getState().sideChatComposers[childId] ?? EMPTY_SIDE_CHAT_COMPOSER;
-    entry!.setState({ restoredSendDraft: null });
-    if (current.quotes?.length) return;
-    if (
-      restoredSendDraftUnchanged(
-        restored,
-        restored.stableId,
-        current.text,
-        current.files,
-        undefined,
-      )
-    )
-      clearComposer(childId);
-  }, [fullSession, childId, restoredSendDraft, clearComposer]);
+  const clearSideChatDraft = useChatStore((s) => s.clearSideChatDraft);
   const setText = useCallback(
     (next: string) => updateComposer(childId, (current) => ({ ...current, text: next })),
     [childId, updateComposer],
@@ -481,101 +168,36 @@ function SideChatComposer({
       ),
     [childId, updateComposer],
   );
-  const setFiles = useCallback(
-    (mutate: (current: File[]) => File[]) =>
-      updateComposer(childId, (current) => ({ ...current, files: mutate(current.files) })),
-    [childId, updateComposer],
-  );
-  const [interrupting, setInterrupting] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const tailTextareaRef = useRef<HTMLTextAreaElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const [mention, setMention] = useState<MentionState | null>(null);
-  const mentionBrowser = useMentionBrowser({
-    mention,
-    setMention,
-    mentionEntries: [],
-    text,
-    setText,
-    textareaRef,
-    referenceDraftKey: pending ? undefined : childId,
-  });
   useEffect(
     () =>
-      registerQuoteDestination(childId, (addition) => {
-        updateComposer(childId, (current) => ({
-          ...current,
-          text: appendDraftText(current.text, addition),
-        }));
-        tailTextareaRef.current?.focus();
-      }),
+      registerQuoteDestination(
+        childId,
+        (addition) => {
+          updateComposer(childId, (current) => ({
+            ...current,
+            text: appendDraftText(current.text, addition),
+          }));
+          tailTextareaRef.current?.focus();
+        },
+        (quote) =>
+          updateComposer(childId, (current) => ({
+            ...current,
+            ...appendReplyQuote(current, quote),
+          })),
+      ),
     [childId, updateComposer],
   );
-  useEffect(() => {
-    if (useChatStore.getState().sideChatComposers[childId]) return;
-    const saved = getSessionDraft(childId);
-    if (saved)
-      updateComposer(childId, () => ({
-        ...restoreReplyDraft(saved.text, saved.replyDraft),
-        files: saved.files,
-      }));
-  }, [childId, updateComposer]);
-  useEffect(() => {
-    if (!composer || pending) return;
-    const saved = { ...composer, quotes: composer.quotes ?? [] };
-    setSessionDraft(childId, {
-      text: serializeReplyDraft(saved),
-      replyDraft: snapshotReplyDraft(saved),
-      files: saved.files,
-    });
-  }, [childId, composer, pending]);
-  const voiceEditsRef = useRef(
-    new Map<string | null, { before: string; after: string; quoteIds: Set<string> }>(),
+  const dictation = useReplyDictation(
+    childId,
+    composer ?? EMPTY_SIDE_CHAT_COMPOSER,
+    activeTextId,
+    editText,
+    textareaRef,
   );
-  const reconcileVoiceEdits = useCallback((current: SideChatComposerDraft) => {
-    for (const [id, edit] of voiceEditsRef.current) {
-      // Appending a quote moves the old tail into that quote's preceding text.
-      const targetId =
-        id ?? current.quotes?.find((item) => !edit.quoteIds.has(item.id))?.id ?? null;
-      const value =
-        targetId === null
-          ? current.text
-          : current.quotes?.find((item) => item.id === targetId)?.before;
-      if (value !== edit.after || targetId !== id) voiceEditsRef.current.delete(id);
-      if (value === edit.after && targetId !== id) voiceEditsRef.current.set(targetId, edit);
-    }
-  }, []);
-  // Manual edits and merged reply fields relinquish dictation's undo ownership.
-  useLayoutEffect(() => {
-    reconcileVoiceEdits(composer ?? EMPTY_SIDE_CHAT_COMPOSER);
-  }, [composer, reconcileVoiceEdits]);
-  const activeText = composer?.quotes?.find((quote) => quote.id === activeTextId)?.before ?? text;
-  const setActiveText = useCallback(
-    (next: string) => {
-      const current =
-        useChatStore.getState().sideChatComposers[childId] ?? EMPTY_SIDE_CHAT_COMPOSER;
-      reconcileVoiceEdits(current);
-      const before =
-        activeTextId === null
-          ? current.text
-          : current.quotes?.find((item) => item.id === activeTextId)?.before;
-      if (before === undefined) return;
-      const previous = voiceEditsRef.current.get(activeTextId);
-      voiceEditsRef.current.set(activeTextId, {
-        before: previous?.before ?? before,
-        after: next,
-        quoteIds: previous?.quoteIds ?? new Set(current.quotes?.map((item) => item.id)),
-      });
-      editText(activeTextId, next);
-    },
-    [activeTextId, childId, editText, reconcileVoiceEdits],
-  );
-  const dictation = useDictationInsert(activeText, setActiveText, textareaRef);
-
-  // This tab's seeded text: on a pending tab the "Ask in side chat" selection
-  // to QUOTE, on a live tab the `/side` question to SEND.
-  const draft = useChatStore((s) => s.sideChatDrafts[childId]);
-  const quote = pending ? draft : undefined;
+  const quote = useChatStore((s) => s.sideChatDrafts[childId]);
   const quotes = [
     ...(quote === undefined ? [] : [{ id: "seed", before: "", text: quote }]),
     ...(composer?.quotes ?? []),
@@ -586,283 +208,46 @@ function SideChatComposer({
   }>({ childId, moves: [] });
   if (quoteMoves.current.childId !== childId) quoteMoves.current = { childId, moves: [] };
   useAutoGrowTextarea(tailTextareaRef, text, quotes.length ? Infinity : 10);
-  const autoSend = pending ? undefined : draft;
   useEffect(() => {
     setActiveTextId(null);
     textareaRef.current = tailTextareaRef.current;
     if (quote !== undefined || composer?.quotes?.length) tailTextareaRef.current?.focus();
   }, [quote, composer?.quotes?.length]);
-  // Re-read the labels so a side chat the server just sealed turns read-only.
-  const refreshLabels = useCallback(
-    () => void queryClient.invalidateQueries({ queryKey: ["session", childId] }),
-    [queryClient, childId],
-  );
-  // Send the seeded question once the child's agent binding is known. The text
-  // stays in the store until this dispatches — never copied into component
-  // state first — so unmounting in the meantime (closing the mobile drawer,
-  // switching tabs) defers the send instead of discarding the only copy.
-  useEffect(() => {
-    if (autoSend === undefined || agentId === null) return;
-    // Re-read and consume the LIVE draft rather than the one captured at
-    // render: a replayed mount effect (React StrictMode in development) would
-    // otherwise send the captured question a second time.
-    const question = useChatStore.getState().sideChatDrafts[childId];
-    if (question === undefined) return;
-    clearSideChatDraft(childId);
-    void send(question, agentId, undefined, { pinnedConversationId: childId }).finally(
-      refreshLabels,
-    );
-  }, [autoSend, agentId, send, childId, clearSideChatDraft, refreshLabels]);
 
-  const ready = pending ? !starting : agentId !== null;
-  const canSend =
-    serializeReplyDraft({ quotes, text }).trim().length > 0 ||
-    (!pending && files.length > 0) ||
-    mentionBrowser.mentionedItems.length > 0;
-  const addFiles = (incoming: File[]) => {
-    const { accepted, errors } = validateAttachments(incoming, attachmentPolicy);
-    errors.forEach((message) => toast.error(message));
-    if (accepted.length) setFiles((current) => [...current, ...accepted]);
+  const ready = !starting && !readOnly;
+  const canSend = serializeReplyDraft({ quotes, text }).trim().length > 0;
+  const submit = async () => {
+    if (
+      !canSend ||
+      !ready ||
+      !onStart ||
+      useChatStore.getState().sideChatComposers[childId]?.starting
+    )
+      return;
+    updateComposer(childId, (current) => ({ ...current, starting: true }));
+    try {
+      await onStart(
+        serializeReplyDraft({
+          quotes,
+          text: isSlashCommandText(text) ? text.trim() : text.trimEnd(),
+        }),
+      );
+      clearSideChatDraft(childId);
+      useChatStore.getState().clearSideChatComposer(childId);
+    } catch (error) {
+      updateComposer(childId, (current) => ({ ...current, starting: false }));
+      toast.error(error instanceof Error ? error.message : "Couldn’t create this subchat.");
+    }
   };
   const onPaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
-    const pasted = clipboardFiles(event.clipboardData);
-    if (!pasted.length) return;
+    if (!clipboardFiles(event.clipboardData).length) return;
     event.preventDefault();
-    if (!ready) return;
-    if (pending) {
-      toast.error("Send a text question to start the side chat before attaching files.");
-      return;
-    }
-    addFiles(pasted);
+    toast.error("Send a text question to start the side chat before attaching files.");
   };
-  // Slash suggestions mirror the main composer: the session's skills plus /help.
-  // Other built-ins (/model, /compact, …) act on the main session and stay out.
-  const isMobile = useIsMobileViewport();
-  const [inputFocused, setInputFocused] = useState(false);
-  const [commandNotice, setCommandNotice] = useState<string | null>(null);
-  const nativeSession = isNativeTerminalSession({ harness, labels: session?.labels });
-  // A generic side chat has no host/workspace of its own: it forks the parent and
-  // runs in the parent's workspace. Discover skills against the parent (the same
-  // catalog the main composer shows); the hostless child always reads unavailable.
-  const parentId = fullSession
-    ? childId
-    : nativeSession
-      ? null
-      : parentIdFromLabels(session?.labels);
-  const { session: parentSession, isLoading: parentLoading } = useSession(parentId);
-  const {
-    skills,
-    skillsStatus,
-    refetch: refreshSkills,
-  } = useSkills({
-    target:
-      !pending && parentId !== null && parentSession?.hostId && parentSession.workspace
-        ? {
-            sessionId: parentId,
-            scope: {
-              hostId: parentSession.hostId,
-              harness: parentSession.harness,
-              workspace: parentSession.workspace,
-              agentId: parentSession.agentId,
-              subAgentName: parentSession.subAgentName,
-            },
-          }
-        : null,
-    enabled: !pending && ready,
-    // A still-loading parent lookup has no target yet; treat it as discovery in
-    // flight so a quickly typed /skill is held, not sent to the agent as plaintext.
-    starting: starting || (parentId !== null && parentLoading),
-  });
-  const skillPrefix = skillInvocationPrefix(harness);
-  const sideChatBuiltins = useMemo<Record<string, string>>(() => {
-    const builtins: Record<string, string> = {};
-    if (!nativeSession) builtins["/help"] = BUILTIN_SLASH_COMMANDS["/help"];
-    return builtins;
-  }, [nativeSession]);
-  // A skill whose command exactly matches a built-in can never run (the built-in
-  // wins), so drop it to keep the menu's labels aligned with what submitting runs.
-  const routableSkills = useMemo(
-    () => skills.filter((skill) => !Object.hasOwn(sideChatBuiltins, `${skillPrefix}${skill.name}`)),
-    [skills, skillPrefix, sideChatBuiltins],
-  );
-  const skillCommands = useMemo(
-    () =>
-      Object.fromEntries(
-        routableSkills.map((skill) => [`${skillPrefix}${skill.name}`, skillMenuDescription(skill)]),
-      ),
-    [routableSkills, skillPrefix],
-  );
-  const skillLabels = useMemo(
-    () => skillDisplayNames(routableSkills, skillPrefix),
-    [routableSkills, skillPrefix],
-  );
-  const menuCommands = useMemo(
-    () => ({ ...sideChatBuiltins, ...skillCommands }),
-    [sideChatBuiltins, skillCommands],
-  );
-  // /help lists what this side chat offers; shown locally, never sent as a turn.
-  const showHelp = useCallback(() => {
-    const lines = Object.entries(menuCommands).map(([name, desc]) => `${name} — ${desc}`);
-    setCommandNotice(lines.join("\n"));
-  }, [menuCommands]);
-  // Tab fills the draft with the chosen command; Enter or click runs a built-in.
-  const completeMenuSelection = (cmd: string) => {
-    setText(slashCompletion.complete(cmd).text);
-  };
-  // Insert a chosen skill at the caret; a built-in runs immediately (no args).
-  const applyMenuSelection = (cmd: string) => {
-    if (Object.hasOwn(sideChatBuiltins, cmd)) {
-      setText("");
-      if (cmd === "/help") showHelp();
-      return;
-    }
-    completeMenuSelection(cmd);
-  };
-  const slashCompletion = useSlashCompletion({
-    text,
-    commands: menuCommands,
-    skills: skillCommands,
-    labels: skillLabels,
-    textareaRef,
-    prefix: skillPrefix,
-    status: skillsStatus,
-    mobile: isMobile,
-    mobileEnterCompletes: false,
-    escapeClearsOnlyWithContent: true,
-    // A pending tab has no session yet; a native TUI reads slash text itself.
-    allowOpen:
-      inputFocused && !pending && !nativeSession && quotes.length === 0 && files.length === 0,
-    onSelect: applyMenuSelection,
-    onTabComplete: completeMenuSelection,
-    clearText: () => setText(""),
-  });
-  // Like the main composer, a draft turns Interrupt into Send.
-  const showInterrupt = !pending && busy && !canSend;
-
-  const interruptSideChat = () => {
-    if (interrupting || !interruptReady) return;
-    setInterrupting(true);
-    void interrupt(childId, responseId)
-      .catch(() => toast.error("Couldn’t interrupt this side chat. Please try again."))
-      .finally(() => setInterrupting(false));
-  };
-
-  const submit = () => {
-    const trimmed = isSlashCommandText(text) ? text.trim() : text.trimEnd();
-    if (pending) {
-      if (!canSend || starting || !onStart) return;
-      // Keep the text so a failed fork can be retried without re-typing.
-      void onStart(serializeReplyDraft({ quotes, text: trimmed }));
-      return;
-    }
-    if (!canSend || agentId === null) return;
-    // On in-process harnesses /help and skills resolve locally; native TUIs
-    // (claude-native, codex-native) read the text themselves, and a quote or
-    // attachment is always an ordinary message.
-    const routeLocally =
-      !nativeSession &&
-      quotes.length === 0 &&
-      files.length === 0 &&
-      mentionBrowser.mentionedItems.length === 0;
-    // A lone command token with skill discovery in flight has nothing to run
-    // yet; only hold when the submission would route locally.
-    if (routeLocally && slashCompletion.pendingCompletion) return;
-    const builtin = routeLocally
-      ? matchSlashCommandInvocation(trimmed, Object.keys(sideChatBuiltins))
-      : null;
-    const skill = routeLocally
-      ? matchSlashCommandInvocation(trimmed, Object.keys(skillCommands))
-      : null;
-    const runSkill = (match: { command: string; args: string }) => {
-      clearComposer(childId);
-      void sendSlashCommand(match.command.slice(1), match.args, agentId, {
-        pinnedConversationId: childId,
-      }).finally(refreshLabels);
-    };
-    // A multi-word catalog skill outranks a built-in that matches only its first
-    // word ("/help desk ..." runs the skill); an exact-name collision keeps
-    // built-in precedence.
-    if (skill !== null && skill.command !== trimmed.split(/\s+/)[0]) {
-      runSkill(skill);
-      return;
-    }
-    if (builtin !== null) {
-      setText("");
-      if (builtin.command === "/help") showHelp();
-      return;
-    }
-    if (skill !== null) {
-      runSkill(skill);
-      return;
-    }
-    const outgoing = files.length > 0 ? files : undefined;
-    const message =
-      buildMentionPreamble(mentionBrowser.mentionedItems, harness ?? null) +
-      serializeReplyDraft({ quotes, text: trimmed });
-    const child = conversationRegistry.peek(childId)?.getState();
-    if (
-      queues &&
-      child !== undefined &&
-      shouldQueueSend(
-        childId,
-        child.status,
-        child.sessionStatus,
-        useChatStore.getState().queuedMessages,
-        readAlwaysSteer(),
-        false,
-        holdsInitialDraft(child),
-      )
-    ) {
-      clearComposer(childId);
-      mentionBrowser.setMentionedItems([]);
-      setSessionDraft(childId, { text: "", files: [] });
-      enqueueMessage(message, outgoing, snapshotReplyDraft({ quotes, text: trimmed }), childId);
-      return;
-    }
-    // A running Codex chat refuses a steered /compact; keep the draft as the main composer does.
-    if (isCompactControl(harness, message, outgoing) && rejectBusyCompact(childId)) return;
-    clearComposer(childId);
-    mentionBrowser.setMentionedItems([]);
-    setSessionDraft(childId, { text: "", files: [] });
-    void send(message, agentId, outgoing, { pinnedConversationId: childId }).finally(refreshLabels);
-  };
-
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>, intent: ComposerKeyIntent) => {
-    // Mod+Enter submits any draft, then steers the whole queue into the running turn.
-    if (queues && intent.shouldSteerAllFromKeyboard) {
-      event.preventDefault();
-      submit();
-      steerAllQueuedMessages(childId);
-      return;
-    }
-    if (mention && !intent.shouldPreferSendOverCompletion) {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        setMention(null);
-        return;
-      }
-      if (event.key === "Enter") {
-        event.preventDefault();
-        return;
-      }
-    }
-    if (slashCompletion.handleKey(event, intent)) return;
-    // A grid pane is a whole session, so only side chats let Escape stop the turn.
-    if (event.key === "Escape" && queues && busy) {
-      event.preventDefault();
-      interruptSideChat();
-      return;
-    }
     if (intent.shouldSubmitFromKeyboard) {
       event.preventDefault();
-      if (!canSend && queues && !event.repeat && ready) {
-        const head = useChatStore
-          .getState()
-          .queuedMessages.find((message) => message.conversationId === childId);
-        if (head) steerMessage(head.queueId);
-        return;
-      }
-      submit();
+      void submit();
     }
   };
   const focusText = (id: string | null, input: HTMLTextAreaElement) => {
@@ -872,221 +257,130 @@ function SideChatComposer({
   };
 
   return (
-    <>
-      {!pending && (
-        <input
-          ref={fileInputRef}
-          type="file"
-          multiple
-          accept={attachmentAccept(attachmentPolicy)}
-          className="hidden"
-          onChange={(event) => {
-            if (event.target.files) {
-              addFiles(Array.from(event.target.files));
-              event.target.value = "";
-            }
-          }}
+    <div className="side-chat-backdrop flex h-full min-h-0 flex-col">
+      <div
+        ref={transcriptRef}
+        className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 px-6 text-center"
+      >
+        <MessagesSquareIcon className="size-6 text-muted-foreground" />
+        <p className="text-ui font-medium text-foreground">Side chat</p>
+        <p className="max-w-[36ch] text-sm text-muted-foreground">
+          Ask a question here without affecting the main conversation.
+        </p>
+      </div>
+      {ready && (
+        <SelectionPopup
+          containerRef={transcriptRef}
+          onReply={(selected) =>
+            updateComposer(childId, (current) => ({
+              ...current,
+              ...appendReplyQuote(current, selected),
+            }))
+          }
         />
       )}
-      {commandNotice !== null && (
-        <ComposerFeedbackRow data-testid="side-chat-command-notice">
-          {commandNotice}
-        </ComposerFeedbackRow>
-      )}
-      {queues && (
-        <TooltipProvider>
-          <QueuedMessagesStrip
-            conversationId={childId}
-            messages={queuedMessages}
-            onDelete={dequeueMessage}
-            onEdit={(queueId) => {
-              const target = queuedMessages.find((message) => message.queueId === queueId);
-              if (!target) return;
-              const restored = restoreReplyDraft(target.text, target.replyDraft);
-              updateComposer(childId, () => ({ ...restored, files: target.files ?? [] }));
-              dequeueMessage(queueId);
-              tailTextareaRef.current?.focus();
-            }}
-            onSteer={steerMessage}
-            onReorder={reorderQueuedMessage}
-          />
-        </TooltipProvider>
-      )}
-      <ChatComposer
-        keyboard={{ submitWithModEnter: false, preventsKeyboardSubmit: false }}
-        input={{
-          ref: tailTextareaRef,
-          value: text,
-          onChange: (event) => {
-            if (commandNotice !== null) setCommandNotice(null);
-            slashCompletion.onSelectionChange(event.target);
-            setText(event.target.value);
-            if (!pending)
-              setMention(detectMentionAt(event.target.value, event.target.selectionStart));
-          },
-          onSelect: (event) => slashCompletion.onSelectionChange(event.currentTarget),
-          onFocus: (event) => {
-            setInputFocused(true);
-            focusText(null, event.currentTarget);
-          },
-          // Menu rows preventDefault on mousedown so selecting one keeps focus.
-          onBlur: (event) => {
-            setInputFocused(false);
-            if (!(
-              event.relatedTarget instanceof Element &&
-              event.relatedTarget.closest("[data-context-reference-picker]")
-            ))
-              setMention(null);
-          },
-          placeholder: fullSession ? "Reply to this session..." : "Ask a side question...",
-          disabled: !ready,
-          "data-testid": "side-chat-input",
-          onKeyDown: handleKeyDown,
-          onPaste,
-          className: quotes.length ? "max-h-none overflow-y-hidden" : undefined,
-        }}
-        slots={{
-          beforeInput: mention ? (
-            <ComposerMentionMenu
-              query={mention.query}
-              onReference={mentionBrowser.attachReference}
-              currentDir=""
-              activeIndex={-1}
-              entries={[]}
-              onOpenDir={() => {}}
-              onAttach={() => {}}
-            />
-          ) : slashCompletion.open ? (
-            <SlashCommandMenu
-              query={slashCompletion.query}
-              activeIndex={slashCompletion.index}
-              onSelect={applyMenuSelection}
-              commands={slashCompletion.commands}
-              builtinNames={slashCompletion.builtinNames}
-              labels={slashCompletion.labels}
-              skillsStatus={skillsStatus}
-              onRetrySkills={() => void refreshSkills()}
-            />
-          ) : undefined,
-          inputPrefix:
-            quotes.length === 0 ? undefined : (
-              <ReplyDraftBlocks
-                quotes={quotes}
-                activeTextId={activeTextId}
-                keyboard={{ submitWithModEnter: false, preventsKeyboardSubmit: false }}
-                disabled={!ready}
-                onMove={(id, target, offset) => {
-                  const before = { quotes, text };
-                  const after = moveReplyQuote(before, id, target, offset);
-                  if (before === after) return;
-                  quoteMoves.current.moves = [
-                    ...quoteMoves.current.moves.slice(-19),
-                    { before, after },
-                  ];
-                  updateComposer(childId, (current) => ({ ...current, ...after }));
-                  if (quote !== undefined) clearSideChatDraft(childId);
-                  setActiveTextId(id);
-                }}
-                onUndoMove={() => {
-                  const move = quoteMoves.current.moves.at(-1);
-                  const current = useChatStore.getState().sideChatComposers[childId];
-                  if (
-                    !move ||
-                    !current ||
-                    current.quotes?.length !== move.after.quotes.length ||
-                    current.quotes.some(
-                      (item, index) => item.id !== move.after.quotes[index]?.id,
-                    ) ||
-                    serializeReplyDraft({ ...current, quotes: current.quotes }) !==
-                      serializeReplyDraft(move.after)
-                  )
-                    return false;
-                  quoteMoves.current.moves.pop();
-                  updateComposer(childId, (latest) => ({ ...latest, ...move.before }));
-                  setActiveTextId(null);
-                  return true;
-                }}
-                inputFor={(replyQuote) => ({
-                  onChange: (event) => editText(replyQuote.id, event.target.value),
-                  onFocus: (event) => focusText(replyQuote.id, event.currentTarget),
-                  onKeyDown: handleKeyDown,
-                  onPaste,
-                })}
-                onRemove={(id) => {
-                  quoteMoves.current.moves = [];
-                  if (id === "seed" && quote !== undefined) clearSideChatDraft(childId);
-                  else
-                    updateComposer(childId, (current) => ({
-                      ...current,
-                      ...removeReplyQuote({ ...current, quotes: current.quotes ?? [] }, id),
-                    }));
-                }}
-              />
-            ),
-          attachments: (
-            <>
-              <ComposerMentionChips
-                items={mentionBrowser.mentionedItems}
-                onRemove={mentionBrowser.removeMentionedItem}
-              />
-              {!pending && files.length > 0 ? (
-                <ComposerAttachments
-                  files={files}
-                  onRemove={(index) => setFiles((prev) => prev.filter((_, i) => i !== index))}
+      <div className="composer-shelf-stack shrink-0 px-3 pt-3 pb-5">
+        {starting && (
+          <ConversationScopeContext.Provider value={childId}>
+            <WorkingIndicator />
+          </ConversationScopeContext.Provider>
+        )}
+        <ChatComposer
+          keyboard={{ submitWithModEnter: false, preventsKeyboardSubmit: false }}
+          input={{
+            ref: tailTextareaRef,
+            value: text,
+            onChange: (e) => setText(e.target.value),
+            onFocus: (e) => focusText(null, e.currentTarget),
+            placeholder: "Ask a side question...",
+            disabled: !ready,
+            "data-testid": "side-chat-input",
+            onKeyDown: handleKeyDown,
+            onPaste,
+            className: quotes.length ? "max-h-none overflow-y-hidden" : undefined,
+          }}
+          slots={{
+            inputPrefix:
+              quotes.length === 0 ? undefined : (
+                <ReplyDraftBlocks
+                  quotes={quotes}
+                  activeTextId={activeTextId}
+                  keyboard={{ submitWithModEnter: false, preventsKeyboardSubmit: false }}
+                  disabled={!ready}
+                  onMove={(id, target, offset) => {
+                    const before = { quotes, text };
+                    const after = moveReplyQuote(before, id, target, offset);
+                    if (before === after) return;
+                    quoteMoves.current.moves = [
+                      ...quoteMoves.current.moves.slice(-19),
+                      { before, after },
+                    ];
+                    updateComposer(childId, (current) => ({ ...current, ...after }));
+                    if (quote !== undefined) clearSideChatDraft(childId);
+                    setActiveTextId(id);
+                  }}
+                  onUndoMove={() => {
+                    const move = quoteMoves.current.moves.at(-1);
+                    const current = useChatStore.getState().sideChatComposers[childId];
+                    if (
+                      !move ||
+                      !current ||
+                      current.quotes?.length !== move.after.quotes.length ||
+                      current.quotes.some(
+                        (item, index) => item.id !== move.after.quotes[index]?.id,
+                      ) ||
+                      serializeReplyDraft({ ...current, quotes: current.quotes }) !==
+                        serializeReplyDraft(move.after)
+                    )
+                      return false;
+                    quoteMoves.current.moves.pop();
+                    updateComposer(childId, (latest) => ({ ...latest, ...move.before }));
+                    setActiveTextId(null);
+                    return true;
+                  }}
+                  inputFor={(replyQuote) => ({
+                    onChange: (event) => editText(replyQuote.id, event.target.value),
+                    onFocus: (event) => focusText(replyQuote.id, event.currentTarget),
+                    onKeyDown: handleKeyDown,
+                    onPaste,
+                  })}
+                  onRemove={(id) => {
+                    quoteMoves.current.moves = [];
+                    if (id === "seed" && quote !== undefined) clearSideChatDraft(childId);
+                    else
+                      updateComposer(childId, (current) => ({
+                        ...current,
+                        ...removeReplyQuote({ ...current, quotes: current.quotes ?? [] }, id),
+                      }));
+                  }}
                 />
-              ) : undefined}
-            </>
-          ),
-        }}
-        actions={{
-          leading: pending ? null : (
-            <ComposerAddMenu
-              disabled={agentId === null}
-              onAttach={() => fileInputRef.current?.click()}
-              showGoal={false}
-              showPlan={false}
-              planActive={false}
-              testIdPrefix="side-chat"
-            />
-          ),
-          trailing: (
-            <>
-              <ComposerMicButton
-                className="size-8 md:size-7"
-                disabled={!ready}
-                onVoiceStart={() => voiceEditsRef.current.clear()}
-                onVoiceDiscard={() => {
-                  reconcileVoiceEdits(
-                    useChatStore.getState().sideChatComposers[childId] ?? EMPTY_SIDE_CHAT_COMPOSER,
-                  );
-                  const edits = [...voiceEditsRef.current];
-                  voiceEditsRef.current.clear();
-                  for (const [id, edit] of edits) editText(id, edit.before);
-                }}
-                onTranscript={(spoken) => dictation.appendFinal(spoken)}
-                onInterim={(spoken) => dictation.replaceInterim(spoken)}
-              />
-              <ComposerSendButton
-                type="button"
-                label={
-                  fullSession
-                    ? showInterrupt
-                      ? "Interrupt session"
-                      : "Send message"
-                    : showInterrupt
-                      ? "Interrupt side chat"
-                      : "Send side question"
-                }
-                interrupt={showInterrupt}
-                busy={showInterrupt && interrupting}
-                disabled={showInterrupt ? interrupting || !interruptReady : !canSend || !ready}
-                onClick={showInterrupt ? interruptSideChat : submit}
-                data-testid={showInterrupt ? "side-chat-interrupt" : "side-chat-send"}
-              />
-            </>
-          ),
-        }}
-      />
-    </>
+              ),
+          }}
+          actions={{
+            leading: null,
+            trailing: (
+              <>
+                <ComposerMicButton
+                  className="size-8 md:size-7"
+                  disabled={!ready}
+                  onVoiceStart={dictation.begin}
+                  onVoiceDiscard={dictation.discard}
+                  onTranscript={(spoken) => dictation.appendFinal(spoken)}
+                  onInterim={(spoken) => dictation.replaceInterim(spoken)}
+                />
+
+                <ComposerSendButton
+                  type="button"
+                  label="Send side question"
+                  disabled={!canSend || !ready}
+                  onClick={submit}
+                  data-testid="side-chat-send"
+                />
+              </>
+            ),
+          }}
+        />
+      </div>
+    </div>
   );
 }

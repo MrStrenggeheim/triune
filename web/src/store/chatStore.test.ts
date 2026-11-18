@@ -5185,9 +5185,9 @@ describe("chatStore — sending during a model switch", () => {
 
     expect(useChatStore.getState()).toMatchObject({
       status: "idle",
-      sessionStatus: "idle",
+      sessionStatus: "running",
       pendingUserMessages: [],
-      activeResponse: { responseId: "response_active", state: "cancelled" },
+      activeResponse: { responseId: "response_active", state: "streaming" },
       failedSendDraft: {
         conversationId: sessionId,
         text: "unfinished steering instructions",
@@ -7183,63 +7183,64 @@ describe("chatStore — stop", () => {
     expect(controller.signal.aborted).toBe(false);
   });
 
-  it("clears local working state immediately while the interrupt ack is pending", () => {
-    useChatStore.setState({
-      conversationId: "conv_abc",
+  it("leaves lifecycle and pending inputs authoritative while a stop is in flight", async () => {
+    let resolveAck!: (response: Response) => void;
+    fetchMock.mockReturnValueOnce(
+      new Promise<Response>((resolve) => {
+        resolveAck = resolve;
+      }),
+    );
+    const { get } = bindConversationForTest("conv_abc", {
       pendingUserMessages: [
-        {
-          tempId: "pend_1",
-          content: [{ type: "input_text", text: "stop me" }],
-        },
+        { tempId: "pending", content: [{ type: "input_text", text: "still queued" }] },
       ],
       activeResponse: { responseId: "resp_1", state: "streaming", error: null },
       status: "streaming",
       sessionStatus: "running",
     });
-    seedConversationsCache([conv("conv_abc", "running")]);
-
-    useChatStore.getState().stop();
-
-    const state = useChatStore.getState();
-    expect(state.pendingUserMessages).toEqual([]);
-    expect(state.status).toBe("idle");
-    expect(state.sessionStatus).toBe("idle");
-    expect(state.activeResponse).toEqual({
-      responseId: "resp_1",
-      state: "cancelled",
-      error: null,
-    });
-    expect(readConversationRows()[0]?.status).toBe("idle");
+    const first = useChatStore.getState().stop("conv_abc");
+    await useChatStore.getState().stop("conv_abc");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(
+      JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string).data.response_id,
+    ).toBe("resp_1");
+    expect(get().interruptRequest?.phase).toBe("sending");
+    expect(get().pendingUserMessages).toHaveLength(1);
+    expect(get().activeResponse?.state).toBe("streaming");
+    resolveAck(new Response(JSON.stringify({ queued: false }), { status: 202 }));
+    await first;
+    expect(get().interruptRequest).toBeNull();
+    expect(get().sessionStatus).toBe("running");
   });
 
-  it("leaves a non-streaming activeResponse untouched on stop", () => {
-    // Pins the `state === "streaming"` guard: stop() still clears the working
-    // state, but must NOT overwrite a non-streaming activeResponse (dropping the
-    // guard would clobber a completed response with a cancelled decoration).
-    useChatStore.setState({
-      conversationId: "conv_abc",
-      pendingUserMessages: [
-        { tempId: "pend_1", content: [{ type: "input_text", text: "stop me" }] },
-      ],
-      activeResponse: { responseId: "resp_1", state: "completed", error: null },
-      status: "streaming",
+  it("shows an ambiguous stop only in its original chat and reconciles before another attempt", async () => {
+    let rejectAck!: (error: Error) => void;
+    fetchMock.mockReturnValueOnce(
+      new Promise<Response>((_, reject) => {
+        rejectAck = reject;
+      }),
+    );
+    const { get, set } = bindConversationForTest("conv_a", {
+      activeResponse: { responseId: "older", state: "streaming", error: null },
       sessionStatus: "running",
     });
-    seedConversationsCache([conv("conv_abc", "running")]);
-
-    useChatStore.getState().stop();
-
-    const state = useChatStore.getState();
-    expect(state.pendingUserMessages).toEqual([]);
-    expect(state.status).toBe("idle");
-    expect(state.sessionStatus).toBe("idle");
-    // Untouched — the guard skipped the cancelled overwrite.
-    expect(state.activeResponse).toEqual({
-      responseId: "resp_1",
-      state: "completed",
-      error: null,
-    });
-    expect(readConversationRows()[0]?.status).toBe("idle");
+    const request = useChatStore.getState().stop("conv_a");
+    set({ activeResponse: { responseId: "newer", state: "streaming", error: null } });
+    const other = bindConversationForTest("conv_b", { sessionStatus: "running" });
+    rejectAck(new Error("connection lost"));
+    await request;
+    expect(other.get().interruptRequest).toBeNull();
+    expect(get().interruptRequest?.phase).toBe("unconfirmed");
+    expect(get().sessionStatus).toBe("running");
+    expect(get().activeResponse?.responseId).toBe("newer");
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({ id: "conv_a", status: "running", active_response_id: "newer" }),
+        { headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    await useChatStore.getState().stop("conv_a");
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/events"))).toHaveLength(1);
   });
 
   it("no-op when no session is bound", () => {

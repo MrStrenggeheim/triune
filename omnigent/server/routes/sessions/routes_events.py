@@ -2047,6 +2047,7 @@ def register_events_routes(
             interrupt_payload: dict[str, Any] = {"type": "interrupt"}
             codex_child = conv.kind == "sub_agent" and _is_codex_native_subagent(conv)
             response_id = None
+            active_id = _session_active_response_cache.get(session_id)
             queued_pending_ids: list[str] = []
             if codex_child:
                 # Native child boundaries come from the Codex forwarder.
@@ -2087,11 +2088,18 @@ def register_events_routes(
                     codex_side_turn_id=response_id.removeprefix("codex_"),
                 )
             else:
-                _publish_interrupted(session_id)
-                # Fence the cancelled turn (see _interrupt_fenced_sessions).
-                _interrupt_fenced_sessions.add(session_id)
-                # Read before the forward so a message sent after Stop stays live;
-                # marked only if the interrupt lands, else the turn may still run them.
+                requested_id = body.data.get("response_id")
+                if requested_id is not None and (
+                    not isinstance(requested_id, str) or not requested_id
+                ):
+                    raise OmnigentError(
+                        "Invalid interrupt response ID.", code=ErrorCode.INVALID_INPUT
+                    )
+                if requested_id and active_id and requested_id != active_id:
+                    raise OmnigentError("The active turn changed.", code=ErrorCode.CONFLICT)
+                response_id = requested_id or active_id
+                if response_id:
+                    interrupt_payload["response_id"] = response_id
                 queued_pending_ids = pending_inputs.pending_ids(session_id)
             runner_client = await _get_runner_client(
                 target_session_id,
@@ -2099,6 +2107,8 @@ def register_events_routes(
             )
             interrupt_delivered = False
             if runner_client is not None:
+                if not codex_child and _session_active_response_cache.get(session_id) != active_id:
+                    raise OmnigentError("The active turn changed.", code=ErrorCode.CONFLICT)
                 try:
                     interrupt_resp = await runner_client.post(
                         f"/v1/sessions/{target_session_id}/events",
@@ -2118,11 +2128,17 @@ def register_events_routes(
                         "Couldn't interrupt the side chat. Please try again.",
                         code=ErrorCode.RUNNER_UNAVAILABLE,
                     )
-                # The turn keeps running and nothing else lifts the fence —
-                # remove it so the turn's remaining output isn't dropped.
-                _interrupt_fenced_sessions.discard(session_id)
-            elif not codex_child:
+                raise OmnigentError(
+                    "Runner did not confirm the interrupt. Check the active turn before retrying.",
+                    code=ErrorCode.RUNNER_UNAVAILABLE,
+                )
+            if not codex_child:
                 pending_inputs.mark_interrupted(session_id, queued_pending_ids)
+                current_id = _session_active_response_cache.get(session_id)
+                if current_id == active_id:
+                    _interrupt_fenced_sessions.add(session_id)
+                if response_id or current_id == active_id:
+                    _publish_interrupted(session_id, response_id=response_id)
             if stop_codex_side_chat:
                 await asyncio.to_thread(
                     conversation_store.set_labels,

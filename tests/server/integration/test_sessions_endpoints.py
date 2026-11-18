@@ -6285,10 +6285,15 @@ async def test_post_interrupt_without_data_field_is_accepted(
     agent = await create_test_agent(client)
     session = await _create_session(client, agent["id"])
 
-    resp = await client.post(
-        f"/v1/sessions/{session['id']}/events",
-        json={"type": "interrupt"},
-    )
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda _: httpx.Response(202)),
+        base_url="http://runner",
+    ) as runner:
+        _route_to_runner(monkeypatch, runner)
+        resp = await client.post(
+            f"/v1/sessions/{session['id']}/events",
+            json={"type": "interrupt"},
+        )
     # 202 (not 422) proves ``data`` defaults to ``{}`` at the schema
     # layer; a 422 here means the pydantic default regressed and every
     # deployed bare-control client breaks again.
@@ -9903,14 +9908,11 @@ async def test_interrupt_on_claude_native_session_skips_idle_publish_on_runner_f
             f"/v1/sessions/{session['id']}/events",
             json={"type": "interrupt", "data": {}},
         )
-        assert resp.status_code == 202, resp.text
+        assert resp.status_code == 503, resp.text
 
-    # interrupted still fires (the UI marks the bubble cancelled);
-    # idle does not (the Escape didn't land).
+    # A runner rejection cannot confirm either cancellation or an idle turn.
     interrupted = [e for e in published if e.get("type") == "session.interrupted"]
-    assert interrupted, (
-        f"session.interrupted should still publish on runner failure; got {published!r}"
-    )
+    assert not interrupted, published
     idle_status = [
         e for e in published if e.get("type") == "session.status" and e.get("status") == "idle"
     ]
@@ -10436,9 +10438,8 @@ async def test_interrupt_forward_failure_lifts_stop_fence(
             f"/v1/sessions/{session_id}/events",
             json={"type": "interrupt", "data": {}},
         )
-        # Interrupt is best-effort and still ACKs (the UI already marked the
-        # bubble interrupted); the fence removal below is the fix under test.
-        assert resp.status_code == 202, resp.text
+        # Explicit failure leaves this turn's output live.
+        assert resp.status_code == 503, resp.text
         assert session_id not in _interrupt_fenced_sessions, (
             "a failed interrupt forward must remove the fence it installed — "
             "leaving it set drops the rest of the still-running turn"
@@ -10609,6 +10610,49 @@ async def test_codex_side_chat_message_drives_parent_thread_without_child_init(
     ]
 
 
+async def test_scoped_interrupt_cannot_cancel_the_successor_turn(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from omnigent.server.routes.sessions import (
+        _interrupt_fenced_sessions,
+        _session_active_response_cache,
+    )
+
+    agent = await create_test_agent(client)
+    session_id = (await _create_session(client, agent["id"]))["id"]
+    published: list[tuple[str, dict[str, Any]]] = []
+    _capture_published(monkeypatch, published)
+    forwarded = []
+
+    def advance_turn(request: httpx.Request) -> httpx.Response:
+        forwarded.append(json.loads(request.content))
+        _session_active_response_cache[session_id] = "successor"
+        return httpx.Response(202)
+
+    _session_active_response_cache[session_id] = "current"
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(advance_turn), base_url="http://runner"
+        ) as runner:
+            _route_to_runner(monkeypatch, runner)
+            url = f"/v1/sessions/{session_id}/events"
+            stale = await client.post(
+                url, json={"type": "interrupt", "data": {"response_id": "older"}}
+            )
+            assert stale.status_code == 409
+            sent = await client.post(
+                url, json={"type": "interrupt", "data": {"response_id": "current"}}
+            )
+            assert sent.status_code == 202
+        assert forwarded == [{"type": "interrupt", "response_id": "current"}]
+        interruptions = [event for _, event in published if event["type"] == "session.interrupted"]
+        assert [event["data"]["response_id"] for event in interruptions] == ["current"]
+        assert session_id not in _interrupt_fenced_sessions
+    finally:
+        _session_active_response_cache.pop(session_id, None)
+        _interrupt_fenced_sessions.discard(session_id)
+
+
 async def test_interrupt_forward_success_keeps_stop_fence(
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
@@ -10777,7 +10821,7 @@ async def test_interrupt_forward_failure_keeps_queued_native_messages_pending(
             json={"type": "interrupt", "data": {}},
         )
 
-        assert resp.status_code == 202, resp.text
+        assert resp.status_code == 503, resp.text
         assert [e["pending_id"] for e in pending_inputs.snapshot_for(session_id)] == [queued]
         assert pending_inputs.has_pending(session_id)
     finally:
