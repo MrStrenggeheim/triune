@@ -868,6 +868,20 @@ def test_bounded_initial_history_preserves_an_older_reader_window(
     expect(view.get_by_text("History item 9871", exact=True)).to_be_visible()
     expect(composer).to_have_value("Retain this history draft")
     assert any(page["before"] <= 9_900 for page in pages)
+    # The virtualizer mounts overscan rows before the deep-link scroll reaches the reader.
+    expect(target).to_be_in_viewport(ratio=1)
+    page.wait_for_function(
+        """() => {
+          const el = document.querySelector('[data-user-message-id="window-9870"]');
+          if (!el) return false;
+          const top = el.getBoundingClientRect().top;
+          const previous = window.__readerBeforeReset;
+          const count = previous?.top === top ? previous.count + 1 : 0;
+          window.__readerBeforeReset = {top, count};
+          return window.__readerBeforeReset.count >= 3;
+        }""",
+        polling="raf",
+    )
     target_top = target.bounding_box()["y"]
     old_subscription_count = len(subscriptions)
     items[9_870] = {

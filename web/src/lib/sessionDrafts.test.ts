@@ -175,6 +175,23 @@ describe("durable composer snapshots", () => {
     expect(hydrated?.mentionedItems).toEqual([{ path: "notes", isDir: false }]);
   });
 
+  it("recovers a same-tab edit when navigation interrupts its durable transaction", async () => {
+    const api = await import("./queuedMessagePersistence");
+    await api.writeComposerDrafts("owner", new Map());
+    sessionStorage.setItem(key, JSON.stringify({ chat: "Still typing" }));
+    sessionStorage.setItem(key + ".scope", "owner");
+    sessionStorage.setItem(
+      key + ".pendingText",
+      JSON.stringify({ scope: "owner", edits: [["chat", null]] }),
+    );
+    const drafts = await import("./sessionDrafts");
+    drafts.initializeSessionDraftPersistence("owner");
+    expect((await drafts.hydrateSessionDraft("chat"))?.text).toBe("Still typing");
+    await drafts.waitForSessionDraftSave();
+    expect((await api.readComposerDrafts("owner")).get("chat")?.text).toBe("Still typing");
+    expect(sessionStorage.getItem(key + ".pendingText")).toBeNull();
+  });
+
   it("does not revive a deleted durable draft from stale legacy text", async () => {
     const api = await import("./queuedMessagePersistence");
     await api.writeComposerDrafts("owner", new Map());

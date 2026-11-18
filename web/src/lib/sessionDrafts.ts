@@ -12,6 +12,7 @@ export interface SessionDraft extends ComposerDraft {
 }
 
 const SESSION_DRAFTS_KEY = "omnigent.sessionDrafts";
+const PENDING_TEXT_KEY = SESSION_DRAFTS_KEY + ".pendingText";
 const listeners = new Set<() => void>();
 
 function loadDraftsFromStorage(): Map<string, SessionDraft> {
@@ -32,6 +33,36 @@ function loadDraftsFromStorage(): Map<string, SessionDraft> {
   }
 }
 
+/** Keep tab-local text edits recoverable until their IndexedDB transaction commits. */
+function checkpointPendingText(owner: DraftOwner) {
+  if (!owner.scope || typeof sessionStorage === "undefined") return;
+  const edits = [...owner.edited]
+    .filter((id) => owner.drafts.get(id)?.text)
+    .map((id) => [id, owner.persisted.get(id)?.text ?? null]);
+  if (edits.length)
+    sessionStorage.setItem(PENDING_TEXT_KEY, JSON.stringify({ scope: owner.scope, edits }));
+  else sessionStorage.removeItem(PENDING_TEXT_KEY);
+}
+
+function pendingTextBases(scope: string | null): Map<string, string | null> {
+  try {
+    const stored = JSON.parse(sessionStorage.getItem(PENDING_TEXT_KEY) ?? "null");
+    if (scope && stored?.scope === scope && Array.isArray(stored.edits))
+      return new Map(
+        stored.edits.filter(
+          (entry: unknown) =>
+            Array.isArray(entry) &&
+            entry.length === 2 &&
+            typeof entry[0] === "string" &&
+            (entry[1] === null || typeof entry[1] === "string"),
+        ),
+      );
+  } catch {
+    /* Unavailable or stale tab storage cannot override the durable draft. */
+  }
+  return new Map();
+}
+
 function saveDraftsToStorage(): void {
   persistSnapshot();
   if (typeof window === "undefined") return;
@@ -48,6 +79,7 @@ function saveDraftsToStorage(): void {
     } else {
       window.sessionStorage.setItem(SESSION_DRAFTS_KEY, JSON.stringify(entries));
     }
+    checkpointPendingText(active);
   } catch (error) {
     active.error = error;
     reportPersistenceError?.(error);
@@ -111,6 +143,7 @@ async function save(
     owner.edited.clear();
     owner.cleared = false;
   }
+  if (owner === active) checkpointPendingText(owner);
 }
 
 function persistSnapshot(): void {
@@ -142,6 +175,7 @@ export function initializeSessionDraftPersistence(
   } catch (error) {
     reportPersistenceError?.(error);
   }
+  const pendingBases = pendingTextBases(scope);
   const changedIdentity = claimedLegacy || !!(legacyOwner && legacyOwner !== scope);
   const legacyFallback = changedIdentity
     ? new Map<string, SessionDraft>()
@@ -159,6 +193,7 @@ export function initializeSessionDraftPersistence(
     if (changedIdentity) {
       clearReferenceDrafts();
       sessionStorage.removeItem(SESSION_DRAFTS_KEY);
+      sessionStorage.removeItem(PENDING_TEXT_KEY);
     }
     if (typeof sessionStorage !== "undefined") {
       if (scope) sessionStorage.setItem(`${SESSION_DRAFTS_KEY}.scope`, scope);
@@ -196,7 +231,17 @@ export function initializeSessionDraftPersistence(
       // Legacy text is only a first-paint fallback, never a complete File snapshot.
       if (snapshot) {
         for (const [id, draft] of legacyFallback) {
-          if (!owner.edited.has(id) && owner.drafts.get(id) === draft) owner.drafts.delete(id);
+          if (owner.edited.has(id) || owner.drafts.get(id) !== draft) continue;
+          const durable = saved.get(id);
+          if (pendingBases.has(id) && pendingBases.get(id) === (durable?.text ?? null)) {
+            owner.edited.add(id);
+            owner.drafts.set(id, {
+              ...durable,
+              text: draft.text,
+              replyDraft: draft.replyDraft,
+              files: durable?.files ?? [],
+            });
+          } else owner.drafts.delete(id);
         }
       }
       for (const id of owner.persisted.keys()) {
