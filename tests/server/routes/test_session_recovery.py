@@ -532,6 +532,12 @@ async def test_updated_item_uses_current_saved_position_without_losing_state_fra
         {"type": "response.output_item.updated", "item": {"id": item.id}}
     )
     assert frame["item"] == item.to_api_dict()
+    assert frame["type"] == "response.output_item.done"
+    current = SessionRecovery(store, sid, _allowed, enabled=True, journal=store.transcript_journal)
+    amended = await current.prepare(
+        {"type": "response.output_item.updated", "item": {"id": item.id}}
+    )
+    assert amended["type"] == "response.output_item.updated" and amended["item"] == frame["item"]
     state = {
         "type": "session.changed_files.invalidated",
         "session_id": sid,

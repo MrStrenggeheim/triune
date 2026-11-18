@@ -501,4 +501,12 @@ class SessionRecovery:
         ):
             return None
         self._replayed.pop(item_id, None)
+        if (
+            self.journal is None
+            and event_type == "response.output_item.updated"
+            and saved.type != "resource_event"
+        ):
+            # Older readers reconcile an exact positioned done row, but only understand
+            # the explicit update frame for subagent activity.
+            return {**event, "type": "response.output_item.done", "item": item}
         return {**event, "item": item}
