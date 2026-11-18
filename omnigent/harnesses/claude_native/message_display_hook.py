@@ -34,9 +34,9 @@ Observed ``MessageDisplay`` payload (this Claude build):
 ``message_id`` is stable per assistant message and ``delta`` is
 incremental (consecutive ``index`` values carry disjoint text), so the
 full message is the concatenation of chunks ordered by ``index`` for a
-given ``message_id``. Note ``message_id``/``turn_id`` do **not** appear
-in Claude's transcript JSONL, so the forwarder/frontend correlate the
-live buffer to the final item positionally (FIFO), not by id value.
+given ``message_id``. Claude's display UUID is independent of the
+transcript record UUID. The server associates eligible completed previews
+when saving transcript items so readers can replace them by display UUID.
 """
 
 from __future__ import annotations

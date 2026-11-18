@@ -554,6 +554,26 @@ def test_pi_empty_final_marker_is_inert() -> None:
     assert inflight_text.snapshot_for(cid) == []
 
 
+@pytest.mark.parametrize("cleanup", ["response.completed", "discard", "reset"])
+def test_claude_completed_id_suppresses_only_its_own_retry_until_cleanup(cleanup: str) -> None:
+    cid = "conv_claude"
+    done = _message_done(text="same")
+    done["item"].update(model="claude-native-ui", stream_message_id="display")
+    inflight_text.record_publish(cid, done)
+    inflight_text.record_publish(cid, _status("idle"))
+    retry = _native_delta("display", 0, "same", final=True)
+    assert inflight_text.record_publish(cid, retry) is None
+    newer = _native_delta("newer", 0, "same", final=True)
+    assert inflight_text.record_publish(cid, newer) == newer
+    if cleanup == "discard":
+        inflight_text.discard(cid)
+    elif cleanup == "reset":
+        inflight_text.reset_for_tests()
+    else:
+        inflight_text.record_publish(cid, {"type": cleanup})
+    assert inflight_text.record_publish(cid, retry) == retry
+
+
 def test_codex_done_drops_equal_aggregate_without_final_delta() -> None:
     """Commit-time equality works for providers that never set final."""
     cid = "conv_codex_no_final"

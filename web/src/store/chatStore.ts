@@ -8285,9 +8285,6 @@ async function* tapLiveDeltas(
         scheduleCompletionRecovery(id, active.responseId, set, get, ignored);
     }
 
-    if (ev.type === "message_done" && ev.messageId !== undefined) {
-      ignored.add(ev.messageId);
-    }
     if (ev.type === "text_delta" && ev.messageId !== undefined) {
       if (!isConversationDisposed(id) && !ignored.has(ev.messageId)) {
         // An unnamed scheduled wake must not preview into a completed turn.
@@ -8654,25 +8651,7 @@ export async function pumpStreamEvents(
   const buffer: AnyBlock[] = [];
   const liveTextBuffer: NativeTextDelta[] = [];
   const seenItemIds = new Set<string>();
-  const completedPreviewIds = new Map<string, string>();
   const nativeMessagesSeen = new Set<string>();
-  const previewToRetire = (block: AnyBlock, blocks: AnyBlock[]): AnyBlock | undefined => {
-    const messageId = completedPreviewIds.get(block.ctx.itemId ?? "");
-    if (messageId !== undefined)
-      return blocks[transcriptIndex(blocks).items.get(LIVE_ITEM_PREFIX + messageId) ?? -1];
-    return undefined;
-  };
-  const matchingPreview = (block: AnyBlock): boolean =>
-    previewToRetire(block, get().blocks) !== undefined;
-  const retirePreview = (block: AnyBlock): void => {
-    flush();
-    set((state) => {
-      const preview = previewToRetire(block, state.blocks);
-      if (!preview) return {};
-      ignoreLivePreview(preview, ignoredMessages);
-      return { blocks: state.blocks.filter((candidate) => candidate !== preview) };
-    });
-  };
   const flushLiveText = () => {
     if (liveTextBuffer.length === 0) return;
     // Snapshot reconciliation can finalize a message while its frame waits.
@@ -8745,11 +8724,27 @@ export async function pumpStreamEvents(
             sseResult.sawDone = true;
           }
         }
-        if (event.type === "message_done" && event.messageId)
-          completedPreviewIds.set(event.itemId, event.messageId);
         // Native previews must land before the next event can replace them
         // or change their turn attribution, approval state or terminal state.
         if (event.type !== "text_delta" || event.messageId === undefined) flushLiveText();
+        const completedPreview =
+          event.type === "message_done"
+            ? event.messageId
+            : event.type === "session_item_updated" &&
+                event.item.type === "message" &&
+                event.item.role === "assistant"
+              ? event.item.stream_message_id
+              : undefined;
+        if (typeof completedPreview === "string" && completedPreview) {
+          ignoredMessages.add(completedPreview);
+          const previewId = LIVE_ITEM_PREFIX + completedPreview;
+          if (transcriptIndex(get().blocks).items.has(previewId)) {
+            set((state) => ({
+              blocks: state.blocks.filter((block) => block.ctx.itemId !== previewId),
+            }));
+            paintedFirstContent = false;
+          }
+        }
         if (event.type === "session_sync") flush();
         if (
           event.committedItem &&
@@ -8986,23 +8981,6 @@ export async function pumpStreamEvents(
         continue;
       }
 
-      // Native preview cleanup must run before the generic dedup below:
-      // when a snapshot merge (reconnect/rebind) inserted this
-      // authoritative item while its `live:*` preview was still on
-      // screen, the dedup alone would drop the event and strand the
-      // preview as a trailing duplicate of the assistant text. Remove
-      // the oldest preview, then fall through so the dedup skips the
-      // event as before.
-      if (
-        block.type === "text_done" &&
-        block.ctx.itemId &&
-        get().isNativeTerminalSession &&
-        (seenItemIds.has(block.ctx.itemId) ||
-          get().blocks.some((b) => b.ctx.itemId === block.ctx.itemId))
-      ) {
-        if (matchingPreview(block)) retirePreview(block);
-      }
-
       // Stream → snapshot dedup: skip if this itemId is already committed
       // or sitting unflushed in the buffer, so the renderer sees one copy.
       if (block.ctx.itemId) {
@@ -9082,13 +9060,6 @@ export async function pumpStreamEvents(
         }
         // No streamed copy to stamp (e.g. a non-streamed message):
         // fall through and append as a normal block.
-      }
-
-      if (block.type === "text_done" && get().isNativeTerminalSession) {
-        if (matchingPreview(block)) {
-          retirePreview(block);
-          paintedFirstContent = false;
-        }
       }
 
       if (block.type === "response_end") {

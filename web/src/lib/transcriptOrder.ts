@@ -274,6 +274,7 @@ export function normalizeTranscript<P extends PendingPlacement>(
     }
     let placement =
       block.ctx.anchor ?? (block.ctx.itemId ? anchors.get(block.ctx.itemId) : undefined);
+    const appended = !placement && !oldBlocks.has(block);
     if (!placement) {
       if (oldBlocks.has(block)) {
         const at = before.blocks.indexOf(block);
@@ -291,7 +292,8 @@ export function normalizeTranscript<P extends PendingPlacement>(
       block.ctx.anchor === placement
         ? block
         : { ...block, ctx: { ...block.ctx, anchor: placement } };
-    lastId = blockKey(next);
+    // Revisiting an earlier overlay must not move the insertion point above a later prompt.
+    if (appended) lastId = blockKey(next);
     return next;
   });
   return {

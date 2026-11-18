@@ -18726,6 +18726,35 @@ describe("chatStore — live delta streaming (claude-native)", () => {
     controller.abort();
   });
 
+  it("retires a Claude preview on an identified saved amendment and ignores its late chunks", async () => {
+    useChatStore.setState({ conversationId: "claude-edit", blocks: [] });
+    const { sink, controller } = startPump("claude-edit");
+    sink.push(nativeDelta("hook-id", 0, "Opening", true));
+    sink.push(nativeDelta("another-id", 0, "Opening", false));
+    await tick();
+    sink.push(
+      sse("response.output_item.updated", {
+        item: {
+          id: "saved-id",
+          type: "message",
+          role: "assistant",
+          status: "completed",
+          response_id: "claude-turn",
+          position: 1,
+          stream_message_id: "hook-id",
+          content: [{ type: "output_text", text: "Opening" }],
+        },
+      }),
+    );
+    sink.push(nativeDelta("hook-id", 1, "Late", true));
+    await tick();
+    const ids = useChatStore.getState().blocks.map((b) => b.ctx.itemId);
+    expect(ids).toContain("saved-id");
+    expect(ids).toContain("live:another-id");
+    expect(ids).not.toContain("live:hook-id");
+    controller.abort();
+  });
+
   it("reconciles each preview independently across a multi-message turn", async () => {
     useChatStore.setState({
       conversationId: "conv_live4",

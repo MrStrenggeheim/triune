@@ -5,6 +5,7 @@ Activity combines the selected chat's main agent and subagents with recorded she
 ## Sub-features
 
 - Main chat and subchat share the same pending-input anchors and ordered message projection.
+- After a Claude image prompt, commentary and the final answer each replace their own live preview and remain below the prompt through reconnect.
 - A subchat hides inherited rows through its server-issued fork boundary; a legacy fork with unknown provenance keeps readable rows.
 - A visible message or interactive row separates adjacent work disclosures, and the narration preference controls whether commentary stays visible after settlement.
 

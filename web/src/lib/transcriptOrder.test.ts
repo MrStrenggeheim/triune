@@ -146,6 +146,24 @@ describe("canonical order and provisional placement", () => {
     expect(settled.blocks.map((block) => block.ctx.itemId)).toEqual(["a1", "tool-id", "q2", "a2"]);
   });
 
+  it("anchors new output after the latest saved row even with an earlier retained overlay", () => {
+    const old = normalizeTranscript(
+      { blocks: [], pendingUserMessages: [] },
+      { blocks: [preview("old")], pendingUserMessages: [] },
+    );
+    const prompt = itemsToBlocks([{ ...item("prompt", 1), role: "user" }]);
+    const before = normalizeTranscript(old, { ...old, blocks: [...old.blocks, ...prompt] });
+    const after = normalizeTranscript(before, {
+      ...before,
+      blocks: [...before.blocks, preview("new")],
+    });
+    expect(after.blocks.map((block) => block.ctx.itemId)).toEqual([
+      "live:old",
+      "prompt",
+      "live:new",
+    ]);
+  });
+
   it("repairs an existing committed inversion while retaining canonical phase and item identity", () => {
     const blocks = itemsToBlocks([item("a2", 3), item("a1", 1)]);
     const sorted = orderTranscriptBlocks([...blocks].reverse());

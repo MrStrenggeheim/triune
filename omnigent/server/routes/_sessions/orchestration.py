@@ -19,6 +19,7 @@ import secrets
 import time
 import uuid
 from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
+from functools import partial
 from types import EllipsisType
 from typing import Any, Literal, cast
 
@@ -3217,8 +3218,10 @@ async def _persist_external_conversation_item(
 
     :returns: Store-assigned conversation item id.
     """
-    task = asyncio.ensure_future(
-        _persist_external_conversation_item_serialized(
+    return await _persist_native_mirror(
+        session_id,
+        partial(
+            _persist_external_conversation_item_unlocked,
             session_id,
             conv,
             body,
@@ -3226,8 +3229,18 @@ async def _persist_external_conversation_item(
             created_by=created_by,
             background_title_coordinator=background_title_coordinator,
             enabled=enabled,
-        )
+        ),
     )
+
+
+async def _persist_native_mirror[T](session_id: str, write: Callable[[], Awaitable[T]]) -> T:
+    """Serialize preview association, append and publication across single and batch requests."""
+
+    async def write_locked() -> T:
+        async with _native_mirror_lock(session_id):
+            return await write()
+
+    task = asyncio.create_task(write_locked())
     try:
         return await asyncio.shield(task)
     except asyncio.CancelledError:
@@ -3236,7 +3249,7 @@ async def _persist_external_conversation_item(
         raise
 
 
-def _log_detached_mirror_persist(session_id: str, task: asyncio.Task[str]) -> None:
+def _log_detached_mirror_persist(session_id: str, task: asyncio.Task[Any]) -> None:
     """
     Log a native mirror persist that failed after its request was cancelled.
 
@@ -3252,32 +3265,6 @@ def _log_detached_mirror_persist(session_id: str, task: asyncio.Task[str]) -> No
             session_id,
             exc,
             extra={"session_id": session_id},
-        )
-
-
-async def _persist_external_conversation_item_serialized(
-    session_id: str,
-    conv: Conversation,
-    body: SessionEventInput,
-    conversation_store: ConversationStore,
-    created_by: str | None = None,
-    background_title_coordinator: BackgroundSessionTitleCoordinator | None = None,
-    enabled: bool = True,
-) -> str:
-    """
-    Run :func:`_persist_external_conversation_item_unlocked` under the mirror lock.
-
-    :returns: Store-assigned conversation item id.
-    """
-    async with _native_mirror_lock(session_id):
-        return await _persist_external_conversation_item_unlocked(
-            session_id,
-            conv,
-            body,
-            conversation_store,
-            created_by=created_by,
-            background_title_coordinator=background_title_coordinator,
-            enabled=enabled,
         )
 
 
@@ -3518,6 +3505,7 @@ async def _persist_external_conversation_item_unlocked(
             event=SessionEventInput(type=item.type, data=item.data.model_dump()),
             enabled=enabled and (drained is None or drained.background_titles_enabled),
         )
+        inflight_text.associate_claude_previews(session_id, batch)
         persisted_items = await asyncio.to_thread(conversation_store.append, session_id, batch)
     except Exception:
         # Nothing was committed: unhold every drained entry so the forwarder's
@@ -3721,6 +3709,19 @@ async def _persist_external_conversation_items(
 
     :returns: Store-assigned item ids, in body order.
     """
+    return await _persist_native_mirror(
+        session_id,
+        partial(
+            _persist_external_conversation_items_unlocked, session_id, bodies, conversation_store
+        ),
+    )
+
+
+async def _persist_external_conversation_items_unlocked(
+    session_id: str,
+    bodies: list[SessionEventInput],
+    conversation_store: ConversationStore,
+) -> list[str]:
     items: list[NewConversationItem] = []
     error: Exception | None = None
     for body in bodies:
@@ -3729,6 +3730,7 @@ async def _persist_external_conversation_items(
         except Exception as exc:  # noqa: BLE001 — re-raised once the valid prefix is applied
             error = exc
             break
+    inflight_text.associate_claude_previews(session_id, items)
     markers = [marker for item in items for marker in claude_subagent_completion_markers(item)]
     persisted_items = (
         (await asyncio.to_thread(conversation_store.append, session_id, [*items, *markers]))[
