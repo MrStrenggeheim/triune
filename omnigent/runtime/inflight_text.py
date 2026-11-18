@@ -90,6 +90,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from omnigent.db.workspace_cache import WorkspaceScopedCache
+from omnigent.entities import MessageData, NewConversationItem
+from omnigent.harness_plugins import CLAUDE_NATIVE_CODING_AGENT
 
 # Terminal turn-lifecycle event types. Any of these clears the
 # conversation's in-flight entry: the turn is over, so its streamed
@@ -180,6 +182,8 @@ class _NativeMessage:
     :param final_seen: Whether the provider marked the stream complete.
     :param claimed: Whether a committed item currently covers this
         aggregate. Claimed messages are excluded from reconnect snapshots.
+    :param contiguous: Whether all observed indices run consecutively from zero.
+    :param ambiguous: Whether this stream already competed for an unidentified Claude row.
     """
 
     text: str = ""
@@ -187,6 +191,8 @@ class _NativeMessage:
     forwarded: bool = False
     final_seen: bool = False
     claimed: bool = False
+    contiguous: bool = True
+    ambiguous: bool = False
 
 
 # Per-conversation, insertion-ordered mapping of message_id to streamed text.
@@ -199,7 +205,16 @@ _RECENT_NATIVE_MESSAGES = 3
 _native_recent_committed: WorkspaceScopedCache[str, deque[str]] = WorkspaceScopedCache()
 
 
-def _committed_message_text(item: dict[str, Any]) -> str | None:
+# A retry of an identified Claude preview can arrive after its row commits.
+_recent_claude_message_ids: WorkspaceScopedCache[str, deque[str]] = WorkspaceScopedCache()
+
+
+def is_claude_stream_agent(agent: object) -> bool:
+    """Recognize the model field written by either native Claude forwarder."""
+    return agent in (CLAUDE_NATIVE_CODING_AGENT.agent_name, CLAUDE_NATIVE_CODING_AGENT.harness)
+
+
+def _committed_message_text(content: Any) -> str | None:
     """
     Extract the assistant text from a committed ``message`` item.
 
@@ -209,13 +224,9 @@ def _committed_message_text(item: dict[str, Any]) -> str | None:
     shape with only non-text blocks) — the caller then neither matches nor
     buffers it, leaving the native index untouched.
 
-    :param item: The ``event["item"]`` dict of a
-        ``response.output_item.done`` whose ``type`` is ``"message"``,
-        e.g. ``{"type": "message", "role": "assistant", "content":
-        [{"type": "output_text", "text": "Hi"}]}``.
+    :param content: Content blocks of the assistant item.
     :returns: The joined output text, or ``None`` if there is none.
     """
-    content = item.get("content")
     if not isinstance(content, list):
         return None
     parts: list[str] = []
@@ -229,6 +240,44 @@ def _committed_message_text(item: dict[str, Any]) -> str | None:
     return "".join(parts)
 
 
+def associate_claude_previews(conversation_id: str, items: list[NewConversationItem]) -> None:
+    """Stamp a unique completed preview on a unique incoming assistant text row before append."""
+    with _lock:
+        messages = _native_inflight.get(conversation_id)
+        if not messages:
+            return
+        rows: dict[str, list[MessageData]] = {}
+        explicit_ids: set[str] = set()
+        for item in items:
+            data = item.data
+            if not isinstance(data, MessageData) or data.role != "assistant" or data.is_meta:
+                continue
+            if data.stream_message_id:
+                explicit_ids.add(data.stream_message_id)
+            elif is_claude_stream_agent(data.agent):
+                text = _committed_message_text(data.content)
+                if text:
+                    rows.setdefault(text, []).append(data)
+
+        if not rows:
+            return
+        candidates: dict[str, list[str]] = {}
+        for message_id, message in messages.items():
+            if message.text in rows and message_id not in explicit_ids:
+                candidates.setdefault(message.text, []).append(message_id)
+        for text, ids in candidates.items():
+            if len(ids) != 1 or len(rows[text]) != 1:
+                continue
+            message = messages[ids[0]]
+            if (
+                message.final_seen
+                and message.contiguous
+                and not message.claimed
+                and not message.ambiguous
+            ):
+                rows[text][0].stream_message_id = ids[0]
+
+
 def _drop_native_message(conversation_id: str, message_id: str) -> None:
     """Drop one native aggregate. Caller must hold :data:`_lock`."""
     messages = _native_inflight.get(conversation_id)
@@ -236,6 +285,49 @@ def _drop_native_message(conversation_id: str, message_id: str) -> None:
         messages.pop(message_id, None)
         if not messages:
             _native_inflight.pop(conversation_id, None)
+
+
+def _record_claude_commit(conversation_id: str, message_id: object, text: str | None) -> None:
+    """Retire an identified stream or suppress a unique partial replay. Caller holds the lock."""
+    if isinstance(message_id, str) and message_id:
+        _drop_native_message(conversation_id, message_id)
+        ids = _recent_claude_message_ids.setdefault(
+            conversation_id, deque(maxlen=_RECENT_NATIVE_MESSAGES)
+        )
+        ids.append(message_id)
+        return
+    if not text:
+        return
+
+    messages = _native_inflight.get(conversation_id, {})
+    covered = [
+        (preview_id, message)
+        for preview_id, message in messages.items()
+        if text.startswith(message.text)
+        or (message.final_seen and not message.contiguous and text.endswith(message.text))
+    ]
+    if len(covered) > 1:
+        for _, message in covered:
+            message.ambiguous = True
+        return
+    if covered:
+        preview_id, message = covered[0]
+        if message.final_seen:
+            # A missed prefix can leave only the last chunks of this row in replay.
+            # A complete equal stream without an ID had competing rows at append time.
+            if not message.contiguous and text.endswith(message.text):
+                _drop_native_message(conversation_id, preview_id)
+            elif message.text == text:
+                message.ambiguous = True
+            return
+        message.claimed = True
+        message.forwarded = False
+    # The transcript can beat the first chunk or the tail. Suppress that prefix
+    # on replay and recover the full aggregate if a later chunk diverges.
+    recent = _native_recent_committed.setdefault(
+        conversation_id, deque(maxlen=_RECENT_NATIVE_MESSAGES)
+    )
+    recent.append(text)
 
 
 def _consume_recent_native_text(conversation_id: str, text: str) -> None:
@@ -364,8 +456,10 @@ def record_publish(conversation_id: str, event: dict[str, Any]) -> dict[str, Any
         message_id = event.get("message_id")
         if isinstance(message_id, str) and message_id:
             index = event.get("index")
-            final = bool(event.get("final"))
+            final = event.get("final") is True
             with _lock:
+                if message_id in _recent_claude_message_ids.get(conversation_id, ()):
+                    return None
                 messages = _native_inflight.setdefault(conversation_id, {})
                 message = messages.get(message_id)
                 if message is None:
@@ -378,7 +472,11 @@ def record_publish(conversation_id: str, event: dict[str, Any]) -> dict[str, Any
                 if isinstance(index, int) and not isinstance(index, bool):
                     if index <= message.last_index:
                         return None
+                    if index != message.last_index + 1:
+                        message.contiguous = False
                     message.last_index = index
+                else:
+                    message.contiguous = False
                 if delta:
                     message.text += delta
                 if final:
@@ -432,7 +530,12 @@ def record_publish(conversation_id: str, event: dict[str, Any]) -> dict[str, Any
     if event_type == "response.output_item.done":
         item = event.get("item")
         if isinstance(item, dict) and item.get("type") == "message":
-            text = _committed_message_text(item)
+            text = _committed_message_text(item.get("content"))
+            if is_claude_stream_agent(item.get("model")):
+                if item.get("role") == "assistant":
+                    with _lock:
+                        _record_claude_commit(conversation_id, item.get("stream_message_id"), text)
+                return event
             if text is not None:
                 with _lock:
                     messages = _native_inflight.get(conversation_id, {})
@@ -482,6 +585,7 @@ def record_publish(conversation_id: str, event: dict[str, Any]) -> dict[str, Any
             _inflight.pop(conversation_id, None)
             _native_inflight.pop(conversation_id, None)
             _native_recent_committed.pop(conversation_id, None)
+            _recent_claude_message_ids.pop(conversation_id, None)
         return event
 
     if event_type == "session.status":
@@ -627,6 +731,7 @@ def discard(conversation_id: str) -> None:
         _inflight.pop(conversation_id, None)
         _native_inflight.pop(conversation_id, None)
         _native_recent_committed.pop(conversation_id, None)
+        _recent_claude_message_ids.pop(conversation_id, None)
 
 
 def reset_text(conversation_id: str) -> None:
@@ -661,3 +766,4 @@ def reset_for_tests() -> None:
         _inflight.clear()
         _native_inflight.clear()
         _native_recent_committed.clear()
+        _recent_claude_message_ids.clear()

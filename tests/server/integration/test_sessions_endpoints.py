@@ -20,7 +20,7 @@ import math
 import threading
 import uuid
 from collections.abc import AsyncIterator, Callable, Iterator
-from contextlib import asynccontextmanager
+from contextlib import aclosing, asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -41,13 +41,14 @@ from omnigent.host.frames import HostHelloFrame
 from omnigent.llms.context_window import ModelPricing
 from omnigent.native.native_coding_agents import CLAUDE_NATIVE_AGENT_NAME
 from omnigent.runner.transports.ws_tunnel.frames import EventAckFrame, EventBatchFrame
-from omnigent.runtime import inflight_text
+from omnigent.runtime import inflight_text, session_stream
 from omnigent.runtime.tool_output import MAX_TOOL_OUTPUT_BYTES
 from omnigent.server.background_session_titles import BackgroundTitleRequest
 from omnigent.server.routes._sessions.helpers import (
     _NativeTerminalEnsureOutcome,
     _RunnerForwardResult,
 )
+from omnigent.server.session_recovery import SessionRecovery, feed_epoch
 from omnigent.session_event_batch import MAX_SESSION_EVENT_REQUEST_BYTES
 from omnigent.spec.types import SkillSpec
 from omnigent.stores.conversation_store.sqlalchemy_store import (
@@ -6352,44 +6353,181 @@ async def test_post_external_output_text_delta_carries_streaming_identifiers(
     ]
 
 
-async def test_native_final_item_retires_server_preview_without_text_matching(
-    client: httpx.AsyncClient,
-) -> None:
-    agent = await create_test_agent(client)
-    session = await _create_session(client, agent["id"])
-    session_id = session["id"]
-    preview = await client.post(
-        f"/v1/sessions/{session_id}/events",
-        json={
-            "type": "external_output_text_delta",
-            "data": {"delta": "final suffix", "message_id": "m1", "index": 42, "final": True},
-        },
-    )
-    assert preview.status_code == 202
-    assert inflight_text.snapshot_for(session_id)
+def _claude_preview(message_id: str, text: str, index: int = 0, final: bool = True) -> dict:
+    return {
+        "type": "external_output_text_delta",
+        "data": {"message_id": message_id, "delta": text, "index": index, "final": final},
+    }
 
-    completed = await client.post(
-        f"/v1/sessions/{session_id}/events",
-        json={
-            "type": "external_conversation_item",
-            "data": {
-                "source_id": "transcript-item-1",
-                "item_type": "message",
-                "response_id": "resp_1",
-                "item_data": {
-                    "role": "assistant",
-                    "agent": "claude-native-ui",
-                    "content": [{"type": "output_text", "text": "old prefix final suffix"}],
-                },
+
+def _claude_text(source_id: str, text: str, **fields: str) -> dict:
+    return {
+        "type": "external_conversation_item",
+        "data": {
+            "source_id": source_id,
+            "item_type": "message",
+            "response_id": "turn",
+            "item_data": {
+                "role": "assistant",
+                "agent": CLAUDE_NATIVE_AGENT_NAME,
+                "content": [{"type": "output_text", "text": text}],
             },
+            **fields,
         },
-    )
-    assert completed.status_code == 202
-    assert inflight_text.snapshot_for(session_id) == []
-    items = (await client.get(f"/v1/sessions/{session_id}/items")).json()["data"]
-    assert [item["content"][0]["text"] for item in items if item.get("type") == "message"] == [
-        "old prefix final suffix"
+    }
+
+
+@pytest.mark.parametrize("batched", [False, True])
+async def test_claude_preview_identity_reaches_live_saved_and_warm_items(client, db_uri, batched):
+    agent = await create_test_agent(client)
+    session = await _create_session(client, agent["id"], initial_message="hi")
+    sid = session["id"]
+    path = f"/v1/sessions/{sid}"
+    store = SqlAlchemyConversationStore(db_uri)
+    journal = store.transcript_journal
+    after_position = store.item_checkpoint(sid)["last_position"]
+    after_revision = journal.revision(sid)
+    previews = [
+        _claude_preview("older", "unrelated"),
+        _claude_preview("display", "line 1\n", final=False),
+        _claude_preview("display", "line 2", 1, final=False),
+        _claude_preview("display", "", 2),
+        _claude_preview("newer", "other finished reply"),
     ]
+    assert (await client.post(f"{path}/events", json=previews)).status_code == 202
+    row = _claude_text("transcript-uuid:0:message", "line 1\nline 2")
+    body = [row] if batched else row
+    async with aclosing(session_stream.subscribe(sid, ready_event={"type": "ready"})) as live:
+        assert (await anext(live))["type"] == "ready"
+        result = await client.post(f"{path}/events", json=body)
+        assert result.status_code == 202, result.text
+        done = await asyncio.wait_for(anext(live), 2)
+    assert done["type"] == "response.output_item.done"
+    assert done["message_id"] == done["item"]["stream_message_id"] == "display"
+    assert done["item"]["model"] == CLAUDE_NATIVE_AGENT_NAME
+    assert done["item"]["role"] == "assistant"
+    assert (await client.post(f"{path}/events", json=body)).json() == result.json()
+    saved = (await client.get(f"{path}/items")).json()["data"]
+    assert [item for item in saved if item["role"] == "assistant"] == [done["item"]]
+    assert [e["message_id"] for e in inflight_text.snapshot_for(sid)] == ["older", "newer"]
+
+    async def allowed():
+        pass
+
+    warm = SessionRecovery(
+        store,
+        sid,
+        allowed,
+        enabled=True,
+        journal=journal,
+        after_position=after_position,
+        after_revision=after_revision,
+        stream_epoch=feed_epoch(),
+    )
+    frames = [frame async for frame in warm.events()]
+    assert frames[-1]["reset"] is False
+    assert [item for frame in frames for item in frame.get("items", [])] == [done["item"]]
+    assert (
+        await warm.prepare({"type": "response.output_text.delta", "message_id": "display"}) is None
+    )
+
+
+@pytest.mark.parametrize(
+    "events,expected_ids,remaining",
+    [
+        (
+            [_claude_preview("a", "yes"), _claude_preview("b", "yes"), _claude_text("1", "yes")],
+            [None],
+            ["a", "b"],
+        ),
+        (
+            [_claude_preview("a", "yes"), _claude_text("1", "yes"), _claude_text("2", "yes")],
+            [None, None],
+            ["a"],
+        ),
+        (
+            [
+                _claude_preview("other", "yes"),
+                _claude_text("1", "yes", message_id="explicit"),
+                _claude_preview("explicit", "yes"),
+            ],
+            ["explicit"],
+            ["other"],
+        ),
+        (
+            [
+                _claude_preview("partial", "hel", final=False),
+                _claude_text("1", "hello"),
+                _claude_preview("partial", "lo", 1),
+            ],
+            [None],
+            [],
+        ),
+        ([_claude_preview("gap", "suffix", 42), _claude_text("1", "suffix")], [None], []),
+        (
+            [
+                _claude_preview("a", "suffix", 41),
+                _claude_preview("b", "suffix", 42),
+                _claude_text("1", "longer suffix"),
+            ],
+            [None],
+            ["a", "b"],
+        ),
+    ],
+    ids=[
+        "equal-previews",
+        "equal-rows",
+        "explicit",
+        "partial",
+        "missing-prefix",
+        "ambiguous-suffix",
+    ],
+)
+async def test_claude_preview_inference_boundaries(client, events, expected_ids, remaining):
+    agent = await create_test_agent(client)
+    sid = (await _create_session(client, agent["id"]))["id"]
+    path = f"/v1/sessions/{sid}"
+    result = await client.post(f"{path}/events", json=events)
+    assert result.status_code == 202, result.text
+    items = (await client.get(f"{path}/items", params={"order": "asc"})).json()["data"]
+    assert [item.get("stream_message_id") for item in items] == expected_ids
+    assert [e["message_id"] for e in inflight_text.snapshot_for(sid)] == remaining
+
+
+async def test_claude_preview_commit_before_first_delta_suppresses_one_late_copy(client):
+    agent = await create_test_agent(client)
+    sid = (await _create_session(client, agent["id"]))["id"]
+    path = f"/v1/sessions/{sid}/events"
+    assert (await client.post(path, json=_claude_text("first", "yes"))).status_code == 202
+    async with aclosing(session_stream.subscribe(sid, ready_event={"type": "ready"})) as live:
+        await anext(live)
+        chunks = [
+            _claude_preview("late", "y", final=False),
+            _claude_preview("late", "es", 1),
+            _claude_preview("newer", "yes"),
+        ]
+        assert (await client.post(path, json=chunks)).status_code == 202
+        delivery = await asyncio.wait_for(anext(live), 2)
+        assert delivery["message_id"] == "newer"
+    assert [e["message_id"] for e in inflight_text.snapshot_for(sid)] == ["newer"]
+    assert (await client.post(path, json=_claude_text("second", "yes"))).status_code == 202
+    items = (await client.get(f"/v1/sessions/{sid}/items", params={"order": "asc"})).json()["data"]
+    assert [item.get("stream_message_id") for item in items] == [None, "newer"]
+
+
+async def test_native_final_item_retires_server_preview_without_text_matching(client):
+    agent = await create_test_agent(client)
+    sid = (await _create_session(client, agent["id"]))["id"]
+    path = f"/v1/sessions/{sid}"
+    preview = _claude_preview("m1", "final suffix", 42)
+    assert (await client.post(f"{path}/events", json=preview)).status_code == 202
+    assert [e["message_id"] for e in inflight_text.snapshot_for(sid)] == ["m1"]
+    text = "old prefix final suffix"
+    assert (await client.post(f"{path}/events", json=_claude_text("row", text))).status_code == 202
+    assert inflight_text.snapshot_for(sid) == []
+    [saved] = (await client.get(f"{path}/items")).json()["data"]
+    assert saved["content"][0]["text"] == text
+    assert "stream_message_id" not in saved
 
 
 @pytest.mark.parametrize(

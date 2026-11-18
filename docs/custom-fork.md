@@ -98,6 +98,9 @@ See the unified-workspace feature map for source mappings and desktop/mobile acc
 
 ### Conversation ownership and negotiated recovery
 
+Claude's display hook and saved transcript use independent message IDs.
+When a complete preview uniquely matches the saved assistant output, its hook ID travels with the saved row so the browser can retire that exact preview.
+
 The workspace declares the union of visible conversation IDs after a layout commit.
 Each tab holds one membership per authorized visible conversation; moving a pane preserves its membership and reader state.
 Chat controls target their conversation's registry entry, and subchats filter inherited history before the shared row projection.
