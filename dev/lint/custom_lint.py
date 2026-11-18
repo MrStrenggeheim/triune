@@ -25,6 +25,7 @@ import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from dev import design_catalog
 from dev.lint import (
     lint_design_contract,
     lint_session_list_visibility,
@@ -58,6 +59,11 @@ RULES: list[Rule] = [
         name=lint_design_contract.RULE_NAME,
         check=lint_design_contract.check,
         hint=lint_design_contract.HINT,
+    ),
+    Rule(
+        name="design-catalog",
+        check=design_catalog.check,
+        hint="Update the affected task entry in design-system/triune/interactions.json.",
     ),
     Rule(
         name=lint_young_dependency_floor.RULE_NAME,

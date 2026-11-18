@@ -1,8 +1,4 @@
-"""Enforce stable literal parts of DESIGN-CONTRACT-3 in shared UI owners.
-
-This intentionally checks exact canonical component files and literal Tailwind
-tokens only. Dynamic classes and call sites remain review concerns.
-"""
+"""Check literal owner styles and menu-item geometry overrides in workspace picker callers."""
 
 from __future__ import annotations
 
@@ -16,10 +12,11 @@ RULE_NAME = "design-contract"
 HINT = (
     "Use the canonical rounded classes or rounded-[var(--radius-*)], and semantic "
     "focus colors such as border-ring/ring-ring. The only literal shape exceptions "
-    "in this surface are Checkbox 4px, Select popup 12px, and Switch rounded-full."
+    "in this surface are Checkbox 4px, Select popup 12px, and Switch rounded-full. "
+    "Set picker row height, gap and padding through the row owner's density variant."
 )
 
-SCOPED_PATHS = frozenset(
+_SHAPE_AND_FOCUS_OWNERS = frozenset(
     {
         "web/src/components/HeaderActionButton.tsx",
         "web/src/components/CloseButton.tsx",
@@ -30,6 +27,18 @@ SCOPED_PATHS = frozenset(
         "web/src/components/ui/switch.tsx",
         "web/src/components/ui/textarea.tsx",
     }
+)
+_PICKER_CALLERS = {
+    "web/src/shell/WorkspacePicker.tsx",
+    "web/src/shell/WorkspaceSelectionDialog.tsx",
+}
+SCOPED_PATHS = _SHAPE_AND_FOCUS_OWNERS | _PICKER_CALLERS
+
+# The target must be the row itself, optionally qualified by state.
+_PICKER_ROW_GEOMETRY = re.compile(
+    r"""\[&(?:_?>_?|_)\[data-slot=(?:menu-item|'menu-item'|"menu-item")\]"""
+    r"""(?:\[[\w="'-]+\]|:[a-z-]+)*\]:(?:[\w-]+:)*"""
+    r"""!?(?:p[xytrblse]?|(?:min-|max-)?h|size|gap(?:-[xy])?)-[^\s"'`]+"""
 )
 
 _TOKEN_PREFIX = r"[^\s\"'`]*"
@@ -79,8 +88,14 @@ def _allows_radius(path: str, token: str, value: str | None) -> bool:
 
 
 def scan_source(source: str, path: str) -> list[Hit]:
-    """Find stable literal violations in one canonical owner source."""
-    if path not in SCOPED_PATHS:
+    """Find violations of the contract that applies to this source path."""
+    if path in _PICKER_CALLERS:
+        return [
+            Hit(line_number, match.group(), "caller override of picker row geometry")
+            for line_number, line in enumerate(source.splitlines(), 1)
+            for match in _PICKER_ROW_GEOMETRY.finditer(line)
+        ]
+    if path not in _SHAPE_AND_FOCUS_OWNERS:
         return []
     hits: list[Hit] = []
     for line_number, line in enumerate(source.splitlines(), 1):
@@ -98,7 +113,7 @@ def scan_source(source: str, path: str) -> list[Hit]:
 
 
 def scan(path: Path) -> list[Hit]:
-    """Scan a file when it is one of the canonical shared owners."""
+    """Scan a file when it is covered by a design contract."""
     relative = _relative_path(path)
     if relative not in SCOPED_PATHS:
         return []
@@ -124,7 +139,7 @@ def check_paths(paths: list[Path]) -> list[str]:
 
 
 def check() -> list[str]:
-    """Check the complete canonical owner surface."""
+    """Check all tracked files covered by the rule."""
     return check_paths(_iter_scoped_paths())
 
 

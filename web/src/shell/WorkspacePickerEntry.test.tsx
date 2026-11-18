@@ -30,12 +30,14 @@ describe("WorkspacePickerEntry", () => {
     expect(onOpen).toHaveBeenCalledWith(folder.path);
   });
 
-  it("renders files as disabled entries", () => {
+  it.each(["default", "embedded"] as const)("renders %s files as disabled entries", (variant) => {
     const onOpen = vi.fn();
-    render(<WorkspacePickerEntry entry={file} onOpen={onOpen} />);
+    render(<WorkspacePickerEntry entry={file} variant={variant} onOpen={onOpen} />);
 
     const row = screen.getByRole("button", { name: "README.md" });
     expect(row).toBeDisabled();
+    expect(row).toHaveClass("cursor-not-allowed", "opacity-55", "text-base");
+    expect(row.querySelector("[data-file-type]")).toHaveClass("size-5");
     fireEvent.click(row);
     expect(onOpen).not.toHaveBeenCalled();
   });
@@ -44,9 +46,11 @@ describe("WorkspacePickerEntry", () => {
     const { rerender } = render(<WorkspacePickerEntry entry={folder} onOpen={() => undefined} />);
     const row = screen.getByRole("button", { name: "projects" });
     expect(row).toHaveClass("min-h-11", "px-5", "py-2");
+    expect(row).not.toHaveClass("density-row");
 
     rerender(<WorkspacePickerEntry entry={folder} onOpen={() => undefined} variant="compact" />);
     expect(row).toHaveClass("h-7", "gap-2", "rounded-md", "px-2", "py-[3px]", "text-ui");
+    expect(row).not.toHaveClass("density-row");
   });
 
   it("matches the compact modal file-row treatment", () => {

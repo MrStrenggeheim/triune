@@ -1,0 +1,51 @@
+[
+  {
+    "task": "Choose a host and workspace folder",
+    "owner": "shell/WorkspaceSelectionDialog.tsx",
+    "caller": "components/composer/WorkspaceSwitchControl.tsx",
+    "story": "shell/WorkspaceSelectionDialog.stories.tsx#HostAndFolder",
+    "test": "shell/WorkspaceSelectionDialog.test.tsx"
+  },
+  {
+    "task": "Browse folder and file rows in a workspace picker",
+    "owner": "shell/WorkspacePickerEntry.tsx",
+    "caller": "shell/WorkspacePicker.tsx",
+    "story": "shell/WorkspacePickerEntry.stories.tsx#Default",
+    "test": "shell/WorkspacePickerEntry.test.tsx"
+  },
+  {
+    "task": "Add an action to a view header",
+    "owner": "components/HeaderActionButton.tsx",
+    "caller": "shell/ChatHeader.tsx",
+    "story": "shell/ChatHeader.stories.tsx#FiledSessionWithPresence",
+    "test": "components/HeaderActionButton.test.tsx"
+  },
+  {
+    "task": "Close a dialog from its header",
+    "owner": "components/CloseButton.tsx",
+    "caller": "components/ui/dialog.tsx",
+    "story": "shell/ShellPrimitives.stories.tsx#CloseShellConfirmation",
+    "test": "components/ui/dialog.test.tsx"
+  },
+  {
+    "task": "Add a command button or icon action",
+    "owner": "components/ui/button.tsx",
+    "caller": "components/composer/ComposerAddMenu.tsx",
+    "story": "components/ui/Foundations.stories.tsx#Gallery",
+    "test": "components/ui/button.test.tsx"
+  },
+  {
+    "task": "Attach files from the composer menu",
+    "owner": "components/composer/ComposerAddMenu.tsx",
+    "caller": "pages/ChatPage.tsx",
+    "story": "components/composer/ChatComposer.stories.tsx#AttachmentMenu",
+    "test": "components/composer/ComposerAddMenu.test.tsx"
+  },
+  {
+    "task": "Set the theme accent",
+    "owner": "components/theme/ThemeColorPicker.tsx",
+    "caller": "pages/SettingsPage.tsx",
+    "story": "components/theme/ThemeColorPicker.stories.tsx#OpenWithEditedHex",
+    "test": "components/theme/ThemeColorPicker.test.tsx"
+  }
+]

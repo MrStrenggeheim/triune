@@ -1057,9 +1057,7 @@ export function WorkspacePicker({
           <div
             className={cn(
               "min-h-0 flex-1 overflow-y-auto py-2",
-              embedded
-                ? "density-list flex flex-col px-0 [&>[data-slot=menu-item]]:min-h-[var(--list-row-min-height)] [&>[data-slot=menu-item]]:gap-[var(--list-row-gap)] [&>[data-slot=menu-item]]:px-[var(--list-row-padding-inline)] [&>[data-slot=menu-item]]:py-[var(--list-row-padding-block)]"
-                : "space-y-px px-2",
+              embedded ? "density-list flex flex-col px-0" : "space-y-px px-2",
               showGitDialog && "pt-0 pb-3",
             )}
             aria-busy={navigationPending || undefined}
@@ -1089,7 +1087,7 @@ export function WorkspacePicker({
                   key={entry.path}
                   entry={entry}
                   onOpen={navigateTo}
-                  variant={embedded ? "default" : "compact"}
+                  variant={embedded ? "embedded" : "compact"}
                 />
               ))}
             {!navigationPending && data?.truncated && (

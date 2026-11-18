@@ -1,6 +1,8 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { ComposerAttachments } from "@/components/ComposerAttachments";
 import { ChatComposer, ComposerSendButton } from "./ChatComposer";
+import { ComposerAddMenu } from "./ComposerAddMenu";
+import { userEvent, within } from "storybook/test";
 
 const KEYBOARD = { submitWithModEnter: false, preventsKeyboardSubmit: false } as const;
 
@@ -34,6 +36,22 @@ export const Default: Story = {
       leading: <span className="text-ui text-muted-foreground">Context controls</span>,
       trailing: <ComposerSendButton label="Send" />,
     },
+  },
+};
+
+// Review the production menu inside the composer, including the trigger-to-popup transition.
+export const AttachmentMenu: Story = {
+  tags: ["!visual-snapshot"],
+  args: {
+    input: { "aria-label": "Message", placeholder: "Message the agent" },
+    actions: {
+      leading: <ComposerAddMenu disabled={false} planActive={false} onAttach={() => {}} />,
+      trailing: <ComposerSendButton label="Send" />,
+    },
+  },
+  play: async ({ canvasElement }) => {
+    await userEvent.click(within(canvasElement).getByTestId("composer-attach"));
+    await within(canvasElement.ownerDocument.body).findByRole("menu");
   },
 };
 

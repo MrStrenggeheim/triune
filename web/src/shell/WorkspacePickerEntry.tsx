@@ -9,7 +9,7 @@ import { WorkspaceFileIcon } from "./WorkspaceFileIcon";
 export interface WorkspacePickerEntryProps {
   entry: HostFilesystemEntry;
   onOpen: (path: string) => void;
-  variant?: "default" | "compact";
+  variant?: "default" | "compact" | "embedded";
 }
 
 /** A single folder or file row in a workspace directory listing. */
@@ -22,7 +22,11 @@ export function WorkspacePickerEntry({
   const compact = variant === "compact";
 
   return (
-    <MenuItem asChild density={compact ? "compact" : "none"} interactive={isDirectory}>
+    <MenuItem
+      asChild
+      density={variant === "embedded" ? "appearance" : compact ? "compact" : "none"}
+      interactive={isDirectory}
+    >
       <TooltipButton
         type="button"
         disabled={!isDirectory}
@@ -30,7 +34,8 @@ export function WorkspacePickerEntry({
         onClick={() => isDirectory && onOpen(entry.path)}
         className={cn(
           "w-full text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-          compact ? "gap-2 px-2 py-[3px]" : "h-auto min-h-11 gap-2.5 px-5 py-2 text-base",
+          compact ? "gap-2 px-2 py-[3px]" : "h-auto text-base",
+          variant === "default" && "min-h-11 gap-2.5 px-5 py-2",
           isDirectory
             ? "cursor-pointer text-foreground"
             : compact

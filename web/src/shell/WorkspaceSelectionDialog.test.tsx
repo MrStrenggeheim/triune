@@ -124,14 +124,12 @@ it("preselects the current host, focuses the editable path, and limits the foote
   expect(screen.getByTestId("workspace-picker-header")).toHaveClass(
     "h-[var(--density-header-height)]",
   );
-  expect(screen.getByTestId("workspace-picker-listing")).toHaveClass(
-    "density-list",
-    "[&>[data-slot=menu-item]]:min-h-[var(--list-row-min-height)]",
-    "[&>[data-slot=menu-item]]:py-[var(--list-row-padding-block)]",
-    "[&>[data-slot=menu-item]]:px-[var(--list-row-padding-inline)]",
-    "[&>[data-slot=menu-item]]:gap-[var(--list-row-gap)]",
-  );
-  expect(screen.getByTestId("workspace-picker-entry-child")).toHaveClass("text-base");
+  const listing = screen.getByTestId("workspace-picker-listing");
+  expect(listing).toHaveClass("density-list");
+  expect(listing.className).not.toContain("[&>");
+  const child = within(listing).getByRole("button", { name: "child" });
+  expect(child).toHaveClass("density-row", "text-base");
+  expect(child).toHaveAttribute("data-density", "appearance");
 });
 
 it("validates a directly typed path and awaits the owner before closing", async () => {

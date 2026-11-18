@@ -219,6 +219,7 @@ map an area, remove it here in the same change.
 - Onboarding and host import review: `tests/e2e_ui/onboarding/` (only the
   import review modal's link to Harnesses is mapped)
 - Visual snapshots: `tests/e2e_ui/visual/`
+- [Component review and approval](../design-system/triune/MASTER.md#reuse-and-owner-approval) uses the shared task directory, Storybook production examples and the design-contract lint.
 
 **CLI commands:**
 

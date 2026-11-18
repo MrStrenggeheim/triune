@@ -20,6 +20,7 @@ Keep each customization in a focused commit. Never edit installed package files.
 ## Reuse and design
 
 Read `design-system/triune/MASTER.md` before changing workspace UI.
+Look up the interaction with `python3 -m dev.design_catalog <task>` and follow the [reuse and owner approval loop](design-system/triune/MASTER.md#reuse-and-owner-approval).
 
 - Before changing UI, compare existing equivalents and reuse the complete shared component, tokens and interaction; verify sibling typography, tooltip shape, colors and focus/hover states against `design-system/triune/MASTER.md`.
 - Search for and reuse existing helpers before adding code. Refactor an existing

@@ -11,6 +11,66 @@ Iteration6 refinements describe source; [the fork guide](../../docs/custom-fork.
 - UI/UX Pro Max: semantic surfaces, state clarity, stable geometry, restrained feedback, shared icons and visible keyboard focus.
 - Generated landing-page patterns, replacement fonts and suggested palettes do not fit this application and are excluded.
 
+## Reuse and owner approval
+
+Treat this specification at a Git revision as the entry point for design decisions.
+The registry supplies values, production components supply interactions, and stories exercise those components with fixture data.
+The small visualization kit consumes generated tokens for sandboxed HTML.
+Use the production React components for product development and product mockups.
+
+1. **Find the owner.** Run `python3 -m dev.design_catalog workspace` from the repository root, or open **Design review → Start here → Interactions** in Storybook.
+   Both read the [task directory](interactions.json), which names the owner, production caller, story and focused test.
+   For an uncatalogued interaction, trace an existing caller first.
+2. **Reuse or repair.** Supply content, commands and state to the existing component.
+   Parents arrange siblings, groups own joined edges and the component that paints an inset surface owns its derived radius.
+   Extend the shared owner when a specified state is missing and verify existing callers.
+3. **Review a design difference.** Use one interactive comparison per independently decidable change, with related appearances or surfaces as states of that comparison.
+   Render the same production composite and fixture in Current and Proposed, including the open menus and dialogs.
+   Provide proportional guides, relevant viewport and input modes, and identify the exact difference.
+4. **Record the decision.** For an accepted change, record the owner decision, date, ticket, exact candidate revision or artifact digest, and accepted surface and states here.
+   Record partial acceptance explicitly and link the decision in the queue item.
+   The commit containing the decision versions the specification; an updated example that changes the decision returns to review.
+5. **Verify and deliver.** Run the owning tests, compare affected complete surfaces with reviewed baselines and check keyboard, touch, focus return and geometry where relevant.
+   Promote changed visual baselines only for the accepted scope.
+   Implementation and release follow the normal delivery queue.
+
+### Current scope of owner review
+
+Earlier scoped approvals in this document still apply.
+The first collection of the whole application is a working reference pending owner review.
+In uncovered areas preserve the existing production surface and bring any new product choice to the owner.
+
+| Owner decision, 2026-11-18 | Accepted scope | Reference for implementation |
+| --- | --- | --- |
+| ACTIVITY-ENTRY-27 | Proposed agent and shell entry geometry, nested actions and narrow Stop treatment | Queued activity-entry artifact, SHA-256 `04949f1d4ba831dac09897e255b4f6a2b5681f9bc6a926cfdf882f1007d2c162` |
+| BUTTON-UNIFY-28 | Composer at rest, hover and press only | Button artifact, SHA-256 `86ea83c0e6165c4ea00a177405693698448517178906b2a4764387dad5648ab3` |
+
+The owner rejected the replacement popup contents and workspace selector in the button artifact.
+Mount the production menus and `WorkspaceSelectionDialog` when reviewing button changes.
+Keep earlier scoped composer decisions on their own ticket.
+
+### Review sequence and open tickets
+
+Prepare the source inventory across the app, then review one component at a time in its normal callers.
+Generate the React inventory with `node web/scripts/review-inventory.mjs --storybook-index URL_OR_FILE --out INVENTORY.json` against the matching Storybook build's `index.json`.
+Read one packet with `node web/scripts/review-inventory.mjs --inventory INVENTORY.json --component WorkspacePickerEntry`.
+It lists declared options, usage sites, story coverage and unresolved expressions.
+Use the artifact kit's versioned manifest and native renderer sources for their respective surfaces.
+Start with a workspace directory row, followed by components with repeated corrections or many competing implementations.
+Per component, give the owner one short review showing actual variants and occurrence contexts, current usage facts, a recommendation and one decision.
+Distinguish production callers, supported story-only variants and dynamic combinations that require a fixture.
+Group identical repetitions visually and retain their source locations.
+
+Keep open product and reliability requirements in the implementation queue.
+Tag each open ticket with its review areas on the checkbox line, for example `<!-- ux: composer, transcript -->`.
+Use `all` for a cross-cutting requirement.
+Run `python3 -m dev.design_queue QUEUE.md --area workspace-picker` before sharing that review and again before merge.
+Repeat `--area` for affected callers, including behavior such as Stop, scrolling or delivery when those paths change.
+The command checks every open ticket for routing and lists relevant ticket IDs and lines; read their full acceptance criteria.
+Record which requirements the candidate covers and which still need implementation or runtime verification.
+
+For the next ten UI edits, record the family, reuse/extension/bypass, and any correction to a previously decided rule in the existing ticket.
+
 ## Tokens and components
 
 | Role                     | Canonical implementation                                                                    |
