@@ -10,9 +10,10 @@ interface ObservationOptions {
   signal: AbortSignal;
   /** Multiplex memberships have no cross-window connection budget. */
   multiplexed?: () => boolean;
+  subscribeTransportChanges?: (changed: () => void) => () => void;
   initialSlot?: StreamSlot;
-  acquire: () => Promise<StreamSlot | null>;
-  pump: (controller: AbortController, resumed: boolean) => Promise<void>;
+  acquire: (signal: AbortSignal) => Promise<StreamSlot | null>;
+  pump: (controller: AbortController, resumed: boolean, multiplexed: boolean) => Promise<void>;
   catchUp: (signal: AbortSignal) => Promise<void>;
   priority?: () => number;
   /** Tests and embedded hosts can supply their own document/focus state. */
@@ -78,8 +79,92 @@ export function refreshConversationObservationPriority(): void {
   for (const observer of observers) observer.changed();
 }
 
-/** Own observation only: yielding never cancels a send, save, shell or agent. */
+/* oxlint-disable no-await-in-loop -- Each generation releases the previous subscription before admitting its replacement. */
+/** Switch ownership only when the physical socket has negotiated a different transport. */
 export async function observeConversationStream(options: ObservationOptions): Promise<void> {
+  let multiplexed = options.multiplexed?.() ?? false;
+  let generation = new AbortController();
+  const stop = () => generation.abort();
+  const unsubscribe = options.subscribeTransportChanges?.(() => {
+    if (multiplexed !== (options.multiplexed?.() ?? false)) stop();
+  });
+  options.signal.addEventListener("abort", stop);
+  let initialSlot = options.initialSlot;
+  let resumed = false;
+  try {
+    while (!options.signal.aborted) {
+      generation = new AbortController();
+      multiplexed = options.multiplexed?.() ?? false;
+      if (multiplexed) {
+        if (initialSlot) {
+          await initialSlot.release();
+          initialSlot = undefined;
+        }
+        await observeVisibleMembership(options, generation.signal, resumed);
+      } else {
+        const first = initialSlot;
+        initialSlot = undefined;
+        await observeLegacyStream(
+          { ...options, signal: generation.signal, initialSlot: first },
+          resumed,
+        );
+      }
+      if (!generation.signal.aborted) return;
+      resumed = true;
+    }
+  } finally {
+    unsubscribe?.();
+    options.signal.removeEventListener("abort", stop);
+    await initialSlot?.release();
+  }
+}
+
+/** A shared-socket membership follows document visibility; workspace removal aborts its owner. */
+async function observeVisibleMembership(
+  options: ObservationOptions,
+  signal: AbortSignal,
+  initiallyResumed: boolean,
+): Promise<void> {
+  let resumed = initiallyResumed;
+  const page = options.document ?? globalThis.document;
+  let active: AbortController | undefined;
+  let wake: (() => void) | undefined;
+  const changed = () => {
+    if (signal.aborted || page?.visibilityState === "hidden") active?.abort();
+    wake?.();
+  };
+  page?.addEventListener("visibilitychange", changed);
+  signal.addEventListener("abort", changed);
+  try {
+    while (!signal.aborted) {
+      if (page?.visibilityState === "hidden") {
+        resumed = true;
+        await new Promise<void>((resolve) => {
+          wake = resolve;
+        });
+        wake = undefined;
+        continue;
+      }
+      active = new AbortController();
+      await options.pump(active, resumed, true);
+      if (!active.signal.aborted) return;
+      resumed = true;
+    }
+  } finally {
+    active?.abort();
+    page?.removeEventListener("visibilitychange", changed);
+    signal.removeEventListener("abort", changed);
+  }
+}
+
+/* oxlint-enable no-await-in-loop */
+
+/** Legacy SSE alone participates in focus arbitration, origin slots and snapshot catch-up. */
+async function observeLegacyStream(
+  options: ObservationOptions,
+  initiallyResumed: boolean,
+): Promise<void> {
+  let resumed = initiallyResumed;
   const page = options.document ?? globalThis.document;
   const browser = options.window ?? globalThis.window;
   // A visible unfocused window still receives bounded snapshots.
@@ -91,15 +176,12 @@ export async function observeConversationStream(options: ObservationOptions): Pr
   let snapshotPriority = 0;
   let wake: (() => void) | undefined;
   let lastCatchUp = Date.now();
-  let resumed = false;
   let announcedWaiting = false;
   let initialSlot = options.initialSlot ?? null;
   const visible = () => !page || page.visibilityState !== "hidden";
-  const multiplexed = () => options.multiplexed?.() ?? false;
-  const mayObserve = () => visible() && (multiplexed() || focused);
-  const priority = () => (visible() && focused && !multiplexed() ? (options.priority?.() ?? 1) : 0);
+  const mayObserve = () => visible() && focused;
+  const priority = () => (visible() && focused ? (options.priority?.() ?? 1) : 0);
   const higherPriorityWaiting = () =>
-    !multiplexed() &&
     [...observers].some(
       (other) => other !== observer && other.waiting && other.priority() > priority(),
     );
@@ -145,7 +227,8 @@ export async function observeConversationStream(options: ObservationOptions): Pr
       let slot: StreamSlot | null = initialSlot;
       initialSlot = null;
       observer.waiting = true;
-      if (!slot && mayObserve() && !higherPriorityWaiting()) slot = await options.acquire();
+      if (!slot && mayObserve() && !higherPriorityWaiting())
+        slot = await options.acquire(options.signal);
       if (!slot) {
         resumed = true;
         if (!announcedWaiting) {
@@ -164,7 +247,7 @@ export async function observeConversationStream(options: ObservationOptions): Pr
         const release = () => void slot.release();
         controller.signal.addEventListener("abort", release, { once: true });
         try {
-          await options.pump(controller, resumed);
+          await options.pump(controller, resumed, false);
         } finally {
           attempt = null;
           controller.signal.removeEventListener("abort", release);

@@ -152,6 +152,7 @@ class SessionUpdatesSocket {
   private watchdogTimer: ReturnType<typeof setTimeout> | null = null;
   private started = false;
   private transcriptCapability: boolean | null = null;
+  private handshakeTimer?: ReturnType<typeof setTimeout>;
   private transcriptWindowCapability = false;
   private feedVersion = 1;
   private membershipLimit = Infinity;
@@ -212,7 +213,8 @@ class SessionUpdatesSocket {
     if (signal.aborted || typeof WebSocket === "undefined" || isHostRoutingEnabled())
       return Promise.resolve(false);
     if (!this.started && (!isHostRoutingEnabled() || isModalHostResolved())) this.start();
-    if (this.transcriptCapability !== null) return Promise.resolve(this.transcriptCapability);
+    if (this.transcriptCapability !== null && this.handshakeTimer === undefined)
+      return Promise.resolve(this.transcriptCapability);
     return new Promise((resolve) => {
       const finish = () => {
         clearTimeout(timer);
@@ -235,28 +237,17 @@ class SessionUpdatesSocket {
     received?: (event: StreamEvent) => void,
     attemptId?: string,
   ): Promise<TranscriptResponse | null> {
-    if (!(await this.negotiateTranscript(signal))) return null;
+    // A disconnected shared socket retains ownership. Confirm the replacement peer's
+    // capabilities before opening any membership on that physical connection.
+    /* oxlint-disable no-await-in-loop -- Each replacement socket must finish its own handshake. */
+    while (!signal.aborted) {
+      if (!(await this.negotiateTranscript(signal))) return null;
+      if (signal.aborted) break;
+      if (this.connected && this.handshakeTimer === undefined) break;
+      if (!this.connected) await this.waitForConnected(signal);
+    }
+    /* oxlint-enable no-await-in-loop */
     if (signal.aborted) throw new DOMException("Aborted", "AbortError");
-    // A known compatible server reconnects through this socket; never open a parallel SSE.
-    if (!this.connected)
-      await new Promise<void>((resolve, reject) => {
-        const unsubscribe = this.subscribeStatus(() => {
-          if (this.connected) {
-            cleanup();
-            resolve();
-          }
-        });
-        const abort = () => {
-          cleanup();
-          reject(new DOMException("Aborted", "AbortError"));
-        };
-        const cleanup = () => {
-          unsubscribe();
-          signal.removeEventListener("abort", abort);
-        };
-        signal.addEventListener("abort", abort, { once: true });
-        if (signal.aborted) abort();
-      });
     this.transcripts.get(sessionId)?.close();
     let subscription: TranscriptSubscription;
     const cleanup = () => {
@@ -294,6 +285,32 @@ class SessionUpdatesSocket {
     return { ok: true, status: 200, headers: new Headers(), body: subscription.body };
   }
 
+  private waitForConnected(signal: AbortSignal): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const cleanup = () => {
+        unsubscribe();
+        signal.removeEventListener("abort", abort);
+      };
+      const abort = () => {
+        cleanup();
+        reject(new DOMException("Aborted", "AbortError"));
+      };
+      const unsubscribe = this.subscribeStatus(() => {
+        if (this.connected) {
+          cleanup();
+          resolve();
+        }
+      });
+      signal.addEventListener("abort", abort, { once: true });
+      if (signal.aborted) abort();
+    });
+  }
+
+  private clearHandshake(): void {
+    clearTimeout(this.handshakeTimer);
+    this.handshakeTimer = undefined;
+  }
+
   reportPresence(idle: boolean): void {
     if (this.supportsTranscripts()) this.send({ type: "presence", idle });
   }
@@ -329,6 +346,7 @@ class SessionUpdatesSocket {
     }
     this.setConnected(false);
     for (const subscription of [...this.transcripts.values()]) subscription.close();
+    this.clearHandshake();
     this.transcriptCapability = null;
     this.transcriptWindowCapability = false;
     this.feedVersion = 1;
@@ -404,6 +422,14 @@ class SessionUpdatesSocket {
     ws.onopen = () => {
       if (this.ws !== ws) return;
       this.failedAttempts = 0;
+      this.clearHandshake();
+      this.handshakeTimer = setTimeout(() => {
+        this.handshakeTimer = undefined;
+        this.transcriptCapability = false;
+        this.transcriptWindowCapability = false;
+        this.feedVersion = 1;
+        for (const listener of [...this.capabilityListeners]) listener();
+      }, TRANSCRIPT_NEGOTIATION_MS);
       this.setConnected(true);
       // Start the silence watchdog: from here we expect at least a
       // heartbeat within the window or we treat the link as dead.
@@ -418,9 +444,7 @@ class SessionUpdatesSocket {
     };
     ws.onclose = () => {
       if (this.ws !== ws) return;
-      this.transcriptCapability = null;
-      this.transcriptWindowCapability = false;
-      this.feedVersion = 1;
+      this.clearHandshake();
       this.ws = null;
       this.clearWatchdog();
       this.setConnected(false);
@@ -500,6 +524,7 @@ class SessionUpdatesSocket {
     }
     if (!frame || typeof frame !== "object") return;
     if (frame.type === "capabilities") {
+      this.clearHandshake();
       configureConvergenceExport(frame.transcript_observation_until_ms ?? 0);
       this.transcriptCapability = frame.transcript_stream === 1;
       this.transcriptWindowCapability = frame.transcript_window === 1;

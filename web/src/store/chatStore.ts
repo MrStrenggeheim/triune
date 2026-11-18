@@ -5582,7 +5582,7 @@ async function bindStream(
   };
   let observing = false;
   let multiplexed = false;
-  let hasSlot = false;
+  let observingAtBind = false;
   let initialStreamOpened!: () => void;
   const initialStreamReady = new Promise<void>((resolve) => {
     initialStreamOpened = resolve;
@@ -5614,7 +5614,6 @@ async function bindStream(
       if (!bootstrapCurrent()) return settleBinding();
     }
 
-    if (typeof WebSocket !== "undefined") observeTranscriptCapabilities();
     multiplexed =
       typeof WebSocket !== "undefined"
         ? await sessionUpdatesSocket.negotiateTranscript(controller.signal)
@@ -5623,8 +5622,9 @@ async function bindStream(
       typeof document === "undefined" ||
       (document.visibilityState !== "hidden" &&
         (multiplexed || !navigator.locks || document.hasFocus()));
-    hasSlot = mayObserve && (multiplexed || (await acquireStreamSlot(id, controller.signal)));
-    const initialSlot = hasSlot ? heldStreamSlots.get(id) : undefined;
+    observingAtBind =
+      mayObserve && (multiplexed || (await acquireStreamSlot(id, controller.signal)));
+    const initialSlot = !multiplexed && observingAtBind ? heldStreamSlots.get(id) : undefined;
     if (!bootstrapCurrent()) {
       if (initialSlot && heldStreamSlots.get(id) === initialSlot) releaseStreamSlot(id);
       return;
@@ -5642,18 +5642,14 @@ async function bindStream(
     void observeConversationStream({
       signal: controller.signal,
       multiplexed: () => sessionUpdatesSocket.supportsTranscripts(),
-      initialSlot: initialSlot
-        ? observationSlot(initialSlot)
-        : multiplexed && mayObserve
-          ? { release: async () => {} }
-          : undefined,
+      subscribeTransportChanges: (changed) => sessionUpdatesSocket.subscribeCapabilities(changed),
+      initialSlot: initialSlot ? observationSlot(initialSlot) : undefined,
       priority: () => (conversationRegistry.isFocused(id) ? 2 : 1),
-      acquire: async () => {
-        if (sessionUpdatesSocket.supportsTranscripts()) return { release: async () => {} };
-        if (!(await acquireStreamSlot(id, controller.signal))) return null;
+      acquire: async (signal) => {
+        if (!(await acquireStreamSlot(id, signal))) return null;
         return observationSlot(heldStreamSlots.get(id)!);
       },
-      pump: (observation, resumed) =>
+      pump: (observation, resumed, sharedSocket) =>
         startStreamPump(
           id,
           controller,
@@ -5663,6 +5659,7 @@ async function bindStream(
           resumed,
           observation,
           initialStreamOpened,
+          sharedSocket,
         ),
       catchUp: (signal) =>
         reconcileOnReconnect(id, set, get, ignoredNativeMessageIds, true, false, undefined, signal),
@@ -5707,7 +5704,7 @@ async function bindStream(
     throw new Error("chatStore.bindStream: queryClient not initialized");
   }
   // A negotiated subscription must register before the authoritative item read.
-  if (multiplexed && hasSlot) await initialStreamReady;
+  if (multiplexed && observingAtBind) await initialStreamReady;
   if (!current()) return settleBinding();
   const snapshotSet: Setter = (patch) => {
     if (bootstrapCurrent()) set(patch);
@@ -5718,7 +5715,7 @@ async function bindStream(
       return;
     }
     const versionedBootstrap =
-      multiplexed && hasSlot && sessionUpdatesSocket.supportsVersionedFeed();
+      multiplexed && observingAtBind && sessionUpdatesSocket.supportsVersionedFeed();
     if (stateBeforeFetch.blocks.length > 0 && !versionedBootstrap) {
       // Reobserve the existing window without clearing older loaded pages or
       // replaying a send/scroll intent through a loading-state remount.
@@ -5727,7 +5724,7 @@ async function bindStream(
         snapshotSet,
         get,
         ignoredNativeMessageIds,
-        !hasSlot,
+        !observingAtBind,
         false,
         bootstrapSnapshot
           ? {
@@ -7439,16 +7436,6 @@ export async function hydrateTranscriptReader({
 }
 setTranscriptReaderHydrator(hydrateTranscriptReader);
 
-let observingTranscriptCapabilities = false;
-function observeTranscriptCapabilities(): void {
-  if (observingTranscriptCapabilities) return;
-  observingTranscriptCapabilities = true;
-  sessionUpdatesSocket.subscribeCapabilities(() => {
-    if (!sessionUpdatesSocket.supportsTranscripts()) return;
-    for (const attempt of presenceAttemptControllers)
-      if (!multiplexedAttempts.has(attempt)) attempt.abort();
-  });
-}
 const presenceIdle = createPresenceIdleTracker({
   onFlip: () => {
     sessionUpdatesSocket.reportPresence(presenceIdle.idleNow());
@@ -7533,6 +7520,7 @@ export async function startStreamPump(
   reconcileFirstOpen = false,
   observationController: AbortController = controller,
   onStreamOpened?: () => void,
+  sharedSocket?: boolean,
 ): Promise<void> {
   nativePreviewTombstonesByController.set(controller, ignoredNativeMessageIds);
   let reconcileAfterSlotWait = reconcileFirstOpen;
@@ -7550,7 +7538,7 @@ export async function startStreamPump(
     });
   };
   const statusReconcileTimer =
-    typeof window === "undefined" || sessionUpdatesSocket.supportsTranscripts()
+    typeof window === "undefined" || (sharedSocket ?? sessionUpdatesSocket.supportsTranscripts())
       ? null
       : window.setInterval(runGuardedStatusReconcile, ACTIVE_SESSION_STATUS_RECONCILE_INTERVAL_MS);
   // Pending post-reconnect catch-up timers. Tracked so each reconnect cancels
@@ -7611,7 +7599,7 @@ export async function startStreamPump(
       if (failedOpens > 0) {
         await abortableDelay(nextReconnectDelay(failedOpens), observationController.signal);
         if (observationController.signal.aborted || isConversationDisposed(id)) break;
-      } else if (hasConnected && conversationRegistry.getActive()?.id !== id) {
+      } else if (hasConnected && !sharedSocket && conversationRegistry.getActive()?.id !== id) {
         // Stagger a BACKGROUND conversation's reconnect. The ingress caps every
         // stream at ~5 minutes, and streams opened together recycle together, so
         // without this a tab holding N conversations fires N reconnects — each
@@ -7627,6 +7615,7 @@ export async function startStreamPump(
       const onOuterAbort = () => attempt.abort();
       observationController.signal.addEventListener("abort", onOuterAbort);
       presenceAttemptControllers.add(attempt);
+      if (sharedSocket) multiplexedAttempts.add(attempt);
       // Stamped from attempt start so the wake fast-path can also recycle
       // an open that has hung past the stale window, not just a dead body.
       streamAttemptActivity.set(attempt, Date.now());
@@ -7659,7 +7648,7 @@ export async function startStreamPump(
                 }
               : {}),
           };
-          if (sessionUpdatesSocket.supportsTranscripts()) {
+          if (sharedSocket ?? sessionUpdatesSocket.supportsTranscripts()) {
             releaseAdmission = await sessionUpdatesSocket.reserveMembership(attempt.signal);
             synchronization = conversationSynchronization(controller).begin(
               true,
@@ -7687,6 +7676,7 @@ export async function startStreamPump(
                 synchronization.identity.attemptId,
               )
             : null;
+          if (!shared && sharedSocket) return;
           if (!shared) {
             synchronization?.stop();
             synchronization = undefined;

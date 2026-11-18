@@ -220,6 +220,27 @@ describe("sessionUpdatesSocket transcript multiplexing", () => {
       event: { type: "response.output_text.delta", delta: text },
     });
 
+  it("holds a known membership through a socket outage and transfers to SSE when the replacement peer has no feed", async () => {
+    ready();
+    const original = latestWs();
+    original.close();
+    expect(sessionUpdatesSocket.supportsTranscripts()).toBe(true);
+    const opening = sessionUpdatesSocket.openTranscript(
+      "resume",
+      new AbortController().signal,
+      { after_position: 0 },
+      false,
+    );
+    await vi.advanceTimersByTimeAsync(5000);
+    const replacement = latestWs();
+    expect(replacement).not.toBe(original);
+    replacement.open();
+    await vi.advanceTimersByTimeAsync(TRANSCRIPT_NEGOTIATION_MS);
+    expect(await opening).toBeNull();
+    expect(replacement.sent.some((f) => f.type === "subscribe")).toBe(false);
+    expect(sessionUpdatesSocket.supportsTranscripts()).toBe(false);
+  });
+
   it("admits waiting panes in arrival order and removes cancelled waiters", async () => {
     latestWs().emit({
       type: "capabilities",
