@@ -2811,9 +2811,7 @@ describe("Composer shared visible controls", () => {
       conversationId: "shared-permissions",
       codexApprovalMode: "ask-for-approval",
     });
-    const setApproval = vi
-      .spyOn(useChatStore.getState(), "setCodexApprovalMode")
-      .mockResolvedValue(undefined);
+    const setApproval = spyComposerAction("setCodexApprovalMode").mockResolvedValue(undefined);
     renderWithTooltips(<Composer {...composerProps({ showCodexApprovalMode: true })} />);
     fireEvent.keyDown(screen.getByTestId("composer-permission-chip"), { key: "ArrowDown" });
     fireEvent.click(screen.getByTestId("composer-permission-option-full-access"));
@@ -2831,9 +2829,7 @@ describe("Composer shared visible controls", () => {
         conversationId: "owner-only-permissions",
         codexApprovalMode: "ask-for-approval",
       });
-      const setApproval = vi
-        .spyOn(useChatStore.getState(), "setCodexApprovalMode")
-        .mockResolvedValue(undefined);
+      const setApproval = spyComposerAction("setCodexApprovalMode").mockResolvedValue(undefined);
       renderWithTooltips(
         <Composer {...composerProps({ showCodexApprovalMode: true, permissionLevel })} />,
       );
@@ -2870,25 +2866,28 @@ describe("Composer shared visible controls", () => {
   });
 });
 
+/** Install action doubles through the store so scoped panes retain them across snapshot changes. */
+function spyComposerAction<
+  K extends "send" | "setModel" | "setEffort" | "setClaudePermissionMode" | "setCodexApprovalMode",
+>(key: K) {
+  const original = useChatStore.getState()[key];
+  const spy = vi.fn<ChatState[K]>(original);
+  useChatStore.setState({ [key]: spy });
+  onTestFinished(() => useChatStore.setState({ [key]: original }));
+  return spy;
+}
+
 describe("Composer permission-mode shortcut", () => {
   beforeEach(() => {
-    const {
-      conversationId,
-      sessionHarness,
-      claudePermissionMode,
-      codexApprovalMode,
-      setClaudePermissionMode,
-      setCodexApprovalMode,
-    } = useChatStore.getState();
-    // Zustand copies spies into later states, so restore both identity and setters.
+    const { conversationId, sessionHarness, claudePermissionMode, codexApprovalMode } =
+      useChatStore.getState();
+    // Restore the caller's session and shortcut state after the simulated interactions.
     onTestFinished(() =>
       useChatStore.setState({
         conversationId,
         sessionHarness,
         claudePermissionMode,
         codexApprovalMode,
-        setClaudePermissionMode,
-        setCodexApprovalMode,
       }),
     );
   });
@@ -2904,13 +2903,11 @@ describe("Composer permission-mode shortcut", () => {
    */
   function spyClaudeSetter(answer: (mode: string, call: number) => string | Error = (m) => m) {
     let call = 0;
-    return vi
-      .spyOn(useChatStore.getState(), "setClaudePermissionMode")
-      .mockImplementation(async (mode) => {
-        const outcome = answer(mode, call++);
-        if (outcome instanceof Error) throw outcome;
-        useChatStore.setState({ claudePermissionMode: outcome });
-      });
+    return spyComposerAction("setClaudePermissionMode").mockImplementation(async (mode) => {
+      const outcome = answer(mode, call++);
+      if (outcome instanceof Error) throw outcome;
+      useChatStore.setState({ claudePermissionMode: outcome });
+    });
   }
   const refuseAuto = (mode: string) =>
     mode === "auto"
@@ -2956,7 +2953,7 @@ describe("Composer permission-mode shortcut", () => {
 
   it("holds Shift+Tab without a second request while a change is in flight", async () => {
     let finish: () => void = () => {};
-    const setMode = vi.spyOn(useChatStore.getState(), "setClaudePermissionMode").mockImplementation(
+    const setMode = spyComposerAction("setClaudePermissionMode").mockImplementation(
       () =>
         new Promise<void>((resolve) => {
           finish = resolve;
@@ -3050,11 +3047,11 @@ describe("Composer permission-mode shortcut", () => {
       sessionHarness: "codex-native",
       codexApprovalMode: "approve-for-me",
     });
-    const setApproval = vi
-      .spyOn(useChatStore.getState(), "setCodexApprovalMode")
-      .mockImplementation(async (mode) => {
+    const setApproval = spyComposerAction("setCodexApprovalMode").mockImplementation(
+      async (mode) => {
         useChatStore.setState({ codexApprovalMode: mode });
-      });
+      },
+    );
     renderWithTooltips(<Composer {...composerProps({ showCodexApprovalMode: true })} />);
 
     await cycleTo("Full Access");
@@ -3076,12 +3073,12 @@ describe("Composer permission-mode shortcut", () => {
       codexApprovalMode: "ask-for-approval",
     });
     let call = 0;
-    const setApproval = vi
-      .spyOn(useChatStore.getState(), "setCodexApprovalMode")
-      .mockImplementation(async (mode) => {
+    const setApproval = spyComposerAction("setCodexApprovalMode").mockImplementation(
+      async (mode) => {
         if (call++ === 0) throw new ApiError("Runner refused", 503, "runner_unavailable");
         useChatStore.setState({ codexApprovalMode: mode });
-      });
+      },
+    );
     renderWithTooltips(<Composer {...composerProps({ showCodexApprovalMode: true })} />);
 
     pressShiftTab(textarea());
@@ -3103,7 +3100,7 @@ describe("Composer permission-mode shortcut", () => {
       codexApprovalMode: session.codex ?? "",
     });
     const setMode = spyClaudeSetter();
-    const setApproval = vi.spyOn(useChatStore.getState(), "setCodexApprovalMode");
+    const setApproval = spyComposerAction("setCodexApprovalMode");
     renderWithTooltips(
       <Composer
         {...composerProps(
@@ -8084,7 +8081,7 @@ describe("full composer in independent conversation panes", () => {
   it("restores primary drafts, keeps workspace controls local, and pins a send after global focus changes", async () => {
     setSessionDraft("pane-first", { text: "Existing primary draft", files: [] });
     setSessionDraft("pane-second", { text: "Second draft", files: [] });
-    const send = vi.spyOn(useChatStore.getState(), "send").mockResolvedValue(undefined);
+    const send = spyComposerAction("send").mockResolvedValue(undefined);
     render(<Panes />);
     expect(input("pane-first")).toHaveValue("Existing primary draft");
     expect(input("pane-second")).toHaveValue("Second draft");
@@ -8114,21 +8111,17 @@ describe("full composer in independent conversation panes", () => {
   });
 
   it("targets the second pane for model, effort and permission controls", async () => {
-    const model = vi
-      .spyOn(useChatStore.getState(), "setModel")
-      .mockImplementation(async (value, _options, id) => {
-        conversationRegistry.peek(id!)!.setState({ sessionModelOverride: value });
-      });
-    const effort = vi
-      .spyOn(useChatStore.getState(), "setEffort")
-      .mockImplementation(async (value, id) => {
-        conversationRegistry.peek(id!)!.setState({ sessionReasoningEffort: value });
-      });
-    const permissions = vi
-      .spyOn(useChatStore.getState(), "setClaudePermissionMode")
-      .mockImplementation(async (value, id) => {
+    const model = spyComposerAction("setModel").mockImplementation(async (value, _options, id) => {
+      conversationRegistry.peek(id!)!.setState({ sessionModelOverride: value });
+    });
+    const effort = spyComposerAction("setEffort").mockImplementation(async (value, id) => {
+      conversationRegistry.peek(id!)!.setState({ sessionReasoningEffort: value });
+    });
+    const permissions = spyComposerAction("setClaudePermissionMode").mockImplementation(
+      async (value, id) => {
         conversationRegistry.peek(id!)!.setState({ claudePermissionMode: value });
-      });
+      },
+    );
     render(<Panes secondFocused />);
     fireEvent.keyDown(
       within(screen.getByTestId("pane-second")).getByTestId("composer-config-gear"),
