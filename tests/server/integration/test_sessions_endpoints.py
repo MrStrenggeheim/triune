@@ -10944,12 +10944,14 @@ def _queue_web_message(session_id: str, text: str) -> str:
     return pending_inputs.record(session_id, [{"type": "input_text", "text": text}])
 
 
-async def _press_stop(client: httpx.AsyncClient, session_id: str) -> None:
+async def _press_stop(
+    client: httpx.AsyncClient, session_id: str, expected_status: int = 202
+) -> None:
     """POST an interrupt, as the web client's Stop button does."""
     response = await client.post(
         f"/v1/sessions/{session_id}/events", json={"type": "interrupt", "data": {}}
     )
-    assert response.status_code == 202, response.text
+    assert response.status_code == expected_status, response.text
 
 
 async def _mirror_user_message(
@@ -11024,7 +11026,7 @@ async def test_interrupted_native_message_is_not_reported_undelivered_by_a_later
         client, monkeypatch, interrupt_status=202 if delivered else 503
     ) as (session_id, published):
         cancelled = _queue_web_message(session_id, "cancel me")
-        await _press_stop(client, session_id)
+        await _press_stop(client, session_id, expected_status=202 if delivered else 503)
         # The person's next message, sent after Stop, which the agent records.
         kept = _queue_web_message(session_id, "go on")
         await _mirror_user_message(client, session_id, "go on", "codex:go-on:0")

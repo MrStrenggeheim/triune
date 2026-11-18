@@ -2222,6 +2222,26 @@ def register_events_routes(
                         session_id,
                     )
             if not interrupt_delivered:
+                if (
+                    runner_client is None
+                    and not response_id
+                    and not codex_child
+                    and not conv.runner_id
+                ):
+                    from omnigent.server.startup_inputs import STARTUP_LABEL
+
+                    # An unscoped Stop before runner assignment can complete entirely in
+                    # the startup queue. Never acknowledge an unconfirmed running turn.
+                    latest = await asyncio.to_thread(
+                        conversation_store.get_conversation, session_id
+                    )
+                    if (
+                        latest is not None
+                        and not latest.runner_id
+                        and latest.labels.get(STARTUP_LABEL) == "cancelled"
+                        and not _session_active_response_cache.get(session_id)
+                    ):
+                        return {"queued": False, "startup_cancelled": True}
                 if codex_child:
                     raise OmnigentError(
                         "Couldn't interrupt the side chat. Please try again.",

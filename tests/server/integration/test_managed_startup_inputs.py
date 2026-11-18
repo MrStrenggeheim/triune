@@ -445,6 +445,13 @@ async def test_stop_before_host_ready_cancels_all_saved_inputs(
     entry = env.conv_store.list_pending_inputs(session_id)[0]
     response = await env.client.post(f"/v1/sessions/{session_id}/events", json={"type": control})
     assert response.status_code == 202, response.text
+    if control == "interrupt":
+        assert response.json()["startup_cancelled"] is True
+        named = await env.client.post(
+            f"/v1/sessions/{session_id}/events",
+            json={"type": "interrupt", "data": {"response_id": "unconfirmed-running-turn"}},
+        )
+        assert named.status_code == 503
     assert env.conv_store.list_pending_inputs(session_id) == []
     # SDK startup/reconnect loads this endpoint and resumes a trailing user item.
     history = await env.client.get(f"/v1/sessions/{session_id}/items")
