@@ -40,11 +40,12 @@ Earlier scoped approvals in this document still apply.
 The first collection of the whole application is a working reference pending owner review.
 In uncovered areas preserve the existing production surface and bring any new product choice to the owner.
 
-| Owner decision, 2026-11-18 | Accepted scope | Reference for implementation |
+| Owner decision | Accepted scope | Reference for implementation |
 | --- | --- | --- |
-| ACTIVITY-ENTRY-27 | Proposed agent and shell entry geometry, nested actions and narrow Stop treatment | Queued activity-entry artifact, SHA-256 `04949f1d4ba831dac09897e255b4f6a2b5681f9bc6a926cfdf882f1007d2c162` |
-| BUTTON-UNIFY-28 | Composer at rest, hover and press only | Button artifact, SHA-256 `86ea83c0e6165c4ea00a177405693698448517178906b2a4764387dad5648ab3` |
-| UX review 1 · embedded workspace directory row | Folder and file rows in the embedded picker: 28 px Compact and 36 px Comfortable on desktop, 44 px for either density on touch; keep the reviewed insets, icon spacing and enabled/disabled appearance | `WorkspacePickerEntry` at `b71684ab1`; review artifact SHA-256 `5376b4a5e3ae87b59cb3d9070162bf2b4680e1885ea131d071c13263a97dc649` |
+| ACTIVITY-ENTRY-27, 2026-11-18 | Proposed agent and shell entry geometry, nested actions and narrow Stop treatment | Queued activity-entry artifact, SHA-256 `04949f1d4ba831dac09897e255b4f6a2b5681f9bc6a926cfdf882f1007d2c162` |
+| BUTTON-UNIFY-28, 2026-11-18 | Composer at rest, hover and press only | Button artifact, SHA-256 `86ea83c0e6165c4ea00a177405693698448517178906b2a4764387dad5648ab3` |
+| UX review 1 · embedded workspace directory row, 2026-11-18 | Folder and file rows in the embedded picker: 28 px Compact and 36 px Comfortable on desktop, 44 px for either density on touch; keep the reviewed insets, icon spacing and enabled/disabled appearance | `WorkspacePickerEntry` at `b71684ab1`; review artifact SHA-256 `5376b4a5e3ae87b59cb3d9070162bf2b4680e1885ea131d071c13263a97dc649` |
+| BUTTON-UNIFY-28 · Medium, 2026-11-19 | At default Appearance, 32 px button, 1 px reserved border, 8 px padding, 6 px gap and 14 px icon/label band. Shift only the label up 0.5 px. Preserve viewport-specific UI type. | Accepted Medium artifact, SHA-256 `61ecdd59531b8f65154cbade5664bb360bbf12193b1ff0f702cf1e18ca880a31` |
 
 The owner rejected the replacement popup contents and workspace selector in the button artifact.
 Mount the production menus and `WorkspaceSelectionDialog` when reviewing button changes.
