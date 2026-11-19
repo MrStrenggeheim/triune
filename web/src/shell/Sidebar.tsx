@@ -3607,6 +3607,7 @@ function SidebarFilterMenu({
                 aria-label={label}
                 data-testid={testId}
                 className={cn("text-muted-foreground", active && "text-foreground")}
+                menuFeedback={active ? false : undefined}
                 onClick={(event) => event.stopPropagation()}
               >
                 <ListFilterIcon className="size-3.5" />
@@ -5515,6 +5516,7 @@ function ConversationRowImpl({
                   size="icon-xs"
                   tabIndex={-1}
                   aria-label="Session status"
+                  menuFeedback={false}
                   aria-describedby={statusDescriptionId}
                   aria-haspopup="menu"
                   aria-expanded={menuOpen}
@@ -5578,6 +5580,7 @@ function ConversationRowImpl({
                     tooltipDescription={statusDescription || undefined}
                     aria-describedby={statusDescription ? statusDescriptionId : undefined}
                     data-testid="conversation-actions"
+                    menuFeedback={false}
                     className="sidebar-session-more shrink-0 text-muted-foreground [@media(pointer:coarse)]:size-11"
                     onClick={(event) => {
                       event.preventDefault();
@@ -6355,6 +6358,7 @@ function ProjectFolderMenu({
           size="icon-xs"
           aria-label={`Project actions for ${projectName}`}
           data-testid="project-actions"
+          menuFeedback={false}
           className="text-muted-foreground"
           onClick={(e) => e.stopPropagation()}
         >

@@ -516,7 +516,7 @@ describe("shell resource contracts", () => {
         resource_url: resourceUrl,
         stop_url: stopUrl,
       });
-      const status = screen.getByRole("button", { name: "Actions for printf actual-command" });
+      const status = screen.getByRole("button", { name: "Stop actions for printf actual-command" });
       fireEvent.pointerDown(status, { pointerType: "mouse", button: 0 });
       fireEvent.click(status, { detail: 1 });
       await act(async () => {});
@@ -533,7 +533,7 @@ describe("shell resource contracts", () => {
     { status: "completed" },
   ])("does not offer Stop without live, explicit capabilities and identity: %j", (override) => {
     openResource({ ...task, ...override });
-    expect(screen.queryByRole("button", { name: /Actions for/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Stop actions for/ })).toBeNull();
     expect(authenticatedFetch).not.toHaveBeenCalled();
   });
   it("leaves old detail-only records readable without inventing shell actions or output", () => {
@@ -544,16 +544,16 @@ describe("shell resource contracts", () => {
     });
     expect(screen.getByText("same command")).toBeVisible();
     expect(
-      screen.queryByRole("button", { name: /Open shell|Orchestration|Actions for/ }),
+      screen.queryByRole("button", { name: /Open shell|Orchestration|Stop actions for/ }),
     ).toBeNull();
     expect(openView).not.toHaveBeenCalled();
   });
   it("retains displayed output but removes Stop when live controls fail to refresh", () => {
     openResource(task);
-    expect(screen.getByRole("button", { name: /Actions for/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Stop actions for/ })).toBeInTheDocument();
     liveShells([task], new Error("Runner offline"));
     act(() => setBackground(1, [{ ...task }]));
-    expect(screen.queryByRole("button", { name: /Actions for/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Stop actions for/ })).toBeNull();
     expect(screen.getByText("captured last line")).toBeInTheDocument();
     const notice = getNotificationSnapshot().entries.find(
       (entry) => entry.id === "shell-popup:conv-1",

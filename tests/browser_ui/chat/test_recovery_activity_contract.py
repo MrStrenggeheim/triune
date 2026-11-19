@@ -404,7 +404,7 @@ def test_child_activity_keeps_one_card_per_id_in_plain_timeline_and_worked_fold(
     expect(second).to_have_count(1)
     expect(first.locator("[data-resource-row]")).to_contain_text("Navigation review")
     expect(second.locator("[data-resource-row]")).to_contain_text("Navigation review")
-    first.get_by_role("button", name="Expand activity", exact=True).click()
+    first.get_by_role("button", name="Expand activity · Curie task", exact=True).click()
     expect(first).to_contain_text("Original handoff")
     expect(first).to_contain_text("First steering details")
     expect(first).to_contain_text("Second steering details")

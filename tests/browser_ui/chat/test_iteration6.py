@@ -405,7 +405,8 @@ def _popup_gap(popup: Locator, trigger: Any) -> dict:
     _settle_popup(popup)
     geometry = popup.evaluate(
         """(popup, trigger) => {
-      const surface = trigger.querySelector('[data-header-action-surface]') || trigger;
+      const surface = trigger.querySelector(
+        '[data-header-action-surface], [data-composer-shelf-face]') || trigger;
       const nearest = trigger.closest('.workbench-app-bar, .workspace-control-header, ' +
         '.chat-header, .composer-shelf-content, .composer-shelf-surface');
       const row = nearest.closest('.composer-shelf-content') || nearest;

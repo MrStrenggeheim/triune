@@ -722,6 +722,7 @@ export function ShellResourceRow({
     : undefined;
   return (
     <ActivityRow
+      entry
       icon={<SquareTerminalIcon aria-hidden="true" />}
       title={name}
       description={task.output_preview ?? ""}
@@ -876,6 +877,7 @@ function AgentResourceContent({
   const running = ["launching", "working", "awaiting"].includes(childStatus(child).activity);
   return (
     <ActivityRow
+      entry
       icon={<BotIcon aria-hidden="true" />}
       title={name}
       titleDetail={
@@ -968,6 +970,7 @@ function ShellRow({
   return (
     <li data-shell-id={owner.id}>
       <ActivityRow
+        entry
         selected={selected}
         icon={<SquareTerminalIcon aria-hidden="true" className="size-3.5" />}
         title={latest?.name ?? groupName(group)}

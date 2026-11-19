@@ -1,4 +1,4 @@
-import { TooltipButton } from "@/components/ui/tooltip";
+import { Button } from "@/components/ui/button";
 import { useCallback, useState } from "react";
 import type { useMcpRegistryCatalog } from "@/hooks/useMcpRegistry";
 import { ChevronDownIcon, PlugIcon } from "lucide-react";
@@ -37,7 +37,10 @@ export function McpRegistryLaunchPicker({
   return (
     <Popover open={open} onOpenChange={(next) => !authorizing && setOpen(next)}>
       <PopoverTrigger asChild>
-        <TooltipButton
+        <Button
+          variant="ghost"
+          menuFeedback={needsSignInCount ? undefined : "composer"}
+          size="xs"
           type="button"
           disabled={disabled}
           title={
@@ -45,9 +48,10 @@ export function McpRegistryLaunchPicker({
           }
           aria-label={`MCP services: ${selectedCount} selected${needsSignInCount ? `, ${needsSignInCount} needs sign-in` : ""}`}
           data-testid="new-chat-landing-mcp-registry-chip"
-          className="relative inline-flex h-6 min-w-10 max-w-[calc(50%-0.25rem)] cursor-pointer items-center gap-1 rounded-md border border-transparent bg-transparent px-0.5 text-xs leading-4 font-normal text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-default disabled:opacity-50 md:min-w-11 md:px-1"
+          className="min-w-10 max-w-[calc(50%-0.25rem)] shrink gap-1 rounded-md px-0.5 text-xs leading-4 text-muted-foreground md:min-w-11 md:px-1"
         >
           <PlugIcon
+            data-icon-size="16"
             className={cn(
               "size-4 shrink-0",
               needsSignInCount && "text-amber-600 dark:text-amber-500",
@@ -64,8 +68,8 @@ export function McpRegistryLaunchPicker({
               · {needsSignInCount} needs sign-in
             </span>
           )}
-          <ChevronDownIcon className="size-3.5 shrink-0 opacity-60" />
-        </TooltipButton>
+          <ChevronDownIcon data-icon-size="14" className="size-3.5 shrink-0 opacity-60" />
+        </Button>
       </PopoverTrigger>
       <PopoverContent
         align="start"

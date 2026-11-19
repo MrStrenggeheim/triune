@@ -14,6 +14,7 @@ import { BackgroundTaskIndicator } from "./BackgroundTaskIndicator";
 import { SubagentTaskIndicator } from "./SubagentTaskIndicator";
 import { COMPOSER_WORKSPACE_COLLAPSED_LABEL_CLASS } from "./ChatComposer";
 import { ComposerShelf } from "./ComposerShelf";
+import { ComposerShelfButton } from "./ComposerShelfButton";
 import { useChildSessions } from "@/hooks/useChildSessions";
 import { childStatus } from "@/shell/subagentStatus";
 import { useComposerShelfVisibility } from "./ComposerShelfVisibility";
@@ -148,17 +149,14 @@ export function ComposerAttentionShelf({
               }}
             >
               <PopoverTrigger asChild>
-                <Button
+                <ComposerShelfButton
                   ref={(node) => {
                     if (node) requestTriggers.current[kind] = node;
                   }}
-                  type="button"
-                  variant="ghost"
-                  size="xs"
                   className="gap-1 px-1 font-normal tabular-nums"
                   aria-label={`${label}: ${items.length}`}
                 >
-                  <Icon className="size-3.5 text-warning" />
+                  <Icon className="size-3.5 text-warning!" />
                   <span
                     data-workspace-collapse-label=""
                     className={COMPOSER_WORKSPACE_COLLAPSED_LABEL_CLASS}
@@ -166,7 +164,7 @@ export function ComposerAttentionShelf({
                     {label}
                   </span>
                   <span>{items.length}</span>
-                </Button>
+                </ComposerShelfButton>
               </PopoverTrigger>
               {mountedRequests.conversationId === conversationId && mountedRequests[kind] && (
                 <PopoverContent
@@ -212,10 +210,7 @@ export function ComposerAttentionShelf({
         {todos.length > 0 && (
           <Popover open={open === "plan"} onOpenChange={(value) => setOpen(value ? "plan" : null)}>
             <PopoverTrigger asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                size="xs"
+              <ComposerShelfButton
                 className="gap-1 px-1 font-normal tabular-nums"
                 aria-label={`Plan: ${completed} of ${todos.length} completed`}
               >
@@ -229,7 +224,7 @@ export function ComposerAttentionShelf({
                 <span>
                   {completed}/{todos.length}
                 </span>
-              </Button>
+              </ComposerShelfButton>
             </PopoverTrigger>
             <PopoverContent
               side="top"

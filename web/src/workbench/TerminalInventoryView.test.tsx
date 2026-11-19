@@ -214,8 +214,8 @@ it("uses two-line embedded rows, sorts observed exit activity and stops only an 
       .filter((button) => ["old", "live"].includes(button.getAttribute("aria-label") ?? ""))
       .map((button) => button.getAttribute("aria-label")),
   ).toEqual(["old", "live"]);
-  expect(screen.queryByRole("button", { name: "Actions for old" })).not.toBeInTheDocument();
-  const status = screen.getByRole("button", { name: "Actions for live" });
+  expect(screen.queryByRole("button", { name: "Stop actions for old" })).not.toBeInTheDocument();
+  const status = screen.getByRole("button", { name: "Stop actions for live" });
   fireEvent.pointerDown(status, { pointerType: "mouse", button: 0 });
   fireEvent.click(status, { detail: 1 });
   await waitFor(() =>
@@ -233,7 +233,7 @@ it("uses two-line embedded rows, sorts observed exit activity and stops only an 
       onNewTerminal={vi.fn()}
     />,
   );
-  expect(screen.queryByRole("button", { name: "Actions for live" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Stop actions for live" })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "old" }));
   expect(open).toHaveBeenCalledWith("old");
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -266,12 +266,14 @@ it("shows the captured command/output and consumes a matching focus request once
   };
   const view = render(<TerminalInventoryView {...props} />, { wrapper: setup() });
   expect(await screen.findByRole("button", { name: "printf actual-command" })).toBeVisible();
-  expect(screen.getByText("last captured line")).toHaveClass("truncate");
+  expect(screen.getByText("last captured line").closest(".resource-description")).toHaveClass(
+    "truncate",
+  );
   expect(screen.queryByText("first line")).toBeNull();
   await waitFor(() => expect(consume).toHaveBeenCalledOnce());
   view.rerender(<TerminalInventoryView {...props} />);
   expect(consume).toHaveBeenCalledOnce();
   view.rerender(<TerminalInventoryView {...props} linkRequestId="second" />);
   expect(consume).toHaveBeenCalledTimes(2);
-  expect(screen.queryByRole("button", { name: /Actions for/ })).toBeNull();
+  expect(screen.queryByRole("button", { name: /Stop actions for/ })).toBeNull();
 });

@@ -1,3 +1,4 @@
+// Modified for Triune; inherited notices remain applicable.
 import { useEffect, useState } from "react";
 import { CheckIcon, ChevronUpIcon, LogOutIcon, PlusIcon, ServerIcon } from "lucide-react";
 import { toast } from "@/lib/notifications";
@@ -172,6 +173,7 @@ export function SidebarServerPicker() {
           <Button
             type="button"
             variant="ghost"
+            menuFeedback={false}
             // Same shared row construct as New session / Inbox / Settings, so
             // the icon lands on the sidebar's icon column and the label on its
             // label column.

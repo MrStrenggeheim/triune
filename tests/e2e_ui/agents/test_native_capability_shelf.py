@@ -117,12 +117,12 @@ def _native_message(text: str, phase: str) -> dict[str, Any]:
 
 
 def _expand_activity(card: Locator) -> None:
-    disclosure = card.get_by_role("button", name="Expand activity", exact=True)
+    disclosure = card.get_by_role("button", name=re.compile(r"^Expand activity · .+"))
     if disclosure.count():
         disclosure.click()
-    expect(card.get_by_role("button", name="Collapse activity", exact=True)).to_have_attribute(
-        "aria-expanded", "true"
-    )
+    expect(
+        card.get_by_role("button", name=re.compile(r"^Collapse activity · .+"))
+    ).to_have_attribute("aria-expanded", "true")
 
 
 def _framework_call(tools: dict[str, dict], name: str, call_id: str, **arguments: Any) -> dict:
@@ -861,7 +861,7 @@ def test_native_codex_capability_shelf(
             row = popup.locator("[data-resource-row]")
             expect(row).to_have_count(1)
             expect(row.locator(".resource-description")).to_have_text(output_marker)
-            stop = row.get_by_role("button", name=re.compile(r"^Actions for "))
+            stop = row.get_by_role("button", name=re.compile(r"^Stop actions for "))
             expect(stop).to_have_count(1 if resource["can_stop"] is True else 0)
             row.get_by_role("button", name=re.compile(r"^Open shell beside ·")).click()
             page.keyboard.press("Escape")
@@ -935,7 +935,7 @@ def test_native_codex_capability_shelf(
                 assert resource["stop_method"] == "POST", resource
                 assert resource["stop_url"] == f"{resource['resource_url']}/stop", resource
                 target.hover()
-                status = target.get_by_role("button", name=re.compile(r"^Actions for "))
+                status = target.get_by_role("button", name=re.compile(r"^Stop actions for "))
                 expect(status).to_have_count(1)
                 with page.expect_response(
                     lambda response: (
@@ -978,9 +978,9 @@ def test_native_codex_capability_shelf(
                 ).text_content().splitlines() == [initial_marker, output_marker]
                 _capture(page, evidence, "codex-targeted-shell-stopped")
                 return
-            expect(target.get_by_role("button", name=re.compile(r"^Actions for "))).to_have_count(
-                0
-            )
+            expect(
+                target.get_by_role("button", name=re.compile(r"^Stop actions for "))
+            ).to_have_count(0)
         finally:
             release.touch()
         poll_until(finished.exists, timeout_s=15)

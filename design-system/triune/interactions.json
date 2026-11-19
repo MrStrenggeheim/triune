@@ -35,6 +35,20 @@
     "test": "components/ui/button.test.tsx"
   },
   {
+    "task": "Use the approved Medium button with an icon and label",
+    "owner": "components/ui/button.tsx",
+    "caller": "shell/WorkspaceSelectionDialog.tsx",
+    "story": "components/ui/Foundations.stories.tsx#MediumButton",
+    "test": "components/ui/button.test.tsx"
+  },
+  {
+    "task": "Open a menu from an ordinary ghost button",
+    "owner": "components/ui/button.tsx",
+    "caller": "shell/DiffComparisonControls.tsx",
+    "story": "components/ui/Foundations.stories.tsx#GhostMenuFeedback",
+    "test": "components/ui/button.test.tsx"
+  },
+  {
     "task": "Attach files from the composer menu",
     "owner": "components/composer/ComposerAddMenu.tsx",
     "caller": "pages/ChatPage.tsx",
@@ -47,5 +61,12 @@
     "caller": "pages/SettingsPage.tsx",
     "story": "components/theme/ThemeColorPicker.stories.tsx#OpenWithEditedHex",
     "test": "components/theme/ThemeColorPicker.test.tsx"
+  },
+  {
+    "task": "Show an agent or shell activity entry",
+    "owner": "components/ActivityRow.tsx",
+    "caller": "shell/ChatActivityPanel.tsx",
+    "story": "shell/ActivityEntries.stories.tsx#RunningAgent",
+    "test": "components/ActivityRow.test.tsx"
   }
 ]

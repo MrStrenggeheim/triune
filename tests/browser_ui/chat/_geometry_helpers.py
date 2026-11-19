@@ -39,6 +39,32 @@ def assert_same_vertical_center(left: FloatRect, right: FloatRect) -> None:
     assert abs(left_center - right_center) <= TOLERANCE, (left_center, right_center)
 
 
+def assert_activity_entry(row: Locator) -> None:
+    row.scroll_into_view_if_needed()
+    header = box(row)
+    tile = box(row.locator(".resource-icon"))
+    title = box(row.locator(":is(.activity-message-text, .resource-text) > :first-child"))
+    preview = box(row.locator(".resource-description"))
+    assert header["height"] == pytest.approx(44)
+    assert (tile["width"], tile["height"]) == pytest.approx((32, 32))
+    assert (tile["x"] - header["x"], tile["y"] - header["y"]) == pytest.approx((6, 6))
+    assert (title["height"], preview["height"]) == pytest.approx((16, 14))
+    assert preview["y"] - title["y"] - title["height"] == pytest.approx(2)
+    compact = header["width"] <= 440
+    for label in row.locator(".resource-status-text, .resource-stop-text").all():
+        assert label.evaluate("el => getComputedStyle(el).display === 'none'") == compact
+    if compact:
+        for badge in row.locator(".activity-status-slot [data-slot=badge]").all():
+            expect(badge).to_have_css("width", "24px")
+            expect(badge).to_have_css("height", "24px")
+    actions = row.locator(".resource-actions :is(a, button)")
+    for action in actions.all():
+        bounds = box(action)
+        assert (bounds["width"], bounds["height"]) == pytest.approx((24, 24))
+        assert_same_vertical_center(header, bounds)
+    assert right_inset(header, box(actions.last)) == pytest.approx(10)
+
+
 def assert_no_overlap(left: FloatRect, right: FloatRect) -> None:
     overlap_x = min(left["x"] + left["width"], right["x"] + right["width"]) - max(
         left["x"], right["x"]

@@ -186,7 +186,7 @@ it.each([
   expect(geometry()["data-popup-row-anchor"]).toBeUndefined();
 });
 
-it("uses viewport/composer intersection as horizontal collision padding and updates on resize", () => {
+it("keeps a 24px viewport gutter for composer popups even when the pane is narrow or moves", () => {
   let left = 100;
   let width = 400;
   render(
@@ -203,13 +203,13 @@ it("uses viewport/composer intersection as horizontal collision padding and upda
     </AnchoredPopupProvider>,
   );
   const bounds = () => JSON.parse(screen.getByTestId("bounds").textContent!);
-  expect(bounds()).toEqual({ top: 8, bottom: 8, left: 112, right: window.innerWidth - 488 });
+  expect(bounds()).toEqual({ top: 24, bottom: 24, left: 24, right: 24 });
   act(() => {
     left = -20;
     width = 300;
     window.dispatchEvent(new Event("resize"));
   });
-  expect(bounds()).toEqual({ top: 8, bottom: 8, left: 8, right: window.innerWidth - 268 });
+  expect(bounds()).toEqual({ top: 24, bottom: 24, left: 24, right: 24 });
 });
 
 it("centers top/bottom popovers and dropdowns despite legacy edge alignment, retaining preferred side", () => {

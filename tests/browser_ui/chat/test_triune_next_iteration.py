@@ -2,6 +2,7 @@
 """Shared controls and retained resources for the next Triune iteration."""
 
 import json
+import math
 import re
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
@@ -315,7 +316,19 @@ def test_fifty_layouts_retire_while_preserving_draft_and_editor_undo(
         assert browser_errors == []
 
 
-@pytest.mark.parametrize("width", [390, 1440], ids=["phone", "desktop"])
+@pytest.mark.parametrize(
+    "width",
+    [
+        pytest.param(390, id="narrow-fine"),
+        pytest.param(
+            375, marks=pytest.mark.browser_context_args(has_touch=True), id="phone-touch"
+        ),
+        pytest.param(1440, id="desktop"),
+        pytest.param(
+            1024, marks=pytest.mark.browser_context_args(has_touch=True), id="wide-touch"
+        ),
+    ],
+)
 def test_original_composer_shelf_requests_and_counts(
     page: Page,
     workspace_journey: WorkspaceJourney,
@@ -410,6 +423,58 @@ def test_original_composer_shelf_requests_and_counts(
     expect(shelf.get_by_role("button", name="Plan: 0 of 1 completed", exact=True)).to_be_visible()
     assert shelf.locator(".lucide-chevron-down").count() == 0
     assert shelf.evaluate("el => el.scrollWidth <= el.clientWidth + 1")
+    presence = shelf.locator("xpath=ancestor::div[contains(@class, 'composer-shelf-presence')]")
+    touch = page.evaluate("matchMedia('(any-pointer: coarse)').matches")
+    assert touch == (width in (375, 1024))
+    enlarged = width < 768 or touch
+    for density, desktop_height in (("compact", 30), ("comfortable", 34)):
+        page.locator("html").evaluate("(el, value) => el.dataset.listDensity = value", density)
+        expect(presence).to_have_css("height", f"{45 if enlarged else desktop_height}px")
+        for button in shelf.get_by_role("button").all():
+            face = button.locator("[data-composer-shelf-face]")
+            expect(face).to_have_css("height", "24px")
+            expect(button).to_have_css("height", "44px" if enlarged else "24px")
+            assert button.evaluate("""el => {
+              const b = el.getBoundingClientRect();
+              const x = b.left + b.width / 2, y = b.top + b.height / 2;
+              const face = el.querySelector('[data-composer-shelf-face]').getBoundingClientRect();
+              if (Math.abs(face.top + face.height / 2 - y) > 0.5) return false;
+              let hitRows = 0;
+              for (let py = Math.floor(b.top) - 1; py <= Math.ceil(b.bottom); py++) {
+                if (el.contains(document.elementFromPoint(x, py))) hitRows++;
+              }
+              if (hitRows < b.height || b.width < b.height) return false;
+              return [[x, b.top + 1], [x, b.bottom - 1], [b.left + 1, y], [b.right - 1, y]]
+                .every(([px, py]) => el.contains(document.elementFromPoint(px, py)));
+            }""")
+    for test_id, name, edge in (
+        ("subagent-task-pill", "1 sub-agent: 1 active", "top"),
+        ("background-task-pill", "1 background task", "bottom"),
+    ):
+        trigger = shelf.get_by_test_id(test_id)
+        bounds = trigger.bounding_box()
+        assert bounds and (not enlarged or bounds["width"] >= 44)
+        x = bounds["x"] + bounds["width"] / 2
+        # A synthesized tap rounds its coordinates; keep it inside the target edge.
+        y = (
+            math.ceil(bounds["y"]) + 1
+            if edge == "top"
+            else math.floor(bounds["y"] + bounds["height"]) - 1
+        )
+        if touch:
+            page.touchscreen.tap(x, y)
+        else:
+            page.mouse.move(x, y)
+            page.mouse.down()
+            expect(trigger).to_have_css("background-color", "rgba(0, 0, 0, 0)")
+            expect(trigger.locator("[data-composer-shelf-face]")).not_to_have_css(
+                "background-color", "rgba(0, 0, 0, 0)"
+            )
+            page.mouse.up()
+        expect(page.get_by_role("dialog", name=name, exact=True)).to_be_visible()
+        page.keyboard.press("Escape")
+        expect(trigger).to_be_focused()
+    _capture(page, output_path, f"shelf-focus-{width}")
     shelf.get_by_role("button", name="Questions: 1", exact=True).click()
     panel = page.get_by_role("dialog", name="Questions", exact=True)
     form = panel.get_by_test_id("ask-user-question-form")

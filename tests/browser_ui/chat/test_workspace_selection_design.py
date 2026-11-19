@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 import pytest
 from playwright.sync_api import Locator, Page, Request, Route, expect
 
+from tests.browser_ui.chat._geometry_helpers import assert_activity_entry
 from tests.browser_ui.chat.session_contract import list_payload, message_item
 from tests.browser_ui.chat.test_iteration6 import _close_phone_navigation, _navigation
 from tests.browser_ui.chat.test_unified_workspace import (
@@ -814,6 +815,12 @@ def test_activity_sources_group_hosts_and_chats_and_agent_cli_is_discoverable(
     browser_errors: list[str],
 ) -> None:
     journey = workspace_journey
+    root = journey.workspace["root"]
+    host_id = journey.chats[1].host_id
+    journey.chats[1].update_session(workspace=root)
+    browser_contract.json(f"/v1/hosts/{host_id}/filesystem", list_payload([]))
+    browser_contract.json(f"/v1/hosts/{host_id}/filesystem{root}", list_payload([]))
+    browser_contract.json("/v1/workbench-workspaces", journey.workspace, method="POST")
     browser_contract.json("/v1/workbench-workspaces", list_payload([journey.workspace]))
     page.set_viewport_size({"width": 1440, "height": 1000})
     page.goto(journey.chats[0].url)
@@ -830,7 +837,7 @@ def test_activity_sources_group_hosts_and_chats_and_agent_cli_is_discoverable(
     source = activity.get_by_role("button", name="Choose orchestration source", exact=False)
     source.click()
     dialog = page.get_by_role("dialog", name="Orchestration source", exact=True)
-    for group, option in (("Hosts", "Browser host"), ("Chats", "Chat B")):
+    for group, option in (("Source", "Host / workspace"), ("Chats", "Chat B")):
         expect(
             dialog.get_by_role("group", name=group, exact=True).get_by_role(
                 "option", name=option, exact=True
@@ -839,16 +846,26 @@ def test_activity_sources_group_hosts_and_chats_and_agent_cli_is_discoverable(
     _capture(page, output_path, "desktop-activity-grouped-sources")
     dialog.get_by_role("option", name="Chat B", exact=True).click()
     expect(dialog).to_have_count(0)
-    expect(source).to_contain_text("Chat: Chat B")
+    expect(source).to_have_accessible_name("Choose orchestration source · Chat: Chat B")
     page.set_viewport_size({"width": 390, "height": 844})
     source.click()
-    expect(dialog.get_by_role("option", name="Browser host", exact=True)).to_be_in_viewport()
+    host = dialog.get_by_role("option", name="Host / workspace", exact=True)
+    expect(host).to_be_in_viewport()
     expect(dialog.get_by_role("option", name="Chat B", exact=True)).to_be_in_viewport()
     _capture(page, output_path, "phone-activity-grouped-sources")
-    dialog.get_by_role("option", name="Browser host", exact=True).click()
+    host.click()
+    picker = page.get_by_role("dialog", name="Select workspace", exact=True)
+    expect(picker.get_by_role("textbox", name="Current folder path")).to_have_value(root)
+    picker.get_by_role("button", name="Use workspace", exact=True).click()
+    expect(picker).to_have_count(0)
     expect(dialog).to_have_count(0)
-    expect(source).to_contain_text("Host: Browser host")
+    expect(source).to_have_accessible_name(
+        f"Choose orchestration source · Host: Browser host · {root}"
+    )
     expect(activity.get_by_role("button", name="shell · fixture", exact=True)).to_be_visible()
+    assert_activity_entry(
+        activity.locator("[data-resource-row]").filter(has_text="shell · fixture")
+    )
     assert journey.attachments == []
     assert journey.stops == []
     assert browser_errors == []

@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { GoalIcon, TargetIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { TooltipButton, Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { ComposerShelfButton } from "@/components/composer/ComposerShelfButton";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { Goal } from "@/lib/goalApi";
 import { cn } from "@/lib/utils";
 import { CommandGoalDialog } from "./CommandGoalDialog";
@@ -99,16 +100,16 @@ export function GoalStatusPill({ goal, onOpen }: { goal: Goal; onOpen?: () => vo
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <TooltipButton
-          type="button"
+        <ComposerShelfButton
+          size="icon-xs"
+          tooltip={false}
           data-testid="composer-goal-mode"
           data-state={done ? "done" : "working"}
           onClick={onOpen}
           aria-label={`${label}: ${goal.objective}`}
-          className="flex shrink-0 items-center rounded-full bg-transparent px-1 text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 md:px-2"
         >
-          <Icon className="size-3.5" strokeWidth={1.5} aria-hidden="true" />
-        </TooltipButton>
+          <Icon data-icon-size="" className="size-3.5" strokeWidth={1.5} aria-hidden="true" />
+        </ComposerShelfButton>
       </TooltipTrigger>
       <TooltipContent side="top" align="end" className="flex-col items-start gap-0.5">
         <div className="font-medium">{label}</div>

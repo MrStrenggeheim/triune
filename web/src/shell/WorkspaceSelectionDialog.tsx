@@ -28,6 +28,8 @@ export type WorkspaceSelectionHandler = (
 
 export interface WorkspaceSelectionDialogProps {
   open: boolean;
+  /** The control that opened this instance, when opened by a user. */
+  returnFocusTo?: HTMLButtonElement | null;
   onOpenChange: (open: boolean) => void;
   hostId: string | null;
   initialPath?: string;
@@ -66,6 +68,7 @@ export function WorkspaceSelectionDialog(props: WorkspaceSelectionDialogProps) {
 }
 
 function WorkspaceSelectionContent({
+  returnFocusTo,
   hostId,
   initialPath,
   onOpenChange,
@@ -84,6 +87,7 @@ function WorkspaceSelectionContent({
   children,
   closeOnConfirm = true,
 }: WorkspaceSelectionDialogProps) {
+  const openingUrl = useRef(returnFocusTo?.ownerDocument.URL);
   const [connectOpen, setConnectOpen] = useState(false);
   const hostsQuery = useHosts({ refetchOnFocus: connectOpen });
   const hosts = suppliedHosts ?? hostsQuery.data ?? [];
@@ -132,6 +136,20 @@ function WorkspaceSelectionContent({
       showCloseButton={false}
       className="flex max-h-[calc(100dvh-2rem)] max-w-[min(64rem,calc(100vw-2rem))] flex-col gap-0 overflow-hidden rounded-lg p-0 sm:max-w-[min(64rem,calc(100vw-2rem))]"
       data-testid="workspace-selection-dialog"
+      onCloseAutoFocus={(event) => {
+        if (!returnFocusTo) return;
+        event.preventDefault();
+        const doc = returnFocusTo.ownerDocument;
+        if (
+          doc.URL === openingUrl.current &&
+          doc.activeElement === doc.body &&
+          returnFocusTo.isConnected &&
+          !returnFocusTo.matches(":disabled") &&
+          !returnFocusTo.closest('[hidden], [inert], [aria-hidden="true"]')
+        ) {
+          returnFocusTo.focus({ preventScroll: true });
+        }
+      }}
       onOpenAutoFocus={(event) => {
         event.preventDefault();
         const content = event.currentTarget as HTMLElement;

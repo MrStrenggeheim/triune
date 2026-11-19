@@ -60,7 +60,8 @@ def test_pending_group_receipts_and_permission_copy(
             "node => { const box = node.closest('.composer-shelf-content'); "
             "return parseFloat(getComputedStyle(box).paddingTop); }"
         )
-        assert inset == (4 if density == "comfortable" else 2)
+        assert inset == (0 if width < 768 else 4 if density == "comfortable" else 2)
+        expect(goal.locator("[data-composer-shelf-face]")).to_have_css("height", "24px")
     baseline = page.locator('[data-message-id="original"]').bounding_box()
     assert baseline is not None
     chat.emit_busy("busy-turn")

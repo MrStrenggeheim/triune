@@ -198,6 +198,8 @@ function PeerMessageContent({
         <ContextMenuTrigger asChild>
           <div>
             <ActivityRow
+              entry
+              entryLabel={`${relatedTitle} ${outgoing ? "sent" : "received"}`}
               presentation="message"
               searchItemIds={[itemId, ...(aliases ?? [])]}
               status={

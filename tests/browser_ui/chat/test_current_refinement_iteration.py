@@ -21,6 +21,7 @@ from playwright.sync_api import Locator, Page, Route, expect
 
 from tests.browser_ui.chat._geometry_helpers import (
     TOLERANCE,
+    assert_activity_entry,
     assert_no_overlap,
     assert_same_vertical_center,
     assert_within_viewport,
@@ -117,7 +118,9 @@ def _assert_footerless_card(card: Locator, *, controls: int) -> dict:
 
 def _assert_stable_disclosure(card: Locator) -> dict:
     """Compare header-relative bounds so transcript scrolling cannot mask a layout shift."""
-    disclosure = card.get_by_role("button", name=re.compile(r"^(Expand|Collapse) activity$"))
+    disclosure = card.get_by_role(
+        "button", name=re.compile(r"^(Expand|Collapse) activity(?: · .+)?$")
+    )
     expanded = disclosure.get_attribute("aria-expanded") == "true"
 
     def measure() -> dict:
@@ -317,6 +320,12 @@ def test_provenance_peer_directions_and_reload(
             (sent, "sent", "Chat A sent to Chat B", "Chat A"),
         ):
             expect(card).to_have_attribute("data-direction", direction)
+            expect(
+                card.get_by_role(
+                    "button", name=f"Expand activity · Chat B {direction}", exact=True
+                )
+            ).to_be_visible()
+            assert_activity_entry(card.locator("[data-resource-row]"))
             expect(card.get_by_role("status")).to_have_count(0)
             expect(card.locator("[data-resource-row]")).to_contain_text(attribution)
             expect(card.locator("strong")).to_have_text(name)
@@ -333,16 +342,17 @@ def test_provenance_peer_directions_and_reload(
         if not task.is_visible():
             chat.get_by_role("button", name="1 subagent", exact=True).click()
         expect(task).to_have_count(1)
+        assert_activity_entry(task.locator("[data-resource-row]"))
         expect(task.get_by_role("status", name="Completed", exact=True)).to_be_visible()
         expect(chat.get_by_test_id("subagent-reply")).to_have_count(0)
         _assert_footerless_card(task, controls=3)
         if not reload:
             measurements["task-expansion"] = _assert_stable_disclosure(task)
-            task.get_by_role("button", name="Expand activity", exact=True).click()
+            task.get_by_role("button", name="Expand activity · Chat B task", exact=True).click()
             expect(task).to_contain_text("Full captured assignment.")
             expect(task.get_by_role("table")).to_contain_text("FooterAbsent")
             _capture(page, output_path, f"{appearance}-expanded-task-and-reply")
-            task.get_by_role("button", name="Collapse activity", exact=True).click()
+            task.get_by_role("button", name="Collapse activity · Chat B task", exact=True).click()
             actions = sent.locator(".resource-actions").locator("a, button")
             fills = []
             for action in actions.all():
@@ -356,7 +366,9 @@ def test_provenance_peer_directions_and_reload(
                 )
             assert len(set(fills)) == 1, fills
             expect(sent).not_to_contain_text("Expanded peer detail.")
-            disclosure = sent.get_by_role("button", name="Expand activity", exact=True)
+            disclosure = sent.get_by_role(
+                "button", name="Expand activity · Chat B sent", exact=True
+            )
             disclosure.click()
             expect(sent).to_contain_text("Expanded peer detail.")
             glyph = sent.locator(".resource-actions button[aria-controls] svg").evaluate(
@@ -367,7 +379,7 @@ def test_provenance_peer_directions_and_reload(
             assert float(glyph["duration"].removesuffix("s")) <= 0.00001 and (
                 glyph["rotate"] == "90deg" or glyph["transform"].startswith("matrix(0, 1")
             ), glyph
-            sent.get_by_role("button", name="Collapse activity", exact=True).click()
+            sent.get_by_role("button", name="Collapse activity · Chat B sent", exact=True).click()
         sent.scroll_into_view_if_needed()
         _capture(
             page, output_path, f"{appearance}-footerless-peer-{'reload' if reload else 'initial'}"
@@ -1030,7 +1042,7 @@ def test_shelf_resource_rows_and_question_drafts(
     )
     expect(agent_row).to_contain_text("Inspect resource controls")
     expect(agent_row).to_contain_text("Running")
-    agent_height = box(agent_row)["height"]
+    assert_activity_entry(agent_row)
     page.keyboard.press("Escape")
     shelf.get_by_test_id("background-task-pill").click()
     shell_popup = page.get_by_role("dialog", name="1 background task", exact=True)
@@ -1040,10 +1052,9 @@ def test_shelf_resource_rows_and_question_drafts(
     )
     expect(shell_row).to_contain_text("Running")
     expect(
-        shell_row.get_by_role("button", name="Actions for pnpm test", exact=True)
+        shell_row.get_by_role("button", name="Stop actions for pnpm test", exact=True)
     ).to_be_visible()
-    shelf_height = box(shell_row)["height"]
-    assert shelf_height == pytest.approx(agent_height, abs=TOLERANCE)
+    assert_activity_entry(shell_row)
     _capture(page, output_path, f"{appearance}-shelf-shell-resource")
     shell_row.get_by_role("button", name="Open shell beside · pnpm test", exact=True).click()
     page.keyboard.press("Escape")
@@ -1102,18 +1113,13 @@ def test_shelf_resource_rows_and_question_drafts(
         row = rows.locator("[data-resource-row]")
         expect(row).to_have_count(1)
         expect(row).to_contain_text("Running")
-        vertical_padding = row.evaluate(
-            """element => {
-              const style = getComputedStyle(element);
-              return parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
-            }"""
-        )
-        assert box(row)["height"] - vertical_padding == pytest.approx(shelf_height, abs=TOLERANCE)
+        assert_activity_entry(row)
         assert_within_viewport(box(row), page.viewport_size["width"])
     _capture(page, output_path, f"{appearance}-shared-orchestration-resources")
     live_row = shells.locator("[data-resource-row]")
-    status = live_row.get_by_role("button", name="Actions for pnpm test", exact=True)
+    status = live_row.get_by_role("button", name="Stop actions for pnpm test", exact=True)
     page.mouse.move(0, 0)
+    expect(status).to_have_accessible_description("Running")
     reserve = box(status)["width"]
     live_row.hover()
     samples = status.evaluate(
@@ -1134,18 +1140,27 @@ def test_shelf_resource_rows_and_question_drafts(
         assert sample["width"] == pytest.approx(reserve, abs=TOLERANCE), sample
     _capture(page, output_path, f"{appearance}-stop-swap")
     if coarse:
-        status.tap()
+        bounds = box(status)
+        page.touchscreen.tap(bounds["x"] - 9, bounds["y"] + bounds["height"] / 2)
         page.get_by_role("menuitem", name="Stop pnpm test", exact=True).tap()
     else:
+        status.focus()
+        page.keyboard.press("Tab")
+        page.keyboard.press("Shift+Tab")
+        expect(status).to_be_focused()
+        expect(status.locator(".resource-stop-label")).to_be_visible()
+        page.keyboard.press("Enter")
+        expect(page.get_by_role("menuitem", name="Stop pnpm test", exact=True)).to_be_visible()
+        page.keyboard.press("Escape")
         status.click()
     expect(status).to_be_disabled()
     assert len(pending_stop) == 1
     shell.update(status="stopped", exit_code=-1, can_stop=False)
     pending_stop.pop().fulfill(json=shell)
     expect(live_row.get_by_role("status", name="Stopped", exact=True)).to_be_visible()
-    expect(live_row.get_by_role("button", name="Actions for pnpm test", exact=True)).to_have_count(
-        0
-    )
+    expect(
+        live_row.get_by_role("button", name="Stop actions for pnpm test", exact=True)
+    ).to_have_count(0)
     offline.update(availability="offline", warning="Showing retained shells.")
     page.get_by_role("tab", name="Chat A", exact=True).click()
     shelf.get_by_test_id("background-task-pill").click()
@@ -1156,18 +1171,23 @@ def test_shelf_resource_rows_and_question_drafts(
     expect(shell_view.get_by_label("Retained shell output", exact=True)).to_have_text(
         retained_output
     )
-    expect(page.get_by_text("Shell runtime offline", exact=True).first).to_be_visible()
+    page.get_by_role("banner", name="Application").get_by_role(
+        "button", name="Notifications", exact=True
+    ).click()
+    notices = page.get_by_role("dialog", name="Notifications", exact=True)
+    expect(notices.get_by_text("Shell runtime offline", exact=True).first).to_be_visible()
     expect(
-        page.get_by_text(
+        notices.get_by_text(
             "Showing retained output. Refresh after the runtime reconnects.", exact=True
         ).first
     ).to_be_visible()
+    notices.get_by_role("button", name="Close notifications", exact=True).click()
     expect(shell_view.get_by_role("alert")).to_have_count(0)
     assert manual_creates == [] and workspace_journey.attachments == []
     (Path(output_path) / "stop-label-timing.json").write_text(json.dumps(samples, indent=2) + "\n")
     _capture(page, output_path, f"{appearance}-offline-retained-shell")
     page.get_by_role("tab", name="Orchestration", exact=True).click()
-    source.click()
+    source.press("Enter")
     page.get_by_role("option", name="Chat B", exact=True).click()
     expect(source).to_contain_text("Chat B")
     expect(

@@ -7,7 +7,7 @@
 }
 
 /* Center the two-pixel accent in the shared 14px tool-icon column. */
-.subagent-activity-card > .activity-row--message {
+.subagent-activity-card > .activity-row--message:where(:not(.activity-entry)) {
   margin-inline-start: calc((0.875rem - 2px) / 2);
 }
 
@@ -56,13 +56,192 @@
 }
 
 @container (max-width: 480px) {
-  .activity-message-header {
+  .activity-message-header:where(:not(.activity-entry-header)) {
     gap: 6px;
   }
-  .activity-message-header .resource-status-text {
+  .activity-message-header:where(:not(.activity-entry-header)) .resource-status-text {
     display: none;
   }
-  .activity-message-header > .resource-actions {
+  .activity-message-header:where(:not(.activity-entry-header)) > .resource-actions {
     gap: 0;
+  }
+}
+
+.activity-entry {
+  --entry-height: 44px;
+  --entry-tile: 32px;
+  --entry-action: 24px;
+  --entry-leading: 6px;
+  --entry-trailing: 10px;
+  --entry-gap: 8px;
+  --entry-control-lift: 90%;
+  --entry-row-hover: var(--workspace-hover-on-content);
+}
+
+.dark .activity-entry {
+  --entry-control-lift: 14%;
+}
+
+.activity-entry > .activity-entry-header {
+  position: relative;
+  height: var(--entry-height);
+  min-height: var(--entry-height);
+  padding: 0 var(--entry-trailing) 0 var(--entry-leading);
+  gap: var(--entry-gap);
+  border-radius: var(--radius-md);
+}
+
+.activity-entry-header:hover {
+  background-color: var(--entry-row-hover);
+}
+
+.activity-entry-header.activity-message-header::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 2px;
+  background: color-mix(in srgb, var(--primary) 60%, transparent);
+  pointer-events: none;
+}
+
+.activity-entry > .activity-message-body {
+  padding: 4px var(--entry-trailing) 8px
+    calc(var(--entry-leading) + var(--entry-tile) + var(--entry-gap));
+}
+
+.activity-entry-header > .resource-icon {
+  width: var(--entry-tile);
+  height: var(--entry-tile);
+  flex: 0 0 var(--entry-tile);
+}
+
+.activity-entry-header .resource-icon svg {
+  width: 22px;
+  height: 22px;
+}
+
+.activity-entry-header > :is(.resource-text, .activity-message-text) {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  height: var(--entry-tile);
+  gap: 2px;
+}
+
+.activity-entry-header :is(.resource-text, .activity-message-text) > :first-child {
+  height: 16px;
+  min-height: 0;
+  line-height: 16px;
+}
+
+.activity-entry-header
+  :is(.resource-text, .activity-message-text)
+  > :first-child
+  :is(button, a, span, p, div) {
+  line-height: 16px;
+}
+
+.activity-entry-header .resource-description {
+  display: block;
+  height: 14px;
+  line-height: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.activity-entry-header .resource-description * {
+  line-height: inherit;
+}
+
+.activity-entry-header > .resource-actions {
+  gap: 4px;
+}
+
+.activity-entry-header .resource-actions :is(button, a) {
+  position: relative;
+  width: var(--entry-action);
+  height: var(--entry-action);
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+}
+
+.activity-entry-header .resource-actions :is(button, a) svg {
+  width: 14px;
+  height: 14px;
+}
+
+.activity-entry-header .activity-status-slot :is(.resource-status, [data-slot="badge"]) {
+  min-width: 0;
+  min-height: 0;
+  height: var(--entry-action);
+}
+
+.activity-entry-header .resource-status:focus-visible .resource-status-label {
+  visibility: hidden;
+}
+
+.activity-entry-header .resource-status:focus-visible .resource-stop-label {
+  visibility: visible;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .activity-entry-header .resource-actions :is(button, a):not(:disabled, :active):hover {
+    background-color: color-mix(in srgb, white var(--entry-control-lift), var(--entry-row-hover));
+  }
+}
+
+@container (max-width: 440px) {
+  .activity-entry > .activity-entry-header {
+    gap: 6px;
+  }
+
+  .activity-entry-header :is(.resource-status-text, .resource-stop-text) {
+    display: none;
+  }
+
+  .activity-entry-header
+    .activity-status-slot
+    :is([data-slot="badge"], .resource-status, .resource-status-label) {
+    width: var(--entry-action);
+    height: var(--entry-action);
+    border-radius: 50%;
+    padding: 0;
+    gap: 0;
+    justify-content: center;
+  }
+
+  .activity-entry-header .resource-status-label {
+    display: grid;
+    place-items: center;
+  }
+}
+
+@media (pointer: coarse) {
+  .activity-entry > .activity-entry-header {
+    gap: 0;
+  }
+
+  .activity-entry-header > .resource-icon {
+    margin-inline-end: 6px;
+  }
+
+  .activity-entry-header > :is(.resource-text, .activity-message-text) {
+    margin-inline-end: var(--entry-trailing);
+  }
+
+  .activity-entry-header > .resource-actions {
+    gap: calc(var(--entry-height) - var(--entry-action));
+    padding-inline-start: calc(var(--entry-height) - var(--entry-action));
+  }
+
+  .activity-entry-header .resource-actions :is(button, a)::after,
+  .activity-entry-header .resource-status::after {
+    content: "";
+    position: absolute;
+    /* Absolute insets start at the control's 1px inner border edge. */
+    inset: calc((var(--entry-action) - var(--entry-height)) / 2 - 1px);
+    border-radius: inherit;
   }
 }

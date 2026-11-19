@@ -96,7 +96,7 @@ function panel(props: Partial<ChatActivityPanelProps> = {}) {
   );
 }
 function stopByMouse(name: string) {
-  const pill = screen.getByRole("button", { name: `Actions for ${name}` });
+  const pill = screen.getByRole("button", { name: `Stop actions for ${name}` });
   fireEvent.pointerDown(pill, { pointerType: "mouse", button: 0 });
   fireEvent.click(pill, { detail: 1 });
 }
@@ -219,7 +219,7 @@ it("shows settled history in separate sections ordered by observed activity", ()
   ).toEqual(["old shell", "idle shell", "bash", "lost shell"]);
   expect(shellRows[3]).toHaveTextContent("Disconnected");
   expect(container.querySelectorAll(".workspace-control-header")).toHaveLength(1);
-  expect(container.querySelectorAll(".density-row")).toHaveLength(7);
+  expect(container.querySelectorAll(".activity-entry-header")).toHaveLength(7);
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });
 
@@ -475,9 +475,11 @@ it("stops only capability-approved running agents and keeps failures visible", a
   const open = vi.fn();
   const stop = vi.fn().mockRejectedValue(new Error("Native stop unavailable"));
   const view = render(panel({ onOpenAgent: open, onStopAgent: stop }));
-  expect(screen.queryByRole("button", { name: "Actions for James" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Stop actions for James" })).not.toBeInTheDocument();
   view.rerender(panel({ onOpenAgent: open, onStopAgent: stop, canStopAgent: () => true }));
-  expect(screen.queryByRole("button", { name: "Actions for Done agent" })).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Stop actions for Done agent" }),
+  ).not.toBeInTheDocument();
   stopByMouse("James");
   await waitFor(() =>
     expect(getNotificationSnapshot().entries).toEqual(
@@ -543,9 +545,11 @@ it("queries controls only for running native children and requires an affirmativ
   expect(vi.mocked(useNativeChildCapabilities).mock.calls.every(([id]) => id === "james")).toBe(
     true,
   );
-  expect(screen.queryByRole("button", { name: "Actions for James" })).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Actions for Managed" })).toBeVisible();
-  expect(screen.queryByRole("button", { name: "Actions for Settled" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Stop actions for James" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Stop actions for Managed" })).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: "Stop actions for Settled" }),
+  ).not.toBeInTheDocument();
   vi.mocked(useNativeChildCapabilities).mockReturnValue({
     data: { version: 1, state: "running", can_reply: false, can_steer: false, can_stop: true },
     error: null,
@@ -555,13 +559,13 @@ it("queries controls only for running native children and requires an affirmativ
   await waitFor(() => expect(stop).toHaveBeenCalledWith(native));
   view.rerender(panel({ ...props, active: false }));
   expect(useNativeChildCapabilities).toHaveBeenLastCalledWith("james", false);
-  expect(screen.queryByRole("button", { name: "Actions for James" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Stop actions for James" })).not.toBeInTheDocument();
   vi.mocked(useNativeChildCapabilities).mockReturnValue({
     data: { can_stop: true },
     error: new Error("Capability refresh failed"),
   } as ReturnType<typeof useNativeChildCapabilities>);
   view.rerender(panel(props));
-  expect(screen.queryByRole("button", { name: "Actions for James" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Stop actions for James" })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "James" })).toBeVisible();
 });
 
@@ -739,7 +743,7 @@ it.each([
       }),
     );
     expect(screen.getByRole("status", { name: label })).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Actions for Retained command" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Stop actions for Retained command" })).toBeNull();
   },
 );
 

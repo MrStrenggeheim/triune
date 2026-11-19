@@ -162,6 +162,7 @@ function GridSidebarRow({
             variant="ghost"
             size="icon-xs"
             aria-label={`Actions for ${title}`}
+            menuFeedback={false}
             className="absolute right-1 top-1/2 -translate-y-1/2 text-muted-foreground md:opacity-0 md:group-hover:opacity-100 md:group-has-[:focus-visible]:opacity-100 data-[state=open]:opacity-100"
           >
             <MoreHorizontalIcon className="size-3.5" />

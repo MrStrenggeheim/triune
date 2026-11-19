@@ -85,6 +85,8 @@ export function SubagentTaskRow({
     : null;
   return (
     <ActivityRow
+      entry
+      entryLabel={`${agentName} task`}
       searchItemIds={searchItemIds}
       presentation="message"
       keepSummaryWhenExpanded={keepSummaryWhenExpanded}

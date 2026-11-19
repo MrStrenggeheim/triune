@@ -82,14 +82,15 @@ export function ComposerAddMenu({
           type="button"
           size="icon"
           variant="ghost"
-          className="size-8 rounded-lg data-[state=open]:bg-muted data-[state=open]:text-foreground data-[pointer-interaction=true]:focus-visible:ring-0 data-[pointer-interaction=true]:focus-visible:border-transparent md:size-7"
+          menuFeedback="composer"
+          className="size-8 rounded-lg data-[pointer-interaction=true]:focus-visible:ring-0 data-[pointer-interaction=true]:focus-visible:border-transparent md:size-7"
           data-pointer-interaction={pointerInteraction || undefined}
           onPointerDownCapture={() => setPointerInteraction(true)}
           onKeyDownCapture={() => setPointerInteraction(false)}
           disabled={disabled}
           loading={!!pendingLabel}
           aria-label={pendingLabel ?? "Add"}
-          title={pendingLabel ?? "Add"}
+          tooltip={pendingLabel ?? "Attach"}
           data-testid={`${testIdPrefix}-attach`}
           componentId={`${testIdPrefix}.add_menu`}
         >
@@ -113,10 +114,8 @@ export function ComposerAddMenu({
         side="top"
         align="center"
         sideOffset={6}
-        collisionPadding={12}
         aria-label="Add"
-        className="composer-add-menu max-w-[calc(100vw-24px)] rounded-[16px]"
-        style={{ width: "var(--radix-popper-available-width)" }}
+        className="composer-add-menu rounded-[16px]"
         data-testid={`${testIdPrefix}-add-menu`}
       >
         {showProjects ? (

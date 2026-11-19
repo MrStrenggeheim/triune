@@ -4,6 +4,7 @@ import { ContentSkeleton } from "@/components/ui/loading";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { SquareTerminalIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ComposerShelfButton } from "./ComposerShelfButton";
 import { useNotificationNotice } from "@/hooks/useNotificationNotice";
 import { shellResourceErrorMessage } from "@/lib/shellResourceError";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -51,6 +52,7 @@ export function BackgroundTaskIndicator({ shelf = false }: { shelf?: boolean }) 
   if (bgCount <= 0) return null;
 
   const countLabel = `${bgCount} background task${bgCount === 1 ? "" : "s"}`;
+  const Trigger = shelf ? ComposerShelfButton : Button;
   // The count is authoritative in both directions: an over-long detail list
   // is clamped, a short one is acknowledged as partially unavailable.
 
@@ -63,7 +65,7 @@ export function BackgroundTaskIndicator({ shelf = false }: { shelf?: boolean }) 
       </span>
       <Popover modal={false} open={open} onOpenChange={handleOpenChange}>
         <PopoverTrigger asChild>
-          <Button
+          <Trigger
             ref={triggerRef}
             type="button"
             variant="ghost"
@@ -82,7 +84,7 @@ export function BackgroundTaskIndicator({ shelf = false }: { shelf?: boolean }) 
               </span>
             )}
             <span className={shelf ? undefined : COMPOSER_COLLAPSED_LABEL_CLASS}>{bgCount}</span>
-          </Button>
+          </Trigger>
         </PopoverTrigger>
         <PopoverContent
           side="top"

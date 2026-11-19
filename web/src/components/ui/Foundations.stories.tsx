@@ -1,9 +1,21 @@
+// Modified for Triune; inherited notices remain applicable.
+import { useState } from "react";
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { BellIcon, CheckIcon, InfoIcon, TriangleAlertIcon } from "lucide-react";
+import { expect, waitFor, within } from "storybook/test";
+import {
+  Archive,
+  BellIcon,
+  CheckIcon,
+  InfoIcon,
+  Link as LinkIcon,
+  TriangleAlertIcon,
+} from "lucide-react";
+import { DEFAULT_DIFF_COMPARISON, DiffComparisonControls } from "@/shell/DiffComparisonControls";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "./alert";
 import { Avatar, AvatarBadge, AvatarFallback, AvatarGroup, AvatarGroupCount } from "./avatar";
 import { Badge } from "./badge";
 import { Button } from "./button";
+import { ButtonGroup } from "./button-group";
 import { Input } from "./input";
 import { Switch } from "./switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./tabs";
@@ -19,6 +31,121 @@ const meta = {
 
 export default meta;
 type Story = StoryObj<typeof meta>;
+
+export const MediumButton: Story = {
+  render: () => (
+    <div className="grid justify-items-start gap-3">
+      {(["default", "ghost", "secondary"] as const).map((variant) => (
+        <div role="group" aria-label={variant} key={variant} className="flex flex-wrap gap-2">
+          <Button type="button" variant={variant} tooltip={false}>
+            <Archive aria-hidden />
+            Archive chat
+          </Button>
+          <Button type="button" variant={variant} tooltip={false}>
+            <LinkIcon aria-hidden />
+            Copy link
+          </Button>
+        </div>
+      ))}
+    </div>
+  ),
+  play: async ({ canvasElement }) => {
+    for (const button of within(canvasElement).getAllByRole("button")) {
+      const style = getComputedStyle(button);
+      const unit = Math.max(1, parseFloat(style.fontSize) / 14);
+      const box = button.getBoundingClientRect();
+      const glyph = button.querySelector("svg")!.getBoundingClientRect();
+      const ink = within(button).getByText(/Archive chat|Copy link/);
+      const label = ink.parentElement!.getBoundingClientRect();
+      expect(box.height).toBeCloseTo(2 + 30 * unit, 1);
+      expect(glyph.height).toBeCloseTo(14 * unit, 1);
+      expect(glyph.width).toBeCloseTo(glyph.height, 1);
+      expect(glyph.top - box.top).toBeCloseTo(1 + 8 * unit, 1);
+      expect(glyph.left - box.left).toBeCloseTo(1 + 8 * unit, 1);
+      expect(box.right - label.right).toBeCloseTo(1 + 8 * unit, 1);
+      expect(label.left - glyph.right).toBeCloseTo(6 * unit, 1);
+      expect(label.top).toBeCloseTo(glyph.top, 1);
+      expect(label.height).toBeCloseTo(glyph.height, 1);
+      expect(getComputedStyle(ink).top).toBe("-0.5px");
+    }
+  },
+};
+
+export const GhostMenuFeedback: Story = {
+  render: function ComparisonMenu() {
+    const [comparison, setComparison] = useState(DEFAULT_DIFF_COMPARISON);
+    return <DiffComparisonControls repositoryRoot value={comparison} onChange={setComparison} />;
+  },
+};
+
+export const MediumTouchTargets: Story = {
+  // This story exercises hit testing on a device with a coarse pointer.
+  tags: ["!visual-snapshot"],
+  render: () => (
+    <div className="grid justify-items-start gap-4">
+      <div role="group" aria-label="Pages" className="flex items-center">
+        <Button type="button">1</Button>
+        <Button asChild>
+          <a href="#page-2">2</a>
+        </Button>
+        <Button type="button" size="sm">
+          Next
+        </Button>
+      </div>
+      <div role="group" aria-label="Stacked" className="flex flex-col items-start">
+        <Button type="button">Retry</Button>
+        <Button type="button">Cancel</Button>
+      </div>
+      {(["horizontal", "vertical"] as const).map((orientation) => (
+        <ButtonGroup key={orientation} orientation={orientation} aria-label={orientation}>
+          <Button type="button" variant="outline">
+            A
+          </Button>
+          <Button type="button" variant="outline">
+            B
+          </Button>
+        </ButtonGroup>
+      ))}
+    </div>
+  ),
+  play: async ({ canvasElement }) => {
+    if (!matchMedia("(any-pointer: coarse)").matches) return;
+    const controls = within(canvasElement);
+    const at = (x: number, y: number) => canvasElement.ownerDocument.elementFromPoint(x, y);
+    await waitFor(() => {
+      for (const name of ["Pages", "Stacked"]) {
+        const group = controls.getByRole("group", { name });
+        for (const action of group.querySelectorAll<HTMLElement>(".button-medium")) {
+          action.scrollIntoView({ block: "center" });
+          const box = action.getBoundingClientRect();
+          const x = box.x + box.width / 2;
+          const y = box.y + box.height / 2;
+          for (const offset of [-21, 21]) {
+            expect(action.contains(at(x, y + offset))).toBe(true);
+            expect(action.contains(at(x + offset, y))).toBe(true);
+          }
+        }
+      }
+    });
+    for (const name of ["horizontal", "vertical"]) {
+      const group = controls.getByRole("group", { name });
+      group.scrollIntoView({ block: "center" });
+      const [first, second] = within(group).getAllByRole("button");
+      const box = first.getBoundingClientRect();
+      const horizontal = name === "horizontal";
+      const x = box.x + box.width / 2;
+      const y = box.y + box.height / 2;
+      const beforeSeam = horizontal
+        ? at(Math.floor(box.right) - 1, y)
+        : at(x, Math.floor(box.bottom) - 1);
+      const afterSeam = horizontal
+        ? at(Math.ceil(box.right) + 1, y)
+        : at(x, Math.ceil(box.bottom) + 1);
+      expect(first.contains(beforeSeam)).toBe(true);
+      expect(second.contains(afterSeam)).toBe(true);
+    }
+  },
+};
 
 export const Gallery: Story = {
   render: () => (

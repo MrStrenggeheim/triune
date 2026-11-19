@@ -145,31 +145,30 @@ def test_media_slots_agent_bar_and_table_survive_reload(
             "node.dataset.listDensity=values[1]}",
             [theme, density],
         )
-        icon = tool.locator(":scope > svg").first.bounding_box()
-        accent = card.locator(":scope > .activity-row--message")
-        border = accent.bounding_box()
-        assert icon and border
-        color = accent.evaluate("""node => {
+        header = card.locator(".activity-message-header")
+        accent = header.evaluate("""node => {
           const probe=document.createElement('i');
-          probe.style.borderLeftColor='color-mix(in oklab, var(--primary) 60%, transparent)';
+          probe.style.backgroundColor='color-mix(in srgb, var(--primary) 60%, transparent)';
           node.append(probe);
-          const expected=getComputedStyle(probe).borderLeftColor;
+          const expected=getComputedStyle(probe).backgroundColor;
           probe.remove();
-          return {actual:getComputedStyle(node).borderLeftColor,expected,
-            width:parseFloat(getComputedStyle(node).borderLeftWidth)};
+          const rule=getComputedStyle(node,'::before');
+          return {actual:rule.backgroundColor,expected, width:rule.width, height:rule.height,
+            left:rule.left, top:rule.top};
         }""")
-        assert border["x"] + color["width"] / 2 == pytest.approx(
-            icon["x"] + icon["width"] / 2, abs=1
+        assert accent["actual"] == accent["expected"]
+        assert (accent["left"], accent["top"], accent["width"], accent["height"]) == (
+            "0px",
+            "0px",
+            "2px",
+            "44px",
         )
-        assert color["actual"] == color["expected"]
-        geometry.append(
-            {"theme": theme, "density": density, "icon": icon, "border": border, "color": color}
-        )
+        geometry.append({"theme": theme, "density": density, "accent": accent})
     header = card.locator(".activity-message-header")
     header_before = header.bounding_box()
     expect(header.locator(".resource-description")).to_be_visible()
     expect(header.locator(".resource-description")).not_to_contain_text("**")
-    card.get_by_role("button", name="Expand activity", exact=True).click()
+    card.get_by_role("button", name="Expand activity · Inspector task", exact=True).click()
     expect(header.locator(".resource-description")).to_have_count(0)
     header_after = header.bounding_box()
     assert header_before and header_after

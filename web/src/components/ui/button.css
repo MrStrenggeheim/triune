@@ -1,0 +1,129 @@
+/* Required Notice: Copyright 2026 MrStrenggeheim. Triune (https://github.com/MrStrenggeheim/triune). */
+.button-medium {
+  --button-medium-unit: max(1px, calc(1em / 14));
+  --button-medium-band: calc(14 * var(--button-medium-unit));
+  --button-medium-padding: calc(8 * var(--button-medium-unit));
+  --button-medium-gap: calc(6 * var(--button-medium-unit));
+  --button-medium-height: calc(2px + 2 * var(--button-medium-padding) + var(--button-medium-band));
+}
+
+/* Size only the action's own glyph. A thumbnail, nested toolbar, loading
+ * overlay or deliberately sized SVG keeps its own canvas. */
+.button-standard-icons.button-medium:where(:not(.sidebar-row, .density-row))
+  > svg:not([data-icon-size]):where(:not(.absolute)),
+.button-standard-icons.button-medium > .contents > svg:not([data-icon-size]) {
+  width: var(--button-medium-band);
+  height: var(--button-medium-band);
+  padding: 0;
+  overflow: visible;
+}
+
+.button-medium .button-label-ink {
+  position: relative;
+  top: -0.5px;
+}
+
+@media (any-pointer: coarse) {
+  @layer components {
+    .button-medium[data-medium-target] {
+      --button-touch-inline: 44px;
+      --button-touch-block: 44px;
+      /* Leave one CSS pixel on either side of an expanded target. Touch hit
+       * testing rounds fractional glyph widths at the edge between controls. */
+      margin-inline: max(
+        0px,
+        calc(1px + (var(--button-touch-inline) - var(--button-face-inline, 46px)) / 2)
+      );
+      margin-block: max(
+        0px,
+        calc(
+          1px +
+            (var(--button-touch-block) - var(--button-face-block, var(--button-medium-height))) / 2
+        )
+      );
+    }
+
+    .button-medium[data-medium-target]::after {
+      content: "";
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: max(100%, var(--button-touch-inline));
+      height: max(100%, var(--button-touch-block));
+      transform: translate(-50%, -50%);
+    }
+
+    /* Joined faces meet at their original seam. Expand across the group only
+     * in its free axis so a tap can never cross into the adjoining button. */
+    [data-slot="button-group"][data-orientation="horizontal"] > .button-medium {
+      --button-touch-inline: 0px;
+      &::after {
+        width: calc(100% - 2px);
+      }
+    }
+    [data-slot="button-group"][data-orientation="vertical"] > .button-medium {
+      --button-touch-block: 0px;
+      &::after {
+        height: calc(100% - 2px);
+      }
+    }
+  }
+}
+
+/* Radix contributes aria-haspopup to the actual control in either Slot order.
+ * A shelf can consume the same resolved fill on its smaller visible face. */
+.button-standard-icons[data-variant="ghost"]:where(
+    [data-menu-feedback],
+    [aria-haspopup="menu"],
+    [aria-haspopup="true"]
+  ):not(
+    :where(
+      [disabled],
+      :disabled,
+      [aria-disabled="true"],
+      [data-disabled],
+      [aria-busy="true"],
+      [aria-pressed="true"],
+      [aria-selected="true"],
+      [aria-checked="true"],
+      [data-selected="true"],
+      [data-header-action-button],
+      [data-close-button],
+      [data-slot="segmented-control"] *,
+      [data-menu-feedback="off"],
+      [data-activity-actions] *,
+      [data-resource-row] *
+    )
+  ) {
+  --button-menu-fill: transparent;
+  background-color: var(--button-menu-root-fill, var(--button-menu-fill));
+  color: var(--foreground);
+  transition-property: box-shadow, border-color;
+
+  &:where([data-size^="icon"]) {
+    color: var(--muted-foreground);
+  }
+
+  & svg {
+    color: var(--muted-foreground);
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    &:where(:hover) {
+      --button-menu-fill: var(--workspace-control-hover);
+      color: var(--foreground);
+    }
+  }
+
+  &:where(:not([data-menu-feedback="composer"])):where(
+      [aria-expanded="true"],
+      [data-open="true"],
+      [data-state="open"]
+    ) {
+    --button-menu-fill: var(--button-menu-open);
+  }
+
+  &:where(:active, [data-button-held]) {
+    --button-menu-fill: var(--button-menu-pressed);
+  }
+}

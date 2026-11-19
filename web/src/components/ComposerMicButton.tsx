@@ -524,6 +524,7 @@ export const ComposerMicButton = ({
       type="button"
       size="icon"
       variant="ghost"
+      menuFeedback={isListening || connecting || error ? undefined : "composer"}
       disabled={disabled}
       onClick={toggle}
       aria-pressed={isListening}

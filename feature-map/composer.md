@@ -27,6 +27,9 @@ and steers messages while the agent is busy.
 
 ## Sub-features
 
+- The [shared-control specification](../design-system/triune/MASTER.md#current-scope-of-owner-review) records approved button and activity-entry behavior across composer, transcript and Orchestration.
+- Anchored composer menus and hints use the viewport’s 24px gutter. Check the complete open surface and the trigger through pointer release and keyboard dismissal.
+
 - `question-batches`: Questions counts actual elicitation batches; each popup entry opens one batch and one question page, retaining drafts across switching and closing.
 - `question-forward`: one counted primary action says Skip or Next before the final page, then Submit; only Submit sends the complete permitted partial/empty batch.
 - `question-receipts`: pending questions transform into one durable answered batch, preserving original questions, category pills and exact non-secret answers; correlated native echoes stay represented once.

@@ -33,6 +33,8 @@ export const DESIGN_ROLES = {
   "workspace-control-hover": "var(--muted)",
   "workspace-control-active-border": "color-mix(in srgb, var(--primary) 35%, var(--border))",
   "workspace-control-active": "color-mix(in srgb, var(--foreground) 10%, var(--workspace-group))",
+  "button-menu-open": "color-mix(in srgb, var(--foreground) 7%, var(--muted))",
+  "button-menu-pressed": "color-mix(in srgb, var(--foreground) 14%, var(--muted))",
   "workspace-close-hover":
     "color-mix(in srgb, var(--foreground) 12%, var(--workspace-hover-on-content))",
   "workspace-close-active":

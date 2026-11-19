@@ -3,13 +3,114 @@
 import pytest
 from playwright.sync_api import Page, expect
 
-from tests.browser_ui.chat.session_contract import model_option
+from tests.browser_ui.chat._geometry_helpers import DESKTOP, PHONE, open_landing, open_live
+from tests.browser_ui.chat.session_contract import ChatSessionContract, model_option
 
 # Tooltip surface properties the host chip shares with the model pill.
 _SURFACE_STYLE = """el => {
   const s = getComputedStyle(el);
   return [s.backgroundColor, s.color, s.fontSize, s.padding, s.borderRadius, s.boxShadow];
 }"""
+
+
+@pytest.mark.parametrize("viewport", [DESKTOP, PHONE], ids=["desktop", "phone"])
+@pytest.mark.parametrize("landing", [True, False], ids=["landing", "in-session"])
+def test_neutral_triggers_open_the_real_composer_controls(
+    page: Page, chat_session_contract: ChatSessionContract, landing: bool, viewport: dict[str, int]
+) -> None:
+    chat = chat_session_contract
+    chat.set_catalog(
+        harness="claude-native",
+        models=[model_option("sonnet", is_default=True)],
+        selected_model="sonnet",
+    )
+    chat.update_session(permission_level=4, labels={"omnigent.wrapper": "claude-code-native-ui"})
+    if not landing:
+        for folder in ("", "/browser-workspace"):
+            chat.contract.json(
+                f"/v1/hosts/{chat.host_id}/filesystem{folder}",
+                {"available": True, "data": [], "has_more": False},
+            )
+    (open_landing if landing else open_live)(page, chat, viewport)
+    prefix = "new-chat-landing" if landing else "composer"
+    draft = (
+        page.get_by_test_id("new-chat-landing-input")
+        if landing
+        else page.get_by_label("Message the agent")
+    )
+    if viewport == PHONE:
+        close = page.get_by_role("button", name="Close navigation", exact=True)
+        if close.is_visible():
+            close.click()
+    draft.fill("Keep this draft")
+    workspace = page.get_by_test_id(f"{prefix}-workspace-{'chip' if landing else 'dir'}")
+    permission = page.get_by_test_id(f"{prefix}-permission-chip")
+    model = page.get_by_test_id(
+        "new-chat-landing-agent-select" if landing else "composer-config-gear"
+    )
+    attach = page.get_by_test_id(f"{prefix}-attach")
+    for trigger in (workspace, permission, model, attach):
+        expect(trigger).to_have_attribute("data-menu-feedback", "composer")
+        expect(trigger).to_have_css("cursor", "pointer")
+        expect(trigger).to_have_css("background-color", "rgba(0, 0, 0, 0)")
+
+    workspace.hover()
+    location = workspace.locator(".workspace-selector-details").text_content()
+    assert location
+    expect(page.get_by_role("tooltip")).to_contain_text(location.replace(" · ", ":"))
+    workspace.press("Enter")
+    dialog = page.get_by_role("dialog", name="Select workspace")
+    expect(dialog.get_by_role("textbox", name="Current folder path")).to_be_visible()
+    dialog.evaluate("el => Promise.all(el.getAnimations().map(a => a.finished))")
+    box = dialog.bounding_box()
+    assert box is not None
+    for axis, size in (("x", "width"), ("y", "height")):
+        assert box[axis] + box[size] / 2 == pytest.approx(viewport[size] / 2, abs=1)
+    page.keyboard.press("Escape")
+    expect(dialog).to_be_hidden()
+    expect(workspace).to_be_focused()
+    page.keyboard.press("Space")
+    dialog.get_by_role("button", name="Cancel", exact=True).press("Enter")
+    expect(dialog).to_be_hidden()
+    expect(workspace).to_be_focused()
+
+    permission.press("ArrowDown")
+    expect(page.get_by_role("menuitemradio").first).to_be_visible()
+    page.keyboard.press("Escape")
+    expect(permission).to_be_focused()
+    model.press("ArrowDown")
+    expect(page.get_by_role("menu")).to_be_visible()
+    page.keyboard.press("Escape")
+    expect(model).to_be_focused()
+    attach.hover()
+    expect(page.get_by_role("tooltip")).to_have_text("Attach")
+    colors = attach.evaluate("""el => {
+      const sample = document.createElement("span");
+      el.append(sample);
+      const resolve = value => {
+        sample.style.backgroundColor = value;
+        return getComputedStyle(sample).backgroundColor;
+      };
+      const hover = resolve("var(--workspace-control-hover)");
+      const press = resolve("color-mix(in srgb, var(--foreground) 14%, var(--muted))");
+      sample.remove();
+      return {hover, press};
+    }""")
+    expect(attach).to_have_css("background-color", colors["hover"])
+    page.mouse.down()
+    expect(attach).to_have_css("background-color", colors["press"])
+    page.mouse.up()
+    menu = page.get_by_test_id(f"{prefix}-add-menu")
+    expect(menu).to_be_visible()
+    menu_box = menu.bounding_box()
+    assert menu_box is not None
+    assert menu_box["x"] >= 23 and menu_box["x"] + menu_box["width"] <= viewport["width"] - 23
+    if viewport == DESKTOP:
+        assert menu_box["width"] < viewport["width"] - 48
+    with page.expect_file_chooser():
+        page.get_by_role("menuitem", name="Files and images").click()
+    expect(draft).to_have_value("Keep this draft")
+    assert not chat.event_posts
 
 
 @pytest.mark.parametrize("turns", [0, 1], ids=["new-session", "existing-session"])
@@ -81,7 +182,8 @@ def test_pill_uses_one_tooltip_and_suppresses_it_while_picker_is_open(
 def test_host_chip_tooltip_names_the_host_and_matches_the_pill(
     page: Page, chat_session_contract
 ) -> None:
-    # A configurable harness keeps the pill enabled so it can be hovered.
+    # An editor sees the host menu rather than the owner-only workspace switcher.
+    chat_session_contract.update_session(permission_level=2)
     chat_session_contract.set_catalog(
         harness="claude-native",
         models=[model_option("sonnet", is_default=True)],
@@ -120,6 +222,7 @@ def test_host_chip_tooltip_names_the_host_and_matches_the_pill(
 def test_button_tooltips_share_white_surface_and_centered_gap(
     page: Page, chat_session_contract, theme: str
 ) -> None:
+    chat_session_contract.update_session(permission_level=2)
     page.emulate_media(color_scheme=theme)
     page.add_init_script(f"localStorage.setItem('web-theme', '{theme}')")
     chat_session_contract.set_catalog(

@@ -43,11 +43,19 @@ function getPopupAnchorRow(trigger: HTMLElement) {
   return nearest?.closest<HTMLElement>(".composer-shelf-content") ?? nearest;
 }
 
+function popupTriggerSurface(trigger: HTMLElement) {
+  return (
+    trigger.querySelector<HTMLElement>(
+      "[data-header-action-surface], [data-composer-shelf-face]",
+    ) ?? trigger
+  );
+}
+
 /** Trigger-relative offsets that mirror visible control insets outside its row. */
 export function getPopupRowOffsets(trigger: HTMLElement) {
   const row = getPopupAnchorRow(trigger);
   if (!row) return null;
-  const surface = trigger.querySelector<HTMLElement>("[data-header-action-surface]") ?? trigger;
+  const surface = popupTriggerSurface(trigger);
   const outer = row.getBoundingClientRect();
   const target = trigger.getBoundingClientRect();
   const paint = surface.getBoundingClientRect();
@@ -85,33 +93,20 @@ export function useAnchoredPopupBounds(
     [forwardedRef],
   );
   const [bounds, setBounds] = useState({
-    left: 0,
-    right: 0,
     offset: sideOffset,
     reserve: 0,
     row: false,
   });
   useLayoutEffect(() => {
     if (!trigger || !enabled || !open) return;
-    const column = trigger.closest<HTMLElement>(".composer-shelf-stack, [data-composer-card]");
     const row = getPopupAnchorRow(trigger);
     const vertical = side === "top" || side === "bottom";
-    const surface = trigger.querySelector<HTMLElement>("[data-header-action-surface]") ?? trigger;
+    const surface = popupTriggerSurface(trigger);
     const win = trigger.ownerDocument.defaultView!;
     const measure = () => {
-      let left = 0,
-        right = 0,
-        offset = sideOffset,
+      let offset = sideOffset,
         reserve = 0,
         anchored = false;
-      if (column) {
-        const rect = column.getBoundingClientRect();
-        const css = win.getComputedStyle(column);
-        if (rect.width) {
-          left = rect.left + (parseFloat(css.paddingLeft) || 0);
-          right = win.innerWidth - rect.right + (parseFloat(css.paddingRight) || 0);
-        }
-      }
       if (row && vertical) {
         const offsets = getPopupRowOffsets(trigger);
         if (offsets) {
@@ -123,25 +118,19 @@ export function useAnchoredPopupBounds(
         }
       }
       setBounds((previous) =>
-        previous.left === left &&
-        previous.right === right &&
-        previous.offset === offset &&
-        previous.reserve === reserve &&
-        previous.row === anchored
+        previous.offset === offset && previous.reserve === reserve && previous.row === anchored
           ? previous
-          : { left, right, offset, reserve, row: anchored },
+          : { offset, reserve, row: anchored },
       );
     };
     measure();
-    if (!column && !(row && vertical)) return;
+    if (!row || !vertical) return;
     const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
-    for (const node of new Set([column, row, trigger, surface])) if (node) observer?.observe(node);
+    for (const node of new Set([row, trigger, surface])) observer?.observe(node);
     const mutation = new MutationObserver(measure);
-    if (content && row && vertical)
-      mutation.observe(content, { attributes: true, attributeFilter: ["data-side"] });
+    if (content) mutation.observe(content, { attributes: true, attributeFilter: ["data-side"] });
     for (const node of new Set([
       row,
-      column,
       trigger.closest("[data-list-density]"),
       trigger.ownerDocument.documentElement,
     ]))
@@ -163,21 +152,31 @@ export function useAnchoredPopupBounds(
     typeof padding === "number"
       ? { top: padding, bottom: padding, left: padding, right: padding }
       : padding;
+  // Composer controls share the narrow layout's outer gutter at every pane width.
+  const inComposer = Boolean(
+    enabled &&
+    open &&
+    trigger?.closest(".composer-shelf-stack, [data-composer-card], [data-composer-popup]"),
+  );
+  const gutter = inComposer ? 24 : 0;
+  const left = Math.max(insets.left ?? 8, gutter);
+  const right = Math.max(insets.right ?? 8, gutter);
   return {
     ref: contentRef,
     sideOffset: enabled && open ? bounds.offset : sideOffset,
+    "data-composer-popup": inComposer || undefined,
     "data-popup-row-anchor": (enabled && open && bounds.row) || undefined,
     collisionPadding: {
       ...insets,
-      top: (insets.top ?? 0) + (enabled && open ? bounds.reserve : 0),
-      bottom: (insets.bottom ?? 0) + (enabled && open ? bounds.reserve : 0),
-      left: Math.max(insets.left ?? 8, bounds.left),
-      right: Math.max(insets.right ?? 8, bounds.right),
+      top: Math.max(insets.top ?? 0, gutter) + (enabled && open ? bounds.reserve : 0),
+      bottom: Math.max(insets.bottom ?? 0, gutter) + (enabled && open ? bounds.reserve : 0),
+      left,
+      right,
     },
     style: {
       ...style,
       minWidth: 0,
-      maxWidth: `min(${typeof style?.maxWidth === "number" ? `${style.maxWidth}px` : (style?.maxWidth ?? "100vw")}, var(--radix-popper-available-width, calc(100vw - 16px)))`,
+      maxWidth: `min(${typeof style?.maxWidth === "number" ? `${style.maxWidth}px` : (style?.maxWidth ?? "100vw")}, var(--radix-popper-available-width, calc(100vw - ${left + right}px)))`,
     } as CSSProperties,
   };
 }

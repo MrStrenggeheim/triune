@@ -32,6 +32,7 @@ describe("shared composer controls", () => {
       </>,
     );
     for (const control of screen.getAllByRole("button")) {
+      expect(control).toHaveAttribute("data-variant", "ghost");
       expect(control).toHaveClass(...COMPOSER_CONTROL_TEXT_CLASS.split(" "));
       expect(control).not.toHaveClass(
         "text-xs",

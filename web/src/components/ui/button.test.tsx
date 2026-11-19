@@ -1,5 +1,6 @@
 // Modified for Triune; inherited notices remain applicable.
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { createRef } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { Button, buttonVariants } from "./button";
@@ -69,7 +70,7 @@ describe("buttonVariants icon geometry", () => {
     }
   });
 
-  it("keeps default button icons at a fixed 14px glyph inside a 16px box", () => {
+  it("keeps the shared icon sizing hook on buttons", () => {
     const classes = buttonVariants({});
     // index.css owns the fixed geometry through this semantic hook; callers can
     // opt an exceptional icon out with data-icon-size.
@@ -118,6 +119,104 @@ describe("buttonVariants icon geometry", () => {
   });
 });
 
+describe("Medium content", () => {
+  it("keeps icon order, count interpolation and the hidden loading width", () => {
+    const children = (
+      <>
+        <svg aria-hidden />
+        Delete <>{2} sessions</>
+        <svg aria-hidden />
+      </>
+    );
+    const view = render(<Button>{children}</Button>);
+    const button = screen.getByRole("button", { name: "Delete 2 sessions" });
+    const ink = screen.getByText("Delete 2 sessions");
+    expect(ink).toHaveClass("button-label-ink");
+    expect(ink.parentElement?.previousElementSibling?.tagName).toBe("svg");
+    expect(ink.parentElement?.nextElementSibling?.tagName).toBe("svg");
+    view.rerender(<Button loading>{children}</Button>);
+    expect(screen.getByText("Delete 2 sessions").closest(".contents")).toHaveClass("invisible");
+    expect(button).toHaveAccessibleName("Delete 2 sessions");
+  });
+
+  it("keeps truncated labels and caller-owned content in their original flex slots", () => {
+    function CustomIcon() {
+      return <svg data-icon-size="custom" role="presentation" />;
+    }
+    render(
+      <Button>
+        <CustomIcon />
+        <span title="Repository" className="truncate">
+          Repository
+        </span>
+      </Button>,
+    );
+    const button = screen.getByRole("button", { name: "Repository" });
+    expect(button.firstElementChild).toHaveAttribute("data-icon-size", "custom");
+    expect(screen.getByTitle("Repository").parentElement).toBe(button);
+    expect(screen.getByText("Repository")).toHaveClass("button-label-ink");
+  });
+
+  it("forwards the actual anchor ref and modified clicks through Slot", () => {
+    const click = vi.fn((event: React.MouseEvent) => event.preventDefault());
+    const ref = createRef<HTMLButtonElement>();
+    render(
+      <Button asChild ref={ref}>
+        <a href="/archive" onClick={click}>
+          <svg aria-hidden />
+          Archive
+        </a>
+      </Button>,
+    );
+    const link = screen.getByRole("link", { name: "Archive" });
+    expect(ref.current).toBe(link);
+    expect(link).toHaveAttribute("href", "/archive");
+    expect(link).not.toHaveAttribute("type");
+    fireEvent.click(link, { ctrlKey: true });
+    expect(click.mock.calls[0][0].ctrlKey).toBe(true);
+    expect(screen.getByText("Archive")).toHaveClass("button-label-ink");
+  });
+});
+
+describe("menu button feedback", () => {
+  it.each(["pointerup", "pointercancel", "lostpointercapture"])(
+    "clears the held trigger on %s outside the button without consuming the event",
+    (release) => {
+      const down = vi.fn();
+      render(
+        <Button
+          aria-haspopup="menu"
+          variant="ghost"
+          size="sm"
+          data-slot="dropdown-menu-trigger"
+          onPointerDownCapture={down}
+          aria-expanded
+        >
+          Compare
+        </Button>,
+      );
+      const button = screen.getByRole("button", { name: "Compare" });
+      function pointer(target: HTMLElement, type: string, pointerId: number) {
+        const event = Object.assign(new MouseEvent(type, { bubbles: true, cancelable: true }), {
+          isPrimary: true,
+          pointerId,
+        });
+        fireEvent(target, event);
+        expect(event.defaultPrevented).toBe(false);
+      }
+      pointer(button, "pointerdown", 4);
+      expect(down).toHaveBeenCalledOnce();
+      expect(button).toHaveAttribute("data-button-held");
+      pointer(document.body, release, 5);
+      expect(button).toHaveAttribute("data-button-held");
+      pointer(document.body, release, 4);
+      expect(button).not.toHaveAttribute("data-button-held");
+      expect(button).toHaveAttribute("aria-expanded", "true");
+      expect(button).toHaveAttribute("data-slot", "dropdown-menu-trigger");
+    },
+  );
+});
+
 describe("Button radius scale", () => {
   it("maps default, small, and extra-small buttons to 8px, 6px, and 4px tokens", () => {
     render(
@@ -143,6 +242,18 @@ describe("Button radius scale", () => {
 });
 
 describe("Button loading state", () => {
+  it("keeps the rendered accessible name of an opaque custom label while busy", () => {
+    function ActionLabel() {
+      return <strong>Save draft</strong>;
+    }
+    render(
+      <Button loading>
+        <ActionLabel />
+      </Button>,
+    );
+    expect(screen.getByRole("button", { name: "Save draft" })).toBeDisabled();
+  });
+
   it("keeps the label in the DOM so the button width doesn't collapse or grow", () => {
     // The label must stay rendered (just hidden) — replacing it with the
     // spinner would shrink the button to the spinner's width and shift

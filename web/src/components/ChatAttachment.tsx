@@ -668,6 +668,7 @@ export function ChatAttachment({
                       variant="ghost"
                       size="icon-xs"
                       aria-label={`More actions for ${filename}`}
+                      menuFeedback={false}
                     >
                       <MoreHorizontalIcon />
                     </Button>

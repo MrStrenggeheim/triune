@@ -1482,6 +1482,7 @@ export function ExplorerRowActions({
             variant="ghost"
             size="icon-xs"
             aria-haspopup="menu"
+            menuFeedback={false}
             aria-expanded={menuOpen}
             className="absolute right-0 text-muted-foreground [@media((hover:hover)_and_(pointer:fine))]:[[data-explorer-entry][data-input=mouse]:not(:hover):not(:has(:focus-visible)):not([data-menu-open])_&]:pointer-events-none [@media((hover:hover)_and_(pointer:fine))]:[[data-explorer-entry][data-input=mouse]:not(:hover):not(:has(:focus-visible)):not([data-menu-open])_&]:opacity-0"
             aria-label={`Actions for ${path}`}

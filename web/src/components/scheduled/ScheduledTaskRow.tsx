@@ -123,6 +123,7 @@ export function ScheduledTaskRow({
             size="icon-sm"
             aria-label={`Actions for ${task.name}`}
             data-testid="task-row-menu"
+            menuFeedback={false}
             disabled={busy}
             loading={busy}
             className={cn(

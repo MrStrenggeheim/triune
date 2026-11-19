@@ -4,6 +4,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Host } from "@/hooks/useHosts";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import {
   WorkspaceSelectionDialog,
   type WorkspaceSelectionHandler,
@@ -300,6 +301,57 @@ it("dismisses setup with Escape without dismissing the workspace picker or its p
   expect(path).toHaveValue("/draft");
   await waitFor(() => expect(screen.getByRole("button", { name: "Add host…" })).toHaveFocus());
 });
+
+it.each(["navigation", "another dialog"])(
+  "yields focus to %s when the picker closes",
+  async (next) => {
+    render(<WorkspaceSelector hostLabel="Host A" path="/work" />);
+    const opener = screen.getByRole<HTMLButtonElement>("button", {
+      name: "Select workspace: Host A:/work",
+    });
+    const view = render(
+      <WorkspaceSelectionDialog
+        open
+        returnFocusTo={opener}
+        onOpenChange={vi.fn()}
+        onConfirm={vi.fn()}
+        hostId="a"
+        initialPath="/work"
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("textbox", { name: "Current folder path" })).toHaveFocus(),
+    );
+    const focusOpener = vi.spyOn(opener, "focus");
+    const originalUrl = document.URL;
+    try {
+      if (next === "navigation") {
+        window.history.replaceState(null, "", "/settings");
+        view.unmount();
+      } else {
+        view.rerender(
+          <Dialog open>
+            <DialogContent aria-describedby={undefined}>
+              <DialogTitle>Next dialog</DialogTitle>
+              <input aria-label="Next field" />
+            </DialogContent>
+          </Dialog>,
+        );
+        await waitFor(() => expect(screen.getByLabelText("Next field")).toHaveFocus());
+      }
+      // Radix schedules close autofocus after the closing content unmounts.
+      await act(
+        () =>
+          new Promise<void>((resolve) => {
+            setTimeout(resolve, 0);
+          }),
+      );
+      expect(focusOpener).not.toHaveBeenCalled();
+    } finally {
+      window.history.replaceState(null, "", originalUrl);
+    }
+  },
+);
 
 it("uses one borderless host/path trigger with a chevron", () => {
   const onClick = vi.fn();

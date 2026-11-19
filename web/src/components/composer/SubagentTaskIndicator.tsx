@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { BotIcon } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { ComposerShelfButton } from "./ComposerShelfButton";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useChildSessions, type ChildSessionInfo } from "@/hooks/useChildSessions";
 import { useLocation, useNavigate } from "@/lib/routing";
@@ -154,6 +155,7 @@ export function SubagentTaskIndicator({
   if (count <= 0) return null;
 
   const countLabel = statusSummary(items);
+  const Trigger = shelf ? ComposerShelfButton : Button;
   const triggerState: IndicatorState = items.some((item) => item.state === "error")
     ? "error"
     : items.some((item) => item.state === "parked")
@@ -170,7 +172,7 @@ export function SubagentTaskIndicator({
       </span>
       <Popover open={open} onOpenChange={handleOpenChange}>
         <PopoverTrigger asChild>
-          <Button
+          <Trigger
             type="button"
             variant="ghost"
             size="xs"
@@ -179,8 +181,12 @@ export function SubagentTaskIndicator({
             aria-label={countLabel}
             className={cn(
               "shrink-0 gap-1 px-1 font-normal tabular-nums md:px-2",
-              triggerState === "error" && "text-destructive hover:text-destructive",
-              triggerState === "parked" && "text-warning hover:text-warning",
+              triggerState === "error" &&
+                (shelf
+                  ? "text-destructive! [&_svg]:text-destructive!"
+                  : "text-destructive hover:text-destructive"),
+              triggerState === "parked" &&
+                (shelf ? "text-warning! [&_svg]:text-warning!" : "text-warning hover:text-warning"),
             )}
           >
             <BotIcon className="size-3.5" strokeWidth={1.5} aria-hidden="true" />
@@ -193,7 +199,7 @@ export function SubagentTaskIndicator({
               </span>
             )}
             <span className={shelf ? undefined : COMPOSER_COLLAPSED_LABEL_CLASS}>{count}</span>
-          </Button>
+          </Trigger>
         </PopoverTrigger>
         <PopoverContent
           side="top"

@@ -231,6 +231,7 @@ export function TerminalInventoryView({
           <div key={`${workspace.id}:${terminal.id}`} data-shell-id={terminal.id}>
             {embedded ? (
               <ActivityRow
+                entry
                 key={terminal.id}
                 selected={focusShellId === terminal.id}
                 icon={<SquareTerminalIcon aria-hidden="true" className="size-3.5" />}

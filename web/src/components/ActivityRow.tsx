@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { toast } from "@/lib/notifications";
 import { Link } from "@/lib/routing";
+import { cn } from "@/lib/utils";
 import "@/components/composer/composerShelves.css";
 import "./ActivityRow.css";
 import ReactMarkdown from "react-markdown";
@@ -44,6 +45,8 @@ export function ActivityRow({
   href,
   descriptionText,
   presentation = "resource",
+  entry = false,
+  entryLabel,
   summary,
   expanded: controlledExpanded,
   onExpandedChange,
@@ -66,6 +69,10 @@ export function ActivityRow({
   href?: string;
   descriptionText?: string;
   presentation?: "resource" | "message";
+  /** Fixed two-line header used by agent and shell entries. */
+  entry?: boolean;
+  /** Spoken identity for an entry whose visible title contains markup. */
+  entryLabel?: string;
   summary?: ReactNode;
   expanded?: boolean;
   onExpandedChange?: (expanded: boolean) => void;
@@ -110,7 +117,8 @@ export function ActivityRow({
       setStopping(false);
     }
   }
-  const name = typeof title === "string" ? title : "resource";
+  const name = entryLabel ?? (typeof title === "string" ? title : "resource");
+  const disclosure = expanded ? "Collapse activity" : "Expand activity";
   const titleContent = (
     <span className="min-w-0 truncate" title={typeof title === "string" ? title : undefined}>
       {title}
@@ -120,6 +128,7 @@ export function ActivityRow({
     <Button
       type="button"
       variant="ghost"
+      size={entry ? "sm" : undefined}
       aria-label={typeof title === "string" ? title : undefined}
       aria-description={
         descriptionText ?? (typeof description === "string" ? description : undefined)
@@ -164,7 +173,16 @@ export function ActivityRow({
   const row = (
     <div
       data-resource-row=""
-      className={`resource-row ${message ? "activity-message-header gap-2.5" : "density-row gap-2 rounded-[var(--radius-md)] hover:bg-[var(--workspace-hover-on-content)]"} flex min-w-0 items-center text-sm ${selected ? "bg-[var(--workspace-hover-on-content)] ring-1 ring-ring" : ""}`}
+      className={cn(
+        "resource-row flex min-w-0 items-center text-sm",
+        message && "activity-message-header",
+        entry
+          ? "activity-entry-header"
+          : message
+            ? "gap-2.5"
+            : "density-row gap-2 rounded-[var(--radius-md)] hover:bg-[var(--workspace-hover-on-content)]",
+        selected && "bg-[var(--workspace-hover-on-content)] ring-1 ring-ring",
+      )}
       onClick={(event) => {
         if (!(event.target instanceof Element) || event.target.closest("button, a")) return;
         if (!event.currentTarget.contains(event.target)) return;
@@ -215,7 +233,8 @@ export function ActivityRow({
                   type="button"
                   variant="ghost"
                   size="xs"
-                  aria-label={`Actions for ${name}`}
+                  aria-label={`${entry ? "Stop actions" : "Actions"} for ${name}`}
+                  aria-describedby={`${contentId}-status`}
                   disabled={stopping}
                   loading={stopping}
                   className="resource-status h-auto rounded-4xl p-0 font-normal"
@@ -227,14 +246,16 @@ export function ActivityRow({
                     if (event.detail > 0 && pointerType.current === "mouse") void stop();
                   }}
                 >
-                  <span className="resource-status-label">{status}</span>
+                  <span id={`${contentId}-status`} className="resource-status-label">
+                    {status}
+                  </span>
                   <Badge
                     variant="destructive"
                     className="resource-stop-label text-xs font-normal"
                     aria-hidden="true"
                   >
                     <SquareIcon className="size-3 fill-current" aria-hidden="true" />
-                    Stop
+                    <span className="resource-stop-text">Stop</span>
                   </Badge>
                 </Button>
               </DropdownMenuTrigger>
@@ -263,7 +284,7 @@ export function ActivityRow({
               size="icon-xs"
               variant="ghost"
               tooltip={false}
-              aria-label={expanded ? "Collapse activity" : "Expand activity"}
+              aria-label={entry ? `${disclosure} · ${name}` : disclosure}
               aria-expanded={expanded}
               aria-controls={contentId}
               onClick={() => {
@@ -298,7 +319,12 @@ export function ActivityRow({
   return (
     <div
       onClickCapture={preserveDisclosure}
-      className={`activity-row min-w-0 text-sm ${message ? "activity-row--message border-l-2 border-primary/60 py-1 pl-2.5 sm:pl-3" : "activity-row--resource"}`}
+      className={cn(
+        "activity-row min-w-0 text-sm",
+        message ? "activity-row--message" : "activity-row--resource",
+        entry && "activity-entry",
+        message && !entry && "border-l-2 border-primary/60 py-1 pl-2.5 sm:pl-3",
+      )}
     >
       {openingRow}
       {children && (

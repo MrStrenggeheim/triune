@@ -69,7 +69,7 @@ function WorkspaceSwitchState({
   disabledReason,
   onReconnect,
 }: WorkspaceSwitchProps) {
-  const [open, setOpen] = useState(false);
+  const [workspaceTrigger, setWorkspaceTrigger] = useState<HTMLButtonElement | null>(null);
   const [hostTarget, setHostTarget] = useState<{ hostId: string; path: string } | null>(null);
   const { switchHostDisabledReason } = useSessionActionRestrictions(sessionId, { hostId });
   const [checking, setChecking] = useState(false);
@@ -192,7 +192,7 @@ function WorkspaceSwitchState({
             },
             { reveal: true },
           );
-        setOpen(false);
+        setWorkspaceTrigger(null);
         return;
       } else reflect(snapshot, true);
       if (snapshot.operation?.blocked && snapshot.operation.phase !== "failed") return;
@@ -202,7 +202,7 @@ function WorkspaceSwitchState({
       }
       if (snapshot.operation?.previous_workspace) addRecent(snapshot.operation.previous_workspace);
       addRecent(snapshot.workspace);
-      setOpen(false);
+      setWorkspaceTrigger(null);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["session", sessionId] }),
         queryClient.invalidateQueries({ queryKey: ["chat-workbench-workspace"] }),
@@ -246,9 +246,9 @@ function WorkspaceSwitchState({
     },
   });
   const changing = checking || mutation.isPending || busy;
-  function closeDialog(next: boolean) {
-    if (!next) prepareSequence.current += 1;
-    setOpen(next);
+  function closeDialog() {
+    prepareSequence.current += 1;
+    setWorkspaceTrigger(null);
   }
   async function change(target: string, recover?: string) {
     setError(null);
@@ -284,7 +284,7 @@ function WorkspaceSwitchState({
       if (sequence !== prepareSequence.current) return false;
       if (prepared.unchanged) {
         toast.info("Workspace unchanged", { description: prepared.workspace });
-        closeDialog(false);
+        closeDialog();
         return false;
       }
       if (fileContext?.beforeWorkspaceChange) {
@@ -316,7 +316,9 @@ function WorkspaceSwitchState({
     <>
       <WorkspaceSelector
         hostLabel={hostLabel}
-        menuOpen={open}
+        menuOpen={workspaceTrigger !== null}
+        composer
+        title={`${hostLabel}:${workspace}`}
         path={
           changing ? "Changing workspace…" : operation?.blocked ? "Recover workspace" : workspace
         }
@@ -324,14 +326,15 @@ function WorkspaceSwitchState({
         aria-label={`Change workspace: ${hostLabel}:${workspace}`}
         disabledReason={disabledReason}
         disabled={!!disabledReason && !operation?.blocked}
-        onClick={() => {
+        onClick={(event) => {
           setFolder(operation?.blocked ? operation.target_workspace : workspace);
           setError(null);
-          setOpen(true);
+          setWorkspaceTrigger(event.currentTarget);
         }}
       />
       <WorkspaceSelectionDialog
-        open={open}
+        open={workspaceTrigger !== null}
+        returnFocusTo={workspaceTrigger}
         onOpenChange={closeDialog}
         hostId={hostId}
         hostLabel={hostLabel}
@@ -425,7 +428,7 @@ function WorkspaceSwitchState({
             if (!next) setHostTarget(null);
           }}
           onSwitched={() => {
-            closeDialog(false);
+            closeDialog();
             void queryClient.invalidateQueries({ queryKey: ["session-workspace", sessionId] });
             void queryClient.invalidateQueries({ queryKey: ["chat-workbench-workspace"] });
             if (useChatStore.getState().conversationId === sessionId)

@@ -70,6 +70,9 @@ describe("trusted peer presentation", () => {
       "/c/implementation",
     );
     expect(screen.getByText("sent to")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Expand activity · Implementation chat sent" }),
+    ).toBeVisible();
     expect(screen.queryByText("from")).not.toBeInTheDocument();
     expect(screen.getByTestId("peer-message")).toHaveAttribute("data-direction", "sent");
     expect(document.querySelector(".lucide-send")).not.toBeNull();
@@ -99,6 +102,7 @@ describe("trusted peer presentation", () => {
       "/c/implementation",
     );
     expect(screen.queryByRole("link", { name: "Own chat" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Expand activity · Agent sent" })).toBeVisible();
   });
 
   it("removes a cached source title when access is revoked", async () => {
@@ -221,7 +225,9 @@ describe("trusted peer presentation", () => {
     expect(screen.getByTestId("peer-message")).not.toHaveTextContent("FINAL_REPORT_MARKER");
     expect(screen.getByTestId("peer-message")).not.toHaveTextContent("\uFFFD");
     expect(screen.queryByRole("button", { name: "Copy" })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Expand activity" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Expand activity · Independent review received" }),
+    );
     expect(screen.getByTestId("peer-message")).toHaveTextContent("FINAL_REPORT_MARKER");
   });
 
@@ -243,20 +249,25 @@ describe("trusted peer presentation", () => {
       "href",
       "/c/review",
     );
-    const disclosure = screen.getByRole("button", { name: "Expand activity" });
+    const disclosure = screen.getByRole("button", {
+      name: "Expand activity · Independent review received",
+    });
     const detail = document.getElementById(disclosure.getAttribute("aria-controls")!);
     expect(detail).not.toBeVisible();
     expect(screen.queryByTestId("message-timestamp")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Copy" })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Expand activity" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Expand activity · Independent review received" }),
+    );
     expect(detail).toBeVisible();
     expect(screen.getByTestId("peer-message").textContent?.match(/First line/g)).toHaveLength(1);
     expect(screen.getByTestId("peer-message")).toHaveTextContent("Fourth line");
-    expect(screen.getByRole("button", { name: "Collapse activity" })).toHaveAttribute(
-      "aria-expanded",
-      "true",
+    expect(
+      screen.getByRole("button", { name: "Collapse activity · Independent review received" }),
+    ).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Collapse activity · Independent review received" }),
     );
-    fireEvent.click(screen.getByRole("button", { name: "Collapse activity" }));
     expect(detail).not.toBeVisible();
     expect(screen.getByTestId("peer-message").textContent?.match(/First line/g)).toHaveLength(1);
     expect(screen.getByTestId("peer-message")).not.toHaveTextContent("Fourth line");
@@ -367,7 +378,7 @@ describe("trusted peer presentation", () => {
     const rendered = render(view("implementation"));
     expect(screen.getByText("this report").tagName).toBe("STRONG");
     expect(fetch).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Expand activity" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Expand activity · .+ (sent|received)$/ }));
     const url =
       "/v1/sessions/implementation/attachments/references/captured-item/metadata?path=%2Foriginal%2Fworkspace%2Fguide.txt";
     await waitFor(() =>
@@ -464,7 +475,7 @@ it.each(["review", "implementation"])(
     );
     const view = render(card("queued"));
     expect(screen.queryByRole("status")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Expand activity" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Expand activity · .+ (sent|received)$/ }));
     expect(screen.queryByRole("status")).toBeNull();
     view.rerender(card("failed"));
     expect(screen.getByRole("alert")).toHaveTextContent("Delivery failed");

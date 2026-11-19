@@ -115,16 +115,36 @@
   border-radius: var(--composer-shelf-control-radius);
 }
 
+.composer-attention-surface > button {
+  --button-menu-root-fill: transparent;
+  isolation: isolate;
+}
+
+[data-composer-shelf-face] {
+  position: absolute;
+  z-index: -1;
+  inset-inline: -1px;
+  height: 24px;
+  border-radius: inherit;
+  background-color: var(--button-menu-fill);
+  pointer-events: none;
+}
+
+[data-size="icon-xs"] > [data-composer-shelf-face] {
+  inset-inline: auto;
+  width: 24px;
+}
+
 .resource-popup {
   padding: var(--popup-inset);
   gap: var(--popup-item-gap);
 }
 
-.activity-row--resource .resource-row {
+.activity-row--resource:where(:not(.activity-entry)) .resource-row {
   padding-inline-start: var(--list-row-padding-block);
 }
 
-.activity-row--resource .resource-text {
+.activity-row--resource:where(:not(.activity-entry)) .resource-text {
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -202,6 +222,12 @@
   .composer-shelf-surface button {
     min-width: 44px;
     min-height: 44px;
+  }
+
+  /* The transparent hit area supplies the vertical inset around each 24px face. */
+  .composer-shelf-content:has(> .composer-attention-surface) {
+    padding-top: 0;
+    padding-bottom: var(--composer-outer-radius);
   }
 
   .resource-row {

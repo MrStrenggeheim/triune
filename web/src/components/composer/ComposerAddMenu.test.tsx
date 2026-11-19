@@ -37,7 +37,8 @@ it("uses the shared centered composer bounds and retains attachment/plan actions
   const menu = screen.getByRole("menu", { name: "Add" });
   expect(menu).toHaveAttribute("data-align", "center");
   expect(menu).toHaveAttribute("data-side", "top");
-  expect(menu.style.width).toBe("var(--radix-popper-available-width)");
+  expect(menu).toHaveClass("w-max");
+  expect(menu.style.width).toBe("");
   fireEvent.click(screen.getByRole("menuitem", { name: "Files and images" }));
   expect(onAttach).toHaveBeenCalledOnce();
   open();

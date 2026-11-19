@@ -18,6 +18,10 @@ The registry supplies values, production components supply interactions, and sto
 The small visualization kit consumes generated tokens for sandboxed HTML.
 Use the production React components for product development and product mockups.
 
+Use the [ui-ux skill](https://github.com/prangishviliAbe/agent-skills/tree/72580c2903bd8e9c769a398cb3c12c00353cc91d/ui-ux) for the design and visual QA pass.
+An intent brief supplies the task and constraints; the app supplies the visual context.
+Inspect nearby components, render the real caller, and fix optical and interaction defects before owner review.
+
 1. **Find the owner.** Run `python3 -m dev.design_catalog workspace` from the repository root, or open **Design review → Start here → Interactions** in Storybook.
    Both read the [task directory](interactions.json), which names the owner, production caller, story and focused test.
    For an uncatalogued interaction, trace an existing caller first.
@@ -46,6 +50,7 @@ In uncovered areas preserve the existing production surface and bring any new pr
 | BUTTON-UNIFY-28, 2026-11-18 | Composer at rest, hover and press only | Button artifact, SHA-256 `86ea83c0e6165c4ea00a177405693698448517178906b2a4764387dad5648ab3` |
 | UX review 1 · embedded workspace directory row, 2026-11-18 | Folder and file rows in the embedded picker: 28 px Compact and 36 px Comfortable on desktop, 44 px for either density on touch; keep the reviewed insets, icon spacing and enabled/disabled appearance | `WorkspacePickerEntry` at `b71684ab1`; review artifact SHA-256 `5376b4a5e3ae87b59cb3d9070162bf2b4680e1885ea131d071c13263a97dc649` |
 | BUTTON-UNIFY-28 · Medium, 2026-11-19 | At default Appearance, 32 px button, 1 px reserved border, 8 px padding, 6 px gap and 14 px icon/label band. Shift only the label up 0.5 px. Preserve viewport-specific UI type. | Accepted Medium artifact, SHA-256 `61ecdd59531b8f65154cbade5664bb360bbf12193b1ff0f702cf1e18ca880a31` |
+| BUTTON-UNIFY-28 · ordinary ghost menu triggers, 2026-11-19 | Use the composer's hover and press feedback. Show a distinct open fill after release. Held feedback takes precedence while pressed. Stop, nested actions and specialized controls keep their existing roles. | File Viewer's Diff comparison in the approved shared Button artifact, SHA-256 `4f71d0f0da07d7c67046ffd50829d9d2e41900622d02fa045c395e4d1ba3fc12` |
 
 The owner rejected the replacement popup contents and workspace selector in the button artifact.
 Mount the production menus and `WorkspaceSelectionDialog` when reviewing button changes.
@@ -58,8 +63,12 @@ Generate the React inventory with `node web/scripts/review-inventory.mjs --story
 Read one packet with `node web/scripts/review-inventory.mjs --inventory INVENTORY.json --component WorkspacePickerEntry`.
 It lists declared options, usage sites, story coverage and unresolved expressions.
 Use the artifact kit's versioned manifest and native renderer sources for their respective surfaces.
-Start with a workspace directory row, followed by components with repeated corrections or many competing implementations.
-Per component, give the owner one short review showing actual variants and occurrence contexts, current usage facts, a recommendation and one decision.
+Batch implementation by shared owner and affected surface, beginning with approved, broadly reused controls.
+Migrate callers and verify each batch end to end before picking up another family.
+Group routine reuse under the existing approval. Ask once for each new visible interaction.
+Show one representative example in context and give the recommendation in one to three sentences.
+A reply of “approve” covers the stated scope. Apply a short correction to the shared component and show just the revised behavior.
+Keep variant inventories, measurement guides and test evidence available for drill-down.
 Distinguish production callers, supported story-only variants and dynamic combinations that require a fixture.
 Group identical repetitions visually and retain their source locations.
 
@@ -182,6 +191,8 @@ Its default 24px surface centers the 14px glyph inside a separate target of at l
 Shared coarse header primitives retain 48px height; docked application headers follow the 48px/36px density setting with targets contained in their row.
 Dialogs balance their top/right close insets.
 Popup composites use the shared inset, item-gap, text-gap and footer-gap roles independently of generic list density.
+Composer menus and hints center on the trigger, flip as space permits, and stay inside a 24px viewport gutter at every pane width.
+The combined workspace selector retains its screen-centered dialog.
 Header and shelf popups measure their outer gap from the owning row edge, matching the visible control's inset on the actual opening side.
 Use the shelf's outer paint owner and exclude its negative overlap; retain Radix collision handling, horizontal alignment and standalone popup spacing.
 

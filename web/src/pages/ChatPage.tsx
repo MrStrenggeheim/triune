@@ -5769,6 +5769,7 @@ function SessionHarnessPicker({
       }}
       trigger={{
         label: "Configure session",
+        menuFeedback: "composer",
         model: label,
         effort: effortLabel ?? undefined,
         icon: <ComposerAgentIcon agent={iconAgent} />,

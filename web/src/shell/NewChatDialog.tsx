@@ -13,6 +13,7 @@ import {
   HarnessPickerSubContent,
 } from "@/components/composer/HarnessPicker";
 import {
+  type ComponentProps,
   type ReactNode,
   useCallback,
   useEffect,
@@ -1379,6 +1380,7 @@ export function AgentHarnessPicker({
   contentClassName,
   contentAlign = "end",
   triggerClassName,
+  menuFeedback = false,
   triggerLabelClassName,
   triggerTooltip,
   triggerTooltipRows,
@@ -1437,6 +1439,7 @@ export function AgentHarnessPicker({
   contentAlign?: "start" | "center" | "end";
   /** Extra classes merged onto the trigger Button. */
   triggerClassName?: string;
+  menuFeedback?: ComponentProps<typeof Button>["menuFeedback"];
   /** Extra classes merged onto the trigger's label span. */
   triggerLabelClassName?: string;
   /** Hover text explaining the current pick, when the label alone doesn't say
@@ -1843,6 +1846,7 @@ export function AgentHarnessPicker({
         }
       }}
       trigger={{
+        menuFeedback,
         disabled: disabledLabel !== undefined || previewOnly || !hasAgents,
         "aria-busy": loading || undefined,
         label: disabledLabel ?? visibleCachedPreview?.label ?? triggerAccessibleName,
@@ -2783,8 +2787,9 @@ export function NewChatLandingScreen({ embedded }: { embedded?: EmbeddedNewChat 
     _setCostControlMode(mode);
     if (mode === "on") _setPickedModel("");
   }, []);
-  // Controls the working-directory popover so picking a directory closes it.
-  const [workspacePickerOpen, setWorkspacePickerOpen] = useState(false);
+  const [workspacePickerTrigger, setWorkspacePickerTrigger] = useState<HTMLButtonElement | null>(
+    null,
+  );
   const [workspacePickerInitialPath, setWorkspacePickerInitialPath] = useState<string | undefined>(
     undefined,
   );
@@ -6408,7 +6413,7 @@ export function NewChatLandingScreen({ embedded }: { embedded?: EmbeddedNewChat 
           if (reconnect) pendingConnectRef.current = true;
           else {
             selectHost(host.host_id);
-            setWorkspacePickerOpen(false);
+            setWorkspacePickerTrigger(null);
           }
         }}
         disabled={reconnect ? connectingThisMachine : host.status !== "online"}
@@ -6498,7 +6503,7 @@ export function NewChatLandingScreen({ embedded }: { embedded?: EmbeddedNewChat 
                 key={provider ?? "default"}
                 onSelect={() => {
                   selectSandbox(provider);
-                  setWorkspacePickerOpen(false);
+                  setWorkspacePickerTrigger(null);
                 }}
                 // First row keeps the original testid; later
                 // rows get a scoped one.
@@ -6896,15 +6901,16 @@ export function NewChatLandingScreen({ embedded }: { embedded?: EmbeddedNewChat 
                     />
                     <WorkspaceSelector
                       hostLabel={hostLabel}
-                      menuOpen={workspacePickerOpen}
+                      menuOpen={workspacePickerTrigger !== null}
+                      composer
                       path={sandboxSelected ? "Managed workspace" : visibleWorkspace}
                       disabled={creating || workspaceLoading}
                       data-testid="new-chat-landing-workspace-chip"
-                      onClick={() => {
+                      onClick={(event) => {
                         setWorkspacePickerInitialPath(
                           isNavigablePath(workspaceTrimmed) ? workspaceTrimmed : undefined,
                         );
-                        setWorkspacePickerOpen(true);
+                        setWorkspacePickerTrigger(event.currentTarget);
                       }}
                     />
 
@@ -6921,14 +6927,17 @@ export function NewChatLandingScreen({ embedded }: { embedded?: EmbeddedNewChat 
               at create time. Blank = empty server-created workspace. */}
                         <Popover>
                           <PopoverTrigger asChild>
-                            <TooltipButton
+                            <Button
+                              variant="ghost"
+                              menuFeedback="composer"
+                              size="xs"
                               type="button"
                               aria-label={`Sandbox repositories: ${
                                 sandboxRepoSelections.length > 0
                                   ? sandboxRepoLabel
                                   : "None selected"
                               }`}
-                              className="relative inline-flex h-6 min-w-10 max-w-[calc(50%-0.25rem)] cursor-pointer items-center gap-1 rounded-md border border-transparent bg-transparent px-1 text-ui font-normal text-foreground transition-colors hover:bg-muted hover:text-foreground md:min-w-11"
+                              className="min-w-10 max-w-[calc(50%-0.25rem)] shrink gap-1 rounded-md px-1 text-ui text-foreground md:min-w-11"
                               data-testid="new-chat-landing-repo-chip"
                             >
                               <GitBranchIcon className="ui-icon" />
@@ -6941,8 +6950,11 @@ export function NewChatLandingScreen({ embedded }: { embedded?: EmbeddedNewChat 
                               >
                                 {sandboxRepoLabel}
                               </span>
-                              <ChevronDownIcon className="size-3.5 shrink-0 opacity-60" />
-                            </TooltipButton>
+                              <ChevronDownIcon
+                                data-icon-size="14"
+                                className="size-3.5 shrink-0 opacity-60"
+                              />
+                            </Button>
                           </PopoverTrigger>
                           <PopoverContent align="start" className="w-96 p-3">
                             <div className="flex flex-col gap-2">
@@ -7460,6 +7472,7 @@ export function NewChatLandingScreen({ embedded }: { embedded?: EmbeddedNewChat 
                         onSelectAutoHarness={handleSelectSmartRoutingHarness}
                         contentClassName={COMPOSER_HARNESS_MENU_SIZE}
                         triggerClassName="leading-5"
+                        menuFeedback="composer"
                       />
                     </div>
                     <TooltipProvider>
@@ -7538,8 +7551,9 @@ export function NewChatLandingScreen({ embedded }: { embedded?: EmbeddedNewChat 
             />
           </form>
           <WorkspaceSelectionDialog
-            open={workspacePickerOpen}
-            onOpenChange={setWorkspacePickerOpen}
+            open={workspacePickerTrigger !== null}
+            returnFocusTo={workspacePickerTrigger}
+            onOpenChange={() => setWorkspacePickerTrigger(null)}
             hostId={selectedHostId}
             initialPath={workspacePickerInitialPath}
             description="Choose a host and folder for the new session."

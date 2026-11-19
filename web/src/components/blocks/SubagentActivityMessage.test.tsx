@@ -90,7 +90,11 @@ describe("sub-agent task and reply", () => {
         phase === "delegated" ? "subagent-activity" : "subagent-reply",
       );
       expect(card).toHaveTextContent("Curie");
-      fireEvent.click(screen.getByRole("button", { name: "Expand activity" }));
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: `Expand activity · Curie ${phase === "delegated" ? "task" : "reply"}`,
+        }),
+      );
       await act(async () =>
         client.setQueryData(childSessionsQueryKey("parent"), [
           {
@@ -103,7 +107,11 @@ describe("sub-agent task and reply", () => {
         ]),
       );
       await waitFor(() => expect(card).toHaveTextContent("Hooke"));
-      expect(screen.getByRole("button", { name: "Collapse activity" })).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", {
+          name: `Collapse activity · Hooke ${phase === "delegated" ? "task" : "reply"}`,
+        }),
+      ).toBeInTheDocument();
       if (phase === "delegated") {
         expect(card).toHaveTextContent("Inspect navigation");
         expect(card).toHaveTextContent("all instructions");
@@ -139,9 +147,9 @@ describe("sub-agent task and reply", () => {
     expect(screen.getByTestId("subagent-activity")).toBe(card);
     expect(screen.queryByTestId("subagent-reply")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Copy" })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Expand activity" }));
+    fireEvent.click(screen.getByRole("button", { name: "Expand activity · Curie task" }));
     expect(card.querySelector('[data-streamdown="strong"]')).toHaveTextContent("all instructions");
-    fireEvent.click(screen.getByRole("button", { name: "Collapse activity" }));
+    fireEvent.click(screen.getByRole("button", { name: "Collapse activity · Curie task" }));
     expect(card.querySelector('[data-streamdown="strong"]')).not.toBeInTheDocument();
   });
 
@@ -294,9 +302,9 @@ describe("sub-agent task and reply", () => {
     expect(reply).not.toHaveTextContent("FINAL_REPORT_MARKER");
     expect(reply).not.toHaveTextContent("\uFFFD");
     expect(screen.queryByRole("button", { name: "Copy" })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Expand activity" }));
+    fireEvent.click(screen.getByRole("button", { name: "Expand activity · Curie reply" }));
     expect(reply).toHaveTextContent("FINAL_REPORT_MARKER");
-    fireEvent.click(screen.getByRole("button", { name: "Collapse activity" }));
+    fireEvent.click(screen.getByRole("button", { name: "Collapse activity · Curie reply" }));
     expect(reply).not.toHaveTextContent("FINAL_REPORT_MARKER");
   });
 
@@ -310,7 +318,7 @@ describe("sub-agent task and reply", () => {
       </MemoryRouter>,
     );
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Expand activity" }));
+    fireEvent.click(screen.getByRole("button", { name: "Expand activity · Curie reply" }));
     expect(screen.getByRole("table")).toHaveTextContent("DoneCorrect");
     expect(screen.getByTestId("subagent-reply").textContent?.match(/Intro/g)).toHaveLength(1);
     expect(screen.getByText("Details")).toHaveAttribute("data-streamdown", "strong");
@@ -348,7 +356,7 @@ describe("sub-agent task and reply", () => {
       );
       const rendered = render(view("parent"));
       if (field === "task_input_ref")
-        fireEvent.click(screen.getByRole("button", { name: "Expand activity" }));
+        fireEvent.click(screen.getByRole("button", { name: "Expand activity · Curie task" }));
       const url =
         "/v1/sessions/original/attachments/references/captured-item/metadata?path=%2Foriginal%2Fguide.txt";
       await waitFor(() => expect(fetch).toHaveBeenCalledWith(url, expect.anything()));
@@ -455,7 +463,7 @@ it("resolves each multipart report section against its own exact source item", a
     ),
   );
   expect(screen.queryByText(/Second section/)).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Expand activity" }));
+  fireEvent.click(screen.getByRole("button", { name: "Expand activity · Curie reply" }));
   await waitFor(() =>
     expect(fetch).toHaveBeenCalledWith(
       "/v1/sessions/original/attachments/references/second/metadata?path=%2Foriginal%2Fguide.txt",
@@ -473,13 +481,13 @@ it("keeps an expanded reply open as late report text enriches the same event", a
     </MemoryRouter>
   );
   const rendered = render(view(original));
-  fireEvent.click(screen.getByRole("button", { name: "Expand activity" }));
+  fireEvent.click(screen.getByRole("button", { name: "Expand activity · Curie reply" }));
   const article = screen.getByTestId("subagent-reply");
   rendered.rerender(
     view(activity("returned", { result_text: "One\nTwo\nThree\nFour\n**Late final part**" })),
   );
   expect(screen.getByTestId("subagent-reply")).toBe(article);
-  expect(screen.getByRole("button", { name: "Collapse activity" })).toHaveAttribute(
+  expect(screen.getByRole("button", { name: "Collapse activity · Curie reply" })).toHaveAttribute(
     "aria-expanded",
     "true",
   );
@@ -552,7 +560,7 @@ it("updates one plain-timeline card per child through spawn, repeated steering a
   expect(findMessageElement("spawn")).toBe(original);
   expect(findMessageElement("steer-1")).toBe(original);
   expect(findMessageElement("steer-2")).toBe(original);
-  fireEvent.click(within(original).getByRole("button", { name: "Expand activity" }));
+  fireEvent.click(within(original).getByRole("button", { name: "Expand activity · Curie task" }));
   expect(original).toHaveTextContent("Original handoff");
   expect(original).toHaveTextContent("First steering details");
   expect(original).toHaveTextContent("Second steering details");
@@ -589,7 +597,7 @@ it.each([
     ]),
   );
   expect(await screen.findByText("· Navigation review")).toBeVisible();
-  fireEvent.click(screen.getByRole("button", { name: "Expand activity" }));
+  fireEvent.click(screen.getByRole("button", { name: "Expand activity · Curie task" }));
   expect(screen.getByTestId("subagent-activity")).toHaveTextContent("all instructions");
 });
 
@@ -623,7 +631,7 @@ it("keeps the full latest message in expanded details and absorbs a real final i
   expect(screen.queryByTestId("subagent-reply")).not.toBeInTheDocument();
   const preview = screen.getByTestId("subagent-activity").querySelector(".resource-description");
   expect(preview).toHaveTextContent("Reply: Final reply");
-  fireEvent.click(screen.getByRole("button", { name: "Expand activity" }));
+  fireEvent.click(screen.getByRole("button", { name: "Expand activity · Curie task" }));
   expect(preview).not.toBeInTheDocument();
   expect(await screen.findByText("instruction")).toBeVisible();
   expect(screen.getByText("reply", { selector: '[data-streamdown="strong"]' })).toBeVisible();

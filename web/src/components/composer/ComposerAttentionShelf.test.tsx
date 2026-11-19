@@ -324,7 +324,7 @@ it("keeps required schema fields and decline semantics in the plain popup", () =
   expect(submitApproval).toHaveBeenCalledExactlyOnceWith("schema-question", "decline", undefined);
 });
 
-it("shares composer collision bounds with one observer per open shelf popup", () => {
+it("tracks the open shelf row's gap without confining its popup to the composer column", () => {
   const observers: {
     callback: ResizeObserverCallback;
     observe: ReturnType<typeof vi.fn>;
@@ -351,16 +351,7 @@ it("shares composer collision bounds with one observer per open shelf popup", ()
       </MemoryRouter>,
     );
     const column = container.querySelector(".composer-shelf-stack")!;
-    let columnWidth = 422;
-    column.getBoundingClientRect = () =>
-      ({
-        left: 100,
-        right: 100 + columnWidth,
-        width: columnWidth,
-        top: 600,
-        bottom: 640,
-        height: 40,
-      }) as DOMRect;
+    const row = container.querySelector(".composer-shelf-content")!;
     expect(
       observers.filter((observer) => observer.observe.mock.calls.some(([node]) => node === column)),
     ).toHaveLength(0);
@@ -371,19 +362,19 @@ it("shares composer collision bounds with one observer per open shelf popup", ()
     expect(popup.className).toContain("30rem");
     // Resolving the portal trigger may replace an initial observer; only live
     // observers contribute to the per-popup resource budget.
-    const widths = observers.filter(
+    const active = observers.filter(
       (observer) =>
-        observer.observe.mock.calls.some(([node]) => node === column) &&
+        observer.observe.mock.calls.some(([node]) => node === row) &&
         observer.disconnect.mock.calls.length === 0,
     );
-    expect(widths).toHaveLength(1);
+    expect(active).toHaveLength(1);
+    expect(active[0].observe.mock.calls.map(([node]) => node)).not.toContain(column);
     act(() => {
-      columnWidth = 300;
-      widths[0].callback([], {} as ResizeObserver);
+      active[0].callback([], {} as ResizeObserver);
     });
     expect(popup.style.maxWidth).toContain("--radix-popper-available-width");
     fireEvent.keyDown(document.body, { key: "Escape" });
-    expect(widths[0].disconnect).toHaveBeenCalledOnce();
+    expect(active[0].disconnect).toHaveBeenCalledOnce();
     fireEvent.click(screen.getByRole("button", { name: "Approvals: 1" }));
     expect(screen.getByRole("dialog", { name: "Approvals" }).className).toContain("25rem");
     expect(screen.getByRole("dialog", { name: "Approvals" }).style.maxWidth).toContain(

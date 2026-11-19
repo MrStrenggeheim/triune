@@ -35,6 +35,8 @@ export function SubagentReply({
       data-message-id={activity.itemId ?? undefined}
     >
       <ActivityRow
+        entry
+        entryLabel={`${agentName} reply`}
         presentation="message"
         icon={<MessageCircleIcon aria-hidden="true" />}
         title={

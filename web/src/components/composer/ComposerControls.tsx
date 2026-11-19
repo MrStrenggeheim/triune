@@ -18,13 +18,7 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  TooltipButton,
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useMenuGuardedTooltip } from "@/hooks/useMenuGuardedTooltip";
 import { cn } from "@/lib/utils";
 import { permissionModeConcept } from "@/lib/nativeHarnessModes";
@@ -82,19 +76,22 @@ export const ComposerWorkspaceTrigger = forwardRef<
 ) {
   const Icon = kind === "directory" ? FolderIcon : GitForkIcon;
   return (
-    <TooltipButton
+    <Button
       ref={ref}
+      variant="ghost"
+      menuFeedback="composer"
+      size="sm"
       type="button"
       // Icon-only while the bar is collapsed, so the label is the name.
       aria-label={label}
       className={cn(
-        "relative inline-flex h-8 min-w-7 max-w-40 cursor-pointer items-center gap-1 rounded-md border border-transparent bg-transparent px-1 transition-colors hover:bg-muted hover:text-foreground disabled:cursor-default disabled:opacity-50 md:h-7",
+        "h-8 min-w-7 max-w-40 shrink gap-1 rounded-md px-1 md:h-7",
         COMPOSER_CONTROL_TEXT_CLASS,
         className,
       )}
       {...props}
     >
-      {icon ?? <Icon className="size-3.5 shrink-0" />}
+      {icon ?? <Icon data-icon-size="14" className="size-3.5 shrink-0" />}
       {!iconOnly && (
         <span
           data-workspace-collapse-label=""
@@ -103,8 +100,8 @@ export const ComposerWorkspaceTrigger = forwardRef<
           {label}
         </span>
       )}
-      <ChevronDownIcon className="size-3 shrink-0 opacity-60" />
-    </TooltipButton>
+      <ChevronDownIcon data-icon-size="12" className="size-3 shrink-0 opacity-60" />
+    </Button>
   );
 });
 
@@ -122,12 +119,15 @@ export const ComposerHostTrigger = forwardRef<
 ) {
   const Icon = cloud ? MonitorCloudIcon : LaptopIcon;
   return (
-    <TooltipButton
+    <Button
       ref={ref}
+      variant="ghost"
+      menuFeedback="composer"
+      size="sm"
       type="button"
       aria-label={label}
       className={cn(
-        "flex h-8 w-11 shrink-0 cursor-pointer items-center justify-center gap-0.5 rounded-lg bg-transparent pl-1 pr-2 transition-colors hover:bg-muted/70 hover:text-foreground data-[state=open]:bg-muted data-[state=open]:text-foreground dark:hover:bg-muted/50 disabled:cursor-default md:h-7 group-data-[labels=collapsed]/composer-actions:w-8 group-data-[labels=collapsed]/composer-actions:px-0",
+        "h-8 w-11 gap-0.5 rounded-lg border-0 pl-1 pr-2 md:h-7 group-data-[labels=collapsed]/composer-actions:w-8 group-data-[labels=collapsed]/composer-actions:px-0",
         COMPOSER_CONTROL_TEXT_CLASS,
         className,
       )}
@@ -146,9 +146,13 @@ export const ComposerHostTrigger = forwardRef<
             />
           </span>
         )}
-        <Icon className="size-4 shrink-0" data-testid={`${testIdPrefix}-host-icon`} />
+        <Icon
+          data-icon-size="16"
+          className="size-4 shrink-0"
+          data-testid={`${testIdPrefix}-host-icon`}
+        />
       </span>
-    </TooltipButton>
+    </Button>
   );
 });
 
@@ -190,12 +194,15 @@ export function ComposerPermissionPicker({
     <DropdownMenu>
       <DisabledActionTooltip reason={disabled ? disabledReason : undefined} label={help}>
         <DropdownMenuTrigger asChild disabled={disabled || (loading && !interactiveWhileLoading)}>
-          <TooltipButton
+          <Button
+            variant="ghost"
+            menuFeedback="composer"
+            size="sm"
             type="button"
             disabled={disabled || (loading && !interactiveWhileLoading)}
             aria-busy={loading || undefined}
             className={cn(
-              "flex h-8 min-w-0 w-auto cursor-pointer items-center justify-center gap-1 rounded-lg bg-transparent px-2 transition-colors hover:bg-muted/70 dark:hover:bg-muted/50 disabled:cursor-default disabled:opacity-50 md:h-7",
+              "h-8 min-w-0 w-auto shrink gap-1 rounded-lg border-0 px-2 md:h-7",
               COMPOSER_CONTROL_TEXT_CLASS,
               loading && "disabled:opacity-100",
             )}
@@ -211,9 +218,13 @@ export function ComposerPermissionPicker({
             data-permission-concept={permissionModeConcept(harness, selectedValue)}
           >
             {loading ? (
-              <Loader2Icon aria-hidden="true" className="size-3 shrink-0 animate-spin" />
+              <Loader2Icon
+                data-icon-size="12"
+                aria-hidden="true"
+                className="size-3 shrink-0 animate-spin"
+              />
             ) : (
-              <HandIcon className="size-3 shrink-0" />
+              <HandIcon data-icon-size="12" className="size-3 shrink-0" />
             )}
             {!iconOnly && (
               <span
@@ -225,8 +236,8 @@ export function ComposerPermissionPicker({
                 {value}
               </span>
             )}
-            <ChevronDownIcon className="size-4 shrink-0 opacity-60" />
-          </TooltipButton>
+            <ChevronDownIcon data-icon-size="16" className="size-4 shrink-0 opacity-60" />
+          </Button>
         </DropdownMenuTrigger>
       </DisabledActionTooltip>
       <DropdownMenuContent
@@ -362,7 +373,7 @@ export const ComposerHarnessTrigger = forwardRef<
       aria-busy={loading || undefined}
       className={cn(
         COMPOSER_CONTROL_TEXT_CLASS,
-        "h-auto min-h-8 min-w-0 w-auto max-w-full gap-1 rounded-lg border-0 px-2 py-0 leading-5 hover:text-foreground md:min-h-7",
+        "h-auto min-h-8 min-w-0 w-auto max-w-full gap-1 rounded-lg border-0 px-2 py-0 leading-5 md:min-h-7",
         className,
       )}
       {...props}
