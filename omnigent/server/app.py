@@ -123,6 +123,7 @@ from omnigent.server.routes.preferences import create_preferences_router
 from omnigent.server.routes.projects import create_projects_router
 from omnigent.server.routes.runner_tunnel import create_runner_tunnel_router
 from omnigent.server.routes.scheduled_tasks import create_scheduled_tasks_router
+from omnigent.server.routes.server_update import ServerUpdate, create_server_update_router
 from omnigent.server.routes.session_mcp_servers import create_session_mcp_servers_router
 from omnigent.server.routes.session_policies import create_session_policies_router
 from omnigent.server.routes.sessions import (
@@ -206,6 +207,7 @@ class FilesystemAttachmentsInfo(BaseModel):
 
 
 class ServerInfoResponse(BaseModel):
+    capabilities: dict[str, bool] = {"server_update": True}
     accounts_enabled: bool
     single_user: bool
     login_url: str | None
@@ -1985,11 +1987,13 @@ def create_app(
         approval_release_task = asyncio.create_task(
             approval_deliveries.release_loop(), name="approval-receipt-release"
         )
+        update.start()
         try:
             await startup_inputs.message_queue.recover_all(app_inst)
             with monitor_event_loop():
                 yield
         finally:
+            await update.close()
             approval_release_task.cancel()
             with suppress(asyncio.CancelledError):
                 await approval_release_task
@@ -2177,6 +2181,10 @@ def create_app(
     from omnigent.server.admin_list import load_admin_list, promote_if_listed
 
     admin_list = load_admin_list(extra=frozenset(admins or ()))
+    update = ServerUpdate(conversation_store)
+    app.include_router(
+        create_server_update_router(update, auth_provider, permission_store, admin_list)
+    )
     # Session-sharing policy, normalized to a per-request callable, plus a
     # ``sharing_mode_writable`` flag gating the admin ``PUT /v1/sharing``
     # endpoint.

@@ -4299,6 +4299,21 @@
         "title": "IncompleteEvent",
         "type": "object"
       },
+      "InstallRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "release": {
+            "pattern": "^[0-9][0-9A-Za-z.]{0,63}-[0-9a-f]{12}$",
+            "title": "Release",
+            "type": "string"
+          }
+        },
+        "required": [
+          "release"
+        ],
+        "title": "InstallRequest",
+        "type": "object"
+      },
       "LaunchRunnerRequest": {
         "description": "Request body for `POST /v1/hosts/{host_id}/runners`.",
         "properties": {
@@ -5412,6 +5427,24 @@
           "end"
         ],
         "title": "MessageSearchRange",
+        "type": "object"
+      },
+      "ModeRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "mode": {
+            "enum": [
+              "manual",
+              "automatic_idle"
+            ],
+            "title": "Mode",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mode"
+        ],
+        "title": "ModeRequest",
         "type": "object"
       },
       "ModelUsage": {
@@ -7805,6 +7838,16 @@
           },
           "branding": {
             "$ref": "#/components/schemas/BrandingInfo"
+          },
+          "capabilities": {
+            "additionalProperties": {
+              "type": "boolean"
+            },
+            "default": {
+              "server_update": true
+            },
+            "title": "Capabilities",
+            "type": "object"
           },
           "databricks_features": {
             "title": "Databricks Features",
@@ -13472,6 +13515,89 @@
         "title": "UpdateSessionRequest",
         "type": "object"
       },
+      "UpdateStatus": {
+        "properties": {
+          "automatic_idle_supported": {
+            "title": "Automatic Idle Supported",
+            "type": "boolean"
+          },
+          "can_install": {
+            "title": "Can Install",
+            "type": "boolean"
+          },
+          "current_release": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Release"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "mode": {
+            "enum": [
+              "manual",
+              "automatic_idle"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "release": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Release"
+          },
+          "release_notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Release Notes"
+          },
+          "status": {
+            "enum": [
+              "unknown",
+              "checking",
+              "up_to_date",
+              "offline",
+              "available",
+              "unsupported",
+              "installing",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "current_release",
+          "release",
+          "release_notes",
+          "detail",
+          "can_install",
+          "mode",
+          "automatic_idle_supported"
+        ],
+        "title": "UpdateStatus",
+        "type": "object"
+      },
       "UpsertMCPServerRequest": {
         "description": "Request body for creating or updating a session agent MCP server.\n\n`env` is still excluded. `headers` is accepted for HTTP servers;\nwhen omitted, existing headers in the bundle are preserved unchanged.",
         "properties": {
@@ -13795,6 +13921,118 @@
           }
         },
         "summary": "Well Known Manifest"
+      }
+    },
+    "/api/server-update": {
+      "get": {
+        "operationId": "status_api_server_update_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpdateStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Status"
+      }
+    },
+    "/api/server-update/check": {
+      "post": {
+        "operationId": "check_api_server_update_check_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpdateStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Check"
+      }
+    },
+    "/api/server-update/install": {
+      "post": {
+        "operationId": "install_api_server_update_install_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InstallRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpdateStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Install"
+      }
+    },
+    "/api/server-update/mode": {
+      "put": {
+        "operationId": "mode_api_server_update_mode_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpdateStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Mode"
       }
     },
     "/api/version": {

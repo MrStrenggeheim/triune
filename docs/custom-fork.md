@@ -20,7 +20,7 @@ See [contributor setup](../CONTRIBUTING.md#development-setup) when changing code
 | Area | Repository documentation |
 | --- | --- |
 | Docked views, per-chat layouts and pins | [Unified workspace](../feature-map/unified-workspace.md) |
-| Composer and model controls | [Composer](../feature-map/composer.md) |
+| Composer workspace trigger, 8px card insets and model controls | [Composer](../feature-map/composer.md) |
 | Markdown editor mount lifecycle | [Markdown editor](../feature-map/markdown-editor.md) |
 | Feature verification entry points | [Feature map](../feature-map/README.md) |
 | Shared appearance and interaction rules | [Design system](../design-system/triune/MASTER.md) |
@@ -51,6 +51,71 @@ Portable release automation, additional platform certification and the wider pro
 Local activation snapshots live session runtimes, stops the services, verifies the new release and restores those conversations instead of waiting for them to become idle.
 Running tasks request continuation through the existing recovery path; unanswered questions and approvals are never automatically accepted.
 Session recovery retries retain the healthy release without repeating its service restart, while code/startup failures keep the existing backup and rollback behavior.
+
+### Review a published server update
+
+On a supported managed deployment, administrators can review the startup check in **Settings → General → Server updates**.
+An installable release opens a dialog showing the installed release, available release and published notes.
+Choose **Later** to continue working or **Update & restart** to submit that release to the managed installer.
+The browser keeps the current workspace mounted while it checks the install status.
+Automatic installation requires an explicit server capability for idle-only installation.
+
+The managed target uses the existing single-host `agent` systemd services, active release virtual environment and local SQLite database at `/home/agent/.omnigent/chat.db`.
+Provision the matching operator checkout in `/home/agent/projects/triune`, its Python environment, runtime pins, `uv`, and working session recovery credentials.
+Install root-owned copies of `deploy/local/omnigent-stable-update` and `deploy/local/triune-release-control` with mode 0755 under `/usr/local/sbin`.
+Install the root-owned `deploy/local/triune-release-update.service` under `/etc/systemd/system` and reload systemd.
+Use `visudo` to grant the fixed command with an empty argument list:
+
+```sudoers
+agent ALL=(root) NOPASSWD: /usr/local/sbin/triune-release-control ""
+```
+
+The server probes that same command without starting the unit.
+The unit holds the existing stable deployment lock through staging, activation and rollback.
+The operator account downloads and previews the wheels using the local runtime pins.
+A browser install requires a signed accounts or OIDC administrator session over the configured HTTPS origin.
+The server compares full commit ancestry when successive builds share a version number.
+Docker, source checkouts and quickstart installations continue to use their existing update procedures.
+The current managed release supports manual installation while server admission fencing remains under evaluation.
+
+### Publish an activated build
+
+For locally built releases, after health checks and session recovery succeed, the updater prints the owner question to its journal and atomically records a pending decision under `~/apps/omnigent/publication-decisions/<release-id>.json`.
+A replay for the same build preserves its recorded decision.
+For builds installed from GitHub, the same success hook writes a separate receipt under `~/apps/omnigent/published-activations/<release-id>.json` and reports the exact tag as already published in the journal and status command.
+Read the current question with `omni-custom status` or `omni-custom publication-status`.
+Ask the owner whether to publish that exact ID and commit to `MrStrenggeheim/triune`.
+Use the ID from the question even if another activation occurs before the owner answers.
+
+| Owner decision | Maintainer command |
+| --- | --- |
+| Pending | `omni-custom publication-status` |
+| No | `omni-custom decline <release-id>` |
+| Explicit yes for this version | `omni-custom publish <release-id> --owner-approved` |
+
+Run the helper as the local operator with GitHub CLI maintain/admin access and SSH push access to the canonical repository.
+Publication takes the systemd updater's lock and checks the active pointer, activation receipt, full source commit, manifest, installed runtime inventory and three wheel hashes.
+It pushes only the `triune-<release-id>` tag and its reachable Git history, prepares a draft, and publishes after GitHub reports matching digests for all three wheels and `SHA256SUMS`.
+GitHub also supplies its standard source archives for the tagged commit.
+The local receipt stays on the deployment host.
+
+**Downstream install contract**
+
+- Read published releases from `github.com/MrStrenggeheim/triune` with tag `triune-<version>-<first 12 hex characters of commit>`.
+- The release body contains three lines: `Activated Triune build <release-id>`, `Commit: <40 lowercase hex characters>` and `Manifest SHA-256: <64 lowercase hex characters>`.
+- The tag's peeled commit must match the full commit. The manifest hash identifies the producer's private build record.
+- Exactly three nonempty wheel assets use `<distribution>-<version>-py3-none-any.whl`, each at most 128 MiB. The distributions are `triune` (historically `omnigent`), `omnigent_client` and `omnigent_ui_sdk`.
+- The fourth asset, `SHA256SUMS`, contains exactly three ASCII lines sorted by wheel basename. Each line contains a lowercase 64-character SHA-256, two spaces, the basename and a terminating LF.
+- Verify GitHub's `sha256:<hex>` asset digest for all four downloads and each wheel digest from `SHA256SUMS`. The installer must resolve its own runtime dependencies.
+
+Retry the same approved command after a connection failure, including a lost reply after publishing.
+The helper reuses matching assets and verifies an existing publication.
+A conflicting tag, release, unexpected asset or absent remote digest requires maintainer inspection before retrying.
+If activation has advanced, ask about the new release.
+The service journal and status command surface the question; a timer cannot answer it.
+
+The installed systemd service invokes the root-owned `/usr/local/sbin/omnigent-stable-update`.
+Roll out its tracked script together with the operator checkout before relying on this hook.
 
 ## Development
 
@@ -430,6 +495,9 @@ Actual `86aca953c` server/runner probes returned 404 for the new route without s
 Compatibility evidence and the integration delta from the functional candidate are under `artifacts/reliability-audit-20261117/permission-control/compatibility/`.
 
 ## Session layout, transcript and settings
+
+Settings → Harnesses installs DeepSeek Harness on the selected host and stores its API key there.
+See [Harness acceptance](../feature-map/harness-acceptance.md) for the runtime and prerequisite.
 
 The header layout menu redistributes open views and retains each session's tabs and drafts.
 Dragging a divider resizes its two neighbors.

@@ -1,0 +1,8 @@
+[Unit]
+Description=Install a verified published Triune release on the managed installation
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/omnigent-stable-update --published
+TimeoutStartSec=3h

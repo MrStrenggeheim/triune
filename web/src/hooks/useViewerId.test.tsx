@@ -2,12 +2,14 @@ import { act, renderHook } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
 
 const identity = vi.hoisted(() => ({
+  admin: false,
   resolution: Promise.resolve<string | null>(null),
   viewerId: null as string | null,
   listeners: new Set<() => void>(),
 }));
 
 vi.mock("@/lib/identity", () => ({
+  getCurrentIsAdmin: () => identity.admin,
   getCurrentUserId: () => identity.viewerId,
   resolveIdentity: () => identity.resolution,
   subscribeIdentity: (listener: () => void) => {
@@ -17,11 +19,23 @@ vi.mock("@/lib/identity", () => ({
 }));
 
 import { useIdentityReady, useViewerId } from "./useViewerId";
+import { useIsAdmin } from "./useIsAdmin";
 
 beforeEach(() => {
+  identity.admin = false;
   identity.resolution = Promise.resolve(null);
   identity.viewerId = null;
   identity.listeners.clear();
+});
+
+it("reveals admin controls when the startup identity probe resolves after first render", () => {
+  const { result } = renderHook(useIsAdmin);
+  expect(result.current).toBe(false);
+  act(() => {
+    identity.admin = true;
+    for (const listener of identity.listeners) listener();
+  });
+  expect(result.current).toBe(true);
 });
 
 it("waits until identity resolves", async () => {

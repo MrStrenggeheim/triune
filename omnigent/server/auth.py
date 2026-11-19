@@ -37,6 +37,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING
+from urllib.parse import urlsplit
 
 from starlette.requests import HTTPConnection
 
@@ -547,6 +548,19 @@ class UnifiedAuthProvider(AuthProvider):
         if self._source == "accounts":
             return "/login"
         return None
+
+    @property
+    def signed_browser_origin(self) -> str | None:
+        """Configured HTTPS origin for signed browser sessions on this deployment."""
+        if self._source == "oidc" and self._oidc_config:
+            url = urlsplit(self._oidc_config.redirect_uri)
+        elif self._source == "accounts" and self._accounts_config:
+            url = urlsplit(self._accounts_config.base_url)
+        else:
+            return None
+        if url.scheme != "https" or not url.hostname or url.username or url.password:
+            return None
+        return f"https://{url.netloc}"
 
     @property
     def session_cookie_name(self) -> str | None:

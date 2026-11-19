@@ -146,6 +146,14 @@ Before completing a turn, reconcile every unchecked request with implementation 
 - Use focused tests during development, then one integrated verification and build per stable candidate; repeat affected checks after fixes, retain required hooks and activate only with authorization.
 - Before reporting completion, reconcile the backlog and record commit, checks and activation state; finish ready passes without waiting for unrelated work.
 
+## After a successful local activation
+
+Run `omni-custom status` and ask the owner any pending publication question, naming the locally built release ID, commit and GitHub repository.
+For installations from GitHub Releases, report the downstream activation receipt.
+When starting or resuming an operator session for this installation, run `omni-custom publication-status` and surface any pending question from an unattended activation.
+Leave it pending until the owner answers about that version.
+Use the [activated-release procedure](docs/custom-fork.md#publish-an-activated-build) to record a decline or publish after an explicit yes.
+
 ## Finishing a task
 
 When you finish a task, print instructions to the user on how to test it: the

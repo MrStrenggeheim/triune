@@ -1,0 +1,11 @@
+#!/bin/sh
+# Root-owned fixed-command interface for the managed Triune release unit.
+set -eu
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+[ "$#" -eq 0 ] && [ "$(/usr/bin/id -u)" = 0 ] || exit 2
+IFS= read -r action || exit 2
+case "$action" in
+    probe) echo triune-release-control-v1 ;;
+    start) exec /usr/bin/systemctl --no-block start triune-release-update.service ;;
+    *) exit 2 ;;
+esac

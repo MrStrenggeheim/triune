@@ -2,7 +2,7 @@
 # Modified for Triune: preserve verified deployment and rollback.
 # Deploy verified builds and restore interrupted sessions under the systemd lock.
 set -euo pipefail
-export PATH=/home/agent/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 app=/home/agent/apps/omnigent
 legacy_python=/home/agent/.local/share/uv/tools/omnigent/bin/python
@@ -15,12 +15,42 @@ as_agent() {
         PATH=/home/agent/.local/bin:/usr/local/bin:/usr/bin:/bin "$@"
 }
 
+discard_failed_published_stage() {
+    if [[ -n ${expected_candidate:-} && "$(readlink -f "$app/pending")" == "$expected_candidate" \
+        && "$(readlink -f "$app/current")" != "$expected_candidate" ]]; then
+        as_agent rm "$app/pending"
+    fi
+}
+
+# Older stable-update units invoke this script through flock(1), which passes
+# its locked file descriptor to the command. Direct invocations take the same lock.
+deployment_lock=/run/lock/stable-updates.lock
+lock_fd=
+for descriptor in /proc/$$/fd/*; do
+    if [[ "$(readlink "$descriptor")" == "$deployment_lock" ]]; then
+        lock_fd=${descriptor##*/}
+        break
+    fi
+done
+if [[ -z $lock_fd ]]; then
+    exec {lock_fd}<"$deployment_lock"
+fi
+flock --nonblock "$lock_fd"
+
 case "${1:-}" in
+    --published)
+        binding=$(as_agent "$source/.venv/bin/python" "$source/deploy/local/published_update.py" apply <&"$lock_fd")
+        [[ $binding =~ ^([0-9][0-9A-Za-z.]{0,63}-[0-9a-f]{12})\ ([0-9a-f]{64})$ ]] || exit 1
+        expected_candidate="$app/releases/${BASH_REMATCH[1]}"
+        manifest_digest=${BASH_REMATCH[2]}
+        trap 'if (( $? != 0 )); then discard_failed_published_stage; fi' EXIT
+        ;;
     --check|"") ;;
-    *) echo "Usage: $0 [--check]" >&2; exit 2 ;;
+    *) echo "Usage: $0 [--check|--published]" >&2; exit 2 ;;
 esac
 
 if [[ ! -L "$app/pending" ]]; then
+    [[ ${1:-} != --published ]] || { echo "Published stage disappeared." >&2; exit 1; }
     echo "No custom release staged; the running installation stays unchanged."
     as_agent "$tool_python" - <<'PY'
 from importlib.metadata import PackageNotFoundError, version
@@ -37,6 +67,11 @@ fi
 
 candidate=$(readlink -f "$app/pending")
 [[ "$(dirname "$candidate")" == "$app/releases" ]] || { echo "Invalid pending release." >&2; exit 1; }
+if [[ ${1:-} == --published ]]; then
+    [[ $candidate == "$expected_candidate" ]] || { echo "Staged release changed." >&2; exit 1; }
+    actual=$(as_agent sha256sum "$candidate/release.json")
+    [[ ${actual%% *} == "$manifest_digest" ]] || { echo "Staged manifest changed." >&2; exit 1; }
+fi
 as_agent "$source/.venv/bin/python" "$source/deploy/local/manage.py" verify "$(basename "$candidate")"
 if [[ "${1:-}" == --check ]]; then
     echo "Would restart sessions and deploy $candidate."
@@ -55,6 +90,8 @@ restart_sessions() {
         --candidate "$(basename "$candidate")"
 }
 finish_deployment() {
+    as_agent "$source/.venv/bin/python" "$source/deploy/local/publication.py" \
+        activation-complete "$(basename "$candidate")" || return 75
     if [[ "$(readlink -f "$app/pending")" == "$candidate" ]]; then
         as_agent rm "$app/pending"
     fi
@@ -101,13 +138,20 @@ PY
         systemctl start omnigent.target omnigent-server.service omnigent-host.service || echo "Service recovery needs attention." >&2
         restart_sessions || echo "Saved sessions need another recovery attempt." >&2
     fi
+    if (( result != 0 )); then discard_failed_published_stage; fi
     exit "$result"
 }
 trap recover EXIT
 
 # Wait for both processes: stopping a target alone can return while its
 # propagated service jobs are still queued, and a subsequent start cancels them.
-systemctl stop omnigent.target omnigent-host.service omnigent-server.service
+if ! systemctl stop omnigent.target omnigent-host.service omnigent-server.service; then
+    systemctl start omnigent.target omnigent-server.service omnigent-host.service
+    for unit in omnigent.target omnigent-server.service omnigent-host.service; do
+        systemctl is-active --quiet "$unit" || { echo "Service recovery needs attention: $unit" >&2; exit 1; }
+    done
+    exit 1
+fi
 stopped=1
 as_agent /usr/bin/python3 - "$app" "$candidate" "$previous" "$backup" "$sessions" <<'PY'
 import shutil

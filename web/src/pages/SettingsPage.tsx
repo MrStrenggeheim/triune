@@ -91,6 +91,7 @@ import {
 import { useTheme } from "next-themes";
 import { PageScroll } from "@/components/PageScroll";
 import { SettingsGroup } from "@/components/SettingsGroup";
+import { ServerUpdateSettings } from "./settings/ServerUpdates";
 import { SettingsLabel } from "@/components/SettingsLabel";
 import { AgentHarnessPicker } from "@/shell/NewChatDialog";
 import { useAvailableAgents } from "@/hooks/useAvailableAgents";
@@ -1963,6 +1964,7 @@ function GeneralSection() {
     <Section title="General" description="Configure general Triune behavior.">
       <div className="flex flex-col gap-6">
         <ServerConnectionPicker />
+        <ServerUpdateSettings />
         <SettingsGroup title="Composer" testId="settings-group-composer">
           <ComposerSendShortcutControl />
           <div className="mt-4 border-t border-border pt-4">

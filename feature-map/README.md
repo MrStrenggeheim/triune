@@ -227,6 +227,7 @@ map an area, remove it here in the same change.
   `triune diagnose`, `triune debug`, `triune usage` (config defaults are
   mapped; credential configuration and the other commands remain unmapped)
 - Install lifecycle: `triune upgrade`, `triune update`, `triune uninstall`
+- Managed server updates: [administrator dialog and Settings workflow](../docs/custom-fork.md#review-a-published-server-update), covered by `web/src/pages/settings/ServerUpdates.test.tsx`.
 - Other running-agent and server workflows: `triune run` (local/native modes),
   `triune start`, `triune stop`,
   `triune server`, `triune attach`, `triune resume`, `triune session`,

@@ -1,6 +1,7 @@
 import { ContentSkeleton } from "@/components/ui/loading";
 // Modified for Triune.
 import { RetainedWorkbench } from "@/workbench/RetainedWorkbench";
+import { ServerUpdatesProvider } from "@/pages/settings/ServerUpdates";
 import { useContextSearchController } from "@/hooks/useContextSearchController";
 import { WorkbenchShell } from "@/workbench/WorkbenchShell";
 import { useContextualFindHotkey } from "@/hooks/useContextualFindHotkey";
@@ -269,11 +270,13 @@ export function AppShell() {
     location.pathname.startsWith(rebase("/grid/"));
   return (
     <GridSessionsProvider>
-      <RetainedWorkbench active={!legacyLayout}>
-        <WorkbenchShell active={!legacyLayout} />
-        {!legacyLayout && <KeyboardShortcutsDialog />}
-      </RetainedWorkbench>
-      {legacyLayout && <LegacyAppShell />}
+      <ServerUpdatesProvider>
+        <RetainedWorkbench active={!legacyLayout}>
+          <WorkbenchShell active={!legacyLayout} />
+          {!legacyLayout && <KeyboardShortcutsDialog />}
+        </RetainedWorkbench>
+        {legacyLayout && <LegacyAppShell />}
+      </ServerUpdatesProvider>
     </GridSessionsProvider>
   );
 }

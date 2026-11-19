@@ -1,3 +1,13 @@
 #!/bin/sh
 # Modified for Triune: preserve verified deployment and rollback.
-exec /home/agent/projects/triune/.venv/bin/python /home/agent/projects/triune/deploy/local/manage.py "$@"
+set -eu
+local_dir=$(dirname "$(readlink -f "$0")")
+python="$local_dir/../../.venv/bin/python"
+case "${1:-}" in
+    publication-status|publish|decline)
+        exec "$python" "$local_dir/publication.py" "$@" ;;
+    status)
+        "$python" "$local_dir/manage.py" "$@"
+        exec "$python" "$local_dir/publication.py" publication-status ;;
+esac
+exec "$python" "$local_dir/manage.py" "$@"

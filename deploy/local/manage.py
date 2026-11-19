@@ -7,6 +7,7 @@ infrastructure/omnigent/custom-builds.md.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import hashlib
 import json
 import os
@@ -23,6 +24,7 @@ from pathlib import Path
 SOURCE = Path(__file__).resolve().parents[2]
 INSTALL = Path.home() / "apps/omnigent"
 RELEASES = INSTALL / "releases"
+LOCK = Path("/run/lock/stable-updates.lock")
 RUNTIME = SOURCE / "deploy/local/runtime.txt"
 
 
@@ -274,6 +276,13 @@ def stage(release_id: str) -> None:
     """Select a verified release for the guarded stop-and-recover deployment."""
     if Path(release_id).name != release_id:
         raise ValueError("supply a release name, not a path")
+    with LOCK.open("rb") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        stage_locked(release_id)
+
+
+def stage_locked(release_id: str) -> None:
+    """Replace pending while the caller holds the stable deployment lock."""
     target = RELEASES / release_id
     read_release(target)
     temporary = INSTALL / "pending.new"
@@ -285,7 +294,10 @@ def stage(release_id: str) -> None:
 
 def main() -> None:
     """Expose build, stage, verification, and status without changing live code."""
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        epilog="After activation, use omni-custom publication-status, decline or publish --help.",
+    )
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("build")
     sub.add_parser("status")

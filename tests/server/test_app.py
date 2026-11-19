@@ -100,6 +100,7 @@ async def test_well_known_manifest_shape(client: httpx.AsyncClient) -> None:
     # Same source of truth as /api/version and /v1/info.server_version, so a
     # client never sees three different answers for one server.
     assert body["server_version"] == VERSION
+    assert body["capabilities"]["server_update"] is True
     assert body["durable_host_initial_input"] is True
     # Present-but-null: clients rely on the key existing, and null is the
     # "no floor" path every shipped shell must accept.
@@ -1356,8 +1357,9 @@ def test_ensure_default_acp_agents_seeds_builtin_cli_rows_without_a_local_binary
         )
 
 
+@pytest.mark.parametrize("slug", ["devin", "deepseek-harness"])
 def test_ensure_default_acp_agents_configured_agent_beats_same_slug_builtin(
-    seed_stores: _SeedStores, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    seed_stores: _SeedStores, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, slug: str
 ) -> None:
     """A configured agent whose slug is a builtin row id keeps its own command.
 
@@ -1377,7 +1379,7 @@ def test_ensure_default_acp_agents_configured_agent_beats_same_slug_builtin(
     from omnigent.onboarding.acp_auth import AcpAgentEntry
     from omnigent.spec import load
 
-    entry = AcpAgentEntry(slug="devin", name="Devin", command="devin acp --model swe-1-7-medium")
+    entry = AcpAgentEntry(slug=slug, name=slug, command="custom-acp --model custom")
     monkeypatch.setattr("omnigent.onboarding.acp_auth.acp_agents", lambda *a, **k: [entry])
     # Both vendor CLIs are installed, so the devin row would otherwise seed too.
     monkeypatch.setattr(
@@ -1388,9 +1390,9 @@ def test_ensure_default_acp_agents_configured_agent_beats_same_slug_builtin(
         seed_stores.agent_store, seed_stores.artifact_store, seed_stores.agent_cache
     )
 
-    seeded = seed_stores.agent_store.get_by_name("devin")
+    seeded = seed_stores.agent_store.get_by_name(slug)
     assert seeded is not None
-    assert seeded.id == builtin_agent_id("devin"), "both sources key the same id"
+    assert seeded.id == builtin_agent_id(slug), "both sources key the same id"
     assert seed_stores.agent_store.get_by_name("grok") is not None, (
         "a non-colliding builtin row must still seed"
     )
@@ -1402,7 +1404,7 @@ def test_ensure_default_acp_agents_configured_agent_beats_same_slug_builtin(
     dest = tmp_path / "seeded"
     with tarfile.open(fileobj=io.BytesIO(bundle), mode="r:gz") as tf:
         tf.extractall(dest, filter="data")
-    assert load(dest).executor.config["harness"] == "acp:devin"
+    assert load(dest).executor.config["harness"] == f"acp:{slug}"
 
 
 def test_ensure_default_acp_agents_seeds_no_slug_rows_without_acp_config(
