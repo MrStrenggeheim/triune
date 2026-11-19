@@ -174,6 +174,74 @@ it("places shell counts before plan without a dropdown chevron", () => {
   expect(shelf.querySelector(".lucide-chevron-down")).toBeNull();
 });
 
+it("keeps one shelf across two 200 ms shells and starts its exit after the last grace", () => {
+  vi.useFakeTimers();
+  try {
+    openShelf();
+    const count = (backgroundTaskCount: number) =>
+      act(() => useChatStore.setState({ backgroundTaskCount }));
+    const tick = (ms: number) => act(() => vi.advanceTimersByTime(ms));
+    count(1);
+    const shelf = screen.getByTestId("composer-attention-shelf");
+    expect(screen.getByRole("button", { name: /still running/ })).toBeVisible();
+    tick(200);
+    count(0);
+    expect(screen.queryByText(/still running/)).toBeNull();
+    expect(within(shelf).getByRole("status")).toHaveTextContent("No current activity");
+    tick(650);
+    count(1);
+    tick(200);
+    expect(screen.getByTestId("composer-attention-shelf")).toBe(shelf);
+    expect(screen.getByRole("button", { name: /still running/ })).toBeVisible();
+    count(0);
+    tick(749);
+    const presence = shelf.closest(".composer-shelf-presence");
+    expect(presence).toHaveAttribute("data-shown", "true");
+    tick(1);
+    expect(presence).toHaveAttribute("data-exiting", "true");
+    tick(200);
+    expect(shelf).not.toBeInTheDocument();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("lets manual hide interrupt grace and clears both grace and hide on chat changes", () => {
+  vi.useFakeTimers();
+  try {
+    useChatStore.setState({ backgroundTaskCount: 1 });
+    mountShelfWithMenu();
+    act(() => useChatStore.setState({ backgroundTaskCount: 0 }));
+    openActivityMenu();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Hide activity shelf" }));
+    expect(screen.queryByRole("status")).toBeNull();
+    act(() => useChatStore.setState({ backgroundTaskCount: 1 }));
+    expect(screen.queryByRole("button", { name: /still running/ })).toBeNull();
+    act(() => useChatStore.setState({ conversationId: "chat-b" }));
+    expect(screen.queryByTestId("composer-attention-shelf")).toBeNull();
+    act(() => useChatStore.setState({ backgroundTaskCount: 1 }));
+    expect(screen.getByRole("button", { name: /still running/ })).toBeVisible();
+    act(() => useChatStore.setState({ backgroundTaskCount: 0 }));
+    expect(screen.getByText("No current activity")).toBeVisible();
+    act(() => useChatStore.setState({ conversationId: "chat-c" }));
+    expect(screen.queryByTestId("composer-attention-shelf")).toBeNull();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("removes a resolved approval and its open form while the shelf settles", () => {
+  const approval = request("permission");
+  useChatStore.setState({ blocks: [approval] });
+  openShelf();
+  fireEvent.click(screen.getByRole("button", { name: "Approvals: 1" }));
+  expect(screen.getByRole("dialog", { name: "Approvals" })).toBeVisible();
+  act(() => useChatStore.setState({ blocks: [{ ...approval, status: "responded" }] }));
+  expect(screen.queryByRole("dialog", { name: "Approvals", hidden: true })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Approvals: 1" })).toBeNull();
+  expect(screen.getByText("No current activity")).toBeVisible();
+});
+
 it("does not mount unopened mirrored-child forms or their descendant queries", () => {
   useChatStore.setState({
     blocks: [

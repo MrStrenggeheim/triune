@@ -135,6 +135,17 @@ class _ChatSseStream:
         class Handler(BaseHTTPRequestHandler):
             protocol_version = "HTTP/1.1"
 
+            def do_OPTIONS(self) -> None:
+                # WebKit preflights the routed SSE fetch across the fixture's two loopback ports.
+                self.send_response(204)
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Access-Control-Allow-Methods", "GET")
+                self.send_header(
+                    "Access-Control-Allow-Headers",
+                    self.headers.get("Access-Control-Request-Headers", ""),
+                )
+                self.end_headers()
+
             def do_GET(self) -> None:
                 self.send_response(200)
                 self.send_header("Content-Type", "text/event-stream")

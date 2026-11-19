@@ -1,11 +1,16 @@
 // Modified for Triune.
 import { useRef, useState, type ButtonHTMLAttributes } from "react";
-import { ChevronDownIcon, MonitorIcon } from "lucide-react";
+import { ChevronDownIcon, FolderIcon, MonitorIcon } from "lucide-react";
 import { DisabledActionTooltip } from "@/components/DisabledActionTooltip";
 import { Button } from "@/components/ui/button";
 import { COMPOSER_CONTROL_TEXT_CLASS } from "@/components/composer/ComposerControls";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useMenuGuardedTooltip } from "@/hooks/useMenuGuardedTooltip";
+import { basename } from "./WorkspacePicker";
+import {
+  COMPOSER_COLLAPSED_LABEL_CLASS,
+  COMPOSER_WORKSPACE_COLLAPSED_LABEL_CLASS,
+} from "@/components/composer/ChatComposer";
 import { cn } from "@/lib/utils";
 
 export interface WorkspaceSelectorProps extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -14,6 +19,8 @@ export interface WorkspaceSelectorProps extends ButtonHTMLAttributes<HTMLButtonE
   disabledReason?: string;
   menuOpen?: boolean;
   composer?: boolean;
+  hostStatus?: "online" | "offline";
+  statusLabel?: string;
 }
 
 /** Shared borderless host and directory trigger. */
@@ -23,16 +30,19 @@ export function WorkspaceSelector({
   disabledReason,
   menuOpen,
   composer = false,
+  hostStatus,
+  statusLabel,
   disabled,
   title,
   className,
   ...props
 }: WorkspaceSelectorProps) {
   const labelRef = useRef<HTMLSpanElement>(null);
-  const [detail, setDetail] = useState<string>();
+  const [labelClipped, setLabelClipped] = useState(false);
   const guardedTooltip = useMenuGuardedTooltip(!!menuOpen);
   const location = `${hostLabel}:${path || "Choose path"}`;
   const accessibleLabel = props["aria-label"] ?? `Select workspace: ${location}`;
+  const showDetail = composer || !!title || labelClipped;
   const button = (
     <Button
       type="button"
@@ -51,17 +61,53 @@ export function WorkspaceSelector({
       )}
       {...props}
     >
-      <MonitorIcon data-icon-size="14" className="size-3.5 shrink-0" aria-hidden />
+      {composer ? (
+        <>
+          <span
+            aria-hidden
+            className={cn(
+              "relative me-3.5 inline-flex shrink-0 text-muted-foreground",
+              COMPOSER_COLLAPSED_LABEL_CLASS,
+            )}
+          >
+            <MonitorIcon data-icon-size="14" className="size-3.5" />
+            {hostStatus === "online" && (
+              <span className="absolute -bottom-px -right-px size-1.5 rounded-full bg-success ring-1 ring-card" />
+            )}
+          </span>
+          <FolderIcon
+            data-icon-size="14"
+            className="size-3.5 shrink-0 text-muted-foreground"
+            aria-hidden
+          />
+        </>
+      ) : (
+        <MonitorIcon data-icon-size="14" className="size-3.5 shrink-0" aria-hidden />
+      )}
       <span
         ref={labelRef}
         data-workspace-collapse-label=""
-        className="workspace-selector-details min-w-0 truncate group-data-[labels=collapsed]/composer-actions:hidden group-data-[labels=collapsed]/composer-workspace:hidden"
+        className={cn(
+          "min-w-0 truncate",
+          COMPOSER_WORKSPACE_COLLAPSED_LABEL_CLASS,
+          composer ? "leading-5" : "workspace-selector-details",
+        )}
       >
-        <span className="text-muted-foreground">{hostLabel}</span>
-        <span className="text-muted-foreground"> · </span>
-        <span className="text-foreground">{path || "Choose path"}</span>
+        {composer ? (
+          (statusLabel ?? (path ? basename(path) : "Choose path"))
+        ) : (
+          <>
+            <span className="text-muted-foreground">{hostLabel}</span>
+            <span className="text-muted-foreground"> · </span>
+            <span className="text-foreground">{path || "Choose path"}</span>
+          </>
+        )}
       </span>
-      <ChevronDownIcon data-icon-size="12" className="size-3 shrink-0" aria-hidden />
+      <ChevronDownIcon
+        data-icon-size="12"
+        className={cn("size-3 shrink-0", composer && COMPOSER_COLLAPSED_LABEL_CLASS)}
+        aria-hidden
+      />
     </Button>
   );
   if (disabled && disabledReason) {
@@ -73,19 +119,33 @@ export function WorkspaceSelector({
   }
   return (
     <Tooltip
-      open={guardedTooltip.open && !!detail}
+      open={guardedTooltip.open && showDetail}
       onOpenChange={(open) => {
         const label = labelRef.current;
         const hidden = label && getComputedStyle(label).display === "none";
         const truncated = label && label.scrollWidth > label.clientWidth;
-        setDetail(title ?? (composer || hidden || truncated ? location : undefined));
+        setLabelClipped(!!(hidden || truncated));
         guardedTooltip.onOpenChange(open);
       }}
     >
       <TooltipTrigger asChild {...guardedTooltip.triggerProps}>
         {button}
       </TooltipTrigger>
-      {detail && <TooltipContent>{detail}</TooltipContent>}
+      {showDetail && (
+        <TooltipContent>
+          {composer && !title ? (
+            <span className="flex min-w-0 flex-col break-all">
+              <span>
+                {hostLabel}
+                {hostStatus && (hostStatus === "online" ? " · Connected" : " · Offline")}
+              </span>
+              <span>{path || "Choose path"}</span>
+            </span>
+          ) : (
+            (title ?? location)
+          )}
+        </TooltipContent>
+      )}
     </Tooltip>
   );
 }

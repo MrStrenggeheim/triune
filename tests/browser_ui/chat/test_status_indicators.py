@@ -64,6 +64,31 @@ def _pill(page: Page, count: int) -> Locator:
     )
 
 
+@pytest.mark.parametrize("width", [375, 1280])
+def test_idle_shelf_keeps_shell_row_height_during_grace(
+    page: Page, chat_session_contract: ChatSessionContract, width: int
+) -> None:
+    chat = chat_session_contract
+    page.set_viewport_size({"width": width, "height": 844})
+    page.emulate_media(reduced_motion="reduce")
+    page.goto(chat.url)
+    expect(page.get_by_label("Message the agent")).to_be_visible()
+    chat.wait_for_stream()
+    chat.update_session(background_task_count=1)
+    _background_status(chat, 1)
+    expect(_pill(page, 1)).to_be_visible()
+    shelf = page.get_by_test_id("composer-attention-shelf")
+    active = shelf.bounding_box()
+    assert active is not None and active["height"] > 0
+    chat.update_session(background_task_count=0)
+    _background_status(chat, 0)
+    expect(shelf.get_by_text("No current activity")).to_be_visible()
+    idle = shelf.bounding_box()
+    assert idle is not None and idle["height"] == pytest.approx(active["height"], abs=1)
+    expect(_pill(page, 1)).to_have_count(0)
+    expect(shelf).to_have_count(0)
+
+
 def test_bare_idle_clears_the_live_working_indicator(
     page: Page,
     chat_session_contract: ChatSessionContract,

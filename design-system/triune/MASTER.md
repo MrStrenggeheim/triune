@@ -141,7 +141,8 @@ Docked content is excluded from the global dark-card glass decoration; code, dif
 Each tab contains its label and its own close control.
 Desktop tab/container headers and view headers remain separate rows, including single-tab panes.
 Mobile reuses horizontally scrolling tabs, including views from other panes; only the selected view is shown.
-Narrow composer workspace controls collapse to an icon and chevron while retaining their accessible full location.
+The composer workspace trigger shows a muted monitor and folder, a connected dot on online hosts and the folder basename.
+It collapses to the folder icon when the action row hides its labels, retaining the accessible full location.
 The shell owns device safe-area insets once; native top clearance uses the application-bar paint and bottom clearance uses the content surface.
 Browser `theme-color` follows the resolved opaque application-bar color, and the standalone status shim paints that surface across the reserved top inset.
 Main and side-chat mobile composers add an 8px Comfortable or 4px Compact content gutter.

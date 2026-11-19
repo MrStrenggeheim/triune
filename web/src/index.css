@@ -346,6 +346,13 @@
 .dark[data-theme] {
   --brand-accent: var(--primary);
 }
+/* Custom accents can place the selection wash closer to the palette's text. */
+:root:not(.dark)[data-theme="custom"] {
+  --selection-foreground: color-mix(in srgb, var(--custom-light-selection-foreground) 65%, black);
+}
+.dark[data-theme="custom"] {
+  --selection-foreground: color-mix(in srgb, var(--custom-dark-selection-foreground) 20%, white);
+}
 /* Keep preset links in the action's hue with extra text contrast. Custom
  * palettes already calculate link contrast across their reading surfaces. */
 :root:not(.dark)[data-theme]:not([data-theme="custom"]) {
@@ -362,8 +369,8 @@
   --ring: var(--focus-color);
   --accent: color-mix(in srgb, var(--primary) 12%, var(--background));
   --accent-foreground: var(--foreground);
-  --selection-background: color-mix(in srgb, var(--primary) 18%, transparent);
-  --selection-foreground: var(--foreground);
+  --selection-background: color-mix(in srgb, var(--primary) 24%, transparent);
+  accent-color: var(--primary);
   --sidebar: color-mix(in srgb, var(--primary) 4%, var(--background));
   --sidebar-primary: var(--primary);
   --sidebar-primary-foreground: var(--primary-foreground);
@@ -1298,6 +1305,25 @@ html[data-electron-mac] .breadcrumb-folder {
   ::selection {
     background: var(--selection-background);
     color: var(--selection-foreground);
+  }
+}
+
+/* Monaco paints selection rectangles separately from syntax-colored glyphs. */
+@media (forced-colors: none) {
+  .monaco-editor:is(.vs, .vs-dark) .lines-content {
+    --vscode-editor-selectionBackground: var(--selection-background);
+    --vscode-editor-inactiveSelectionBackground: color-mix(
+      in srgb,
+      var(--primary) 12%,
+      transparent
+    );
+  }
+}
+
+@media (forced-colors: active) {
+  ::selection {
+    background-color: Highlight;
+    color: HighlightText;
   }
 }
 

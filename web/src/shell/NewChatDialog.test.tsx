@@ -5333,7 +5333,8 @@ describe("NewChatLandingScreen", () => {
     );
     renderLanding();
     const trigger = screen.getByTestId("new-chat-landing-workspace-chip");
-    expect(trigger).toHaveTextContent("/Users/corey/repo");
+    expect(trigger).toHaveTextContent(/^repo$/);
+    expect(trigger).toHaveAccessibleName(/:\/Users\/corey\/repo$/);
     fireEvent.click(trigger);
     expect(screen.getByRole("region", { name: "Host" })).toBeVisible();
     expect(screen.getByRole("region", { name: "Path" })).toBeVisible();
@@ -5353,10 +5354,12 @@ describe("NewChatLandingScreen", () => {
     fireEvent.click(trigger);
     fireEvent.click(screen.getByRole("button", { name: "/Users/corey/other" }));
     expect(screen.getByTestId("workspace-picker-path-input")).toHaveValue("/Users/corey/other");
-    expect(trigger).toHaveTextContent("/Users/corey/repo");
+    expect(trigger).toHaveTextContent(/^repo$/);
+    expect(trigger).toHaveAccessibleName(/:\/Users\/corey\/repo$/);
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(screen.queryByRole("dialog")).toBeNull();
-    expect(trigger).toHaveTextContent("/Users/corey/repo");
+    expect(trigger).toHaveTextContent(/^repo$/);
+    expect(trigger).toHaveAccessibleName(/:\/Users\/corey\/repo$/);
   });
 
   it("separates the zero-session import action from an empty notice slot", () => {

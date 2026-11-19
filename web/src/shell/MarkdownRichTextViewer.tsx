@@ -536,7 +536,7 @@ function MarkdownRichTextViewerInner({
         {!editor && <ContentSkeleton label="Preparing editor…" rows={6} />}
         <EditorContent
           editor={editor}
-          className="outline-none max-w-none text-ui text-foreground [&_*::selection]:bg-blue-300/40 [&_*::selection]:text-foreground [&::selection]:bg-blue-300/40 [&::selection]:text-foreground tiptap-md-content"
+          className="outline-none max-w-none text-ui text-foreground tiptap-md-content"
         />
       </div>
       {canEdit && editor && (

@@ -88,7 +88,8 @@ function WorkspaceSwitchState({
   const fileContext = useContext(FileViewerContext);
   const { addRecent } = useRecentWorkspaces(hostId);
   const { data: hosts } = useHosts({ includeSandbox: true });
-  const hostLabel = hosts?.find((host) => host.host_id === hostId)?.name ?? hostId;
+  const host = hosts?.find((candidate) => candidate.host_id === hostId);
+  const hostLabel = host?.name ?? hostId;
   const activeNotice = useRef<string | undefined>(undefined);
   const settledNotice = useRef<string | undefined>(undefined);
   const query = useQuery({
@@ -318,9 +319,10 @@ function WorkspaceSwitchState({
         hostLabel={hostLabel}
         menuOpen={workspaceTrigger !== null}
         composer
-        title={`${hostLabel}:${workspace}`}
-        path={
-          changing ? "Changing workspace…" : operation?.blocked ? "Recover workspace" : workspace
+        hostStatus={host?.status}
+        path={workspace}
+        statusLabel={
+          changing ? "Changing workspace…" : operation?.blocked ? "Recover workspace" : undefined
         }
         data-testid="composer-workspace-dir"
         aria-label={`Change workspace: ${hostLabel}:${workspace}`}
@@ -344,7 +346,7 @@ function WorkspaceSwitchState({
             {switchHostDisabledReason && (
               <p className="px-2 py-2 text-xs text-muted-foreground">{switchHostDisabledReason}</p>
             )}
-            {onReconnect && hosts?.find((host) => host.host_id === hostId)?.status !== "online" && (
+            {onReconnect && host?.status !== "online" && (
               <Button type="button" variant="ghost" onClick={onReconnect}>
                 Reconnect host
               </Button>

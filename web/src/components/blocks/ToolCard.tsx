@@ -707,7 +707,7 @@ function ShellStatus({
   if (state === "input-available") {
     status = (
       <span className="flex items-center gap-1.5 text-muted-foreground">
-        <Loader2Icon className="size-3 animate-spin text-info" />
+        <Loader2Icon className="size-3 animate-spin" />
         running
       </span>
     );
@@ -745,9 +745,7 @@ function StatusIcon({
   state: ToolState;
 }): ReactNode {
   if (state === "input-available") {
-    // Slightly larger and tinted so the running indicator is the one
-    // thing in the row that actively draws the eye.
-    return <Loader2Icon className="size-3.5 shrink-0 animate-spin text-info" />;
+    return <Loader2Icon className="size-3.5 shrink-0 animate-spin text-muted-foreground" />;
   }
   if (state === "output-error") {
     return <XCircleIcon className="size-3.5 shrink-0 text-destructive" />;

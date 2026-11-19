@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from itertools import pairwise
+from pathlib import Path
 
 import pytest
 from playwright.sync_api import Locator, Page, expect
@@ -174,16 +175,36 @@ def test_content_and_action_controls_follow_shared_inset_lines(
     page: Page,
     chat_session_contract: ChatSessionContract,
     surface: str,
+    tmp_path: Path,
 ) -> None:
     chat = chat_session_contract
     if surface == "landing":
         chat.harness = "claude-native"
     _surface(page, chat, surface, DESKTOP)
-    _attach(page, ["alpha.txt", "clip.mp4"])
+    valid = tmp_path / "alpha.txt"
+    valid.write_text("geometry")
+    oversized = tmp_path / "clip.mp4"
+    with oversized.open("wb") as video:
+        video.truncate(51 * 1024 * 1024)
+    page.locator('input[type="file"]').first.set_input_files([valid, oversized])
     card = box(page.locator("[data-composer-card]"))
     input_box = box(_input(page, surface))
     chip = box(page.get_by_role("button", name="Remove alpha.txt").locator(".."))
     if surface == "landing":
+        labels = _action_row(page, surface).locator(
+            '[data-testid="new-chat-landing-workspace-chip"] [data-workspace-collapse-label], '
+            '[data-testid="new-chat-landing-permission-chip"] > span.truncate, '
+            '[data-testid="new-chat-landing-agent-model-value"]'
+        )
+        expect(labels).to_have_count(3)
+        lines = labels.evaluate_all("""labels => labels.map(label => {
+            const range = document.createRange();
+            range.selectNodeContents(label);
+            const text = range.getBoundingClientRect();
+            return [label.getBoundingClientRect().height, text.top, text.height];
+        })""")
+        assert lines[0][0] == 20
+        assert lines[0] == lines[1] == lines[2]
         error = box(page.get_by_test_id("new-chat-landing-attachment-error"))
         leading = box(page.get_by_test_id("new-chat-landing-attach"))
         controls = [
@@ -193,7 +214,7 @@ def test_content_and_action_controls_follow_shared_inset_lines(
             box(_submit(page, surface)),
         ]
     else:
-        error = box(page.get_by_text(re.compile("can't be attached")))
+        error = box(page.get_by_text(re.compile("clip.mp4.*too large")))
         leading = box(page.get_by_test_id("composer-attach"))
         controls = [
             leading,
@@ -201,7 +222,9 @@ def test_content_and_action_controls_follow_shared_inset_lines(
             box(_submit(page, surface)),
         ]
     expected_left = input_box["x"] - card["x"]
-    assert_primitive_inset(expected_left, border_left_px(page.locator("[data-composer-card]")))
+    assert expected_left == pytest.approx(
+        8 + border_left_px(page.locator("[data-composer-card]")), abs=TOLERANCE
+    )
     assert chip["x"] - card["x"] == pytest.approx(expected_left, abs=TOLERANCE)
     assert error["x"] - card["x"] == pytest.approx(expected_left, abs=TOLERANCE)
     assert leading["x"] - card["x"] == pytest.approx(expected_left, abs=TOLERANCE)
@@ -579,27 +602,46 @@ def test_workspace_controls_live_in_the_card_action_row(
     surface: str,
 ) -> None:
     chat = chat_session_contract
+    path = "/work/projects/browser-workspace"
+    page.add_init_script(
+        "localStorage.setItem('omnigent:recent-workspaces', "
+        f"JSON.stringify({{'{chat.host_id}': ['{path}']}}))"
+    )
+    for suffix in ("", path):
+        chat.contract.json(f"/v1/hosts/{chat.host_id}/filesystem{suffix}", list_payload([]))
+    chat.contract.json("/v1/skills", list_payload([]))
+    chat.update_session(workspace=path)
     _surface(page, chat, surface, DESKTOP)
-    if surface == "landing":
-        tray = page.get_by_test_id("new-chat-landing-workspace-controls")
-        chip = page.get_by_test_id("new-chat-landing-workspace-chip")
-    else:
-        tray = page.get_by_test_id("composer-workspace-controls")
-        chip = page.get_by_test_id("composer-workspace-dir")
-    card = page.locator("[data-composer-card]")
-    actions = page.get_by_test_id(
-        "new-chat-landing-actions" if surface == "landing" else "composer-action-row"
+    chip = page.get_by_test_id(
+        "new-chat-landing-workspace-chip" if surface == "landing" else "composer-workspace-dir"
     )
-    assert card.locator(".composer-workspace-surface").count() == 0
-    assert tray.evaluate("el => !!el.closest('[data-composer-card]')")
-    assert chip.evaluate("el => !!el.closest('[data-composer-card]')")
-    send = (
-        page.get_by_test_id("new-chat-landing-submit")
-        if surface == "landing"
-        else page.get_by_role("button", name="Send", exact=True)
-    )
-    assert_same_vertical_center(box(chip), box(send))
-    assert actions.locator("[data-workspace-collapse-label]").count() > 0
+    actions = _action_row(page, surface)
+    expect(actions.locator(".lucide-folder").first).to_be_visible()
+    assert page.locator("[data-composer-card] .composer-workspace-surface").count() == 0
+    expect(actions.locator("[data-workspace-collapse-label]").first).to_be_visible()
+    label = chip.locator("[data-workspace-collapse-label]")
+    expect(label).to_have_text("browser-workspace")
+    expect(label).to_be_visible()
+    expect(chip.locator(".lucide-monitor")).to_be_visible()
+    assert label.evaluate("el => getComputedStyle(el).lineHeight") == "20px"
+    assert actions.evaluate("el => getComputedStyle(el).paddingLeft") == "8px"
+    assert_same_vertical_center(box(chip), box(_submit(page, surface)))
+    chip.hover()
+    expect(page.get_by_role("tooltip")).to_contain_text(path)
+    chip.click()
+    dialog = page.get_by_test_id("workspace-selection-dialog")
+    expect(dialog).to_be_visible()
+    page.keyboard.press("Escape")
+    expect(dialog).to_be_hidden()
+    page.set_viewport_size(PHONE)
+    expect(actions).to_have_attribute("data-labels", "collapsed")
+    expect(label).to_be_hidden()
+    expect(chip.locator(".lucide-monitor")).to_be_hidden()
+    expect(chip.locator(".lucide-chevron-down")).to_be_hidden()
+    expect(chip.locator(".lucide-folder")).to_be_visible()
+    chip.focus()
+    chip.press("Enter")
+    expect(dialog).to_be_visible()
 
 
 def test_queued_rows_and_nested_workspace_share_the_tray_grid(

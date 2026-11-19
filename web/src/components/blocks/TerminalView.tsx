@@ -19,6 +19,7 @@ import {
 } from "@/lib/terminalClipboardWriter";
 import {
   getOmnigentServerIdentity,
+  getThemeRoots,
   isDatabricksWorkspace,
   isHostRoutingEnabled,
   resolveWebSocketUrl,
@@ -641,7 +642,21 @@ export function TerminalView({
 
   // Push theme changes into the live session without remounting.
   useEffect(() => {
-    sessionRef.current?.setTheme(isDark);
+    const sync = () => sessionRef.current?.setTheme(isDark);
+    const observer = new MutationObserver(sync);
+    for (const root of getThemeRoots()) {
+      observer.observe(root, {
+        attributes: true,
+        attributeFilter: ["class", "style", "data-theme"],
+      });
+    }
+    const contrast = window.matchMedia("(forced-colors: active)");
+    contrast.addEventListener("change", sync);
+    sync();
+    return () => {
+      observer.disconnect();
+      contrast.removeEventListener("change", sync);
+    };
   }, [isDark]);
 
   useEffect(() => {

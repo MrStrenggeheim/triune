@@ -7,6 +7,9 @@ The packaged restored-grid case in `tests/browser_ui/chat/test_session_grid.py` 
 November 17 refinements keep the selected permission-mode caption stable through idle/running changes.
 While running, its hover and dropdown add only “Only applies next turn”; the original mode guidance stays in the hover.
 An active Goal appears after Plan in the attention shelf, including when it is the shelf's only resource.
+In automatic mode, the shelf appears immediately and waits 750 ms after the last activity in that conversation before exiting.
+Renewed activity cancels the timer, and resolved requests lose their controls immediately.
+When the last control disappears, “No current activity” holds the row height through the exit.
 Unread native follow-ups sit below the working indicator under one shared hint, then return above it on individual consumption receipts.
 The header Usage menu refreshes stale observations/accounting on opening while retaining current values.
 Quote rows use square full-width surfaces with internal controls; drag or keyboard placement moves an atomic quote to an authored-text caret and supports guarded undo.
@@ -219,6 +222,8 @@ and steers messages while the agent is busy.
   bundle and selects it. States: import in flight (Cancel and Create locked),
   rejected bundle, imported agent missing from the refreshed list, and hidden on
   a server without agent install.
+- Landing and existing chats use one workspace button with a host monitor, online dot and folder basename.
+  Its tooltip identifies the host and full path, and its folder icon opens the same picker at narrow widths.
 - `mobile-labels`: on narrow screens labels collapse to icons without
   overlapping the stop button.
 

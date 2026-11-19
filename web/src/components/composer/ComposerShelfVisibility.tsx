@@ -16,6 +16,7 @@ import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { useWorkbenchActions } from "@/workbench/WorkbenchContext";
 
 type Mode = "auto" | "shown" | "hidden";
+const AUTO_HIDE_GRACE_MS = 750;
 interface Presence {
   visible: boolean;
   hasContent: boolean;
@@ -98,7 +99,22 @@ export function useComposerShelfVisibility({
       setMode("auto");
     previous.current = { conversationId, requiredIds: next };
   }, [conversationId, requiredKey, setMode]);
-  const visible = hasContent && mode !== "hidden" && (mode === "shown" || active);
+  const [recentConversation, setRecentConversation] = useState<string | null | undefined>();
+  const recent = recentConversation === conversationId;
+  useLayoutEffect(() => {
+    if (mode === "hidden") {
+      setRecentConversation(undefined);
+    } else if (active) {
+      setRecentConversation(conversationId);
+    } else if (recent) {
+      const timer = window.setTimeout(() => setRecentConversation(undefined), AUTO_HIDE_GRACE_MS);
+      return () => window.clearTimeout(timer);
+    } else {
+      setRecentConversation(undefined);
+    }
+    return undefined;
+  }, [active, conversationId, mode, recent]);
+  const visible = mode !== "hidden" && (recent || (hasContent && (active || mode === "shown")));
   const report = control?.report;
   useLayoutEffect(() => {
     report?.((current) =>
@@ -122,7 +138,7 @@ export function ComposerShelfMenuItems({ conversationId }: { conversationId: str
   return (
     <>
       <DropdownMenuItem
-        disabled={!presence.hasContent}
+        disabled={!presence.visible && !presence.hasContent}
         onSelect={() => control.setMode(presence.visible ? "hidden" : "shown")}
       >
         <Icon />

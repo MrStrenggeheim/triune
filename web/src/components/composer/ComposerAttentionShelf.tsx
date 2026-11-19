@@ -59,6 +59,8 @@ export function ComposerAttentionShelf({
   );
   const todos = useChatStore((state) => state.todos);
   const completed = todos.filter((todo) => todo.status === "completed").length;
+  const hasContent =
+    pending.length > 0 || todos.length > 0 || backgroundCount > 0 || hasAgents || goal !== null;
   const { visible, planRequest } = useComposerShelfVisibility({
     conversationId,
     active:
@@ -69,8 +71,7 @@ export function ComposerAttentionShelf({
       children.some((child) =>
         ["launching", "working", "awaiting", "disconnected"].includes(childStatus(child).activity),
       ),
-    hasContent:
-      pending.length > 0 || todos.length > 0 || backgroundCount > 0 || hasAgents || goal !== null,
+    hasContent,
     hasPlan: todos.length > 0,
     requiredIds: pending.map(
       (block) => `${block.targetSessionId ?? conversationId}:${block.elicitationId}`,
@@ -118,9 +119,7 @@ export function ComposerAttentionShelf({
       key={conversationId}
       retainContent={false}
       present={visible}
-      keepMounted={
-        pending.length > 0 || todos.length > 0 || backgroundCount > 0 || hasAgents || goal !== null
-      }
+      keepMounted={hasContent}
     >
       <ComposerWorkspaceBar
         shelfInset
@@ -205,6 +204,14 @@ export function ComposerAttentionShelf({
           );
         })}
         <span className="flex-1" />
+        {!hasContent && (
+          <span
+            role="status"
+            className="composer-shelf-idle flex items-center px-1 text-sm text-muted-foreground"
+          >
+            No current activity
+          </span>
+        )}
         <BackgroundTaskIndicator shelf />
         <SubagentTaskIndicator conversationId={conversationId} shelf />
         {todos.length > 0 && (

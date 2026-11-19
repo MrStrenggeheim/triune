@@ -288,6 +288,24 @@ describe("control-mode terminal", () => {
     expect(terminalSessionMock.instances[0].clipboardEnabled).toBe(false);
   });
 
+  it("refreshes a mounted terminal when the app accent changes", async () => {
+    render(<TerminalView sessionId="conv_abc" terminalId="terminal_bash_s1" />);
+    await waitFor(() => expect(terminalSessionMock.instances).toHaveLength(1));
+    const session = terminalSessionMock.instances[0];
+    session.setTheme.mockClear();
+    const root = document.documentElement;
+    const original = root.getAttribute("data-theme");
+    try {
+      root.setAttribute("data-theme", "custom");
+      await waitFor(() => expect(session.setTheme).toHaveBeenCalled());
+      expect(terminalSessionMock.instances).toEqual([session]);
+      expect(session.dispose).not.toHaveBeenCalled();
+    } finally {
+      if (original === null) root.removeAttribute("data-theme");
+      else root.setAttribute("data-theme", original);
+    }
+  });
+
   it("does not render a legacy selection hint", async () => {
     render(<TerminalView sessionId="conv_abc" terminalId="terminal_bash_s1" />);
     await waitFor(() => expect(terminalSessionMock.instances).toHaveLength(1));

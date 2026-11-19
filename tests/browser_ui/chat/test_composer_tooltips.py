@@ -55,9 +55,12 @@ def test_neutral_triggers_open_the_real_composer_controls(
         expect(trigger).to_have_css("background-color", "rgba(0, 0, 0, 0)")
 
     workspace.hover()
-    location = workspace.locator(".workspace-selector-details").text_content()
-    assert location
-    expect(page.get_by_role("tooltip")).to_contain_text(location.replace(" · ", ":"))
+    label = workspace.get_attribute("aria-label") or ""
+    host, _, path = label.partition(": ")[2].partition(":")
+    assert host and path, label
+    hint = page.get_by_role("tooltip")
+    expect(hint).to_contain_text(host)
+    expect(hint).to_contain_text(path)
     workspace.press("Enter")
     dialog = page.get_by_role("dialog", name="Select workspace")
     expect(dialog.get_by_role("textbox", name="Current folder path")).to_be_visible()

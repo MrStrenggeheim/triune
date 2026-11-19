@@ -120,6 +120,10 @@
   isolation: isolate;
 }
 
+.composer-shelf-idle {
+  min-height: 24px;
+}
+
 [data-composer-shelf-face] {
   position: absolute;
   z-index: -1;
@@ -219,7 +223,8 @@
 }
 
 @media (max-width: 767.98px), (any-pointer: coarse) {
-  .composer-shelf-surface button {
+  .composer-shelf-surface button,
+  .composer-shelf-idle {
     min-width: 44px;
     min-height: 44px;
   }

@@ -25,24 +25,10 @@ import "./composerShelves.css";
 export const COMPOSER_COLUMN_WIDTH = `w-full ${CHAT_COLUMN_WIDTH}`;
 
 /**
- * The composer layout contract: one 12px inset, two roles.
- *
- * Inside the card, every content row - the input text, chip rows
- * (attachment/mention chips), feedback rows (attachment/command errors), and
- * the action row's controls - aligns to a shared left/right inset line 12px
- * from the card's edges. Outside the card, the docked trays (workspace bar,
- * queued-messages strip, sub-agent tray) nest 12px in from the card's outer
- * edges: a tray is a shelf peeking above the card, not a content row, so it
- * keeps its own inset rather than sharing the card's border box.
- *
- * Padding vs margin follows what each row's border box must coincide with:
- * chip and action rows are measured through their children (chips, buttons),
- * so they pad; a feedback row's own box sits on the inset line, so it uses
- * margins. Vertical rhythm: the input area is `pt-3 pb-1`, each content row
- * carries `pb-2`, and the action row is `pt-1 pb-2`.
+ * Content aligns 8px inside the card. Docked trays keep their own 12px inset.
  */
-export const COMPOSER_CONTENT_INSET_CLASS = "px-3";
-export const COMPOSER_BLOCK_INSET_CLASS = "mx-3";
+export const COMPOSER_CONTENT_INSET_CLASS = "px-2";
+export const COMPOSER_BLOCK_INSET_CLASS = "mx-2";
 export const COMPOSER_TRAY_INSET_CLASS = "mx-3";
 
 /**

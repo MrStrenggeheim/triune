@@ -480,15 +480,10 @@ def test_custom_theme_colors_can_be_randomized(
     assert stored["tint"] == "#3ad2d2"
 
 
-def test_omnigent_selection_keeps_the_brand_tint(
+def test_selected_text_and_native_controls_follow_the_app_accent(
     page: Page, chat_session_contract: ChatSessionContract
 ) -> None:
-    """Selected chat text on the default palette is the translucent brand pink.
-
-    Omnigent's selection is the sidebar's active-item tint, not an opaque
-    primary-colour block: ``rgba(240, 1, 150, 0.1)`` with plum text in light
-    mode and ``rgba(240, 1, 150, 0.15)`` with pink text in dark mode.
-    """
+    """The browser paints the chosen primary tint over readable selected text."""
     base_url, session_id = chat_session_contract.base_url, chat_session_contract.session_id
     chat_session_contract.set_items(
         [
@@ -498,19 +493,15 @@ def test_omnigent_selection_keeps_the_brand_tint(
             message_item("theme-prompt", "user", "Hello", response_id="theme-turn"),
         ]
     )
-    expected = {
-        "Light": ["rgba(240, 1, 150, 0.1)", "rgb(101, 18, 73)"],
-        "Dark": ["rgba(240, 1, 150, 0.15)", "rgb(249, 168, 212)"],
-    }
     _open_appearance(page, base_url)
     _pick_palette(page, "Omnigent")
-    for mode, colors in expected.items():
+    for mode in ["Light", "Dark"]:
         _open_appearance(page, base_url)
         _theme_radiogroup(page).get_by_role("radio", name=mode).click()
         page.goto(f"{base_url}/c/{session_id}", wait_until="domcontentloaded")
         bubble = page.get_by_test_id("message-bubble").filter(has_text="Select this reply.").first
         expect(bubble).to_be_visible(timeout=30_000)
-        selection = bubble.evaluate(
+        actual, expected = bubble.evaluate(
             """el => {
                 const target = el.querySelector('p') ?? el;
                 const range = document.createRange();
@@ -519,7 +510,19 @@ def test_omnigent_selection_keeps_the_brand_tint(
                 selection.removeAllRanges();
                 selection.addRange(range);
                 const style = getComputedStyle(target, '::selection');
-                return [style.backgroundColor, style.color];
+                const control = document.createElement('input');
+                control.type = 'checkbox';
+                target.append(control);
+                control.style.backgroundColor =
+                    'color-mix(in srgb, var(--primary) 24%, transparent)';
+                control.style.color = 'var(--selection-foreground)';
+                const reference = getComputedStyle(control);
+                const actual = [style.backgroundColor, style.color, reference.accentColor];
+                const expected = [reference.backgroundColor, reference.color];
+                control.style.color = 'var(--primary)';
+                expected.push(reference.color);
+                control.remove();
+                return [actual, expected];
             }"""
         )
-        assert selection == colors, mode
+        assert actual == expected, mode

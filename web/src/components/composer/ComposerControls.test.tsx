@@ -188,7 +188,7 @@ describe("shared composer controls", () => {
       expect(screen.getByText("Bypass permissions")).not.toHaveClass(forbidden);
     }
     expect(screen.getByText("Bypass permissions")).toHaveClass(COMPOSER_COLLAPSED_LABEL_CLASS);
-    expect(trigger).toHaveClass("w-auto", "gap-1", "px-2");
+    expect(trigger).toHaveClass("w-auto", "gap-1.5", "px-2");
     fireEvent.keyDown(trigger, {
       key: "ArrowDown",
     });

@@ -202,7 +202,7 @@ export function ComposerPermissionPicker({
             disabled={disabled || (loading && !interactiveWhileLoading)}
             aria-busy={loading || undefined}
             className={cn(
-              "h-8 min-w-0 w-auto shrink gap-1 rounded-lg border-0 px-2 md:h-7",
+              "h-8 min-w-0 w-auto shrink gap-1.5 rounded-lg border-0 px-2 md:h-7",
               COMPOSER_CONTROL_TEXT_CLASS,
               loading && "disabled:opacity-100",
             )}
@@ -224,19 +224,19 @@ export function ComposerPermissionPicker({
                 className="size-3 shrink-0 animate-spin"
               />
             ) : (
-              <HandIcon data-icon-size="12" className="size-3 shrink-0" />
+              <HandIcon data-icon-size="14" className="size-3.5 shrink-0 text-muted-foreground" />
             )}
             {!iconOnly && (
               <span
                 className={cn(
-                  "min-w-0 truncate text-ui font-normal",
+                  "min-w-0 truncate text-ui leading-5 font-normal",
                   COMPOSER_COLLAPSED_LABEL_CLASS,
                 )}
               >
                 {value}
               </span>
             )}
-            <ChevronDownIcon data-icon-size="16" className="size-4 shrink-0 opacity-60" />
+            <ChevronDownIcon data-icon-size="12" className="size-3 shrink-0 opacity-60" />
           </Button>
         </DropdownMenuTrigger>
       </DisabledActionTooltip>

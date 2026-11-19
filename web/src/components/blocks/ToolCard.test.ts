@@ -423,7 +423,12 @@ describe("ToolCard shell terminal panel", () => {
       state: "input-available",
     });
     expand(container);
-    expect(screen.getByText("running")).toBeInTheDocument();
+    const spinners = container.querySelectorAll<SVGElement>("svg.animate-spin");
+    expect(spinners).toHaveLength(2);
+    expect(spinners[0]).toHaveClass("text-muted-foreground");
+    expect(screen.getByText("running")).toHaveClass("text-muted-foreground");
+    expect(screen.getByText("running")).toContainElement(spinners[1]);
+    expect(spinners[1]).not.toHaveClass("text-info");
   });
 
   it.each([

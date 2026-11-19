@@ -53,6 +53,7 @@ def record_tail_geometry(
           const shelf = document.querySelector('[data-testid="composer-attention-shelf"]');
           const tail = content.lastElementChild;
           return {item,body,viewport,padding,composer:rect(composer),shelf:rect(shelf),
+            working:rect(content.querySelector('[data-testid="working-indicator"]')),
             settled,frame,ledger,
             contentExcess:body.bottom-padding-item.bottom,
             viewportGap:viewport.bottom-item.bottom,
@@ -110,14 +111,43 @@ def test_tail_spacing_survives_pending_reload_and_completion(
     capture("initial")
     chat.emit_busy("spacing-turn")
     expect(page.get_by_test_id("working-indicator")).to_be_visible()
-    capture("working")
+    capture("working", scroll=False)
+    chat.emit(
+        {
+            "event": "response.output_text.delta",
+            "data": {
+                "message_id": "spacing-preview",
+                "index": 0,
+                "delta": "Progress paragraph.\n\n" * 20,
+            },
+        }
+    )
+    expect(page.locator('[data-search-item-id="live:spacing-preview"]')).to_have_count(1)
+    capture("working-stream", scroll=False)
     actions = page.get_by_test_id("header-conversation-actions")
     actions.click()
     page.get_by_role("menuitem", name="Hide activity shelf", exact=True).click()
-    capture("working-shelf-hidden")
+    expect(page.get_by_test_id("composer-attention-shelf")).to_be_hidden()
+    capture("working-shelf-hidden", scroll=False)
     actions.click()
     page.get_by_role("menuitem", name="Show activity shelf", exact=True).click()
-    capture("working-shelf-shown")
+    expect(page.get_by_test_id("composer-attention-shelf")).to_be_visible()
+    capture("working-shelf-shown", scroll=False)
+    composer.fill("\n".join(f"Working draft {index}" for index in range(10)))
+    capture("working-composer-resized", scroll=False)
+    if history_turns:
+        scroller = page.locator(".transcript-hide-native-scrollbar")
+        top = scroller.evaluate("el => { el.scrollTop -= 400; return el.scrollTop; }")
+        shelf = page.get_by_test_id("composer-attention-shelf")
+        for label in ("Hide", "Show"):
+            actions.click()
+            page.get_by_role("menuitem", name=f"{label} activity shelf", exact=True).click()
+            expect(shelf).to_be_visible(visible=label == "Show")
+            composer.fill("Short draft" if label == "Hide" else "Tall draft\n" * 10)
+            scroller.evaluate(
+                "async () => { for (let i=0; i<8; i++) await new Promise(requestAnimationFrame) }"
+            )
+            assert scroller.evaluate("el => el.scrollTop") == pytest.approx(top, abs=2)
     pending = []
     for index in (1, 2):
         text = f"Spacing follow-up {index}"
@@ -192,6 +222,12 @@ def test_tail_spacing_survives_pending_reload_and_completion(
     page.screenshot(path=str(artifacts / "tail-complete.png"), full_page=True)
     for phase, geometry in measurements.items():
         assert geometry["settled"], (phase, geometry["ledger"])
+        if phase.startswith("working"):
+            assert geometry["working"] and geometry["working"]["height"] > 0
+            assert geometry["working"]["top"] >= geometry["viewport"]["top"]
+            for boundary in (geometry["composer"], geometry["shelf"]):
+                if boundary and boundary["height"]:
+                    assert geometry["working"]["bottom"] <= boundary["top"] + 1, (phase, geometry)
         assert geometry["contentExcess"] == pytest.approx(0, abs=1), (phase, geometry)
         assert geometry["viewportGap"] == pytest.approx(geometry["padding"], abs=2), (
             phase,
@@ -206,6 +242,7 @@ def test_growing_answer_respects_saved_reading_position(
 ) -> None:
     chat = chat_session_contract
     chat.set_items(transcript_items(20))
+    page.add_init_script("localStorage.setItem('omnigent:always-steer', 'true')")
     if follow:
         page.add_init_script("localStorage.setItem('triune:chat-scroll', 'follow')")
     page.goto(chat.url)
@@ -214,10 +251,12 @@ def test_growing_answer_respects_saved_reading_position(
     scroller = log.locator(":scope > div").first
     expect(scroller).to_be_visible()
     record_tail_geometry(page)
-    chat.emit_busy("reading-position")
-    expect(page.get_by_test_id("working-indicator")).to_be_visible()
-    record_tail_geometry(page)
     for index in range(2):
+        chat.event_ack = {"queued": True, "pending_id": f"reading-pending-{index}"}
+        composer = page.get_by_label("Message the agent")
+        text = f"Send at reader position {index}. " + "Wrapped message content. " * 45
+        text = text.rstrip()
+        composer.fill(text)
         top = scroller.evaluate(
             """(el, away) => {
             el.scrollTop = el.scrollHeight - el.clientHeight - (away ? 160 : 0);
@@ -225,6 +264,19 @@ def test_growing_answer_respects_saved_reading_position(
         }""",
             bool(index),
         )
+        with page.expect_response(
+            lambda response: response.url.endswith(f"/{chat.session_id}/events")
+        ):
+            page.get_by_role("button", name="Send", exact=True).click()
+        expect(page.get_by_role("log").get_by_text(text, exact=True)).to_have_count(1)
+        scroller.evaluate(
+            "async () => { for (let i=0; i<8; i++) await new Promise(requestAnimationFrame) }"
+        )
+        if index == 0:
+            assert scroller.evaluate("e => e.scrollHeight - e.clientHeight - e.scrollTop") <= 2
+        else:
+            assert scroller.evaluate("e => e.scrollTop") == pytest.approx(top, abs=2)
+        top = scroller.evaluate("e => e.scrollTop")
         before = scroller.evaluate("el => el.scrollHeight")
         item = message_item(
             f"growing-{index}",

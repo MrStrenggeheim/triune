@@ -43,24 +43,46 @@ export const WS_CLOSE_WRONG_REPLICA = 4400;
 /**
  * Return an xterm `ITheme` object matched to the app's light or dark palette.
  */
-export function terminalTheme(isDark: boolean): ITheme {
-  const { background: bg, foreground, selection } = terminalSurfaceColors(isDark);
+export function terminalTheme(isDark: boolean, surface?: HTMLElement): ITheme {
+  const { background: bg, foreground } = terminalSurfaceColors(isDark);
+  const forced = surface?.ownerDocument.defaultView?.matchMedia("(forced-colors: active)").matches;
+  const selected = forced && surface ? getComputedStyle(surface, "::selection") : null;
+  const nativeAccent = surface && getComputedStyle(surface).accentColor;
+  const accent = nativeAccent === "auto" ? undefined : nativeAccent;
+  // xterm accepts literal sRGB colors. Let the browser resolve CSS color-mix
+  // and wide-gamut values before supplying an eight-digit selection color.
+  let cursor = foreground;
+  let selection = isDark ? "#ffffff33" : "#00000033";
+  if (surface && accent && !forced) {
+    const sample = surface.ownerDocument.createElement("canvas");
+    sample.width = 1;
+    sample.height = 1;
+    const context = sample.getContext("2d");
+    if (context) {
+      // Keep the cursor visible even on a pane whose background matches the accent.
+      cursor = `color-mix(in srgb, ${foreground} 70%, ${accent})`;
+      context.fillStyle = accent;
+      context.fillRect(0, 0, 1, 1);
+      const rgb = context.getImageData(0, 0, 1, 1).data.subarray(0, 3);
+      selection = "#" + Array.from(rgb, (n) => n.toString(16).padStart(2, "0")).join("") + "33";
+    }
+  }
+  const common = {
+    background: forced ? "Canvas" : bg,
+    foreground: forced ? "CanvasText" : foreground,
+    cursor: forced ? "CanvasText" : cursor,
+    cursorAccent: forced ? "Canvas" : bg,
+    selectionBackground: selected?.backgroundColor ?? selection,
+    selectionForeground: selected?.color ?? foreground,
+  };
   return isDark
     ? {
-        background: bg,
-        foreground,
-        cursor: "#22d3ee",
-        cursorAccent: bg,
-        selectionBackground: selection,
+        ...common,
         black: "#09090b",
         brightBlack: "#71717a",
       }
     : {
-        background: bg,
-        foreground,
-        cursor: "#0891b2",
-        cursorAccent: bg,
-        selectionBackground: selection,
+        ...common,
         black: "#18181b",
         brightBlack: "#e4e4e7",
         // CLIs that assume a dark terminal paint primary text with ANSI
@@ -632,6 +654,7 @@ export class TerminalSession {
   private readonly term: Terminal;
   private readonly fit: FitAddon;
   /** WebGL renderer addon, or ``null`` when WebGL is unavailable. */
+  private readonly container: HTMLElement;
   private readonly webgl: WebglAddon | null;
   private readonly ws: WebSocket;
   private readonly listenerCtl: AbortController;
@@ -703,6 +726,7 @@ export class TerminalSession {
     adaptCodexPalette = false,
     onFileLink?: TerminalFileLinkListener,
   ) {
+    this.container = container;
     this.codexPalette = adaptCodexPalette ? new CodexTerminalPalette() : null;
     this.clipboardEnabled = clipboardEnabled;
     this.focusOnConnect = focusOnConnect;
@@ -961,7 +985,7 @@ export class TerminalSession {
   }
 
   private theme(isDark: boolean): ITheme {
-    const theme = terminalTheme(isDark);
+    const theme = terminalTheme(isDark, this.container);
     return this.codexPalette ? codexTerminalTheme(theme, isDark) : theme;
   }
 

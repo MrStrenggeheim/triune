@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -39,10 +39,43 @@ describe("ComposerContextRing", () => {
     await user.tab();
     expect(screen.getByTestId("composer-context-ring")).toHaveFocus();
     expect(await screen.findByText("12% context used")).toBeInTheDocument();
-    expect(screen.getByText("123 / 1K tokens")).toHaveClass(
-      "text-neutral-400",
-      "dark:text-muted-foreground",
+    expect(screen.getByRole("tooltip")).toHaveTextContent("123 / 1K tokens");
+    await user.keyboard("{Enter}");
+    const dialog = await screen.findByRole("dialog", { name: "Context window" });
+    expect(within(dialog).getByRole("progressbar")).toHaveAttribute("aria-valuenow", "12.3");
+    expect(dialog).toHaveTextContent("123 / 1,000 tokens");
+    expect(screen.queryByRole("tooltip")).toBeNull();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByRole("button")).toHaveFocus();
+  });
+
+  it("previews on hover and preserves the draft across click and touch", async () => {
+    const user = userEvent.setup();
+    render(
+      <TooltipProvider>
+        <form>
+          <textarea aria-label="Draft" defaultValue="unfinished draft" />
+          <ComposerContextRing contextWindow={200_000} tokensUsed={83_400} />
+        </form>
+      </TooltipProvider>,
     );
+    const draft = screen.getByRole("textbox");
+    const ring = screen.getByRole("button", { name: "42% of context used" });
+    await user.click(draft);
+    await user.hover(ring);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("42% context used");
+    expect(draft).toHaveFocus();
+    await user.click(ring);
+    expect(screen.getByRole("dialog")).toHaveTextContent("83,400 / 200,000 tokens");
+    await user.click(draft);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(draft).toHaveFocus();
+    await user.pointer({ keys: "[TouchA]", target: ring });
+    expect(screen.getByRole("dialog")).toBeVisible();
+    await user.pointer({ keys: "[TouchA]", target: ring });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(draft).toHaveValue("unfinished draft");
   });
 
   it("fits the SVG to the painted ring so its padding does not widen the label gap", () => {

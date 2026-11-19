@@ -99,7 +99,6 @@ export interface TranscriptProps {
   /** StickToBottom scroll container + lock controls, lifted by the bridge. */
   scroller: ConversationScroller | null;
   setScroller: (s: ConversationScroller | null) => void;
-  /** Bumped on each local send so the list scrolls back to the bottom. */
   hasMoreHistory: boolean;
   loadingMoreHistory: boolean;
   isMobileViewport: boolean;
@@ -153,6 +152,31 @@ function TranscriptImpl({
   const focused = useConversationChatFocused();
   const blocks = useChatStore((s) => s.blocks);
   const pendingUserMessages = useChatStore((s) => s.pendingUserMessages);
+  // Sample the old layout synchronously when the store appends the optimistic
+  // user row. After React commits, the same offset can already be above the edge.
+  const sentAtBottom = useRef(false);
+  useLayoutEffect(() => {
+    const el = scroller?.el;
+    if (!el) return;
+    return useChatStore.subscribe((next, previous) => {
+      if (next.pendingUserMessages === previous.pendingUserMessages) return;
+      const last = next.pendingUserMessages.at(-1);
+      if (
+        last?.createdAtS !== undefined &&
+        next.conversationId === previous.conversationId &&
+        !previous.pendingUserMessages.some((message) => message.tempId === last.tempId)
+      ) {
+        sentAtBottom.current =
+          el.clientHeight > 0 && el.scrollHeight - el.clientHeight - el.scrollTop <= 1;
+      }
+    });
+  }, [scroller, useChatStore]);
+  useLayoutEffect(() => {
+    if (sentAtBottom.current && scroller?.el) {
+      scroller.el.scrollTop = scroller.el.scrollHeight;
+    }
+    sentAtBottom.current = false;
+  }, [pendingUserMessages, scroller]);
   const activeResponse = useChatStore((s) => s.activeResponse);
   const interruptedResponseIds = useChatStore((s) => s.interruptedResponseIds);
   const sessionStatus = useChatStore((s) => s.sessionStatus);

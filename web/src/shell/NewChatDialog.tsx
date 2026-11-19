@@ -6903,6 +6903,11 @@ export function NewChatLandingScreen({ embedded }: { embedded?: EmbeddedNewChat 
                       hostLabel={hostLabel}
                       menuOpen={workspacePickerTrigger !== null}
                       composer
+                      hostStatus={
+                        sandboxSelected || connectingThisMachine || connectingArca
+                          ? undefined
+                          : selectedHost?.status
+                      }
                       path={sandboxSelected ? "Managed workspace" : visibleWorkspace}
                       disabled={creating || workspaceLoading}
                       data-testid="new-chat-landing-workspace-chip"

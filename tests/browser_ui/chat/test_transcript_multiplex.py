@@ -195,20 +195,43 @@ def test_readiness_heartbeat_waits_for_history_then_displays_live_progress(
                 "type": "session.status",
                 "conversation_id": chat.session_id,
                 "status": "running",
-                "response_id": "ready-turn",
+                "response_id": "away-turn",
             }
         )
         expect(view.get_by_test_id("working-indicator")).to_be_visible()
+        page.evaluate("""() => {
+            Object.defineProperty(document, 'hidden', {value: true, configurable: true});
+            Object.defineProperty(document, 'visibilityState', {
+                value: 'hidden', configurable: true
+            });
+            document.dispatchEvent(new Event('visibilitychange'));
+        }""")
+        canonical.append(
+            {
+                **message_item(
+                    "ready-final", "assistant", "Finished while away", response_id="away-turn"
+                ),
+                "position": 3,
+                "phase": "final_answer",
+            }
+        )
+        chat.set_items(list(reversed(canonical)))
         # The runner finishes during the gap. Only the metadata read can report the idle state.
         chat.update_session(status="idle", active_response_id=None)
     boundary.update(
-        last_position=2,
+        last_position=canonical[-1]["position"],
         last_item_id=canonical[-1]["id"],
-        item_count=3,
-        item_revision=3,
+        item_count=len(canonical),
+        item_revision=len(canonical),
         stream_epoch="feed2:reconnected" if versioned else "ready-first-reconnected",
     )
     sockets[-1].close(code=1012, reason="Fixture server restart")
+    if versioned:
+        page.evaluate("""() => {
+            delete document.hidden;
+            delete document.visibilityState;
+            document.dispatchEvent(new Event('visibilitychange'));
+        }""")
     page.wait_for_function("n => window.__readyHeartbeatCount >= n", arg=3 if versioned else 2)
     page.wait_for_timeout(250)
     assert len(subscriptions) == 2
@@ -219,6 +242,7 @@ def test_readiness_heartbeat_waits_for_history_then_displays_live_progress(
     event({"type": "session.sync", "phase": "complete", "reset": True, **boundary})
     expect(view.get_by_text("Saved reply", exact=True)).to_have_count(1)
     if versioned:
+        expect(view.get_by_text("Finished while away", exact=True)).to_be_visible()
         expect(view.get_by_test_id("working-indicator")).to_have_count(0)
     for position in (1, 2):
         expect(view.get_by_text(f"Live progress {position}", exact=True)).to_have_count(1)

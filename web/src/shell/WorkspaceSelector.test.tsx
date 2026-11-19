@@ -26,6 +26,25 @@ it("keeps the full Host:path accessible with the existing trigger geometry", asy
   expect(onClick).toHaveBeenCalledOnce();
 });
 
+it("keeps one composer action for the host and folder and reports the full location on focus", async () => {
+  const onClick = vi.fn();
+  const props = { composer: true, hostLabel: "Host", path: "/work/repo/", onClick };
+  const { rerender } = render(<WorkspaceSelector {...props} hostStatus="online" />);
+  const trigger = screen.getByRole("button", { name: "Select workspace: Host:/work/repo/" });
+  expect(trigger).toHaveTextContent(/^repo$/);
+  expect(trigger.querySelector(".bg-success")).toBeInTheDocument();
+  await userEvent.tab();
+  const tooltip = await screen.findByRole("tooltip");
+  expect(tooltip).toHaveTextContent("Host · Connected");
+  expect(tooltip).toHaveTextContent("/work/repo/");
+  for (const icon of ["monitor", "folder"]) {
+    fireEvent.click(trigger.querySelector(`.lucide-${icon}`)!);
+  }
+  expect(onClick).toHaveBeenCalledTimes(2);
+  rerender(<WorkspaceSelector {...props} hostStatus="offline" />);
+  expect(trigger.querySelector(".bg-success")).not.toBeInTheDocument();
+});
+
 it.each(["truncated", "collapsed"])(
   "uses one canonical tooltip for a %s location",
   async (state) => {
