@@ -10748,6 +10748,61 @@ async def test_codex_side_chat_message_drives_parent_thread_without_child_init(
     ]
 
 
+@pytest.mark.parametrize("outcome", ["interrupted", "already_ended", "superseded", None])
+async def test_scoped_codex_interrupt_reconciles_lost_runner_ack(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch, outcome: str | None
+) -> None:
+    from omnigent.server.routes.sessions import (
+        _interrupt_fenced_sessions,
+        _session_active_response_cache,
+    )
+
+    agent = await create_test_agent(client)
+    session_id = (await _create_session(client, agent["id"]))["id"]
+    target = "codex_observed"
+    _session_active_response_cache[session_id] = target
+    published = []
+    _capture_published(monkeypatch, published)
+    calls = []
+
+    def runner_reply(request: httpx.Request) -> httpx.Response:
+        calls.append(request.method)
+        if request.method == "POST":
+            assert json.loads(request.content) == {"type": "interrupt", "response_id": target}
+            raise httpx.ReadTimeout("lost acknowledgement")
+        assert request.url.path == f"/v1/sessions/{session_id}/codex/interrupt-status"
+        assert request.url.params["response_id"] == target
+        if outcome is None:
+            return httpx.Response(503)
+        return httpx.Response(200, json={"response_id": target, "interrupt_outcome": outcome})
+
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(runner_reply), base_url="http://runner"
+        ) as runner:
+            _route_to_runner(monkeypatch, runner)
+            url = f"/v1/sessions/{session_id}/events"
+            event = {"type": "interrupt", "data": {"response_id": target}}
+            headers = {"Idempotency-Key": "one-stop"}
+            response = await client.post(url, json=event, headers=headers)
+            replay = await client.post(url, json=event, headers=headers)
+            assert replay.status_code == response.status_code
+            if outcome is not None:
+                assert replay.json() == response.json()
+        assert calls == ["POST", "GET"]
+        if outcome is None:
+            assert response.status_code >= 400
+        else:
+            assert response.status_code == 202
+            assert response.json()["interrupt_outcome"] == outcome
+        assert any(event["type"] == "session.interrupted" for _, event in published) == (
+            outcome == "interrupted"
+        )
+    finally:
+        _session_active_response_cache.pop(session_id, None)
+        _interrupt_fenced_sessions.discard(session_id)
+
+
 async def test_scoped_interrupt_cannot_cancel_the_successor_turn(
     client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

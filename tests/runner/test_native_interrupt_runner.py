@@ -579,6 +579,91 @@ async def test_codex_interrupt_noop_when_no_bridge_state() -> None:
     assert isinstance(resp, Response) and resp.status_code == 204
 
 
+@pytest.mark.parametrize(
+    ("native_id", "status", "outcome"),
+    [
+        ("target", "interrupted", "interrupted"),
+        ("target", "completed", "already_ended"),
+        ("other", "inProgress", "superseded"),
+        ("target", "inProgress", None),
+        ("other", "completed", None),
+    ],
+)
+async def test_codex_interrupt_status_only_reads_parent_thread(
+    monkeypatch: pytest.MonkeyPatch,
+    native_id: str,
+    status: str,
+    outcome: str | None,
+) -> None:
+    from unittest.mock import AsyncMock
+
+    from omnigent.harnesses.codex_native import app_server
+
+    state = SimpleNamespace(thread_id="parent", socket_path="unused")
+    runner, captured = _make_runner(
+        codex_bridge_state_for_session=AsyncMock(return_value=(state, Path("unused")))
+    )
+    native = AsyncMock()
+    native.request.return_value = {"result": {"data": [{"id": native_id, "status": status}]}}
+    monkeypatch.setattr(app_server, "client_for_transport", lambda *args, **kwargs: native)
+    response = await runner.codex_interrupt_status("session", "codex_target")
+    native.request.assert_awaited_once_with(
+        "thread/turns/list", {"threadId": "parent", "limit": 1, "itemsView": "summary"}
+    )
+    if outcome:
+        assert json.loads(bytes(response.body)) == {
+            "response_id": "codex_target",
+            "interrupt_outcome": outcome,
+        }
+    else:
+        assert response.status_code == 503
+    assert captured["published"] == captured["wakes"] == []
+
+
+@pytest.mark.parametrize(
+    ("reason", "outcome"),
+    [
+        ("no active turn to interrupt", "already_ended"),
+        ("expected active turn id target but found newer", "superseded"),
+    ],
+)
+async def test_scoped_interrupt_returns_native_stale_outcome(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, reason: str, outcome: str
+) -> None:
+    from unittest.mock import AsyncMock
+
+    from omnigent.harnesses.codex_native import app_server, bridge
+
+    state = bridge.CodexNativeBridgeState(
+        session_id="session",
+        thread_id="parent",
+        socket_path="unused",
+        codex_home="unused",
+        active_turn_id="newer",
+    )
+    bridge.write_bridge_state(tmp_path, state)
+    runner, captured = _make_runner(
+        codex_bridge_state_for_session=AsyncMock(return_value=(state, tmp_path))
+    )
+    native = AsyncMock()
+    native.request.side_effect = app_server.CodexAppServerResponseError(
+        {"code": -32600, "message": reason}
+    )
+    monkeypatch.setattr(app_server, "client_for_transport", lambda *args, **kwargs: native)
+    response = await runner.interrupt(
+        "codex-native", "session", expected_response_id="codex_target"
+    )
+    assert response is not None and json.loads(bytes(response.body)) == {
+        "response_id": "codex_target",
+        "interrupt_outcome": outcome,
+    }
+    native.request.assert_awaited_once_with(
+        "turn/interrupt", {"threadId": "parent", "turnId": "target"}
+    )
+    assert bridge.read_bridge_state(tmp_path) == state
+    assert captured["published"] == captured["wakes"] == []
+
+
 async def test_codex_interrupt_with_old_turn_requires_matching_bridge_state() -> None:
     runner, _ = _make_runner()
     response = await runner.interrupt(

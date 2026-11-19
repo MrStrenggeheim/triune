@@ -277,6 +277,16 @@ _UNIFORM_STOP: dict[str, _UniformStop] = {
 }
 
 
+def _codex_turn_id(response_id: object) -> str | None:
+    if (
+        not isinstance(response_id, str)
+        or not response_id.startswith("codex_")
+        or response_id == "codex_native"
+    ):
+        return None
+    return response_id.removeprefix("codex_") or None
+
+
 def native_agent_for_cancel(wrapper_label: str | None) -> NativeCodingAgent | None:
     """Resolve a native agent from a session wrapper or sub-agent wrapper label.
 
@@ -704,6 +714,49 @@ class NativeInterruptRunner:
             )
         return Response(status_code=204)
 
+    async def codex_interrupt_status(self, conv_id: str, response_id: object) -> Response:
+        """Read the parent thread after an ambiguous delivery without repeating the interrupt."""
+        from omnigent.harnesses.codex_native.app_server import client_for_transport
+
+        target = _codex_turn_id(response_id)
+        if not target:
+            return Response(status_code=400)
+        state, _ = await self._codex_bridge_state_for_session(conv_id, action="interrupt status")
+        if state is None:
+            return Response(status_code=409)
+        client = client_for_transport(
+            state.socket_path, client_name="omnigent-codex-native-runner"
+        )
+        try:
+            await client.connect()
+            reply = await client.request(
+                "thread/turns/list",
+                {"threadId": state.thread_id, "limit": 1, "itemsView": "summary"},
+            )
+            result = reply.get("result")
+            turns = result.get("data") if isinstance(result, dict) else None
+            if isinstance(turns, list) and len(turns) == 1:
+                turn = turns[0]
+                if target == turn["id"] and turn.get("status") in {
+                    "interrupted",
+                    "completed",
+                    "failed",
+                }:
+                    outcome = "interrupted" if turn["status"] == "interrupted" else "already_ended"
+                    return JSONResponse({"response_id": response_id, "interrupt_outcome": outcome})
+                if target != turn["id"] and turn["id"] and turn.get("status") == "inProgress":
+                    return JSONResponse(
+                        {"response_id": response_id, "interrupt_outcome": "superseded"}
+                    )
+        except Exception:
+            self._logger.warning(
+                "Codex interrupt status unavailable for %s", conv_id, exc_info=True
+            )
+        finally:
+            with contextlib.suppress(Exception):
+                await client.close()
+        return Response(status_code=503)
+
     async def _codex_interrupt(
         self, conv_id: str, expected_response_id: str | None = None
     ) -> Response:
@@ -721,15 +774,21 @@ class NativeInterruptRunner:
 
         state, bridge_dir = await self._codex_bridge_state_for_session(conv_id, action="interrupt")
         if expected_response_id is not None and (
-            state is None
-            or not state.active_turn_id
-            or expected_response_id != f"codex_{state.active_turn_id}"
+            state is None or not _codex_turn_id(expected_response_id)
         ):
             return JSONResponse(status_code=409, content={"error": "active_turn_changed"})
         if state is None:
             return Response(status_code=204)
-        pending_mcp = cancel_pending_mcp_startup(bridge_dir)
-        if state.active_turn_id is None and not pending_mcp:
+        # Codex checks the requested turn on this thread atomically.
+        turn_id = (
+            _codex_turn_id(expected_response_id)
+            if expected_response_id is not None
+            else state.active_turn_id
+        )
+        pending_mcp = (
+            cancel_pending_mcp_startup(bridge_dir) if expected_response_id is None else []
+        )
+        if turn_id is None and not pending_mcp:
             self._logger.info(
                 "Codex-native interrupt skipped for %s: no active turn or MCP startup.",
                 conv_id,
@@ -774,13 +833,13 @@ class NativeInterruptRunner:
                         state.thread_id,
                         exc_info=True,
                     )
-            if state.active_turn_id is not None:
+            if turn_id is not None:
                 try:
                     await codex_client.request(
                         "turn/interrupt",
                         {
                             "threadId": state.thread_id,
-                            "turnId": state.active_turn_id,
+                            "turnId": turn_id,
                         },
                     )
                 except CodexAppServerResponseError as exc:
@@ -809,14 +868,14 @@ class NativeInterruptRunner:
                                 )
 
                         cleared = clear_active_turn_id_if_matches(
-                            bridge_dir, state.active_turn_id, on_cleared=_publish_idle
+                            bridge_dir, turn_id, on_cleared=_publish_idle
                         )
                         self._logger.info(
                             "Codex-native interrupt reconciled an already-ended turn "
                             "for session=%s thread=%s turn=%s cleared=%s: %s",
                             conv_id,
                             state.thread_id,
-                            state.active_turn_id,
+                            turn_id,
                             cleared,
                             exc.message,
                         )
@@ -829,19 +888,24 @@ class NativeInterruptRunner:
                             "session=%s thread=%s turn=%s; a newer turn is live: %s",
                             conv_id,
                             state.thread_id,
-                            state.active_turn_id,
+                            turn_id,
                             exc.message,
                         )
                     # The targeted turn ended or was superseded, so skip the
                     # deferred parent-wake cancel. A dropped sub-agent completion
                     # can still leave its parent waiting; reconciled separately.
+                    if expected_response_id is not None:
+                        outcome = "already_ended" if is_no_active_turn_error(exc) else "superseded"
+                        return JSONResponse(
+                            {"interrupt_outcome": outcome, "response_id": expected_response_id}
+                        )
                     return Response(status_code=204)
         except Exception as exc:  # surface active-turn interrupt failures.
             self._logger.warning(
                 "Codex-native turn/interrupt failed for session=%s thread=%s turn=%s",
                 conv_id,
                 state.thread_id,
-                state.active_turn_id,
+                turn_id,
                 exc_info=True,
             )
             return JSONResponse(

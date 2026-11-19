@@ -66,6 +66,8 @@ export interface ElicitResult {
 
 /** Response body of `POST /v1/sessions/{id}/events` (202 Accepted). */
 export interface PostEventResponse {
+  responseId?: string;
+  interruptOutcome?: "accepted" | "interrupted" | "already_ended" | "superseded";
   position?: number;
   /** True for item-typed events (persisted); false for interrupt / approval. */
   queued: boolean;
@@ -487,7 +489,9 @@ export async function apiErrorFromResponse(res: Response): Promise<ApiError> {
   return new ApiError(message, res.status, code);
 }
 
-function postEventResponseFromWire(wire: {
+interface PostEventResponseWire {
+  response_id?: string;
+  interrupt_outcome?: PostEventResponse["interruptOutcome"];
   queued: boolean;
   position?: number;
   item_id?: string;
@@ -495,9 +499,15 @@ function postEventResponseFromWire(wire: {
   pending_id?: string;
   recovered?: boolean;
   recovery?: PostEventResponse["recovery"];
-}): PostEventResponse {
+}
+
+function postEventResponseFromWire(wire: PostEventResponseWire): PostEventResponse {
   return {
     queued: wire.queued,
+    ...(wire.interrupt_outcome && {
+      responseId: wire.response_id,
+      interruptOutcome: wire.interrupt_outcome,
+    }),
     ...(typeof wire.position === "number" &&
     Number.isSafeInteger(wire.position) &&
     wire.position >= 0
@@ -1561,17 +1571,7 @@ export async function postEvent(
   // on `code` — e.g. surface a friendly "runner didn't come online" message
   // for the 503 the server returns when a host-bound runner never connects.
   if (!res.ok) throw await apiErrorFromResponse(res);
-  return postEventResponseFromWire(
-    (await res.json()) as {
-      queued: boolean;
-      position?: number;
-      item_id?: string;
-      denied?: boolean;
-      pending_id?: string;
-      recovered?: boolean;
-      recovery?: PostEventResponse["recovery"];
-    },
-  );
+  return postEventResponseFromWire((await res.json()) as PostEventResponseWire);
 }
 
 /**

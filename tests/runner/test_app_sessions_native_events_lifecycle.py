@@ -3146,6 +3146,48 @@ def _build_codex_native_runner_for_stale_turn(
     return app, server_client, bridge_dir
 
 
+async def test_scoped_codex_interrupt_uses_only_requested_parent_turn(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    conv_id = "c0dec0dec0dec0dec0dec0dec0de1234"
+    native = _RecordingCodexAppServerClient("ws://unused", "omnigent-codex-native-runner")
+    active = {"parent": "target", "child-a": "turn-a", "child-b": "turn-b"}
+
+    async def request(method: str, params: dict[str, Any]) -> dict[str, Any]:
+        native.requests.append((method, params))
+        assert method == "turn/interrupt"
+        assert active[params["threadId"]] == params["turnId"]
+        del active[params["threadId"]]
+        return {"result": {}}
+
+    monkeypatch.setattr(native, "request", request)
+    app, _, directory = _build_codex_native_runner_for_stale_turn(
+        monkeypatch,
+        tmp_path,
+        conv_id,
+        active_turn_id="stale",
+        thread_id="parent",
+        socket_path=native.transport,
+        fake_client=native,
+    )
+    async with _runner_client(app) as client:
+        created = await client.post(
+            "/v1/sessions",
+            json={"session_id": conv_id, "agent_id": "880b5afda28ad55ff74cbeb9b5fc67fb"},
+        )
+        assert created.status_code == 201
+        app.state.live_response_id[conv_id] = "proxy_response"
+        codex_native_bridge.update_mcp_server_startup(directory, "tools", "starting")
+        response = await client.post(
+            f"/v1/sessions/{conv_id}/events",
+            json={"type": "interrupt", "response_id": "codex_target"},
+        )
+    assert response.status_code == 204
+    assert native.requests == [("turn/interrupt", {"threadId": "parent", "turnId": "target"})]
+    assert active == {"child-a": "turn-a", "child-b": "turn-b"}
+    assert codex_native_bridge.read_mcp_startup(directory)["tools"]["status"] == "starting"
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("event_type", ["interrupt", "stop_session"])
 async def test_events_codex_native_stop_after_completed_turn_is_noop_not_503(

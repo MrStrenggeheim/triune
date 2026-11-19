@@ -3816,32 +3816,56 @@ const createChatState = (get: () => ChatState): ChatState => ({
       phase: "sending" as const,
     };
     write({ interruptRequest: request });
-    // A failed transfer can still have reached the runner. Read its state before retrying.
-    try {
-      if (prior?.phase === "unconfirmed") {
-        const fresh = await getSessionSlim(sessionId, {
-          refreshState: true,
-          signal: AbortSignal.timeout(10_000),
-        });
-        if (!owns() || reader().interruptRequest !== request) return;
-        const current = reader();
-        if (
-          current.activeResponse === state.activeResponse &&
-          current.sessionStatus === state.sessionStatus
-        ) {
-          write({
-            ...reconnectStatusPatch(fresh, current, current.mcpStartupLaunch, current.todos),
-            interruptRequest: null,
-          });
-        } else write({ interruptRequest: null });
-        // Reconciliation never issues another interrupt; the next deliberate action owns its turn.
+    const stillPending = () => owns() && reader().interruptRequest === request;
+    const reconcile = async (ackLost: boolean) => {
+      if (!stillPending()) return;
+      const fresh = await getSessionSlim(sessionId, {
+        refreshState: true,
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!stillPending()) return;
+      const current = reader();
+      // A stream transition during the POST or the read owns the newer state.
+      if (
+        current.activeResponse !== state.activeResponse ||
+        current.sessionStatus !== state.sessionStatus
+      ) {
+        write({ interruptRequest: null });
         return;
       }
-      await interruptSession(sessionId, responseId ?? undefined, request.requestId);
-      if (owns() && reader().interruptRequest === request) write({ interruptRequest: null });
+      const unresolved =
+        ackLost &&
+        !["idle", "failed", "waiting"].includes(fresh.status) &&
+        (!fresh.activeResponseId || fresh.activeResponseId === responseId);
+      write({
+        ...reconnectStatusPatch(fresh, current, state.mcpStartupLaunch, state.todos),
+        interruptRequest: unresolved ? { ...request, phase: "unconfirmed" } : null,
+      });
+    };
+    try {
+      if (prior?.phase === "unconfirmed") {
+        await reconcile(false);
+        return;
+      }
+      let ack;
+      try {
+        ack = await interruptSession(sessionId, responseId ?? undefined, request.requestId);
+      } catch (error) {
+        if (!requireObservedTurn && responseId?.startsWith("codex_")) {
+          await reconcile(true);
+          return;
+        }
+        throw error;
+      }
+      if (
+        ack?.responseId === responseId &&
+        ack?.interruptOutcome &&
+        ack.interruptOutcome !== "accepted"
+      ) {
+        await reconcile(false);
+      } else if (stillPending()) write({ interruptRequest: null });
     } catch {
-      if (!owns() || reader().interruptRequest !== request) return;
-      write({ interruptRequest: { ...request, phase: "unconfirmed" } });
+      if (stillPending()) write({ interruptRequest: { ...request, phase: "unconfirmed" } });
     }
   },
 

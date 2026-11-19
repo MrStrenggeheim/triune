@@ -791,6 +791,46 @@ _RUNNER_EVENT_TYPES = frozenset(
 )
 
 
+async def _forward_interrupt(
+    runner: httpx.AsyncClient, session_id: str, payload: dict[str, Any]
+) -> str | None:
+    """Send Stop once, then read the native outcome if its acknowledgement was lost."""
+    url = f"/v1/sessions/{session_id}"
+    target = payload.get("response_id")
+    scoped = isinstance(target, str) and target.startswith("codex_")
+    response = None
+    try:
+        # The WebSocket tunnel waits for a response frame outside HTTPX's socket timeout.
+        async with asyncio.timeout(5):
+            response = await runner.post(f"{url}/events", json=payload, timeout=5.0)
+    except (httpx.HTTPError, ConnectionError, TimeoutError):
+        _logger.warning("Interrupt acknowledgement lost for %s", session_id, exc_info=True)
+    if response is not None and response.is_success:
+        if not scoped or response.status_code != 200:
+            return "accepted"
+    elif scoped and (response is None or response.is_server_error):
+        try:
+            async with asyncio.timeout(5):
+                response = await runner.get(
+                    f"{url}/codex/interrupt-status", params={"response_id": target}, timeout=5.0
+                )
+        except (httpx.HTTPError, ConnectionError, TimeoutError):
+            _logger.warning("Interrupt status unavailable for %s", session_id, exc_info=True)
+            return None
+    else:
+        return None
+    if response.status_code == 200:
+        try:
+            result = response.json()
+        except ValueError:
+            return None
+        if isinstance(result, dict) and result.get("response_id") == target:
+            outcome = result.get("interrupt_outcome")
+            if outcome in ("already_ended", "superseded", "interrupted"):
+                return outcome
+    return None
+
+
 def register_events_routes(
     router: APIRouter,
     *,
@@ -2125,7 +2165,12 @@ def register_events_routes(
                 if dispatch.item_id is not None:
                     child_response["item_id"] = dispatch.item_id
                 return child_response
-        if body.type in (_INTERRUPT_TYPE, _STOP_SESSION_TYPE):
+        explicit_codex_interrupt = (
+            body.type == _INTERRUPT_TYPE
+            and isinstance(body.data.get("response_id"), str)
+            and body.data["response_id"].startswith("codex_")
+        )
+        if body.type in (_INTERRUPT_TYPE, _STOP_SESSION_TYPE) and not explicit_codex_interrupt:
             from omnigent.server.session_orchestration import PEER_STOP_LABEL
 
             await asyncio.to_thread(
@@ -2206,24 +2251,20 @@ def register_events_routes(
                 target_session_id,
                 runner_router,
             )
-            interrupt_delivered = False
+            outcome = None
             if runner_client is not None:
                 if not codex_child and _session_active_response_cache.get(session_id) != active_id:
                     raise OmnigentError("The active turn changed.", code=ErrorCode.CONFLICT)
-                try:
-                    interrupt_resp = await runner_client.post(
-                        f"/v1/sessions/{target_session_id}/events",
-                        json=interrupt_payload,
-                        timeout=5.0,
-                    )
-                    interrupt_delivered = interrupt_resp.status_code < 400
-                except (httpx.HTTPError, ConnectionError):
-                    # WSTunnelTransport raises bare ConnectionError on tunnel close.
-                    _logger.exception(
-                        "Interrupt forward failed for %r",
-                        session_id,
-                    )
-            if not interrupt_delivered:
+                outcome = await _forward_interrupt(
+                    runner_client, target_session_id, interrupt_payload
+                )
+                if outcome in ("already_ended", "superseded"):
+                    return {
+                        "queued": False,
+                        "response_id": body.data["response_id"],
+                        "interrupt_outcome": outcome,
+                    }
+            if outcome is None:
                 if (
                     runner_client is None
                     and not response_id
@@ -2256,16 +2297,29 @@ def register_events_routes(
             if not codex_child:
                 pending_inputs.mark_interrupted(session_id, queued_pending_ids)
                 current_id = _session_active_response_cache.get(session_id)
-                if current_id == active_id:
+                same_turn = current_id == (response_id if explicit_codex_interrupt else active_id)
+                if same_turn:
                     _interrupt_fenced_sessions.add(session_id)
                 if response_id or current_id == active_id:
                     _publish_interrupted(session_id, response_id=response_id)
+                if explicit_codex_interrupt and same_turn:
+                    from omnigent.server.session_orchestration import PEER_STOP_LABEL
+
+                    await asyncio.to_thread(
+                        conversation_store.set_labels, session_id, {PEER_STOP_LABEL: "1"}
+                    )
             if stop_codex_side_chat:
                 await asyncio.to_thread(
                     conversation_store.set_labels,
                     session_id,
                     {CLOSED_LABEL_KEY: CLOSED_LABEL_VALUE},
                 )
+            if explicit_codex_interrupt:
+                return {
+                    "queued": False,
+                    "response_id": body.data["response_id"],
+                    "interrupt_outcome": outcome,
+                }
             return {"queued": False}
         if body.type == _STOP_SESSION_TYPE:
             # Fence the cancelled turn, same as interrupt.

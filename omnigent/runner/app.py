@@ -6761,6 +6761,12 @@ def create_runner_app(
             )
         return await _handle_codex_native_approval_mode_change(conversation_id, mode)
 
+    @app.get("/v1/sessions/{conversation_id}/codex/interrupt-status")
+    async def codex_interrupt_status(conversation_id: str, response_id: str) -> Response:
+        if _session_harness_name(conversation_id) != _CODEX_NATIVE_HARNESS:
+            return Response(status_code=409)
+        return await _native_interrupt_runner.codex_interrupt_status(conversation_id, response_id)
+
     @app.post("/v1/sessions/{conversation_id}/events")
     async def post_session_events(
         conversation_id: str,
@@ -7014,12 +7020,19 @@ def create_runner_app(
                     _cond.notify_all()
 
         if body_type == "interrupt":
+            _harness = _session_harness_name(conversation_id)
             requested_id = body.get("response_id")
             active_id = _live_response_id.get(conversation_id)
-            if requested_id and active_id and requested_id != active_id:
+            # Codex validates its native thread/turn pair at dispatch. The proxy
+            # stream tracks a separate response identity.
+            if (
+                _harness != _CODEX_NATIVE_HARNESS
+                and requested_id
+                and active_id
+                and requested_id != active_id
+            ):
                 return JSONResponse(status_code=409, content={"error": "active_turn_changed"})
             _cancel_claude_prompt_waiter(conversation_id)
-            _harness = _session_harness_name(conversation_id)
             resource_registry.note_terminal_control_request(conversation_id, "interrupt")
             _interrupt_resp = await _native_interrupt_runner.interrupt(
                 _harness, conversation_id, expected_response_id=requested_id
