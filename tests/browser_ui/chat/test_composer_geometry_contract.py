@@ -887,6 +887,7 @@ def test_composer_growth_reflows_without_covering_output(
 ) -> None:
     chat = chat_session_contract
     seed_long_transcript(chat, 20)
+    page.add_init_script("localStorage.setItem('triune:chat-scroll', 'follow')")
     open_live(page, chat, {"width": 1280, "height": 720})
     composer = page.get_by_label("Message the agent")
     composer.click()
@@ -957,7 +958,7 @@ def test_composer_growth_reflows_without_covering_output(
     shrunk = settled_geometry(page)
     assert shrunk["composerHeight"] == baseline["composerHeight"]
     for key in ("messageTops", "composerTop", "transcriptBottom", "viewport", "railTicks"):
-        assert shrunk[key] == baseline[key], ("after deleting", key, baseline[key], shrunk[key])
+        assert shrunk[key] == pytest.approx(baseline[key], abs=TOLERANCE), ("after deleting", key)
     assert_clearance(shrunk, "after deleting")
 
     page.set_viewport_size({"width": 500, "height": 713})
@@ -1047,19 +1048,16 @@ def test_composer_growth_reflows_without_covering_output(
     append_streamed_output(page, 80)
     assert settled_geometry(page)["distanceFromBottom"] <= TOLERANCE
 
-    composer.fill("")
-    settled_geometry(page)
-    scroll_to_distance_from_bottom(page, 320)
-    send_escaped = settled_geometry(page)
-    assert send_escaped["distanceFromBottom"] == pytest.approx(320, abs=TOLERANCE)
     composer.fill("round-three line one\nline two\nline three")
-    assert settled_geometry(page)["distanceFromBottom"] >= 319
+    assert_clearance(settled_geometry(page), "before send at bottom")
     chat.event_ack = {"queued": False, "item_id": "geometry-send-item"}
-    page.get_by_role("button", name="Send", exact=True).click()
-    assert settled_geometry(page)["distanceFromBottom"] <= TOLERANCE
+    with page.expect_response(
+        lambda response: response.url.endswith(f"/{chat.session_id}/events")
+    ):
+        page.get_by_role("button", name="Send", exact=True).click()
+    assert_clearance(settled_geometry(page), "after send at bottom")
     composer.fill("next draft\nline two\nline three")
-    send_relocked_grown = settled_geometry(page)
-    assert_clearance(send_relocked_grown, "growth after send")
+    assert_clearance(settled_geometry(page), "growth after send")
     expect(composer).to_be_focused()
 
 

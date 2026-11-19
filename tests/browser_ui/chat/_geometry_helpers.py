@@ -275,7 +275,6 @@ def append_streamed_output(page: Page, height: int) -> dict:
           const ta = document.querySelector('textarea[aria-label="Message the agent"]');
           const scroller = ta.closest('form').parentElement.querySelector('[role="log"] > div');
           const content = scroller.firstElementChild;
-          const spacer = content.lastElementChild;
           const geometry = () => ({
             scrollHeight: scroller.scrollHeight, scrollTop: scroller.scrollTop});
           const before = geometry();
@@ -283,7 +282,7 @@ def append_streamed_output(page: Page, height: int) -> dict:
           streamed.dataset.testid = 'streamed-output-probe';
           streamed.style.cssText = `flex: 0 0 auto; height: ${height}px`;
           streamed.textContent = 'Additional streamed output below the reader.';
-          content.insertBefore(streamed, spacer);
+          content.append(streamed);
           return {before, after: geometry()};
         }""",
         height,
@@ -298,13 +297,12 @@ def append_output_during_composer_reflow(
           const ta = document.querySelector('textarea[aria-label="Message the agent"]');
           const scroller = ta.closest('form').parentElement.querySelector('[role="log"] > div');
           const content = scroller.firstElementChild;
-          const spacer = content.lastElementChild;
           const append = (height, testid) => {
             const el = document.createElement('div');
             el.dataset.testid = testid;
             el.style.cssText = `flex: 0 0 auto; height: ${height}px`;
             el.textContent = 'Additional streamed output below the reader.';
-            content.insertBefore(el, spacer);
+            content.append(el);
           };
           const geometry = () => ({clientHeight: scroller.clientHeight,
             scrollHeight: scroller.scrollHeight, scrollTop: scroller.scrollTop});
