@@ -1,3 +1,4 @@
+import { isTranscriptAtBottom, useChatScrollPreference } from "@/lib/chatScrollPreference";
 import { useStartupInputReceipts } from "./StartupInputReceipts";
 // Modified for Triune.
 import { useTranscriptConvergenceDisplay } from "@/hooks/useTranscriptConvergenceDisplay";
@@ -166,16 +167,19 @@ function TranscriptImpl({
         next.conversationId === previous.conversationId &&
         !previous.pendingUserMessages.some((message) => message.tempId === last.tempId)
       ) {
-        sentAtBottom.current =
-          el.clientHeight > 0 && el.scrollHeight - el.clientHeight - el.scrollTop <= 1;
+        sentAtBottom.current = isTranscriptAtBottom(el);
       }
     });
   }, [scroller, useChatStore]);
   useLayoutEffect(() => {
-    if (sentAtBottom.current && scroller?.el) {
-      scroller.el.scrollTop = scroller.el.scrollHeight;
-    }
+    if (!sentAtBottom.current || !scroller?.el) return;
     sentAtBottom.current = false;
+    const el = scroller.el;
+    // Composer auto-sizing and the optimistic row commit in the same frame.
+    const frame = requestAnimationFrame(() => {
+      el.scrollTop = el.scrollHeight;
+    });
+    return () => cancelAnimationFrame(frame);
   }, [pendingUserMessages, scroller]);
   const activeResponse = useChatStore((s) => s.activeResponse);
   const interruptedResponseIds = useChatStore((s) => s.interruptedResponseIds);
@@ -499,6 +503,7 @@ function TranscriptImpl({
       <div
         onClickCapture={preserveDisclosure}
         ref={setConversationEl}
+        data-focused-transcript={focused ? display.conversationId : undefined}
         className="@container/chat relative flex min-h-0 flex-1 overflow-hidden"
       >
         <TranscriptConversation className="chat-scroll-fade flex-1">
@@ -730,15 +735,9 @@ export function transcriptBubbleContainsItem(bubble: Bubble, itemId: string): bo
   );
 }
 
-/** Physical "is this scroll element at (or within a hair of) its bottom". */
-const BOTTOM_EPSILON_PX = 8;
 /** Space between virtualized rows, shared by the virtualizer's offsets and the list's layout. */
 const ROW_GAP_PX = 16;
 const RESTORE_CANCEL_EVENTS = ["wheel", "touchstart", "pointerdown", "keydown"] as const;
-function isElAtBottom(el: HTMLElement): boolean {
-  return el.scrollHeight - el.clientHeight - el.scrollTop <= BOTTOM_EPSILON_PX;
-}
-
 export const VirtualBubbleList = memo(function VirtualBubbleList({
   recoveryDisabled,
   bubbles,
@@ -774,6 +773,7 @@ export const VirtualBubbleList = memo(function VirtualBubbleList({
   };
   const visible = useConversationChatVisible();
   const ctxRef = useRef(ctx);
+  const followAtBottom = useChatScrollPreference() === "follow";
   ctxRef.current = ctx;
   const storeConvId = useChatStore((s) => s.conversationId);
   const readerScope = transcriptReaderScope();
@@ -989,6 +989,8 @@ export const VirtualBubbleList = memo(function VirtualBubbleList({
         resizeReaderRef.current = null;
         return false;
       }
+      // Follow pins the end; a compensation write here could replay later and pull the reader up.
+      if (followAtBottom && isTranscriptAtBottom(scrollEl)) return false;
       const reader = resizeReaderRef.current;
       if (reader && performance.now() < reader.deadline) {
         const index = bubblesRef.current.findIndex((bubble) => {
@@ -1004,7 +1006,7 @@ export const VirtualBubbleList = memo(function VirtualBubbleList({
         ? item.start < offset
         : item.start + size <= offset && instance.scrollDirection !== "backward";
     },
-    [scrollEl, visible, disableVirtualization],
+    [scrollEl, visible, disableVirtualization, followAtBottom],
   );
   const virtualizer = useVirtualizer({
     enabled: !disableVirtualization,
@@ -1115,7 +1117,7 @@ export const VirtualBubbleList = memo(function VirtualBubbleList({
         restoringRef.current === conversationId
       )
         return;
-      if (isElAtBottom(scrollEl)) {
+      if (isTranscriptAtBottom(scrollEl)) {
         const snapshot = { atBottom: true } as const;
         latestSnapshotRef.current = { conversationId, snapshot };
         rememberTranscriptView(conversationId, snapshot, readerScope, viewId);

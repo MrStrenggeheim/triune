@@ -395,13 +395,16 @@ describe("SettingsPage", () => {
     async (section) => {
       mocks.isMobile = true;
       renderPage(`/settings/${section}`);
-      const chooser = screen.getByRole("combobox", { name: "Settings section" });
-      expect(chooser.closest(".overflow-y-auto")).toBeNull();
-      fireEvent.change(chooser, { target: { value: "appearance" } });
+      const directory = screen.getByRole("navigation", { name: "Settings sections" });
+      const link = within(directory).getByRole("link", { name: "Appearance" });
+      fireEvent.click(link);
       expect(
         await screen.findByRole("heading", { name: "Appearance", level: 1 }),
       ).toBeInTheDocument();
-      expect(screen.getByRole("combobox", { name: "Settings section" })).toHaveValue("appearance");
+      expect(link).toHaveAttribute("aria-current", "page");
+      await waitFor(() =>
+        expect(screen.getByRole("region", { name: "Settings detail" })).toHaveFocus(),
+      );
     },
   );
 
@@ -1286,13 +1289,13 @@ describe("SettingsPage", () => {
 
   it("defaults bare /settings to General regardless of login mode", () => {
     renderPage("/settings");
-    expect(screen.getByRole("heading", { name: "General" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "General", level: 1 })).toBeInTheDocument();
 
     cleanup();
     mocks.accountsEnabled = false;
     mocks.loginUrl = null;
     renderPage("/settings");
-    expect(screen.getByRole("heading", { name: "General" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "General", level: 1 })).toBeInTheDocument();
   });
 
   it("renders the Account section at /settings/account for any login session", async () => {
@@ -1400,8 +1403,16 @@ describe("SettingsPage", () => {
     mocks.me = { id: "alice", is_admin: true };
     renderPage("/settings/account");
     await waitFor(() => expect(screen.getByText("alice")).toBeInTheDocument());
-    expect(screen.queryByRole("link", { name: /Members/ })).toBeNull();
-    expect(screen.queryByRole("link", { name: /Policies/ })).toBeNull();
+    expect(
+      within(screen.getByRole("region", { name: "Settings detail" })).queryByRole("link", {
+        name: /Members/,
+      }),
+    ).toBeNull();
+    expect(
+      within(screen.getByRole("region", { name: "Settings detail" })).queryByRole("link", {
+        name: /Policies/,
+      }),
+    ).toBeNull();
   });
 
   it("shows an empty default base branch by default and persists a typed value", () => {

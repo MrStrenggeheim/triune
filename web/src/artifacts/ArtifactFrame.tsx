@@ -341,10 +341,12 @@ export function ArtifactFrame({
         </header>
       )}
       <div
-        className="min-h-0 overflow-auto overscroll-contain"
+        className={
+          inline && !source ? "min-h-0 overflow-hidden" : "min-h-0 overflow-auto overscroll-contain"
+        }
         role="region"
         aria-label={`${title} preview`}
-        tabIndex={0}
+        tabIndex={inline && !source ? undefined : 0}
       >
         {!documentHtml && <ContentSkeleton label="Preparing artifact…" />}
         {documentHtml && (
@@ -356,7 +358,13 @@ export function ArtifactFrame({
             srcDoc={documentHtml}
             hidden={source}
             className="block w-full border-0"
-            style={{ height, display: source ? "none" : undefined }}
+            style={{
+              height:
+                inline && maximumBodyHeight !== undefined
+                  ? Math.min(height, maximumBodyHeight)
+                  : height,
+              display: source ? "none" : undefined,
+            }}
             onLoad={() => container.current?.dispatchEvent(new Event("triune-artifact:update"))}
           />
         )}

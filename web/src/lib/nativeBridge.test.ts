@@ -7,6 +7,7 @@ import {
   hasDbcertPreflightBridge,
   isAndroidShell,
   isElectronShell,
+  isDesktopUnlocked,
   isIOSShell,
   isNativeShell,
   nativeNotify,
@@ -27,6 +28,7 @@ import {
 // The Electron preload bridge mock, installed on window.omnigentDesktop.
 const electronSetBadge = vi.fn();
 const electronNotify = vi.fn().mockResolvedValue(true);
+const electronIsDesktopUnlocked = vi.fn().mockResolvedValue(true);
 const electronUnsubscribe = vi.fn();
 const electronOnNotificationActivated = vi.fn().mockReturnValue(electronUnsubscribe);
 const electronSetColorScheme = vi.fn();
@@ -67,6 +69,7 @@ function setElectron(on: boolean, withClickRouting = true, withBrowser = false):
       setBadgeCount: (...args: unknown[]) => electronSetBadge(...args),
       setColorScheme: (...args: unknown[]) => electronSetColorScheme(...args),
       notify: (...args: unknown[]) => electronNotify(...args),
+      isDesktopUnlocked: (...args: unknown[]) => electronIsDesktopUnlocked(...args),
       ...(withClickRouting
         ? {
             onNotificationActivated: (...args: unknown[]) =>
@@ -136,6 +139,7 @@ function setAndroid(on: boolean, withClickRouting = true): void {
 beforeEach(() => {
   vi.clearAllMocks();
   electronNotify.mockResolvedValue(true);
+  electronIsDesktopUnlocked.mockResolvedValue(true);
   iosNotify.mockResolvedValue(true);
   androidNotify.mockResolvedValue(true);
 });
@@ -453,6 +457,29 @@ describe("nativeNotify", () => {
     setElectron(true);
     electronNotify.mockRejectedValueOnce(new Error("ipc down"));
     await expect(nativeNotify({ title: "t" })).resolves.toBe(false);
+  });
+});
+
+describe("isDesktopUnlocked", () => {
+  it("reads the event-time lock state from Electron", async () => {
+    setElectron(true);
+    await expect(isDesktopUnlocked()).resolves.toBe(true);
+    expect(electronIsDesktopUnlocked).toHaveBeenCalledOnce();
+  });
+
+  it("returns false outside Electron and for an older shell", async () => {
+    setElectron(false);
+    await expect(isDesktopUnlocked()).resolves.toBe(false);
+    setElectron(true);
+    delete (window as unknown as { omnigentDesktop: { isDesktopUnlocked?: unknown } })
+      .omnigentDesktop.isDesktopUnlocked;
+    await expect(isDesktopUnlocked()).resolves.toBe(false);
+  });
+
+  it("returns false when the lock-state bridge fails", async () => {
+    setElectron(true);
+    electronIsDesktopUnlocked.mockRejectedValueOnce(new Error("IPC closed"));
+    await expect(isDesktopUnlocked()).resolves.toBe(false);
   });
 });
 

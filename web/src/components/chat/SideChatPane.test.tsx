@@ -146,6 +146,30 @@ it.each(["Unfinished side draft", "  \n "])(
   },
 );
 
+it("restores a pending side mention draft and sends its parent-workspace marker in place", async () => {
+  const id = "pending:mention";
+  useChatStore.setState({ sessionHarness: "codex-native" });
+  queryClient.setQueryData(["workspace-all-files", "conv_main", ""], {
+    available: true,
+    data: [{ path: "draft.md", name: "draft.md", type: "file" }],
+  });
+  const onStart = vi.fn().mockResolvedValue(undefined);
+  const pane = <SideChatPane childId={id} selectionParentId="conv_main" onStart={onStart} />;
+  const first = renderPane(pane);
+  fireEvent.change(screen.getByTestId("side-chat-input"), {
+    target: { value: "Read @draft today", selectionStart: 11 },
+  });
+  fireEvent.click(await screen.findByRole("button", { name: "draft.md" }));
+  expect(screen.getByTestId("side-chat-input")).toHaveTextContent("Read draft.md today");
+  first.unmount();
+  useChatStore.setState({ sideChatComposers: {} });
+  renderPane(pane);
+  expect(await screen.findByRole("button", { name: "Remove draft.md" })).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Send side question" }));
+  await waitFor(() => expect(onStart).toHaveBeenCalledWith("Read [Attached file: draft.md] today"));
+  await waitFor(() => expect(getSessionDraft(id)).toBeUndefined());
+});
+
 describe("side-chat working indicator", () => {
   it.each([true, false])("keeps child rows after cold hydration (known boundary: %s)", (known) => {
     const entry = conversationRegistry.acquire(childId);

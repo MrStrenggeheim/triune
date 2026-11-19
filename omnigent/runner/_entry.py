@@ -2215,24 +2215,30 @@ def main() -> None:
     :returns: None.
     """
     from omnigent.process_logging import configure_process_logging
+    from omnigent.release_admission import admit_work
 
-    configure_process_logging("runner", force=True)
-    _install_crash_logging()
-    _maybe_prewarm_ambient_detection()
-    try:
-        asyncio.run(_run_tunnel_from_env())
-    except RuntimeError as exc:
-        if not str(exc).startswith(
-            (RUNNER_TUNNEL_REJECTION_PREFIX, RUNNER_TUNNEL_NO_CREDENTIAL_PREFIX)
-        ):
-            raise
-        # A fatal tunnel auth failure is an expected, actionable exit — log the
-        # reason but keep stderr to the concise message (no traceback).
-        _logger.error("runner exiting: %s", exc, extra={"session_id": runner_primary_session_id()})
-        print(f"error: {exc}", file=sys.stderr)
-        # A refused credential gets its own code so the host reports a sign-in problem.
-        auth_rejected = isinstance(exc, RunnerTunnelAuthRejectedError)
-        raise SystemExit(RUNNER_AUTH_REJECTED_EXIT_CODE if auth_rejected else 1) from None
+    with admit_work() as admitted:
+        if not admitted:
+            raise SystemExit("Published release activation in progress.")
+        configure_process_logging("runner", force=True)
+        _install_crash_logging()
+        _maybe_prewarm_ambient_detection()
+        try:
+            asyncio.run(_run_tunnel_from_env())
+        except RuntimeError as exc:
+            if not str(exc).startswith(
+                (RUNNER_TUNNEL_REJECTION_PREFIX, RUNNER_TUNNEL_NO_CREDENTIAL_PREFIX)
+            ):
+                raise
+            # A fatal tunnel auth failure is an expected, actionable exit — log the
+            # reason but keep stderr to the concise message (no traceback).
+            _logger.error(
+                "runner exiting: %s", exc, extra={"session_id": runner_primary_session_id()}
+            )
+            print(f"error: {exc}", file=sys.stderr)
+            # A refused credential gets its own code so the host reports a sign-in problem.
+            auth_rejected = isinstance(exc, RunnerTunnelAuthRejectedError)
+            raise SystemExit(RUNNER_AUTH_REJECTED_EXIT_CODE if auth_rejected else 1) from None
 
 
 if __name__ == "__main__":

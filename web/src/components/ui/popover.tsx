@@ -34,7 +34,7 @@ function PopoverContent({
   className,
   align = "center",
   sideOffset = 4,
-  side = "bottom",
+  side = "top",
   collisionPadding,
   style,
   ...props

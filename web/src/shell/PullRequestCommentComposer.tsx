@@ -2,7 +2,8 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { EditorModeTabs } from "@/components/ui/segmented-control";
+import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { MessageResponse } from "@/components/ai-elements/message";
 import {
   MAX_PULL_REQUEST_COMMENT_CHARACTERS,
@@ -32,10 +33,7 @@ export function PullRequestCommentComposer({
       }}
     >
       <Tabs value={tab} onValueChange={setTab} className="min-h-0">
-        <TabsList className="shrink-0">
-          <TabsTrigger value="write">Write</TabsTrigger>
-          <TabsTrigger value="preview">Preview</TabsTrigger>
-        </TabsList>
+        <EditorModeTabs label="Comment editor" value={tab} />
         <TabsContent value="write" className="min-h-0 overflow-y-auto">
           <Textarea
             aria-label="New PR comment"

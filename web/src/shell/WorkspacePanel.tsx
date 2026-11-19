@@ -1,3 +1,4 @@
+import { HeaderActionButton } from "@/components/HeaderActionButton";
 // Modified for Triune.
 import { ContentSkeleton } from "@/components/ui/loading";
 import { usePanelFolder } from "@/lib/panelFolder";
@@ -320,15 +321,9 @@ function NewTabMenu({
     <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
       <WorkspaceTabTooltip label="Open new">
         <DropdownMenuTrigger asChild>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-xs"
-            aria-label="Open new"
-            className="size-6 shrink-0 text-muted-foreground hover:text-foreground"
-          >
+          <HeaderActionButton type="button" aria-label="Open new">
             <PlusIcon className="size-4" />
-          </Button>
+          </HeaderActionButton>
         </DropdownMenuTrigger>
       </WorkspaceTabTooltip>
       {/* min-w-44 floors the content wide enough for the longest item label

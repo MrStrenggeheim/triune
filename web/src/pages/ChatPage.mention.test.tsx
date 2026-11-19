@@ -135,7 +135,12 @@ function textarea() {
 
 /** Type `text` into the composer with the caret at the end. */
 function type(text: string) {
-  fireEvent.change(textarea(), { target: { value: text, selectionStart: text.length } });
+  const input = textarea();
+  if (input instanceof HTMLTextAreaElement) {
+    fireEvent.change(input, { target: { value: text, selectionStart: text.length } });
+  } else {
+    fireEvent.paste(input, { clipboardData: { files: [], items: [], getData: () => text } });
+  }
 }
 
 function renderWithTooltips(ui: ReactElement) {
@@ -264,7 +269,7 @@ describe("Composer @-file-mention browser (native sessions)", () => {
     expect(screen.getByRole("button", { name: "readme.md" })).toBeInTheDocument();
 
     fireEvent.keyDown(textarea(), { key: "Tab", shiftKey: true });
-    expect(screen.getByText("@src/")).toBeInTheDocument();
+    expect(screen.getByText("src/")).toBeInTheDocument();
     expect(setMode).not.toHaveBeenCalled();
 
     // Attaching a folder closes the menu, so the next press cycles the mode.
@@ -272,7 +277,7 @@ describe("Composer @-file-mention browser (native sessions)", () => {
     await waitFor(() => expect(setMode).toHaveBeenCalledWith("auto"));
   });
 
-  it("opens a folder to reveal nested files, then delivers the chosen file", () => {
+  it("opens a folder to reveal nested files, then delivers the chosen file", async () => {
     const onSend = vi.fn();
     renderWithTooltips(<Composer {...composerProps({ onSend })} />);
 
@@ -283,44 +288,47 @@ describe("Composer @-file-mention browser (native sessions)", () => {
 
     // Now inside src: nested files appear.
     fireEvent.click(screen.getByRole("button", { name: "server.ts" }));
-    expect(screen.getByText("@src/server.ts")).toBeInTheDocument();
+    expect(screen.getByText("src/server.ts")).toBeInTheDocument();
 
-    type("explain this");
+    await Promise.resolve();
+    type(" explain this");
     fireEvent.submit(textarea().closest("form")!);
 
     // The WHY: the agent reads the on-disk nested file from this exact marker.
     // No File is uploaded (second arg undefined).
-    expect(onSend).toHaveBeenCalledWith("[Attached: src/server.ts]\n\nexplain this", undefined);
+    expect(onSend).toHaveBeenCalledWith("[Attached: src/server.ts] explain this", undefined);
   });
 
-  it("attaches a whole folder as a single trailing-slash marker", () => {
+  it("attaches a whole folder as a single trailing-slash marker", async () => {
     const onSend = vi.fn();
     renderWithTooltips(<Composer {...composerProps({ onSend })} />);
 
     type("@src");
     fireEvent.click(screen.getByLabelText("Attach whole folder src"));
-    expect(screen.getByText("@src/")).toBeInTheDocument();
+    expect(screen.getByText("src/")).toBeInTheDocument();
 
-    type("review the module");
+    await Promise.resolve();
+    type(" review the module");
     fireEvent.submit(textarea().closest("form")!);
 
     // A folder is delivered with a trailing "/" so the agent opens the dir.
-    expect(onSend).toHaveBeenCalledWith("[Attached: src/]\n\nreview the module", undefined);
+    expect(onSend).toHaveBeenCalledWith("[Attached: src/] review the module", undefined);
   });
 
   it.each([
-    ["claude-native", "[Attached: src/server.ts]\n\ngo"],
-    ["pi-native", "[Attached: src/server.ts]\n\ngo"],
-    ["cursor-native", "[Attached: src/server.ts]\n\ngo"],
-    ["codex-native", "[Attached file: src/server.ts]\n\ngo"],
-  ])("delivers the harness-correct marker on %s", (harness, expected) => {
+    ["claude-native", "[Attached: src/server.ts] go"],
+    ["pi-native", "[Attached: src/server.ts] go"],
+    ["cursor-native", "[Attached: src/server.ts] go"],
+    ["codex-native", "[Attached file: src/server.ts] go"],
+  ])("delivers the harness-correct marker on %s", async (harness, expected) => {
     useChatStore.setState({ sessionHarness: harness });
     const onSend = vi.fn();
     renderWithTooltips(<Composer {...composerProps({ onSend })} />);
     type("@src");
     fireEvent.click(screen.getByRole("button", { name: "src/" }));
     fireEvent.click(screen.getByRole("button", { name: "server.ts" }));
-    type("go");
+    await Promise.resolve();
+    type(" go");
     fireEvent.submit(textarea().closest("form")!);
     expect(onSend).toHaveBeenCalledWith(expected, undefined);
   });
@@ -337,7 +345,7 @@ describe("Composer @-file-mention browser (native sessions)", () => {
 
     // The composer drained the queue into a chip showing the path + lines
     // (the line span renders in its own node so it never truncates away)...
-    expect(screen.getByText("@bob-max-gain/docker-compose.yml")).toBeInTheDocument();
+    expect(screen.getByText("bob-max-gain/docker-compose.yml")).toBeInTheDocument();
     expect(screen.getByText(":2-9")).toBeInTheDocument();
     // ...and the store queue was cleared so it can't double-apply.
     expect(useChatStore.getState().pendingComposerAttachments).toEqual([]);
@@ -382,7 +390,7 @@ describe("Composer @-file-mention browser (native sessions)", () => {
     // Row 0 (src, folders-first) is preselected; move to row 1 (readme.md).
     fireEvent.keyDown(ta, { key: "ArrowDown" });
     fireEvent.keyDown(ta, { key: "Enter" });
-    expect(screen.getByText("@readme.md")).toBeInTheDocument();
+    expect(screen.getByText("readme.md")).toBeInTheDocument();
   });
 
   it("ArrowUp from the top row wraps to the last row", () => {
@@ -391,7 +399,7 @@ describe("Composer @-file-mention browser (native sessions)", () => {
     // From row 0, ArrowUp wraps to the last row (readme.md), not -1.
     fireEvent.keyDown(textarea(), { key: "ArrowUp" });
     fireEvent.keyDown(textarea(), { key: "Enter" });
-    expect(screen.getByText("@readme.md")).toBeInTheDocument();
+    expect(screen.getByText("readme.md")).toBeInTheDocument();
   });
 
   it("Enter on a directory row drills in rather than attaching", () => {
@@ -412,7 +420,7 @@ describe("Composer @-file-mention browser (native sessions)", () => {
     // Tab on the "src" folder attaches it as a unit (trailing-slash chip),
     // distinct from Enter's drill-in.
     fireEvent.keyDown(textarea(), { key: "Tab" });
-    expect(screen.getByText("@src/")).toBeInTheDocument();
+    expect(screen.getByText("src/")).toBeInTheDocument();
   });
 
   it("Escape closes the mention menu", () => {
@@ -429,19 +437,20 @@ describe("Composer @-file-mention browser (native sessions)", () => {
     renderWithTooltips(<Composer {...composerProps()} />);
     type("@");
     fireEvent.click(screen.getByRole("button", { name: "readme.md" }));
-    expect(screen.getByText("@readme.md")).toBeInTheDocument();
+    expect(screen.getByText("readme.md")).toBeInTheDocument();
     fireEvent.click(screen.getByLabelText("Remove readme.md"));
-    expect(screen.queryByText("@readme.md")).not.toBeInTheDocument();
+    expect(screen.queryByText("readme.md")).not.toBeInTheDocument();
   });
 
-  it("dedups re-attaching the same file via '@' to a single chip", () => {
+  it("keeps repeated selections of the same file at both insertion points", async () => {
     renderWithTooltips(<Composer {...composerProps()} />);
     type("@");
     fireEvent.click(screen.getByRole("button", { name: "readme.md" }));
+    await Promise.resolve();
     type("@");
     fireEvent.click(screen.getByRole("button", { name: "readme.md" }));
-    // Same path + dir-ness + (no) range → same identity key → one chip.
-    expect(screen.getAllByText("@readme.md")).toHaveLength(1);
+    // Each selection is an independently removable occurrence.
+    expect(screen.getAllByText("readme.md")).toHaveLength(2);
   });
 
   it("keeps two distinct line ranges of the same file as separate chips", () => {
@@ -455,7 +464,7 @@ describe("Composer @-file-mention browser (native sessions)", () => {
       ],
     });
     renderWithTooltips(<Composer {...composerProps()} />);
-    expect(screen.getAllByText("@a.ts")).toHaveLength(2);
+    expect(screen.getAllByText("a.ts")).toHaveLength(2);
     expect(screen.getByText(":2-9")).toBeInTheDocument();
     expect(screen.getByText(":20-30")).toBeInTheDocument();
   });
@@ -494,7 +503,7 @@ describe("Composer @-file-mention browser (native sessions)", () => {
     const onSend = vi.fn();
     renderWithTooltips(<Composer {...composerProps({ onSend })} />);
     type("@comp");
-    expect(screen.getByText("Loading…")).toBeInTheDocument();
+    expect(screen.getByLabelText("Loading files…")).toBeInTheDocument();
     fireEvent.keyDown(textarea(), { key: "Enter" });
     expect(onSend).not.toHaveBeenCalled();
   });

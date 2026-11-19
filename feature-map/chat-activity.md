@@ -11,7 +11,7 @@ Activity combines the selected chat's main agent and subagents with recorded she
 
 - `agents`: retain the existing agent tree, graph and navigation within the expanded Activity panel.
 - `shells`: live shell sessions open their existing terminal; completed sessions open retained output and exit details.
-- `commands`: captured noninteractive commands appear as command executions rather than fabricated interactive terminals.
+- `commands`: completed one-shot commands share a collapsed Commands row per source session and recorded turn. Expand it for each command, captured output and exit code when known.
 - `history`: keep ended activity available offline with truthful per-entry state, without exposing internal capture diagnostics.
 - `provenance`: descendant activity preserves its source chat and agent; each descendant needs its own existing read permission.
 - `filters`: shared All, Agents and Shells control filters separate sections, including settled records, ordered by last observed activity.
@@ -27,7 +27,7 @@ Activity combines the selected chat's main agent and subagents with recorded she
 
 - Desktop: open Orchestration from the shared Open menu or a task card's square-arrow button; the stored activity identifier remains compatible.
 - Phone: open Orchestration through the shared Open menu or a task shortcut.
-- Click an agent/shell row, filter Shells, open a live terminal or inspect retained output; use Graph from its menu when needed.
+- Use the chat or shell icon to open the resource beside the current view. The shelf and chat entries also offer Show in Orchestration.
 - Change Chat to Host/workspace in the source picker; the current source chat's location is prefilled until confirmation.
 - Return from another chat to see that conversation's activity rather than the selected filesystem workspace's inventory.
 
@@ -35,7 +35,7 @@ Activity combines the selected chat's main agent and subagents with recorded she
 
 Preconditions: use the isolated [verification environment](skills/verify-omnigent/SKILL.md) and temporary terminal sessions; historical coverage depends on recorded tool/lifecycle data.
 
-- Seeded persisted-command projection, retained-output dialog and no terminal attachment: `tests/e2e_ui/agents/test_chat_activity_history.py::test_activity_inspects_recorded_commands_without_attaching_a_terminal`.
+- Three shell executions in two persisted turns, collapsed history, output and exit codes: `tests/e2e_ui/agents/test_chat_activity_history.py::test_activity_groups_recorded_commands_by_turn`.
 - Filters, history, intent consumption and tab navigation: `web/src/shell/ChatActivityPanel.test.tsx`, `web/src/workbench/ActivityView.test.tsx` and `web/src/hooks/useChatActivity.test.tsx`.
 - Recorded commands open without a terminal attach: `web/src/workbench/TerminalResourceView.test.tsx`.
 - Lifecycle capture, command versus shell completion and bounded durable history: `tests/terminals/test_activity_history.py`, `tests/runner/test_session_activity.py` and `tests/server/test_session_activity.py`.

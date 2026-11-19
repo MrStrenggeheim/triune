@@ -92,7 +92,7 @@ describe("MembersPage gating", () => {
   it("shows a loading state until the identity probe resolves", () => {
     vi.mocked(identity.resolveIdentity).mockReturnValue(new Promise(() => {})); // never resolves
     renderPage();
-    expect(screen.getByText("Loading…")).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "Loading members…" })).toBeInTheDocument();
   });
 
   it("blocks non-admins with a permission message and never lists users", async () => {
@@ -112,7 +112,7 @@ describe("MembersPage gating", () => {
     renderPage();
     await waitFor(() => expect(identity.getCurrentIsAdmin).not.toHaveBeenCalled());
     expect(accountsApi.listUsers).not.toHaveBeenCalled();
-    expect(screen.getByText("Loading…")).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "Loading members…" })).toBeInTheDocument();
   });
 });
 
@@ -193,6 +193,20 @@ describe("MembersPage actions", () => {
     await waitFor(() => expect(accountsApi.createInvite).toHaveBeenCalledWith(false));
     // The single-use invite URL renders in a readonly, copyable input.
     expect(await screen.findByDisplayValue(/register\?invite=tok/)).toBeInTheDocument();
+  });
+
+  it("creates an admin invite from the shared checkbox option", async () => {
+    renderPage();
+    await screen.findByText("No members yet.");
+
+    fireEvent.click(screen.getByRole("button", { name: /Invite member/ }));
+    const dialog = await screen.findByRole("dialog");
+    const option = within(dialog).getByRole("checkbox", { name: "Grant admin privileges" });
+    fireEvent.click(option);
+    expect(option).toBeChecked();
+    fireEvent.click(within(dialog).getByRole("button", { name: /Create invite/ }));
+
+    await waitFor(() => expect(accountsApi.createInvite).toHaveBeenCalledWith(true));
   });
 });
 

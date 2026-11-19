@@ -62,6 +62,9 @@ Automatic installation requires an explicit server capability for idle-only inst
 
 The managed target uses the existing single-host `agent` systemd services, active release virtual environment and local SQLite database at `/home/agent/.omnigent/chat.db`.
 Provision the matching operator checkout in `/home/agent/projects/triune`, its Python environment, runtime pins, `uv`, and working session recovery credentials.
+Provision a persistent tmpfiles rule for the shared deployment lock if the host does not already create it at boot (`f /run/lock/stable-updates.lock 0644 root root -`).
+Keep the existing lock inode when provisioning a running installation.
+The published installer uses binary wheels and the exact versions in `deploy/local/runtime.txt`.
 Install root-owned copies of `deploy/local/omnigent-stable-update` and `deploy/local/triune-release-control` with mode 0755 under `/usr/local/sbin`.
 Install the root-owned `deploy/local/triune-release-update.service` under `/etc/systemd/system` and reload systemd.
 Use `visudo` to grant the fixed command with an empty argument list:
@@ -76,7 +79,12 @@ The operator account downloads and previews the wheels using the local runtime p
 A browser install requires a signed accounts or OIDC administrator session over the configured HTTPS origin.
 The server compares full commit ancestry when successive builds share a version number.
 Docker, source checkouts and quickstart installations continue to use their existing update procedures.
-The current managed release supports manual installation while server admission fencing remains under evaluation.
+Published installation is manual.
+The unit takes an exclusive lock on the installation directory before checking inactivity and retains it through the replacement server’s health check or rollback.
+Manual requests, scheduled dispatch, queue delivery, native runners and terminal connections take shared admission while they can start work.
+Bound sessions, missing session metadata, unknown session status, pending user input and unfinished scheduled runs block installation.
+The active server and candidate preview must both acknowledge the drain.
+An interrupted published stage requires operator review before another activation.
 
 ### Publish an activated build
 
@@ -256,7 +264,8 @@ Shelf question popups show the bold question, answers and one row of Previous, D
 Optional provider categories precede the original question; submissions and correlated native echoes do not create duplicate human-message cards.
 Submit and Decline apply to the batch, retaining supported partial or empty answers.
 Agent and shell popups reuse Orchestration's two-line rows, supported Stop status pills and exact-resource side-opening controls.
-Native shell records retain captured output across completion and reload without promising an interactive connection or unsupported targeted control.
+Finished one-shot commands with recorded turn identity share a collapsed Commands entry per chat and turn.
+Persistent terminals and live commands retain individual controls.
 Only trusted human submissions use human message styling; framework recovery and other injected input retain explicit source wrappers.
 Peer copies say sent to in the source chat and from in the receiving chat, with authorized destination/source links.
 Touch tabs switch on one tap; stationary holds open their context menu, and held movement starts the existing dock placement preview.

@@ -9,7 +9,7 @@ import {
   PlusIcon,
   TargetIcon,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { ComposerActionButton } from "./ComposerActionButton";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -78,12 +78,9 @@ export function ComposerAddMenu({
       }}
     >
       <DropdownMenuTrigger asChild>
-        <Button
+        <ComposerActionButton
           type="button"
-          size="icon"
-          variant="ghost"
-          menuFeedback="composer"
-          className="size-8 rounded-lg data-[pointer-interaction=true]:focus-visible:ring-0 data-[pointer-interaction=true]:focus-visible:border-transparent md:size-7"
+          className="data-[pointer-interaction=true]:focus-visible:ring-0 data-[pointer-interaction=true]:focus-visible:border-transparent"
           data-pointer-interaction={pointerInteraction || undefined}
           onPointerDownCapture={() => setPointerInteraction(true)}
           onKeyDownCapture={() => setPointerInteraction(false)}
@@ -99,7 +96,7 @@ export function ComposerAddMenu({
             data-icon-size="16"
             data-testid={`${testIdPrefix}-attach-icon`}
           />
-        </Button>
+        </ComposerActionButton>
       </DropdownMenuTrigger>
       <DropdownMenuContent
         onPointerDownCapture={() => setPointerInteraction(true)}

@@ -139,6 +139,7 @@ def test_native_recorded_commands_keep_completion_separate_from_shells() -> None
         *_command_items("not-shell", "file changed", tool="apply_patch"),
     ]
     rows = recorded_commands(items, "child")
+    assert [row.turn_id for row in rows] == ["pending", "success", "failed", "structured"]
     assert len(rows) == 4
     assert len({row.id for row in rows}) == 4
     assert all(row.kind == "command" and row.terminal_id is None for row in rows)
@@ -210,6 +211,7 @@ def test_claude_activity_uses_native_task_id_without_equating_equal_commands(
     assert [row.source_call_id for row in rows] == (
         ["background-one", "background-two"] if metadata else [None, None]
     )
+    assert all(row.state == "unknown" for row in rows)
     assert rows[0].name == rows[1].name
     assert len({row.id for row in rows}) == 2
 

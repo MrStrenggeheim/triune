@@ -1,5 +1,6 @@
 // Triune additions: PolyForm Noncommercial 1.0.0; see LICENSING.md.
 // Required Notice: Copyright 2026 MrStrenggeheim. Triune (https://github.com/MrStrenggeheim/triune).
+import { isTranscriptAtBottom, readChatScrollPreference } from "@/lib/chatScrollPreference";
 import { useContext, useEffect, useLayoutEffect, useRef, type MouseEvent } from "react";
 import {
   ConversationScrollLockContext,
@@ -57,6 +58,8 @@ export function useTranscriptDisclosureAnchor() {
     let scroller = trigger.parentElement;
     while (scroller && !["auto", "scroll"].includes(getComputedStyle(scroller).overflowY))
       scroller = scroller.parentElement;
+    if (scroller && isTranscriptAtBottom(scroller) && readChatScrollPreference() === "follow")
+      return;
     if (lock) {
       lock.stopScroll();
       lock.state.isAtBottom = false;

@@ -1,0 +1,56 @@
+.settings-layout {
+  container-type: inline-size;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  padding-top: calc(var(--omnigent-header-height, 0px) + var(--omnigent-inset-top, 0px));
+}
+.settings-panes {
+  --omnigent-header-height: 0px;
+  --omnigent-inset-top: 0px;
+  display: grid;
+  grid-template-columns: clamp(160px, 32%, 260px) minmax(0, 1fr);
+  width: 100%;
+}
+.settings-directory {
+  overflow: auto;
+  border-inline-end: 1px solid var(--border);
+}
+.settings-detail {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+.settings-detail .settings-directory-back {
+  display: none;
+}
+@container (max-width: 540px) {
+  .settings-panes {
+    display: block;
+    overflow-y: auto;
+  }
+  .settings-directory {
+    overflow: visible;
+    border-inline-end: 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .settings-detail .settings-directory-back {
+    display: inline-flex;
+    align-self: start;
+  }
+}
+.settings-layout .settings-page-title {
+  position: static;
+  height: auto;
+  line-height: 1.35;
+  font-size: 1.5rem;
+  text-align: start;
+  white-space: normal;
+}
+.unified-workbench .settings-directory {
+  --sidebar-active: var(--workspace-selected);
+  --sidebar-active-foreground: var(--foreground);
+  --muted: var(--workspace-hover-on-chrome);
+}

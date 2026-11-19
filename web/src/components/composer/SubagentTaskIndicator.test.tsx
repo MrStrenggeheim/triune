@@ -119,7 +119,7 @@ describe("SubagentTaskIndicator", () => {
     expect(screen.getAllByRole("status").some((status) => status.textContent === "Failed")).toBe(
       true,
     );
-    expect(screen.getByRole("link", { name: "researcher" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "Open chat beside · researcher" })).toHaveAttribute(
       "href",
       "/c/working?debug=1",
     );
@@ -145,7 +145,7 @@ describe("SubagentTaskIndicator", () => {
       .getAllByRole("status")
       .find((status) => status.textContent === "Disconnected");
     expect(disconnectedStatus).toHaveClass("bg-secondary");
-    expect(screen.getByRole("link", { name: "Agent" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open chat beside · Agent" })).toBeInTheDocument();
   });
 
   it("uses the parked trigger treatment when no child has an error", () => {

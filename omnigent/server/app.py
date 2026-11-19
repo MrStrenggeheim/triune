@@ -33,6 +33,7 @@ from starlette.responses import Response
 from starlette.routing import Match, Mount, Route
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from omnigent import release_admission
 from omnigent._platform import resolve_repo_symlink
 from omnigent.db.db_models import InvalidUuidError
 from omnigent.debug_logging import (
@@ -2181,6 +2182,7 @@ def create_app(
     from omnigent.server.admin_list import load_admin_list, promote_if_listed
 
     admin_list = load_admin_list(extra=frozenset(admins or ()))
+    app.add_middleware(release_admission.ReleaseAdmissionMiddleware)
     update = ServerUpdate(conversation_store)
     app.include_router(
         create_server_update_router(update, auth_provider, permission_store, admin_list)
@@ -3129,7 +3131,11 @@ def create_app(
         :returns: ``{"version": "<semver string>"}``,
             e.g. ``{"version": "0.1.0"}``.
         """
-        return {"version": _server_version()}
+        result = {"version": _server_version()}
+        if release_admission.MANAGED:
+            with release_admission.admit_work() as admitted:
+                result["release_admission"] = "open" if admitted else "draining"
+        return result
 
     @app.get("/.well-known/omnigent.json")
     async def well_known_manifest() -> dict[str, object]:

@@ -13,10 +13,10 @@ export const DESIGN_SEMANTIC_TOKENS = {
 export const DESIGN_DARK_SEMANTIC_TOKENS = { destructive: "#e65b77" } as const;
 
 export const CONTROL_FOCUS_CLASS =
-  "focus-visible:border-[var(--workspace-control-active-border)] focus-visible:ring-3 focus-visible:ring-ring/50";
+  "focus-visible:border-[var(--workspace-control-active-border)] focus-visible:ring-control-focus focus-visible:ring-ring/12";
 
 export const CONTROL_WITHIN_FOCUS_CLASS =
-  "has-[:focus-visible]:border-[var(--workspace-control-active-border)] has-[:focus-visible]:ring-3 has-[:focus-visible]:ring-ring/50";
+  "has-[:focus-visible]:border-[var(--workspace-control-active-border)] has-[:focus-visible]:ring-control-focus has-[:focus-visible]:ring-ring/12";
 
 /** Named focus exception: retain the composer's original textarea-focus shadow. */
 export const COMPOSER_FOCUS_CLASS = "has-[textarea:focus]:shadow-[var(--composer-shadow-focus)]";

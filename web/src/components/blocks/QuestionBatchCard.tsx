@@ -1,5 +1,6 @@
 // Triune additions: PolyForm Noncommercial 1.0.0; see LICENSING.md.
 // Required Notice: Copyright 2026 MrStrenggeheim. Triune (https://github.com/MrStrenggeheim/triune).
+import "./questionBatchCard.css";
 import { useState, type ReactNode } from "react";
 import {
   ClockIcon,
@@ -83,19 +84,29 @@ export function QuestionBatchCard({
           <strong className="shrink-0 font-semibold">{label}</strong>
           <span className="shrink-0 text-muted-foreground">·</span>
           {current.header && (
-            <Badge variant="secondary" className="shrink-0 font-normal text-muted-foreground">
+            <Badge
+              variant="secondary"
+              className="max-w-[25%] shrink overflow-hidden font-normal text-muted-foreground"
+            >
               {current.header}
             </Badge>
           )}
-          <span className="min-w-0 truncate text-muted-foreground">
+          <span className="question-preview min-w-0 truncate text-muted-foreground">
             <QuestionMarkdown>{current.question}</QuestionMarkdown>
           </span>
         </>
       }
-      summary={pending ? "" : <span className="text-foreground">{answer}</span>}
+      summary={
+        pending ? "" : <span className="question-answer-preview text-foreground">{answer}</span>
+      }
       descriptionText={`${current.question}${pending ? "" : ` ${answer}`}`}
       actions={
-        <QuestionPaginator index={index} count={questions.length} onChange={onIndexChange} />
+        <QuestionPaginator
+          compactWhenNarrow={!pending}
+          index={index}
+          count={questions.length}
+          onChange={onIndexChange}
+        />
       }
     >
       {pending ? (

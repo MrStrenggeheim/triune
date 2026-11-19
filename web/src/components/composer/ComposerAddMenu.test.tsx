@@ -8,6 +8,7 @@ afterEach(cleanup);
 it("clears pointer-restored focus styling when keyboard interaction resumes", () => {
   render(<ComposerAddMenu disabled={false} onAttach={vi.fn()} planActive={false} />);
   const trigger = screen.getByRole("button", { name: "Add" });
+  expect(trigger).toHaveClass("size-8", "rounded-lg", "md:size-7");
   fireEvent.pointerDown(trigger, { button: 0, pointerType: "mouse", ctrlKey: false });
   expect(trigger).toHaveAttribute("data-pointer-interaction", "true");
   fireEvent.keyDown(document.body, { key: "Escape" });

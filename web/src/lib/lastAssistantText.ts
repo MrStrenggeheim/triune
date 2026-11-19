@@ -146,7 +146,9 @@ export async function fetchLastAssistantText(
     const params = new URLSearchParams({ limit: String(SCAN_ITEMS), order: "desc" });
     // `hostFetch` applies the deployment base path (e.g. `/proxy/6767`) in
     // standalone and routes through the embed host transport when embedded.
-    const res = await hostFetch(`/v1/sessions/${encodeURIComponent(sessionId)}/items?${params}`);
+    const res = await hostFetch(`/v1/sessions/${encodeURIComponent(sessionId)}/items?${params}`, {
+      signal: AbortSignal.timeout(900),
+    });
     if (!res.ok) return undefined;
     const json = (await res.json()) as { data?: unknown };
     const items = Array.isArray(json.data) ? json.data : [];

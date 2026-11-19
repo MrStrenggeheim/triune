@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { CheckIcon, FolderIcon, PlusIcon, SearchIcon } from "lucide-react";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 import { useProjects } from "@/hooks/useConversations";
 import { cn } from "@/lib/utils";
 
@@ -66,16 +67,19 @@ export function ProjectPicker({
 
   return (
     <>
-      <div className="flex items-center gap-2 border-b px-2 py-1.5">
-        <SearchIcon className="size-3.5 shrink-0 text-muted-foreground" />
-        <input
-          aria-label="Search or create project"
-          className="w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground"
-          placeholder="Search or create project"
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-          onKeyDown={(event) => event.stopPropagation()}
-        />
+      <div className="border-b px-2 py-1.5">
+        <InputGroup>
+          <InputGroupAddon align="inline-start">
+            <SearchIcon />
+          </InputGroupAddon>
+          <InputGroupInput
+            aria-label="Search or create project"
+            placeholder="Search or create project"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            onKeyDown={(event) => event.stopPropagation()}
+          />
+        </InputGroup>
       </div>
       <div className="max-h-48 overflow-y-auto">
         {filtered.map((project) => (

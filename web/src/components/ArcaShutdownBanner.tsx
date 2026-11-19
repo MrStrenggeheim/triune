@@ -1,4 +1,4 @@
-import { TooltipButton } from "@/components/ui/tooltip";
+import { HeaderActionButton } from "@/components/HeaderActionButton";
 import { useEffect, useRef, useState } from "react";
 import { CheckIcon, CopyIcon } from "lucide-react";
 import { useMarkArcaBannerWhenVisible } from "@/hooks/useArcaShutdownBanner";
@@ -35,11 +35,10 @@ function CommandCopyButton({ command }: { command: string }) {
   return (
     <div className="flex max-w-full items-center gap-1 rounded border border-border bg-background/70 px-2 py-0.5">
       <code className="min-w-0 break-all">{command}</code>
-      <TooltipButton
+      <HeaderActionButton
         type="button"
-        aria-label={copied ? `Copied ${command}` : `Copy ${command}`}
-        title={copied ? "Copied" : `Copy ${command}`}
-        className="rounded p-1 hover:bg-muted focus-visible:outline focus-visible:outline-2"
+        aria-label={`Copy ${command}`}
+        tooltip={copied ? "Copied" : `Copy ${command}`}
         onClick={() => void copy()}
       >
         {copied ? (
@@ -47,7 +46,10 @@ function CommandCopyButton({ command }: { command: string }) {
         ) : (
           <CopyIcon className="size-3.5" aria-hidden="true" />
         )}
-      </TooltipButton>
+      </HeaderActionButton>
+      <span role="status" className="sr-only">
+        {copied ? "Command copied" : ""}
+      </span>
     </div>
   );
 }

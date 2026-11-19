@@ -209,7 +209,9 @@ it("shows settled history in separate sections ordered by observed activity", ()
   const { container } = render(panel());
   const agentRows = within(screen.getByRole("list", { name: "Agents" })).getAllByRole("listitem");
   expect(
-    agentRows.map((row) => row.querySelector("button[aria-label]")?.getAttribute("aria-label")),
+    agentRows.map(
+      (row) => row.querySelector(".resource-text > :first-child > :first-child")?.textContent,
+    ),
   ).toEqual(["Failed agent", "James", "Older"]);
   expect(agentRows[0]).toHaveTextContent("Failed");
   expect(agentRows[1]).toHaveTextContent("Completed");
@@ -257,7 +259,7 @@ it("renders Markdown descriptions outside the opening button", async () => {
   expect(link.closest("button")).toBeNull();
   fireEvent.click(link);
   expect(open).not.toHaveBeenCalled();
-  fireEvent.click(within(row).getByRole("button", { name: "James" }));
+  fireEvent.click(within(row).getByRole("button", { name: "Open chat beside · James" }));
   expect(open).toHaveBeenCalledOnce();
 });
 
@@ -271,15 +273,15 @@ it("restores the selected category after retirement without sharing it with anot
   expect(screen.getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "true");
 });
 
-it("opens the named child through its row without a redundant Open action or inspector", () => {
+it("opens the named child only through its navigation control", () => {
   const agent = child({ busy: false, current_task_status: "completed" });
   agents([agent]);
   const open = vi.fn();
   render(panel({ onOpenAgent: open }));
-  fireEvent.click(screen.getByRole("button", { name: "James" }));
+  fireEvent.click(screen.getByRole("button", { name: "Open chat beside · James" }));
   expect(screen.queryByRole("button", { name: "Open James" })).toBeNull();
   fireEvent.click(screen.getByRole("listitem").querySelector("[data-resource-row]")!);
-  expect(open.mock.calls).toEqual([[agent], [agent]]);
+  expect(open.mock.calls).toEqual([[agent]]);
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });
 
@@ -343,7 +345,7 @@ it.each(["running", "idle", "exited", "unknown", "disconnected"] as const)(
     activity([record]);
     const open = vi.fn();
     render(panel({ onOpenTerminal: open }));
-    fireEvent.click(screen.getByRole("button", { name: "bash" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open shell beside · bash" }));
     expect(open).toHaveBeenCalledWith({
       sessionId: "origin-chat",
       terminalId: "terminal_bash_a",
@@ -356,7 +358,7 @@ it.each(["running", "idle", "exited", "unknown", "disconnected"] as const)(
         entries: [record],
       },
     });
-    fireEvent.click(screen.getByRole("button", { name: "bash" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open shell beside · bash" }));
     expect(open).toHaveBeenCalledTimes(2);
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   },
@@ -375,7 +377,7 @@ it("retains command-only history and sends its output without a live attach targ
   const open = vi.fn();
   render(panel({ onOpenTerminal: open }));
   expect(screen.getByText("pnpm test")).toBeVisible();
-  fireEvent.click(screen.getByRole("button", { name: "pnpm test" }));
+  fireEvent.click(screen.getByRole("button", { name: "Open shell beside · pnpm test" }));
   expect(open).toHaveBeenCalledWith(
     expect.objectContaining({
       terminalId: "",
@@ -415,17 +417,17 @@ it("assigns commands by launch time and keeps reused terminal IDs isolated by se
   expect(
     within(screen.getByRole("list", { name: "Shells" })).getAllByRole("listitem")[0],
   ).toHaveTextContent("new command");
-  fireEvent.click(screen.getByRole("button", { name: "old command" }));
+  fireEvent.click(screen.getByRole("button", { name: "Open shell beside · old command" }));
   expect(open).toHaveBeenLastCalledWith(
     expect.objectContaining({ activity: expect.objectContaining({ entries: [old, oldCommand] }) }),
   );
-  fireEvent.click(screen.getByRole("button", { name: "new command" }));
+  fireEvent.click(screen.getByRole("button", { name: "Open shell beside · new command" }));
   expect(open).toHaveBeenLastCalledWith(
     expect.objectContaining({
       activity: expect.objectContaining({ entries: [recent, newCommand] }),
     }),
   );
-  fireEvent.click(screen.getByRole("button", { name: "other bash" }));
+  fireEvent.click(screen.getByRole("button", { name: "Open shell beside · other bash" }));
   expect(open).toHaveBeenLastCalledWith(
     expect.objectContaining({
       sessionId: "another-chat",
@@ -566,7 +568,7 @@ it("queries controls only for running native children and requires an affirmativ
   } as ReturnType<typeof useNativeChildCapabilities>);
   view.rerender(panel(props));
   expect(screen.queryByRole("button", { name: "Stop actions for James" })).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "James" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Open chat beside · James" })).toBeVisible();
 });
 
 it("focuses a native shell once per link request and preserves the selected source", () => {
@@ -609,15 +611,7 @@ it("shares agent navigation controls and targets the originating Orchestration",
   fireEvent.click(screen.getByRole("button", { name: "Open chat beside · James" }));
   expect(openAgent).toHaveBeenCalledWith(expect.objectContaining({ id: "james" }));
   expect(openView).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole("button", { name: "Show James in Orchestration" }));
-  expect(openView).toHaveBeenCalledWith(
-    expect.objectContaining({
-      source: { kind: "chat", conversationId: "selected-chat" },
-      focusAgentId: "james",
-      linkRequestId: expect.any(String),
-    }),
-    { beside: true },
-  );
+  expect(screen.queryByRole("button", { name: "Show James in Orchestration" })).toBeNull();
 });
 
 it("deduplicates service and ledger launches by identity and keeps identical commands separate", () => {

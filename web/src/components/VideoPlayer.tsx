@@ -1,3 +1,4 @@
+import { HeaderActionButton } from "@/components/HeaderActionButton";
 // Modified for Triune.
 import { ContentSkeleton, OperationStatus } from "@/components/ui/loading";
 import { useEffect, useId, useRef, useState } from "react";
@@ -22,6 +23,7 @@ import {
   fetchWorkspaceFileBlob,
   useFileContent,
 } from "@/hooks/useFileContent";
+import { useWorkbenchWorkspace } from "@/lib/workbenchWorkspace";
 import { showToast } from "@/components/ui/toast";
 import { followLinkWithPopupFallback } from "@/lib/openLinkInApp";
 import { cn } from "@/lib/utils";
@@ -31,6 +33,7 @@ import { parseVideoChapters, type VideoChapter } from "@/lib/videoChapters";
 type VideoSource = { conversationId: string; path: string } | { src: string };
 export type VideoPlayerProps = VideoSource & {
   title: string;
+  reloadRevision?: number;
   className?: string;
   compact?: boolean;
   onOpenFile?: () => void;
@@ -47,7 +50,15 @@ function VideoPlayerContent(props: VideoPlayerProps) {
   const remoteSrc = "src" in props ? props.src : undefined;
   const conversationId = "conversationId" in props ? props.conversationId : undefined;
   const path = "path" in props ? props.path : undefined;
+  const workspace = useWorkbenchWorkspace();
+  const reloadRevision = props.reloadRevision ?? 0;
+  const previousRevision = useRef(reloadRevision);
   const [requested, setRequested] = useState(false);
+  useEffect(() => {
+    if (previousRevision.current === reloadRevision) return;
+    previousRevision.current = reloadRevision;
+    setRequested(true);
+  }, [reloadRevision]);
   const [blobSrc, setBlobSrc] = useState<string>();
   const src = requested ? (remoteSrc ?? blobSrc) : undefined;
   const [failed, setFailed] = useState(false);
@@ -101,10 +112,13 @@ function VideoPlayerContent(props: VideoPlayerProps) {
 
   // Recordings can be large. Fetch only on Play, and release bytes on close.
   useEffect(() => {
-    if (!requested || !conversationId || !path) return;
+    if (!requested || (!conversationId && !workspace) || !path) return;
+    setFailed(false);
+    setBlobSrc(undefined);
+    setFrameReady(false);
     const controller = new AbortController();
     let objectUrl: string | undefined;
-    void fetchWorkspaceFileBlob(conversationId, path, controller.signal)
+    void fetchWorkspaceFileBlob(conversationId, path, controller.signal, workspace ?? undefined)
       .then((blob) => {
         if (controller.signal.aborted) return;
         objectUrl = URL.createObjectURL(blob);
@@ -117,7 +131,7 @@ function VideoPlayerContent(props: VideoPlayerProps) {
       controller.abort();
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [requested, conversationId, path]);
+  }, [requested, conversationId, path, workspace, reloadRevision]);
 
   useEffect(() => {
     // Capture the element before React clears its ref on unmount.
@@ -170,14 +184,13 @@ function VideoPlayerContent(props: VideoPlayerProps) {
           ) : chapters.length > 0 ? (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <TooltipButton
+                <HeaderActionButton
                   type="button"
                   aria-label={`Download recording: ${title}`}
                   title="Download recording"
-                  className="rounded p-1 hover:bg-accent"
                 >
                   <DownloadIcon className="size-4" />
-                </TooltipButton>
+                </HeaderActionButton>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 <DropdownMenuItem

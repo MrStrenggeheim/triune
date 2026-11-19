@@ -174,6 +174,8 @@ class SessionShellResources:
                         and row.get("status") in ENDED_SHELL_STATUSES
                     ):
                         row["status"] = "stopped"
+                    if row.get("turn_id") is None:
+                        row["turn_id"] = old.get("turn_id")
                     if row.get("output") is None:
                         row["output"] = old.get("output")
                         row["output_preview"] = old.get("output_preview")

@@ -166,7 +166,7 @@ describe("ExecutionLogsPanel items-list states", () => {
     // WHY: the isLoading branch must render the spinner text, not "No items".
     h.itemsResult = { ...h.itemsResult, isLoading: true };
     renderPanel({ open: true });
-    expect(screen.getByText("Loading…")).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "Loading execution history…" })).toBeInTheDocument();
   });
 
   it("surfaces the error message when the items fetch fails", () => {

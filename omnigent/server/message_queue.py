@@ -17,6 +17,7 @@ from starlette.datastructures import Headers
 from omnigent.db.db_models import current_workspace_id, workspace_scope
 from omnigent.entities.conversation import Conversation
 from omnigent.errors import OmnigentError
+from omnigent.release_admission import defer_during_update
 from omnigent.runtime import pending_elicitations, session_stream
 from omnigent.server.message_queue_store import MessageQueueStore
 from omnigent.server.schemas import SessionEventInput
@@ -266,6 +267,7 @@ class DurableMessageQueue:
 
         await asyncio.to_thread(self.store.mutate, session_id, "hold", change)
 
+    @defer_during_update()
     async def recover(self, app: Any, session_id: str) -> None:
         if self._closing:
             return
@@ -416,10 +418,12 @@ class QueuedStartupInputs(ManagedStartupInputs):
         super().__init__(conversations, hosts)
         self.message_queue = DurableMessageQueue(self)
 
+    @defer_during_update(False)
     async def _recover_session(self, app: Any, session_id: str, connection: Any) -> bool:
         await self.message_queue.recover(app, session_id)
         return await super()._recover_session(app, session_id, connection)
 
+    @defer_during_update()
     async def _deliver(self, app: Any, session_id: str, item: Any) -> Any:
         if self._closing:
             return None

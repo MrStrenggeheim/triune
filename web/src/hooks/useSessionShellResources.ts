@@ -29,6 +29,7 @@ export function shellResourceMatchesActivity(
     kind: "command" | "terminal";
     source?: BackgroundTaskInfo["source"];
     source_call_id?: string | null;
+    turn_id?: string | null;
   },
   sessionId: string,
 ): boolean {
@@ -42,6 +43,7 @@ export function shellResourceMatchesActivity(
     return entry.kind === "terminal" && entry.id === task.resource_id;
   return (
     entry.kind === "command" &&
+    (!entry.turn_id || !task.turn_id || entry.turn_id === task.turn_id) &&
     (task.activity_id === entry.id ||
       (entry.source === task.source && entry.source_call_id === task.resource_id))
   );
@@ -106,6 +108,7 @@ function readResource(raw: unknown, sessionId: string): SessionShellResource {
     task.output,
     task.output_preview,
     task.activity_id,
+    task.turn_id,
   ]) {
     if (value != null && typeof value !== "string") throw new Error("Invalid shell resource text");
   }

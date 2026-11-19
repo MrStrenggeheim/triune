@@ -474,7 +474,7 @@ export function HeaderConversationMenu({
               <Button type="button" variant="ghost" onClick={() => setRenameOpen(false)}>
                 Cancel
               </Button>
-              <Button type="submit" disabled={!renameTitle.trim() || rename.isPending}>
+              <Button type="submit" disabled={!renameTitle.trim()} loading={rename.isPending}>
                 Rename
               </Button>
             </DialogFooter>

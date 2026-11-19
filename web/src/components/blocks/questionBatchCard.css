@@ -1,0 +1,30 @@
+/* SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0 */
+@container (max-width: 32rem) {
+  .question-page-prefix {
+    position: absolute;
+    clip-path: inset(50%);
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+  }
+}
+
+/* Markdown in the question preview must fit its single line; the form uses full markup. */
+.question-preview,
+.question-preview :is(span, div, p) {
+  white-space: nowrap;
+}
+.question-preview :is(div, p) {
+  display: inline;
+}
+.question-preview br {
+  display: none;
+}
+
+/* The answer owns its own line so it truncates independently of the question. */
+.resource-description > .question-answer-preview {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

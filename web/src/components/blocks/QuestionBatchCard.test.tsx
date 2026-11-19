@@ -59,7 +59,7 @@ it("retains the same card/disclosure/header pager when a pending batch becomes a
   expect(screen.queryByText("Original question?")).toBeNull();
   fireEvent.click(toggle);
   expect(container.querySelector(".activity-message-header")).toContainElement(
-    screen.getByText("Question 2 of 2"),
+    screen.getByTestId("ask-user-question-progress"),
   );
 });
 it("omits single-question pagination and missing categories, and distinguishes empty from unanswered", () => {

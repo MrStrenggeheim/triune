@@ -64,9 +64,7 @@ describe("ArcaShutdownBanner", () => {
     render(<Banner />);
     fireEvent.click(screen.getByRole("button", { name: "Copy arca extend overnight" }));
     expect(copyText).toHaveBeenCalledWith("arca extend overnight");
-    expect(
-      await screen.findByRole("button", { name: "Copied arca extend overnight" }),
-    ).toBeTruthy();
+    expect(await screen.findByText("Command copied")).toBeTruthy();
   });
 
   it("shows workweek on Wednesday and hides it Thursday", () => {
@@ -121,7 +119,7 @@ describe("ArcaShutdownBanner", () => {
     };
     render(<Banner />);
     fireEvent.click(await screen.findByRole("button", { name: "Keep running tonight" }));
-    expect(screen.getByRole("button", { name: "Extending Arca…" })).toHaveProperty(
+    expect(screen.getByRole("button", { name: "Keep running tonight" })).toHaveProperty(
       "disabled",
       true,
     );

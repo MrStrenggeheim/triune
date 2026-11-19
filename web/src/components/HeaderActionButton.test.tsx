@@ -64,7 +64,7 @@ it("forwards close refs and native event guards without turning dismissal into f
   expect(close).toHaveAttribute("type", "button");
   expect(close).toHaveAttribute("data-size", "icon-xs");
   expect(close).not.toHaveAttribute("data-slot", "tooltip-trigger");
-  expect(close.querySelector("[data-close-surface]")).toHaveClass("size-6");
+  expect(close.querySelector("[data-header-action-surface]")).toHaveClass("size-6");
   fireEvent.click(close.querySelector("svg")!);
   expect(onClose).toHaveBeenCalledOnce();
   expect(onParentClick).not.toHaveBeenCalled();

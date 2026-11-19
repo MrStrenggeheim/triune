@@ -1,3 +1,4 @@
+import { HeaderActionButton } from "@/components/HeaderActionButton";
 // Modified for Triune.
 import type { ReactNode } from "react";
 import {
@@ -582,20 +583,14 @@ function FilesPanelContent({
   }, [active, conversationId, locationParam]);
 
   const hiddenFilesToggle = (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          aria-label={showHidden ? "Hide hidden files" : "Show hidden files"}
-          aria-pressed={showHidden}
-          onClick={() => onShowHiddenChange(!showHidden)}
-        >
-          {showHidden ? <EyeOffIcon /> : <EyeIcon />}
-        </Button>
-      </TooltipTrigger>
-      <TooltipContent>{showHidden ? "Hide hidden files" : "Show hidden files"}</TooltipContent>
-    </Tooltip>
+    <HeaderActionButton
+      aria-label={showHidden ? "Hide hidden files" : "Show hidden files"}
+      aria-pressed={showHidden}
+      tooltip={showHidden ? "Hide hidden files" : "Show hidden files"}
+      onClick={() => onShowHiddenChange(!showHidden)}
+    >
+      {showHidden ? <EyeOffIcon /> : <EyeIcon />}
+    </HeaderActionButton>
   );
 
   const revealFileInTree = useCallback(

@@ -1,3 +1,4 @@
+import { OperationFailure } from "@/components/ui/operation-failure";
 import { OperationStatus, ContentSkeleton } from "@/components/ui/loading";
 // Modified for Triune.
 /**
@@ -202,12 +203,7 @@ export function ApprovePage() {
         </Alert>
       )}
 
-      {state.kind === "error" && (
-        <Alert variant="destructive" className="flex flex-col gap-2 py-4 px-5">
-          <AlertTitle className="text-ui">Error</AlertTitle>
-          <AlertDescription className="text-sm">{state.message}</AlertDescription>
-        </Alert>
-      )}
+      {state.kind === "error" && <OperationFailure>{state.message}</OperationFailure>}
 
       {state.kind === "submitted" && (
         <Alert className="flex flex-col gap-1 border-muted py-4 px-5">

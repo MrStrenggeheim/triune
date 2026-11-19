@@ -33,7 +33,7 @@ describe("ComposerMentionChips", () => {
 
   it("renders a file chip with the file icon, @path label, and full-path title", () => {
     const { container } = renderChips([{ path: "src/app.ts", isDir: false }]);
-    const label = screen.getByText("@src/app.ts");
+    const label = screen.getByText("src/app.ts");
     expect(label).toHaveAttribute("title", "src/app.ts");
     expect(container.querySelector("svg.lucide-file-text")).not.toBeNull();
     expect(container.querySelector("svg.lucide-folder")).toBeNull();
@@ -43,7 +43,7 @@ describe("ComposerMentionChips", () => {
     const { container } = renderChips([{ path: "src", isDir: true }]);
     // The trailing slash marks the chip as a whole-folder attachment, matching
     // the "path/" form delivered in the send-time marker.
-    const label = screen.getByText("@src/");
+    const label = screen.getByText("src/");
     expect(label).toHaveAttribute("title", "src/");
     expect(container.querySelector("svg.lucide-folder")).not.toBeNull();
     expect(container.querySelector("svg.lucide-file-text")).toBeNull();
@@ -52,7 +52,7 @@ describe("ComposerMentionChips", () => {
   it("keeps the full long path on the title while the label truncates", () => {
     const longPath = `very/deeply/nested/${"segment/".repeat(20)}final.ts`;
     renderChips([{ path: longPath, isDir: false }]);
-    const label = screen.getByText(`@${longPath}`);
+    const label = screen.getByText(`${longPath}`);
     expect(label).toHaveClass("truncate");
     expect(label).toHaveAttribute("title", longPath);
   });
@@ -63,7 +63,7 @@ describe("ComposerMentionChips", () => {
     });
     expect(screen.getByText(":2-9")).toBeInTheDocument();
     // The title still names the exact span behind the truncated label.
-    expect(screen.getByText("@docker-compose.yml")).toHaveAttribute(
+    expect(screen.getByText("docker-compose.yml")).toHaveAttribute(
       "title",
       "docker-compose.yml:2-9",
     );
@@ -83,7 +83,7 @@ describe("ComposerMentionChips", () => {
       { showLineRange: true },
     );
     // Both chips survive reconciliation because each range keys its own chip.
-    expect(screen.getAllByText("@a.ts")).toHaveLength(2);
+    expect(screen.getAllByText("a.ts")).toHaveLength(2);
     expect(screen.getByText(":2-9")).toBeInTheDocument();
     expect(screen.getByText(":20-30")).toBeInTheDocument();
   });

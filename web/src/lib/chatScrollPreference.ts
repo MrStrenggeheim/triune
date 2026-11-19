@@ -9,9 +9,9 @@ const changeEvent = "triune:chat-scroll-change";
 
 export function readChatScrollPreference(): ChatScrollPreference {
   try {
-    return localStorage.getItem(CHAT_SCROLL_KEY) === "follow" ? "follow" : "stay";
+    return localStorage.getItem(CHAT_SCROLL_KEY) === "stay" ? "stay" : "follow";
   } catch {
-    return "stay";
+    return "follow";
   }
 }
 
@@ -36,11 +36,21 @@ export function useChatScrollPreference() {
       };
     },
     readChatScrollPreference,
-    () => "stay" as const,
+    () => "follow" as const,
   );
 }
 
-/** Compare with the previous viewport extent so content growth cannot hide a reader's escape. */
+export const TRANSCRIPT_BOTTOM_THRESHOLD_PX = 24;
+
+export function isTranscriptAtBottom(viewport: HTMLElement): boolean {
+  return (
+    viewport.clientHeight > 0 &&
+    viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop <=
+      TRANSCRIPT_BOTTOM_THRESHOLD_PX
+  );
+}
+
+/** Remember the reader's edge before the browser lays out the next transcript. */
 export function observeChatScroll(
   viewport: HTMLElement,
   content: HTMLElement,
@@ -49,23 +59,41 @@ export function observeChatScroll(
 ) {
   const extent = () => Math.max(0, viewport.scrollHeight - viewport.clientHeight);
   let previousExtent = extent();
-  const publish = () => onPosition?.(extent() - viewport.scrollTop <= 1);
-  const resize = () => {
+  let previousTop = viewport.scrollTop;
+  let atEdge = isTranscriptAtBottom(viewport);
+  const position = () => {
     if (!viewport.clientHeight) return;
     const nextExtent = extent();
-    if (follow && nextExtent > previousExtent && viewport.scrollTop >= previousExtent - 1) {
-      viewport.scrollTop = nextExtent;
+    // A layout shrink can clamp scrollTop and dispatch scroll before resize.
+    if (nextExtent === previousExtent || viewport.scrollTop !== Math.min(previousTop, nextExtent)) {
+      atEdge = previousExtent - viewport.scrollTop <= TRANSCRIPT_BOTTOM_THRESHOLD_PX;
+      previousTop = viewport.scrollTop;
     }
-    previousExtent = nextExtent;
-    publish();
+    onPosition?.(atEdge);
   };
-  const observer = new ResizeObserver(resize);
+  const layout = () => {
+    if (!viewport.clientHeight) return;
+    const nextExtent = extent();
+    // A scroll can also precede delivery of its event.
+    if (viewport.scrollTop !== Math.min(previousTop, nextExtent))
+      atEdge = previousExtent - viewport.scrollTop <= TRANSCRIPT_BOTTOM_THRESHOLD_PX;
+    if (follow && atEdge && viewport.scrollTop !== nextExtent) viewport.scrollTop = nextExtent;
+    previousExtent = nextExtent;
+    previousTop = viewport.scrollTop;
+    atEdge = isTranscriptAtBottom(viewport);
+    onPosition?.(atEdge);
+  };
+  const observer = new ResizeObserver(layout);
   observer.observe(content);
   observer.observe(viewport);
-  viewport.addEventListener("scroll", publish, { passive: true });
-  publish();
+  // Equal-height replacements do not produce a resize.
+  const mutations = new MutationObserver(layout);
+  mutations.observe(content, { childList: true, subtree: true, characterData: true });
+  viewport.addEventListener("scroll", position, { passive: true });
+  onPosition?.(atEdge);
   return () => {
+    mutations.disconnect();
     observer.disconnect();
-    viewport.removeEventListener("scroll", publish);
+    viewport.removeEventListener("scroll", position);
   };
 }

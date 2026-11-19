@@ -1,7 +1,7 @@
 import { ContentSkeleton, OperationStatus } from "@/components/ui/loading";
 // Modified for Triune.
 import { useEffect, useState } from "react";
-import { CheckIcon, ChevronDownIcon, MessageSquareIcon, MonitorIcon } from "lucide-react";
+import { ChevronDownIcon, MessageSquareIcon, MonitorIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Command,
@@ -167,6 +167,10 @@ export function ActivitySourcePicker({
                   <CommandItem
                     key={chat.id}
                     value={`chat:${chat.id}`}
+                    data-checked={source?.kind === "chat" && source.conversationId === chat.id}
+                    aria-current={
+                      (source?.kind === "chat" && source.conversationId === chat.id) || undefined
+                    }
                     disabled={busy}
                     onSelect={() => void select({ kind: "chat", conversationId: chat.id })}
                   >
@@ -174,9 +178,6 @@ export function ActivitySourcePicker({
                     <span className="min-w-0 flex-1 truncate">
                       {conversationDisplayLabel(chat)}
                     </span>
-                    {source?.kind === "chat" && source.conversationId === chat.id && (
-                      <CheckIcon className="size-3.5" />
-                    )}
                   </CommandItem>
                 ))}
               {settled && !chats.isLoading && !chats.error && conversations.length === 0 && (

@@ -9,6 +9,7 @@ import {
 } from "react";
 import { CheckIcon, Link2Icon, WandSparklesIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import {
   TooltipButton,
   Tooltip,
@@ -281,9 +282,10 @@ export function CommentsPanel({
                   {displayAnchorContent(activeSelection.anchor_content).split("\n")[0]}
                 </div>
               )}
-              <textarea
+              <Textarea
                 ref={addCommentTextareaRef}
-                className="w-full resize-none rounded border border-border bg-background px-2 py-1.5 text-sm placeholder:text-muted-foreground"
+                aria-label="File comment"
+                className="resize-none"
                 rows={3}
                 placeholder="Add a comment…"
                 value={body}

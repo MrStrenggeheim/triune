@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 /** Compact header chrome inside a separate, non-overlapping mobile touch target. */
 export const HeaderActionButton = forwardRef<
   HTMLButtonElement,
-  Omit<ComponentProps<typeof Button>, "asChild" | "loading">
+  Omit<ComponentProps<typeof Button>, "asChild">
 >(function HeaderActionButton({ children, className, ...props }, ref) {
   return (
     <Button

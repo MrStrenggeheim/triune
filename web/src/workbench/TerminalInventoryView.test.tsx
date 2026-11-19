@@ -207,13 +207,17 @@ it("uses two-line embedded rows, sorts observed exit activity and stops only an 
     />,
     { wrapper: setup() },
   );
-  await screen.findByRole("button", { name: "old" });
+  await screen.findByRole("button", { name: "Open shell beside · old" });
   expect(
     screen
       .getAllByRole("button")
-      .filter((button) => ["old", "live"].includes(button.getAttribute("aria-label") ?? ""))
+      .filter((button) =>
+        ["Open shell beside · old", "Open shell beside · live"].includes(
+          button.getAttribute("aria-label") ?? "",
+        ),
+      )
       .map((button) => button.getAttribute("aria-label")),
-  ).toEqual(["old", "live"]);
+  ).toEqual(["Open shell beside · old", "Open shell beside · live"]);
   expect(screen.queryByRole("button", { name: "Stop actions for old" })).not.toBeInTheDocument();
   const status = screen.getByRole("button", { name: "Stop actions for live" });
   fireEvent.pointerDown(status, { pointerType: "mouse", button: 0 });
@@ -234,7 +238,7 @@ it("uses two-line embedded rows, sorts observed exit activity and stops only an 
     />,
   );
   expect(screen.queryByRole("button", { name: "Stop actions for live" })).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "old" }));
+  fireEvent.click(screen.getByRole("button", { name: "Open shell beside · old" }));
   expect(open).toHaveBeenCalledWith("old");
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Expand activity" })).not.toBeInTheDocument();
@@ -265,7 +269,7 @@ it("shows the captured command/output and consumes a matching focus request once
     onConsumeLinkIntent: consume,
   };
   const view = render(<TerminalInventoryView {...props} />, { wrapper: setup() });
-  expect(await screen.findByRole("button", { name: "printf actual-command" })).toBeVisible();
+  expect(await screen.findByText("printf actual-command")).toBeVisible();
   expect(screen.getByText("last captured line").closest(".resource-description")).toHaveClass(
     "truncate",
   );

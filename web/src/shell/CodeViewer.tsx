@@ -1,7 +1,7 @@
+import { HeaderActionButton } from "@/components/HeaderActionButton";
 import { ContentSkeleton } from "@/components/ui/loading";
 // Modified for Triune.
 import { getFindContext } from "@/lib/findContext";
-import { TooltipButton } from "@/components/ui/tooltip";
 import { previewSourceMarkers, renderedMarkdownSelection } from "./markdownPreviewSelection";
 import { FileSelectionMenu, FileSelectionScope } from "./FileSelectionMenu";
 // Syntax-highlighted file body with find-in-file, text-selection comments,
@@ -567,6 +567,7 @@ export interface CodeViewerProps {
   conversationId: string;
   path: string;
   fileQuery: ReturnType<typeof useFileContent>;
+  mediaReload?: number;
   comments: Comment[];
   /** Addressed comments are available for temporarily revealing a selected anchor. */
   addressedComments?: Comment[];
@@ -638,6 +639,7 @@ function CodeViewerContent({
   conversationId,
   path,
   fileQuery,
+  mediaReload,
   comments,
   addressedComments = EMPTY_COMMENTS,
   activeSelection,
@@ -1000,6 +1002,7 @@ function CodeViewerContent({
     return (
       <div className="flex h-full items-center justify-center overflow-auto p-4">
         <VideoPlayer
+          reloadRevision={mediaReload}
           conversationId={conversationId}
           path={path}
           title={path.split("/").pop() ?? path}
@@ -1010,7 +1013,7 @@ function CodeViewerContent({
   if (fileQuery.isLoading) {
     return <ContentSkeleton label="Loading file…" rows={3} />;
   }
-  if (fileQuery.isError) {
+  if (fileQuery.isError && !fileQuery.data) {
     return (
       <div className="p-8 text-destructive text-ui">
         Error loading file:{" "}
@@ -1192,35 +1195,35 @@ function CodeViewerContent({
                 : "No results"
               : ""}
           </span>
-          <TooltipButton
+          <HeaderActionButton
             type="button"
+            tooltipShortcut={["Shift", "Enter"]}
             aria-label="Previous match"
-            className="rounded p-0.5 text-muted-foreground hover:bg-muted disabled:opacity-40"
             disabled={matches.length === 0}
             onClick={() => setCurrentMatchIdx((i) => (i - 1 + matches.length) % matches.length)}
           >
             <ChevronUpIcon className="size-3.5" />
-          </TooltipButton>
-          <TooltipButton
+          </HeaderActionButton>
+          <HeaderActionButton
             type="button"
+            tooltipShortcut={["Enter"]}
             aria-label="Next match"
-            className="rounded p-0.5 text-muted-foreground hover:bg-muted disabled:opacity-40"
             disabled={matches.length === 0}
             onClick={() => setCurrentMatchIdx((i) => (i + 1) % matches.length)}
           >
             <ChevronDownIcon className="size-3.5" />
-          </TooltipButton>
-          <TooltipButton
+          </HeaderActionButton>
+          <HeaderActionButton
             type="button"
+            tooltipShortcut={["Esc"]}
             aria-label="Close search"
-            className="rounded p-0.5 text-muted-foreground hover:bg-muted"
             onClick={() => {
               setSearchOpen(false);
               setSearchQuery("");
             }}
           >
             <XIcon className="size-3.5" />
-          </TooltipButton>
+          </HeaderActionButton>
         </div>
       )}
 

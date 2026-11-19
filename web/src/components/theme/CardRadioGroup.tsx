@@ -20,6 +20,7 @@ export function CardRadioGroup<T extends string>({
   onSelect,
   componentId,
   items,
+  layout,
   className,
   cardClassName,
 }: {
@@ -28,6 +29,7 @@ export function CardRadioGroup<T extends string>({
   onSelect: (value: T) => void;
   componentId?: string;
   items: readonly CardRadioOption<T>[];
+  layout?: "vertical" | "gallery";
   className?: string;
   cardClassName?: string;
 }) {
@@ -41,7 +43,16 @@ export function CardRadioGroup<T extends string>({
   const refs = useRef(new Map<T, HTMLButtonElement | null>());
 
   return (
-    <div role="radiogroup" aria-labelledby={labelledBy} className={className}>
+    <div
+      role="radiogroup"
+      aria-labelledby={labelledBy}
+      data-layout={layout}
+      className={cn(
+        layout === "vertical" && "flex flex-col gap-2",
+        layout === "gallery" && "grid grid-cols-2 gap-2",
+        className,
+      )}
+    >
       {items.map((item, index) => {
         const selected = item.value === value;
         return (

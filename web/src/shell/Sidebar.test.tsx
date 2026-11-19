@@ -19,7 +19,7 @@ import { GridSessionsProvider } from "@/grid/GridSessionsContext";
 import * as readStateHooks from "@/hooks/useUnseenConversations";
 import { getOmnigentServerIdentity } from "@/lib/host";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { ARIA_MOD_KEY, MOD_KEY, SHIFT_KEY } from "@/components/KeyboardShortcut";
+import { newSessionAriaShortcut, newSessionShortcutKeys } from "@/components/KeyboardShortcut";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import type { Conversation } from "@/hooks/useConversations";
 import type * as PullRequestsModule from "@/hooks/usePullRequests";
@@ -30,7 +30,6 @@ import {
   seedReadState,
 } from "@/hooks/useUnseenConversations";
 import { FALLBACK_SERVER_INFO, type ServerInfo } from "@/lib/capabilities";
-import { isMacPlatform } from "@/lib/hotkeys";
 import { clearOptimisticTitles, recordOptimisticTitle } from "@/lib/optimisticTitles";
 import { clearSessionDrafts, setSessionDraft } from "@/lib/sessionDrafts";
 import * as sessionsApi from "@/lib/sessionsApi";
@@ -392,7 +391,7 @@ describe("Sidebar scroll divider", () => {
     expect(divider).toHaveClass("opacity-0");
   });
 
-  it("resets when returning from settings to a fresh session list", () => {
+  it("preserves the session list and scroll position while visiting settings", () => {
     mockConversations([conv("session-1", "A session")]);
     renderSidebar();
 
@@ -400,10 +399,8 @@ describe("Sidebar scroll divider", () => {
     expect(screen.getByTestId("sidebar-scroll-divider")).toHaveClass("opacity-100");
 
     fireEvent.click(screen.getByTestId("settings-button"));
-    expect(screen.queryByTestId("sidebar-scroll-divider")).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("link", { name: /back/i }));
-    expect(screen.getByTestId("sidebar-scroll-divider")).toHaveClass("opacity-0");
+    expect(screen.getByTestId("sidebar-scroll-divider")).toHaveClass("opacity-100");
+    expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute("aria-current", "page");
   });
 });
 
@@ -575,7 +572,7 @@ describe("Sidebar session list", () => {
     expect(screen.getByTestId("session-filter")).toBe(filter);
     const sessions = screen.getByRole("button", { name: "Sessions" }).closest("section")!;
     expect(within(sessions).getByRole("status")).toHaveTextContent(
-      state === "loading" ? "Loading…" : /could not be loaded|Failed to load/,
+      state === "loading" ? "Loading sessions…" : /could not be loaded|Failed to load/,
     );
     if (state === "error") {
       fireEvent.click(within(sessions).getByRole("button", { name: "Retry" }));
@@ -896,22 +893,11 @@ describe("Sidebar session list", () => {
     expect(onOpenSearch).not.toHaveBeenCalled();
   });
 
-  it("swaps the card content to the settings section nav on /settings", () => {
+  it("keeps sessions accessible and remembers the last settings section", () => {
     mockConversations(THREE_TYPE_CONVERSATIONS);
-    renderSidebar(true, "/settings");
-
-    // The same card now shows the settings nav (Back to app + sections),
-    // not the conversation search/list.
-    expect(screen.queryByTestId("sidebar-search-button")).toBeNull();
-    expect(screen.getByRole("link", { name: "Back" })).toHaveAttribute("href", "/");
-    expect(screen.getByTestId("settings-nav-appearance")).toHaveAttribute(
-      "href",
-      "/settings/appearance",
-    );
-    expect(screen.getByTestId("settings-nav-archived")).toHaveAttribute(
-      "href",
-      "/settings/archived",
-    );
+    renderSidebar(true, "/settings/appearance");
+    expect(screen.getByTestId("settings-button")).toHaveAttribute("href", "/settings/appearance");
+    expect(screen.getByTestId("sidebar-conversation-list")).toBeInTheDocument();
   });
 
   it("keeps Settings in the fixed footer without duplicate header controls", () => {
@@ -967,7 +953,7 @@ describe("Sidebar session list", () => {
       "py-1.5",
       "md:py-1",
     );
-    expect(inbox).toHaveClass("hover:bg-muted", "hover:text-foreground", "dark:hover:bg-muted/50");
+    expect(inbox).toHaveClass("density-row");
     expect(inbox.className).not.toContain("sidebar-hover");
     expect(inbox).not.toHaveClass("h-8");
     expect(newChat.querySelector("svg")).toHaveClass("text-[var(--sidebar-active-foreground)]");
@@ -1150,10 +1136,10 @@ describe("Sidebar session list", () => {
     const newSession = screen.getByTestId("new-chat-button");
     const shortcut = newSession.querySelector<HTMLElement>('[data-slot="shortcut-keys"]');
 
-    expect(newSession).toHaveAttribute("aria-keyshortcuts", `${ARIA_MOD_KEY}+Shift+O`);
+    expect(newSession).toHaveAttribute("aria-keyshortcuts", newSessionAriaShortcut());
     expect(
       Array.from(newSession.querySelectorAll('[data-slot="kbd"]'), (key) => key.textContent),
-    ).toEqual([MOD_KEY, isMacPlatform() ? SHIFT_KEY : "Shift", "O"]);
+    ).toEqual(newSessionShortcutKeys());
     expect(shortcut).toHaveClass(
       "absolute",
       "top-1/2",
@@ -1174,8 +1160,8 @@ describe("Sidebar session list", () => {
     // ad-hoc bg-muted.
     expect(screen.getByTestId("scheduled-tasks-nav")).toHaveClass(
       "bg-[var(--sidebar-active)]",
-      "dark:hover:bg-[var(--sidebar-active)]",
-      "dark:hover:text-[var(--sidebar-active-foreground)]",
+      "dark:hover:bg-[var(--sidebar-active)]!",
+      "dark:hover:text-[var(--sidebar-active-foreground)]!",
     );
   });
 
@@ -1210,10 +1196,7 @@ describe("Sidebar session list", () => {
     expect(screen.getByTestId("inbox-button")).toBeInTheDocument();
   });
 
-  it("does NOT close the sidebar when the footer Settings is tapped", () => {
-    // No onNavClick on the footer Settings link: on mobile the overlay stays
-    // open and swaps to the settings section list rather than collapsing onto
-    // the default section's content.
+  it("closes the mobile drawer when the footer Settings is tapped", () => {
     mockConversations(THREE_TYPE_CONVERSATIONS);
     const onClose = vi.fn();
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -1229,7 +1212,7 @@ describe("Sidebar session list", () => {
       </QueryClientProvider>,
     );
     fireEvent.click(screen.getByTestId("settings-button"));
-    expect(onClose).not.toHaveBeenCalled();
+    expect(onClose).toHaveBeenCalledOnce();
   });
 
   it("keeps archived sessions out of the sidebar list (they live on the Settings page)", () => {
@@ -1337,38 +1320,14 @@ describe("Sidebar session list", () => {
     expect(within(otherRow).queryByTestId("session-state-badge")).toBeNull();
   });
 
-  it("shows the full session title in a styled tooltip on hover", async () => {
+  it("exposes the full session name without a row hover card", async () => {
     const title = "A long session title that is truncated in the compact sidebar row";
-    const now = new Date("2026-07-23T00:00:00Z").getTime();
-    const nowSpy = vi.spyOn(Date, "now").mockReturnValue(now);
-    mockConversations([
-      conv("conv_tooltip", "Codex", {
-        title,
-        updated_at: (now - 2 * 24 * 60 * 60 * 1000) / 1000,
-      }),
-    ]);
+    mockConversations([conv("conv_tooltip", "Codex", { title })]);
     renderSidebar();
-
     const row = screen.getByRole("link", { name: title });
-    expect(row).not.toHaveAttribute("title");
-
     fireEvent.pointerMove(row, { pointerType: "mouse" });
-    await waitFor(() => {
-      const tooltip = screen.getByTestId("session-tooltip-content");
-      expect(tooltip).toHaveTextContent(title);
-      expect(tooltip).toHaveStyle({ backgroundColor: "#fff", color: "#30303a" });
-      expect(tooltip.className).not.toContain("bg-card-solid");
-      // The title matches sidebar row names through the shared compact class,
-      // which resolves to the same text-ui step as Appearance content.
-      const tooltipTitle = tooltip.querySelector("p.sidebar-compact-text");
-      expect(tooltipTitle).not.toBeNull();
-      expect(tooltipTitle).toHaveTextContent(title);
-      expect(tooltip).toHaveTextContent("2d");
-      expect(within(tooltip).getAllByTestId("session-tooltip-location")[0]).toHaveTextContent(
-        "Local machine",
-      );
-    });
-    nowSpy.mockRestore();
+    expect(row).not.toHaveAttribute("title");
+    expect(screen.queryByTestId("session-tooltip-content")).toBeNull();
   });
 
   it("keeps title-only and worktree session rows the same centered height", () => {
@@ -1387,25 +1346,6 @@ describe("Sidebar session list", () => {
     expect(plainRow).toHaveClass("sidebar-row", "h-auto", "min-h-0", "justify-center");
     expect(worktreeRow).toHaveClass("sidebar-row", "h-auto", "min-h-0", "justify-center");
     expect(within(worktreeRow).queryByText("fix/sidebar-row-height")).toBeNull();
-  });
-
-  it("reveals git branch metadata in the session tooltip on hover", async () => {
-    const branch = "fix/sidebar-row-height";
-    mockConversations([
-      conv("conv_branch_tooltip", "Codex", {
-        title: "Worktree session",
-        git_branch: branch,
-      }),
-    ]);
-    renderSidebar();
-
-    const row = screen.getByText("Worktree session").closest("a")!;
-    expect(within(row).queryByText(branch)).toBeNull();
-
-    fireEvent.pointerMove(row, { pointerType: "mouse" });
-    await waitFor(() => {
-      expect(screen.getAllByTestId("session-tooltip-branch")[0]).toHaveTextContent(branch);
-    });
   });
 
   it("shares one hosts observer across multiple ordinary session rows", () => {
@@ -1429,39 +1369,6 @@ describe("Sidebar session list", () => {
     expect(screen.getByRole("link", { name: "conv_three" })).toBeInTheDocument();
     expect(observerMounted).toHaveBeenCalledTimes(1);
     expect(useHostsMock).toHaveBeenCalledWith({ includeSandbox: true });
-  });
-
-  it.each([
-    {
-      title: "resolved remote host name",
-      hostId: "host_remote",
-      hosts: [{ host_id: "host_remote", name: "Build Mac", sandbox_provider: null }],
-      expected: "Build Mac",
-    },
-    {
-      title: "sandbox provider label",
-      hostId: "host_sandbox",
-      hosts: [{ host_id: "host_sandbox", name: "Managed host", sandbox_provider: "modal" }],
-      expected: "Modal Sandbox",
-    },
-    {
-      title: "unknown host fallback",
-      hostId: "host_missing",
-      hosts: [],
-      expected: "host_missing",
-    },
-  ])("shows the $title in the session tooltip", async ({ hostId, hosts, expected }) => {
-    useHostsMock.mockReturnValue({ data: hosts });
-    mockConversations([conv("conv_location", "Codex", { host_id: hostId })]);
-    renderSidebar();
-
-    fireEvent.pointerMove(screen.getByRole("link", { name: "conv_location" }), {
-      pointerType: "mouse",
-    });
-
-    await waitFor(() => {
-      expect(screen.getAllByTestId("session-tooltip-location")[0]).toHaveTextContent(expected);
-    });
   });
 });
 
@@ -1686,7 +1593,7 @@ describe("Sidebar failed session indicator", () => {
       }
       mockConversations([
         conv(id, "Codex", {
-          status: state === "running" ? "running" : "failed",
+          status: state === "error" ? "failed" : state === "running" ? "running" : "idle",
           pending_elicitations_count: state === "awaiting" ? 1 : 0,
           labels: pinned ? { omni_project: "Customer X" } : {},
         }),
@@ -1701,24 +1608,22 @@ describe("Sidebar failed session indicator", () => {
         "data-state",
         state,
       );
-      if (pinned) fireEvent.focus(row);
-      else fireEvent.pointerMove(row, { pointerType: "mouse" });
-      return screen.findByTestId(pinned ? "pinned-project-flyout" : "session-tooltip-content");
+      return within(row.closest("li")!).getByRole("button", { name: "Session status" });
     }
 
-    it("explains the error through the row's existing hover surface", async () => {
-      const content = await openExplanation("error");
-      expect(content).toHaveTextContent("Latest message is an error");
-      const hint = content.querySelector("p.text-destructive");
-      expect(hint).toHaveTextContent("Latest message is an error");
-      expect(hint?.querySelector("svg.lucide-circle-alert")).toHaveAttribute("aria-hidden", "true");
+    it("describes the error on the status action and opens the row menu", async () => {
+      const action = await openExplanation("error");
+      expect(action).toHaveAccessibleDescription(/Latest message is an error/);
+      fireEvent.click(action);
+      expect(screen.getByRole("menu")).toBeVisible();
     });
 
     it.each(["running", "awaiting", "starting"] as const)(
       "omits an old error explanation while the session is %s",
       async (state) => {
         const content = await openExplanation(state);
-        expect(content).not.toHaveTextContent("Latest message is an error");
+        expect(content).toHaveAccessibleDescription(/.+/);
+        expect(content).not.toHaveAccessibleDescription(/Latest message is an error/);
       },
     );
   });
@@ -2553,13 +2458,13 @@ describe("Sidebar project sections", () => {
     const kebab = screen.getByTestId("project-actions");
     const revealWrapper = kebab.closest("div[class*=transition-opacity]")!;
     expect(revealWrapper).toHaveClass(
-      "[@media((hover:hover)_and_(pointer:fine))]:md:opacity-0",
-      "[@media((hover:hover)_and_(pointer:fine))]:md:group-hover/header:opacity-100",
+      "[@media((hover:hover)_and_(pointer:fine))]:md:group-[[data-input=mouse]:not(:hover):not(:has(:focus-visible)):not(:has([data-state=open]))]/header:opacity-0",
+      "[@media((hover:hover)_and_(pointer:fine))]:md:group-[[data-input=mouse]:hover]/header:opacity-100",
     );
     const outerBox = kebab.closest("div[class*=absolute]")!;
     expect(outerBox).toHaveClass(
       "[@media((hover:hover)_and_(pointer:fine))]:md:pointer-events-none",
-      "[@media((hover:hover)_and_(pointer:fine))]:md:group-hover/header:pointer-events-auto",
+      "[@media((hover:hover)_and_(pointer:fine))]:md:group-[[data-input=mouse]:hover]/header:pointer-events-auto",
     );
   });
 });
@@ -2760,9 +2665,9 @@ describe("Sidebar collapsed project marker", () => {
       "[@media((hover:hover)_and_(pointer:fine))]:md:-mr-1",
     );
     expect(slot).toHaveClass(
-      "[@media((hover:hover)_and_(pointer:fine))]:md:group-hover/section:opacity-0",
+      "[@media((hover:hover)_and_(pointer:fine))]:md:group-[[data-input=mouse]:hover]/header:opacity-0",
       "[@media((hover:hover)_and_(pointer:fine))]:md:group-has-[[data-state=open]]/header:opacity-0",
-      "[@media((hover:hover)_and_(pointer:fine))]:md:group-has-[[data-header-controls]:focus-within]/header:opacity-0",
+      "[@media((hover:hover)_and_(pointer:fine))]:md:group-has-[[data-header-controls]_:focus-visible]/header:opacity-0",
     );
   });
 
@@ -3226,7 +3131,7 @@ describe("Sidebar view options", () => {
     } else {
       expect(working.queryByText("No sessions")).toBeNull();
       expect(working.getByRole("status")).toHaveTextContent(
-        state === "loading" ? "Loading…" : "Failed to load: unavailable",
+        state === "loading" ? "Loading sessions…" : "Failed to load: unavailable",
       );
     }
     expect(working.getByTestId("session-filter")).toBeInTheDocument();
@@ -3647,110 +3552,6 @@ describe("Sidebar view options", () => {
     const local = screen.getByText("conv_local").closest("li")!;
     expect(within(local).queryByTestId("session-row-meta")).toBeNull();
   });
-
-  it("adds the harness and on-demand repo, PR and branch to the session tooltip", async () => {
-    usePullRequestInfoMock.mockReturnValue({
-      data: {
-        object: "session.github.info",
-        available: true,
-        branch: "onboarding-flow",
-        repo: { name_with_owner: "omnigent-ai/omnigent" },
-        pr: { number: 419, state: "OPEN", is_draft: true },
-      },
-    });
-    mockConversations([
-      conv("conv_gh", "claude-native-ui", {
-        workspace: "/Users/me/omnigent",
-        labels: { "omnigent.wrapper": "claude-code-native-ui" },
-      }),
-      conv("conv_no_workspace", "Codex"),
-    ]);
-    renderGroupingSidebar();
-    // Closed tooltips don't fetch: rows only ask for GitHub info once opened.
-    expect(usePullRequestInfoMock).not.toHaveBeenCalled();
-
-    fireEvent.pointerMove(screen.getByRole("link", { name: "conv_gh" }), { pointerType: "mouse" });
-    await waitFor(() => {
-      const tooltip = screen.getByTestId("session-tooltip-content");
-      expect(within(tooltip).getByRole("img", { name: "Claude Code harness" })).toBeTruthy();
-      expect(within(tooltip).getByTestId("session-tooltip-repo")).toHaveTextContent("Repoomnigent");
-      expect(within(tooltip).getByTestId("session-tooltip-pr")).toHaveTextContent("PR#419 · Draft");
-      expect(within(tooltip).getByTestId("session-tooltip-branch")).toHaveTextContent(
-        "Branchonboarding-flow",
-      );
-    });
-    expect(usePullRequestInfoMock).toHaveBeenCalledWith("conv_gh");
-  });
-
-  it("shows the tracked PR number when gh can't resolve its state", async () => {
-    // gh unauthenticated: `pr` is null, but the association carries the number.
-    usePullRequestInfoMock.mockReturnValue({
-      data: {
-        object: "session.github.info",
-        available: true,
-        authenticated: false,
-        repo: { name_with_owner: "omnigent-ai/omnigent" },
-        pr: null,
-        selected_pr_url: "https://github.com/omnigent-ai/omnigent/pull/7918",
-        prs: [
-          {
-            url: "https://github.com/omnigent-ai/omnigent/pull/7918",
-            host: "github.com",
-            repository: "omnigent-ai/omnigent",
-            number: 7918,
-            relationship: "created",
-          },
-        ],
-      },
-    });
-    mockConversations([conv("conv_assoc", "Codex", { workspace: "/Users/me/omnigent" })]);
-    renderGroupingSidebar();
-
-    fireEvent.pointerMove(screen.getByRole("link", { name: "conv_assoc" }), {
-      pointerType: "mouse",
-    });
-    await waitFor(() => {
-      // Number only, no "· Open/Draft" suffix, since there's no resolved state.
-      expect(screen.getByTestId("session-tooltip-pr")).toHaveTextContent(/^PR#7918$/);
-    });
-  });
-
-  it("skips the GitHub lookup for a session without a workspace", async () => {
-    mockConversations([conv("conv_bare", "Codex", { owner: null })]);
-    renderGroupingSidebar();
-
-    fireEvent.pointerMove(screen.getByRole("link", { name: "conv_bare" }), {
-      pointerType: "mouse",
-    });
-    await screen.findByTestId("session-tooltip-content");
-    expect(usePullRequestInfoMock).toHaveBeenCalledWith(undefined);
-    expect(screen.queryByTestId("session-tooltip-repo")).toBeNull();
-  });
-
-  it("names the creator in the session tooltip", async () => {
-    const viewer = vi.spyOn(identity, "getCurrentUserId").mockReturnValue("viewer@example.com");
-    try {
-      mockConversations([
-        conv("conv_mine", "Codex", { owner: "viewer@example.com", git_branch: "fix/a" }),
-      ]);
-      renderGroupingSidebar();
-
-      fireEvent.pointerMove(screen.getByRole("link", { name: "conv_mine" }), {
-        pointerType: "mouse",
-      });
-      await waitFor(() => {
-        const tooltip = screen.getByTestId("session-tooltip-content");
-        expect(within(tooltip).getByTestId("session-tooltip-owner")).toHaveTextContent(
-          "Created byYou",
-        );
-        expect(within(tooltip).getByTestId("session-tooltip-branch")).toHaveTextContent(
-          "Branchfix/a",
-        );
-      });
-    } finally {
-      viewer.mockRestore();
-    }
-  });
 });
 
 describe("sidebar_grouping_ui release flag", () => {
@@ -3813,15 +3614,10 @@ describe("sidebar_grouping_ui release flag", () => {
       expect(screen.queryByTestId("session-show-menu")).toBeNull();
       fireEvent.keyDown(document.activeElement!, { key: "Escape" });
 
-      // The tooltip is the plain one: no harness, no GitHub lookup.
       fireEvent.pointerMove(screen.getByRole("link", { name: "conv_mine" }), {
         pointerType: "mouse",
       });
-      const tooltip = await screen.findByTestId("session-tooltip-content");
-      expect(within(tooltip).getByTestId("session-tooltip-location")).toHaveTextContent(
-        "Build box",
-      );
-      expect(within(tooltip).queryByTestId("session-tooltip-harness")).toBeNull();
+      expect(screen.queryByTestId("session-tooltip-content")).toBeNull();
       expect(usePullRequestInfoMock).not.toHaveBeenCalled();
     },
   );
@@ -3882,27 +3678,15 @@ describe("sidebar_grouping_ui release flag", () => {
     );
   });
 
-  it("keeps the project loading placeholder at session-row height", () => {
+  it("indents the labeled loading skeleton under its project", () => {
     projectsMock.push("Alpha");
     projectSessionsLoadingRef.current = true;
     mockConversations([]);
     renderGroupingSidebar();
     fireEvent.click(screen.getByRole("button", { name: /^Alpha/ }));
 
-    const loading = screen.getByText("Loading…");
+    const loading = screen.getByRole("status", { name: "Loading sessions…" });
     expect(loading.parentElement).toHaveClass("pl-6");
-    expect(loading).toHaveClass(
-      "sidebar-row",
-      "sidebar-compact-text",
-      "h-auto",
-      "min-h-0",
-      "w-full",
-      "px-2",
-      "py-1.5",
-      "md:py-1",
-      "justify-center",
-    );
-    expect(loading).not.toHaveClass("text-sm");
   });
 
   it("selects project, Shared and Sessions rows together from the Projects header", () => {
@@ -3920,7 +3704,7 @@ describe("sidebar_grouping_ui release flag", () => {
     fireEvent.pointerDown(within(projects).getByTestId("project-list-actions"), { button: 0 });
     fireEvent.click(screen.getByTestId("projects-select-sessions"));
     for (const name of ["conv_filed", "conv_mine", "conv_shared"]) {
-      fireEvent.click(screen.getByRole("link", { name: new RegExp(name) }));
+      fireEvent.click(screen.getByRole("checkbox", { name: new RegExp(name) }));
     }
     // One bulk bar, under the Projects header, counting all three.
     expect(screen.getAllByRole("button", { name: "Exit selection mode" })).toHaveLength(1);
@@ -3963,7 +3747,7 @@ describe("sidebar_grouping_ui release flag", () => {
 
     showSharedTab();
     const shared = screen.getByRole("button", { name: "Shared" }).closest("section")!;
-    expect(within(shared).getByRole("status")).toHaveTextContent("Loading…");
+    expect(within(shared).getByRole("status")).toHaveTextContent("Loading sessions…");
   });
 
   it("selects from the Shared list when it's the only list", () => {
@@ -3975,7 +3759,7 @@ describe("sidebar_grouping_ui release flag", () => {
     const shared = screen.getByRole("button", { name: "Shared" }).closest("section")!;
     expect(within(shared).getByTestId("sessions-new-session")).toBeInTheDocument();
     selectSessionsFromMenu();
-    fireEvent.click(screen.getByRole("link", { name: /conv_shared/ }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /conv_shared/ }));
     expect(screen.getByText("1 selected")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Exit selection mode" })).toBeInTheDocument();
   });

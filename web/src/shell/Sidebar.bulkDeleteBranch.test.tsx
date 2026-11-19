@@ -75,9 +75,9 @@ function mockConversations(conversations: Conversation[]) {
 /** Enter selection mode and select every row, then open the delete modal. */
 function selectAllAndOpenDeleteDialog() {
   selectSessionsFromMenu();
-  fireEvent.click(screen.getByRole("link", { name: /Alpha/ }));
-  fireEvent.click(screen.getByRole("link", { name: /Beta/ }));
-  fireEvent.click(screen.getByRole("link", { name: /Gamma/ }));
+  fireEvent.click(screen.getByRole("checkbox", { name: /Alpha/ }));
+  fireEvent.click(screen.getByRole("checkbox", { name: /Beta/ }));
+  fireEvent.click(screen.getByRole("checkbox", { name: /Gamma/ }));
   fireEvent.click(screen.getByTestId("bulk-delete"));
   return screen.getByRole("dialog");
 }
@@ -189,7 +189,7 @@ describe("bulk-delete branch list", () => {
     renderSidebar();
 
     selectSessionsFromMenu();
-    fireEvent.click(screen.getByRole("link", { name: /Gamma/ }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /Gamma/ }));
     fireEvent.click(screen.getByTestId("bulk-delete"));
 
     const dialog = screen.getByRole("dialog");

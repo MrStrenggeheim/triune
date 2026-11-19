@@ -1,3 +1,4 @@
+import { HeaderActionButton } from "@/components/HeaderActionButton";
 // Modified for Triune.
 import { ContentSkeleton } from "@/components/ui/loading";
 /**
@@ -26,9 +27,17 @@ import { ContentSkeleton } from "@/components/ui/loading";
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { CopyIcon, KeyRoundIcon, RefreshCwIcon, Trash2Icon, UserPlusIcon } from "lucide-react";
+import {
+  CheckIcon,
+  CopyIcon,
+  KeyRoundIcon,
+  RefreshCwIcon,
+  Trash2Icon,
+  UserPlusIcon,
+} from "lucide-react";
 import { PageScroll } from "@/components/PageScroll";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
@@ -307,11 +316,11 @@ export function MembersPage() {
             </DialogDescription>
           </DialogHeader>
           <label className="flex items-center gap-2 text-ui">
-            <input
-              type="checkbox"
+            <Checkbox
               checked={inviteAsAdmin}
-              onChange={(e) => setInviteAsAdmin(e.target.checked)}
+              onCheckedChange={(checked) => setInviteAsAdmin(checked === true)}
               disabled={pendingAction}
+              componentId="settings.members.invite_admin"
             />
             Grant admin privileges
           </label>
@@ -458,9 +467,16 @@ function CopyableValue({ value }: { value: string }) {
         className="font-mono text-sm"
         onFocus={(e) => e.currentTarget.select()}
       />
-      <Button variant="outline" size="sm" onClick={() => void onCopy()} aria-label="Copy">
-        <CopyIcon /> {copied ? "Copied" : "Copy"}
-      </Button>
+      <HeaderActionButton
+        onClick={() => void onCopy()}
+        aria-label="Copy invite link"
+        tooltip={copied ? "Copied" : "Copy invite link"}
+      >
+        {copied ? <CheckIcon /> : <CopyIcon />}
+      </HeaderActionButton>
+      <span role="status" className="sr-only">
+        {copied ? "Invite link copied" : ""}
+      </span>
     </div>
   );
 }

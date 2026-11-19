@@ -1,10 +1,16 @@
 // Triune additions: PolyForm Noncommercial 1.0.0; see LICENSING.md.
 // Required Notice: Copyright 2026 MrStrenggeheim. Triune (https://github.com/MrStrenggeheim/triune).
 import { useEffect, useState } from "react";
-import { InfoIcon, SquareTerminalIcon } from "lucide-react";
+import { InfoIcon, SquareTerminalIcon, XIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { HeaderActionButton } from "@/components/HeaderActionButton";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  Popover,
+  PopoverContent,
+  PopoverDescription,
+  PopoverTitle,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import type { RuntimeNotice } from "@/hooks/useRuntimeNotices";
 import { useWorkbenchActions } from "@/workbench/WorkbenchContext";
 
@@ -50,7 +56,7 @@ export function RuntimeNoticeIndicator({
         </HeaderActionButton>
       </PopoverTrigger>
       <PopoverContent
-        side="bottom"
+        side="top"
         align="end"
         collisionPadding={8}
         aria-label="Agent notices"
@@ -62,24 +68,31 @@ export function RuntimeNoticeIndicator({
         <ul className="flex flex-col gap-[var(--popup-item-gap)]">
           {notices.map((notice) => (
             <li key={notice.id} className="flex flex-col gap-[var(--popup-text-gap)] text-ui">
-              <div className="flex items-center gap-1.5 font-semibold">
+              <PopoverTitle className="flex items-center gap-1.5">
                 <InfoIcon className={`size-4 shrink-0 ${noticeColor(notice.severity)}`} />
-                <span className="min-w-0">
+                <span className="min-w-0 flex-1">
                   {notice.provider ? `${notice.provider} · ` : ""}
                   {notice.title}
                 </span>
-              </div>
-              <p className="whitespace-pre-wrap break-words text-muted-foreground">
+                <HeaderActionButton
+                  aria-label={`Dismiss ${notice.title}`}
+                  tooltip="Dismiss"
+                  onClick={() => onDismiss(notice)}
+                >
+                  <XIcon aria-hidden="true" />
+                </HeaderActionButton>
+              </PopoverTitle>
+              <PopoverDescription className="whitespace-pre-wrap break-words">
                 {notice.message}
-              </p>
+              </PopoverDescription>
               {notice.reset_at != null && (
                 <p className="text-xs text-muted-foreground">
                   Last reported reset: {new Date(notice.reset_at * 1000).toLocaleString()}
                   {notice.reset_at * 1000 <= Date.now() && " · Current availability unconfirmed"}
                 </p>
               )}
-              <div className="flex flex-wrap items-center gap-[var(--popup-footer-gap)]">
-                {workbench && (
+              {workbench && (
+                <div className="flex flex-wrap items-center gap-[var(--popup-footer-gap)]">
                   <Button
                     type="button"
                     variant="ghost"
@@ -95,11 +108,8 @@ export function RuntimeNoticeIndicator({
                     <SquareTerminalIcon />
                     Open Agent CLI
                   </Button>
-                )}
-                <Button type="button" variant="ghost" size="xs" onClick={() => onDismiss(notice)}>
-                  Dismiss
-                </Button>
-              </div>
+                </div>
+              )}
             </li>
           ))}
         </ul>

@@ -1,4 +1,4 @@
-import type { ComponentProps, CSSProperties } from "react";
+import { forwardRef, type ComponentProps, type CSSProperties } from "react";
 import { HeaderActionButton } from "@/components/HeaderActionButton";
 import { cn } from "@/lib/utils";
 
@@ -50,17 +50,16 @@ export function mobileSidebarToggleStyle(side: "left" | "right"): CSSProperties 
   };
 }
 
-export function SidebarToggle({
-  side,
-  expanded,
-  className,
-  ...props
-}: Omit<ComponentProps<typeof HeaderActionButton>, "aria-expanded"> & {
-  side: "left" | "right";
-  expanded: boolean;
-}) {
+export const SidebarToggle = forwardRef<
+  HTMLButtonElement,
+  Omit<ComponentProps<typeof HeaderActionButton>, "aria-expanded"> & {
+    side: "left" | "right";
+    expanded: boolean;
+  }
+>(function SidebarToggle({ side, expanded, className, ...props }, ref) {
   return (
     <HeaderActionButton
+      ref={ref}
       aria-expanded={expanded}
       className={cn("[&>[data-header-action-surface]]:bg-transparent!", className)}
       {...props}
@@ -68,4 +67,4 @@ export function SidebarToggle({
       <SidebarPanelIcon side={side} expanded={expanded} />
     </HeaderActionButton>
   );
-}
+});

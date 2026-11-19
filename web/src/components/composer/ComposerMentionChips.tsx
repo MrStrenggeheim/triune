@@ -1,9 +1,4 @@
-import { useState } from "react";
-import { ContextReferencePreview } from "./ContextReferencePreview";
-import { referenceScopeLabels, type ContextReference } from "@/lib/contextReferences";
-import { TooltipButton } from "@/components/ui/tooltip";
-import { FileTextIcon, FolderIcon, XIcon } from "lucide-react";
-
+import { ComposerMentionChip } from "./ComposerMentionChip";
 import { mentionItemPath, type MentionItem } from "@/lib/composerMentions";
 import { cn } from "@/lib/utils";
 import { ComposerChipRow } from "@/components/composer/ChatComposer";
@@ -28,54 +23,17 @@ export function ComposerMentionChips({
   showLineRange?: boolean;
   className?: string;
 }) {
-  const [preview, setPreview] = useState<ContextReference | null>(null);
   if (items.length === 0) return null;
   return (
     <ComposerChipRow className={cn("gap-1.5", className)}>
       {items.map((item, i) => (
-        <span
+        <ComposerMentionChip
           key={mentionItemPath(item)}
-          className="flex items-center gap-1 rounded-full border border-border bg-muted px-2 py-0.5 text-sm text-muted-foreground"
-        >
-          {item.isDir ? (
-            <FolderIcon className="size-3 shrink-0" />
-          ) : (
-            <FileTextIcon className="size-3 shrink-0" />
-          )}
-          {item.reference?.version === 2 ? (
-            <a className="max-w-[240px] truncate" href={item.reference.url}>
-              @{item.reference.source_title}
-            </a>
-          ) : item.reference ? (
-            <button
-              type="button"
-              className="max-w-[240px] truncate"
-              onClick={() => item.reference?.version === 1 && setPreview(item.reference)}
-            >
-              @{item.reference.source_title} · {referenceScopeLabels[item.reference.scope]}
-            </button>
-          ) : (
-            <span className="max-w-[200px] truncate" title={mentionItemPath(item)}>
-              @{item.path}
-              {item.isDir ? "/" : ""}
-            </span>
-          )}
-          {showLineRange && item.lineRange && (
-            <span className="shrink-0">
-              :{item.lineRange.start}-{item.lineRange.end}
-            </span>
-          )}
-          <TooltipButton
-            type="button"
-            onClick={() => onRemove(i)}
-            className="ml-0.5 rounded-full hover:text-foreground"
-            aria-label={`Remove ${item.path}`}
-          >
-            <XIcon className="size-3" />
-          </TooltipButton>
-        </span>
+          item={item}
+          showLineRange={showLineRange}
+          onRemove={() => onRemove(i)}
+        />
       ))}
-      {preview && <ContextReferencePreview reference={preview} onClose={() => setPreview(null)} />}
     </ComposerChipRow>
   );
 }

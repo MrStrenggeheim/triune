@@ -1,4 +1,4 @@
-import { ContentSkeleton } from "@/components/ui/loading";
+import { ContentSkeleton, OperationStatus } from "@/components/ui/loading";
 // Modified for Triune.
 /**
  * Permissions management modal for a session.
@@ -533,7 +533,7 @@ function AddUserCombobox({ value, onChange, disabled }: AddUserFieldProps) {
         // Wider than the (narrow) field so suggested emails aren't truncated.
         <div className="absolute left-0 top-full z-50 mt-1 w-96 rounded-[12px] border border-border bg-popover p-2 text-popover-foreground shadow-menu">
           {isLoading ? (
-            <div className="py-6 text-center text-ui text-muted-foreground">Searching…</div>
+            <OperationStatus className="flex justify-center py-6">Searching…</OperationStatus>
           ) : suggestions.length === 0 ? (
             <div className="py-6 text-center text-ui text-muted-foreground">No matches</div>
           ) : (

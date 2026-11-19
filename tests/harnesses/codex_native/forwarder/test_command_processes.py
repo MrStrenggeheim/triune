@@ -74,6 +74,7 @@ async def test_held_inventory_cannot_delay_tool_output_or_completion(monkeypatch
         await state.command_processes.close()
         await delta.close()
     assert [s["background_task_count"] for s in sent] == [1, 0]
+    assert sent[-1]["shell_resources"][0]["turn_id"] == "codex_t"
     assert sent[-1]["shell_resources"][0]["output"] == "captured"
 
 

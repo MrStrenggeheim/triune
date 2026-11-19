@@ -119,6 +119,8 @@ def test_every_advertised_tool_is_named_without_fabricating_availability() -> No
     assert all(name in startup for name in names)
     assert "catalog only: web_search" in startup
     assert "A denial never authorizes bypass" in startup
+    assert "reuse a known idle, agent-owned terminal in the same workspace" in startup
+    assert "Launch independent work immediately in parallel" in startup
     assert "SVG/PNG plots" in startup
 
 

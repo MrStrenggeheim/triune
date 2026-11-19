@@ -61,6 +61,7 @@ class ActivityEntry(BaseModel):
     workspace_id: str | None = None
     parent_agent_id: str | None = None
     source: Literal["codex_native", "claude_native", "registered_terminal"] | None = None
+    turn_id: str | None = None
     source_call_id: str | None = None
 
 

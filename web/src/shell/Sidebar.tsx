@@ -1,3 +1,5 @@
+import { HeaderActionButton } from "@/components/HeaderActionButton";
+import { CheckboxVisual } from "@/components/ui/checkbox";
 import "./sidebarSessionControls.css";
 import { ContentSkeleton } from "@/components/ui/loading";
 import { copySessionLink } from "@/lib/sessionShareLink";
@@ -93,8 +95,6 @@ import {
   Settings2Icon,
   ShareIcon,
   SmilePlusIcon,
-  SquareIcon,
-  SquareCheckIcon,
   Trash2Icon,
   WalletIcon,
   XIcon,
@@ -276,7 +276,7 @@ import { extensionPathParts, resolveExtensionPageFromPath } from "@/extensions/c
 import { NewProjectButton } from "./NewProjectButton";
 import { SessionImportStatus } from "./SessionImportStatus";
 import { useSessionImportStore } from "@/store/sessionImport";
-import { SettingsSidebarBody, useSettingsRoute, useTrackSettingsReturn } from "./settingsNav";
+import { useSettingsRoute } from "./settingsNav";
 import {
   type ActiveChatOverride,
   clearLegacyPinnedConversationIds,
@@ -302,7 +302,7 @@ import {
   sessionBelongsToProject,
   sessionsListAcceptsDrop,
 } from "./sidebarNav";
-import { SidebarServerPicker } from "./SidebarServerPicker";
+
 import { useHarnessLabels } from "@/lib/agentLabels";
 import { nativeCodingAgentForSession } from "@/lib/nativeCodingAgents";
 import { matchWorktree } from "@/hooks/useHostWorktrees";
@@ -329,7 +329,6 @@ import {
   SIDEBAR_TREE_INDENT,
   SIDEBAR_TREE_GUIDE,
   SIDEBAR_INDICATOR_GAP,
-  SIDEBAR_DISCLOSURE_HOVER,
 } from "./sidebarStyles";
 import { MAIN_CANVAS_ID } from "@/canvas/canvasLayout";
 import { CANVAS_QUERY_PARAM, canvasLocation, isCanvasPathname } from "@/canvas/canvasNavigation";
@@ -345,6 +344,9 @@ import {
   commandAriaShortcut,
   useCommandShortcutKeys,
 } from "@/components/KeyboardShortcut";
+
+const SHORTCUT_KEYCAPS =
+  "**:data-[slot=kbd]:min-w-[19px] **:data-[slot=kbd]:h-[20px] **:data-[slot=kbd]:w-auto **:data-[slot=kbd]:rounded-[3px] **:data-[slot=kbd]:border-[#e5e5eb] **:data-[slot=kbd]:bg-[#fafafb] **:data-[slot=kbd]:text-[11px] **:data-[slot=kbd]:font-normal **:data-[slot=kbd]:text-[#767680]";
 
 const DROP_TARGET_HIGHLIGHT = SIDEBAR_ACTIVE_HIGHLIGHT;
 
@@ -724,6 +726,7 @@ function SidebarImpl({
 }: SidebarProps) {
   const workbenchActions = useWorkbench();
   const searchKeys = useCommandShortcutKeys("find");
+
   const contextSearch = useContextSearch();
   const mobileViewport = useIsMobileViewport();
   const sidebarData = useSidebarData();
@@ -827,11 +830,24 @@ function SidebarImpl({
   // The scrollable list container — used as the IntersectionObserver root for
   // infinite scroll (auto-loading the next page as the sentinel nears view).
   const scrollContainerRef = useRef<HTMLElement>(null);
+  const scrollContent = useRef<HTMLDivElement>(null);
   const [hasScrolled, setHasScrolled] = useState(false);
-  const setScrollContainer = useCallback((node: HTMLElement | null) => {
-    scrollContainerRef.current = node;
-    setHasScrolled((node?.scrollTop ?? 0) > 0);
+  const [moreBelow, setMoreBelow] = useState(false);
+  const measureScroll = useCallback(() => {
+    const node = scrollContainerRef.current;
+    if (!node) return;
+    setHasScrolled(node.scrollTop > 0);
+    setMoreBelow(node.scrollHeight - node.clientHeight - node.scrollTop > 1);
   }, []);
+  useLayoutEffect(() => {
+    const node = scrollContainerRef.current;
+    if (!node || !scrollContent.current) return;
+    measureScroll();
+    const observer = new ResizeObserver(measureScroll);
+    observer.observe(node);
+    observer.observe(scrollContent.current);
+    return () => observer.disconnect();
+  }, [measureScroll]);
 
   // Row-Link click handler. The Link navigates natively (so modifier/middle
   // clicks open tabs); we only close the drawer on a plain primary click on
@@ -850,7 +866,7 @@ function SidebarImpl({
 
   // Which top-level nav button to highlight for the current route.
   const {
-    isNewChatPage,
+    isNewChatPage: isNewChatRoute,
     isInboxPage,
     isCanvasPage,
     isTasksPage,
@@ -858,15 +874,14 @@ function SidebarImpl({
     activeExtensionPageId,
     newSessionProjectName,
   } = useActiveNavItem();
+  // A workbench chat can occupy the root route; it is then the current page, not New chat.
+  const isNewChatPage = isNewChatRoute && !workbenchActions?.focusedConversationId;
 
-  // On /settings the card keeps its chrome but swaps the conversation list
-  // for the settings section nav (see settingsNav.tsx) — entering settings
-  // shouldn't replace the whole sidebar.
-  const { inSettings } = useSettingsRoute();
-  // Remember the pre-settings location so the Back row returns to the
-  // conversation the user was viewing, not the home page. Tracked here since
-  // the sidebar stays mounted across the transition into settings.
-  useTrackSettingsReturn();
+  const { inSettings, section } = useSettingsRoute();
+  const [settingsPath, setSettingsPath] = useState("/settings");
+  useEffect(() => {
+    if (inSettings) setSettingsPath(`/settings/${section}`);
+  }, [inSettings, section]);
 
   // Pins are stored on the server as an `omnigent.pinned` session label, so
   // they follow the user across devices. `usePinnedConversations` is the
@@ -1029,7 +1044,7 @@ function SidebarImpl({
       pill) and renders after the sidebar, so a same-z peer that ever takes
       pointer events would win the tie inside the exposed strip and swallow the
       dismiss. Strictly between chat chrome and the drawer's z-50. */}
-      {!inSettings && (
+      {
         <TooltipButton
           type="button"
           data-testid="sidebar-scrim"
@@ -1043,11 +1058,10 @@ function SidebarImpl({
           )}
           style={dragging ? { opacity: dragProgress, transition: "none" } : undefined}
         />
-      )}
+      }
       {!workbench &&
         mobileViewport &&
         effectiveOpen &&
-        !inSettings &&
         createPortal(
           <SidebarToggle
             side="left"
@@ -1105,10 +1119,7 @@ function SidebarImpl({
           // most of the phone but stops short of the right edge so the chat stays
           // visible (and tappable through the scrim) behind it.
           "fixed inset-0 z-50",
-          // The settings nav takes the sidebar over and its "Back" row is the
-          // only way out, so there the drawer stays full-bleed (and gets no
-          // dismiss scrim) rather than offering a tap that strands the user.
-          !inSettings && "max-md:right-14",
+          "max-md:right-14",
           // Mobile only: animate the slide so the iOS edge-swipe settles
           // smoothly on release. Suppressed inline while a drag is live (the
           // overlay must track the finger 1:1). Scoped to transform so it can't
@@ -1169,281 +1180,276 @@ function SidebarImpl({
             className="absolute inset-y-0 right-0 z-10 hidden w-1 cursor-col-resize transition-colors hover:bg-primary/30 active:bg-primary/50 md:block"
           />
         )}
-        {inSettings && !contextSearch?.open ? (
-          <SettingsSidebarBody onNavClick={onNavClick} />
-        ) : (
-          <>
-            {/* sidebar-header-row is the hook for the macOS Electron shell, where
+
+        {/* sidebar-header-row is the hook for the macOS Electron shell, where
           this row shares the window's top strip with the traffic lights: the
           brand mark is dropped and the actions slide left to sit beside the
           window controls (see the [data-electron-mac] rules in index.css).
           Inert in a browser and on other platforms, which keep the row below. */}
-            {/* h-14 below md matches the mobile chat header height so the
+        {/* h-14 below md matches the mobile chat header height so the
             Search bubble shares a centerline with the overflow bubble in the
             chat strip beside the open drawer. */}
-            {!workbench && (
-              <div className="sidebar-header-row flex h-12 shrink-0 items-center justify-between pr-3 pl-4 max-md:h-14 max-md:pl-16">
-                {/* Brand mark doubles as the "home" affordance: clicking it
+        {!workbench && (
+          <div className="sidebar-header-row flex h-12 shrink-0 items-center justify-between pr-3 pl-4 max-md:h-14 max-md:pl-16">
+            {/* Brand mark doubles as the "home" affordance: clicking it
             returns to `/`, the new-session composer. Without this there
             is no way back to the landing composer once you're inside a
             session. Reuses onNavClick so a plain primary click closes
             the sidebar on mobile (where it's a full-screen overlay) but
             modifier/middle clicks still open `/` in a new tab. */}
-                <Link
-                  to="/"
-                  onClick={onNavClick}
-                  data-testid="sidebar-brand"
-                  componentId="sidebar.home"
-                  className="sidebar-brand rounded-none transition-opacity duration-200 ease-[var(--ease-otto)] hover:opacity-70"
-                >
-                  {branding.app_name ? (
-                    <span className={cn(SIDEBAR_HEADING, "tracking-tight")}>
-                      {branding.app_name}
-                    </span>
-                  ) : (
-                    <img
-                      src={omnigentWordmark}
-                      alt="Triune"
-                      data-testid="sidebar-wordmark"
-                      className="h-[15px] w-auto shrink-0 translate-y-px dark:invert"
-                    />
-                  )}
-                </Link>
-                {/* On the macOS shell this copy is hidden and an identical cluster
+            <Link
+              to="/"
+              onClick={onNavClick}
+              data-testid="sidebar-brand"
+              componentId="sidebar.home"
+              className="sidebar-brand rounded-none transition-opacity duration-200 ease-[var(--ease-otto)] hover:opacity-70"
+            >
+              {branding.app_name ? (
+                <span className={cn(SIDEBAR_HEADING, "tracking-tight")}>{branding.app_name}</span>
+              ) : (
+                <img
+                  src={omnigentWordmark}
+                  alt="Triune"
+                  data-testid="sidebar-wordmark"
+                  className="h-[15px] w-auto shrink-0 translate-y-px dark:invert"
+                />
+              )}
+            </Link>
+            {/* On the macOS shell this copy is hidden and an identical cluster
             renders in the title-bar strip instead (see AppShell), so the icons
             keep their place when the sidebar collapses or peeks. Everywhere
             else this is the only copy. */}
-                <SidebarHeaderActions
-                  compact
-                  showToggle={false}
-                  showSearch={false}
-                  expanded={!peek}
-                  // onOpen is optional (the sidebar renders standalone in tests), so
-                  // fall back to a no-op rather than widening the child's contract.
-                  onToggle={peek ? () => onOpen?.() : onClose}
-                  onOpenSearch={onOpenSearch}
-                />
-              </div>
-            )}
+            <SidebarHeaderActions
+              compact
+              showToggle={false}
+              showSearch={false}
+              expanded={!peek}
+              // onOpen is optional (the sidebar renders standalone in tests), so
+              // fall back to a no-op rather than widening the child's contract.
+              onToggle={peek ? () => onOpen?.() : onClose}
+              onOpenSearch={onOpenSearch}
+            />
+          </div>
+        )}
 
-            <ContextSearchSidebar />
-            <div
-              className={cn("min-h-0 flex-1 flex-col", contextSearch?.open ? "hidden" : "flex")}
-              inert={contextSearch?.open || undefined}
-              aria-hidden={contextSearch?.open || undefined}
-            >
-              <SidebarActionGroup testId="sidebar-primary-nav">
-                {/* "New session" routes to the home composer ("/"), which now owns
+        <ContextSearchSidebar />
+        <div
+          className={cn("min-h-0 flex-1 flex-col", contextSearch?.open ? "hidden" : "flex")}
+          inert={contextSearch?.open || undefined}
+          aria-hidden={contextSearch?.open || undefined}
+        >
+          <SidebarActionGroup testId="sidebar-primary-nav">
+            {/* "New session" routes to the home composer ("/"), which now owns
             session creation end-to-end (host/workspace/worktree chips +
             send). Rendered as a Link so cmd/middle-click opens it in a new
             tab; onNavClick still closes the sidebar on a plain mobile tap. */}
-                <SidebarNavAction
-                  active={isNewChatPage}
-                  className="group/new-session"
-                  data-testid="new-chat-button"
-                >
-                  {/* New session always creates a session the viewer owns, which
+            <SidebarNavAction
+              active={isNewChatPage}
+              className="group/new-session"
+              data-testid="new-chat-button"
+            >
+              {/* New session always creates a session the viewer owns, which
               lands under "My sessions" — so snap the tab back there on click
               (the button stays visible on both tabs). */}
-                  <Link
-                    to="/"
-                    componentId="sidebar.new_chat"
-                    aria-keyshortcuts={newSessionAriaShortcut()}
-                    onClick={(e) => {
-                      switchTab("mine");
-                      onNavClick(e);
-                    }}
-                  >
-                    <MessageCirclePlusIcon
-                      className={cn(
-                        "ui-icon",
-                        isNewChatPage
-                          ? "text-[var(--sidebar-active-foreground)]"
-                          : "text-muted-foreground",
-                      )}
-                    />
-                    New session
-                    <CompactShortcutKeys
-                      command="new-chat"
-                      className="pointer-events-none absolute top-1/2 right-2 -translate-y-1/2 opacity-0 transition-opacity group-focus-visible/new-session:opacity-100 [&_kbd]:w-auto [&_kbd]:min-w-4 [&_kbd]:px-0.5 [&_kbd]:font-sans [&_kbd]:text-[10px] [@media((hover:hover)_and_(pointer:fine))]:group-hover/new-session:opacity-100"
-                    />
-                  </Link>
-                </SidebarNavAction>
-                <SidebarNavAction active={isTasksPage} data-testid="scheduled-tasks-nav">
-                  <Link to="/tasks" onClick={onNavClick} componentId="sidebar.tasks">
-                    <ClockIcon
-                      className={cn(
-                        "ui-icon",
-                        isTasksPage
-                          ? "text-[var(--sidebar-active-foreground)]"
-                          : "text-muted-foreground",
-                      )}
-                    />
-                    Automations
-                  </Link>
-                </SidebarNavAction>
-                <Button
-                  asChild
-                  variant="ghost"
+              <Link
+                to="/"
+                componentId="sidebar.new_chat"
+                aria-current={isNewChatPage ? "page" : undefined}
+                aria-keyshortcuts={newSessionAriaShortcut()}
+                onClick={(e) => {
+                  switchTab("mine");
+                  onNavClick(e);
+                }}
+              >
+                <MessageCirclePlusIcon
                   className={cn(
-                    SIDEBAR_ROW,
-                    "density-row",
-                    "w-full justify-start border-0 font-normal",
-                    SIDEBAR_HOVER_HIGHLIGHT,
-                    isInboxPage && SIDEBAR_ACTIVE_HIGHLIGHT,
+                    "ui-icon",
+                    isNewChatPage
+                      ? "text-[var(--sidebar-active-foreground)]"
+                      : "text-muted-foreground",
                   )}
-                  data-testid="inbox-button"
-                >
-                  <Link to="/inbox" onClick={onNavClick} componentId="sidebar.inbox">
-                    <InboxIcon
-                      className={cn(
-                        "ui-icon",
-                        isInboxPage
-                          ? "text-[var(--sidebar-active-foreground)]"
-                          : "text-muted-foreground",
-                      )}
-                    />
-                    Inbox
-                    {inboxCount > 0 && (
-                      <span
-                        aria-label={
-                          inboxCount === 1
-                            ? "1 inbox item waiting"
-                            : `${inboxCount} inbox items waiting`
-                        }
-                        className={cn(
-                          "ml-auto inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-10 font-medium text-[var(--sidebar-active-foreground)] tabular-nums",
-                          // The active Inbox row already paints the translucent
-                          // --sidebar-active wash; repainting it on the nested
-                          // badge would double-composite to a darker fill.
-                          isInboxPage ? "bg-transparent" : "bg-[var(--sidebar-active)]",
-                        )}
-                      >
-                        {inboxCount}
-                      </span>
-                    )}
-                  </Link>
-                </Button>
-                {onOpenSearch && (
-                  <Button
-                    variant="ghost"
+                />
+                New session
+                <CompactShortcutKeys
+                  command="new-chat"
+                  className={cn(
+                    "pointer-events-none absolute top-1/2 right-2 -translate-y-1/2 opacity-0 transition-opacity group-focus-visible/new-session:opacity-100 [@media((hover:hover)_and_(pointer:fine))]:group-hover/new-session:opacity-100",
+                    SHORTCUT_KEYCAPS,
+                  )}
+                />
+              </Link>
+            </SidebarNavAction>
+            <SidebarNavAction active={isTasksPage} data-testid="scheduled-tasks-nav">
+              <Link
+                to="/tasks"
+                aria-current={isTasksPage ? "page" : undefined}
+                onClick={onNavClick}
+                componentId="sidebar.tasks"
+              >
+                <ClockIcon
+                  className={cn(
+                    "ui-icon",
+                    isTasksPage
+                      ? "text-[var(--sidebar-active-foreground)]"
+                      : "text-muted-foreground",
+                  )}
+                />
+                Automations
+              </Link>
+            </SidebarNavAction>
+            <SidebarNavAction active={isInboxPage} data-testid="inbox-button">
+              <Link
+                to="/inbox"
+                aria-current={isInboxPage ? "page" : undefined}
+                onClick={onNavClick}
+                componentId="sidebar.inbox"
+              >
+                <InboxIcon
+                  className={cn(
+                    "ui-icon",
+                    isInboxPage
+                      ? "text-[var(--sidebar-active-foreground)]"
+                      : "text-muted-foreground",
+                  )}
+                />
+                Inbox
+                {inboxCount > 0 && (
+                  <span
+                    aria-label={
+                      inboxCount === 1
+                        ? "1 inbox item waiting"
+                        : `${inboxCount} inbox items waiting`
+                    }
                     className={cn(
-                      SIDEBAR_ROW,
-                      "group/sidebar-search relative density-row flex w-full justify-start font-normal",
-                      SIDEBAR_HOVER_HIGHLIGHT,
+                      "ml-auto inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-10 font-medium text-[var(--sidebar-active-foreground)] tabular-nums",
+                      // The active Inbox row already paints the translucent
+                      // --sidebar-active wash; repainting it on the nested
+                      // badge would double-composite to a darker fill.
+                      isInboxPage ? "bg-transparent" : "bg-[var(--sidebar-active)]",
                     )}
-                    onClick={() => {
-                      onOpenSearch();
-                      if (isMobileViewport()) onClose();
-                    }}
-                    tooltipShortcut={searchKeys}
-                    aria-keyshortcuts={commandAriaShortcut("find") || undefined}
-                    componentId="sidebar.search"
                   >
-                    <SearchIcon className="ui-icon text-muted-foreground" />
-                    Search
-                    <CompactShortcutKeys
-                      command="find"
-                      className="pointer-events-none absolute top-1/2 right-2 -translate-y-1/2 opacity-0 group-focus-visible/sidebar-search:opacity-100 [&_kbd]:w-auto [&_kbd]:min-w-4 [&_kbd]:px-0.5 [&_kbd]:font-sans [&_kbd]:text-[10px] [@media((hover:hover)_and_(pointer:fine))]:group-hover/sidebar-search:opacity-100"
-                    />
-                  </Button>
+                    {inboxCount}
+                  </span>
                 )}
-                {canvasEnabled && (
-                  <PrimaryNavLink
-                    to={canvasDestination.pathname + canvasDestination.search}
-                    label="Canvas"
-                    icon={LayoutDashboardIcon}
-                    active={isCanvasPage}
-                    onClick={onNavClick}
-                    componentId="sidebar.canvas"
-                    testId="canvas-nav"
+              </Link>
+            </SidebarNavAction>
+            {onOpenSearch && (
+              <SidebarNavAction
+                asChild={false}
+                className="group/sidebar-search relative"
+                onClick={() => {
+                  onOpenSearch();
+                  if (isMobileViewport()) onClose();
+                }}
+
+                aria-keyshortcuts={commandAriaShortcut("find") || undefined}
+                componentId="sidebar.search"
+              >
+                <SearchIcon className="ui-icon text-muted-foreground" />
+                Search
+                <CompactShortcutKeys
+                  keys={searchKeys}
+                  className={cn(
+                    "pointer-events-none absolute top-1/2 right-2 -translate-y-1/2 opacity-0 group-focus-visible/sidebar-search:opacity-100 [@media((hover:hover)_and_(pointer:fine))]:group-hover/sidebar-search:opacity-100",
+                    SHORTCUT_KEYCAPS,
+                  )}
+                />
+              </SidebarNavAction>
+            )}
+            {canvasEnabled && (
+              <PrimaryNavLink
+                to={canvasDestination.pathname + canvasDestination.search}
+                label="Canvas"
+                icon={LayoutDashboardIcon}
+                active={isCanvasPage}
+                onClick={onNavClick}
+                componentId="sidebar.canvas"
+                testId="canvas-nav"
+              />
+            )}
+            <ExtensionPrimaryNavigation
+              activePageId={activeExtensionPageId}
+              onNavigate={onNavClick}
+            />
+            {usagePageEnabled && (
+              <SidebarNavAction active={isUsagePage} data-testid="usage-nav">
+                <Link
+                  to="/usage"
+                  aria-current={isUsagePage ? "page" : undefined}
+                  onClick={onNavClick}
+                  componentId="sidebar.usage"
+                >
+                  <WalletIcon
+                    className={cn(
+                      "ui-icon",
+                      isUsagePage
+                        ? "text-[var(--sidebar-active-foreground)]"
+                        : "text-muted-foreground",
+                    )}
                   />
-                )}
-                <ExtensionPrimaryNavigation
-                  activePageId={activeExtensionPageId}
-                  onNavigate={onNavClick}
-                />
-                {usagePageEnabled && (
-                  <Button
-                    asChild
-                    variant="ghost"
-                    className={cn(
-                      SIDEBAR_ROW,
-                      "density-row",
-                      "w-full justify-start border-0 font-normal",
-                      SIDEBAR_HOVER_HIGHLIGHT,
-                      isUsagePage && SIDEBAR_ACTIVE_HIGHLIGHT,
-                    )}
-                    data-testid="usage-nav"
-                  >
-                    <Link to="/usage" onClick={onNavClick} componentId="sidebar.usage">
-                      <WalletIcon
-                        className={cn(
-                          "ui-icon",
-                          isUsagePage
-                            ? "text-[var(--sidebar-active-foreground)]"
-                            : "text-muted-foreground",
-                        )}
-                      />
-                      Usage
-                    </Link>
-                  </Button>
-                )}
-              </SidebarActionGroup>
+                  Usage
+                </Link>
+              </SidebarNavAction>
+            )}
+          </SidebarActionGroup>
 
-              {/* Keep the list scrollable above the persistent footer. */}
-              <div className="relative flex min-h-0 flex-1 flex-col">
-                <div
-                  aria-hidden="true"
-                  data-testid="sidebar-scroll-divider"
-                  className={cn(
-                    "pointer-events-none absolute inset-x-0 top-0 z-10 h-px bg-border",
-                    hasScrolled ? "opacity-100" : "opacity-0",
-                  )}
-                />
-                <nav
-                  ref={setScrollContainer}
-                  data-scrollbar="hidden"
-                  onScroll={(event) => {
-                    setHasScrolled(event.currentTarget.scrollTop > 0);
-                  }}
-                  className="relative flex-1 overflow-y-auto px-2 pt-4 pb-3"
-                >
-                  <GridSidebar onNavigate={onNavClick} />
-                  {sidebarData.identityReady ? (
-                    <ConversationList
-                      conversationsQuery={displayQuery}
-                      scrollContainerRef={scrollContainerRef}
-                      onRowClick={onNavClick}
-                      searchQuery=""
-                      newSessionProjectName={newSessionProjectName}
-                      activeTab={availableTab}
-                      onActiveTabChange={switchTab}
-                      multiUser={multiUser}
-                      pinnedConversationIds={pinnedConversationIds}
-                      pinnedConversations={pinnedConversations}
-                      pinReorderEnabled={pinnedFilterHonored}
-                      onTogglePinned={togglePinnedConversation}
-                      onEnterSelectionMode={enterSelectionMode}
-                      selectionMode={selectionMode}
-                      selectionScope={selectionScope}
-                      selectedIds={selectedIds}
-                      onToggleSelected={toggleSelected}
-                      onDeselectAll={deselectAll}
-                      onExitSelectionMode={exitSelectionMode}
-                      getVisibleIdsRef={getVisibleIdsRef}
-                    />
-                  ) : (
-                    <ContentSkeleton label="Loading sessions…" rows={5} className="px-2 py-1" />
-                  )}
-                </nav>
+          {/* Keep the list scrollable above the persistent footer. */}
+          <div className="relative flex min-h-0 flex-1 flex-col">
+            <div
+              aria-hidden="true"
+              data-testid="sidebar-scroll-divider"
+              className={cn(
+                "pointer-events-none absolute inset-x-0 top-0 z-10 h-px bg-border",
+                hasScrolled ? "opacity-100" : "opacity-0",
+              )}
+            />
+            <nav
+              ref={scrollContainerRef}
+              data-scrollbar="hidden"
+              onScroll={measureScroll}
+              className="relative flex-1 overflow-y-auto px-2 pt-4 pb-3"
+            >
+              <div ref={scrollContent}>
+                <GridSidebar onNavigate={onNavClick} />
+                {sidebarData.identityReady ? (
+                  <ConversationList
+                    conversationsQuery={displayQuery}
+                    scrollContainerRef={scrollContainerRef}
+                    onRowClick={onNavClick}
+                    searchQuery=""
+                    newSessionProjectName={newSessionProjectName}
+                    activeTab={availableTab}
+                    onActiveTabChange={switchTab}
+                    multiUser={multiUser}
+                    pinnedConversationIds={pinnedConversationIds}
+                    pinnedConversations={pinnedConversations}
+                    pinReorderEnabled={pinnedFilterHonored}
+                    onTogglePinned={togglePinnedConversation}
+                    onEnterSelectionMode={enterSelectionMode}
+                    selectionMode={selectionMode}
+                    selectionScope={selectionScope}
+                    selectedIds={selectedIds}
+                    onToggleSelected={toggleSelected}
+                    onDeselectAll={deselectAll}
+                    onExitSelectionMode={exitSelectionMode}
+                    getVisibleIdsRef={getVisibleIdsRef}
+                  />
+                ) : (
+                  <ContentSkeleton label="Loading sessions…" rows={5} className="px-2 py-1" />
+                )}
               </div>
+            </nav>
+            {moreBelow && (
+              <div
+                aria-hidden="true"
+                data-testid="sidebar-bottom-divider"
+                className="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-border"
+              />
+            )}
+          </div>
 
-              <SidebarSettingsFooter />
-            </div>
-          </>
-        )}
-        {!contextSearch?.open && <SidebarServerPicker />}
+          <SidebarSettingsFooter active={inSettings} to={settingsPath} onClick={onNavClick} />
+        </div>
       </aside>
     </>
   );
@@ -2781,7 +2787,7 @@ function ConversationList({
             </Link>
           </Button>
         </TooltipTrigger>
-        <TooltipContent side="bottom">New session</TooltipContent>
+        <TooltipContent side="top">New session</TooltipContent>
       </Tooltip>
       <SectionActionsMenu label="Session list actions" testId="session-list-actions">
         <DropdownMenuItem
@@ -2927,9 +2933,9 @@ function ConversationList({
                 {workbench && branches.error && (
                   <div role="alert" className="px-2 text-xs text-destructive">
                     Could not refresh subchats.{" "}
-                    <button type="button" onClick={branches.retry}>
+                    <Button variant="ghost" size="sm" onClick={branches.retry}>
                       Retry
-                    </button>
+                    </Button>
                   </div>
                 )}
                 {/* Removing a filed session from its project means dropping it back
@@ -3600,10 +3606,9 @@ function SidebarFilterMenu({
         <TooltipTrigger asChild>
           <span className="inline-flex shrink-0" {...tooltip.triggerProps}>
             <DropdownMenuTrigger asChild>
-              <Button
+              <HeaderActionButton
                 type="button"
-                variant="ghost"
-                size="icon-xs"
+
                 aria-label={label}
                 data-testid={testId}
                 className={cn("text-muted-foreground", active && "text-foreground")}
@@ -3611,11 +3616,11 @@ function SidebarFilterMenu({
                 onClick={(event) => event.stopPropagation()}
               >
                 <ListFilterIcon className="size-3.5" />
-              </Button>
+              </HeaderActionButton>
             </DropdownMenuTrigger>
           </span>
         </TooltipTrigger>
-        <TooltipContent side="bottom" data-noninteractive-tooltip>
+        <TooltipContent side="top" data-noninteractive-tooltip>
           {label}
         </TooltipContent>
       </Tooltip>
@@ -3633,7 +3638,7 @@ function ProjectFilterMenu({
 }) {
   return (
     <SidebarFilterMenu label="Filter projects" active={value}>
-      <DropdownMenuContent align="end">
+      <DropdownMenuContent side="top" align="end">
         <DropdownMenuCheckboxItem checked={value} onCheckedChange={onChange}>
           Show archived projects
         </DropdownMenuCheckboxItem>
@@ -3677,12 +3682,16 @@ function SessionFilterMenu({
     <SidebarFilterMenu label={triggerLabel} testId="session-filter">
       {view === null ? (
         // Remove with the sidebar_grouping_ui flag (review by 0.19.0).
-        <DropdownMenuContent align="end" className="min-w-44 [&_[role=menuitemradio]]:text-ui">
+        <DropdownMenuContent
+          side="top"
+          align="end"
+          className="min-w-44 [&_[role=menuitemradio]]:text-ui"
+        >
           <DropdownMenuLabel className="text-muted-foreground text-sm">Display</DropdownMenuLabel>
           {displayOptions}
         </DropdownMenuContent>
       ) : (
-        <DropdownMenuContent align="end" className="min-w-56">
+        <DropdownMenuContent side="top" align="end" className="min-w-56">
           <FilterMenuSub
             label="Grouping"
             value={GROUPING_LABELS[view.grouping]}
@@ -3769,19 +3778,18 @@ function SectionActionsMenu({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button
+        <HeaderActionButton
           type="button"
-          variant="ghost"
-          size="icon-xs"
+
           aria-label={label}
           data-testid={testId}
           className="text-muted-foreground"
           onClick={(event) => event.stopPropagation()}
         >
           <MoreHorizontalIcon className="size-3.5" />
-        </Button>
+        </HeaderActionButton>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="min-w-40">
+      <DropdownMenuContent side="top" align="end" className="min-w-40">
         {children}
       </DropdownMenuContent>
     </DropdownMenu>
@@ -3942,7 +3950,7 @@ function SectionGroup({
         )}
       </div>
       {afterHeader}
-      {!collapsed && <div className="flex flex-col gap-px pt-1">{children}</div>}
+      {!collapsed && <div className="density-list flex flex-col pt-1">{children}</div>}
     </section>
   );
 }
@@ -4752,16 +4760,16 @@ function ConversationBranchRow({
         treeControl={
           !props.conversation.provisional &&
           children.length > 0 && (
-            <TooltipButton
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              menuFeedback={false}
               type="button"
-              title={`${expanded ? "Collapse" : "Expand"} subchats`}
+              tooltip={`${expanded ? "Collapse" : "Expand"} subchats`}
               aria-label={`${expanded ? "Collapse" : "Expand"} subchats of ${label}`}
               aria-expanded={expanded}
               aria-controls={groupId}
-              className={cn(
-                "flex h-6 shrink-0 items-center justify-center gap-1 rounded px-1 text-muted-foreground transition-none",
-                SIDEBAR_DISCLOSURE_HOVER,
-              )}
+              className="h-6 w-auto min-w-6 gap-1 px-1 text-muted-foreground max-md:min-w-11 [@media(pointer:coarse)]:min-w-11"
               onMouseDown={(event) => event.stopPropagation()}
               onTouchStart={(event) => event.stopPropagation()}
               onClick={(event) => {
@@ -4776,7 +4784,7 @@ function ConversationBranchRow({
                 </span>
               )}
               <ChevronRightIcon aria-hidden className={cn("size-3.5", expanded && "rotate-90")} />
-            </TooltipButton>
+            </Button>
           )
         }
       />
@@ -5076,13 +5084,6 @@ function ConversationRowImpl({
   const metaBranch = show.includes("branch")
     ? (gitBranch ?? (workspaceWorktree?.detached ? null : (workspaceWorktree?.branch ?? null)))
     : null;
-  // Overlays (checkbox, badges, controls; each also `-translate-y-1/2`) center on
-  // the row, or on the title line — padding + half its 20px box — above a meta line.
-  const overlayTop =
-    metaEnvironment !== null || metaRepo !== null || metaBranch !== null
-      ? "top-[calc(var(--list-row-padding-block)+10px)]"
-      : "top-1/2";
-
   // Drag-and-drop: a row is grabbable when the viewer owns it (re-filing is
   // owner-only, like the Move-to-project kebab item), outside selection /
   // archive / rename modes. Dragging it onto a project folder files it there;
@@ -5285,7 +5286,7 @@ function ConversationRowImpl({
   // mode) or wrapped in the right-click ContextMenuTrigger below.
   const rowLink = (
     <Link
-      to={selectionMode ? "#" : `/c/${conversation.id}`}
+      to={`/c/${conversation.id}`}
       componentId="sidebar.conversation_switcher"
       aria-current={isActive ? "page" : undefined}
       style={{ "--tree-depth": 0 } as CSSProperties}
@@ -5325,7 +5326,6 @@ function ConversationRowImpl({
         // Full width (not 100%+1rem) so the highlight stays inset from the
         // right edge, aligning with the project/folder rows above.
         "w-full min-w-0 flex-1",
-        selectionMode && "pr-2 pl-8",
       )}
       onClick={(e) => {
         recentClickTimesRef.current = [...recentClickTimesRef.current.slice(-1), performance.now()];
@@ -5334,17 +5334,10 @@ function ConversationRowImpl({
           e.preventDefault();
           return;
         }
-        if (selectionMode) {
-          e.preventDefault();
-          e.stopPropagation();
-          onToggleSelected(conversation.id, e.shiftKey);
-          return;
-        }
         activateRow(conversation.id, e);
         onClick(e);
       }}
       onDoubleClick={(e) => {
-        if (selectionMode) return;
         if (!isOwner) return;
         if (isProvisionalRow) return; // no rename before the real session exists
         e.preventDefault();
@@ -5451,7 +5444,30 @@ function ConversationRowImpl({
         />
       )}
       {selectionMode ? (
-        rowLink
+        <label
+          className={cn(
+            SIDEBAR_ROW,
+            "density-row grid w-full min-w-0 cursor-pointer grid-cols-[1rem_minmax(0,1fr)_auto] items-center has-focus-visible:ring-2 has-focus-visible:ring-ring",
+          )}
+        >
+          <input
+            type="checkbox"
+            className="sr-only"
+            aria-label={label}
+            checked={isSelected}
+            onChange={(event) =>
+              onToggleSelected(
+                conversation.id,
+                (event.nativeEvent as globalThis.MouseEvent).shiftKey,
+              )
+            }
+          />
+          <CheckboxVisual checked={isSelected} />
+          <span className="min-w-0 truncate">{label}</span>
+          {currentProject && (
+            <small className="truncate text-muted-foreground">{currentProject}</small>
+          )}
+        </label>
       ) : (
         <ContextMenu onOpenChange={setContextMenuOpen}>
           <ContextMenuTrigger asChild touchDrag={!!dragListeners?.onTouchStart}>
@@ -5466,20 +5482,6 @@ function ConversationRowImpl({
           </ContextMenuContent>
         </ContextMenu>
       )}
-      {selectionMode ? (
-        <span
-          className={cn(
-            "-translate-y-1/2 pointer-events-none absolute left-2 flex items-center",
-            overlayTop,
-          )}
-        >
-          {isSelected ? (
-            <SquareCheckIcon className="size-4 text-primary" />
-          ) : (
-            <SquareIcon className="size-4 text-muted-foreground" />
-          )}
-        </span>
-      ) : null}
       {!selectionMode && (
         <ContextMenu onOpenChange={setContextMenuOpen}>
           <ContextMenuTrigger asChild>
@@ -5877,7 +5879,7 @@ function ProjectFolderActions({
               </Link>
             </Button>
           </TooltipTrigger>
-          <TooltipContent side="bottom">New session in project</TooltipContent>
+          <TooltipContent side="top">New session in project</TooltipContent>
         </Tooltip>
       )}
       <ProjectFolderMenu projectName={projectName} onNavigate={onNavigate} actions={actions} />
@@ -6352,10 +6354,9 @@ function ProjectFolderMenu({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button
+        <HeaderActionButton
           type="button"
-          variant="ghost"
-          size="icon-xs"
+
           aria-label={`Project actions for ${projectName}`}
           data-testid="project-actions"
           menuFeedback={false}
@@ -6363,9 +6364,10 @@ function ProjectFolderMenu({
           onClick={(e) => e.stopPropagation()}
         >
           <MoreHorizontalIcon className="size-3.5" data-icon-size="14" />
-        </Button>
+        </HeaderActionButton>
       </DropdownMenuTrigger>
       <DropdownMenuContent
+        side="top"
         align="end"
         className="min-w-40"
         onCloseAutoFocus={actions.onCloseAutoFocus}
@@ -6669,19 +6671,18 @@ function BulkActionBar({
         <div className="flex items-center gap-2 rounded-lg border border-border bg-transparent p-1.5">
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button
+              <HeaderActionButton
                 type="button"
-                variant="ghost"
-                size="icon-xs"
+
                 className="shrink-0"
                 aria-label="Exit selection mode"
                 data-testid="toggle-selection-mode"
                 onClick={onExit}
               >
                 <XIcon className="size-3.5" />
-              </Button>
+              </HeaderActionButton>
             </TooltipTrigger>
-            <TooltipContent side="bottom">Exit selection</TooltipContent>
+            <TooltipContent side="top">Exit selection</TooltipContent>
           </Tooltip>
           <span className="sidebar-compact-text shrink-0 whitespace-nowrap font-medium">
             {count} selected
@@ -6691,10 +6692,9 @@ function BulkActionBar({
             {unreadSelected.length > 0 ? (
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Button
+                  <HeaderActionButton
                     type="button"
-                    variant="ghost"
-                    size="icon-xs"
+
                     className="shrink-0"
                     disabled={isBusy}
                     onClick={handleMarkRead}
@@ -6702,17 +6702,16 @@ function BulkActionBar({
                     data-testid="bulk-mark-read"
                   >
                     <MailOpenIcon className="size-3.5" />
-                  </Button>
+                  </HeaderActionButton>
                 </TooltipTrigger>
-                <TooltipContent side="bottom">Mark as read</TooltipContent>
+                <TooltipContent side="top">Mark as read</TooltipContent>
               </Tooltip>
             ) : (
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Button
+                  <HeaderActionButton
                     type="button"
-                    variant="ghost"
-                    size="icon-xs"
+
                     className="shrink-0"
                     disabled={isBusy || count === 0}
                     onClick={handleMarkUnread}
@@ -6720,18 +6719,17 @@ function BulkActionBar({
                     data-testid="bulk-mark-unread"
                   >
                     <MailIcon className="size-3.5" />
-                  </Button>
+                  </HeaderActionButton>
                 </TooltipTrigger>
-                <TooltipContent side="bottom">Mark as unread</TooltipContent>
+                <TooltipContent side="top">Mark as unread</TooltipContent>
               </Tooltip>
             )}
             {!(allSelectedSameArchiveGroup && archivedSelected.length > 0) && (
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Button
+                  <HeaderActionButton
                     type="button"
-                    variant="ghost"
-                    size="icon-xs"
+
                     className="shrink-0"
                     disabled={isBusy || nonArchivedSelected.length === 0}
                     onClick={handleArchive}
@@ -6743,18 +6741,17 @@ function BulkActionBar({
                     ) : (
                       <ArchiveIcon className="size-3.5" />
                     )}
-                  </Button>
+                  </HeaderActionButton>
                 </TooltipTrigger>
-                <TooltipContent side="bottom">Archive</TooltipContent>
+                <TooltipContent side="top">Archive</TooltipContent>
               </Tooltip>
             )}
             {allSelectedSameArchiveGroup && archivedSelected.length > 0 && (
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Button
+                  <HeaderActionButton
                     type="button"
-                    variant="ghost"
-                    size="icon-xs"
+
                     className="shrink-0"
                     disabled={isBusy}
                     onClick={handleUnarchive}
@@ -6766,9 +6763,9 @@ function BulkActionBar({
                     ) : (
                       <ArchiveRestoreIcon className="size-3.5" />
                     )}
-                  </Button>
+                  </HeaderActionButton>
                 </TooltipTrigger>
-                <TooltipContent side="bottom">Unarchive</TooltipContent>
+                <TooltipContent side="top">Unarchive</TooltipContent>
               </Tooltip>
             )}
             <DropdownMenu
@@ -6786,10 +6783,9 @@ function BulkActionBar({
                   {/* Separate nodes keep the Radix tooltip and menu trigger states independent. */}
                   <span className="inline-flex shrink-0" {...moveTooltip.triggerProps}>
                     <DropdownMenuTrigger asChild>
-                      <Button
+                      <HeaderActionButton
                         type="button"
-                        variant="ghost"
-                        size="icon-xs"
+
                         disabled={isBusy || ownedSelected.length === 0}
                         aria-label="Move to project"
                         data-testid="bulk-move-to-project"
@@ -6799,15 +6795,15 @@ function BulkActionBar({
                         ) : (
                           <FolderInputIcon className="size-3.5" />
                         )}
-                      </Button>
+                      </HeaderActionButton>
                     </DropdownMenuTrigger>
                   </span>
                 </TooltipTrigger>
-                <TooltipContent side="bottom" data-noninteractive-tooltip>
+                <TooltipContent side="top" data-noninteractive-tooltip>
                   Move to project
                 </TooltipContent>
               </Tooltip>
-              <DropdownMenuContent align="end" className="w-52">
+              <DropdownMenuContent side="top" align="end" className="w-52">
                 <div className="flex items-center gap-2 border-b px-2 py-1.5">
                   <SearchIcon className="size-3.5 shrink-0 text-muted-foreground" />
                   <input
@@ -6841,10 +6837,9 @@ function BulkActionBar({
             </DropdownMenu>
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button
+                <HeaderActionButton
                   type="button"
-                  variant="ghost"
-                  size="icon-xs"
+
                   className={cn("shrink-0", ownedSelected.length > 0 && "text-destructive")}
                   disabled={isBusy || ownedSelected.length === 0}
                   onClick={() => setConfirmDeleteOpen(true)}
@@ -6856,9 +6851,9 @@ function BulkActionBar({
                   ) : (
                     <Trash2Icon className="size-3.5" />
                   )}
-                </Button>
+                </HeaderActionButton>
               </TooltipTrigger>
-              <TooltipContent side="bottom">{deleteLabel}</TooltipContent>
+              <TooltipContent side="top">{deleteLabel}</TooltipContent>
             </Tooltip>
           </div>
         </div>

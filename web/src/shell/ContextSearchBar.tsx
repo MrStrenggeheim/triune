@@ -1,3 +1,4 @@
+import { HeaderActionButton } from "@/components/HeaderActionButton";
 import { OperationStatus } from "@/components/ui/loading";
 // Modified for Triune.
 import { useRef } from "react";
@@ -76,7 +77,7 @@ export function ContextSearchBar({ contained = false }: { contained?: boolean })
       >
         {searching ? <OperationStatus className="text-xs">Searching…</OperationStatus> : counter}
       </span>
-      <TooltipButton
+      <HeaderActionButton
         type="button"
         aria-label="Previous match"
         tooltipShortcut={["Shift", "Enter"]}
@@ -86,11 +87,10 @@ export function ContextSearchBar({ contained = false }: { contained?: boolean })
           search.activeMessages.isFetchingNextPage
         }
         onClick={() => search.move(-1)}
-        className="inline-flex size-8 shrink-0 items-center justify-center rounded hover:bg-accent disabled:opacity-40"
       >
         <ChevronUpIcon className="size-4" />
-      </TooltipButton>
-      <TooltipButton
+      </HeaderActionButton>
+      <HeaderActionButton
         type="button"
         aria-label="Next match"
         tooltipShortcut={["Enter"]}
@@ -100,20 +100,18 @@ export function ContextSearchBar({ contained = false }: { contained?: boolean })
           search.activeMessages.isFetchingNextPage
         }
         onClick={() => search.move(1)}
-        className="inline-flex size-8 shrink-0 items-center justify-center rounded hover:bg-accent disabled:opacity-40"
       >
         <ChevronDownIcon className="size-4" />
-      </TooltipButton>
+      </HeaderActionButton>
       <span aria-hidden className="mx-1 h-4 border-l" />
-      <TooltipButton
+      <HeaderActionButton
         type="button"
         aria-label="Close search"
         tooltipShortcut={["Esc"]}
         onClick={search.close}
-        className="inline-flex size-8 shrink-0 items-center justify-center rounded hover:bg-accent"
       >
         <XIcon className="size-4" />
-      </TooltipButton>
+      </HeaderActionButton>
     </div>
   );
 }

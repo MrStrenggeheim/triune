@@ -2717,7 +2717,7 @@ describe("Composer shared visible controls", () => {
     expect(childSessionsArgsSpy).toHaveBeenCalledWith("conv_parent");
 
     fireEvent.click(subagent);
-    expect(screen.getByRole("link", { name: "developer" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "Open chat beside · developer" })).toHaveAttribute(
       "href",
       "/c/conv_child?debug=1",
     );
@@ -3199,7 +3199,7 @@ describe("Composer background tasks", () => {
     clearSessionDrafts();
   });
 
-  it("shows a running monitor in the workspace bar after foreground work ends", () => {
+  it("shows a running monitor in the workspace bar after foreground work ends", async () => {
     useChatStore.setState({
       backgroundTaskCount: 1,
       backgroundTasks: [
@@ -3218,9 +3218,12 @@ describe("Composer background tasks", () => {
       </QueryClientProvider>,
     );
 
-    const trigger = screen.getByRole("button", {
-      name: "1 background task still running",
-    });
+    // Shell activity reveals the shelf after its shared opening delay.
+    const trigger = await screen.findByRole(
+      "button",
+      { name: "1 background task still running" },
+      { timeout: 2000 },
+    );
     expect(trigger).toHaveTextContent("1");
     expect(screen.queryByTestId("subagent-task-pill")).toBeNull();
     fireEvent.click(trigger);
@@ -3229,7 +3232,7 @@ describe("Composer background tasks", () => {
     expect(dialog).toHaveTextContent("gh pr checks 123 --watch");
   });
 
-  it("shows live task counts and removes the control when all tasks finish", () => {
+  it("shows live task counts and removes the control when all tasks finish", async () => {
     renderWithTooltips(
       <QueryClientProvider client={shellQueryClient}>
         <Composer {...composerProps()} />
@@ -3239,7 +3242,11 @@ describe("Composer background tasks", () => {
 
     act(() => useChatStore.setState({ backgroundTaskCount: 2 }));
     expect(
-      screen.getByRole("button", { name: "2 background tasks still running" }),
+      await screen.findByRole(
+        "button",
+        { name: "2 background tasks still running" },
+        { timeout: 2000 },
+      ),
     ).toHaveTextContent("2");
 
     act(() => useChatStore.setState({ backgroundTaskCount: 0 }));
@@ -3256,7 +3263,13 @@ describe("Composer background tasks", () => {
       </QueryClientProvider>,
     );
 
-    await user.click(screen.getByRole("button", { name: "1 background task still running" }));
+    await user.click(
+      await screen.findByRole(
+        "button",
+        { name: "1 background task still running" },
+        { timeout: 2000 },
+      ),
+    );
     expect(screen.getByRole("dialog", { name: "1 background task" })).toBeVisible();
     await user.click(textarea());
     expect(screen.queryByRole("dialog", { name: "1 background task" })).toBeNull();
@@ -6106,7 +6119,7 @@ describe("Composer queue acceptance", () => {
       await act(async () => pending.resolve(true));
       expect(textarea()).toHaveValue(edit === "text" ? "next message" : "queued follow-up");
       if (edit === "file") expect(screen.getByText("new.txt")).toBeTruthy();
-      if (edit === "mention") expect(screen.getByText("@new.ts")).toBeTruthy();
+      if (edit === "mention") expect(screen.getByText("new.ts")).toBeTruthy();
     },
   );
 

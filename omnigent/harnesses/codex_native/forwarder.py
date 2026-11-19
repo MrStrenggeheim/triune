@@ -3294,7 +3294,13 @@ async def _handle_event(
             await _ensure_user_message_posted(client, route_session_id, params, event_state)
         elif isinstance(item, dict) and item.get("type") in {"commandExecution", "mcpToolCall"}:
             if item["type"] == "commandExecution":
-                await _sync_command_processes(client, route_session_id, item, event_state)
+                await _sync_command_processes(
+                    client,
+                    route_session_id,
+                    item,
+                    event_state,
+                    turn_id=_response_id(params) if params.get("turnId") else None,
+                )
             item_id = item.get("id")
             if (
                 isinstance(item_id, str)
@@ -5525,7 +5531,13 @@ async def _handle_completed_item_inner(
     item_type = item.get("type")
     turn_id = _turn_id_from_payload(params)
     if item_type == "commandExecution":
-        await _sync_command_processes(client, session_id, item, forwarder_state)
+        await _sync_command_processes(
+            client,
+            session_id,
+            item,
+            forwarder_state,
+            turn_id=_response_id(params) if turn_id else None,
+        )
     if item_type in {"agentMessage", "plan"} and forwarder_state is not None and turn_id:
         item_id = item.get("id")
         forwarder_state.discard_partial_text_item(
@@ -7519,6 +7531,8 @@ async def _sync_command_processes(
     session_id: str,
     item: _JsonObject,
     forwarder_state: _CodexForwarderState | None,
+    *,
+    turn_id: str | None = None,
 ) -> None:
     """Publish shell inventory changes independently of agent turn status."""
     if forwarder_state is None:
@@ -7528,7 +7542,7 @@ async def _sync_command_processes(
     if not isinstance(call_id, str):
         return
     before = processes.resources.get(call_id)
-    processes.observe(item, session_id=session_id)
+    processes.observe(item, session_id=session_id, turn_id=turn_id)
     if before != processes.resources.get(call_id):
         processes.schedule_publication(
             lambda snapshot: _publish_command_snapshot(client, session_id, snapshot)

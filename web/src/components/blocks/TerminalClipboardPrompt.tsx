@@ -1,3 +1,4 @@
+import { Checkbox } from "@/components/ui/checkbox";
 import { ClipboardCopyIcon, XIcon } from "lucide-react";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { toast } from "@/lib/notifications";
@@ -140,13 +141,12 @@ function TerminalClipboardPromptContent({
             <label
               className={`flex items-start gap-2 ${canRemember ? "cursor-pointer" : "cursor-default"}`}
             >
-              <input
-                type="checkbox"
+              <Checkbox
                 checked={rememberChoice}
                 disabled={!canRemember}
                 aria-describedby={rememberDescriptionId}
-                onChange={(event) => onRememberChange(event.target.checked)}
-                className="mt-0.5 size-4 shrink-0 scroll-my-1 accent-primary"
+                onCheckedChange={(checked) => onRememberChange(checked === true)}
+                className="mt-0.5 scroll-my-1"
               />
               <span>Remember my choice</span>
             </label>

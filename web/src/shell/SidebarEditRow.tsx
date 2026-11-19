@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { CheckIcon, XIcon } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { HeaderActionButton } from "@/components/HeaderActionButton";
 import { USER_SESSION_TITLE_MAX_CHARS } from "@/lib/sessionTitles";
 import { isImeCompositionKeyEvent } from "@/lib/ime";
 
@@ -71,32 +71,30 @@ export function SidebarEditRow({
         data-testid="rename-conversation-input"
         className="min-w-0 flex-1 truncate rounded bg-transparent px-1 py-0.5 outline-none md:select-text"
       />
-      <Button
+      <HeaderActionButton
         type="button"
-        variant="ghost"
-        size="icon-xs"
         aria-label="Save rename"
+        tooltipShortcut={["Enter"]}
         onMouseDown={(e) => {
           // Prevent the input's blur from firing before the commit.
           e.preventDefault();
         }}
         onClick={() => onCommit(value)}
       >
-        <CheckIcon className="size-3.5" />
-      </Button>
-      <Button
+        <CheckIcon />
+      </HeaderActionButton>
+      <HeaderActionButton
         type="button"
-        variant="ghost"
-        size="icon-xs"
         aria-label="Cancel rename"
+        tooltipShortcut={["Esc"]}
         onMouseDown={(e) => e.preventDefault()}
         onClick={() => {
           cancelledRef.current = true;
           onCancel();
         }}
       >
-        <XIcon className="size-3.5" />
-      </Button>
+        <XIcon />
+      </HeaderActionButton>
     </div>
   );
 }

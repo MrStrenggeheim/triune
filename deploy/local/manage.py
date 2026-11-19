@@ -67,7 +67,9 @@ def read_release(path: Path) -> dict:
     return manifest
 
 
-def preview(release: Path, expected_version: str, expected_commit: str) -> None:
+def preview(
+    release: Path, expected_version: str, expected_commit: str, *, require_drain: bool = False
+) -> None:
     """Boot the packaged app against an isolated copy of the chat database."""
     python = release / "venv/bin/python"
     run(
@@ -133,7 +135,10 @@ def preview(release: Path, expected_version: str, expected_commit: str) -> None:
                 with urllib.request.urlopen(
                     f"http://127.0.0.1:{port}/api/version", timeout=5
                 ) as r:
-                    if json.load(r)["version"] != expected_version:
+                    identity = json.load(r)
+                    if require_drain and identity.get("release_admission") != "draining":
+                        raise RuntimeError("Candidate does not honor the published release drain")
+                    if identity["version"] != expected_version:
                         raise RuntimeError("preview version differs from the build")
                 with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=5) as r:
                     html = r.read().decode()

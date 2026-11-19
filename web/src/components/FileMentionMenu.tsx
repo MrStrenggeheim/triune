@@ -27,6 +27,7 @@ interface FileMentionMenuProps {
   onOpenDir: (path: string) => void;
   /** Attach a file (isDir=false) or whole folder (isDir=true) as a unit. */
   onAttach: (path: string, isDir: boolean) => void;
+  listId?: string;
   query?: string;
   chats?: ReferenceChat[];
   onChooseChat?: (chat: ReferenceChat) => void;
@@ -41,6 +42,7 @@ interface FileMentionMenuProps {
  */
 export function FileMentionMenu({
   currentDir,
+  listId,
   activeIndex,
   entries,
   loading = false,
@@ -83,12 +85,19 @@ export function FileMentionMenu({
         {rows.length === 0 && loading ? (
           <ContentSkeleton label="Loading files…" rows={3} />
         ) : (
-          <div ref={listRef} role="listbox" className="max-h-80 overflow-y-auto">
+          <div
+            ref={listRef}
+            id={listId}
+            role="listbox"
+            aria-label="Mention suggestions"
+            className="max-h-80 overflow-y-auto"
+          >
             {rows.map((entry, i) => {
               const isDir = entry.type === "directory";
               return (
                 <div
                   key={`${entry.type}:${entry.path}`}
+                  id={listId ? `${listId}-${i}` : undefined}
                   role="option"
                   aria-selected={i === activeIndex}
                   data-testid={`file-mention-item-${i}`}

@@ -347,7 +347,7 @@
 .dock-tab-group[data-input="touch"] .dock-tab-type-icon {
   opacity: 1;
 }
-.dock-tab-group[data-input="touch"] .dock-tab-close:not(:active) [data-close-surface] {
+.dock-tab-group[data-input="touch"] .dock-tab-close:not(:active) [data-header-action-surface] {
   background: transparent;
 }
 .dock-tab-pin[aria-pressed="true"] {

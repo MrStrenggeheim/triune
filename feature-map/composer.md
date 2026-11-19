@@ -7,7 +7,9 @@ The packaged restored-grid case in `tests/browser_ui/chat/test_session_grid.py` 
 November 17 refinements keep the selected permission-mode caption stable through idle/running changes.
 While running, its hover and dropdown add only “Only applies next turn”; the original mode guidance stays in the hover.
 An active Goal appears after Plan in the attention shelf, including when it is the shelf's only resource.
-In automatic mode, the shelf appears immediately and waits 750 ms after the last activity in that conversation before exiting.
+Shell-only activity opens the shelf after 900 ms and cancels the opening if it ends sooner.
+Requests for input and explicit opening remain immediate.
+The shelf waits 900 ms after the last activity in that conversation before exiting.
 Renewed activity cancels the timer, and resolved requests lose their controls immediately.
 When the last control disappears, “No current activity” holds the row height through the exit.
 Unread native follow-ups sit below the working indicator under one shared hint, then return above it on individual consumption receipts.

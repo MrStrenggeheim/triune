@@ -39,7 +39,9 @@ flock --nonblock "$lock_fd"
 
 case "${1:-}" in
     --published)
-        binding=$(as_agent "$source/.venv/bin/python" "$source/deploy/local/published_update.py" apply <&"$lock_fd")
+        exec {admission_fd}<"$app"
+        flock --wait 2 "$admission_fd" || { echo "Runtime work holds admission." >&2; exit 1; }
+        binding=$(as_agent "$source/.venv/bin/python" "$source/deploy/local/published_update.py" apply <&"$lock_fd" 3<&"$admission_fd")
         [[ $binding =~ ^([0-9][0-9A-Za-z.]{0,63}-[0-9a-f]{12})\ ([0-9a-f]{64})$ ]] || exit 1
         expected_candidate="$app/releases/${BASH_REMATCH[1]}"
         manifest_digest=${BASH_REMATCH[2]}
@@ -72,7 +74,11 @@ if [[ ${1:-} == --published ]]; then
     actual=$(as_agent sha256sum "$candidate/release.json")
     [[ ${actual%% *} == "$manifest_digest" ]] || { echo "Staged manifest changed." >&2; exit 1; }
 fi
-as_agent "$source/.venv/bin/python" "$source/deploy/local/manage.py" verify "$(basename "$candidate")"
+manifest=$(as_agent "$source/.venv/bin/python" "$source/deploy/local/manage.py" verify "$(basename "$candidate")")
+if [[ -z ${1:-} && ( "$(readlink -f "$app/current")" != "$candidate" || ! -f "$app/session-restart.json" ) ]]; then
+    origin=$(/usr/bin/python3 -c 'import json, sys; print(json.load(sys.stdin).get("origin", ""))' <<<"$manifest")
+    [[ $origin != github-release ]] || { echo "Published stage requires fenced activation." >&2; exit 1; }
+fi
 if [[ "${1:-}" == --check ]]; then
     echo "Would restart sessions and deploy $candidate."
     exit 0
@@ -86,6 +92,10 @@ if ! systemctl is-active --quiet omnigent.target \
 fi
 sessions="$app/session-restart.json"
 restart_sessions() {
+    if [[ -n ${admission_fd:-} ]]; then
+        exec {admission_fd}<&-
+        unset admission_fd
+    fi
     as_agent "$tool_python" "$source/deploy/local/session_restart.py" resume "$sessions" \
         --candidate "$(basename "$candidate")"
 }
@@ -186,7 +196,7 @@ systemctl start omnigent.target omnigent-server.service omnigent-host.service
 for attempt in {1..30}; do
     if systemctl is-active --quiet omnigent-server.service \
         && systemctl is-active --quiet omnigent-host.service \
-        && as_agent /usr/bin/python3 - "$candidate" <<'PY'
+        && as_agent /usr/bin/python3 - "$candidate" "${1:-}" <<'PY'
 import json
 import subprocess
 import sys
@@ -198,7 +208,10 @@ expected = json.loads((candidate / "release.json").read_text())["version"]
 with urlopen("http://127.0.0.1:6767/health", timeout=5) as response:
     assert json.load(response)["status"] == "ok"
 with urlopen("http://127.0.0.1:6767/api/version", timeout=5) as response:
-    assert json.load(response)["version"] == expected
+    identity = json.load(response)
+    assert identity["version"] == expected
+    if sys.argv[2] == "--published":
+        assert identity.get("release_admission") == "draining"
 for unit in ("omnigent-server.service", "omnigent-host.service"):
     pid = subprocess.check_output(["systemctl", "show", unit, "-p", "MainPID", "--value"], text=True).strip()
     argv = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")

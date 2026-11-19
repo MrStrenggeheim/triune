@@ -447,36 +447,7 @@ export function LegacyAppShell() {
     if (canvasMode) setSidebarPeek(false);
   }, [canvasMode]);
 
-  // Desktop settings need the sidebar's Back row. Mobile section links keep
-  // the drawer state chosen by navigation; the header can reopen the menu.
-  // Restore the prior sidebar preference when leaving settings.
   const { inSettings } = useSettingsRoute();
-  const sidebarOpenBeforeSettingsRef = useRef<boolean | null>(null);
-  useEffect(() => {
-    if (inSettings) {
-      // Stash inside the updater so it reads the CURRENT value rather than a
-      // closure captured before the pin, and so a re-render while already on
-      // /settings can't overwrite the stash with the pinned-open value.
-      setSidebarOpen((wasOpen) => {
-        if (sidebarOpenBeforeSettingsRef.current === null) {
-          sidebarOpenBeforeSettingsRef.current = wasOpen;
-        }
-        return (
-          !isMobileViewport() ||
-          location.pathname.replace(/\/$/, "") === rebasePath("/settings") ||
-          wasOpen
-        );
-      });
-      setSidebarPeek(false);
-      return;
-    }
-    // Leaving /settings: restore, then clear the stash so the next visit
-    // captures fresh state.
-    if (sidebarOpenBeforeSettingsRef.current !== null) {
-      setSidebarOpen(sidebarOpenBeforeSettingsRef.current);
-      sidebarOpenBeforeSettingsRef.current = null;
-    }
-  }, [inSettings, location.pathname, rebasePath, setSidebarOpen]);
 
   // Reads the same module-level store Sidebar drives, so the rail's ceiling
   // tracks the live sidebar width (including a drag) rather than a guess.
@@ -1872,17 +1843,6 @@ export function LegacyAppShell() {
   // cleared so we never leave `sidebarOpen` and `sidebarPeek` both true (a
   // floating-card layout the rest of the shell treats as a pushing panel).
   const toggleLeftSidebar = () => {
-    // On /settings the sidebar holds the only exit (the Back row), so collapsing
-    // it — by hotkey or command palette, the paths that bypass the hidden
-    // title-bar toggle — would strand the user on the page. Opening is still
-    // fine; only the collapse direction is refused. The pre-settings state stays
-    // stashed either way, so what the user had before the visit is still what
-    // gets restored on the way out.
-    if (inSettings) {
-      setSidebarOpen(true);
-      setSidebarPeek(false);
-      return;
-    }
     setSidebarOpen(!(sidebarOpen || sidebarPeek));
     setSidebarPeek(false);
   };
@@ -2975,14 +2935,7 @@ export function LegacyAppShell() {
           inset-2 would drag them off the lights' centre line. The sidebar's own
           copy is hidden on mac by CSS; this one is positioned by
           .electron-sidebar-header-actions in index.css. */}
-                  {/* Hidden on /settings: the settings nav replaces the session list
-          INSIDE the sidebar, and its "Back" row is the only way out. Leaving a
-          collapse toggle up here would let the user hide the one exit and strand
-          themselves on the settings page (the row exists but is clipped and
-          inert). So on /settings the sidebar is pinned open — see
-          forceSidebarOpenInSettings — and these controls step aside rather than
-          offer an action that would break the page. */}
-                  {isMacElectronShell() && !inSettings && (
+                  {isMacElectronShell() && (
                     <div className="electron-sidebar-header-actions">
                       <SidebarHeaderActions
                         compact
@@ -3078,7 +3031,7 @@ export function LegacyAppShell() {
                           // appeared. Left collapsed, the breadcrumb stays put beneath
                           // the floating card (and in the title-bar strip on mac).
                           sidebarOpen={sidebarOpen}
-                          settingsMode={inSettings}
+
                           active={!inSettings && !extensionOwnsHeader}
                           onOpenSidebar={handleSidebarOpen}
                           isChildSession={isChildSession}

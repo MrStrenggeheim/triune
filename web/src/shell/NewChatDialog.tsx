@@ -58,7 +58,6 @@ import {
   ComposerFeedbackRow,
   ComposerSendButton,
 } from "@/components/composer/ChatComposer";
-import { ComposerMentionChips } from "@/components/composer/ComposerMentionChips";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   MonitorCloudIcon,
@@ -332,7 +331,7 @@ import { ComposerMentionMenu } from "@/components/composer/ComposerMentionMenu";
 import { FileDropOverlay } from "@/components/FileDropOverlay";
 import { useMentionBrowser } from "@/hooks/useMentionBrowser";
 import {
-  buildMentionPreamble,
+  deliverInlineMentions,
   detectMentionAt,
   type MentionState,
   parseMentionToken,
@@ -5215,11 +5214,9 @@ export function NewChatLandingScreen({ embedded }: { embedded?: EmbeddedNewChat 
   // host-filesystem source + token state above are launcher-specific.
   const {
     mentionIndex,
-    mentionedItems,
     attachMention,
     attachReference,
     openMentionDir,
-    removeMentionedItem,
     handleKeyDown: handleMentionKeyDown,
     dismiss: dismissMention,
   } = useMentionBrowser({
@@ -5227,6 +5224,7 @@ export function NewChatLandingScreen({ embedded }: { embedded?: EmbeddedNewChat 
     setMention,
     mentionEntries,
     text: message,
+    isMobile: isMobileViewport,
     setText: setMessage,
     textareaRef,
   });
@@ -5886,15 +5884,10 @@ export function NewChatLandingScreen({ embedded }: { embedded?: EmbeddedNewChat 
       const defaultModelRow = pickerModelOptions.find((option) => option.isDefault);
       const resolvedDefaultModel = defaultModelRow?.model ?? defaultModelRow?.id ?? null;
 
-      // Prepend each "@"-tagged path as an attachment marker on its own line —
-      // the same wording the native executors emit and that title-seeding
-      // strips. The runner, rooted at this workspace, reads the on-disk file
-      // from the marker; no upload happens. Folders carry a trailing "/".
-      // Computed BEFORE the create so `smart_routing_message` classifies the
-      // prompt the agent actually receives, not the raw textarea value.
-      const initialPrompt =
-        buildMentionPreamble(mentionedItems, selectedAgent?.harness ?? null) +
-        sanitizeInitialPrompt(message);
+      // Classify and deliver the same prompt, including inline workspace markers.
+      const initialPrompt = sanitizeInitialPrompt(
+        deliverInlineMentions(message, selectedAgent?.harness ?? null),
+      );
       // Native terminal agents open terminal-first: `omnigent.ui: terminal`
       // tells the UI to render the terminal wrapper, and `omnigent.wrapper`
       // selects which CLI bridge the runner launches — the values are the
@@ -6837,10 +6830,6 @@ export function NewChatLandingScreen({ embedded }: { embedded?: EmbeddedNewChat 
                         }
                       }}
                     />
-                    {/* "@"-mention chips — one per tagged workspace file/folder. Each is
-                delivered as an "[Attached: <path>]" marker prepended to the
-                first message at create time. */}
-                    <ComposerMentionChips items={mentionedItems} onRemove={removeMentionedItem} />
                     {/* Pending attachments — image thumbnails (click to view) + file rows. */}
                     <ComposerAttachments files={files} onRemove={removeFile} />
                     {/* Rejected-attachment feedback: unsupported type or too large */}

@@ -2,12 +2,11 @@
 import { useAgentPresentation } from "@/hooks/useAgentPresentation";
 import { useContext } from "react";
 import { QueryClientContext } from "@tanstack/react-query";
-import { MessageCircleIcon, WorkflowIcon } from "lucide-react";
+import { ActivityNavigation } from "@/components/ActivityNavigation";
 import { ConversationScopeContext } from "@/components/chat/conversationScope";
-import { Button } from "@/components/ui/button";
 import { FilePathAwareMessageResponse } from "@/components/blocks/ChatMarkdown";
 import { useChildSessions } from "@/hooks/useChildSessions";
-import { Link, useLocation, useNavigate } from "@/lib/routing";
+import { useLocation } from "@/lib/routing";
 import { sessionNavigationSearch } from "@/lib/sessionNavigation";
 import {
   subagentCardItemIds,
@@ -124,7 +123,6 @@ function Task({
 }) {
   const workbench = useWorkbenchActions();
   const { search, pathname } = useLocation();
-  const navigate = useNavigate();
   const origin = conversationId ?? decodeURIComponent(pathname.match(/^\/c\/([^/]+)/)?.[1] ?? "");
   const params = new URLSearchParams(sessionNavigationSearch(search));
   params.set("panel", "activity");
@@ -142,65 +140,35 @@ function Task({
   const input = activity.taskInput;
   const preview = display.preview ?? "No captured message";
   const action = (
-    <>
-      <Button variant="ghost" size="icon-xs" aria-label={`Open ${name} chat beside`} asChild>
-        <Link
-          to={{ pathname: `/c/${encodeURIComponent(activity.sessionId)}`, search: "" }}
-          onClick={(event) => {
-            if (
-              event.button !== 0 ||
-              event.metaKey ||
-              event.ctrlKey ||
-              event.shiftKey ||
-              event.altKey
-            )
-              return;
-            if (workbench) {
-              event.preventDefault();
+    <ActivityNavigation
+      name={name}
+      openHref={`/c/${encodeURIComponent(activity.sessionId)}`}
+      orchestrationHref={to.pathname + to.search}
+      onOpen={
+        workbench
+          ? () =>
               workbench.openView(
                 { kind: "conversation", conversationId: activity.sessionId, title: name },
                 { beside: true },
-              );
-            }
-          }}
-        >
-          <MessageCircleIcon aria-hidden="true" className="size-3.5" />
-        </Link>
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon-xs"
-        aria-label={`Inspect ${name} in Orchestration`}
-        asChild
-      >
-        <Link
-          to={to}
-          onClick={(event) => {
-            if (
-              event.button !== 0 ||
-              event.metaKey ||
-              event.ctrlKey ||
-              event.shiftKey ||
-              event.altKey
-            )
-              return;
-            event.preventDefault();
-            if (workbench && origin)
+              )
+          : undefined
+      }
+      onOrchestration={
+        workbench && origin
+          ? () =>
               workbench.openView(
                 {
                   kind: "activity",
+                  conversationId: origin,
                   source: { kind: "chat", conversationId: origin },
                   focusAgentId: activity.sessionId,
+                  linkRequestId: crypto.randomUUID(),
                 },
                 { beside: true },
-              );
-            else navigate(to);
-          }}
-        >
-          <WorkflowIcon aria-hidden="true" className="size-3.5" />
-        </Link>
-      </Button>
-    </>
+              )
+          : undefined
+      }
+    />
   );
   if (!canonical && activity.phase === "returned")
     return (

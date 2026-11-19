@@ -1,8 +1,8 @@
 // Modified for Triune; inherited notices remain applicable.
 import { useEffect, useState } from "react";
-import { CheckIcon, ChevronUpIcon, LogOutIcon, PlusIcon, ServerIcon } from "lucide-react";
+import { CheckIcon, LogOutIcon, PlusIcon, ServerIcon } from "lucide-react";
 import { toast } from "@/lib/notifications";
-import { Button } from "@/components/ui/button";
+import { SidebarNavAction } from "./SidebarHeaderActions";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -19,7 +19,7 @@ import {
   type ServerPickerInfo,
 } from "@/lib/nativeBridge";
 import { cn } from "@/lib/utils";
-import { SIDEBAR_ROW } from "./sidebarStyles";
+
 import { ownServerName } from "@/lib/serverNames";
 
 /** Short display label for a server URL — its host, e.g. "localhost:8000". */
@@ -72,32 +72,6 @@ function serverKey(url: string): string | null {
   }
 }
 
-/**
- * Server picker for the native shells (Electron desktop and iOS), pinned to
- * the sidebar's bottom.
- *
- * A sidebar row (server glyph + current host + an upward chevron) that opens a
- * menu of organization-provided and recently-connected servers — selecting one
- * re-points the whole window via the shell — plus "Connect to new server…",
- * which returns the window to the shell's setup page, and "Sign out" when the
- * shell owns the current server's sign-in.
- *
- * This deliberately lives at the bottom of the sidebar rather than in the
- * chat surface's top strip. The macOS shell hides the native title bar
- * (titleBarStyle "hiddenInset"), and the previous picker filled that freed
- * strip with a centered "<thread> — <host>" label. But the chat header
- * occupies the same strip (`absolute top-0`, and taller at h-14), so on a
- * narrow window the centered label ran into the header's action cluster. The
- * iOS shell repeated the same mistake with its floating pill, which crowded
- * the chat header's title and floating controls on a notched iPhone. Docking
- * the picker here takes it out of that contested space on both shells.
- *
- * Renders nothing until the shell confirms this page is a connected server
- * (getServerPicker resolves non-null) — so it's absent in plain browsers, under
- * shells too old for the picker bridge, and on foreign pages. That single check
- * is the whole gate: no platform sniffing, matching how the rest of
- * nativeBridge degrades (one bundle, many runtimes, decided at runtime).
- */
 export function SidebarServerPicker() {
   const [info, setInfo] = useState<ServerPickerInfo | null>(null);
 
@@ -159,9 +133,7 @@ export function SidebarServerPicker() {
       : currentHost;
 
   return (
-    // shrink-0 keeps the row at its natural height so the scrolling session
-    // list above (flex-1) gives up space instead of squashing it.
-    <div className="shrink-0 px-2 pt-1 pb-2" data-testid="sidebar-server-picker-row">
+    <div data-testid="sidebar-server-picker-row">
       <DropdownMenu
         onOpenChange={(open) => {
           // Re-read when opened so a newly applied/removed MDM profile appears
@@ -169,35 +141,15 @@ export function SidebarServerPicker() {
           if (open) void getServerPicker().then(setInfo);
         }}
       >
-        <DropdownMenuTrigger asChild>
-          <Button
-            type="button"
-            variant="ghost"
-            menuFeedback={false}
-            // Same shared row construct as New session / Inbox / Settings, so
-            // the icon lands on the sidebar's icon column and the label on its
-            // label column.
-            className={cn(
-              SIDEBAR_ROW,
-              "w-full justify-start border-0 font-normal",
-              "text-muted-foreground",
-              "hover:bg-muted hover:text-foreground dark:hover:bg-muted/50",
-              "data-[state=open]:bg-muted data-[state=open]:text-foreground",
-            )}
+        <SidebarNavAction>
+          <DropdownMenuTrigger
             aria-label={`Server: ${currentDescription}. Switch server`}
-            title={currentDescription}
             data-testid="sidebar-server-picker"
           >
             <ServerIcon className="ui-icon text-muted-foreground" />
-            <span className="truncate">{currentHost}</span>
-            {/* Points up: the menu opens upward from the sidebar's bottom. */}
-            <ChevronUpIcon className="ui-icon ml-auto shrink-0 text-muted-foreground" />
-          </Button>
-        </DropdownMenuTrigger>
-        {/* side="top" — the trigger sits at the bottom of the window, so the
-            menu must grow upward rather than off-screen. max-w caps the width so
-            a long host (the default menu is w-max) truncates in place instead of
-            overflowing the viewport on a narrow phone. */}
+            Switch server
+          </DropdownMenuTrigger>
+        </SidebarNavAction>
         <DropdownMenuContent
           side="top"
           align="start"

@@ -80,7 +80,7 @@ describe("scope filter during selection mode", () => {
 
     // Enter selection mode and pick the owned session.
     selectSessionsFromMenu();
-    fireEvent.click(screen.getByRole("link", { name: /conv_mine/ }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /conv_mine/ }));
     expect(screen.getByText("1 selected")).toBeInTheDocument();
 
     // Switching to the Shared tab drops selection mode entirely (rather than
@@ -100,7 +100,7 @@ describe("scope filter during selection mode", () => {
     // Select on the Shared tab first.
     switchTo("sidebar-tab-shared");
     selectSessionsFromMenu();
-    fireEvent.click(screen.getByRole("link", { name: /conv_shared/ }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /conv_shared/ }));
     expect(screen.getByText("1 selected")).toBeInTheDocument();
 
     // Back to My sessions: selection mode is gone. Re-entering shows a clean
@@ -117,7 +117,7 @@ describe("scope filter during selection mode", () => {
     // Enter selection mode on the Shared tab and pick the shared session.
     switchTo("sidebar-tab-shared");
     selectSessionsFromMenu();
-    fireEvent.click(screen.getByRole("link", { name: /conv_shared/ }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /conv_shared/ }));
     expect(screen.getByText("1 selected")).toBeInTheDocument();
 
     // "New session" snaps the tab back to "mine" outside the Tabs

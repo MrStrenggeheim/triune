@@ -146,11 +146,11 @@ describe("Sidebar shift-click selection", () => {
     fireEvent.click(selectBtn);
 
     // Click first session (sets anchor)
-    const row1 = screen.getByRole("link", { name: "s1" });
+    const row1 = screen.getByRole("checkbox", { name: "s1" });
     fireEvent.click(row1);
 
     // Shift-click third session
-    const row3 = screen.getByRole("link", { name: "s3" });
+    const row3 = screen.getByRole("checkbox", { name: "s3" });
     fireEvent.click(row3, { shiftKey: true });
 
     // s1, s2, s3 should all be selected (bg-primary/5 class)
@@ -181,11 +181,11 @@ describe("Sidebar shift-click selection", () => {
     fireEvent.click(selectBtn);
 
     // Click c1 (first chat session, sets anchor)
-    const rowC1 = screen.getByRole("link", { name: "c1" });
+    const rowC1 = screen.getByRole("checkbox", { name: "c1" });
     fireEvent.click(rowC1);
 
     // Shift-click c3 (last chat session)
-    const rowC3 = screen.getByRole("link", { name: "c3" });
+    const rowC3 = screen.getByRole("checkbox", { name: "c3" });
     fireEvent.click(rowC3, { shiftKey: true });
 
     // Only c1, c2, c3 should be selected — NOT p1, p2
@@ -218,8 +218,8 @@ describe("Sidebar shift-click selection", () => {
     fireEvent.click(await screen.findByTestId("projects-select-sessions"));
 
     // Shift-select across the project sessions: p1 anchor → p3 selects p1..p3.
-    fireEvent.click(await screen.findByRole("link", { name: "p1" }));
-    fireEvent.click(screen.getByRole("link", { name: "p3" }), { shiftKey: true });
+    fireEvent.click(await screen.findByRole("checkbox", { name: "p1" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "p3" }), { shiftKey: true });
     await waitFor(() => {
       expect(screen.getByText("3 selected")).toBeInTheDocument();
     });
@@ -259,8 +259,8 @@ describe("Sidebar shift-click selection", () => {
 
     // Shift-select p1 → p3: the range must span all three (including the
     // out-of-window p3), not collapse to a single toggle.
-    fireEvent.click(await screen.findByRole("link", { name: "p1" }));
-    fireEvent.click(screen.getByRole("link", { name: "p3" }), { shiftKey: true });
+    fireEvent.click(await screen.findByRole("checkbox", { name: "p1" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "p3" }), { shiftKey: true });
     await waitFor(() => {
       expect(screen.getByText("3 selected")).toBeInTheDocument();
     });
@@ -299,8 +299,8 @@ describe("Sidebar shift-click selection", () => {
     fireEvent.click(screen.getByRole("button", { name: /select/i }));
 
     // Select both rows — "2 selected", but only the owned one is deletable.
-    fireEvent.click(await screen.findByRole("link", { name: "mine" }));
-    fireEvent.click(screen.getByRole("link", { name: /^theirs/ }));
+    fireEvent.click(await screen.findByRole("checkbox", { name: "mine" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /^theirs/ }));
     await waitFor(() => {
       expect(screen.getByText("2 selected")).toBeInTheDocument();
     });
@@ -319,15 +319,15 @@ describe("Sidebar shift-click selection", () => {
     fireEvent.click(selectBtn);
 
     // Click s1 (anchor), shift-click s2 (range: s1, s2)
-    fireEvent.click(screen.getByRole("link", { name: "s1" }));
-    fireEvent.click(screen.getByRole("link", { name: "s2" }), { shiftKey: true });
+    fireEvent.click(screen.getByRole("checkbox", { name: "s1" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "s2" }), { shiftKey: true });
 
     await waitFor(() => {
       expect(screen.getByText("2 selected")).toBeInTheDocument();
     });
 
     // Normal click on s4 (sets new anchor, toggles s4 on)
-    fireEvent.click(screen.getByRole("link", { name: "s4" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "s4" }));
 
     await waitFor(() => {
       expect(screen.getByText("3 selected")).toBeInTheDocument();
@@ -341,12 +341,12 @@ describe("Sidebar shift-click selection", () => {
 
     // Enter, click s1, exit
     fireEvent.click(screen.getByRole("button", { name: /select/i }));
-    fireEvent.click(screen.getByRole("link", { name: "s1" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "s1" }));
     fireEvent.click(screen.getByRole("button", { name: /exit/i }));
 
     // Re-enter, shift-click s3 — should single-toggle (no anchor)
     fireEvent.click(screen.getByRole("button", { name: /select/i }));
-    fireEvent.click(screen.getByRole("link", { name: "s3" }), { shiftKey: true });
+    fireEvent.click(screen.getByRole("checkbox", { name: "s3" }), { shiftKey: true });
 
     await waitFor(() => {
       expect(screen.getByText("1 selected")).toBeInTheDocument();

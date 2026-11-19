@@ -16,7 +16,7 @@ import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { useWorkbenchActions } from "@/workbench/WorkbenchContext";
 
 type Mode = "auto" | "shown" | "hidden";
-const AUTO_HIDE_GRACE_MS = 750;
+const AUTO_DELAY_MS = 900;
 interface Presence {
   visible: boolean;
   hasContent: boolean;
@@ -74,12 +74,14 @@ export function useComposerShelfMenuCloseAutoFocus() {
 export function useComposerShelfVisibility({
   conversationId,
   active,
+  shellActive,
   hasContent,
   hasPlan,
   requiredIds,
 }: {
   conversationId: string | null;
   active: boolean;
+  shellActive: boolean;
   hasContent: boolean;
   hasPlan: boolean;
   requiredIds: string[];
@@ -100,20 +102,22 @@ export function useComposerShelfVisibility({
     previous.current = { conversationId, requiredIds: next };
   }, [conversationId, requiredKey, setMode]);
   const [recentConversation, setRecentConversation] = useState<string | null | undefined>();
+  useLayoutEffect(() => setRecentConversation(undefined), [conversationId]);
   const recent = recentConversation === conversationId;
   useLayoutEffect(() => {
     if (mode === "hidden") {
       setRecentConversation(undefined);
-    } else if (active) {
+    } else if (active || (mode === "shown" && shellActive)) {
       setRecentConversation(conversationId);
-    } else if (recent) {
-      const timer = window.setTimeout(() => setRecentConversation(undefined), AUTO_HIDE_GRACE_MS);
+    } else if (shellActive !== recent) {
+      const timer = window.setTimeout(
+        () => setRecentConversation(shellActive ? conversationId : undefined),
+        AUTO_DELAY_MS,
+      );
       return () => window.clearTimeout(timer);
-    } else {
-      setRecentConversation(undefined);
     }
     return undefined;
-  }, [active, conversationId, mode, recent]);
+  }, [active, shellActive, conversationId, mode, recent]);
   const visible = mode !== "hidden" && (recent || (hasContent && (active || mode === "shown")));
   const report = control?.report;
   useLayoutEffect(() => {

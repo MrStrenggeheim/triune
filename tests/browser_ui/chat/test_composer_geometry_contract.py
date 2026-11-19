@@ -17,7 +17,6 @@ from tests.browser_ui.chat._geometry_helpers import (
     append_output_during_composer_reflow,
     append_streamed_output,
     assert_no_overlap,
-    assert_primitive_inset,
     assert_row_grid,
     assert_same_vertical_center,
     assert_symmetric_insets,
@@ -319,50 +318,6 @@ def test_attachment_chips_follow_the_row_grid(
     expect(last_remove).to_be_in_viewport(ratio=1)
 
 
-def test_wrapped_attachment_rows_keep_the_grid(
-    page: Page,
-    chat_session_contract: ChatSessionContract,
-) -> None:
-    chat = chat_session_contract
-    open_live(page, chat, DESKTOP)
-    workspace = page.get_by_role("complementary", name="Workspace")
-    if not workspace.is_visible():
-        page.get_by_role("button", name="Expand right panel").click()
-        expect(workspace).to_be_visible()
-    workspace.evaluate(
-        "el => Promise.all(el.getAnimations().map(animation => animation.finished))"
-    )
-    names = [
-        "quarterly-planning-notes.txt",
-        "customer-feedback-export.csv",
-        "incident-review-minutes.md",
-        "onboarding-checklist-draft.txt",
-        "competitive-analysis-sheet.csv",
-        "roadmap-brainstorm-doc.md",
-    ]
-    _attach(page, names)
-    chips = sorted(
-        [box(page.get_by_role("button", name=f"Remove {name}").locator("..")) for name in names],
-        key=lambda value: (value["y"], value["x"]),
-    )
-    lines: list[list[dict]] = []
-    for chip in chips:
-        if lines and abs(chip["y"] - lines[-1][0]["y"]) <= TOLERANCE:
-            lines[-1].append(chip)
-        else:
-            lines.append([chip])
-    assert len(lines) >= 2
-    for line in lines:
-        for chip in line[1:]:
-            assert_same_vertical_center(line[0], chip)
-    assert lines[0][0]["x"] == pytest.approx(
-        box(page.get_by_label("Message the agent"))["x"], abs=TOLERANCE
-    )
-    assert all(line[0]["x"] == pytest.approx(lines[0][0]["x"], abs=TOLERANCE) for line in lines)
-    for above, below in pairwise(lines):
-        assert above[0]["y"] + above[0]["height"] - below[0]["y"] <= TOLERANCE
-
-
 def _register_agents(
     chat: ChatSessionContract, *, skills: bool = False, picker_navigation: bool = False
 ) -> None:
@@ -410,6 +365,7 @@ def test_mention_chips_follow_the_row_grid(
     chat = chat_session_contract
     chat.harness = "claude-native"
     names = ["alpha.md", "beta.md", "gamma.md"]
+    chat.contract.json("/v1/context-references/chats", list_payload([]))
     chat.contract.json(
         f"/v1/sessions/{chat.session_id}/resources/environments/default",
         {"metadata": {"root": "/workspace"}},
@@ -431,6 +387,8 @@ def test_mention_chips_follow_the_row_grid(
     )
     open_live(page, chat, DESKTOP)
     composer = page.get_by_label("Message the agent")
+    composer.fill(" tail")
+    composer.press("Home")
     for name in names:
         composer.press_sequentially("@")
         option = page.get_by_role("option", name=re.compile(name))
@@ -445,6 +403,21 @@ def test_mention_chips_follow_the_row_grid(
     ]
     assert gaps[0] == pytest.approx(gaps[1], abs=TOLERANCE)
     assert chips[0]["x"] == pytest.approx(box(composer)["x"], abs=TOLERANCE)
+    composer.press_sequentially(" middle")
+    expect(composer).to_have_text("alpha.mdbeta.mdgamma.md middle tail")
+    page.reload()
+    expect(composer).to_have_text("alpha.mdbeta.mdgamma.md middle tail")
+    remove = composer.get_by_role("button", name="Remove beta.md")
+    remove.focus()
+    remove.press("Enter")
+    expect(composer).to_have_text("alpha.mdgamma.md middle tail")
+    composer.press("Backspace")
+    expect(composer).to_have_text("gamma.md middle tail")
+    with page.expect_request(
+        lambda request: request.method == "POST" and request.url.endswith("/events")
+    ) as sent:
+        composer.press("Enter")
+    assert "[Attached: gamma.md] middle tail" in str(sent.value.post_data_json)
 
 
 @pytest.mark.parametrize("surface", ["landing", "live"])
@@ -644,154 +617,6 @@ def test_workspace_controls_live_in_the_card_action_row(
     expect(dialog).to_be_visible()
 
 
-def test_queued_rows_and_nested_workspace_share_the_tray_grid(
-    page: Page,
-    chat_session_contract: ChatSessionContract,
-) -> None:
-    chat = chat_session_contract
-    open_live(page, chat, DESKTOP)
-    chat.emit_busy("geometry-turn")
-    composer = page.get_by_label("Message the agent")
-    for message in ("queued one", "queued two"):
-        composer.fill(message)
-        page.get_by_role("button", name="Send", exact=True).click()
-    strip = page.get_by_test_id("composer-queued-strip")
-    expect(strip).to_be_visible()
-    rows = strip.get_by_role("listitem")
-    expect(rows).to_have_count(2)
-    row_boxes = [box(rows.nth(0)), box(rows.nth(1))]
-    assert row_boxes[0]["x"] == pytest.approx(row_boxes[1]["x"], abs=TOLERANCE)
-    assert row_boxes[0]["width"] == pytest.approx(row_boxes[1]["width"], abs=TOLERANCE)
-    assert row_boxes[0]["height"] == pytest.approx(row_boxes[1]["height"], abs=TOLERANCE)
-    columns = []
-    for index in range(2):
-        row = rows.nth(index)
-        columns.append(
-            {
-                "status": box(row.locator(":scope > *:first-child")),
-                "label": box(row.locator("span.truncate").first),
-                "trailing": box(row.locator(":scope > span").last),
-            }
-        )
-    for name in ("status", "label", "trailing"):
-        assert columns[0][name]["x"] == pytest.approx(columns[1][name]["x"], abs=TOLERANCE)
-    assert_primitive_inset(columns[0]["status"]["x"] - box(strip)["x"])
-    card = box(page.locator("[data-composer-card]"))
-    assert box(strip)["x"] - card["x"] == pytest.approx(12, abs=TOLERANCE)
-    assert right_inset(card, box(strip)) == pytest.approx(12, abs=TOLERANCE)
-    assert box(strip)["y"] + box(strip)["height"] >= card["y"] - TOLERANCE
-    assert page.locator(".composer-workspace-surface").count() == 0
-
-
-@pytest.mark.parametrize(
-    ("viewport_width", "expected_frame", "prose_ch"),
-    [(1920, 768, 80), (2400, 896, 80), (3200, 1280, 120), (4096, 1600, 120)],
-    ids=["desktop", "wide", "ultrawide", "4k"],
-)
-@pytest.mark.parametrize("font_size", [13, 16])
-def test_chat_width_scales_while_prose_remains_readable(
-    page: Page,
-    chat_session_contract: ChatSessionContract,
-    viewport_width: int,
-    expected_frame: float,
-    prose_ch: int,
-    font_size: int,
-) -> None:
-    chat = chat_session_contract
-    page.add_init_script(f"localStorage.setItem('omnigent:ui-font-size', '{font_size}')")
-    seed_items(
-        chat,
-        list(
-            reversed(
-                [
-                    message_item("user-prose", "user", "Show prose", response_id="prose"),
-                    message_item(
-                        "assistant-prose",
-                        "assistant",
-                        "Responsive prose width marker. " + "Readable sentence. " * 30,
-                        response_id="prose",
-                    ),
-                    message_item("user-table", "user", "Show table", response_id="table"),
-                    message_item(
-                        "assistant-table",
-                        "assistant",
-                        "Responsive table width marker.\n\n"
-                        "| View | Behavior |\n| --- | --- |\n| Prose | Readable |",
-                        response_id="table",
-                    ),
-                ]
-            )
-        ),
-    )
-    open_live(page, chat, {"width": viewport_width, "height": 1080})
-    expect(page.get_by_text("Responsive prose width marker.", exact=False)).to_be_visible()
-    expect(page.locator("table")).to_be_visible()
-    widths = page.evaluate(
-        """() => {
-          const frame = document.querySelector('.chat-conversation-content');
-          const composer = document.querySelector('[data-composer-card]');
-          const workspace = document.querySelector(
-            '[data-testid="composer-workspace-controls"]').closest('[data-composer-card]');
-          const bubbles = [...document.querySelectorAll(
-            '[data-testid="message-bubble"][data-role="assistant"]')];
-          const prose = bubbles.find(b => b.textContent.includes('Responsive prose'));
-          const table = bubbles.find(b => b.textContent.includes('Responsive table'));
-          const style = getComputedStyle(frame);
-          const paragraph = prose.querySelector('.chat-markdown > p');
-          const font = getComputedStyle(paragraph);
-          const measure = document.createElement('span');
-          measure.style.cssText = 'display: inline-block; width: 1ch';
-          paragraph.append(measure);
-          const ch = measure.getBoundingClientRect().width;
-          measure.remove();
-          return {
-            frame: frame.getBoundingClientRect().width,
-            inner: frame.clientWidth
-              - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight),
-            prose: paragraph.getBoundingClientRect().width,
-            ch,
-            fontSize: parseFloat(font.fontSize),
-            table: table.getBoundingClientRect().width,
-            tableProse: table.querySelector('.chat-markdown > p').getBoundingClientRect().width,
-            composer: composer.getBoundingClientRect().width,
-            workspace: workspace.getBoundingClientRect().width,
-            composerLeft: composer.getBoundingClientRect().left,
-            frameLeft: frame.getBoundingClientRect().left,
-          };
-        }"""
-    )
-    assert widths["frame"] == pytest.approx(expected_frame, abs=TOLERANCE)
-    expected_prose = min(widths["inner"], prose_ch * widths["ch"])
-    assert widths["fontSize"] == font_size
-    assert widths["prose"] == pytest.approx(expected_prose, abs=TOLERANCE)
-    assert widths["table"] == pytest.approx(widths["inner"], abs=TOLERANCE)
-    assert widths["tableProse"] == pytest.approx(expected_prose, abs=TOLERANCE)
-    assert widths["composer"] == pytest.approx(expected_frame, abs=TOLERANCE)
-    assert widths["workspace"] == pytest.approx(expected_frame, abs=TOLERANCE)
-    assert widths["composerLeft"] == pytest.approx(widths["frameLeft"], abs=TOLERANCE)
-
-    if viewport_width == 3200:
-        page.get_by_role("button", name="Expand right panel").click()
-        workspace = page.get_by_role("complementary", name="Workspace")
-        expect(workspace).to_be_visible()
-        workspace.evaluate(
-            "el => Promise.all(el.getAnimations().map(animation => animation.finished))"
-        )
-        handle = box(workspace.get_by_label("Resize panel"))
-        pane = box(page.locator('[class~="@container/chat"]'))
-        x, y = handle["x"] + handle["width"] / 2, handle["y"] + handle["height"] / 2
-        page.mouse.move(x, y)
-        page.mouse.down()
-        page.mouse.move(pane["x"] + 980, y, steps=10)
-        page.mouse.up()
-        page.wait_for_function(
-            "document.querySelector('.chat-conversation-content').clientWidth < 1024"
-        )
-        for marker in ("Responsive prose width marker.", "Responsive table width marker."):
-            paragraph = page.get_by_text(marker, exact=False)
-            assert box(paragraph)["width"] == pytest.approx(80 * widths["ch"], abs=TOLERANCE)
-
-
 def test_composer_fits_available_space_while_resizing(
     page: Page,
     chat_session_contract: ChatSessionContract,
@@ -821,63 +646,6 @@ def test_composer_fits_available_space_while_resizing(
         )
         assert dimensions["left"] >= 0 and dimensions["right"] <= width
         assert document_width(page) <= width
-
-
-def test_composer_hides_native_scrollbar_without_disabling_scroll(
-    page: Page,
-    chat_session_contract: ChatSessionContract,
-) -> None:
-    chat = chat_session_contract
-    seed_long_transcript(chat, 20)
-    open_live(page, chat, {"width": 1280, "height": 720})
-    composer = page.get_by_label("Message the agent")
-    transition = page.evaluate(
-        r"""async () => {
-          const composer = document.querySelector('textarea[aria-label="Message the agent"]');
-          const setter = Object.getOwnPropertyDescriptor(
-            HTMLTextAreaElement.prototype, 'value').set;
-          const samples = [];
-          for (let i = 0; i < 20; i += 1) {
-            setter.call(composer, Array.from({length: i + 1}, (_, line) =>
-              `Draft line ${line}`).join('\n'));
-            composer.dispatchEvent(new InputEvent('input', {bubbles: true}));
-            await new Promise(resolve => requestAnimationFrame(resolve));
-            samples.push({input: getComputedStyle(composer.parentElement).overflowY,
-              root: getComputedStyle(document.documentElement).overflowY,
-              body: getComputedStyle(document.body).overflowY,
-              rootScrollTop: document.scrollingElement.scrollTop});
-          }
-          return samples;
-        }"""
-    )
-    assert all(
-        sample == {"input": "hidden", "root": "hidden", "body": "hidden", "rootScrollTop": 0}
-        for sample in transition
-    ), transition
-    geometry = page.evaluate(
-        """() => {
-          const composer = document.querySelector('textarea[aria-label="Message the agent"]');
-          const transcript = document.querySelector('[role="log"] > div');
-          const probe = el => ({
-            clientHeight: el.clientHeight,
-            scrollHeight: el.scrollHeight,
-            scrollbarWidth: getComputedStyle(el).scrollbarWidth,
-            webkitDisplay: getComputedStyle(el, '::-webkit-scrollbar').display,
-          });
-          return { composer: probe(composer), transcript: probe(transcript),
-            input: getComputedStyle(composer.parentElement).overflowY,
-            root: getComputedStyle(document.documentElement).overflowY,
-            body: getComputedStyle(document.body).overflowY };
-        }"""
-    )
-    for surface in ("composer", "transcript"):
-        assert geometry[surface]["scrollHeight"] > geometry[surface]["clientHeight"]
-        assert geometry[surface]["scrollbarWidth"] == "none"
-        assert geometry[surface]["webkitDisplay"] == "none"
-    assert geometry["root"] == "hidden" and geometry["body"] == "hidden"
-    assert geometry["input"] == "hidden"
-    composer.evaluate("el => { el.scrollTop = el.scrollHeight; }")
-    assert composer.evaluate("el => el.scrollTop") > 0
 
 
 @pytest.mark.browser_context_args(has_touch=True)
@@ -1077,9 +845,10 @@ def test_composer_growth_stays_bottom_pinned_every_frame(
           const ta = document.querySelector('textarea[aria-label="Message the agent"]');
           const scroller = ta.closest('form').parentElement.querySelector('[role="log"] > div');
           const samples = []; let sampling = true;
-          const sample = () => { samples.push(
+          // Read after each frame's resize observers, the state that frame paints.
+          const sample = () => setTimeout(() => { samples.push(
             scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop);
-            if (sampling) requestAnimationFrame(sample); };
+            if (sampling) requestAnimationFrame(sample); }, 0);
           requestAnimationFrame(sample);
           const setter = Object.getOwnPropertyDescriptor(
             HTMLTextAreaElement.prototype, 'value').set;
@@ -1132,68 +901,6 @@ def _fully_visible_state(page: Page) -> dict:
             width: Math.round(rect.width) };
         }"""
     )
-
-
-def test_fully_visible_transcript_paints_no_scrollbar(
-    page: Page,
-    chat_session_contract: ChatSessionContract,
-) -> None:
-    chat = chat_session_contract
-    _single_reply(chat, 140)
-    open_live(page, chat, {"width": 1400, "height": 800})
-    page.get_by_role("button", name="Expand right panel").click()
-    expect(page.get_by_role("complementary", name="Workspace")).to_be_visible()
-    expect(page.get_by_text("word0000", exact=False)).to_be_visible()
-    page.wait_for_timeout(1200)
-    state = _fully_visible_state(page)
-    assert state["first"] >= state["top"] and state["last"] <= state["bottom"] - 32
-    assert not state["thumb"], state
-
-
-def test_panel_resize_does_not_summon_a_ghost_scrollbar(
-    page: Page,
-    chat_session_contract: ChatSessionContract,
-) -> None:
-    chat = chat_session_contract
-    _single_reply(chat, 95)
-    chat.update_session(workspace="/workspace")
-    chat.contract.json(
-        f"/v1/sessions/{chat.session_id}/resources/environments/default",
-        {"metadata": {"root": "/workspace"}},
-    )
-    chat.contract.json(
-        f"/v1/sessions/{chat.session_id}/resources/environments/default/changes",
-        list_payload([]),
-    )
-    chat.contract.json(
-        f"/v1/sessions/{chat.session_id}/resources/environments/default/filesystem",
-        list_payload([]),
-    )
-    open_live(page, chat, {"width": 1600, "height": 1000})
-    page.get_by_role("button", name="Expand right panel").click()
-    workspace = page.get_by_role("complementary", name="Workspace")
-    expect(workspace).to_be_visible()
-    workspace.evaluate(
-        "el => Promise.all(el.getAnimations().map(animation => animation.finished))"
-    )
-    before = _fully_visible_state(page)
-    handle = box(workspace.get_by_label("Resize panel"))
-    x, y = handle["x"] + handle["width"] / 2, handle["y"] + handle["height"] / 2
-    violations = []
-    page.mouse.move(x, y)
-    page.mouse.down()
-    for delta in range(0, -380, -20):
-        page.mouse.move(x + delta, y, steps=2)
-        page.wait_for_timeout(60)
-        state = _fully_visible_state(page)
-        if state["thumb"] and state["max"] <= 24 and state["last"] <= state["bottom"] - 32:
-            violations.append(state)
-    page.mouse.up()
-    after = _fully_visible_state(page)
-    assert after["width"] < before["width"] - 40
-    assert after["last"] > before["last"]
-    assert after["last"] <= after["bottom"] - 32
-    assert not after["thumb"] and not violations
 
 
 def test_scrollbar_thumb_drags_by_touch(

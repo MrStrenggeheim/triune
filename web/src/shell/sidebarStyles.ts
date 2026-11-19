@@ -11,14 +11,10 @@ export const SIDEBAR_TREE_INDENT = "var(--sidebar-tree-indent, 10px)";
 
 /** Theme-aware secondary strokes stay visible over chrome and row highlights. */
 export const SIDEBAR_TREE_GUIDE =
-  "pointer-events-none absolute top-0 bottom-0 w-px bg-muted-foreground/50";
+  "pointer-events-none absolute top-[calc(-1*var(--list-gap))] bottom-0 w-px bg-muted-foreground/50";
 
 /** Share the list density's gaps within and around persistent row indicators. */
 export const SIDEBAR_INDICATOR_GAP = "gap-[calc(var(--list-gap)*2)]";
-
-/** A disclosure needs feedback above the row's chrome-hover surface. */
-export const SIDEBAR_DISCLOSURE_HOVER =
-  "cursor-pointer [@media((hover:hover)_and_(pointer:fine))]:group-data-[input=mouse]/sidebar:hover:bg-[color-mix(in_srgb,var(--foreground)_6%,var(--workspace-hover-on-chrome))] [@media((hover:hover)_and_(pointer:fine))]:group-data-[input=mouse]/sidebar:hover:text-foreground";
 
 // Match the Settings sidebar's ghost-button hover treatment across every home
 // sidebar row.

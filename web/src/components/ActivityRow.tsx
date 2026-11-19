@@ -124,51 +124,52 @@ export function ActivityRow({
       {title}
     </span>
   );
-  const heading = onOpen ? (
-    <Button
-      type="button"
-      variant="ghost"
-      size={entry ? "sm" : undefined}
-      aria-label={typeof title === "string" ? title : undefined}
-      aria-description={
-        descriptionText ?? (typeof description === "string" ? description : undefined)
-      }
-      className={`h-auto ${titleDetail ? "w-auto max-w-[55%] shrink" : "w-full"} min-w-0 justify-start rounded-none p-0 text-left font-medium hover:bg-transparent`}
-      onClick={href ? undefined : onOpen}
-      asChild={!!href}
-    >
-      {href ? (
-        <Link
-          to={href}
-          onClick={(event) => {
-            if (
-              event.button !== 0 ||
-              event.metaKey ||
-              event.ctrlKey ||
-              event.shiftKey ||
-              event.altKey
-            ) {
-              event.stopPropagation();
-              return;
-            }
-            event.preventDefault();
-            onOpen();
-          }}
-        >
-          {titleContent}
-        </Link>
-      ) : (
-        titleContent
-      )}
-    </Button>
-  ) : (
-    <div
-      className="flex min-w-0 items-center gap-1.5 truncate"
-      title={typeof title === "string" ? title : undefined}
-    >
-      {title}
-    </div>
-  );
+  const heading =
+    onOpen && !entry ? (
+      <Button
+        type="button"
+        variant="ghost"
+        size={entry ? "sm" : undefined}
+        aria-label={typeof title === "string" ? title : undefined}
+        aria-description={
+          descriptionText ?? (typeof description === "string" ? description : undefined)
+        }
+        className={`h-auto ${titleDetail ? "w-auto max-w-[55%] shrink" : "w-full"} min-w-0 justify-start rounded-none p-0 text-left font-medium hover:bg-transparent`}
+        onClick={href ? undefined : onOpen}
+        asChild={!!href}
+      >
+        {href ? (
+          <Link
+            to={href}
+            onClick={(event) => {
+              if (
+                event.button !== 0 ||
+                event.metaKey ||
+                event.ctrlKey ||
+                event.shiftKey ||
+                event.altKey
+              ) {
+                event.stopPropagation();
+                return;
+              }
+              event.preventDefault();
+              onOpen();
+            }}
+          >
+            {titleContent}
+          </Link>
+        ) : (
+          titleContent
+        )}
+      </Button>
+    ) : (
+      <div
+        className="flex min-w-0 items-center gap-1.5 truncate"
+        title={typeof title === "string" ? title : undefined}
+      >
+        {title}
+      </div>
+    );
 
   const row = (
     <div
@@ -184,14 +185,15 @@ export function ActivityRow({
         selected && "bg-[var(--workspace-hover-on-content)] ring-1 ring-ring",
       )}
       onClick={(event) => {
-        if (!(event.target instanceof Element) || event.target.closest("button, a")) return;
+        if (entry || !(event.target instanceof Element) || event.target.closest("button, a"))
+          return;
         if (!event.currentTarget.contains(event.target)) return;
         if (window.getSelection()?.isCollapsed === false) return;
         onOpen?.();
       }}
     >
       <span
-        className={`resource-icon flex shrink-0 items-center justify-center text-primary [&_svg]:size-7 ${message ? "size-7" : "size-9 rounded-[var(--radius-md)] bg-primary/5"}`}
+        className={`resource-icon flex shrink-0 items-center justify-center text-primary [&_svg]:size-7 ${message ? "size-7" : entry ? "size-9" : "size-9 rounded-[var(--radius-md)] bg-primary/5"}`}
       >
         {icon}
       </span>
@@ -302,19 +304,20 @@ export function ActivityRow({
       )}
     </div>
   );
-  const openingRow = onStop ? (
-    <ContextMenu>
-      <ContextMenuTrigger asChild>{row}</ContextMenuTrigger>
-      <ContextMenuContent className="rounded-[var(--radius-lg)]">
-        <ContextMenuItem variant="destructive" disabled={stopping} onSelect={() => void stop()}>
-          <SquareIcon className="fill-current" aria-hidden="true" />
-          {stopping ? "Stopping…" : `Stop ${name}`}
-        </ContextMenuItem>
-      </ContextMenuContent>
-    </ContextMenu>
-  ) : (
-    row
-  );
+  const openingRow =
+    onStop && !entry ? (
+      <ContextMenu>
+        <ContextMenuTrigger asChild>{row}</ContextMenuTrigger>
+        <ContextMenuContent className="rounded-[var(--radius-lg)]">
+          <ContextMenuItem variant="destructive" disabled={stopping} onSelect={() => void stop()}>
+            <SquareIcon className="fill-current" aria-hidden="true" />
+            {stopping ? "Stopping…" : `Stop ${name}`}
+          </ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
+    ) : (
+      row
+    );
 
   return (
     <div

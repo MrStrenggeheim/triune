@@ -174,22 +174,24 @@ describe("dropping an unpinned session onto a pinned row", () => {
         }),
     );
     renderSidebar();
-    const pinButton = (id: string) =>
-      screen
-        .getByRole("link", { name: id })
-        .closest("li")!
-        .querySelector<HTMLElement>('[data-testid="quick-pin-conversation"]')!;
-
-    fireEvent.click(pinButton("conv_c"));
+    const openPinMenu = (id: string) => {
+      const row = screen.getByRole("link", { name: id }).closest("li")!;
+      fireEvent.pointerDown(row.querySelector('[data-testid="conversation-actions"]')!, {
+        button: 0,
+      });
+      return screen.getByTestId("pin-conversation");
+    };
+    fireEvent.click(openPinMenu("conv_c"));
     await waitFor(() => expect(mocks.pinFn).toHaveBeenCalledOnce());
-    await waitFor(() => expect(pinButton("conv_d")).toHaveAttribute("aria-disabled", "true"));
-    fireEvent.click(pinButton("conv_d"));
+    const other = openPinMenu("conv_d");
+    expect(other).toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(other);
     expect(mocks.pinFn).toHaveBeenCalledOnce();
 
     await act(async () => {
       resolvePin();
     });
-    await waitFor(() => expect(pinButton("conv_d")).toHaveAttribute("aria-disabled", "false"));
+    await waitFor(() => expect(other).not.toHaveAttribute("aria-disabled", "true"));
   });
 });
 
@@ -203,8 +205,11 @@ describe("unpinning from a sidebar row", () => {
 
   it.each([
     [
-      "quick-pin button",
-      () => fireEvent.click(row("conv_a").querySelector('[data-testid="quick-pin-conversation"]')!),
+      "context-menu Unpin item",
+      () => {
+        fireEvent.contextMenu(row("conv_a").querySelector("a")!);
+        fireEvent.click(screen.getByRole("menuitem", { name: "Unpin" }));
+      },
     ],
     [
       "kebab Unpin item",

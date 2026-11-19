@@ -286,6 +286,7 @@ export interface BackgroundTaskInfo {
   terminal_id?: string | null;
   /** Stable vendor item or registered terminal identity; never a process ID. */
   resource_id?: string | null;
+  turn_id?: string | null;
   output_preview?: string | null;
   resource_url?: string | null;
   can_open?: boolean;

@@ -1,3 +1,4 @@
+import { HeaderActionButton } from "@/components/HeaderActionButton";
 // Modified for Triune.
 import {
   useTranscriptDisclosureState,
@@ -803,26 +804,17 @@ function WrapTextButton({
 }) {
   const label = `${wrap ? "Disable" : "Enable"} ${kind ? `${kind} ` : ""}word wrap`;
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Button
-          aria-label={label}
-          aria-pressed={wrap}
-          className={cn("size-6 text-muted-foreground", wrap && "text-foreground")}
-          onClick={onToggle}
-          size="icon-xs"
-          type="button"
-          variant="ghost"
-          componentId="diagnostics.tool.toggle_wrap"
-        >
-          <WrapTextIcon className="size-3.5" />
-        </Button>
-      </TooltipTrigger>
-      <TooltipContent>{label}</TooltipContent>
-    </Tooltip>
+    <HeaderActionButton
+      aria-label={label}
+      aria-pressed={wrap}
+      tooltip={label}
+      onClick={onToggle}
+      componentId="diagnostics.tool.toggle_wrap"
+    >
+      <WrapTextIcon />
+    </HeaderActionButton>
   );
 }
-
 /** Count the visible text prefix with at most one boundary-line binary search. */
 export function visibleCodeCharacterCount(code: HTMLElement, text: string, bottom: number): number {
   const lines = text.split("\n");

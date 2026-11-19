@@ -48,7 +48,7 @@ const { changedFilesFixture, agentFileDiffMock } = vi.hoisted(() => ({
 vi.mock("@/lib/clipboard", () => ({ copyText: vi.fn(() => Promise.resolve()) }));
 vi.mock("@/lib/notifications", async (original) => ({
   ...(await original<typeof NotificationsModule>()),
-  toast: { success: vi.fn(), error: vi.fn() },
+  toast: { info: vi.fn(), success: vi.fn(), error: vi.fn() },
 }));
 
 // ── Mock heavy child components ───────────────────────────────────────────────
@@ -540,6 +540,22 @@ it("loads CodeViewer only after opening and retains the dirty editor through A/B
   await userEvent.click(screen.getByRole("menuitem", { name: /Source/ }));
   expect(screen.getByRole("dialog")).toHaveTextContent("Unsaved changes");
   expect(codeViewerImports).toHaveBeenCalledTimes(1);
+});
+
+it("reloads clean file contents and keeps an unsaved draft intact", async () => {
+  useCommentsMock.mockReturnValue(makeCommentsQuery([]));
+  const refetch = vi.fn().mockResolvedValue({});
+  vi.mocked(useFileContent).mockReturnValue({
+    data: { content: "test", path: "notes.md" },
+    refetch,
+  } as unknown as ReturnType<typeof useFileContent>);
+  renderViewer({ open: true, path: "notes.md" });
+  const reload = await screen.findByRole("button", { name: "Reload file" });
+  fireEvent.click(reload);
+  expect(refetch).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByRole("button", { name: "make dirty" }));
+  fireEvent.click(reload);
+  expect(refetch).toHaveBeenCalledTimes(1);
 });
 
 describe("FileViewer comparison sources", () => {

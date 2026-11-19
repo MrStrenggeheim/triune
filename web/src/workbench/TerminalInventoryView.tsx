@@ -16,8 +16,7 @@ import { stripAnsi } from "@/lib/ansi";
 import { authenticatedFetch } from "@/lib/identity";
 import { LEVEL_OWNER } from "@/lib/permissionsApi";
 import { apiErrorFromResponse } from "@/lib/sessionsApi";
-import { ActivityNavigation } from "@/shell/ChatActivityPanel";
-import { useWorkbenchActions } from "@/workbench/WorkbenchContext";
+import { ActivityNavigation } from "@/components/ActivityNavigation";
 import { SubagentTaskStatus } from "@/components/blocks/SubagentTaskRow";
 import { shellResourceErrorMessage } from "@/lib/shellResourceError";
 import { shellState } from "@/lib/shellState";
@@ -117,7 +116,6 @@ export function TerminalInventoryView({
   linkRequestId?: string;
   onConsumeLinkIntent?: () => void;
 }) {
-  const workbench = useWorkbenchActions();
   const rowsRef = useRef<HTMLDivElement>(null);
   const consumedIntent = useRef<string | undefined>(undefined);
   // The legacy live-tab hook excludes exited/stopped rows; this cache retains them.
@@ -239,7 +237,6 @@ export function TerminalInventoryView({
                 description={
                   stripAnsi(terminal.output).trim().split(/\r?\n/).filter(Boolean).at(-1) ?? ""
                 }
-                onOpen={() => onOpenTerminal(terminal.id)}
                 onStop={
                   canCreate && terminal.state === "running" && terminal.connectivity === "connected"
                     ? () => stopTerminal(terminal)
@@ -250,24 +247,6 @@ export function TerminalInventoryView({
                     name={terminalDisplayLabel(terminal)}
                     shell
                     onOpen={() => onOpenTerminal(terminal.id)}
-                    onOrchestration={
-                      workbench && workspace.host_id
-                        ? () => {
-                            const request = {
-                              kind: "activity" as const,
-                              source: {
-                                kind: "host" as const,
-                                hostId: workspace.host_id!,
-                                workspace,
-                              },
-                              focusShellId: terminal.id,
-                              linkRequestId: crypto.randomUUID(),
-                              title: "Orchestration",
-                            };
-                            workbench.openView(request, { beside: true });
-                          }
-                        : undefined
-                    }
                   />
                 }
                 status={

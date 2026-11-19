@@ -12,6 +12,8 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import time
+from contextlib import ExitStack
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 
@@ -98,19 +100,48 @@ def prerequisites():
         raise ValueError("The authenticated local session inventory is unavailable.")
 
 
+def require_admission(expected):
+    from session_restart import request
+
+    if request("GET", "/api/version").get("release_admission") != expected:
+        raise ValueError("The managed runtime did not confirm published-release admission.")
+
+
 def idle():
-    from omnigent.db.enum_codecs import SESSION_LIVE_STATUS
+    from omnigent.db.enum_codecs import SCHEDULED_TASK_RUN_STATUS, SESSION_LIVE_STATUS
+    from omnigent.stores.conversation_store import PENDING_INPUT_RESPONSE_ID
 
     with sqlite3.connect((STATE / "chat.db").as_uri() + "?mode=ro", uri=True) as db:
+        db.execute("BEGIN")
         if db.execute(
-            "SELECT 1 FROM omnigent_conversation_metadata WHERE live_status NOT IN (?, ?) "
-            "OR pending_elicitation_count > 0 LIMIT 1",
+            "SELECT 1 FROM conversations c WHERE NOT EXISTS "
+            "(SELECT 1 FROM omnigent_conversation_metadata m "
+            "WHERE m.workspace_id = c.workspace_id AND m.id = c.id) LIMIT 1"
+        ).fetchone():
+            return False
+        if db.execute(
+            "SELECT 1 FROM omnigent_conversation_metadata WHERE live_status IS NULL "
+            "OR live_status NOT IN (?, ?) "
+            "OR pending_elicitation_count IS NULL OR pending_elicitation_count != 0 "
+            "OR runner_id IS NOT NULL OR host_id IS NOT NULL OR terminal_launch_args IS NOT NULL "
+            "OR workspace_transition IS NOT NULL LIMIT 1",
             (SESSION_LIVE_STATUS["idle"], SESSION_LIVE_STATUS["failed"]),
+        ).fetchone():
+            return False
+        if db.execute(
+            "SELECT 1 FROM conversation_items WHERE response_id = ? LIMIT 1",
+            (PENDING_INPUT_RESPONSE_ID,),
+        ).fetchone():
+            return False
+        if db.execute(
+            "SELECT 1 FROM scheduled_task_runs WHERE status IS NULL "
+            "OR status NOT IN (?, ?, ?) LIMIT 1",
+            tuple(SCHEDULED_TASK_RUN_STATUS[s] for s in ("succeeded", "failed", "skipped")),
         ).fetchone():
             return False
         for (payload,) in db.execute("SELECT payload FROM omnigent_message_queues"):
             queue = json.loads(payload)
-            if queue["messages"] or queue["inflight"]:
+            if queue["messages"] != [] or queue["inflight"] is not None:
                 return False
     return True
 
@@ -146,13 +177,17 @@ def check(*, retry=False):
         or not re.fullmatch(RELEASE, name)
     ):
         return state("unknown", "The active managed build identity is inconsistent.")
-    if unit_state() in {"active", "activating", "deactivating", "reloading"}:
+    active_state = unit_state()
+    if active_state in {"active", "activating", "deactivating", "reloading"}:
         return state("installing", "The managed release unit is running.", current=name)
+    if active_state not in {"inactive", "failed"}:
+        return state("unknown", "The release unit state is unavailable.", current=name)
     if os.path.lexists(manage.INSTALL / "pending"):
         return state(
             "unknown", "Another managed release is staged or awaiting recovery.", current=name
         )
     try:
+        require_admission("draining" if retry else "open")
         published = latest()
         if published is None:
             return state("unknown", "No published stable Triune release was found.", current=name)
@@ -165,7 +200,7 @@ def check(*, retry=False):
         if not idle():
             return state(
                 "available",
-                "Waiting for active sessions and queued messages to finish.",
+                "Waiting for work to finish or for harness inactivity to be confirmed.",
                 current=name,
                 published=published,
             )
@@ -190,15 +225,28 @@ def check(*, retry=False):
         )
     except (URLError, TimeoutError, ConnectionError):
         return state("offline", "Cannot reach the published release origin.", current=name)
-    except (ValueError, KeyError, TypeError, AttributeError, sqlite3.Error) as error:
+    except (
+        RuntimeError,
+        OSError,
+        ValueError,
+        KeyError,
+        TypeError,
+        AttributeError,
+        sqlite3.Error,
+    ) as error:
         return state(
             "unknown", f"Release or idle-state verification failed: {error}", current=name
         )
 
 
 def request_install(release, fingerprint):
-    with (manage.INSTALL / "published-request.lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+    # Keep the request fence until the independent systemd process owns the unit fence.
+    with ExitStack() as locks:
+        request_fd = os.open(manage.RELEASES, os.O_DIRECTORY)
+        locks.callback(os.close, request_fd)
+        fcntl.flock(request_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        unit_fd = os.open(manage.INSTALL, os.O_DIRECTORY)
+        locks.callback(os.close, unit_fd)
         result = check(retry=True)
         if (
             not result["can_install"]
@@ -208,6 +256,16 @@ def request_install(release, fingerprint):
             raise ValueError("The requested release is no longer eligible for installation.")
         write(REQUEST, {"release": release, "fingerprint": fingerprint, "automatic": False})
         command("/usr/bin/sudo", "-n", "--", str(CONTROL), stdin="start\n")
+        deadline = time.monotonic() + 10
+        while True:
+            try:
+                fcntl.flock(unit_fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            except BlockingIOError:
+                break
+            fcntl.flock(unit_fd, fcntl.LOCK_UN)
+            if time.monotonic() >= deadline:
+                raise ValueError("The release unit did not acquire admission.")
+            time.sleep(0.05)
         return {
             **result,
             "status": "installing",
@@ -247,7 +305,7 @@ def build_environment(candidate, published):
     (candidate / "runtime.txt").write_text(
         manage.run(uv, "pip", "freeze", "--python", python, capture=True) + "\n"
     )
-    manage.preview(candidate, published.version, published.commit)
+    manage.preview(candidate, published.version, published.commit, require_drain=True)
     manifest = {
         "release": published.release,
         "version": published.version,
@@ -260,7 +318,10 @@ def build_environment(candidate, published):
     (candidate / "release.json").write_text(json.dumps(manifest))
 
 
-def apply(lock):
+def apply(lock, admission_fd):
+    if not os.path.samestat(os.fstat(admission_fd), manage.INSTALL.stat()):
+        raise ValueError("The managed admission directory is required.")
+    fcntl.flock(admission_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     if not os.path.samestat(os.fstat(lock.fileno()), manage.LOCK.stat()):
         raise ValueError("The managed deployment lock is required.")
     fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -283,12 +344,14 @@ def apply(lock):
         if not idle():
             raise ValueError("Active sessions or queued messages prevent activation.")
 
+    require_admission("draining")
     require_idle()
     published.checksums()
     candidate = manage.RELEASES / published.release
     if candidate.is_symlink():
         raise ValueError("Invalid release directory.")
-    if not candidate.exists():
+    existing = candidate.exists()
+    if not existing:
         candidate.mkdir()
         try:
             build_environment(candidate, published)
@@ -307,6 +370,8 @@ def apply(lock):
         or manifest["artifacts"] != expected
     ):
         raise ValueError("Existing local candidate conflicts with the published release.")
+    if existing:
+        manage.preview(candidate, published.version, published.commit, require_drain=True)
     require_idle()
     manage.stage_locked(published.release)
     return published.release, manage.digest(candidate / "release.json")
@@ -325,7 +390,7 @@ def main():
         # Reserve stdout for the exact activated identity. Build output goes to the journal.
         with os.fdopen(os.dup(1), "w") as result:
             os.dup2(2, 1)
-            print(*apply(sys.stdin.buffer), file=result)
+            print(*apply(sys.stdin.buffer, 3), file=result)
     elif args.action == "check":
         print(json.dumps(check()))
     else:

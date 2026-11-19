@@ -1073,6 +1073,8 @@ it("keeps unchanged transcript lists resident across focus changes and scopes na
     expect(vi.mocked(useVirtualizer).mock.calls.length - renders).toBe(0);
     expect(vi.mocked(chatStore.ensureConversationStreamed).mock.calls.length).toBe(streamEnsures);
     expect(controllers.every((controller) => !controller.signal.aborted)).toBe(true);
+    // Visibility leases reconcile in a microtask after layout commits.
+    await act(async () => {});
     expect(ids.map((id) => conversationRegistry.isVisible(id))).toEqual([true, true]);
     expect(ids.map((id) => conversationRegistry.isFocused(id))).toEqual([true, false]);
     const scopes = ids.map((id) =>

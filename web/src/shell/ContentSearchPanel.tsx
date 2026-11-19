@@ -27,7 +27,7 @@ import { useCanEdit } from "@/hooks/usePermissions";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
-import { Spinner } from "@/components/ui/spinner";
+import { OperationStatus } from "@/components/ui/loading";
 import type { OpenFileOptions } from "./FileViewerContext";
 import { cn } from "@/lib/utils";
 
@@ -593,16 +593,8 @@ function ContentSearchPanelContent({
         className="min-h-0 flex-1 overflow-auto p-2"
         aria-busy={search.isFetching || busy}
       >
-        {search.isFetching && (
-          <div role="status" className="flex items-center gap-2 p-2 text-sm">
-            <Spinner /> Searching…
-          </div>
-        )}
-        {busy && (
-          <div role="status" className="flex items-center gap-2 p-2 text-sm">
-            <Spinner /> Preparing changes…
-          </div>
-        )}
+        {search.isFetching && <OperationStatus className="flex p-2">Searching…</OperationStatus>}
+        {busy && <OperationStatus className="flex p-2">Preparing changes…</OperationStatus>}
         {search.isError && !search.isFetching && (
           <p role="alert" className="p-2 text-sm text-destructive">
             {search.error.message}

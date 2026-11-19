@@ -18,11 +18,13 @@ function renderFrame(ui: React.ReactNode) {
 
 afterEach(() => {
   cleanup();
+  delete document.documentElement.dataset.listDensity;
   localStorage.clear();
   viewer.id = "artifact-viewer-a";
 });
 
 it("offers one portable download with kit, appearance and saved state", async () => {
+  document.documentElement.dataset.listDensity = "comfortable";
   const html = '<main data-triune-kit="1"><button>Local tool</button></main>';
   renderFrame(<ArtifactFrame html={html} identity="export-chat:file" title="Exported tool" />);
   const frame = (await screen.findByTitle("Exported tool")) as HTMLIFrameElement;
@@ -177,12 +179,21 @@ it("caps inline documents to their dock view and expands through the existing ro
     const container = frame.closest<HTMLElement>("[data-triune-artifact]")!;
     expect(container.style.maxHeight).toContain("240px");
     const scroller = screen.getByRole("region", { name: "Inline preview" });
-    scroller.scrollTop = 45;
+    const channel = JSON.parse(frame.srcdoc.match(/const channel = (".*?");/)![1]);
+    act(() =>
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          source: frame.contentWindow,
+          data: { type: "triune-artifact:resize", channel, height: 4096 },
+        }),
+      ),
+    );
+    expect(parseFloat(frame.style.height)).toBeLessThanOrEqual(240);
+    expect(scroller).toHaveClass("overflow-hidden");
     fireEvent.click(screen.getByRole("button", { name: "Expand artifact" }));
     expect(onOpenTab).toHaveBeenCalledOnce();
     expect(screen.getByTitle("Inline")).toBe(frame);
     expect(frame.srcdoc).toBe(document);
-    expect(scroller.scrollTop).toBe(45);
   } finally {
     geometry.mockRestore();
   }

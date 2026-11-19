@@ -212,7 +212,10 @@ it("owns one visible focus treatment on the answer row while the inner controls 
   );
   const input = screen.getByRole("textbox", { name: "Custom answer text" });
   const row = input.closest("label")!;
-  expect(row).toHaveClass("has-[:focus-visible]:ring-3", "has-[:focus-visible]:ring-ring/50");
+  expect(row).toHaveClass(
+    "has-[:focus-visible]:ring-control-focus",
+    "has-[:focus-visible]:ring-ring/12",
+  );
   expect(input).toHaveClass("outline-none");
   expect(input.className).not.toMatch(/focus-visible:ring/);
   expect(screen.getByTestId("ask-user-question-custom-toggle").className).not.toMatch(

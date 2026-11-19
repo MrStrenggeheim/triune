@@ -65,7 +65,7 @@ import {
   useState,
 } from "react";
 import { useViewerId } from "@/hooks/useViewerId";
-import { useIsMobileViewport } from "@/hooks/useIsMobileViewport";
+import "./settingsLayout.css";
 import {
   ArchiveRestoreIcon,
   AlertTriangleIcon,
@@ -155,7 +155,7 @@ import {
 import { conversationDisplayLabel } from "@/shell/sidebarNav";
 import { absoluteTime } from "@/lib/relativeTime";
 import { useNavigate } from "@/lib/routing";
-import { SettingsSectionChooser, useSettingsRoute } from "@/shell/settingsNav";
+import { SettingsDirectory, useSettingsRoute } from "@/shell/settingsNav";
 import { ImportSessionsPanel } from "@/shell/ImportSessionsPanel";
 import { isThemeMode, normalizeThemeMode, type ThemeMode } from "@/components/theme/themeMode";
 import { useResolvedThemeMode } from "@/components/theme/useResolvedThemeMode";
@@ -306,16 +306,10 @@ const SharingPage = lazy(() =>
   import("@/pages/SharingPage").then((m) => ({ default: m.SharingPage })),
 );
 
-/**
- * Settings content panel. The section nav lives in the sidebar card
- * (SettingsSidebarBody); this renders only the selected section into the
- * AppShell main outlet. The active section is read from the URL so the two
- * stay in sync. PageScroll handles clearing the shell's absolute header and
- * the iOS native bars, matching the Inbox / Members pages.
- */
 export function SettingsPage() {
   const info = useServerInfo();
-  const isMobile = useIsMobileViewport();
+  const directory = useRef<HTMLElement>(null);
+  const detail = useRef<HTMLDivElement>(null);
   // A login session exists (accounts OR OIDC) when the server advertises a
   // login_url; gates the Account section so SSO users get it too.
   const hasAuthSession = info !== "loading" && info.login_url !== null;
@@ -391,13 +385,38 @@ export function SettingsPage() {
     );
 
   return (
-    <div className="flex min-h-0 w-full flex-1 flex-col">
-      {isMobile && (
-        <div className="shrink-0 px-4 pt-[calc(var(--omnigent-header-height,0px)+var(--omnigent-inset-top,0px)+0.75rem)] pb-3 md:hidden">
-          <SettingsSectionChooser />
+    <div className="settings-layout">
+      <div className="settings-panes">
+        <SettingsDirectory
+          directoryRef={directory}
+          onNavClick={(event) => {
+            if (
+              event.button === 0 &&
+              !event.ctrlKey &&
+              !event.metaKey &&
+              !event.altKey &&
+              !event.shiftKey
+            )
+              requestAnimationFrame(() => detail.current?.focus());
+          }}
+        />
+        <div
+          ref={detail}
+          tabIndex={-1}
+          className="settings-detail"
+          role="region"
+          aria-label="Settings detail"
+        >
+          <Button
+            variant="ghost"
+            className="settings-directory-back"
+            onClick={() => directory.current?.focus()}
+          >
+            ↑ Settings sections
+          </Button>
+          {content}
         </div>
-      )}
-      {content}
+      </div>
     </div>
   );
 }
@@ -559,11 +578,12 @@ function TranscriptViewDefaultControl() {
       helper="Choose whether terminal-backed chats open in Chat or Terminal view. A view selected in a chat is remembered for the current tab."
     >
       <CardRadioGroup<TranscriptViewDefault>
+        layout="gallery"
         labelledBy={labelId}
         value={value}
         onSelect={choose}
         componentId="settings.appearance.transcript_view"
-        className="grid grid-cols-2 gap-3"
+        className="gap-3"
         cardClassName="items-center gap-2 p-4"
         items={transcriptViewCards.map((card) => ({
           value: card.value,
@@ -866,6 +886,7 @@ function ChatScrollControl() {
       helper="Choose how the transcript moves as an answer grows."
     >
       <CardRadioGroup
+        layout="gallery"
         labelledBy={id}
         value={value}
         onSelect={writeChatScrollPreference}
@@ -877,7 +898,6 @@ function ChatScrollControl() {
             body: "Follow answer when at bottom",
           },
         ]}
-        className="grid grid-cols-2 gap-2"
         cardClassName="min-w-0 p-2.5 text-left"
       />
     </ThemeSubsection>
@@ -894,6 +914,7 @@ function StartupDestinationControl() {
       helper="Choose what opens when you launch Triune."
     >
       <CardRadioGroup
+        layout="gallery"
         labelledBy={id}
         value={value}
         onSelect={writeStartupDestination}
@@ -901,7 +922,6 @@ function StartupDestinationControl() {
           { value: "continue" as const, testId: "startup-continue", body: "Continue last session" },
           { value: "new" as const, testId: "startup-new", body: "New chat" },
         ]}
-        className="grid grid-cols-2 gap-2"
         cardClassName="min-w-0 p-2.5 text-left"
       />
     </ThemeSubsection>
@@ -918,6 +938,7 @@ function FileOpeningControl() {
       helper="Choose where a new file tab opens."
     >
       <CardRadioGroup
+        layout="gallery"
         labelledBy={id}
         value={value}
         onSelect={writeFileOpening}
@@ -934,7 +955,7 @@ function FileOpeningControl() {
             </>
           ),
         }))}
-        className="grid grid-cols-2 gap-2 md:grid-cols-4"
+        className="md:grid-cols-4"
         cardClassName="min-w-0 gap-2 p-2.5 text-left"
       />
     </ThemeSubsection>

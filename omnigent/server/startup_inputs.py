@@ -27,6 +27,7 @@ from omnigent.entities.conversation import (
     StartupInputOptions,
 )
 from omnigent.errors import ErrorCode, OmnigentError
+from omnigent.release_admission import start_admitted_task
 from omnigent.runtime import pending_inputs
 from omnigent.server.host_registry import HostConnection, HostRegistry
 from omnigent.server.schemas import SessionEventInput, SessionStartupInput
@@ -403,10 +404,11 @@ class ManagedStartupInputs:
         """Keep durable acceptance independent of the HTTP sender and policy wait."""
         key = (current_workspace_id(), session_id)
         if not self._closing and self.dispatch is not None and key not in self._deliveries:
-            task = asyncio.create_task(
+            task = start_admitted_task(
                 self._deliver(app, session_id, item), name=f"startup-input-{session_id}"
             )
-            self._deliveries[key] = task
+            if task is not None:
+                self._deliveries[key] = task
 
     async def _deliver(
         self, app: Any, session_id: str, item: ConversationItem

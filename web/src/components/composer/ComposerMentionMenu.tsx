@@ -1,6 +1,6 @@
 import { ContentSkeleton } from "@/components/ui/loading";
 // Modified for Triune.
-import { useEffect, useState, useRef, type ComponentProps } from "react";
+import { useEffect, useId, useState, useRef, type ComponentProps } from "react";
 import { FileMentionMenu } from "@/components/FileMentionMenu";
 import { Button } from "@/components/ui/button";
 import { searchReferenceChats, type ChatLink, type ReferenceChat } from "@/lib/contextReferences";
@@ -22,6 +22,7 @@ export function ComposerMentionMenu({
   const generation = useRef(0);
   const [chatCursor, setChatCursor] = useState<string | null>(null);
   const [activeIndex, setActiveIndex] = useState(0);
+  const listId = useId();
   const composing = useRef(false);
   const [chats, setChats] = useState<ReferenceChat[]>([]);
   const [error, setError] = useState("");
@@ -55,20 +56,42 @@ export function ComposerMentionMenu({
   }, [query]);
   useEffect(() => setActiveIndex(0), [query, files.entries, chats]);
   useEffect(() => {
+    const menu = menuRef.current;
+    const field = document.activeElement;
+    if (
+      !(field instanceof HTMLElement) ||
+      !menu?.closest("[data-composer-card]")?.contains(field) ||
+      !field.matches("textarea,[data-inline-mention-editor]") ||
+      !document.getElementById(listId)
+    )
+      return;
+    field.setAttribute("aria-autocomplete", "list");
+    field.setAttribute("aria-controls", listId);
+    field.setAttribute("aria-activedescendant", `${listId}-${activeIndex}`);
+    return () => {
+      for (const attribute of ["aria-autocomplete", "aria-controls", "aria-activedescendant"])
+        field.removeAttribute(attribute);
+    };
+  }, [activeIndex, listId, chats, files.entries]);
+  useEffect(() => {
     const handle = (event: KeyboardEvent) => {
       const menu = menuRef.current;
       if (!menu || event.isComposing || event.keyCode === 229 || composing.current) return;
-      const composer = menu.closest("form") ?? menu.parentElement;
+      const composer =
+        menu.closest("[data-composer-card]") ?? menu.closest("form") ?? menu.parentElement;
       const inInput =
-        event.target instanceof HTMLTextAreaElement && composer?.contains(event.target);
+        event.target instanceof Element &&
+        (event.target instanceof HTMLTextAreaElement ||
+          event.target.hasAttribute("data-inline-mention-editor")) &&
+        composer?.contains(event.target);
       if (!inInput && !(event.target instanceof Node && menu.contains(event.target))) return;
       if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
       if (inInput && isMobile && event.key === "Enter") return;
       if (!["Enter", "Tab", "ArrowDown", "ArrowUp"].includes(event.key)) return;
       // Own the merged list before the composer's file-only controller or Send.
+      const rows = Array.from(menu.querySelectorAll<HTMLElement>('[role="option"]'));
       event.preventDefault();
       event.stopPropagation();
-      const rows = Array.from(menu.querySelectorAll<HTMLElement>('[role="option"]'));
       if (!rows.length) return;
       if (event.key === "ArrowDown" || event.key === "ArrowUp") {
         setActiveIndex(
@@ -108,6 +131,7 @@ export function ComposerMentionMenu({
       <div className="relative min-h-10 [&>div]:static [&>div>div]:w-full [&>div>div]:border-0 [&>div>div]:shadow-none">
         <FileMentionMenu
           {...files}
+          listId={listId}
           activeIndex={activeIndex}
           query={query}
           chats={chats}

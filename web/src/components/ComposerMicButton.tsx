@@ -1,6 +1,6 @@
 "use client";
 
-import { Button } from "@/components/ui/button";
+import { ComposerActionButton } from "@/components/composer/ComposerActionButton";
 import { showToast } from "@/components/ui/toast";
 import { useVoiceDictationHotkey } from "@/hooks/useVoiceDictationHotkey";
 import { useServerInfo } from "@/lib/CapabilitiesContext";
@@ -520,10 +520,8 @@ export const ComposerMicButton = ({
   const tooltip = error ?? (connecting ? "Starting voice input…" : a11yLabel);
 
   return (
-    <Button
+    <ComposerActionButton
       type="button"
-      size="icon"
-      variant="ghost"
       menuFeedback={isListening || connecting || error ? undefined : "composer"}
       disabled={disabled}
       onClick={toggle}
@@ -533,7 +531,6 @@ export const ComposerMicButton = ({
       data-server-dictation-available={serverAvailable}
       title={tooltip}
       className={cn(
-        "size-9 md:size-8",
         isListening &&
           "bg-muted/60 text-foreground hover:bg-destructive/10 hover:text-destructive focus-visible:bg-destructive/10 focus-visible:text-destructive",
         error && "text-destructive",
@@ -563,6 +560,6 @@ export const ComposerMicButton = ({
       ) : (
         <MicIcon className="size-4" data-icon-size="16" />
       )}
-    </Button>
+    </ComposerActionButton>
   );
 };

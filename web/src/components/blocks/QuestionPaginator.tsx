@@ -8,9 +8,11 @@ export function QuestionPaginator({
   index,
   count,
   onChange,
+  compactWhenNarrow = false,
 }: {
   index: number;
   count: number;
+  compactWhenNarrow?: boolean;
   onChange: (index: number) => void;
 }) {
   if (count <= 1) return null;
@@ -32,7 +34,8 @@ export function QuestionPaginator({
         aria-live="polite"
         data-testid="ask-user-question-progress"
       >
-        Question {index + 1} of {count}
+        {compactWhenNarrow ? <span className="question-page-prefix">Question </span> : "Question "}
+        {index + 1} of {count}
       </span>
       <Button
         type="button"

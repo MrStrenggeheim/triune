@@ -48,15 +48,7 @@ const DropdownMenuContent = React.forwardRef<
   React.ElementRef<typeof DropdownMenuPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Content>
 >(function DropdownMenuContent(
-  {
-    className,
-    align = "center",
-    side = "bottom",
-    sideOffset = 4,
-    collisionPadding,
-    style,
-    ...props
-  },
+  { className, align = "center", side = "top", sideOffset = 4, collisionPadding, style, ...props },
   ref,
 ) {
   const bounds = useAnchoredPopupBounds(collisionPadding, style, true, side, sideOffset, ref);

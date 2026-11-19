@@ -1,3 +1,4 @@
+import { HeaderActionButton } from "@/components/HeaderActionButton";
 import { type CSSProperties, useState } from "react";
 import { PlusIcon, SmilePlusIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -10,7 +11,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { TooltipButton, Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { TooltipButton } from "@/components/ui/tooltip";
 import { EmojiPicker } from "@/components/ProjectIconPicker";
 import { useCreateProject } from "@/hooks/useConversations";
 import { cn } from "@/lib/utils";
@@ -46,27 +47,21 @@ export function NewProjectButton({ onCreated }: { onCreated: (name: string) => v
 
   return (
     <>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-xs"
-            aria-label="New project"
-            data-testid="new-project"
-            className="text-muted-foreground"
-            onClick={(e) => {
-              e.stopPropagation();
-              setName("");
-              setIcon(undefined);
-              setOpen(true);
-            }}
-          >
-            <PlusIcon className="size-3.5" />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent side="bottom">New project</TooltipContent>
-      </Tooltip>
+      <HeaderActionButton
+        type="button"
+        variant="ghost"
+        aria-label="New project"
+        data-testid="new-project"
+        className="text-muted-foreground"
+        onClick={(e) => {
+          e.stopPropagation();
+          setName("");
+          setIcon(undefined);
+          setOpen(true);
+        }}
+      >
+        <PlusIcon className="size-3.5" />
+      </HeaderActionButton>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent
           onClick={(e) => e.stopPropagation()}

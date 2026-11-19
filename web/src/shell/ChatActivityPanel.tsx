@@ -10,16 +10,10 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import {
-  BotIcon,
-  EllipsisIcon,
-  MessageCircleIcon,
-  WorkflowIcon,
-  SquareTerminalIcon,
-} from "lucide-react";
+import { BotIcon, EllipsisIcon, SquareTerminalIcon } from "lucide-react";
 import type { BackgroundTaskInfo } from "@/lib/types";
 import { shellState } from "@/lib/shellState";
-import { Link } from "@/lib/routing";
+import { ActivityNavigation } from "@/components/ActivityNavigation";
 import { shellResourceErrorMessage } from "@/lib/shellResourceError";
 import { useNotificationNotice } from "@/hooks/useNotificationNotice";
 import { notify } from "@/lib/notifications";
@@ -44,6 +38,7 @@ import {
   sessionShellResourcesKey,
   sessionShellResourceKey,
   shellResourceMatchesActivity,
+  type SessionShellResource,
 } from "@/hooks/useSessionShellResources";
 import { useNativeChildCapabilities } from "@/hooks/useNativeChildCapabilities";
 import { authenticatedFetch } from "@/lib/identity";
@@ -63,10 +58,12 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
+export { ActivityNavigation } from "@/components/ActivityNavigation";
+
 const SubagentsGraphView = lazy(() =>
   import("./SubagentsGraphView").then((module) => ({ default: module.SubagentsGraphView })),
 );
-const NO_SHELL_RESOURCES: BackgroundTaskInfo[] = [];
+const NO_SHELL_RESOURCES: SessionShellResource[] = [];
 
 export interface ChatActivityShellSnapshot {
   id: string;
@@ -96,7 +93,7 @@ export interface ChatActivityPanelProps {
   linkRequestId?: string;
   sourceControl?: ReactNode;
   /** Server-projected native shell inventory, including settled records. */
-  shellResources?: BackgroundTaskInfo[];
+  shellResources?: SessionShellResource[];
   onOpenAgent?: (child: ChildSessionInfo) => void;
   onConsumeLinkIntent?: () => void;
   canStopAgent?: (child: ChildSessionInfo) => boolean;
@@ -267,12 +264,10 @@ function shellGroups(entries: ChatActivityEntry[]): ShellGroup[] {
             );
           });
     const terminal = matches.length === 1 ? matches[0] : undefined;
-    // Ambiguous and bare commands stay grouped without inventing a terminal launch.
+    // Without a proven terminal or turn, each execution retains its identity.
     const id = terminal
       ? JSON.stringify([terminal.session_id, terminal.id])
-      : entry.terminal_id
-        ? JSON.stringify(["commands", entry.session_id, entry.terminal_id])
-        : JSON.stringify(["commands", entry.session_id, entry.owner_kind, entry.owner_id]);
+      : JSON.stringify(["command", entry.session_id, entry.id]);
     let group = groups.get(id);
     if (!group) {
       group = { id, commands: [] };
@@ -419,7 +414,8 @@ function ChatActivityContent({
     true,
     active,
   );
-  const groups = shellGroups(activity.data?.data ?? []).sort(
+  const entries = activity.data?.data ?? [];
+  const groups = shellGroups(entries).sort(
     (left, right) =>
       groupLastActive(right) - groupLastActive(left) || left.id.localeCompare(right.id),
   );
@@ -467,7 +463,37 @@ function ChatActivityContent({
     onConsumeLinkIntent,
   ]);
 
-  const resourceShells = shellResources.map((task) => {
+  const turns = new Map<string, { turnId: string; commands: ChatActivityEntry[] }>();
+  function addCommand(turnId: string, command: ChatActivityEntry) {
+    const key = JSON.stringify([command.session_id, turnId]);
+    const turn = turns.get(key) ?? { turnId, commands: [] };
+    turn.commands.push(command);
+    turns.set(key, turn);
+  }
+
+  const resourceShells = shellResources.flatMap((task) => {
+    if (task.source !== "registered_terminal" && shellState({ status: task.status }).ended) {
+      const recorded = entries.find((entry) =>
+        shellResourceMatchesActivity(task, entry, conversationId),
+      );
+      const turnId = task.turn_id ?? recorded?.turn_id;
+      const id = shellFocusId(task);
+      if (turnId && id) {
+        addCommand(turnId, {
+          ...recorded,
+          kind: "command",
+          session_id: conversationId,
+          owner_kind: "chat",
+          owner_id: conversationId,
+          id,
+          state: "exited",
+          name: task.command ?? recorded?.name ?? task.description ?? "Command",
+          exit_status: task.exit_code ?? recorded?.exit_status,
+          output: task.output ?? recorded?.output ?? task.output_preview,
+        });
+        return [];
+      }
+    }
     const group =
       task.source === "registered_terminal"
         ? groups.find(
@@ -481,7 +507,7 @@ function ChatActivityContent({
           (left, right) => (timestamp(right.started_at) ?? 0) - (timestamp(left.started_at) ?? 0),
         )[0]
       : undefined;
-    return latest && !task.command ? { ...task, command: latest.name } : task;
+    return [latest && !task.command ? { ...task, command: latest.name } : task];
   });
   const legacyGroups = groups.flatMap((group) => {
     if (
@@ -491,10 +517,15 @@ function ChatActivityContent({
       )
     )
       return [];
-    const commands = group.commands.filter(
-      (entry) =>
-        !shellResources.some((task) => shellResourceMatchesActivity(task, entry, conversationId)),
-    );
+    const commands = group.commands.filter((entry) => {
+      if (shellResources.some((task) => shellResourceMatchesActivity(task, entry, conversationId)))
+        return false;
+      if (!entry.terminal_id && entry.state === "exited" && entry.turn_id) {
+        addCommand(entry.turn_id, entry);
+        return false;
+      }
+      return true;
+    });
     return group.terminal || commands.length ? [{ ...group, commands }] : [];
   });
 
@@ -546,6 +577,7 @@ function ChatActivityContent({
                         child={child}
                         conversationId={conversationId}
                         active={active}
+                        inOrchestration
                         selected={highlightedAgent === child.id}
                         onOpen={() => openAgent(child)}
                         canStopAgent={canStopAgent}
@@ -580,48 +612,87 @@ function ChatActivityContent({
                       <ShellResourceRow
                         task={task}
                         conversationId={conversationId}
+                        inOrchestration
                         selected={highlightedShell === shellFocusId(task)}
                         allowStop={active && !shells.error}
                         onOpenTerminal={onOpenTerminal}
                       />
                     </li>
                   ))}
+                  {Array.from(turns, ([key, turn]) => {
+                    const focused = turn.commands.some(
+                      (command) => command.id === highlightedShell,
+                    );
+                    return (
+                      <li key={key} data-shell-id={focused ? highlightedShell : undefined}>
+                        <ActivityRow
+                          entry
+                          icon={<SquareTerminalIcon aria-hidden />}
+                          title="Commands"
+                          entryLabel={`Commands · ${turn.turnId}`}
+                          selected={focused}
+                          description={`${turn.commands.length} · ${turn.turnId}`}
+                        >
+                          <ul className="space-y-2">
+                            {turn.commands.map((command) => (
+                              <li key={command.id}>
+                                <code className="whitespace-pre-wrap break-all">
+                                  {command.name}
+                                </code>
+                                <div className="text-xs text-muted-foreground">
+                                  {command.exit_status == null
+                                    ? "Exit code unavailable"
+                                    : `Exit code: ${command.exit_status}`}
+                                </div>
+                                <pre className="whitespace-pre-wrap break-all">
+                                  {command.output || "No captured output"}
+                                </pre>
+                              </li>
+                            ))}
+                          </ul>
+                        </ActivityRow>
+                      </li>
+                    );
+                  })}
                   {legacyGroups.map((group) => (
                     <ShellRow
                       key={group.id}
                       group={group}
-                      conversationId={conversationId}
                       selected={highlightedShell === (group.terminal?.id ?? group.commands[0]?.id)}
                       onOpenTerminal={onOpenTerminal}
                     />
                   ))}
                 </ul>
-                {!legacyGroups.length && !resourceShells.length && activity.isLoading && (
-                  <ContentSkeleton label="Loading shells…" rows={3} />
-                )}
-                {!legacyGroups.length && !resourceShells.length && !activity.isLoading && (
-                  <p role="status" className="p-2 text-sm text-muted-foreground">
-                    {activity.isLoading
-                      ? "Loading shells…"
-                      : shells.error || activity.error
-                        ? "Shell history is unavailable."
-                        : shells.data?.warning
-                          ? "No retained shells are available."
-                          : "No shells in loaded history."}
-                    {!!(shells.error || activity.error || shells.data?.warning) && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => {
-                          void activity.refetch();
-                          void shells.refetch();
-                        }}
-                      >
-                        Refresh shells
-                      </Button>
-                    )}
-                  </p>
-                )}
+                {!turns.size &&
+                  !legacyGroups.length &&
+                  !resourceShells.length &&
+                  activity.isLoading && <ContentSkeleton label="Loading shells…" rows={3} />}
+                {!turns.size &&
+                  !legacyGroups.length &&
+                  !resourceShells.length &&
+                  !activity.isLoading && (
+                    <p role="status" className="p-2 text-sm text-muted-foreground">
+                      {activity.isLoading
+                        ? "Loading shells…"
+                        : shells.error || activity.error
+                          ? "Shell history is unavailable."
+                          : shells.data?.warning
+                            ? "No retained shells are available."
+                            : "No shells in loaded history."}
+                      {!!(shells.error || activity.error || shells.data?.warning) && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            void activity.refetch();
+                            void shells.refetch();
+                          }}
+                        >
+                          Refresh shells
+                        </Button>
+                      )}
+                    </p>
+                  )}
               </section>
             )}
           </>
@@ -644,12 +715,14 @@ export function ShellResourceRow({
   task,
   conversationId,
   selected = false,
+  inOrchestration = false,
   allowStop = false,
   onOpenTerminal,
 }: {
   task: BackgroundTaskInfo;
   conversationId: string;
   selected?: boolean;
+  inOrchestration?: boolean;
   allowStop?: boolean;
   onOpenTerminal?: ChatActivityPanelProps["onOpenTerminal"];
 }) {
@@ -727,7 +800,6 @@ export function ShellResourceRow({
       title={name}
       description={task.output_preview ?? ""}
       selected={selected}
-      onOpen={open}
       onStop={stop}
       status={<SubagentTaskStatus status={outcome} label={outcome.label} />}
       actions={
@@ -736,84 +808,13 @@ export function ShellResourceRow({
           shell
           onOpen={open}
           onOrchestration={
-            orchestration && focusId ? () => orchestration({ focusShellId: focusId }) : undefined
+            !inOrchestration && orchestration && focusId
+              ? () => orchestration({ focusShellId: focusId })
+              : undefined
           }
         />
       }
     />
-  );
-}
-
-export function ActivityNavigation({
-  name,
-  shell = false,
-  onOpen,
-  onOrchestration,
-  openHref,
-  orchestrationHref,
-}: {
-  name: string;
-  shell?: boolean;
-  onOpen?: () => void;
-  onOrchestration?: () => void;
-  openHref?: string;
-  orchestrationHref?: string;
-}) {
-  function navigation(icon: ReactNode, label: string, href?: string, action?: () => void) {
-    if (!href && !action) return null;
-    return (
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon-xs"
-        aria-label={label}
-        asChild={!!href}
-        onClick={href ? undefined : action}
-      >
-        {href ? (
-          <Link
-            to={href}
-            onClick={(event) => {
-              if (
-                !action ||
-                event.button !== 0 ||
-                event.metaKey ||
-                event.ctrlKey ||
-                event.shiftKey ||
-                event.altKey
-              )
-                return;
-              event.preventDefault();
-              action();
-            }}
-          >
-            {icon}
-          </Link>
-        ) : (
-          icon
-        )}
-      </Button>
-    );
-  }
-  return (
-    <>
-      {navigation(
-        shell ? (
-          <SquareTerminalIcon aria-hidden="true" className="size-4" />
-        ) : (
-          <MessageCircleIcon aria-hidden="true" className="size-4" />
-        ),
-        `Open ${shell ? "shell" : "chat"} beside · ${name}`,
-        openHref,
-        onOpen,
-      )}
-      {navigation(
-        <WorkflowIcon aria-hidden="true" className="size-4" />,
-        `Show ${name} in Orchestration`,
-        orchestrationHref,
-        onOrchestration,
-      )}
-    </>
   );
 }
 
@@ -837,6 +838,7 @@ export function useResourceOrchestration(conversationId: string) {
 type AgentResourceRowProps = Pick<ChatActivityPanelProps, "canStopAgent" | "onStopAgent"> & {
   child: ChildSessionInfo;
   conversationId: string;
+  inOrchestration?: boolean;
   active?: boolean;
   selected?: boolean;
   onOpen: () => void;
@@ -869,6 +871,7 @@ function AgentResourceContent({
   selected,
   onStopAgent,
   canStop,
+  inOrchestration,
   href,
 }: AgentResourceRowProps & { canStop: boolean }) {
   const orchestration = useResourceOrchestration(conversationId);
@@ -891,8 +894,6 @@ function AgentResourceContent({
         ) : undefined
       }
       selected={selected}
-      href={href}
-      onOpen={onOpen}
       descriptionText={[display.task, display.preview].filter(Boolean).join(" · ")}
       description={
         <ConversationScopeContext.Provider value={child.id}>
@@ -928,8 +929,11 @@ function AgentResourceContent({
         <ActivityNavigation
           name={name}
           onOpen={onOpen}
+          openHref={href}
           onOrchestration={
-            orchestration ? () => orchestration({ focusAgentId: child.id }) : undefined
+            !inOrchestration && orchestration
+              ? () => orchestration({ focusAgentId: child.id })
+              : undefined
           }
         />
       }
@@ -939,16 +943,13 @@ function AgentResourceContent({
 
 function ShellRow({
   group,
-  conversationId,
   selected,
   onOpenTerminal,
 }: {
   group: ShellGroup;
-  conversationId: string;
   selected?: boolean;
   onOpenTerminal?: ChatActivityPanelProps["onOpenTerminal"];
 }) {
-  const orchestration = useResourceOrchestration(conversationId);
   const terminal = group.terminal;
   const entries = [...(terminal ? [terminal] : []), ...group.commands];
   const latest = [...group.commands].sort(
@@ -978,15 +979,11 @@ function ShellRow({
           (latest?.output ?? terminal?.output ?? "").trim().split(/\r?\n/).filter(Boolean).at(-1) ??
           ""
         }
-        onOpen={onOpenTerminal ? open : undefined}
         actions={
           <ActivityNavigation
-            name={groupName(group)}
+            name={latest?.name ?? groupName(group)}
             shell
             onOpen={onOpenTerminal ? open : undefined}
-            onOrchestration={
-              orchestration ? () => orchestration({ focusShellId: owner.id }) : undefined
-            }
           />
         }
         status={<SubagentTaskStatus status={outcome} label={outcome.label} />}

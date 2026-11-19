@@ -75,7 +75,7 @@ describe("SidebarServerPicker", () => {
     // localhost:8000 shows twice by design — once as the row's own label, once
     // as the menu's leading checked entry — and NOT a third time from recents,
     // which collapses into that entry.
-    expect(screen.getAllByText("localhost:8000")).toHaveLength(2);
+    expect(screen.getAllByText("localhost:8000")).toHaveLength(1);
     expect(
       screen.getByText("omnigents-3272836215725701.aws.databricksapps.com"),
     ).toBeInTheDocument();
@@ -115,7 +115,7 @@ describe("SidebarServerPicker", () => {
     await openMenu();
     expect(await screen.findByText("Provided by your organization")).toBeInTheDocument();
     // Once on the sidebar row and once as the checked managed menu item.
-    expect(screen.getAllByText("managed.example.com")).toHaveLength(2);
+    expect(screen.getAllByText("managed.example.com")).toHaveLength(1);
     expect(screen.queryByText("Recents")).toBeNull();
   });
 
@@ -182,7 +182,9 @@ describe("SidebarServerPicker", () => {
     });
     renderPicker();
     // The row names the picked host, not the workspace host sign-in moved to.
-    expect(await screen.findByText("accounts.example.com")).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: "Server: accounts.example.com. Switch server" }),
+    ).toHaveTextContent("Switch server");
     await openMenu();
     // Workspace 2 stays a switch target even though it shares the account origin.
     const items = screen.getAllByRole("menuitem");
@@ -244,9 +246,11 @@ describe("SidebarServerPicker", () => {
     });
     renderPicker();
     // The row names the current, managed server by its name.
-    expect(await screen.findByText("Engineering")).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: "Server: Engineering. Switch server" }),
+    ).toHaveTextContent("Switch server");
     await openMenu();
-    expect(screen.getAllByText("Engineering").length).toBeGreaterThan(1);
+    expect(screen.getAllByText("Engineering")).toHaveLength(1);
     // An unnamed one keeps its host.
     expect(screen.getByText("two.example.com")).toBeInTheDocument();
   });
@@ -271,7 +275,7 @@ describe("SidebarServerPicker", () => {
       "Server: Acme Engineering (omni.example). Switch server",
     );
     // The current entry and the other named recent both keep their host visible.
-    expect(screen.getAllByText("Acme Engineering").length).toBeGreaterThan(1);
+    expect(screen.getAllByText("Acme Engineering")).toHaveLength(1);
     expect(screen.getByText("omni.example")).toBeInTheDocument();
     expect(screen.getByText("Acme Staging")).toBeInTheDocument();
     expect(screen.getByText("staging.example")).toBeInTheDocument();
@@ -313,7 +317,9 @@ describe("SidebarServerPicker", () => {
       recentServers: [],
     });
     renderPicker();
-    expect(await screen.findByText("Engineering")).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: "Server: Engineering. Switch server" }),
+    ).toHaveTextContent("Switch server");
     expect(screen.queryByText("Self-chosen")).toBeNull();
   });
 

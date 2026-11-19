@@ -1,3 +1,4 @@
+import { HeaderActionButton } from "@/components/HeaderActionButton";
 import { OperationStatus } from "@/components/ui/loading";
 // Modified for Triune.
 import { usePanelEscapeClose } from "@/hooks/usePanelEscapeClose";
@@ -75,16 +76,15 @@ export function ContextSearchSidebar() {
       <div className="shrink-0 space-y-3 px-3 pt-2 pb-3">
         <div className="flex items-center justify-between text-ui font-medium">
           <span>Search</span>
-          <TooltipButton
+          <HeaderActionButton
             type="button"
             aria-label="Close search"
             tooltipShortcut={["Esc"]}
             onClick={search.close}
-            className="inline-flex size-8 items-center justify-center rounded-md hover:bg-accent"
           >
             <ArrowLeftIcon className="size-4 md:hidden" />
             <XIcon className="hidden size-4 md:block" />
-          </TooltipButton>
+          </HeaderActionButton>
         </div>
         <div className="relative">
           <SearchIcon

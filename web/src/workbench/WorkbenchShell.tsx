@@ -1,8 +1,6 @@
 import { ContentSkeleton } from "@/components/ui/loading";
 import { conversationDisplayLabel } from "@/shell/sidebarNav";
 // Modified for Triune.
-import { useSettingsNavigationVisibility } from "@/hooks/useSettingsNavigationVisibility";
-import { useSettingsRoute } from "@/shell/settingsNav";
 import { parseWorkbenchFileLink, resolveWorkbenchFileLink } from "./fileLinks";
 import { WorkbenchBindings } from "./WorkbenchBindings";
 import { createWorkbenchResourceShortcuts } from "./resourceShortcuts";
@@ -237,8 +235,6 @@ function WorkbenchShellBody({ accountId, active }: { accountId: string; active: 
   const location = useLocation();
   const queryClient = useQueryClient();
   const [sidebarOpen, setSidebarOpen] = useState(() => !isMobileViewport());
-  const { inSettings } = useSettingsRoute();
-  useSettingsNavigationVisibility({ inSettings, sidebarOpen, setSidebarOpen, enabled: active });
   const [sidebarDragProgress, setSidebarDragProgress] = useState<number | null>(null);
   const handleSidebarDrag = useCallback<Parameters<typeof onNativeSidebarDrag>[0]>(
     (phase, progress) => {

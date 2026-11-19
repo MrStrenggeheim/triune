@@ -1,7 +1,11 @@
-import { CheckIcon, Loader2Icon, MessagesSquareIcon, TerminalIcon } from "lucide-react";
+import { Loader2Icon, MessagesSquareIcon, TerminalIcon } from "lucide-react";
 import { commandAriaShortcut, useCommandShortcutKeys } from "@/components/KeyboardShortcut";
 import { SegmentedControl, SegmentedControlItem } from "@/components/ui/segmented-control";
-import { DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
+import {
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
 import { useIsMobileViewport } from "@/hooks/useIsMobileViewport";
 import { useViewModeToggleHotkey } from "@/hooks/useViewModeToggleHotkey";
 import { useTerminalFirst } from "./TerminalFirstContext";
@@ -101,28 +105,33 @@ export function ViewModeMenuItems() {
 
   return (
     <>
-      <DropdownMenuItem
-        className="gap-2.5 px-2.5 py-2 text-ui"
-        onSelect={() => setView("chat")}
-        data-testid="view-mode-menu-chat"
+      <DropdownMenuRadioGroup
+        value={view}
+        onValueChange={(value) => {
+          if (value === "chat" || value === "terminal") setView(value);
+        }}
       >
-        <MessagesSquareIcon className="size-4" />
-        Chat
-        {view === "chat" && <CheckIcon className="ml-auto size-4" />}
-      </DropdownMenuItem>
-      <DropdownMenuItem
-        className="gap-2.5 px-2.5 py-2 text-ui"
-        onSelect={() => setView("terminal")}
-        data-testid="view-mode-menu-terminal"
-      >
-        {terminalStartingUp ? (
-          <Loader2Icon className="size-4 animate-spin" aria-hidden />
-        ) : (
-          <TerminalIcon className="size-4" />
-        )}
-        {terminalLabel}
-        {view === "terminal" && <CheckIcon className="ml-auto size-4" />}
-      </DropdownMenuItem>
+        <DropdownMenuRadioItem
+          className="gap-2.5 px-2.5 py-2 text-ui"
+          value="chat"
+          data-testid="view-mode-menu-chat"
+        >
+          <MessagesSquareIcon className="size-4" />
+          Chat
+        </DropdownMenuRadioItem>
+        <DropdownMenuRadioItem
+          className="gap-2.5 px-2.5 py-2 text-ui"
+          value="terminal"
+          data-testid="view-mode-menu-terminal"
+        >
+          {terminalStartingUp ? (
+            <Loader2Icon className="size-4 animate-spin" aria-hidden />
+          ) : (
+            <TerminalIcon className="size-4" />
+          )}
+          {terminalLabel}
+        </DropdownMenuRadioItem>
+      </DropdownMenuRadioGroup>
       <DropdownMenuSeparator />
     </>
   );

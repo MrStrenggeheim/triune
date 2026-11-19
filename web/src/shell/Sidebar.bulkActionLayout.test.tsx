@@ -53,7 +53,7 @@ function mockConversations(conversations: Conversation[]) {
 function enterSelectionModeAndSelect() {
   selectSessionsFromMenu();
   // In selection mode the row link toggles selection instead of navigating.
-  fireEvent.click(screen.getByRole("link", { name: /My Session/ }));
+  fireEvent.click(screen.getByRole("checkbox", { name: /My Session/ }));
 }
 
 beforeEach(() => {
@@ -213,7 +213,7 @@ describe("bulk-action bar layout", () => {
     expect(screen.getByText("0 selected")).toBeInTheDocument();
 
     // Selecting a row enables all three actions.
-    fireEvent.click(screen.getByRole("link", { name: /My Session/ }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /My Session/ }));
     expect(archiveBtn).toBeEnabled();
     expect(deleteBtn).toBeEnabled();
     expect(moveBtn).toBeEnabled();
@@ -224,21 +224,16 @@ describe("bulk-action bar layout", () => {
     renderSidebar();
     selectSessionsFromMenu();
 
-    // The checkbox marker sits at the row's leading edge (left-2), not the
-    // trailing edge — so the title indents to make room after it.
-    const row = screen.getByRole("link", { name: /My Session/ });
-    const li = row.closest("li") as HTMLElement;
-    const marker = li.querySelector("svg.lucide-square")?.parentElement as HTMLElement;
-    expect(marker.className).toMatch(/\bleft-2\b/);
-    expect(marker.className).not.toMatch(/\bright-/);
-
+    const row = screen.getByRole("checkbox", { name: /My Session/ });
+    const li = row.closest("li")!;
+    expect(row.nextElementSibling).toHaveAttribute("data-slot", "checkbox-visual");
+    expect(row).not.toBeChecked();
     fireEvent.click(row);
     expect(screen.getByText("1 selected")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Exit selection mode" }));
 
     expect(screen.getByRole("button", { name: "Session list actions" })).toBeInTheDocument();
-    expect(li.querySelector("svg.lucide-square")).toBeNull();
-    expect(li.querySelector("svg.lucide-square-check")).toBeNull();
+    expect(li.querySelector("input[type=checkbox]")).toBeNull();
     expect(screen.queryByText(/\d+ selected/)).toBeNull();
   });
 });

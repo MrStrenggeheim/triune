@@ -379,20 +379,22 @@ describe("sub-agent task and reply", () => {
         </WorkbenchProvider>
       </MemoryRouter>,
     );
-    expect(screen.getByRole("link", { name: "Inspect Curie in Orchestration" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "Show Curie in Orchestration" })).toHaveAttribute(
       "href",
       "/c/parent?debug=1&panel=activity&focusAgentId=child",
     );
-    fireEvent.click(screen.getByRole("link", { name: "Inspect Curie in Orchestration" }));
+    fireEvent.click(screen.getByRole("link", { name: "Show Curie in Orchestration" }));
     expect(openView).toHaveBeenCalledWith(
       {
         kind: "activity",
+        conversationId: "parent",
+        linkRequestId: expect.any(String),
         source: { kind: "chat", conversationId: "parent" },
         focusAgentId: "child",
       },
       { beside: true },
     );
-    fireEvent.click(screen.getByRole("link", { name: "Open Curie chat beside" }));
+    fireEvent.click(screen.getByRole("link", { name: "Open chat beside · Curie" }));
     expect(openView).toHaveBeenLastCalledWith(
       { kind: "conversation", conversationId: "child", title: "Curie" },
       { beside: true },

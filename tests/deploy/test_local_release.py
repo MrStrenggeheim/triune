@@ -211,6 +211,7 @@ def deployment(tmp_path: Path):
     _executable(
         source / ".venv/bin/python",
         '#!/bin/bash\necho "manager $2" >> "$COMMAND_LOG"\n'
+        'if [[ "$2" == verify ]]; then echo "{\\"origin\\":\\"$MODE\\"}"; fi\n'
         '[[ "$2" != activation-complete || "$MODE" != receipt-fail ]]\n',
     )
     original = (_ROOT / "deploy/local/omnigent-stable-update").read_text()
@@ -228,6 +229,17 @@ def deployment(tmp_path: Path):
     ]
     _executable(script, "\n".join(lines) + "\n")
     return app, database, log, env, script
+
+
+def test_default_unit_refuses_an_interrupted_published_stage(deployment) -> None:
+    app, _database, log, env, script = deployment
+    result = subprocess.run(
+        [str(script)], env=dict(env, MODE="github-release"), capture_output=True, text=True
+    )
+    assert "requires fenced activation" in result.stderr
+    assert result.returncode != 0
+    assert (app / "current").resolve().name == "previous"
+    assert "systemctl stop" not in log.read_text()
 
 
 def test_busy_deployment_restarts_sessions_instead_of_deferring(deployment) -> None:

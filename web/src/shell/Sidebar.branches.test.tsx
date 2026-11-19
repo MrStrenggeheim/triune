@@ -120,7 +120,7 @@ function renderTree(initial = "root", owner?: string | null, onOpenSearch?: () =
     <QueryClientProvider client={client}>
       <SidebarDataProvider>
         <TooltipProvider>
-          <MemoryRouter>
+          <MemoryRouter initialEntries={[`/sessions/${initial}`]}>
             <Harness />
           </MemoryRouter>
         </TooltipProvider>
@@ -172,10 +172,8 @@ it("uses trailing parent-only count/disclosure without reserving a leading root 
   const expand = await screen.findByRole("button", { name: "Expand subchats of root" });
   const root = screen.getByRole("link", { name: "root" }).closest("li")!;
   expect(expand).toHaveTextContent("4");
-  expect(expand).toHaveClass(
-    "cursor-pointer",
-    "[@media((hover:hover)_and_(pointer:fine))]:group-data-[input=mouse]/sidebar:hover:bg-[color-mix(in_srgb,var(--foreground)_6%,var(--workspace-hover-on-chrome))]",
-  );
+  expect(expand).toHaveAttribute("data-menu-feedback", "off");
+  expect(expand).toHaveClass("w-auto", "gap-1");
   expect(
     expand.compareDocumentPosition(within(root).getByTestId("conversation-actions")) &
       Node.DOCUMENT_POSITION_FOLLOWING,
@@ -498,9 +496,7 @@ it("preloads hierarchy, expands four levels, and retains navigation, menus and e
     "aria-expanded",
     "true",
   );
-  expect(screen.getByRole("button", { name: "Collapse subchats of one" })).toHaveClass(
-    "transition-none",
-  );
+  expect(screen.getByRole("button", { name: "Collapse subchats of one" })).toHaveClass("w-auto");
 });
 it("never renders inaccessible ancestor titles and keeps an authorized orphan usable", async () => {
   const orphan = branch("authorized-orphan", "private-ancestor");

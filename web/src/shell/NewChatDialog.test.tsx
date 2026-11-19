@@ -9388,7 +9388,7 @@ describe("NewChatLandingScreen @-file-mention", () => {
       fireEvent.keyDown(input(), { key: "Enter" });
 
       expect((input() as HTMLTextAreaElement).value).toBe("@README");
-      expect(screen.queryByText("@README.md")).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("Remove README.md")).not.toBeInTheDocument();
       // The unified picker may search chat references; Enter must not create/send a session.
       expect(
         authenticatedFetchMock.mock.calls.every(
@@ -9426,9 +9426,12 @@ describe("NewChatLandingScreen @-file-mention", () => {
     fireEvent.click(screen.getByRole("button", { name: "omnigent/" }));
     fireEvent.click(screen.getByRole("button", { name: "cli.py" }));
     // The chip shows the workspace-relative path, not the host-absolute one.
-    expect(screen.getByText("@omnigent/cli.py")).toBeInTheDocument();
+    expect(screen.getByText("omnigent/cli.py")).toBeInTheDocument();
 
-    fireEvent.change(input(), { target: { value: "explain this", selectionStart: 12 } });
+    await Promise.resolve();
+    fireEvent.paste(input(), {
+      clipboardData: { files: [], items: [], getData: () => " explain this" },
+    });
     fireEvent.click(screen.getByTestId("new-chat-landing-submit"));
 
     // The contract: the first message carries "[Attached: <relpath>]" so the
@@ -9436,7 +9439,7 @@ describe("NewChatLandingScreen @-file-mention", () => {
     // the "/Users/corey/repo/…" absolute path the host filesystem returned.
     await waitFor(() => expect(setPendingInitialPromptMock).toHaveBeenCalled());
     const [, payload] = setPendingInitialPromptMock.mock.calls[0]!;
-    expect((payload as { text: string }).text).toBe("[Attached: omnigent/cli.py]\n\nexplain this");
+    expect((payload as { text: string }).text).toBe("[Attached: omnigent/cli.py] explain this");
   });
 
   it("suppresses stale parent rows while a drilled directory is still loading", async () => {
@@ -9472,7 +9475,7 @@ describe("NewChatLandingScreen @-file-mention", () => {
 
     // Drilled-but-loading: the loading row shows and the parent's stale rows are
     // gone (without the isPlaceholderData guard they'd appear as the child's).
-    expect(screen.getByText("Loading…")).toBeInTheDocument();
+    expect(screen.getByLabelText("Loading files…")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "README.md" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "omnigent/" })).not.toBeInTheDocument();
   });
@@ -9490,23 +9493,26 @@ describe("NewChatLandingScreen @-file-mention", () => {
     fireEvent.change(input(), { target: { value: "@", selectionStart: 1 } });
     // The folder row's "+" button attaches the directory as a unit.
     fireEvent.click(screen.getByLabelText("Attach whole folder omnigent"));
-    expect(screen.getByText("@omnigent/")).toBeInTheDocument();
+    expect(screen.getByText("omnigent/")).toBeInTheDocument();
 
-    fireEvent.change(input(), { target: { value: "review it", selectionStart: 9 } });
+    await Promise.resolve();
+    fireEvent.paste(input(), {
+      clipboardData: { files: [], items: [], getData: () => " review it" },
+    });
     fireEvent.click(screen.getByTestId("new-chat-landing-submit"));
 
     await waitFor(() => expect(setPendingInitialPromptMock).toHaveBeenCalled());
     const [, payload] = setPendingInitialPromptMock.mock.calls[0]!;
-    expect((payload as { text: string }).text).toBe("[Attached: omnigent/]\n\nreview it");
+    expect((payload as { text: string }).text).toBe("[Attached: omnigent/] review it");
   });
 
   it("removes a tagged chip when its ✕ is clicked", () => {
     renderLanding();
     fireEvent.change(input(), { target: { value: "@", selectionStart: 1 } });
     fireEvent.click(screen.getByRole("button", { name: "README.md" }));
-    expect(screen.getByText("@README.md")).toBeInTheDocument();
+    expect(screen.getByText("README.md")).toBeInTheDocument();
     fireEvent.click(screen.getByLabelText("Remove README.md"));
-    expect(screen.queryByText("@README.md")).not.toBeInTheDocument();
+    expect(screen.queryByText("README.md")).not.toBeInTheDocument();
   });
 });
 

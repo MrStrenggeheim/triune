@@ -64,7 +64,15 @@ def recorded_commands(items: list[ConversationItem], session_id: str) -> list[Ac
         if item.type != "function_call" or not isinstance(item.data, FunctionCallData):
             continue
         call = item.data
-        if call.name not in {"shell", "exec_command", "shell_command", "commandExecution", "Bash"}:
+        name = call.name.removeprefix("mcp__omnigent__")
+        if name not in {
+            "shell",
+            "exec_command",
+            "shell_command",
+            "commandExecution",
+            "sys_os_shell",
+            "Bash",
+        }:
             continue
         try:
             arguments = json.loads(call.arguments)
@@ -95,7 +103,9 @@ def recorded_commands(items: list[ConversationItem], session_id: str) -> list[Ac
                 result = json.loads(output)
             except ValueError:
                 result = None
-            if call.name in {"exec_command", "shell_command"}:
+            if name == "Bash" and isinstance(result, dict) and result.get("backgroundTaskId"):
+                complete = False
+            if name in {"exec_command", "shell_command", "sys_os_shell"}:
                 if isinstance(result, dict):
                     code = result.get(
                         "exit_code", result.get("exit_status", result.get("exitCode"))
@@ -118,6 +128,7 @@ def recorded_commands(items: list[ConversationItem], session_id: str) -> list[Ac
                 native_id = getattr(native_output, "source_call_id", None)
                 if isinstance(native_id, str) and native_id:
                     source_call_id = native_id
+                    complete = False
             elif call.agent == "claude-native-ui":
                 source = "claude_native"
         digest = hashlib.sha256(
@@ -127,6 +138,7 @@ def recorded_commands(items: list[ConversationItem], session_id: str) -> list[Ac
             id=f"command_{digest}",
             kind="command",
             session_id=session_id,
+            turn_id=item.response_id if item.response_id != "codex_native" else None,
             name=redact_log_text(command)[:300],
             state="exited" if complete else "unknown",
             started_at=item.created_at,

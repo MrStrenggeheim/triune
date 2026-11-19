@@ -1,3 +1,4 @@
+import { Progress } from "@/components/ui/progress";
 // Triune additions: PolyForm Noncommercial 1.0.0; see LICENSING.md.
 // Required Notice: Copyright 2026 MrStrenggeheim. Triune (https://github.com/MrStrenggeheim/triune).
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -26,17 +27,11 @@ function observationDate(seconds: number | null): Date | null {
 function UsageBar({ percent, label }: { percent: number; label: string }) {
   const value = Math.min(percent, 100);
   return (
-    <div
-      role="progressbar"
+    <Progress
+      value={value}
       aria-label={label}
-      aria-valuemin={0}
-      aria-valuemax={100}
-      aria-valuenow={value}
-      aria-valuetext={`${Math.round(percent)}% used`}
-      className="h-[3px] w-full overflow-hidden bg-muted"
-    >
-      <span className="block h-full bg-primary" style={{ width: `${value}%` }} />
-    </div>
+      getValueLabel={() => `${Math.round(percent)}% used`}
+    />
   );
 }
 

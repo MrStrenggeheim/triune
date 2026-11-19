@@ -71,7 +71,7 @@ function openKebab(row: HTMLElement) {
 function enterSelectionModeAndSelect(titles: string[]) {
   selectSessionsFromMenu();
   for (const title of titles) {
-    fireEvent.click(screen.getByRole("link", { name: new RegExp(title) }));
+    fireEvent.click(screen.getByRole("checkbox", { name: new RegExp(title) }));
   }
 }
 
@@ -149,7 +149,7 @@ describe("bulk-selection read-state action", () => {
     selectSessionsFromMenu();
 
     expect(screen.getByTestId("bulk-mark-unread")).toBeDisabled();
-    fireEvent.click(screen.getByRole("link", { name: /Session Alpha/ }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /Session Alpha/ }));
     expect(screen.getByTestId("bulk-mark-unread")).toBeEnabled();
   });
 });

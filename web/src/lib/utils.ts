@@ -5,6 +5,7 @@ const twMerge = extendTailwindMerge({
   extend: {
     classGroups: {
       "font-size": ["text-ui"],
+      "ring-w": ["ring-control-focus"],
     },
   },
 });

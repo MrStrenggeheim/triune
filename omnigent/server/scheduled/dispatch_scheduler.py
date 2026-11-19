@@ -13,6 +13,7 @@ from typing import Literal
 from omnigent.db.db_models import workspace_scope
 from omnigent.debug_logging import debug_event
 from omnigent.entities import ScheduledTask, ScheduledTaskRun
+from omnigent.release_admission import defer_during_update
 from omnigent.server.scheduled.config import DEFAULT_SCHEDULER_CONFIG, ScheduledTaskSchedulerConfig
 from omnigent.server.scheduled.rrule import RRuleSearchError, RRuleValidationError, validate_rrule
 from omnigent.server.scheduled.schedule import (
@@ -397,6 +398,7 @@ class PersistentTaskScheduler:
                 )
             await asyncio.sleep(self._poll_seconds)
 
+    @defer_during_update()
     async def poll_once(self) -> None:
         """Serialize due-task polling and start recovery in the background if idle."""
         async with self._poll_lock:
@@ -477,6 +479,7 @@ class PersistentTaskScheduler:
                 extra=debug_event("scheduled_task_operation_failed", operation="cleanup"),
             )
 
+    @defer_during_update()
     async def _reconcile(self) -> None:
         # Keep the cutoff fixed until the scan wraps so new expirations cannot
         # indefinitely postpone retrying uncertain outcomes from earlier pages.
@@ -659,6 +662,7 @@ class PersistentTaskScheduler:
                         ),
                     )
 
+    @defer_during_update()
     async def _execute(self, task: ScheduledTask, run: ScheduledTaskRun) -> None:
         lease = StartupLease(
             self._store,

@@ -1,3 +1,4 @@
+import { OperationFailure } from "@/components/ui/operation-failure";
 import { OperationStatus, ContentSkeleton } from "@/components/ui/loading";
 // Modified for Triune.
 
@@ -208,15 +209,9 @@ function TerminalResourceContent({
             )}
           </div>
         )}
-        {stopError && (
-          <p role="alert" className="px-3 py-2 text-sm text-destructive">
-            Could not stop the shell: {stopError}
-          </p>
-        )}
+        {stopError && <OperationFailure>Could not stop the shell: {stopError}</OperationFailure>}
         {target && detail.error && (
-          <p role="alert" className="px-3 py-2 text-sm text-destructive">
-            Could not refresh shell state: {detail.error.message}
-          </p>
+          <OperationFailure>Could not refresh shell state: {detail.error.message}</OperationFailure>
         )}
         <div className="min-h-0 flex-1 overflow-auto">
           {manual && !target ? (

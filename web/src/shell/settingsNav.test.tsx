@@ -9,7 +9,7 @@
 import { cleanup, fireEvent, render, renderHook, screen } from "@testing-library/react";
 import { SettingsIcon } from "lucide-react";
 import type { ReactNode } from "react";
-import { MemoryRouter, useNavigate } from "react-router-dom";
+import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
@@ -47,20 +47,14 @@ vi.mock("@/hooks/useIsAdmin", () => ({
   useIsAdmin: () => mocks.isAdmin,
 }));
 
-import {
-  SettingsSidebarBody,
-  SettingsSectionChooser,
-  settingsNavGroups,
-  useSettingsRoute,
-  useTrackSettingsReturn,
-} from "./settingsNav";
+import { SettingsDirectory, settingsNavGroups, useSettingsRoute } from "./settingsNav";
 
 function renderBody(opts: { onNavClick?: () => void } = {}) {
   const onNavClick = opts.onNavClick ?? vi.fn();
   render(
     <TooltipProvider>
       <MemoryRouter initialEntries={["/settings/appearance"]}>
-        <SettingsSidebarBody onNavClick={onNavClick} />
+        <SettingsDirectory onNavClick={onNavClick} />
       </MemoryRouter>
     </TooltipProvider>,
   );
@@ -77,54 +71,6 @@ beforeEach(() => {
   mocks.enabledConnections = [];
 });
 afterEach(cleanup);
-
-describe("SettingsSectionChooser", () => {
-  function renderChooser() {
-    render(
-      <TooltipProvider>
-        <MemoryRouter initialEntries={["/settings/general"]}>
-          <SettingsSectionChooser />
-        </MemoryRouter>
-      </TooltipProvider>,
-    );
-    fireEvent.keyDown(screen.getByRole("combobox", { name: "Settings section" }), {
-      key: "ArrowDown",
-    });
-  }
-
-  it("navigates without a sidebar and hides desktop-only and unauthorized sections", async () => {
-    renderChooser();
-    expect(screen.queryByRole("option", { name: "Keyboard shortcuts" })).toBeNull();
-    expect(screen.queryByRole("option", { name: "Account" })).toBeNull();
-    expect(screen.queryByRole("option", { name: "Members" })).toBeNull();
-    expect(screen.queryByRole("option", { name: "Custom agents" })).toBeNull();
-    expect(screen.queryByRole("option", { name: "MCP" })).toBeNull();
-    fireEvent.click(await screen.findByRole("option", { name: "Appearance" }));
-    expect(screen.getByRole("combobox", { name: "Settings section" })).toHaveTextContent(
-      "Appearance",
-    );
-  });
-
-  it("reuses account, admin, feature and connection permissions", () => {
-    mocks.loginUrl = "/auth/login";
-    mocks.isAdmin = true;
-    mocks.customAgentsEnabled = true;
-    mocks.agentInstall = true;
-    mocks.enabledConnections = ["mcp", "github"];
-    renderChooser();
-    for (const label of [
-      "Account",
-      "Members",
-      "Policies",
-      "Sharing",
-      "Custom agents",
-      "MCP",
-      "Sandbox Integrations",
-    ]) {
-      expect(screen.getByRole("option", { name: label })).toBeInTheDocument();
-    }
-  });
-});
 
 describe("settingsNavGroups", () => {
   it("starts general preferences with a General gear entry", () => {
@@ -234,7 +180,7 @@ describe("settingsNavGroups", () => {
   });
 });
 
-describe("SettingsSidebarBody", () => {
+describe("SettingsDirectory", () => {
   it.each([
     { connections: [], mcp: false, integrations: false },
     { connections: ["mcp"], mcp: true, integrations: false },
@@ -252,29 +198,21 @@ describe("SettingsSidebarBody", () => {
     },
   );
 
-  it("renders Back as a standard sidebar row without a collapse button", () => {
-    renderBody();
-    const backLink = screen.getByRole("link", { name: "Back" });
-    expect(backLink.querySelector("svg")).toHaveClass("ui-icon");
-    expect(backLink).toHaveClass(
-      "sidebar-row",
-      "h-auto",
-      "min-h-0",
-      "gap-2",
-      "px-2",
-      "py-1.5",
-      "md:py-1",
-      "rounded-[var(--radius-otto-button)]",
-      "w-full",
-      "justify-start",
-      "border-0",
-      "font-normal",
-    );
-    expect(screen.queryByRole("button", { name: "Close sidebar" })).not.toBeInTheDocument();
-    expect(screen.getByTestId("settings-nav-appearance").querySelector("svg")).toHaveClass(
-      "ui-icon",
-    );
-    expect(screen.getByTestId("settings-nav-general")).toHaveAttribute("href", "/settings/general");
+  it("offers the native server switcher under Admin to a non-admin user", async () => {
+    vi.stubGlobal("omnigentNative", {
+      kind: "ios",
+      getServerPicker: async () => ({ currentOrigin: "https://local.example", recentServers: [] }),
+      switchServer: vi.fn(),
+      openServerSetup: vi.fn(),
+    });
+    try {
+      renderBody();
+      const admin = screen.getByRole("region", { name: "Admin" });
+      expect(admin).toContainElement(await screen.findByText("Switch server"));
+      expect(screen.queryByTestId("settings-nav-members")).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("uses the shared row geometry with normal-weight labels", () => {
@@ -293,13 +231,12 @@ describe("SettingsSidebarBody", () => {
       "font-normal",
       "bg-[var(--sidebar-active)]",
       "text-[var(--sidebar-active-foreground)]",
-      "dark:hover:bg-[var(--sidebar-active)]",
-      "dark:hover:text-[var(--sidebar-active-foreground)]",
+      "dark:hover:bg-[var(--sidebar-active)]!",
+      "dark:hover:text-[var(--sidebar-active-foreground)]!",
     );
     expect(selected).not.toHaveClass("bg-muted", "font-semibold");
     expect(unselected).toHaveClass("sidebar-row", "font-normal");
-    expect(selected.querySelector("svg")).toHaveClass("text-[var(--sidebar-active-foreground)]");
-    expect(selected.querySelector("svg")).not.toHaveClass("text-muted-foreground");
+    expect(selected.querySelector("svg")).toHaveClass("text-muted-foreground");
     expect(unselected.querySelector("svg")).toHaveClass("text-muted-foreground");
   });
 
@@ -309,7 +246,7 @@ describe("SettingsSidebarBody", () => {
     expect(heading).toHaveClass("h-7", "text-sm", "font-normal");
     expect(heading).not.toHaveClass("font-medium", "uppercase");
     expect(heading.parentElement?.parentElement).toHaveClass("gap-4");
-    expect(heading.nextElementSibling).toHaveClass("mt-1", "gap-px");
+    expect(heading.nextElementSibling).toHaveClass("mt-1", "density-list");
   });
 
   it("marks the Keyboard shortcuts nav item hidden on mobile via max-md:hidden", () => {
@@ -318,47 +255,6 @@ describe("SettingsSidebarBody", () => {
     // Sibling items stay visible on every viewport.
     expect(screen.getByTestId("settings-nav-appearance").className).not.toContain("max-md:hidden");
     expect(screen.getByTestId("settings-nav-archived").className).not.toContain("max-md:hidden");
-  });
-
-  it("does NOT close the sidebar when Back is tapped", () => {
-    // No onNavClick on the back link: on mobile the overlay stays open so the
-    // sidebar swaps back to the conversation list rather than closing onto the
-    // homepage behind it.
-    const { onNavClick } = renderBody();
-    fireEvent.click(screen.getByRole("link", { name: "Back" }));
-    expect(onNavClick).not.toHaveBeenCalled();
-  });
-
-  it("Back returns to the conversation the user came from", () => {
-    // Simulate the real flow: the sidebar (which stays mounted) tracks the
-    // pre-settings location, then the user enters /settings. Back must point at
-    // the conversation, not the home page.
-    function Harness() {
-      useTrackSettingsReturn();
-      const navigate = useNavigate();
-      const { inSettings } = useSettingsRoute();
-      return (
-        <>
-          <button type="button" onClick={() => navigate("/settings")}>
-            go-settings
-          </button>
-          {inSettings && <SettingsSidebarBody onNavClick={vi.fn()} />}
-        </>
-      );
-    }
-    render(
-      <TooltipProvider>
-        <MemoryRouter initialEntries={["/c/conv_123?file=foo.ts"]}>
-          <Harness />
-        </MemoryRouter>
-      </TooltipProvider>,
-    );
-    fireEvent.click(screen.getByText("go-settings"));
-    expect(screen.getByRole("link", { name: "Back" })).toHaveAttribute(
-      "href",
-      "/c/conv_123?file=foo.ts",
-    );
-    expect(screen.getByTestId("settings-nav-general")).toHaveAttribute("aria-current", "page");
   });
 
   it("DOES close the sidebar when a section is tapped (drills into content)", () => {

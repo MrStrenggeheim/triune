@@ -122,7 +122,10 @@ beforeEach(() => {
 afterEach(cleanup);
 
 function rowFor(id: string): HTMLElement {
-  return screen.getByRole("link", { name: new RegExp(id) });
+  return (
+    screen.queryByRole("checkbox", { name: new RegExp(id) }) ??
+    screen.getByRole("link", { name: new RegExp(id) })
+  );
 }
 
 describe("sidebar active highlight in selection mode", () => {

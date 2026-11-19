@@ -174,33 +174,36 @@ it("places shell counts before plan without a dropdown chevron", () => {
   expect(shelf.querySelector(".lucide-chevron-down")).toBeNull();
 });
 
-it("keeps one shelf across two 200 ms shells and starts its exit after the last grace", () => {
+it("cancels a short shell opening and delays both automatic transitions by 900 ms", () => {
   vi.useFakeTimers();
   try {
     openShelf();
     const count = (backgroundTaskCount: number) =>
       act(() => useChatStore.setState({ backgroundTaskCount }));
     const tick = (ms: number) => act(() => vi.advanceTimersByTime(ms));
-    count(1);
-    const shelf = screen.getByTestId("composer-attention-shelf");
-    expect(screen.getByRole("button", { name: /still running/ })).toBeVisible();
-    tick(200);
-    count(0);
-    expect(screen.queryByText(/still running/)).toBeNull();
-    expect(within(shelf).getByRole("status")).toHaveTextContent("No current activity");
-    tick(650);
+    const button = () => screen.queryByRole("button", { name: /still running/ });
     count(1);
     tick(200);
-    expect(screen.getByTestId("composer-attention-shelf")).toBe(shelf);
-    expect(screen.getByRole("button", { name: /still running/ })).toBeVisible();
+    expect(button()).toBeNull();
     count(0);
-    tick(749);
-    const presence = shelf.closest(".composer-shelf-presence");
-    expect(presence).toHaveAttribute("data-shown", "true");
+    tick(900);
+    expect(screen.queryByTestId("composer-attention-shelf")).toBeNull();
+    count(1);
+    tick(899);
+    expect(button()).toBeNull();
     tick(1);
-    expect(presence).toHaveAttribute("data-exiting", "true");
-    tick(200);
-    expect(shelf).not.toBeInTheDocument();
+    expect(button()).toBeVisible();
+    const shelf = screen.getByTestId("composer-attention-shelf");
+    count(0);
+    tick(899);
+    count(1);
+    tick(1);
+    expect(button()).toBeVisible();
+    count(0);
+    tick(899);
+    expect(shelf.closest(".composer-shelf-presence")).not.toHaveAttribute("data-exiting");
+    tick(1);
+    expect(shelf.closest(".composer-shelf-presence")).toHaveAttribute("data-exiting", "true");
   } finally {
     vi.useRealTimers();
   }
@@ -211,6 +214,9 @@ it("lets manual hide interrupt grace and clears both grace and hide on chat chan
   try {
     useChatStore.setState({ backgroundTaskCount: 1 });
     mountShelfWithMenu();
+    openActivityMenu();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Show activity shelf" }));
+    expect(screen.getByRole("button", { name: /still running/ })).toBeVisible();
     act(() => useChatStore.setState({ backgroundTaskCount: 0 }));
     openActivityMenu();
     fireEvent.click(screen.getByRole("menuitem", { name: "Hide activity shelf" }));
@@ -220,6 +226,7 @@ it("lets manual hide interrupt grace and clears both grace and hide on chat chan
     act(() => useChatStore.setState({ conversationId: "chat-b" }));
     expect(screen.queryByTestId("composer-attention-shelf")).toBeNull();
     act(() => useChatStore.setState({ backgroundTaskCount: 1 }));
+    act(() => vi.advanceTimersByTime(900));
     expect(screen.getByRole("button", { name: /still running/ })).toBeVisible();
     act(() => useChatStore.setState({ backgroundTaskCount: 0 }));
     expect(screen.getByText("No current activity")).toBeVisible();

@@ -91,11 +91,10 @@ describe("mobile sidebar drawer", () => {
     );
   });
 
-  it("drops the peek strip and the scrim on the settings page, where Back is the only exit", () => {
+  it("keeps the drawer dismissible on settings routes", () => {
     renderSidebar({ route: "/settings" });
-
-    expect(screen.queryByTestId("sidebar-scrim")).toBeNull();
-    expect(screen.getByRole("complementary", { name: "Conversations" })).not.toHaveClass(
+    expect(screen.getByTestId("sidebar-scrim")).toBeInTheDocument();
+    expect(screen.getByRole("complementary", { name: "Conversations" })).toHaveClass(
       "max-md:right-14",
     );
   });

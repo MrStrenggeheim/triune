@@ -6,10 +6,16 @@ import {
 } from "@/lib/contextReferenceDrafts";
 import { referenceIdentity, type ComposerReference } from "@/lib/contextReferences";
 import { toast } from "@/lib/notifications";
-import { type KeyboardEvent, type RefObject, useRef, useState, useEffect } from "react";
+import {
+  type KeyboardEvent,
+  type RefObject,
+  useRef,
+  useState,
+  useEffect,
+  useLayoutEffect,
+} from "react";
 
-import type { MentionItem, MentionState } from "@/lib/composerMentions";
-import { composerAttachmentKey } from "@/store/chatStore";
+import { inlineMentionToken, type MentionItem, type MentionState } from "@/lib/composerMentions";
 import type { WorkspaceFile } from "@/hooks/useWorkspaceChangedFiles";
 
 /**
@@ -124,19 +130,28 @@ export function useMentionBrowser(params: MentionBrowserParams): MentionBrowser 
       });
     });
   }, [referenceKey]);
-  const attachReference = (reference: ComposerReference) => {
+  const pendingCaret = useRef<{ value: string; offset: number } | null>(null);
+  useLayoutEffect(() => {
+    const pending = pendingCaret.current;
+    const input = textareaRef.current;
+    if (!input || !pending || pending.value !== text) return;
+    pendingCaret.current = null;
+    input.setSelectionRange(pending.offset, pending.offset);
+    if (input.dispatchEvent(new Event("composer-caret", { cancelable: true }))) input.focus();
+  }, [text, textareaRef]);
+
+  const insertMention = (item: MentionItem) => {
     if (!mention) return;
-    setText(text.slice(0, mention.start) + text.slice(mention.end));
-    setMentionedItems((current) => [
-      ...current.filter(
-        (item) =>
-          !item.reference || referenceIdentity(item.reference) !== referenceIdentity(reference),
-      ),
-      { path: reference.source_title, isDir: false, reference },
-    ]);
+    const token = inlineMentionToken(item);
+    const caret = mention.start + token.length;
+    const next = text.slice(0, mention.start) + token + text.slice(mention.end);
+    pendingCaret.current = { value: next, offset: caret };
+    setText(next);
     setMention(null);
-    queueMicrotask(() => textareaRef.current?.focus());
+    setMentionIndex(-1);
   };
+  const attachReference = (reference: ComposerReference) =>
+    insertMention({ path: reference.source_title, isDir: false, reference });
 
   // Pre-select the top row whenever the listing changes — lets Enter/Tab act on
   // the top hit without arrowing first. Keyed by type+path so a file and a dir
@@ -152,40 +167,17 @@ export function useMentionBrowser(params: MentionBrowserParams): MentionBrowser 
     setMentionIndex(mentionEntryKeys.length > 0 ? 0 : -1);
   }
 
-  const attachMention = (path: string, isDir: boolean) => {
-    if (!mention) return;
-    setText(text.slice(0, mention.start) + text.slice(mention.end));
-    // Dedup on the shared attachment key (path + dir-ness + range) — the same
-    // identity the store queue uses — so the "@" menu and the file viewer's
-    // "Attach to agent" never disagree about what counts as a duplicate.
-    const item: MentionItem = { path, isDir };
-    const itemKey = composerAttachmentKey(item);
-    setMentionedItems((prev) =>
-      prev.some((it) => composerAttachmentKey(it) === itemKey) ? prev : [...prev, item],
-    );
-    setMention(null);
-    setMentionIndex(-1);
-    // Restore the caret to where the token was so typing continues naturally.
-    queueMicrotask(() => {
-      const ta = textareaRef.current;
-      if (ta) ta.setSelectionRange(mention.start, mention.start);
-      ta?.focus();
-    });
-  };
+  const attachMention = (path: string, isDir: boolean) => insertMention({ path, isDir });
 
   const openMentionDir = (path: string) => {
     if (!mention) return;
     const inserted = `@${path}/`;
     const next = text.slice(0, mention.start) + inserted + text.slice(mention.end);
-    setText(next);
     const caret = mention.start + inserted.length;
+    pendingCaret.current = { value: next, offset: caret };
+    setText(next);
     setMention({ query: `${path}/`, start: mention.start, end: caret });
     setMentionIndex(0);
-    queueMicrotask(() => {
-      const ta = textareaRef.current;
-      if (ta) ta.setSelectionRange(caret, caret);
-      ta?.focus();
-    });
   };
 
   const removeMentionedItem = (index: number) =>

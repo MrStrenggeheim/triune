@@ -4,6 +4,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import {
   CHAT_SCROLL_KEY,
   observeChatScroll,
+  isTranscriptAtBottom,
   readChatScrollPreference,
   writeChatScrollPreference,
 } from "@/lib/chatScrollPreference";
@@ -13,10 +14,10 @@ afterEach(() => {
   localStorage.removeItem(CHAT_SCROLL_KEY);
 });
 
-it("defaults to stay and restores an explicit choice", () => {
-  expect(readChatScrollPreference()).toBe("stay");
-  writeChatScrollPreference("follow");
+it("defaults to follow and restores an explicit choice", () => {
   expect(readChatScrollPreference()).toBe("follow");
+  writeChatScrollPreference("stay");
+  expect(readChatScrollPreference()).toBe("stay");
 });
 
 it.each([false, true])(
@@ -41,11 +42,11 @@ it.each([false, true])(
       scrollHeight: { get: () => contentHeight },
       clientHeight: { get: () => viewportHeight },
     });
-    viewport.scrollTop = 600;
+    viewport.scrollTop = 580;
     const stop = observeChatScroll(viewport, document.createElement("div"), follow);
     contentHeight += 200;
     resize();
-    expect(viewport.scrollTop).toBe(follow ? 800 : 600);
+    expect(viewport.scrollTop).toBe(follow ? 800 : 580);
     viewport.scrollTop = 700;
     viewportHeight -= 40;
     resize();
@@ -58,3 +59,19 @@ it.each([false, true])(
     expect(disconnect).toHaveBeenCalledOnce();
   },
 );
+
+it.each([
+  [20, true],
+  [24, true],
+  [24.5, false],
+  [100, false],
+] as const)("measures the visible edge at %s CSS px", (gap, expected) => {
+  const viewport = document.createElement("div");
+  expect(isTranscriptAtBottom(viewport)).toBe(false);
+  Object.defineProperties(viewport, {
+    clientHeight: { value: 400 },
+    scrollHeight: { value: 1000 },
+  });
+  viewport.scrollTop = 600 - gap;
+  expect(isTranscriptAtBottom(viewport)).toBe(expected);
+});

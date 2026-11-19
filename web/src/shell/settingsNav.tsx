@@ -1,13 +1,4 @@
 // Modified for Triune.
-// Shared model + sidebar body for the Settings surface.
-//
-// Entering /settings doesn't swap out the conversations sidebar card — the
-// SAME card just renders this nav in place of the conversation list, while
-// the main area shows the selected section's content (SettingsPage). Section
-// selection is URL-driven (/settings/<section>) so the nav (in the sidebar)
-// and the content (in the outlet) stay in sync without shared state.
-
-import { useEffect } from "react";
 import {
   ArchiveIcon,
   BlocksIcon,
@@ -25,24 +16,15 @@ import {
   UsersIcon,
   VectorSquareIcon,
 } from "lucide-react";
-import { Link, useLocation, useNavigate } from "@/lib/routing";
-import { Button } from "@/components/ui/button";
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectLabel,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Link, useLocation } from "@/lib/routing";
+
 import { useServerInfo } from "@/lib/CapabilitiesContext";
 import { customAgentsSettingsEnabled, isSingleUserMode } from "@/lib/capabilities";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
-import { isElectronShell } from "@/lib/nativeBridge";
+import { isElectronShell, supportsNativeServerPicker } from "@/lib/nativeBridge";
 import { cn } from "@/lib/utils";
-import { SidebarSettingsFooter } from "./SidebarHeaderActions";
-import { SIDEBAR_ROW } from "./sidebarStyles";
+import { SidebarNavAction } from "./SidebarHeaderActions";
+import { SidebarServerPicker } from "./SidebarServerPicker";
 
 export type SettingsSectionId =
   | "appearance"
@@ -213,27 +195,6 @@ export function useSettingsRoute(): {
   return harness ? { inSettings: true, section, harness } : { inSettings: true, section };
 }
 
-// Last location the user was on before entering /settings — path + search so
-// the conversation (and its ?file= etc.) is preserved. The Back row
-// returns here instead of the home page. Module-scoped: the sidebar stays
-// mounted across the settings transition, so the value captured on the last
-// non-settings render survives into settings.
-let settingsReturnPath = "/";
-
-/**
- * Record the current location as the settings return target whenever the user
- * is NOT in settings. Call from a component that stays mounted across the
- * transition into /settings (the Sidebar) so the last conversation is captured
- * before the swap.
- */
-export function useTrackSettingsReturn(): void {
-  const { pathname, search } = useLocation();
-  const { inSettings } = useSettingsRoute();
-  useEffect(() => {
-    if (!inSettings) settingsReturnPath = `${pathname}${search}`;
-  }, [inSettings, pathname, search]);
-}
-
 /** Use the same capabilities and identity gates for both navigation surfaces. */
 function useSettingsNavGroups(): SettingsNavGroup[] {
   const info = useServerInfo();
@@ -257,94 +218,59 @@ function useSettingsNavGroups(): SettingsNavGroup[] {
   );
 }
 
-/** Mobile navigation remains in the content header even with the drawer closed. */
-export function SettingsSectionChooser() {
-  const groups = useSettingsNavGroups();
-  const { section } = useSettingsRoute();
-  const navigate = useNavigate();
-  return (
-    <Select value={section} onValueChange={(value) => navigate(`/settings/${value}`)}>
-      <SelectTrigger aria-label="Settings section" className="h-11 w-full">
-        <SelectValue placeholder="Choose a section" />
-      </SelectTrigger>
-      <SelectContent position="popper">
-        {groups.map((group) => (
-          <SelectGroup key={group.title}>
-            <SelectLabel>{group.title}</SelectLabel>
-            {group.items
-              .filter((item) => !item.hideOnMobile)
-              .map((item) => (
-                <SelectItem key={item.id} value={item.id}>
-                  <item.icon className="size-4" aria-hidden />
-                  {item.label}
-                </SelectItem>
-              ))}
-          </SelectGroup>
-        ))}
-      </SelectContent>
-    </Select>
-  );
-}
-
-/** Settings sections in the shell's existing sidebar. */
-export function SettingsSidebarBody({
+export function SettingsDirectory({
   onNavClick,
+  directoryRef,
 }: {
-  onNavClick: (e: React.MouseEvent<HTMLAnchorElement>) => void;
+  onNavClick: React.MouseEventHandler<HTMLAnchorElement>;
+  directoryRef?: React.Ref<HTMLElement>;
 }) {
   const { section } = useSettingsRoute();
   const groups = useSettingsNavGroups();
-
+  const serverPicker = supportsNativeServerPicker();
+  if (serverPicker && !groups.some((group) => group.title === "Admin")) {
+    groups.splice(
+      groups.findIndex((group) => group.title === "Archived"),
+      0,
+      { title: "Admin", items: [] },
+    );
+  }
   return (
-    <>
-      <nav className="settings-sidebar-header flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-3 py-3">
-        {groups.map((group) => (
-          <div key={group.title} className="flex flex-col">
-            <h2 className="flex h-7 items-center px-2 text-sm font-normal text-muted-foreground">
-              {group.title}
-            </h2>
-            <div className="mt-1 flex flex-col gap-px">
-              {group.items.map((item) => {
-                const Icon = item.icon;
-                const selected = section === item.id;
-                return (
-                  <Button
-                    key={item.id}
-                    asChild
-                    variant="ghost"
-                    className={cn(
-                      SIDEBAR_ROW,
-                      "w-full justify-start border-0 font-normal",
-                      selected &&
-                        "bg-[var(--sidebar-active)] text-[var(--sidebar-active-foreground)] hover:bg-[var(--sidebar-active)] hover:text-[var(--sidebar-active-foreground)] dark:hover:bg-[var(--sidebar-active)] dark:hover:text-[var(--sidebar-active-foreground)]",
-                      item.hideOnMobile && "max-md:hidden",
-                    )}
-                  >
-                    <Link
-                      to={`/settings/${item.id}`}
-                      onClick={onNavClick}
-                      data-testid={`settings-nav-${item.id}`}
-                      componentId={`settings.nav.${item.id}`}
-                      aria-current={selected ? "page" : undefined}
-                    >
-                      <Icon
-                        className={cn(
-                          "ui-icon",
-                          selected
-                            ? "text-[var(--sidebar-active-foreground)]"
-                            : "text-muted-foreground",
-                        )}
-                      />
-                      {item.label}
-                    </Link>
-                  </Button>
-                );
-              })}
-            </div>
+    <nav
+      ref={directoryRef}
+      tabIndex={-1}
+      aria-label="Settings sections"
+      className="settings-directory group/sidebar flex flex-col gap-4 p-3"
+      data-input="mouse"
+    >
+      {groups.map((group) => (
+        <section key={group.title} aria-label={group.title}>
+          <h2 className="flex h-7 items-center px-2 text-sm font-normal text-muted-foreground">
+            {group.title}
+          </h2>
+          <div className="mt-1 density-list flex flex-col">
+            {group.items.map(({ id, label, icon: Icon, hideOnMobile }) => (
+              <SidebarNavAction
+                key={id}
+                active={id === section}
+                className={cn(hideOnMobile && "max-md:hidden")}
+              >
+                <Link
+                  to={`/settings/${id}`}
+                  onClick={onNavClick}
+                  aria-current={section === id ? "page" : undefined}
+                  componentId={`settings.nav.${id}`}
+                  data-testid={`settings-nav-${id}`}
+                >
+                  <Icon aria-hidden className="ui-icon text-muted-foreground" />
+                  {label}
+                </Link>
+              </SidebarNavAction>
+            ))}
+            {group.title === "Admin" && serverPicker && <SidebarServerPicker />}
           </div>
-        ))}
-      </nav>
-      <SidebarSettingsFooter returnPath={settingsReturnPath} />
-    </>
+        </section>
+      ))}
+    </nav>
   );
 }

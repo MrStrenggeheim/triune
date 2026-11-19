@@ -243,8 +243,8 @@ def test_growing_answer_respects_saved_reading_position(
     chat = chat_session_contract
     chat.set_items(transcript_items(20))
     page.add_init_script("localStorage.setItem('omnigent:always-steer', 'true')")
-    if follow:
-        page.add_init_script("localStorage.setItem('triune:chat-scroll', 'follow')")
+    if not follow:
+        page.add_init_script("localStorage.setItem('triune:chat-scroll', 'stay')")
     page.goto(chat.url)
     chat.wait_for_stream()
     log = page.get_by_role("log").first
@@ -259,7 +259,7 @@ def test_growing_answer_respects_saved_reading_position(
         composer.fill(text)
         top = scroller.evaluate(
             """(el, away) => {
-            el.scrollTop = el.scrollHeight - el.clientHeight - (away ? 160 : 0);
+            el.scrollTop = el.scrollHeight - el.clientHeight - (away ? 100 : 20);
             return el.scrollTop;
         }""",
             bool(index),
@@ -276,6 +276,30 @@ def test_growing_answer_respects_saved_reading_position(
             assert scroller.evaluate("e => e.scrollHeight - e.clientHeight - e.scrollTop") <= 2
         else:
             assert scroller.evaluate("e => e.scrollTop") == pytest.approx(top, abs=2)
+        # Consume the sent message first so the reply follows it, as in a real turn.
+        stable_id = chat.event_posts[-1]["body"]["data"]["stable_id"]
+        chat.emit(
+            {
+                "event": "session.input.consumed",
+                "data": {
+                    "type": "session.input.consumed",
+                    "data": {
+                        "item_id": stable_id,
+                        "type": "message",
+                        "cleared_pending_id": f"reading-pending-{index}",
+                        "data": {
+                            "role": "user",
+                            "user_authored": True,
+                            "content": [{"type": "input_text", "text": text}],
+                        },
+                    },
+                },
+            }
+        )
+        expect(page.locator(f'[data-message-id="{stable_id}"]')).to_have_count(1)
+        scroller.evaluate(
+            "async () => { for (let i=0; i<8; i++) await new Promise(requestAnimationFrame) }"
+        )
         top = scroller.evaluate("e => e.scrollTop")
         before = scroller.evaluate("el => el.scrollHeight")
         item = message_item(

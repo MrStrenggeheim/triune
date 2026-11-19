@@ -1,12 +1,7 @@
 // Modified for Triune.
 import type { ComponentProps, ReactNode } from "react";
-import {
-  ArrowLeftIcon,
-  PanelLeftOpenIcon,
-  PanelRightOpenIcon,
-  SearchIcon,
-  SettingsIcon,
-} from "lucide-react";
+import { SearchIcon, SettingsIcon } from "lucide-react";
+import { SidebarToggle } from "./SidebarToggle";
 
 import { ALT_KEY, ARIA_MOD_KEY, MOD_KEY } from "@/components/KeyboardShortcut";
 import { Button } from "@/components/ui/button";
@@ -71,34 +66,21 @@ export function SidebarHeaderActions({
       {showToggle && (
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-xs"
+            <SidebarToggle
+              side="left"
+              expanded={expanded}
               aria-label={expanded ? "Close sidebar" : "Open sidebar"}
               aria-keyshortcuts={`${ARIA_MOD_KEY}+Alt+[`}
+              tooltip={false}
+              className="max-md:hidden"
               onClick={onToggle}
               onPointerEnter={onTogglePointerEnter}
               onPointerDown={onTogglePointerDown}
               onPointerLeave={onTogglePointerLeave}
-              // Mobile drops the toggle entirely: there the sidebar is a drawer
-              // that leaves a strip of the chat visible, and tapping that strip
-              // is how you get back — a collapse icon would be a second, worse
-              // way to do the same thing.
-              className="size-6 text-muted-foreground hover:text-foreground max-md:hidden"
-            >
-              {/* panel-right-open reads as "push the panel away" while the sidebar
-            is open; panel-left-open as "bring it back" once it is collapsed or
-            merely peeking. */}
-              {expanded ? (
-                <PanelRightOpenIcon className="size-4" />
-              ) : (
-                <PanelLeftOpenIcon className="size-4" />
-              )}
-            </Button>
+            />
           </TooltipTrigger>
-          <TooltipContent side="bottom" shortcut={SIDEBAR_TOGGLE_KEYS}>
-            <span>{expanded ? "Collapse sidebar" : "Open sidebar"}</span>
+          <TooltipContent side="top" shortcut={SIDEBAR_TOGGLE_KEYS}>
+            {expanded ? "Collapse sidebar" : "Open sidebar"}
           </TooltipContent>
         </Tooltip>
       )}
@@ -209,7 +191,11 @@ export function SidebarActionGroup({
 }) {
   return (
     <div
-      className={cn("flex shrink-0 flex-col gap-px px-2", footer ? "pb-2" : "pt-2", className)}
+      className={cn(
+        "density-list flex shrink-0 flex-col px-2",
+        footer ? "pb-2" : "pt-2",
+        className,
+      )}
       data-testid={testId}
     >
       {children}
@@ -224,8 +210,9 @@ export function SidebarNavAction({
 }: ComponentProps<typeof Button> & { active?: boolean }) {
   return (
     <Button
-      {...props}
+      tooltip={false}
       asChild
+      {...props}
       variant="ghost"
       className={cn(
         SIDEBAR_ROW,
@@ -238,30 +225,29 @@ export function SidebarNavAction({
   );
 }
 
-export function SidebarSettingsFooter({ returnPath }: { returnPath?: string }) {
+export function SidebarSettingsFooter({
+  to,
+  active,
+  onClick,
+}: {
+  to: string;
+  active: boolean;
+  onClick: React.MouseEventHandler<HTMLAnchorElement>;
+}) {
   return (
-    <SidebarActionGroup
-      footer
-      testId="sidebar-settings-footer"
-      className={returnPath !== undefined ? "max-md:mr-14" : undefined}
-    >
-      <SidebarNavAction>
-        {returnPath !== undefined ? (
-          <Link to={returnPath} componentId="settings.back_to_omnigent">
-            <ArrowLeftIcon className="ui-icon text-muted-foreground" />
-            Back
-          </Link>
-        ) : (
-          <Link
-            to="/settings"
-            componentId="sidebar.settings"
-            aria-keyshortcuts={`${ARIA_MOD_KEY}+Alt+,`}
-            data-testid="settings-button"
-          >
-            <SettingsIcon className="ui-icon text-muted-foreground" />
-            Settings
-          </Link>
-        )}
+    <SidebarActionGroup footer testId="sidebar-settings-footer">
+      <SidebarNavAction active={active}>
+        <Link
+          to={to}
+          onClick={onClick}
+          aria-current={active ? "page" : undefined}
+          componentId="sidebar.settings"
+          aria-keyshortcuts={`${ARIA_MOD_KEY}+Alt+,`}
+          data-testid="settings-button"
+        >
+          <SettingsIcon className="ui-icon text-muted-foreground" />
+          Settings
+        </Link>
       </SidebarNavAction>
     </SidebarActionGroup>
   );

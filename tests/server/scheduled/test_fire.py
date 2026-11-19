@@ -988,8 +988,16 @@ async def test_connected_host_dispatch_uses_resolved_local_owner(
 
 
 @pytest.mark.asyncio
-async def test_on_fire_returns_before_launch_completes() -> None:
-    """on_fire must return fast so the scheduler timer re-arms immediately."""
+async def test_on_fire_returns_before_launch_completes(tmp_path, monkeypatch) -> None:
+    """The recurring timer re-arms while the launch still holds update admission."""
+    import os
+
+    fcntl = pytest.importorskip("fcntl")
+    from omnigent import release_admission
+
+    (tmp_path / "releases").mkdir()
+    monkeypatch.setattr(release_admission, "MANAGED", True)
+    monkeypatch.setattr(release_admission, "INSTALL", tmp_path)
     store = FakeScheduledTaskStore(rows={"task_1": _task()})
     release = asyncio.Event()
     launch_finished = asyncio.Event()
@@ -1007,9 +1015,19 @@ async def test_on_fire_returns_before_launch_completes() -> None:
     # rather than awaited inline. Asserting on the launch's state instead of
     # a wall-clock budget keeps this honest on a loaded CI runner.
     assert not launch_finished.is_set()
-    release.set()
-    await _drain()
-    assert launch_finished.is_set()
+    fd = os.open(tmp_path, os.O_DIRECTORY)
+    try:
+        with pytest.raises(BlockingIOError):
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        release.set()
+        await _drain()
+        assert launch_finished.is_set()
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        assert await on_fire(0, "task_1")  # retain the recurring timer
+        assert not fire_mod._PENDING_FIRES
+        assert len(store.runs) == 1
+    finally:
+        os.close(fd)
 
 
 @pytest.mark.asyncio

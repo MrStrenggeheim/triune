@@ -22,6 +22,8 @@ import {
   removeReplyQuote,
   moveReplyQuote,
   serializeReplyDraft,
+  snapshotReplyDraft,
+  restoreReplyDraft,
   type ReplyDraft,
 } from "@/lib/replyDraft";
 import { registerQuoteDestination, appendDraftText } from "@/lib/quoteDraftDestinations";
@@ -33,6 +35,23 @@ import {
 } from "@/components/composer/ChatComposer";
 import { ComposerMicButton } from "@/components/ComposerMicButton";
 import { ReplyDraftBlocks } from "@/components/composer/ReplyDraftBlocks";
+import { useMentionBrowser } from "@/hooks/useMentionBrowser";
+import { useWorkspaceAllFiles, useWorkspaceDirectory } from "@/hooks/useWorkspaceChangedFiles";
+import { useIsMobileViewport } from "@/hooks/useIsMobileViewport";
+import {
+  deliverInlineMentions,
+  detectMentionAt,
+  parseMentionToken,
+  rankMentionEntries,
+  type MentionState,
+} from "@/lib/composerMentions";
+import {
+  getSessionDraft,
+  retireSessionDraft,
+  setSessionDraft,
+  useSessionDraftsHydrated,
+} from "@/lib/sessionDrafts";
+import { ComposerMentionMenu } from "@/components/composer/ComposerMentionMenu";
 import { SelectionPopup } from "./SelectionPopup";
 import { WorkingIndicator } from "./chatBubbleParts";
 import { ConversationScopeContext, EmbeddedChatContext } from "./conversationScope";
@@ -89,6 +108,7 @@ export function SideChatPane({
       <PendingSubchat
         key={childId}
         childId={childId}
+        selectionParentId={selectionParentId}
         starting={starting}
         readOnly={readOnly}
         onStart={onStart}
@@ -141,18 +161,17 @@ function SeededSubchatSend({ conversationId }: { conversationId: string }) {
 function PendingSubchat({
   childId,
   starting,
+  selectionParentId,
   readOnly,
   onStart,
-}: Pick<SideChatPaneProps, "childId" | "onStart" | "readOnly"> & { starting: boolean }) {
+}: Pick<SideChatPaneProps, "childId" | "onStart" | "readOnly" | "selectionParentId"> & {
+  starting: boolean;
+}) {
   const transcriptRef = useRef<HTMLDivElement>(null);
   const composer = useChatStore((s) => s.sideChatComposers[childId]);
   const text = composer?.text ?? "";
   const updateComposer = useChatStore((s) => s.updateSideChatComposer);
   const clearSideChatDraft = useChatStore((s) => s.clearSideChatDraft);
-  const setText = useCallback(
-    (next: string) => updateComposer(childId, (current) => ({ ...current, text: next })),
-    [childId, updateComposer],
-  );
   const [activeTextId, setActiveTextId] = useState<string | null>(null);
   const editText = useCallback(
     (id: string | null, next: string) =>
@@ -190,6 +209,53 @@ function PendingSubchat({
       ),
     [childId, updateComposer],
   );
+  const hydrated = useSessionDraftsHydrated();
+  useEffect(() => {
+    if (!hydrated) return;
+    if (composer) {
+      const reply = { text: composer.text, quotes: composer.quotes ?? [] };
+      setSessionDraft(childId, {
+        text: serializeReplyDraft(reply),
+        replyDraft: snapshotReplyDraft(reply),
+        files: composer.files,
+      });
+    } else {
+      const saved = getSessionDraft(childId);
+      if (saved)
+        updateComposer(childId, (current) => ({
+          ...current,
+          ...restoreReplyDraft(saved.text, saved.replyDraft),
+          files: saved.files,
+        }));
+    }
+  }, [childId, composer, hydrated, updateComposer]);
+  const [mention, setMention] = useState<MentionState | null>(null);
+  const { dir, filter } = parseMentionToken(mention?.query ?? "");
+  const parentId = useChatStore((s) => selectionParentId ?? s.conversationId);
+  const harness = useChatStore((s) => s.sessionHarness);
+  const rootListing = useWorkspaceAllFiles(parentId ?? undefined, { enabled: !!mention && !dir });
+  const dirListing = useWorkspaceDirectory(parentId ?? undefined, mention && dir ? dir : null);
+  const entries = rankMentionEntries(
+    dir ? (dirListing.data ?? []) : (rootListing.data?.data ?? []),
+    filter,
+  );
+  const listingPending = dir ? dirListing.isLoading : rootListing.isLoading;
+  const mobile = useIsMobileViewport();
+  const browser = useMentionBrowser({
+    mention,
+    setMention,
+    mentionEntries: entries,
+    text: activeTextId
+      ? (composer?.quotes?.find((quote) => quote.id === activeTextId)?.before ?? "")
+      : text,
+    setText: (next) => editText(activeTextId, next),
+    textareaRef,
+    isMobile: mobile,
+  });
+  const changeText = (id: string | null, input: HTMLTextAreaElement) => {
+    editText(id, input.value);
+    setMention(detectMentionAt(input.value, input.selectionStart));
+  };
   const dictation = useReplyDictation(
     childId,
     composer ?? EMPTY_SIDE_CHAT_COMPOSER,
@@ -228,10 +294,17 @@ function PendingSubchat({
     try {
       await onStart(
         serializeReplyDraft({
-          quotes,
-          text: isSlashCommandText(text) ? text.trim() : text.trimEnd(),
+          quotes: quotes.map((draftQuote) => ({
+            ...draftQuote,
+            before: deliverInlineMentions(draftQuote.before, harness),
+          })),
+          text: deliverInlineMentions(
+            isSlashCommandText(text) ? text.trim() : text.trimEnd(),
+            harness,
+          ),
         }),
       );
+      retireSessionDraft(childId);
       clearSideChatDraft(childId);
       useChatStore.getState().clearSideChatComposer(childId);
     } catch (error) {
@@ -245,9 +318,10 @@ function PendingSubchat({
     toast.error("Send a text question to start the side chat before attaching files.");
   };
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>, intent: ComposerKeyIntent) => {
+    if (browser.handleKeyDown(event)) return;
     if (intent.shouldSubmitFromKeyboard) {
       event.preventDefault();
-      void submit();
+      if (!mention || !listingPending) void submit();
     }
   };
   const focusText = (id: string | null, input: HTMLTextAreaElement) => {
@@ -290,7 +364,8 @@ function PendingSubchat({
           input={{
             ref: tailTextareaRef,
             value: text,
-            onChange: (e) => setText(e.target.value),
+            onChange: (e) => changeText(null, e.target),
+            onBlur: browser.dismiss,
             onFocus: (e) => focusText(null, e.currentTarget),
             placeholder: "Ask a side question...",
             disabled: !ready,
@@ -300,6 +375,18 @@ function PendingSubchat({
             className: quotes.length ? "max-h-none overflow-y-hidden" : undefined,
           }}
           slots={{
+            beforeInput: mention && (
+              <ComposerMentionMenu
+                query={mention.query}
+                onReference={browser.attachReference}
+                currentDir={dir}
+                activeIndex={browser.mentionIndex}
+                entries={entries}
+                loading={listingPending}
+                onOpenDir={browser.openMentionDir}
+                onAttach={browser.attachMention}
+              />
+            ),
             inputPrefix:
               quotes.length === 0 ? undefined : (
                 <ReplyDraftBlocks
@@ -339,7 +426,8 @@ function PendingSubchat({
                     return true;
                   }}
                   inputFor={(replyQuote) => ({
-                    onChange: (event) => editText(replyQuote.id, event.target.value),
+                    onChange: (event) => changeText(replyQuote.id, event.target),
+                    onBlur: browser.dismiss,
                     onFocus: (event) => focusText(replyQuote.id, event.currentTarget),
                     onKeyDown: handleKeyDown,
                     onPaste,

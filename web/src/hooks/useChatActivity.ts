@@ -11,6 +11,7 @@ export interface ChatActivityEntry {
   session_id: string;
   terminal_id?: string | null;
   source?: BackgroundTaskInfo["source"];
+  turn_id?: string | null;
   source_call_id?: string | null;
   name: string;
   state: "running" | "idle" | "exited" | "disconnected" | "unknown";

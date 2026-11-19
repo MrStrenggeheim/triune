@@ -67,10 +67,10 @@ export function ComposerAttentionShelf({
       goal?.status === "active" ||
       pending.length > 0 ||
       completed < todos.length ||
-      backgroundCount > 0 ||
       children.some((child) =>
         ["launching", "working", "awaiting", "disconnected"].includes(childStatus(child).activity),
       ),
+    shellActive: backgroundCount > 0,
     hasContent,
     hasPlan: todos.length > 0,
     requiredIds: pending.map(

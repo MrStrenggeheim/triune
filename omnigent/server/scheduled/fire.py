@@ -64,6 +64,7 @@ from omnigent.db.db_models import workspace_scope
 from omnigent.entities import Conversation, ScheduledTask
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.mcp_selection import mcp_selection_revision
+from omnigent.release_admission import start_admitted_task
 from omnigent.server.auth import LEVEL_OWNER, LEVEL_READ, RESERVED_USER_LOCAL, RESERVED_USER_PUBLIC
 from omnigent.server.bundles import agent_for_user
 from omnigent.server.host_registry import host_owner_scope
@@ -317,15 +318,17 @@ async def _trigger_fire(
     if key in _IN_FLIGHT_TASKS:
         _logger.info("scheduled fire: task %s already in flight — skipping", scheduled_task_id)
         return _FireResult.IN_FLIGHT
-    _IN_FLIGHT_TASKS.add(key)
 
     # Fire-and-forget: the session create + launch runs in the background so the
     # caller returns immediately (the scheduler re-arms the timer now; the route
     # returns 202).
-    fire_task = asyncio.create_task(
+    fire_task = start_admitted_task(
         _run_fire(deps, workspace_id, scheduled_task_id, fire_dispatch, require_active),
         name=f"scheduled-fire-{scheduled_task_id}",
     )
+    if fire_task is None:
+        return _FireResult.IN_FLIGHT
+    _IN_FLIGHT_TASKS.add(key)
     _PENDING_FIRES.add(fire_task)
     fire_task.add_done_callback(_PENDING_FIRES.discard)
     fire_task.add_done_callback(lambda _task: _IN_FLIGHT_TASKS.discard(key))

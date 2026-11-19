@@ -5,9 +5,9 @@ import { useWorkbenchWorkspace, queryIdentity } from "@/lib/workbenchWorkspace";
 // the repository's labels. Pending edits show at once and settle to what the provider reports.
 
 import { useMemo, useState } from "react";
-import { cn } from "@/lib/utils";
+import { Chip } from "@/components/ui/chip";
 import { useMutationState } from "@tanstack/react-query";
-import { PlusIcon, XIcon } from "lucide-react";
+import { PlusIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Command,
@@ -26,11 +26,7 @@ import {
   type PullRequestLabel,
   type PullRequestLabelChange,
 } from "@/hooks/usePullRequests";
-import {
-  PULL_REQUEST_CHIP_CLASS,
-  PullRequestChipAction,
-  PullRequestSectionHeader,
-} from "./PullRequestSection";
+import { PullRequestSectionHeader } from "./PullRequestSection";
 
 /** The label's `#rrggbb` color, or undefined when the provider sent none. */
 function labelColor(label: PullRequestLabel): string | undefined {
@@ -58,21 +54,15 @@ function PullRequestLabelChip({
 }) {
   const color = labelColor(label);
   return (
-    <li
+    <Chip
+      as="li"
+      leading={<LabelDot label={label} />}
       title={label.description ?? undefined}
-      className={cn(PULL_REQUEST_CHIP_CLASS, "rounded-full")}
       style={color ? { backgroundColor: `${color}1f`, borderColor: `${color}80` } : undefined}
+      remove={onRemove ? { label: `Remove label ${label.name}`, onClick: onRemove } : undefined}
     >
-      <LabelDot label={label} />
       <span className="min-w-0 truncate font-medium text-foreground">{label.name}</span>
-      {onRemove && (
-        <PullRequestChipAction
-          label={`Remove label ${label.name}`}
-          icon={XIcon}
-          onClick={onRemove}
-        />
-      )}
-    </li>
+    </Chip>
   );
 }
 

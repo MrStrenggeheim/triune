@@ -18,8 +18,8 @@ import { useMemo, useState } from "react";
 import { ClockIcon, SearchIcon, TriangleAlertIcon } from "lucide-react";
 import { PageScroll } from "@/components/PageScroll";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { useOmnigentAnalytics } from "@/lib/analytics";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
+import { SegmentedControl, SegmentedControlItem } from "@/components/ui/segmented-control";
 import { CreateScheduledTaskDialog } from "@/components/scheduled/CreateScheduledTaskDialog";
 import { ScheduledTaskRow } from "@/components/scheduled/ScheduledTaskRow";
 import {
@@ -47,7 +47,6 @@ const FILTER_TABS: { value: FilterTab; label: string }[] = [
 
 export function TasksPage() {
   const { data: tasks, isLoading, isError, refetch } = useScheduledTasks();
-  const { trackClick } = useOmnigentAnalytics();
   // A single shared, slowly-ticking clock for the whole list. Passing it down to
   // each row (rather than each row owning a timer) keeps the relative next-run
   // labels fresh with ONE interval regardless of how many rows are on screen.
@@ -175,40 +174,34 @@ export function TasksPage() {
           model for scheduled tasks in this build, so it would act on nothing.
           Restore it if run-result unread state lands. */}
       <div className="mb-4 flex flex-col gap-5">
-        <div className="relative">
-          <SearchIcon className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
+        <InputGroup>
+          <InputGroupAddon>
+            <SearchIcon />
+          </InputGroupAddon>
+          <InputGroupInput
+            aria-label="Search automations"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search automations…"
             componentId="tasks.search"
             data-testid="tasks-search"
-            className="pl-9"
           />
-        </div>
+        </InputGroup>
         {hasAnyTasks && (
-          <div aria-label="Filter automations" className="flex items-center gap-1">
+          <SegmentedControl aria-label="Filter automations">
             {FILTER_TABS.map((tab) => (
-              <TooltipButton
+              <SegmentedControlItem
                 key={tab.value}
-                type="button"
-                aria-pressed={filter === tab.value}
+                active={filter === tab.value}
+                label={tab.label}
+                componentId={`tasks.filter_${tab.value}`}
                 data-testid={`tasks-filter-${tab.value}`}
-                onClick={() => {
-                  trackClick(`tasks.filter_${tab.value}`, "button");
-                  setFilter(tab.value);
-                }}
-                className={cn(
-                  "rounded-md px-3 py-1 text-ui font-medium transition-colors",
-                  filter === tab.value
-                    ? "bg-muted text-foreground"
-                    : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
-                )}
+                onClick={() => setFilter(tab.value)}
               >
                 {tab.label}
-              </TooltipButton>
+              </SegmentedControlItem>
             ))}
-          </div>
+          </SegmentedControl>
         )}
       </div>
 

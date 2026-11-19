@@ -21,6 +21,8 @@ import {
 } from "@/lib/composerSendShortcutPreferences";
 import { CHAT_COLUMN_WIDTH } from "@/pages/chatLayout";
 import "./composerShelves.css";
+import { InlineMentionEditor } from "./InlineMentionEditor";
+import { inlineMentions } from "@/lib/composerMentions";
 
 export const COMPOSER_COLUMN_WIDTH = `w-full ${CHAT_COLUMN_WIDTH}`;
 
@@ -247,51 +249,76 @@ export function ComposerTextInput({
   input,
   keyboard,
 }: Pick<ChatComposerProps, "input" | "keyboard">) {
+  const value = String(input.value ?? "");
+  const rich = inlineMentions(value).length > 0;
   return (
-    <ComposerTextarea
-      {...input}
-      onKeyDown={(event) => {
-        // A newline in every mode and on touch devices; completion menus never see it.
-        if (isComposerAltNewlineKey({ ...event, isComposing: event.nativeEvent.isComposing })) {
-          event.preventDefault();
-          insertComposerText(event.currentTarget, "\n");
-          return;
-        }
-        if (keyboard.preventsKeyboardSubmit && event.key === "Enter") return;
-        const insertNewline =
-          event.key === "Enter" &&
-          (event.shiftKey || keyboard.submitWithModEnter) &&
-          !event.altKey &&
-          !event.metaKey &&
-          !event.ctrlKey;
-        const listEdit = insertNewline ? composerListEdit(event.currentTarget) : null;
-        const listStartEdit =
-          event.key === " " && !event.altKey && !event.shiftKey && !event.metaKey && !event.ctrlKey
-            ? composerListStartEdit(event.currentTarget)
-            : null;
-        const shouldSubmitFromKeyboard = isComposerSendKey(
-          { ...event, isComposing: event.nativeEvent.isComposing },
-          keyboard.submitWithModEnter,
-          keyboard.preventsKeyboardSubmit,
-        );
-        const shouldSteerAllFromKeyboard = isComposerSteerAllKey(
-          { ...event, isComposing: event.nativeEvent.isComposing },
-          keyboard.submitWithModEnter,
-          keyboard.preventsKeyboardSubmit,
-        );
-        input.onKeyDown?.(event, {
-          shouldSubmitFromKeyboard,
-          shouldPreferSendOverCompletion: keyboard.submitWithModEnter && shouldSubmitFromKeyboard,
-          shouldSteerAllFromKeyboard,
-        });
-        if (event.defaultPrevented) return;
-        const edit = listStartEdit ?? listEdit;
-        if (edit) {
-          event.preventDefault();
-          insertComposerText(event.currentTarget, edit.text, edit.start, edit.end);
-        }
-      }}
-    />
+    <>
+      <ComposerTextarea
+        {...input}
+        {...(rich
+          ? {
+              className: "sr-only",
+              tabIndex: -1,
+              "aria-hidden": true,
+              "aria-label": undefined,
+              "data-testid": undefined,
+            }
+          : {})}
+        onKeyDown={(event) => {
+          // A newline in every mode and on touch devices; completion menus never see it.
+          if (isComposerAltNewlineKey({ ...event, isComposing: event.nativeEvent.isComposing })) {
+            event.preventDefault();
+            insertComposerText(event.currentTarget, "\n");
+            return;
+          }
+          if (keyboard.preventsKeyboardSubmit && event.key === "Enter") return;
+          const insertNewline =
+            event.key === "Enter" &&
+            (event.shiftKey || keyboard.submitWithModEnter) &&
+            !event.altKey &&
+            !event.metaKey &&
+            !event.ctrlKey;
+          const listEdit = insertNewline ? composerListEdit(event.currentTarget) : null;
+          const listStartEdit =
+            event.key === " " &&
+            !event.altKey &&
+            !event.shiftKey &&
+            !event.metaKey &&
+            !event.ctrlKey
+              ? composerListStartEdit(event.currentTarget)
+              : null;
+          const shouldSubmitFromKeyboard = isComposerSendKey(
+            { ...event, isComposing: event.nativeEvent.isComposing },
+            keyboard.submitWithModEnter,
+            keyboard.preventsKeyboardSubmit,
+          );
+          const shouldSteerAllFromKeyboard = isComposerSteerAllKey(
+            { ...event, isComposing: event.nativeEvent.isComposing },
+            keyboard.submitWithModEnter,
+            keyboard.preventsKeyboardSubmit,
+          );
+          input.onKeyDown?.(event, {
+            shouldSubmitFromKeyboard,
+            shouldPreferSendOverCompletion: keyboard.submitWithModEnter && shouldSubmitFromKeyboard,
+            shouldSteerAllFromKeyboard,
+          });
+          if (event.defaultPrevented) return;
+          const edit = listStartEdit ?? listEdit;
+          if (edit) {
+            event.preventDefault();
+            insertComposerText(event.currentTarget, edit.text, edit.start, edit.end);
+          }
+        }}
+      />
+      {rich && (
+        <InlineMentionEditor
+          value={value}
+          label={input["aria-label"] ?? input.placeholder ?? "Message"}
+          disabled={input.disabled || input.readOnly}
+          testId={input["data-testid"]}
+        />
+      )}
+    </>
   );
 }
 

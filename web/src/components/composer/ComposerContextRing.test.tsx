@@ -82,14 +82,17 @@ describe("ComposerContextRing", () => {
     renderRing(1000, 490);
     const svg = screen.getByTestId("composer-context-ring").querySelector("svg");
     expect(svg).toHaveAttribute("viewBox", "1.5 1.5 13 13");
-    expect(svg).toHaveAttribute("width", "13");
-    expect(svg).toHaveAttribute("height", "13");
+    expect(svg).toHaveAttribute("width", "16");
+    expect(svg).toHaveAttribute("height", "16");
   });
 
-  it("clamps over-full usage to 100%", () => {
+  it("clamps the progress graphic while reporting actual over-full usage", async () => {
+    const user = userEvent.setup();
     renderRing(1000, 4000);
-    expect(screen.getByLabelText("100% of context used")).toBeInTheDocument();
-    expect(screen.getByTestId("composer-context-ring")).not.toHaveTextContent("100%");
+    expect(screen.getByLabelText("400% of context used")).toBeInTheDocument();
+    await user.click(screen.getByRole("button"));
+    expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "100");
+    expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuetext", "400% used");
   });
 
   it("stays grayscale — never warning/destructive — even at high usage", () => {

@@ -19,10 +19,9 @@ const row = (onStop?: () => Promise<void>, onOpen = vi.fn()) => (
     title="Exact resource"
     description="Recorded output"
     status={<SubagentTaskStatus status={{ activity: "working", label: "Running" }} />}
-    onOpen={onOpen}
     onStop={onStop}
     actions={
-      <button type="button" onClick={() => {}}>
+      <button type="button" onClick={onOpen}>
         Open beside
       </button>
     }
@@ -33,7 +32,7 @@ it("keeps actions outside the opening target and leaves unsupported status inert
   const open = vi.fn();
   render(row(undefined, open));
   fireEvent.click(screen.getByRole("button", { name: "Open beside" }));
-  expect(open).not.toHaveBeenCalled();
+  expect(open).toHaveBeenCalledOnce();
   expect(screen.getByRole("status", { name: "Running" })).toBeVisible();
   expect(screen.queryByRole("button", { name: /Stop actions/ })).toBeNull();
   fireEvent.click(screen.getByText("Recorded output"));
@@ -41,7 +40,7 @@ it("keeps actions outside the opening target and leaves unsupported status inert
   expect(screen.getByText("Recorded output").closest(".resource-description")).toHaveClass(
     "truncate",
   );
-  expect(screen.getByRole("button", { name: "Exact resource" }).querySelector("button")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Exact resource" })).toBeNull();
 });
 
 it("retains the action names of disclosures outside the entry layout", () => {
@@ -84,10 +83,12 @@ it("opens Stop from the keyboard and prevents duplicate requests while pending",
   expect(screen.getByRole("button", { name: "Stop actions for Exact resource" })).toBeEnabled();
 });
 
-it("exposes the same Stop through row context access and keeps failures visible", async () => {
+it("offers Stop through the status menu and keeps failures visible", async () => {
   const stop = vi.fn().mockRejectedValue(new Error("Resource disconnected"));
   render(row(stop));
-  fireEvent.contextMenu(screen.getByText("Recorded output"));
+  fireEvent.keyDown(screen.getByRole("button", { name: "Stop actions for Exact resource" }), {
+    key: "Enter",
+  });
   fireEvent.click(screen.getByRole("menuitem", { name: "Stop Exact resource" }));
   await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Resource disconnected"));
   expect(screen.getByText("Recorded output")).toBeInTheDocument();

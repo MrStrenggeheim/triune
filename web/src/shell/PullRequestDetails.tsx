@@ -9,7 +9,8 @@ import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore }
 import { ExternalLinkIcon, Loader2Icon, PaperclipIcon, PencilIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { EditorModeTabs } from "@/components/ui/segmented-control";
+import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import type { Components } from "streamdown";
 import { MessageResponse } from "@/components/ai-elements/message";
@@ -450,19 +451,18 @@ function PullRequestDescriptionEditor({
     close();
   };
 
+  const [tab, setTab] = useState("write");
   const error = update.isError ? update.error.message : draft.error;
   return (
     <div ref={editorRef} className="scroll-my-3 space-y-2">
-      <Tabs defaultValue="write" componentId="github.panel.description.tabs" className="gap-2">
+      <Tabs
+        value={tab}
+        onValueChange={setTab}
+        componentId="github.panel.description.tabs"
+        className="gap-2"
+      >
         <div className="flex items-center gap-1">
-          <TabsList variant="line" aria-label="Description editor" className="h-auto gap-0 p-0">
-            <TabsTrigger value="write" className="flex-none border-0 px-2 leading-none">
-              Write
-            </TabsTrigger>
-            <TabsTrigger value="preview" className="flex-none border-0 px-2 leading-none">
-              Preview
-            </TabsTrigger>
-          </TabsList>
+          <EditorModeTabs label="Description editor" value={tab} />
           {attachments && (
             <>
               <Button

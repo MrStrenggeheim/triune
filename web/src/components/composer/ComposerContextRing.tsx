@@ -1,5 +1,5 @@
 // Modified for Triune; inherited notices remain applicable.
-import { Button } from "@/components/ui/button";
+import { ComposerActionButton } from "./ComposerActionButton";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Progress } from "@/components/ui/progress";
 import { formatTokenCount } from "@/lib/formatCost";
@@ -31,19 +31,17 @@ export function ComposerContextRing({
 }) {
   if (contextWindow == null || contextWindow <= 0 || tokensUsed == null) return null;
 
-  const pct = Math.min(tokensUsed / contextWindow, 1);
+  const usedRatio = tokensUsed / contextWindow;
+  const pct = Math.min(usedRatio, 1);
   // Arc, %, label, and tooltip all encode context USED: a fresh session
   // shows an empty ring at 0% and the ring fills as context is consumed.
   const usedArc = pct * RING_CIRCUMFERENCE;
-  const usedPct = Math.round(pct * 100);
+  const usedPct = Math.round(usedRatio * 100);
 
   return (
     <Popover>
       <PopoverTrigger asChild>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          menuFeedback="composer"
+        <ComposerActionButton
           tooltip={`${usedPct}% context used`}
           tooltipDescription={`${formatTokenCount(tokensUsed)} / ${formatTokenCount(contextWindow)} tokens`}
           type="button"
@@ -53,10 +51,10 @@ export function ComposerContextRing({
         >
           {/* Tight stroke bounds keep the visible icon-to-label gap consistent. */}
           <svg
-            data-icon-size="13"
+            data-icon-size="16"
             viewBox="1.5 1.5 13 13"
-            width="13"
-            height="13"
+            width="16"
+            height="16"
             fill="none"
             aria-hidden="true"
           >
@@ -76,12 +74,12 @@ export function ComposerContextRing({
               />
             )}
           </svg>
-        </Button>
+        </ComposerActionButton>
       </PopoverTrigger>
       <PopoverContent side="top" aria-label="Context window" className="w-52 gap-1.5">
         <p className="font-medium">Context window</p>
         <p className="tabular-nums">{usedPct}% used</p>
-        <Progress aria-label="Context used" value={pct * 100} />
+        <Progress aria-label="Context used" value={pct * 100} aria-valuetext={`${usedPct}% used`} />
         <p className="tabular-nums text-muted-foreground">
           {tokensUsed.toLocaleString()} / {contextWindow.toLocaleString()} tokens
         </p>

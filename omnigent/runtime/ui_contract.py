@@ -423,7 +423,11 @@ for _key, (_label, _tools, _guidance) in _DISCOVERY_GROUPS.items():
 TOOL_SELECTION_GUIDANCE = (
     "Choose an advertised structured tool for its matching operation; prefer native patch/edit "
     "tools for precise edits and retained diff metadata. Use shell for commands, pipelines, "
-    "builds/tests or operations without a suitable tool. Tool scope matters: Triune file tools "
+    "builds/tests or operations without a suitable tool. Continue live processes through their "
+    "existing handles. For sequential commands that depend on shell state, reuse a known idle, "
+    "agent-owned terminal in the same workspace. Launch independent work immediately in parallel. "
+    "Never wait for a busy shell, scan for idle shells, or serialize work solely for reuse. "
+    "Tool scope matters: Triune file tools "
     "use their environment root plus explicit path grants; native commands use the harness "
     "sandbox. A denial never authorizes bypass through another tool. Use exact advertised names "
     "and schemas; catalog names describe capabilities, not permission or availability."

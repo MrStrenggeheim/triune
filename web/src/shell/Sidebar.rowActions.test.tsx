@@ -455,7 +455,7 @@ describe("conversation actions and pin menu", () => {
     expect(kebab).not.toHaveClass("hidden");
     const row = kebab.closest("li")!;
     expect(row.innerHTML).not.toContain("group-focus-within");
-    expect(kebab).toHaveClass("focus-visible:ring-3");
+    expect(kebab).toHaveClass("focus-visible:ring-control-focus");
     expect(kebab).toHaveClass("sidebar-session-more");
     expect(screen.queryByTestId("conversation-indicators")).toBeNull();
     fireEvent.pointerDown(row, { pointerType: "touch", pointerId: 1 });

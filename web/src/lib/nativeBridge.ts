@@ -103,6 +103,8 @@ interface NativeShellApi {
   setColorScheme?: (scheme: "light" | "dark" | "system") => void;
   /** Fire an OS notification; resolves true when it was shown. */
   notify: (params: NativeNotifyParams) => Promise<boolean>;
+  /** Read the desktop lock state at call time. Absent on older shells. */
+  isDesktopUnlocked?: () => Promise<boolean>;
   // Optional: a shell older than this SPA may lack notification-click routing,
   // in which case clicking a native toast only focuses the app (the prior
   // behavior) instead of also navigating.
@@ -769,11 +771,27 @@ export async function nativeNotify({
   const native = nativeApi();
   if (!native) return false;
   try {
-    return await native.notify({ title, body, navigatePath });
+    return (await native.notify({ title, body, navigatePath })) === true;
   } catch (err) {
     // Only reachable inside a native shell. Log rather than swallow so a
     // broken bridge is visible instead of silently dropping notifications.
     console.warn("[nativeBridge] native notify failed:", err);
+    return false;
+  }
+}
+
+/**
+ * Read the Electron desktop's lock state at the moment a completion is routed.
+ * Older shells and non-desktop runtimes are not eligible for desktop delivery.
+ */
+export async function isDesktopUnlocked(): Promise<boolean> {
+  if (!isElectronShell()) return false;
+  const desktop = nativeApi();
+  if (!desktop?.isDesktopUnlocked) return false;
+  try {
+    return (await desktop.isDesktopUnlocked()) === true;
+  } catch (err) {
+    console.warn("[nativeBridge] desktop lock check failed:", err);
     return false;
   }
 }

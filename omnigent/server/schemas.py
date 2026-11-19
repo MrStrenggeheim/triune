@@ -2188,6 +2188,7 @@ class BackgroundTaskInfo(BaseModel):
     session_id: str | None = None
     resource_id: str | None = None
     terminal_id: str | None = None
+    turn_id: str | None = None
     output_preview: str | None = None
     resource_url: str | None = None
     can_open: bool = False

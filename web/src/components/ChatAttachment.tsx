@@ -19,14 +19,13 @@ import {
 } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { createPortal } from "react-dom";
-import { ContentSkeleton } from "@/components/ui/loading";
+import { ContentSkeleton, OperationStatus } from "@/components/ui/loading";
 import { fetchChatFileLocation } from "@/lib/chatFileReferences";
 import {
   CopyIcon,
   CodeIcon,
   DownloadIcon,
   FolderOpenIcon,
-  Loader2Icon,
   MoreHorizontalIcon,
   PanelRightIcon,
   PanelsTopLeftIcon,
@@ -678,10 +677,9 @@ export function ChatAttachment({
             </span>
           )}
           {content.isFetching && (
-            <span role="status" className={compact ? "sr-only" : "flex items-center gap-1 text-xs"}>
-              <Loader2Icon className="size-3 animate-spin" />
+            <OperationStatus className={compact ? "sr-only" : "text-xs"}>
               Loading file…
-            </span>
+            </OperationStatus>
           )}
           {blobUrl && failedImage === blobUrl && (
             <span role="alert" className="text-xs text-destructive">

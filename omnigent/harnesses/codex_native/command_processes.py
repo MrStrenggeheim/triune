@@ -95,6 +95,7 @@ class CodexCommandProcesses:
         item: JsonObject,
         *,
         session_id: str | None = None,
+        turn_id: str | None = None,
         targeted_stop_supported: bool = False,
     ) -> JsonObject | None:
         """Return a changed snapshot, excluding transient stdin interactions."""
@@ -135,6 +136,8 @@ class CodexCommandProcesses:
         if not isinstance(output, str) or not output:
             output = previous.get("output")
         captured = bounded_output(output if isinstance(output, str) else None)
+        if turn_id:
+            resource["turn_id"] = turn_id
         resource["output"] = captured
         process_id = item.get("processId")
         resource.update(

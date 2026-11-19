@@ -1,3 +1,4 @@
+import { HeaderActionButton } from "@/components/HeaderActionButton";
 // Modified for Triune.
 import { OperationStatus, ContentSkeleton } from "@/components/ui/loading";
 import { TooltipButton } from "@/components/ui/tooltip";
@@ -30,7 +31,6 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
-import { Button } from "@/components/ui/button";
 import {
   Select,
   SelectContent,
@@ -160,9 +160,9 @@ export function ExecutionLogsPanel({
       {isDesktop && !contained && (
         <header className="workspace-control-header flex items-center justify-between border-border border-b px-3">
           <h2 className="font-medium text-ui">Execution logs</h2>
-          <Button type="button" variant="ghost" size="icon-sm" aria-label="Close" onClick={onClose}>
+          <HeaderActionButton type="button" aria-label="Close" onClick={onClose}>
             <XIcon className="size-4" />
-          </Button>
+          </HeaderActionButton>
         </header>
       )}
 

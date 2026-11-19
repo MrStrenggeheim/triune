@@ -18,6 +18,14 @@
  * app theme customization in this file. */
 @source "../node_modules/streamdown/dist/*.js";
 
+@utility ring-control-focus {
+  --tw-ring-shadow: var(--tw-ring-inset,) 0 0 3px calc(1px + var(--tw-ring-offset-width, 0px))
+    var(--tw-ring-color, var(--ring));
+  box-shadow:
+    var(--tw-inset-shadow, 0 0 #0000), var(--tw-inset-ring-shadow, 0 0 #0000),
+    var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow), var(--tw-shadow, 0 0 #0000);
+}
+
 @custom-variant dark (&:is(.dark *));
 
 /* OverlayScrollbars owns native UI scroll surfaces. Editors and terminals
@@ -1338,7 +1346,7 @@ html[data-electron-mac] .breadcrumb-folder {
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  [data-close-surface] {
+  [data-close-button] [data-header-action-surface] {
     transition: none;
   }
 }

@@ -72,6 +72,7 @@ import {
   MessageSquareTextIcon,
   MoreHorizontalIcon,
   PencilLineIcon,
+  RefreshCwIcon,
   RowsIcon,
   SearchIcon,
   SquareArrowOutUpRightIcon,
@@ -644,6 +645,7 @@ function FileViewerBody({
   // Auto-save lifecycle reported up from the Monaco editor, shown as a status
   // chip in the toolbar (the editor itself no longer has a Save button).
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
+  const [mediaReload, setMediaReload] = useState(0);
   const contentReader = useRef<FileContentReader | null>(null);
   const registerContentReader = useCallback((reader: FileContentReader) => {
     contentReader.current = reader;
@@ -1418,7 +1420,31 @@ function FileViewerBody({
      * carry no "selected choice" semantics. `onSelect` is ignored. */
     menu?: ToolbarOption[];
   }
-  const toolbarActions: ToolbarAction[] = [];
+  const toolbarActions: ToolbarAction[] = [
+    {
+      key: "reload",
+      label: "Reload file",
+      icon: <RefreshCwIcon className="size-4" />,
+      onSelect: async () => {
+        if (isEditorDirtyRef.current || saveStatus === "saving") {
+          toast.info("Save your changes before reloading this file.");
+          return;
+        }
+        if (isVideo) {
+          setMediaReload((revision) => revision + 1);
+          return;
+        }
+        try {
+          const options = { throwOnError: true, cancelRefetch: false };
+          const reads: Promise<unknown>[] = [fileQuery.refetch(options)];
+          if (viewMode === "diff" && "refetch" in diffQuery) reads.push(diffQuery.refetch(options));
+          await Promise.all(reads);
+        } catch (error) {
+          toast.error("Could not reload file", { description: String(error) });
+        }
+      },
+    },
+  ];
   if (lang === "markdown" && !markdownSourceFallback && viewMode !== "diff") {
     // Markdown is a segmented control over three reachable modes: the rich-text
     // Editor (default), the rendered Preview, and raw Source. Switching away
@@ -2147,6 +2173,7 @@ function FileViewerBody({
                     conversationId={conversationId}
                     path={path}
                     fileQuery={fileQuery}
+                    mediaReload={mediaReload}
                     onDirtyChange={handleDirtyChange}
                     onSaveStatusChange={setSaveStatus}
                     comments={openComments}

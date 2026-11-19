@@ -241,7 +241,12 @@ describe("VideoPlayer", () => {
     await waitFor(() =>
       expect(container.querySelector("video")).toHaveAttribute("src", "blob:recording"),
     );
-    expect(fetchBlob).toHaveBeenCalledWith("sess_1", "demo.webm", expect.any(AbortSignal));
+    expect(fetchBlob).toHaveBeenCalledWith(
+      "sess_1",
+      "demo.webm",
+      expect.any(AbortSignal),
+      undefined,
+    );
     const video = container.querySelector("video")!;
     expect(video).toHaveAttribute("controls");
     expect(video).toHaveAttribute("playsinline");

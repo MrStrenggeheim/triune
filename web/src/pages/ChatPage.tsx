@@ -152,6 +152,8 @@ import { DEVIN_NATIVE_PERMISSION_MODES } from "@/lib/nativeHarnessModes";
 import { readSubmitWithModEnter } from "@/lib/composerSendShortcutPreferences";
 import {
   buildMentionPreamble,
+  deliverInlineMentions,
+  inlineMentions,
   detectMentionAt,
   type MentionItem,
   mentionMarkerFor,
@@ -3053,6 +3055,7 @@ function ComposerImpl(
   const composerIsCommand =
     draft.quotes.length === 0 &&
     files.length === 0 &&
+    !inlineMentions(value).length &&
     hasCommandPrefix &&
     splitSlashCommand(value, slashCommandNames) !== null;
   const toggleCodexPlanMode = async () => {
@@ -3822,7 +3825,7 @@ function ComposerImpl(
     // The /btw overlay locks the composer — never send while it's open.
     if (composerLockedByBtw || queueSubmitPendingRef.current.has(draftConversationIdRef.current))
       return;
-    const trimmed = fullText.trim();
+    const trimmed = deliverInlineMentions(fullText, sessionHarness).trim();
     if (
       slashCompletion.pendingCompletion &&
       !isNativeWrapper &&
@@ -3994,13 +3997,19 @@ function ComposerImpl(
       // Preserve authored whitespace and quote provenance, including mention markers.
       const outgoing = {
         ...draft,
-        quotes: draft.quotes.map((quote, index) =>
-          index === 0 ? { ...quote, before: mentionPreamble + quote.before } : quote,
-        ),
+        text: deliverInlineMentions(draft.text, sessionHarness),
+        quotes: draft.quotes.map((quote, index) => ({
+          ...quote,
+          before:
+            (index === 0 ? mentionPreamble : "") +
+            deliverInlineMentions(quote.before, sessionHarness),
+        })),
       };
       acceptance = onSend(serializeReplyDraft(outgoing), sendFiles, snapshotReplyDraft(outgoing));
     } else {
-      const message = isSlashCommandText(trimmed) ? trimmed : fullText.trimEnd();
+      const message = isSlashCommandText(trimmed)
+        ? trimmed
+        : deliverInlineMentions(fullText, sessionHarness).trimEnd();
       acceptance = onSend(mentionPreamble + message, sendFiles);
     }
     if (acceptance) {

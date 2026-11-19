@@ -15919,60 +15919,88 @@ describe("chatStore — startStreamPump reconnect loop", () => {
     await loop;
   });
 
-  it("settles a missed Codex completion when a shared transcript resumes", async () => {
-    const id = "resumed-codex";
-    seedSession(id, []);
-    const controller = new AbortController();
-    const bound = bindConversationForTest(id, {
-      abortController: controller,
-      sessionStatus: "running",
-      status: "streaming",
-      activeResponse: { responseId: "codex_finished", state: "streaming", error: null },
-    });
-    const sink = pushableStream();
-    const open = vi
-      .spyOn(sessionUpdatesSocket, "openTranscript")
-      .mockResolvedValue(structuredResponse(new Response(sink.stream)));
-    const loop = startStreamPump(
-      id,
-      controller,
-      bound.set,
-      bound.get,
-      new Set(),
-      true,
-      controller,
-      undefined,
-      true,
-    );
-    try {
-      await drainAsync();
-      const boundary = {
-        reset: true,
-        stream_epoch: "feed2:test",
-        item_revision: 0,
-        reset_revision: 0,
-        item_count: 0,
-        last_position: -1,
-        last_item_id: null,
-      };
-      sink.push(sse("session.sync", { ...boundary, phase: "start" }));
-      sink.push(sse("session.sync", { ...boundary, phase: "complete" }));
-      await drainAsync();
-      expect(bound.get().transcriptCheckpoint?.cursor.stream_epoch).toBe("feed2:test");
-      expect(bound.get()).toMatchObject({
-        sessionStatus: "idle",
-        status: "idle",
-        activeResponse: { state: "completed" },
+  it.each([false, true])(
+    "settles a missed Codex completion after shared replay (late idle %s)",
+    async (lateIdle) => {
+      const id = "resumed-codex";
+      const item = { ...assistantMessage("codex_finished", "Saved final reply"), position: 0 };
+      seedSession(id, [item]);
+      let snapshotReads = 0;
+      fetchMock.mockImplementation((input, init) => {
+        if (
+          String(input).split("?")[0] === `/v1/sessions/${id}` &&
+          ++snapshotReads === 1 &&
+          lateIdle
+        )
+          return mockResponse({
+            id,
+            agent_id: "agent_xyz",
+            created_at: 0,
+            status: "running",
+            items: [],
+          });
+        return defaultFetchHandler(input, init);
       });
-      expect(open).toHaveBeenCalledTimes(1);
-    } finally {
-      controller.abort();
-      sink.close();
-      await drainAsync(2);
-      await loop;
-      open.mockRestore();
-    }
-  });
+      const controller = new AbortController();
+      const bound = bindConversationForTest(id, {
+        abortController: controller,
+        sessionStatus: "running",
+        status: "streaming",
+        activeResponse: { responseId: "codex_finished", state: "streaming", error: null },
+      });
+      const sink = pushableStream();
+      const open = vi
+        .spyOn(sessionUpdatesSocket, "openTranscript")
+        .mockResolvedValue(structuredResponse(new Response(sink.stream)));
+      const loop = startStreamPump(
+        id,
+        controller,
+        bound.set,
+        bound.get,
+        new Set(),
+        true,
+        controller,
+        undefined,
+        true,
+      );
+      try {
+        await drainAsync();
+        const boundary = {
+          reset: true,
+          stream_epoch: "feed2:test",
+          item_revision: 1,
+          reset_revision: 0,
+          item_count: 1,
+          last_position: 0,
+          last_item_id: item.id,
+        };
+        sink.push(sse("session.sync", { ...boundary, phase: "start" }));
+        sink.push(sse("response.output_item.done", { item }));
+        sink.push(sse("session.sync", { ...boundary, phase: "complete" }));
+        await drainAsync();
+        expect(bound.get().transcriptCheckpoint?.cursor.stream_epoch).toBe("feed2:test");
+        expect(bound.get().blocks).toContainEqual(
+          expect.objectContaining({ fullText: "Saved final reply" }),
+        );
+        if (lateIdle) {
+          expect(bound.get().sessionStatus).toBe("running");
+          await vi.advanceTimersByTimeAsync(3000);
+        }
+        expect(bound.get()).toMatchObject({
+          sessionStatus: "idle",
+          status: "idle",
+          activeResponse: { state: "completed" },
+        });
+        expect(open).toHaveBeenCalledTimes(1);
+      } finally {
+        controller.abort();
+        sink.close();
+        await drainAsync(2);
+        await loop;
+        open.mockRestore();
+      }
+    },
+  );
 
   it("reconciles status when a heartbeat-only stream misses the idle event", async () => {
     seedSession("conv_heartbeat_gap", []);

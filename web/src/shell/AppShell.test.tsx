@@ -2003,7 +2003,7 @@ describe("Workspace rail maximize", () => {
   it.each([
     ["desktop", "/settings", true],
     ["desktop", "/settings/import", true],
-    ["mobile", "/settings", true],
+    ["mobile", "/settings", false],
     ["mobile", "/settings/import", false],
     ["mobile", "/settings/harnesses/codex", false],
   ] as const)("opens the appropriate settings surface on %s at %s", (viewport, path, open) => {
@@ -2017,19 +2017,6 @@ describe("Workspace rail maximize", () => {
     renderShell(path);
 
     expect(screen.getByTestId("sidebar")).toHaveAttribute("data-open", String(open));
-  });
-
-  it("refuses to collapse the sidebar while on /settings", () => {
-    // The hotkey (⌘⌥[) and command palette reach the toggle without going
-    // through the title-bar button, so the guard has to live in the handler, not
-    // just in what's rendered. Opening stays allowed; only collapsing is
-    // refused, because collapsing is what removes the exit.
-    mockConversations([]);
-    renderShell("/settings");
-
-    expect(screen.getByTestId("sidebar")).toHaveAttribute("data-open", "true");
-    fireEvent.keyDown(document, { code: "BracketLeft", ctrlKey: true, altKey: true });
-    expect(screen.getByTestId("sidebar")).toHaveAttribute("data-open", "true");
   });
 
   it("dismisses a peeking sidebar once the pointer moves elsewhere", async () => {
@@ -2086,16 +2073,13 @@ describe("Workspace rail maximize", () => {
     expect(screen.getByTestId("sidebar")).toHaveAttribute("data-peek", "true");
   });
 
-  it("keeps the sidebar pinned open for the whole /settings visit", () => {
-    // Repeated toggles all resolve to open while on the page: collapsing is what
-    // removes the only exit, so the guard refuses that direction throughout.
+  it("toggles the session sidebar in settings", () => {
     mockConversations([]);
     renderShell("/settings");
-
-    expect(screen.getByTestId("sidebar")).toHaveAttribute("data-open", "true");
-    fireEvent.keyDown(document, { code: "BracketLeft", ctrlKey: true, altKey: true });
-    fireEvent.keyDown(document, { code: "BracketLeft", ctrlKey: true, altKey: true });
-    expect(screen.getByTestId("sidebar")).toHaveAttribute("data-open", "true");
+    for (const open of ["true", "false"]) {
+      fireEvent.keyDown(document, { code: "BracketLeft", ctrlKey: true, altKey: true });
+      expect(screen.getByTestId("sidebar")).toHaveAttribute("data-open", open);
+    }
   });
 
   it("restores a collapsed sidebar after leaving /settings", () => {
@@ -2109,11 +2093,8 @@ describe("Workspace rail maximize", () => {
     // Collapsed going in (jsdom default).
     expect(screen.getByTestId("sidebar")).toHaveAttribute("data-open", "false");
 
-    // Into settings: pinned open despite the collapsed preference.
     fireEvent.click(screen.getByTestId("nav-settings"));
-    expect(screen.getByTestId("sidebar")).toHaveAttribute("data-open", "true");
-
-    // Back out: the collapsed state the user chose is restored.
+    expect(screen.getByTestId("sidebar")).toHaveAttribute("data-open", "false");
     fireEvent.click(screen.getByTestId("nav-home"));
     expect(screen.getByTestId("sidebar")).toHaveAttribute("data-open", "false");
   });

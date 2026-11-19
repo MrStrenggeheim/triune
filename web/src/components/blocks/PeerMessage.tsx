@@ -4,7 +4,7 @@ import { useContext, useMemo } from "react";
 import { MessageCircleIcon, SendIcon } from "lucide-react";
 import { QueryClientContext, useQuery } from "@tanstack/react-query";
 import { ActivityRow } from "@/components/ActivityRow";
-import { ActivityNavigation } from "@/shell/ChatActivityPanel";
+import { ActivityNavigation } from "@/components/ActivityNavigation";
 import {
   ContextMenu,
   ContextMenuContent,

@@ -34,13 +34,12 @@ import {
   CheckIcon,
   ClockIcon,
   CopyIcon,
-  FileTextIcon,
-  FolderIcon,
   ImageIcon,
   Link2Icon,
   SplitIcon,
 } from "lucide-react";
-import type { LucideIcon } from "lucide-react";
+import { Chip } from "@/components/ui/chip";
+import { ComposerMentionChip } from "@/components/composer/ComposerMentionChip";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { TooltipButton, Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { userColor, userColorTint, userInitials } from "@/lib/userBadge";
@@ -797,17 +796,6 @@ export const BubbleView = memo(
     bubblesEqual(prev.bubble, next.bubble),
 );
 
-/** Pill for an attachment with no preview of its own: a non-image file, an
- *  upload still in flight, or an image block carrying nothing renderable. */
-function AttachmentChip({ icon: Icon, label }: { icon: LucideIcon; label: string }) {
-  return (
-    <span className="flex items-center gap-1 rounded-full border border-border bg-muted px-2 py-0.5 text-sm text-muted-foreground">
-      <Icon className="size-3 shrink-0" />
-      <span className="max-w-[180px] truncate">{label}</span>
-    </span>
-  );
-}
-
 // User-authored tags and placeholders are text, including valid HTML examples.
 const USER_MESSAGE_REMARK_REHYPE_OPTIONS: MessageResponseProps["remarkRehypeOptions"] = {
   handlers: {
@@ -997,27 +985,14 @@ function UserBubbleContent({ bubble, origin, recoveryDisabled }: UserBubbleProps
           {/* "@"-mentioned workspace files/folders (delivered as text markers) */}
           {mentionedChips.length > 0 && (
             <div className="mb-1.5 flex flex-wrap gap-1.5">
-              {mentionedChips.map((item) => (
-                <span
-                  key={mentionItemPath(item)}
-                  className="flex items-center gap-1 rounded-full border border-border bg-muted px-2 py-0.5 text-sm text-muted-foreground"
-                >
-                  {item.isDir ? (
-                    <FolderIcon className="size-3 shrink-0" />
-                  ) : (
-                    <FileTextIcon className="size-3 shrink-0" />
-                  )}
-                  <span className="max-w-[180px] truncate" title={mentionItemPath(item)}>
-                    @{item.path}
-                    {item.isDir ? "/" : ""}
-                  </span>
-                  {item.lineRange && (
-                    <span className="shrink-0">
-                      :{item.lineRange.start}-{item.lineRange.end}
-                    </span>
-                  )}
-                </span>
-              ))}
+              {mentionedChips.map((item, position) => {
+                const path = mentionItemPath(item);
+                // Repeated mentions of one path stay distinct by their occurrence number.
+                const occurrence = mentionedChips
+                  .slice(0, position)
+                  .filter((earlier) => mentionItemPath(earlier) === path).length;
+                return <ComposerMentionChip key={`${path}#${occurrence}`} item={item} />;
+              })}
             </div>
           )}
           {/* Render user text as markdown, matching the assistant bubble.
@@ -1093,7 +1068,13 @@ function UserBubbleContent({ bubble, origin, recoveryDisabled }: UserBubbleProps
                       className="rounded-md object-contain"
                     />
                   );
-                return <AttachmentChip key={key} icon={ImageIcon} label={preview.label} />;
+                return (
+                  <Chip key={key} leading={<ImageIcon aria-hidden className="size-3 shrink-0" />}>
+                    <span className="max-w-[180px] truncate" title={preview.label}>
+                      {preview.label}
+                    </span>
+                  </Chip>
+                );
               }}
             />
           )}

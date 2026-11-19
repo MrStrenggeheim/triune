@@ -154,7 +154,7 @@ describe("Explorer actions", () => {
       expect(metadata?.className).toContain("(hover:hover)_and_(pointer:fine)");
       expect(metadata?.className).toContain("data-input=mouse");
       expect(metadata?.parentElement).toBe(actions.parentElement);
-      expect(actions).toHaveClass("absolute", "focus-visible:ring-3");
+      expect(actions).toHaveClass("absolute", "focus-visible:ring-control-focus");
       expect(actions).toHaveAttribute("aria-haspopup", "menu");
       fireEvent.pointerDown(row, { pointerType: "touch", pointerId: 1 });
       fireEvent.pointerUp(row, { pointerType: "touch", pointerId: 1 });

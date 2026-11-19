@@ -51,7 +51,7 @@ export function mentionItemPath(item: MentionItem): string {
 // mid-string "@" still matches because the newline before it counts as the
 // ``\s``.) Mirrors the terminal FileMentionCompleter's "@"-trigger so the web
 // behaves the same.
-const MENTION_RE = /(?:^|\s)@([^\s@]*)$/;
+const MENTION_RE = /(?:^|[\s\uFFFC])@([^\s@\uFFFC]*)$/;
 
 /**
  * Detect an in-progress ``@``-mention immediately before the caret.
@@ -155,4 +155,50 @@ export function buildMentionPreamble(items: MentionItem[], harness: string | nul
       )
       .join("\n") + "\n\n"
   );
+}
+
+// Keep the item and its position together through plain-string draft storage,
+// quote moves and history recall. Unrecognized sequences remain ordinary text.
+const mentionDelimiter = "\uFFFC";
+export function inlineMentionToken(item: MentionItem): string {
+  return mentionDelimiter + encodeURIComponent(JSON.stringify(item)) + mentionDelimiter;
+}
+
+export function inlineMentions(text: string) {
+  const mentions: { start: number; token: string; item: MentionItem }[] = [];
+  for (const match of text.matchAll(/\uFFFC([^\uFFFC\s]+)\uFFFC/g)) {
+    try {
+      const item = JSON.parse(decodeURIComponent(match[1]));
+      if (typeof item?.path !== "string" || typeof item.isDir !== "boolean") continue;
+      if (
+        item.reference &&
+        !(
+          item.reference.version === 2 &&
+          typeof item.reference.source_title === "string" &&
+          typeof item.reference.source_id === "string" &&
+          typeof item.reference.url === "string" &&
+          /^(?:https?:\/\/|\/(?!\/))/.test(item.reference.url)
+        )
+      )
+        continue;
+      mentions.push({ start: match.index!, token: match[0], item: item as MentionItem });
+    } catch {
+      // Literal or incomplete markers are authored text.
+    }
+  }
+  return mentions;
+}
+
+export function deliverInlineMentions(text: string, harness: string | null): string {
+  let end = 0;
+  let result = "";
+  for (const { start, token, item } of inlineMentions(text)) {
+    result +=
+      text.slice(end, start) +
+      (item.reference
+        ? serializeContextReference(item.reference)
+        : mentionMarkerFor(harness, mentionItemPath(item)));
+    end = start + token.length;
+  }
+  return result + text.slice(end);
 }

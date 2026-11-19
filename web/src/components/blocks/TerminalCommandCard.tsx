@@ -1,5 +1,6 @@
+import { HeaderActionButton } from "@/components/HeaderActionButton";
 import { useWrapPreference } from "@/hooks/useWrapPreference";
-import { Button } from "@/components/ui/button";
+
 import { ChevronRightIcon, SquareTerminalIcon, WrapTextIcon } from "lucide-react";
 // Compact card for runner-side terminal commands (!cmd) forwarded from
 // the Claude Code embedded TUI transcript. Two variants:
@@ -22,16 +23,15 @@ interface TerminalCommandCardProps {
 export function TerminalCommandCard({ kind, input, stdout, stderr }: TerminalCommandCardProps) {
   const [wrap, setWrap] = useWrapPreference(kind === "input" ? "tool-input" : "tool-output");
   const toggle = (
-    <Button
+    <HeaderActionButton
       type="button"
-      variant="ghost"
-      size="icon-xs"
+      tooltip={`${wrap ? "Disable" : "Enable"} word wrap`}
       aria-label={`Toggle command ${kind} word wrap`}
       aria-pressed={wrap}
       onClick={() => setWrap((value) => !value)}
     >
       <WrapTextIcon />
-    </Button>
+    </HeaderActionButton>
   );
   if (kind === "input") {
     return (

@@ -30,15 +30,17 @@ async def test_snapshot_restart_keeps_ended_shells_and_distinguishes_same_named_
         "command": "same",
         "status": "running",
         "output": "old\nactual line\n",
+        "turn_id": "codex_turn",
         "can_stop": True,
     }
     await service.capture("chat", [row, {**row, "source": "claude_native"}])
-    await service.capture("chat", [{**row, "status": "stopped", "output": None}])
+    await service.capture("chat", [{**row, "status": "stopped", "output": None, "turn_id": None}])
     await service.capture("chat", [])
     restarted = SessionShellResources(LocalArtifactStore(str(tmp_path)))
     retained = await restarted.capture("chat", [])
     assert len(retained) == 2 and all(not row["can_stop"] for row in retained)
     stopped = await restarted.get("chat", "codex_native", "one")
+    assert stopped["turn_id"] == "codex_turn"
     assert stopped["status"] == "stopped" and stopped["output_preview"] == "actual line"
     await restarted.capture("chat", [row])
     assert (await restarted.get("chat", "codex_native", "one"))["status"] == "stopped"

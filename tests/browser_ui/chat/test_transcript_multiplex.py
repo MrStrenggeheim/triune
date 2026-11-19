@@ -217,7 +217,7 @@ def test_readiness_heartbeat_waits_for_history_then_displays_live_progress(
         )
         chat.set_items(list(reversed(canonical)))
         # The runner finishes during the gap. Only the metadata read can report the idle state.
-        chat.update_session(status="idle", active_response_id=None)
+        chat.update_session(status="running", active_response_id="away-turn")
     boundary.update(
         last_position=canonical[-1]["position"],
         last_item_id=canonical[-1]["id"],
@@ -243,7 +243,9 @@ def test_readiness_heartbeat_waits_for_history_then_displays_live_progress(
     expect(view.get_by_text("Saved reply", exact=True)).to_have_count(1)
     if versioned:
         expect(view.get_by_text("Finished while away", exact=True)).to_be_visible()
-        expect(view.get_by_test_id("working-indicator")).to_have_count(0)
+        expect(view.get_by_test_id("working-indicator")).to_be_visible()
+        chat.update_session(status="idle", active_response_id=None)
+        expect(view.get_by_test_id("working-indicator")).to_have_count(0, timeout=12_000)
     for position in (1, 2):
         expect(view.get_by_text(f"Live progress {position}", exact=True)).to_have_count(1)
     expect(composer).to_have_value("Preserve my draft")

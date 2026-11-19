@@ -7627,13 +7627,13 @@ export async function startStreamPump(
   };
   // Re-read at each catch-up delay, replacing any prior burst: the full status if asked
   // (on screen only) and, while a launch shows, its stage on screen or not.
-  const scheduleStatusCatchup = (withStatus: boolean): void => {
+  const scheduleStatusCatchup = (checkStatus?: () => void): void => {
     if (typeof window === "undefined") return;
     clearCatchupTimers();
     catchupTimers = RECONNECT_STATUS_CATCHUP_DELAYS_MS.map((delayMs) =>
       window.setTimeout(() => {
         if (observationController.signal.aborted || isConversationDisposed(id)) return;
-        if (withStatus) runGuardedStatusReconcile();
+        checkStatus?.();
         const launch = get().sandboxStatus;
         if (launch !== null && launch.stage !== "failed") void reconcileLaunchStatus(id, set, get);
       }, delayMs),
@@ -7919,7 +7919,11 @@ export async function startStreamPump(
           () => {
             failedOpens = 0;
             // Transcript replay recovers saved items. A turn can have ended during the gap.
-            if (multiplexedAttempts.has(attempt)) reconcileBusySession();
+            if (multiplexedAttempts.has(attempt)) {
+              reconcileBusySession();
+              // A resumed feed can replay the final row before metadata reaches idle.
+              if (reconnecting) scheduleStatusCatchup(reconcileBusySession);
+            }
           },
           expectsInitialSync,
           multiplexedAttempts.has(attempt),
@@ -7950,11 +7954,11 @@ export async function startStreamPump(
           // settles shortly after reconnect clears in seconds. Guarded +
           // idempotent, and scoped to the active conversation by
           // reconcileActiveSessionStatus itself.
-          scheduleStatusCatchup(true);
+          scheduleStatusCatchup(runGuardedStatusReconcile);
         } else {
           // A launch's `ready` sent before this first open subscribed is in no snapshot
           // read yet, so re-read its stage over the next ~20 s while it still shows.
-          scheduleStatusCatchup(false);
+          scheduleStatusCatchup();
         }
         let reason = await pumpPromise;
 

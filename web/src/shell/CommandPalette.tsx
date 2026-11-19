@@ -1,3 +1,4 @@
+import "./commandPalette.css";
 import { OperationStatus, ContentSkeleton } from "@/components/ui/loading";
 // Modified for Triune.
 import { TooltipButton } from "@/components/ui/tooltip";
@@ -26,7 +27,7 @@ import { useServerInfo } from "@/lib/CapabilitiesContext";
 import { cn } from "@/lib/utils";
 import { isImeCompositionKeyEvent } from "@/lib/ime";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogPortal, DialogTitle } from "@/components/ui/dialog";
 import {
   Command,
   CommandEmpty,
@@ -478,9 +479,28 @@ export function CommandPalette({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange} modal={!anchorSelector}>
+      {open && anchorSelector && (
+        <DialogPortal>
+          <div
+            aria-hidden="true"
+            data-palette-dismiss-layer=""
+            className="fixed inset-0 z-50"
+            onClick={close}
+          />
+        </DialogPortal>
+      )}
       <DialogContent
+        data-command-palette=""
         overlay={!anchorSelector}
         aria-describedby={undefined}
+        onPointerDownOutside={(event) => {
+          // Keep the shield through pointerup so a touch cannot activate the view underneath.
+          if (
+            event.target instanceof Element &&
+            event.target.closest("[data-palette-dismiss-layer]")
+          )
+            event.preventDefault();
+        }}
         onEscapeKeyDown={dismissOnEscape}
         onKeyDownCapture={(event) => {
           if (event.key !== "Escape" || !(event.target instanceof Element)) return;

@@ -151,7 +151,7 @@ describe("session drag preview portal", () => {
 
   it("does not intercept Space on a session action as a keyboard drag", () => {
     renderSidebar();
-    const button = screen.getByRole("button", { name: "Pin conversation" });
+    const button = screen.getByRole("button", { name: "Archive conversation" });
     button.focus();
     expect(fireEvent.keyDown(button, { key: " ", code: "Space" })).toBe(true);
     expect(document.body.querySelector('[class*="max-w-[16rem]"]')).toBeNull();
