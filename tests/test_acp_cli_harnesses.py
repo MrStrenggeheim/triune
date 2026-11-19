@@ -1,3 +1,4 @@
+# Modified for Triune; inherited notices remain applicable.
 """The declarative builtin ACP CLI harness catalog (omnigent/acp_cli_harnesses.py).
 
 Two halves:
@@ -272,8 +273,12 @@ def test_catalog_row_is_fully_registered(name: str) -> None:
 
 
 @pytest.mark.parametrize("name", sorted(ACP_CLI_HARNESSES))
-def test_catalog_row_spawn_env_builds(name: str) -> None:
+def test_catalog_row_spawn_env_builds(
+    name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The shared builder produces a launchable command for every real row."""
+    monkeypatch.setenv("OMNIGENT_DISABLE_KEYRING", "1")
+    monkeypatch.setenv("OMNIGENT_CONFIG_HOME", str(tmp_path))
     row = ACP_CLI_HARNESSES[name]
     env = _build_acp_cli_spawn_env(_spec(name), harness=name)
     argv = shlex.split(env["HARNESS_ACP_COMMAND"])
@@ -282,6 +287,49 @@ def test_catalog_row_spawn_env_builds(name: str) -> None:
         assert argv[-len(row.args) :] == list(row.args)
     assert env["HARNESS_ACP_NAME"] == row.label
     assert env["HARNESS_ACP_OMNIGENT_MCP"] == ("1" if row.omnigent_mcp else "0")
+
+
+def test_deepseek_setup_is_host_and_harness_scoped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from omnigent.onboarding import harness_readiness as readiness
+    from omnigent.onboarding.harness_auth import store_acp_key
+    from omnigent.onboarding.harness_install import (
+        harness_install_command,
+        try_install_harness_cli,
+    )
+
+    harness = "deepseek-harness"
+    monkeypatch.setenv("OMNIGENT_DISABLE_KEYRING", "1")
+    monkeypatch.setenv("OMNIGENT_CONFIG_HOME", str(tmp_path / "first"))
+    node = tmp_path / "node"
+    node.write_text("#!/bin/sh\necho v24.8.9\n")
+    node.chmod(0o700)
+    monkeypatch.setenv("PATH", str(tmp_path))
+    assert readiness._harness_availability(harness) == "version-too-low"
+    failure = try_install_harness_cli(harness)
+    assert not failure.installed and failure.reason and "Node.js 24.9" in failure.reason
+    assert harness_install_command(harness) == [
+        "npm",
+        "install",
+        "-g",
+        "@deepseek-ai/dsh@0.2.2-rc.5",
+    ]
+    node.write_text("#!/bin/sh\necho v24.9.0\n")
+    monkeypatch.setattr(readiness, "harness_cli_binary", lambda _: None)
+    assert readiness._harness_availability(harness) == "binary-missing"
+    monkeypatch.setattr(readiness, "harness_cli_binary", lambda _: "/test/dsh")
+    assert not store_acp_key(harness, "gateway", "dummy").stored
+    assert not store_acp_key(harness, "key", " ").stored
+    assert readiness._harness_availability(harness) == "needs-auth"
+    assert store_acp_key(harness, "key", "dummy").stored
+    assert readiness._harness_availability(harness) is True
+    env = _build_acp_cli_spawn_env(_spec(harness), harness=harness)
+    assert env["HARNESS_ACP_ENV_PASSTHROUGH"] == "DEEPSEEK_API_KEY"
+    assert env["DEEPSEEK_API_KEY"] == "dummy"
+    assert "DEEPSEEK_API_KEY" not in _build_acp_cli_spawn_env(_spec("grok"), harness="grok")
+    monkeypatch.setenv("OMNIGENT_CONFIG_HOME", str(tmp_path / "second"))
+    assert readiness._harness_availability(harness) == "needs-auth"
 
 
 # ---------------------------------------------------------------------------

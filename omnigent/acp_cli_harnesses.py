@@ -1,3 +1,4 @@
+# Modified for Triune; inherited notices remain applicable.
 """Declarative catalog of builtin ACP CLI harnesses.
 
 One row here is one first-class harness backed by a vendor CLI that speaks the
@@ -20,17 +21,10 @@ Every row runs through the shared generic wrap
 AcpExecutor` — the same code path a user-configured ``acp:<slug>`` agent uses.
 To promote a new ACP-speaking vendor CLI to a builtin harness, add one row and
 its docs; do not add a new inner module, registry entries, or a per-harness
-spawn-env builder. Rows own their auth and model selection (``OWN_AUTH``): no
-Omnigent credential or model override is wired, so a ``/model`` pick is
-rejected up front rather than silently dropped.
+spawn-env builder. The vendor CLI selects its default model.
 
-One consequence worth knowing before adding a row: the generic ACP spawn env is
-deny-by-default and a row has no ``env_passthrough`` of its own (only a
-user-configured ``acp:<slug>`` agent can declare one), so a row's CLI reaches the
-agent with the base environment only. A vendor that configures or authenticates
-*solely* from an environment variable therefore needs a user-configured agent
-rather than a row here; a vendor that reads stored credentials from disk (Devin,
-Grok's OAuth login) works as a row.
+A row with a credential_env uses a host-stored API key scoped to that CLI.
+Other rows authenticate through the vendor CLI.
 
 This module stays import-light (stdlib + :mod:`omnigent.harness_install_spec`)
 so the registry, onboarding, and runner layers can all read it without cycles.
@@ -65,6 +59,7 @@ class AcpCliHarness:
     args: tuple[str, ...]
     aliases: tuple[str, ...] = ()
     omnigent_mcp: bool = True
+    credential_env: str | None = None
 
     @property
     def label(self) -> str:
@@ -87,6 +82,16 @@ class AcpCliHarness:
 # Keyed by canonical harness id. Keep keys sorted; each row's registrations
 # derive from here (see the module docstring for the full list).
 ACP_CLI_HARNESSES: dict[str, AcpCliHarness] = {
+    "deepseek-harness": AcpCliHarness(
+        install=HarnessInstallSpec(
+            "DeepSeek Harness",
+            "dsh",
+            "@deepseek-ai/dsh@0.2.2-rc.5",
+            auth_hint="add a DeepSeek API key in Settings → Harnesses",
+        ),
+        args=("--profile", "acp"),
+        credential_env="DEEPSEEK_API_KEY",
+    ),
     # Grok Build (xAI's ``grok`` CLI) drives ``grok agent stdio``. Ships via a
     # curl installer (not npm) and authenticates through its own ``grok login``
     # (xAI OAuth, device-code capable) or ``XAI_API_KEY``; Omnigent stores no

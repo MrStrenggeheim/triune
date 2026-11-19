@@ -1,3 +1,4 @@
+# Modified for Triune; inherited notices remain applicable.
 """Harness readiness checks used by the host daemon.
 
 The daemon reports a per-harness readiness map in its hello frame, refreshes
@@ -232,6 +233,12 @@ def _harness_availability_core(harness: str) -> HarnessAvailability:
     if IS_WINDOWS and canonical in NATIVE_HARNESSES:
         # Native harnesses require tmux/PTY, which the runner does not support on Windows.
         return False
+    if canonical == "deepseek-harness":
+        from omnigent.onboarding.harness_install import deepseek_node_supported
+
+        if not deepseek_node_supported():
+            return HARNESS_VERSION_TOO_LOW
+        return True if harness_cli_binary(canonical) else HARNESS_BINARY_MISSING
     if canonical == "acp":
         # The generic ACP harness has no fixed binary — "configured" means at
         # least one agent is registered in the ``acp:`` config block. Each
@@ -949,6 +956,13 @@ def _harness_availability(canonical: str) -> HarnessAvailability:
         from omnigent.harnesses.codex_native.main import _codex_auth_unavailable_reason
 
         return _codex_auth_unavailable_reason() or True
+    if canonical == "deepseek-harness":
+        from omnigent.onboarding.harness_auth import acp_api_key
+
+        state = _harness_availability_core(canonical)
+        if state is True and not acp_api_key(canonical):
+            return HARNESS_NEEDS_AUTH
+        return state
     install_key = _AUTH_AWARE_NATIVE_HARNESSES.get(canonical)
     if install_key is not None:
         # Cursor is auth-aware like the other native CLI harnesses, so a missing

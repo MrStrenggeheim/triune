@@ -1,3 +1,4 @@
+# Modified for Triune; inherited notices remain applicable.
 """Non-interactive credential-write core for UI-driven harness auth.
 
 The web UI's "Add a credential" flow (Setup From the UI, M3) needs to write a
@@ -151,6 +152,31 @@ def _pin_defaults_after_write(
 
     _pin(family, get_default_provider(load(), family))
     _pin(PI_SURFACE, default_provider_for_harness(load(), PI_SURFACE))
+
+
+def acp_api_key(harness: str) -> str | None:
+    """Resolve a builtin ACP row's dedicated host secret."""
+    from omnigent.errors import OmnigentError
+    from omnigent.onboarding.secrets import load_secret
+
+    try:
+        return load_secret(f"harness-{harness}")
+    except (OmnigentError, OSError, ValueError) as exc:
+        _logger.warning("ACP credential unavailable for %s (%s)", harness, type(exc).__name__)
+        return None
+
+
+def store_acp_key(harness: str, kind: str, value: str | None) -> StoreCredentialResult:
+    """Write the vendor credential without changing shared provider defaults."""
+    from omnigent.onboarding.secrets import store_secret
+
+    if kind != "key" or not value or not value.strip():
+        return StoreCredentialResult(False, None, "Enter a non-empty API key.")
+    try:
+        store_secret(f"harness-{harness}", value.strip())
+    except Exception:
+        return StoreCredentialResult(False, None, "Could not save the API key on this host.")
+    return StoreCredentialResult(True, None, None)
 
 
 def store_harness_credential(

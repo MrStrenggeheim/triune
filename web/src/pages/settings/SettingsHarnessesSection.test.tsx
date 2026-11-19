@@ -152,6 +152,7 @@ vi.mock("@/lib/CapabilitiesContext", () => ({
     databricks_features: databricksFeatures,
     features: { harness_install: harnessInstall },
     installable_harnesses: [
+      "deepseek-harness",
       "claude-native",
       "codex-native",
       "opencode-native",
@@ -310,6 +311,13 @@ describe("Harnesses grid", () => {
     expect(dialog.getAttribute("data-mode")).toBe("install");
     expect(within(card("codex-native")).queryByText("Needs reconfiguration")).toBeNull();
     expect(within(card("codex-native")).getByText("Not installed")).toBeTruthy();
+  });
+
+  it("shows the host Node prerequisite and disables the DeepSeek update", () => {
+    hosts = [{ ...ONLINE, configured_harnesses: { "deepseek-harness": "version-too-low" } }];
+    renderHarnesses("deepseek-harness", "?tab=settings");
+    expect(screen.getByText(/Install Node.js 24.9 or later/)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Update" })).toBeDisabled();
   });
 
   it("does not offer one-click install for a not-installed Cursor harness", () => {

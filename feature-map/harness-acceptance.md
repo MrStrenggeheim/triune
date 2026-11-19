@@ -10,6 +10,11 @@ differences can justify exceptions; maintainer assignment or support tier cannot
 
 - `ui-contract`: verify the packaged catalog at the real adapter startup/prompt boundary, its actual tool inventory and its version; retain explicit template/version/reattachment limits.
 
+DeepSeek Harness requires Node.js 24.9 or later.
+Settings installs `@deepseek-ai/dsh@0.2.2-rc.5` and saves a host-local API key.
+New Chat starts `dsh --profile acp` with the vendor default model.
+A configured `acp:deepseek-harness` keeps its own command.
+
 P0 is the usable-session baseline; P1 covers recovery and additional supported
 features. These are checklist priorities, not changes to the bench's probe
 priorities or CI gates. Scope a change to affected rows and consumers, and

@@ -488,7 +488,9 @@ def ui_installable_harnesses() -> frozenset[str]:
 # (omnigent stores no key for them), so they are NOT credential-configurable.
 # ``pi`` consumes anthropic/openai and is handled by the host store-secret
 # handler, so it's included via its own key.
-_UI_CREDENTIAL_FAMILIES: frozenset[str] = frozenset({ANTHROPIC_FAMILY, OPENAI_FAMILY, PI_KEY})
+_UI_CREDENTIAL_FAMILIES: frozenset[str] = frozenset(
+    {ANTHROPIC_FAMILY, OPENAI_FAMILY, PI_KEY, "deepseek-harness"}
+)
 
 
 def ui_credential_configurable_harnesses() -> frozenset[str]:
@@ -567,6 +569,13 @@ _UI_AUTH_STEP_BY_KEY: dict[str, SetupStep] = {
         detail="Add an API key or a gateway so Pi can run.",
         action="auth",
         command=None,
+        status_key="authed",
+    ),
+    "deepseek-harness": SetupStep(
+        kind="auth",
+        title="Add a DeepSeek API key",
+        detail="Save the key on the selected host.",
+        action="auth",
         status_key="authed",
     ),
     QWEN_KEY: SetupStep(
@@ -996,6 +1005,8 @@ def harness_cli_installed(key: str, timeout: float = _DEFAULT_CLI_PROBE_TIMEOUT_
         ``False`` when it doesn't resolve, the key has no associated CLI,
         or its version falls outside the declared range.
     """
+    if key == "deepseek-harness" and not deepseek_node_supported():
+        return False
     spec = harness_install_spec(key)
     if spec is None:
         return False
@@ -1152,6 +1163,17 @@ class HarnessInstallResult(NamedTuple):
     reason: str | None
 
 
+_DSH_NODE = HarnessInstallSpec("Node.js", "node", None, min_version="24.9.0")
+
+
+def deepseek_node_supported() -> bool:
+    """Probe the Node executable that npm and the dsh shebang will use."""
+    node = shutil.which("node")
+    return bool(
+        node and _harness_cli_version_satisfies(_DSH_NODE, node, READINESS_CLI_PROBE_TIMEOUT_S)
+    )
+
+
 def try_install_harness_cli(key: str) -> HarnessInstallResult:
     """Install the harness CLI, returning whether it landed and why not.
 
@@ -1173,6 +1195,8 @@ def try_install_harness_cli(key: str) -> HarnessInstallResult:
     if spec is not None and spec.package is None and spec.install_command is None:
         # Manual-only CLI (e.g. cursor-agent): caller shows install_hint.
         return HarnessInstallResult(False, f"{spec.binary!r} is not installable automatically")
+    if key == "deepseek-harness" and not deepseek_node_supported():
+        return HarnessInstallResult(False, "Install Node.js 24.9 or later on the host first.")
     cmd = harness_install_command(key)
     if shutil.which(cmd[0]) is None:
         return HarnessInstallResult(False, f"{cmd[0]!r} is not available on the host")

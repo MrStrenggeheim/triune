@@ -74,7 +74,9 @@ def _repo_relative(path: Path) -> str:
 
 def _extract_models(text: str) -> list[str]:
     """Return hardcoded model ids in ``text``."""
-    return [match.group(0) for match in MODEL_ID_RE.finditer(text)]
+    # The ACP registry key and its npm package identify tools, not model selections.
+    tooling_ids = {"deepseek-harness", "deepseek-ai/dsh"}
+    return [match[0] for match in MODEL_ID_RE.finditer(text) if match[0] not in tooling_ids]
 
 
 def _literal_string_nodes(node: ast.expr) -> tuple[ast.Constant, ...] | None:

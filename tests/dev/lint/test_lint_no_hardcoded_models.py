@@ -17,6 +17,14 @@ from dev.lint.lint_no_hardcoded_models import (
 )
 
 
+def test_deepseek_tool_ids_do_not_mask_model_selections(tmp_path: Path) -> None:
+    source = tmp_path / "harness.py"
+    source.write_text(
+        'TOOLS = ["deepseek-harness", "@deepseek-ai/dsh@0.2"]\nMODEL = "deepseek-chat"\n'
+    )
+    assert [hit.model for hit in scan(source)] == ["deepseek-chat"]
+
+
 def test_scan_flags_python_model_assignment(tmp_path: Path) -> None:
     dirty = tmp_path / "dirty.py"
     dirty.write_text('DEFAULT_MODEL = "databricks-claude-sonnet-4-6"\n')

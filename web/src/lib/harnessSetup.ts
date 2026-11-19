@@ -1,3 +1,4 @@
+// Modified for Triune; inherited notices remain applicable.
 /**
  * Requirements checklist for getting a harness ready to run on a host.
  *
@@ -57,6 +58,13 @@ export interface HarnessReadinessExplanation {
 
 export type HarnessCredentialKind = "isaac" | "personal";
 
+export const DEEPSEEK_HARNESS_ID = "deepseek-harness";
+export const DEEPSEEK_NODE_REQUIREMENT = "Node.js 24.9 or later";
+
+export function harnessUsesOnlyApiKey(harness: string | null | undefined): boolean {
+  return harness === DEEPSEEK_HARNESS_ID;
+}
+
 export const HARNESS_CREDENTIAL_COPY: Record<HarnessCredentialKind, HarnessReadinessExplanation> = {
   isaac: {
     label: "Isaac",
@@ -79,9 +87,11 @@ export function missingHarnessCredentialCopy(
     ? "ChatGPT account or API key"
     : canonicalHarness === "claude-native" || canonicalHarness === "claude"
       ? "Claude subscription or API key"
-      : harnessCredentialFamily(harness) !== null
-        ? "API key or gateway credential"
-        : "credentials";
+      : harnessUsesOnlyApiKey(harness)
+        ? "DeepSeek API key"
+        : harnessCredentialFamily(harness) !== null
+          ? "API key or gateway credential"
+          : "credentials";
   return `No ${credential} on ${hostName}, so new sessions can’t use ${harnessName}.`;
 }
 
@@ -135,6 +145,12 @@ export function harnessReadinessOnHost(
   const availability = configured[harness];
   if (availability === true) {
     return harnessReadinessResult("available", "ready", false, null);
+  }
+  if (availability === "version-too-low" && harness === DEEPSEEK_HARNESS_ID) {
+    return harnessReadinessResult("broken", "version-too-low", true, {
+      label: "Node.js required",
+      description: `Install ${DEEPSEEK_NODE_REQUIREMENT} on the selected host.`,
+    });
   }
   if (availability === "version-too-low") {
     return harnessReadinessResult("broken", "version-too-low", true, {
@@ -312,6 +328,9 @@ export function harnessInstallableOnHost(
     isFeatureEnabled(info, "harness_install") &&
     !!harness &&
     info.installable_harnesses.includes(harness) &&
+    !(
+      harness === DEEPSEEK_HARNESS_ID && host?.configured_harnesses?.[harness] === "version-too-low"
+    ) &&
     host?.status === "online"
   );
 }
@@ -368,7 +387,7 @@ export function harnessAuthableOnHost(
   return (
     info !== "loading" &&
     isFeatureEnabled(info, "harness_install") &&
-    harnessCredentialFamily(harness) !== null &&
+    (harnessUsesOnlyApiKey(harness) || harnessCredentialFamily(harness) !== null) &&
     host?.status === "online"
   );
 }

@@ -30,6 +30,8 @@ import { ApiError } from "@/lib/sessionsApi";
 import { INVENTORY_HARNESS_IDS } from "@/hooks/useHarnessInventory";
 import { BRAND_HARNESSES } from "@/components/onboarding/harnessBrand";
 import {
+  DEEPSEEK_HARNESS_ID,
+  DEEPSEEK_NODE_REQUIREMENT,
   HARNESS_CREDENTIAL_COPY,
   harnessInstallableOnHost,
   harnessReadinessOnHost,
@@ -85,6 +87,12 @@ const HARNESS_ENTRIES: HarnessEntry[] = [...NATIVE_CODING_AGENTS]
     agentName: spec.agentName,
     description: HARNESS_DESCRIPTIONS[spec.harness] ?? "",
   }));
+HARNESS_ENTRIES.push({
+  harness: DEEPSEEK_HARNESS_ID,
+  name: "DeepSeek Harness",
+  agentName: DEEPSEEK_HARNESS_ID,
+  description: "DeepSeek’s coding agent, running on the selected host.",
+});
 
 function hostHarnessKey(hostId: string, harness: string): string {
   return `${hostId}:${harness}`;
@@ -354,6 +362,10 @@ function HostSelect({
 function harnessStatus(harness: string, host: Host | null) {
   const readiness = harnessReadinessOnHost(harness, host);
   return {
+    prerequisite:
+      harness === DEEPSEEK_HARNESS_ID && readiness.reason === "version-too-low"
+        ? DEEPSEEK_NODE_REQUIREMENT
+        : null,
     ready: readiness.state === "available" && readiness.reason === "ready",
     // Only "setup-required" / "broken" are actionable. A host that reports no
     // readiness (older host → `readiness-unknown`) stays neutral: no badge, no
@@ -371,6 +383,8 @@ function credentialPresentation(
   harness: string,
   override?: HarnessCredentialKind,
 ) {
+  if (harness === DEEPSEEK_HARNESS_ID)
+    return { label: "API key", description: "DeepSeek API key stored on this host" };
   if (override === "personal") {
     return HARNESS_CREDENTIAL_COPY.personal;
   }
@@ -425,11 +439,11 @@ function HarnessStatusText({
       return (
         <span className="flex w-fit items-center gap-1 text-xs text-amber-600 dark:text-amber-500">
           <TriangleAlertIcon className="size-3.5" aria-hidden />
-          {reconfigurationReason(status.reason)}
+          {status.prerequisite ?? reconfigurationReason(status.reason)}
         </span>
       );
     }
-    const label = reconfigurationReason(status.reason);
+    const label = status.prerequisite ?? reconfigurationReason(status.reason);
     return (
       <Tooltip>
         <TooltipTrigger asChild>
@@ -614,7 +628,10 @@ function HarnessDetail({
           size="sm"
           variant="secondary"
           disabled={
-            !canFix || status.reason === "binary-missing" || status.reason === "unconfigured"
+            !canFix ||
+            (entry.harness === DEEPSEEK_HARNESS_ID && !installable) ||
+            status.reason === "binary-missing" ||
+            status.reason === "unconfigured"
           }
           onClick={() => onFix("update")}
         >
@@ -637,7 +654,7 @@ function HarnessDetail({
       showStatus={canSetup}
       statusLabel={
         status.reason === "binary-missing" || status.reason === "unconfigured"
-          ? reconfigurationReason(status.reason)
+          ? (status.prerequisite ?? reconfigurationReason(status.reason))
           : "Needs reconfiguration"
       }
       onReconfigure={credentialProblem && canFix ? () => onFix(mode) : undefined}
@@ -747,11 +764,13 @@ function HarnessWarning({
   onFix: (mode: HarnessFixMode) => void;
 }) {
   const copy =
-    reason === "readiness-error"
-      ? `${entry.name} isn’t working on ${host.name}. Run setup again to fix it.`
-      : mode === "update"
-        ? `${entry.name} is out of date on ${host.name}. Update it so new sessions can use ${entry.name}.`
-        : `${entry.name} isn’t set up on ${host.name}, so new sessions can’t use ${entry.name}.`;
+    entry.harness === DEEPSEEK_HARNESS_ID && reason === "version-too-low"
+      ? `Install ${DEEPSEEK_NODE_REQUIREMENT} on ${host.name}, then refresh host readiness.`
+      : reason === "readiness-error"
+        ? `${entry.name} isn’t working on ${host.name}. Run setup again to fix it.`
+        : mode === "update"
+          ? `${entry.name} is out of date on ${host.name}. Update it so new sessions can use ${entry.name}.`
+          : `${entry.name} isn’t set up on ${host.name}, so new sessions can’t use ${entry.name}.`;
   const action = !installable
     ? "Set up"
     : mode === "update"

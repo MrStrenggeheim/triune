@@ -1,3 +1,4 @@
+// Modified for Triune; inherited notices remain applicable.
 import { TooltipButton } from "@/components/ui/tooltip";
 /**
  * Inline "Add a credential" form for the harness setup dialog (Claude/Codex/Pi).
@@ -29,7 +30,7 @@ import {
   type StoreCredentialResult,
   type StoreCredentialInput,
 } from "@/hooks/useHosts";
-import { harnessCredentialAdoptFamilies } from "@/lib/harnessSetup";
+import { harnessCredentialAdoptFamilies, harnessUsesOnlyApiKey } from "@/lib/harnessSetup";
 
 export function HarnessCredentialForm({
   harness,
@@ -52,14 +53,14 @@ export function HarnessCredentialForm({
   // What the user sees in toasts — the friendly name, not the canonical id.
   const display = label ?? harness;
   const store = useStoreCredential(host?.host_id ?? "");
-  // Detection is only meaningful for a live host and this open form.
-  const { data: detected } = useDetectedCredentials(host?.host_id, !!host);
   // The detect endpoint is host-wide (both families), so scope the adopt
   // affordance to the families THIS harness can adopt — otherwise we could offer
   // (and persist) a cross-family key, e.g. an Anthropic key for Codex. Pi
   // consumes both families, so it can adopt an openai OR an anthropic key.
   const adoptFamilies = harnessCredentialAdoptFamilies(harness);
+  const { data: detected } = useDetectedCredentials(host?.host_id, adoptFamilies.length > 0);
   const adoptable = (detected ?? []).find((d) => d.env_var && adoptFamilies.includes(d.family));
+  const apiKeyOnly = harnessUsesOnlyApiKey(harness);
 
   const [apiKey, setApiKey] = useState("");
   const [gatewayUrl, setGatewayUrl] = useState("");
@@ -102,7 +103,7 @@ export function HarnessCredentialForm({
 
   // Build the applicable options in a fixed order; each renders as an
   // equally-weighted labeled block, joined by "or" dividers below. Adopt and
-  // subscription are conditional; API key and gateway always apply. Each carries
+  // subscription, and gateway depend on the harness. Each carries
   // a stable id key: the async adopt row prepends once detection resolves, so an
   // array-index key would shift and remount the rows below it.
   const options: { id: string; node: React.ReactNode }[] = [];
@@ -122,7 +123,7 @@ export function HarnessCredentialForm({
       ),
     });
   }
-  if (command) {
+  if (command && !apiKeyOnly) {
     options.push({
       id: "subscription",
       node: (
@@ -165,7 +166,7 @@ export function HarnessCredentialForm({
           <Input
             type="password"
             autoComplete="off"
-            placeholder="Paste an API key"
+            placeholder={apiKeyOnly ? "Paste a DeepSeek API key" : "Paste an API key"}
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
             data-testid="harness-credential-key"
@@ -176,51 +177,52 @@ export function HarnessCredentialForm({
       </CredentialOption>
     ),
   });
-  options.push({
-    id: "gateway",
-    node: (
-      <CredentialOption icon={<Waypoints />} label="Connect a gateway">
-        <p className="text-sm text-muted-foreground">
-          Route through an OpenAI-compatible proxy (e.g. OpenRouter).
-        </p>
-        <form
-          className="flex flex-col gap-2"
-          data-testid="harness-credential-gateway"
-          onSubmit={(e) => {
-            e.preventDefault();
-            // See the API-key form: gate on !busy so Enter can't re-POST mid-save.
-            if (!busy && gatewayUrl.trim() && gatewayKey.trim()) {
-              submit({
-                harness,
-                kind: "gateway",
-                base_url: gatewayUrl.trim(),
-                secret: gatewayKey.trim(),
-              });
-            }
-          }}
-        >
-          <Input
-            type="text"
-            placeholder="Gateway base URL (e.g. https://openrouter.ai/api/v1)"
-            value={gatewayUrl}
-            onChange={(e) => setGatewayUrl(e.target.value)}
-            className="h-8 text-sm"
-          />
-          <div className="flex items-center gap-2">
+  if (!apiKeyOnly)
+    options.push({
+      id: "gateway",
+      node: (
+        <CredentialOption icon={<Waypoints />} label="Connect a gateway">
+          <p className="text-sm text-muted-foreground">
+            Route through an OpenAI-compatible proxy (e.g. OpenRouter).
+          </p>
+          <form
+            className="flex flex-col gap-2"
+            data-testid="harness-credential-gateway"
+            onSubmit={(e) => {
+              e.preventDefault();
+              // See the API-key form: gate on !busy so Enter can't re-POST mid-save.
+              if (!busy && gatewayUrl.trim() && gatewayKey.trim()) {
+                submit({
+                  harness,
+                  kind: "gateway",
+                  base_url: gatewayUrl.trim(),
+                  secret: gatewayKey.trim(),
+                });
+              }
+            }}
+          >
             <Input
-              type="password"
-              autoComplete="off"
-              placeholder="Gateway API key"
-              value={gatewayKey}
-              onChange={(e) => setGatewayKey(e.target.value)}
-              className="h-8 font-mono text-sm"
+              type="text"
+              placeholder="Gateway base URL (e.g. https://openrouter.ai/api/v1)"
+              value={gatewayUrl}
+              onChange={(e) => setGatewayUrl(e.target.value)}
+              className="h-8 text-sm"
             />
-            <SaveButton busy={busy} disabled={!gatewayUrl.trim() || !gatewayKey.trim()} />
-          </div>
-        </form>
-      </CredentialOption>
-    ),
-  });
+            <div className="flex items-center gap-2">
+              <Input
+                type="password"
+                autoComplete="off"
+                placeholder="Gateway API key"
+                value={gatewayKey}
+                onChange={(e) => setGatewayKey(e.target.value)}
+                className="h-8 font-mono text-sm"
+              />
+              <SaveButton busy={busy} disabled={!gatewayUrl.trim() || !gatewayKey.trim()} />
+            </div>
+          </form>
+        </CredentialOption>
+      ),
+    });
 
   return (
     <div className="flex flex-col gap-3 py-1" data-testid="harness-credential-form">

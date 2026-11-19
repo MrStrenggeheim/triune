@@ -145,6 +145,7 @@ from omnigent.inner import _proc
 from omnigent.onboarding.harness_auth import (
     adopt_env_credential,
     detect_adoptable_credentials,
+    store_acp_key,
     store_harness_credential,
 )
 from omnigent.onboarding.harness_install import (
@@ -3181,14 +3182,15 @@ class HostProcess:
             OPENAI_FAMILY: OPENAI_FAMILY,
             "pi": ANTHROPIC_FAMILY,
         }.get(install_key or "")
-        if family is None:
+        if install_key == "deepseek-harness":
+            result = store_acp_key(install_key, frame.kind, frame.secret_value)
+        elif family is None:
             return HostStoreSecretResultFrame(
                 request_id=frame.request_id,
                 status="failed",
                 error=f"harness {frame.harness!r} is not configurable from the UI",
             )
-
-        if frame.kind == "adopt":
+        elif frame.kind == "adopt":
             if not frame.env_var:
                 return HostStoreSecretResultFrame(
                     request_id=frame.request_id,
@@ -3238,13 +3240,7 @@ class HostProcess:
                 status="failed",
                 error=result.reason or "could not write the credential",
             )
-        # Deliberately log only the non-secret entry name, never the secret.
-        _logger.info(
-            "Wrote %s credential for %s (family %s) via UI request",
-            frame.kind,
-            frame.harness,
-            family,
-        )
+        _logger.info("Wrote %s credential for %s via UI request", frame.kind, frame.harness)
         return HostStoreSecretResultFrame(
             request_id=frame.request_id,
             status="ok",

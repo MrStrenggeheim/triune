@@ -1729,6 +1729,8 @@ def create_hosts_router(
                 status_code=400,
                 detail=f"harness {harness!r} is not configurable from the UI",
             )
+        if harness == "deepseek-harness" and body.kind != "key":
+            raise HTTPException(status_code=400, detail="DeepSeek Harness requires an API key.")
         if body.kind not in ("key", "gateway", "adopt"):
             raise HTTPException(status_code=400, detail=f"unknown credential kind {body.kind!r}")
 

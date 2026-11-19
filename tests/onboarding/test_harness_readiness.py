@@ -1,3 +1,4 @@
+# Modified for Triune; inherited notices remain applicable.
 """Tests for harness readiness checks (``harness_readiness.py``)."""
 
 from __future__ import annotations
@@ -121,6 +122,8 @@ def _all_clis_installed(monkeypatch: pytest.MonkeyPatch) -> None:
             # fine with a generous semver placeholder.
             if argv[0].endswith("opencode"):
                 version = "1.17.7\n"
+            elif argv[0].endswith("/node"):
+                version = "v24.9.0\n"
             elif argv[0].endswith("cursor-agent") or argv[0].endswith("hermes"):
                 version = "2026.07.01\n"
             else:
@@ -624,6 +627,7 @@ def test_configured_harness_map_all_true_with_clis(
     import omnigent.onboarding.gemini_auth as _ga
     import omnigent.onboarding.kimi_auth as _ka
 
+    monkeypatch.setattr("omnigent.onboarding.harness_auth.acp_api_key", lambda _h: "dummy")
     _all_clis_installed(monkeypatch)
     monkeypatch.setattr(
         "omnigent.harnesses.codex_native.main._codex_auth_unavailable_reason",
