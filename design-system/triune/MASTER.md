@@ -163,7 +163,7 @@ Missing authorized membership, draft/read hydration or latest-error evidence rem
 Parents alone have a trailing child-count/chevron; children use shallow indentation.
 Hover actions truncate titles before controls instead of covering labels or status.
 
-The custom ConversationActivityDock remains disabled.
+The custom ConversationActivityDock was removed.
 The approved original composer shelf groups questions, approvals, shells, agents and plan progress above the input, using existing forms and popovers.
 Shelf buttons have no chevrons; labels collapse under measured space pressure while icons and counts remain visible.
 Activity data and the dedicated Activity view remain available.

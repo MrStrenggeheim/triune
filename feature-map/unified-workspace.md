@@ -66,7 +66,7 @@ Integration7 checks below describe a source candidate awaiting combined release 
 - Durable composer branching and keyboard resource reuse: `web/src/workbench/durableSubchat.test.ts` and `web/src/workbench/resourceShortcuts.test.ts`.
 - Scoped chat actions, initial sends and draft migration: `web/src/workbench/ScopedChatStore.test.tsx`, `web/src/workbench/useScopedInitialPrompt.test.tsx` and `web/src/workbench/conversationDraft.test.ts`.
 - Reattachment, explicit stop and retained terminal output: `web/src/workbench/TerminalResourceView.test.tsx` and `web/src/workbench/TerminalInventoryView.test.tsx`.
-- Peer presentation and activity: `web/src/components/blocks/PeerMessage.test.tsx`, `web/src/hooks/usePeerMessages.test.tsx` and `web/src/components/composer/ConversationActivityDock.test.tsx`.
+- Peer presentation and activity: `web/src/components/blocks/PeerMessage.test.tsx` and `web/src/hooks/usePeerMessages.test.tsx`.
 - References, quote destinations and authorized snapshots: `web/src/components/composer/ContextReferences.test.tsx` and `tests/stores/test_context_references.py`.
 - Hierarchy and native recovery: `tests/stores/test_conversation_store.py`, `tests/server/integration/test_sessions_fork.py` and `tests/runner/test_suppress_recovery_turn.py`.
 - Delivery authorization and deduplication: `tests/server/integration/test_session_orchestration.py`.
