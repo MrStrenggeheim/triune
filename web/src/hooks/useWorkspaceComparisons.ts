@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { useWorkbenchWorkspace, queryIdentity, resourceBase } from "@/lib/workbenchWorkspace";
 import { useQuery } from "@tanstack/react-query";
 import { authenticatedFetch } from "@/lib/identity";
@@ -17,6 +18,7 @@ import {
   type ComparisonTurn,
   type WorkspaceComparisonScope,
 } from "@/lib/workspaceComparison";
+import { FALLBACK_POLL_MS, usePollingInterval } from "./usePollingInterval";
 
 export interface WorkspaceComparisonResult {
   available: boolean;
@@ -75,6 +77,11 @@ export function useWorkspaceComparisonChanges(
   useTrailingInvalidate(identity, active, "workspace-comparison-changes");
   const path = options.path ?? "";
   const directories = [...new Set(options.directories ?? [])].sort().slice(0, 128);
+  // File-change pushes invalidate session comparisons; this poll is the safety net.
+  const refetchInterval = usePollingInterval({
+    active: options.enabled !== false,
+    intervalMs: FALLBACK_POLL_MS,
+  });
   return useQuery<WorkspaceComparisonResult>({
     queryKey: [
       "workspace-comparison-changes",
@@ -124,7 +131,7 @@ export function useWorkspaceComparisonChanges(
       serveable !== false &&
       environment.data?.available === true,
     staleTime: 5_000,
-    refetchInterval: 5_000,
+    refetchInterval,
     retry: false,
     placeholderData: (previous, query) =>
       query?.queryKey[1] === identity &&

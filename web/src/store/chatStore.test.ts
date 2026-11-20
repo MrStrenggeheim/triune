@@ -10961,10 +10961,16 @@ describe("chatStore — handleSessionEvent (resource events)", () => {
       expect(spy).toHaveBeenCalledWith({
         queryKey: ["workspace-environment", "conv_abc"],
       });
-      // 5 = the four filesystem-view keys + workspace-environment, all from
-      // ONE debounced flush (the two events above coalesced). 10 would mean
-      // the debounce broke and each event flushed separately.
-      expect(spy).toHaveBeenCalledTimes(5);
+      // Git status and comparisons follow the same push, so their polls stay a slow fallback.
+      expect(spy).toHaveBeenCalledWith({
+        queryKey: ["workspace-git-changes", "conv_abc"],
+      });
+      expect(spy).toHaveBeenCalledWith({
+        queryKey: ["workspace-comparison-changes", "conv_abc"],
+      });
+      // 7 = the four filesystem-view keys, two git keys and workspace-environment,
+      // all from ONE debounced flush (the two events above coalesced).
+      expect(spy).toHaveBeenCalledTimes(7);
       spy.mockRestore();
     });
   });

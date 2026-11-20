@@ -34,6 +34,7 @@ import {
   type WorkbenchWorkspace,
   type WorkspaceResourceTarget,
 } from "@/lib/workbenchWorkspace";
+import { FALLBACK_POLL_MS, usePollingInterval } from "./usePollingInterval";
 
 /** True while this session’s agent loop is live, including visible grid panes. */
 export function useSessionActive(conversationId: string | undefined): boolean {
@@ -393,6 +394,11 @@ export function useWorkspaceGitChanges(
   });
   const path = options.path ?? "";
   const directories = [...new Set(options.directories ?? [])].sort().slice(0, 128);
+  // File-change pushes invalidate session git status; this poll is the safety net.
+  const refetchInterval = usePollingInterval({
+    active: options.enabled !== false,
+    intervalMs: FALLBACK_POLL_MS,
+  });
   return useQuery<
     WorkspaceChangedFilesResult & { repositories: string[]; root_is_repository?: boolean }
   >({
@@ -425,7 +431,7 @@ export function useWorkspaceGitChanges(
       serveable !== false &&
       environment.data?.available === true,
     staleTime: 5_000,
-    refetchInterval: 5_000,
+    refetchInterval,
     retry: false,
     placeholderData: (previous, query) =>
       query?.queryKey[1] === identity && query?.queryKey[2] === path ? previous : undefined,

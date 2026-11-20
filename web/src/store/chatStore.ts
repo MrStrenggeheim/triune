@@ -2329,6 +2329,13 @@ function scheduleWorkspaceFilesystemInvalidation(sessionId: string): void {
     queryClient?.invalidateQueries({
       queryKey: ["workspace-dir-listing", sessionId],
     });
+    // Git status and comparisons read the same files; their polls are only a fallback.
+    queryClient?.invalidateQueries({
+      queryKey: ["workspace-git-changes", sessionId],
+    });
+    queryClient?.invalidateQueries({
+      queryKey: ["workspace-comparison-changes", sessionId],
+    });
     // Environment availability (root/home → the Files tab gate) can
     // change too: the post-switch runner reset publishes this same event
     // after closing the old agent's cached OSEnv, so an os_env-boundary
