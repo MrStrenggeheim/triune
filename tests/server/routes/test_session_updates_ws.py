@@ -1446,8 +1446,71 @@ def test_multiplex_authorization_and_active_revocation_are_member_scoped(
         assert _recv_until(ws, {"snapshot"})["items"][0]["id"] == second
 
 
+@pytest.mark.timeout(20)
+def test_unsignalled_revocation_stops_frames_within_grant_bound(app, stores, monkeypatch):
+    """A grant removed without an access signal still ends the stream once the grant ages."""
+    from sqlalchemy import delete
+
+    from omnigent.db.db_models import SqlSessionPermission
+    from omnigent.runtime import session_stream
+    from omnigent.server.auth import LEVEL_READ
+
+    permissions = stores[2]
+    # Isolate the stream grant bound from the store's own resolve cache.
+    monkeypatch.setattr(permissions, "_resolve_cache_ttl_s", 0)
+    sid = _seed_session(stores, owner=ALICE, title="shared")
+    permissions.ensure_user(BOB)
+    permissions.grant(BOB, sid, LEVEL_READ)
+
+    def publish(environment_id: str) -> None:
+        session_stream.publish(
+            sid,
+            {
+                "type": "session.changed_files.invalidated",
+                "session_id": sid,
+                "environment_id": environment_id,
+            },
+        )
+
+    def environments_until_error(ws) -> list[str]:
+        received = []
+        for _ in range(100):
+            frame = ws.receive_json()
+            if frame.get("session_id") != sid:
+                continue
+            if frame["type"] == "session.error":
+                assert frame["code"] == "not_found"
+                return received
+            event = frame.get("event", {})
+            if event.get("type") == "session.changed_files.invalidated":
+                received.append(event["environment_id"])
+                if event["environment_id"] == "within-bound":
+                    return received
+        raise AssertionError("revoked subscription was not closed")
+
+    with TestClient(app).websocket_connect(
+        "/v1/sessions/updates", headers={"X-Forwarded-Email": BOB}
+    ) as ws:
+        _subscribe(ws, sid)
+        # Delete the row directly, as account deletion does, so no signal fires.
+        with permissions._engine.begin() as connection:
+            connection.execute(
+                delete(SqlSessionPermission).where(
+                    SqlSessionPermission.user_id == BOB,
+                    SqlSessionPermission.conversation_id == sid,
+                )
+            )
+        publish("within-bound")
+        assert environments_until_error(ws)[-1] == "within-bound"
+        aged = time.monotonic() + session_change_signal.STREAM_GRANT_MAX_AGE_S
+        monkeypatch.setattr(session_change_signal, "_clock", lambda: aged)
+        publish("after-bound")
+        assert "after-bound" not in environments_until_error(ws)
+        assert not session_stream.has_subscribers(sid)
+
+
 @pytest.mark.parametrize("change", ["rebind", "reroute", "disconnect", "revoke", "delete"])
-async def test_stream_authorization_reuses_fresh_conversation_and_rejects_changes(
+async def test_stream_authorization_reuses_bounded_grant_and_rejects_changes(
     app, stores, monkeypatch, change
 ):
     from unittest.mock import AsyncMock, Mock
@@ -1517,6 +1580,13 @@ async def test_stream_authorization_reuses_fresh_conversation_and_rejects_change
         permissions.revoke(ALICE, sid)
     else:
         await store.delete_conversation(sid)
+    if change != "revoke":
+        # An unsignalled change keeps the grant until it ages past its bound.
+        await request.state.stream_authorize()
+        assert read.call_count == 2
+        aged = time.monotonic() + session_change_signal.STREAM_GRANT_MAX_AGE_S
+        monkeypatch.setattr(session_change_signal, "_clock", lambda: aged)
+    # A revoke signals every grant to re-check before its next frame.
     with pytest.raises(OmnigentError if change in {"revoke", "delete"} else ConnectionError):
         await request.state.stream_authorize()
     if change in {"rebind", "revoke", "delete"}:

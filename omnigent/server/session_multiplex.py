@@ -131,7 +131,8 @@ class SessionMultiplex:
                 raise ConnectionError("Session socket writer closed")
             if waited and authorize is not None:
                 # A completed contender owns the next admission turn, not the
-                # physical writer. Bound this final fresh check; never cache grants.
+                # physical writer. Re-admit within a deadline; a stream grant is
+                # reused only until an access change or its 5 s bound.
                 try:
                     async with asyncio.timeout(_AUTH_HANDOFF_TIMEOUT_S):
                         await authorize()

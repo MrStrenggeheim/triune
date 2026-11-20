@@ -8,8 +8,9 @@ durable write or a live status change; any thread may call it. Consumers
 such as the session-updates socket recompute only the rows a signal names
 and keep a slow full rescan for changes no producer reports.
 
-:func:`notify_access_changed` additionally advances :func:`access_epoch`
-for consumers that cache authorization.
+:func:`notify_access_changed` additionally advances :func:`access_epoch`.
+:class:`BoundedGrant` reuses a successful stream authorization until that
+epoch moves or :data:`STREAM_GRANT_MAX_AGE_S` passes, whichever is first.
 """
 
 from __future__ import annotations
@@ -17,13 +18,19 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import threading
+import time
 import weakref
-from collections.abc import Iterator
+from collections.abc import Awaitable, Callable, Iterator
+
+# Revocation and scope changes no producer reports still apply within this bound.
+STREAM_GRANT_MAX_AGE_S = 5.0
 
 _lock = threading.Lock()
 # custom-lint: disable-next=workspace-scoped-cache -- subscription objects are process-unique
 _subscriptions: weakref.WeakSet[SessionChangeSubscription] = weakref.WeakSet()
 _access_epoch = 0
+# Indirection lets tests age a grant without patching the event loop's clock.
+_clock = time.monotonic
 
 
 class SessionChangeSubscription:
@@ -82,3 +89,31 @@ def access_epoch() -> int:
     """Return the counter that every grant, admin or scope change advances."""
     with _lock:
         return _access_epoch
+
+
+class BoundedGrant:
+    """Reuse a successful authorization within the bounded staleness rule.
+
+    A grant is reused until :func:`notify_access_changed` runs or
+    :data:`STREAM_GRANT_MAX_AGE_S` passes; a denial is never cached.
+    """
+
+    def __init__(
+        self,
+        check: Callable[[], Awaitable[None]],
+        *,
+        max_age_s: float = STREAM_GRANT_MAX_AGE_S,
+    ) -> None:
+        self._check = check
+        self._max_age_s = max_age_s
+        self._epoch: int | None = None
+        self._valid_until = 0.0
+
+    async def __call__(self) -> None:
+        # Sample before checking: a change that lands mid-check must not be cached over.
+        epoch = access_epoch()
+        now = _clock()
+        if epoch == self._epoch and now < self._valid_until:
+            return
+        await self._check()
+        self._epoch, self._valid_until = epoch, now + self._max_age_s
