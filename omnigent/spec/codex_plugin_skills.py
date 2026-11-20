@@ -6,6 +6,8 @@ import json
 import logging
 import os
 import subprocess
+import threading
+import time
 from dataclasses import replace
 from pathlib import Path
 from typing import cast
@@ -17,6 +19,12 @@ from omnigent.spec.parser import _discover_skills, _parse_skill
 from omnigent.spec.types import SkillSpec
 
 _log = logging.getLogger(__name__)
+
+# ``codex plugin list`` can wait on a remote marketplace for longer than its
+# timeout; a failed inventory falls back to Codex's loaded skills until then.
+INVENTORY_FAILURE_TTL_SECONDS = 600.0
+_inventory_failures: dict[tuple[str, str], float] = {}
+_inventory_failures_lock = threading.Lock()
 
 
 def _is_path_segment(part: object) -> bool:
@@ -52,6 +60,11 @@ def _inventory_plugins(codex_home: Path, cwd: Path | None) -> list[object] | Non
     if (codex_path := _find_codex_cli()) is None:
         _log.debug("Codex plugin inventory unavailable: codex CLI not found")
         return None
+    key = (codex_path, str(codex_home))
+    now = time.monotonic()
+    with _inventory_failures_lock:
+        if _inventory_failures.get(key, 0.0) > now:
+            return None
     try:
         result = subprocess.run(
             [codex_path, "plugin", "list", "--json"],
@@ -64,7 +77,13 @@ def _inventory_plugins(codex_home: Path, cwd: Path | None) -> list[object] | Non
         )
         inventory = json.loads(result.stdout)
     except (OSError, subprocess.SubprocessError, ValueError) as exc:
-        _log.info("Codex plugin inventory unavailable: %s", exc)
+        _log.info(
+            "Codex plugin inventory unavailable for %.0fs: %s", INVENTORY_FAILURE_TTL_SECONDS, exc
+        )
+        with _inventory_failures_lock:
+            for expired in [k for k, until in _inventory_failures.items() if until <= now]:
+                del _inventory_failures[expired]
+            _inventory_failures[key] = now + INVENTORY_FAILURE_TTL_SECONDS
         return None
     plugins = inventory.get("installed") if isinstance(inventory, dict) else None
     return plugins if isinstance(plugins, list) else []
