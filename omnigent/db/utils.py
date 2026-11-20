@@ -11,7 +11,7 @@ import random
 import threading
 import time
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import AbstractContextManager, contextmanager
 from contextvars import ContextVar
 from datetime import UTC, datetime
@@ -259,6 +259,10 @@ def _env_float(name: str, default: float, *, minimum: float) -> float:
 _engine_cache: dict[str, Engine] = {}
 _engine_lock = threading.Lock()
 
+SQLITE_MMAP_SIZE_BYTES = 1 << 30
+# Negative cache_size is KiB: 64 MiB of page cache per connection.
+SQLITE_CACHE_SIZE_PRAGMA = -65536
+
 
 def _create_engine(db_uri: str) -> Engine:
     """
@@ -312,11 +316,8 @@ def _create_engine(db_uri: str) -> Engine:
             pool_timeout=10,
         )
 
-        # Apply WAL + busy_timeout on every fresh DBAPI connection
-        # so AsyncSession instances and any other consumer all
-        # benefit — the per-session PRAGMA in
-        # :func:`make_managed_session_maker` only fires for code
-        # paths that go through that helper.
+        # Connection settings apply once per fresh DBAPI connection, for
+        # every consumer of the engine; pooled checkouts reuse them.
         import sqlite3
 
         @event.listens_for(engine, "connect")
@@ -327,6 +328,10 @@ def _create_engine(db_uri: str) -> Engine:
                 cur.execute("PRAGMA busy_timeout=20000")  # 20s
                 cur.execute("PRAGMA synchronous=NORMAL")  # WAL-safe + fast
                 cur.execute("PRAGMA foreign_keys=ON")
+                # A WAL commit by another connection resets this page cache, so
+                # memory-mapped reads serve repeat lookups from the OS cache.
+                cur.execute(f"PRAGMA mmap_size={SQLITE_MMAP_SIZE_BYTES}")
+                cur.execute(f"PRAGMA cache_size={SQLITE_CACHE_SIZE_PRAGMA}")
             finally:
                 cur.close()
 
@@ -619,6 +624,10 @@ def _run_migrations(engine: Engine, db_uri: str) -> None:
                 # it into the chain, create_all still creates missing tables.
                 for base in (OmnigentBase, ConversationBase):
                     base.metadata.create_all(bind=engine, checkfirst=True)
+    if engine.dialect.name == "sqlite":
+        # Migrations switch connection settings such as foreign_keys off; the
+        # pool must hand out only connections configured by the connect hook.
+        engine.dispose()
 
 
 def run_migrations_with_retry(
@@ -867,6 +876,54 @@ def clear_engine_cache() -> None:
         _engine_cache.clear()
 
 
+def optimize_sqlite_statistics(db_uris: Iterable[str | None]) -> None:
+    """
+    Refresh stale planner statistics for the already-open SQLite databases among *db_uris*.
+
+    ``PRAGMA optimize`` re-analyzes only tables whose statistics are missing or
+    drifted, sampling at most ``analysis_limit`` rows per index; it never runs a
+    full ``ANALYZE``. Failures are logged, not raised.
+    """
+    import sqlite3
+
+    with _engine_lock:
+        engines = {
+            engine
+            for uri in db_uris
+            if isinstance(uri, str)
+            and (engine := _engine_cache.get(normalize_database_url(uri))) is not None
+            and engine.dialect.name == "sqlite"
+        }
+    for engine in engines:
+        started = time.monotonic()
+        try:
+            with engine.connect() as connection:
+                connection.exec_driver_sql("PRAGMA analysis_limit=400")
+                if sqlite3.sqlite_version_info < (3, 46):
+                    # Older SQLite optimizes only tables this connection planned an
+                    # indexed lookup for; 3.46 checks all tables with 0x10000.
+                    for table, column in connection.exec_driver_sql(
+                        "SELECT m.name, i.name FROM sqlite_master AS m, "
+                        "pragma_index_list(m.name) AS l, pragma_index_info(l.name) AS i "
+                        "WHERE m.type = 'table' AND i.seqno = 0 AND i.name IS NOT NULL"
+                    ).all():
+                        connection.exec_driver_sql(
+                            f'EXPLAIN QUERY PLAN SELECT 1 FROM "{table}" WHERE "{column}" = ?',
+                            (None,),
+                        ).all()
+                connection.exec_driver_sql("PRAGMA optimize=0x10002").all()
+                connection.commit()
+        except Exception:
+            _logger.warning("SQLite statistics refresh failed for %s", engine.url, exc_info=True)
+            continue
+        _logger.info(
+            "SQLite statistics refreshed for %s in %.2fs (SQLite %s)",
+            engine.url.database,
+            time.monotonic() - started,
+            sqlite3.sqlite_version,
+        )
+
+
 # ── Managed session ────────────────────────────────────
 
 
@@ -927,9 +984,8 @@ def make_managed_session_maker(
     Create a context-manager factory for database sessions.
 
     Sessions auto-commit on success and auto-rollback on failure.
-    When the underlying dialect is SQLite, each session additionally
-    enables ``PRAGMA foreign_keys`` and sets a 20-second
-    ``busy_timeout``.
+    SQLite connection settings (foreign keys, ``busy_timeout``) come from
+    the engine's connect hook in :func:`_create_engine`.
 
     :param engine: The SQLAlchemy engine to bind sessions to.
     :param immediate: When ``True`` and the dialect is SQLite, starts
@@ -954,9 +1010,7 @@ def make_managed_session_maker(
         """
         Yield a managed :class:`~sqlalchemy.orm.Session`.
 
-        Commits on clean exit, rolls back on exception. For SQLite
-        backends, enables foreign key enforcement and sets a
-        busy timeout before yielding.
+        Commits on clean exit, rolls back on exception.
 
         Inside a :func:`shared_read_scope` (and only for read makers), the
         scope's per-engine session is reused instead of a fresh checkout;
@@ -969,27 +1023,15 @@ def make_managed_session_maker(
                 session = shared.get(key)
                 if session is None:
                     session = factory()
-                    # Register before the PRAGMAs: those executes force the pool
-                    # checkout, so if one raises the scope must already track the
-                    # session to close it (otherwise the connection would leak).
                     shared[key] = session
-                    if is_sqlite:
-                        session.execute(text("PRAGMA foreign_keys = ON"))
-                        session.execute(text("PRAGMA busy_timeout = 20000"))  # 20s
                 yield session
                 return
         with factory() as session:
             try:
-                if is_sqlite:
-                    # PRAGMAs must run before BEGIN IMMEDIATE: foreign_keys is
-                    # a no-op inside a transaction, and busy_timeout must be
-                    # set before lock acquisition or it doesn't apply.
-                    session.execute(text("PRAGMA foreign_keys = ON"))
-                    session.execute(text("PRAGMA busy_timeout = 20000"))  # 20s
-                    if immediate:
-                        # Acquire write lock before any read to prevent
-                        # concurrent check-then-insert races on SQLite.
-                        session.execute(text("BEGIN IMMEDIATE"))
+                if is_sqlite and immediate:
+                    # Acquire write lock before any read to prevent
+                    # concurrent check-then-insert races on SQLite.
+                    session.execute(text("BEGIN IMMEDIATE"))
                 yield session
                 session.commit()
             except Exception:
