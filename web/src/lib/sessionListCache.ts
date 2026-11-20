@@ -216,6 +216,14 @@ function violatesKnownMembership(conv: Conversation, filters: ConversationListFi
   return false;
 }
 
+/**
+ * Whether a row is a delegated sub-agent: it appears under its parent's child
+ * list, never by root-list order or membership. Branches keep list semantics.
+ */
+export function isSubAgentRow(row: SessionListWireItem): boolean {
+  return !!row.parent_session_id && !(row as { branch?: unknown }).branch;
+}
+
 /** Fields that can change membership in another cached list, including search. */
 function changedFieldsAffectMembership(changed: Set<string>): boolean {
   return [
@@ -241,20 +249,18 @@ function changedFieldsAffectMembership(changed: Set<string>): boolean {
  * query may now match it.
  *
  * @param changed - Names of wire fields that changed the cached row.
- * @param isActiveRow - Whether this row is the active chat (the one held
- *   in place by `ActiveChatOverride`). An `updated_at`-only change on it
- *   doesn't move the visible row, so it doesn't need a server resort.
+ * @param orderFixed - Whether an `updated_at`-only change leaves the visible
+ *   order alone: the active chat is held in place by `ActiveChatOverride`, and
+ *   a sub-agent child is placed under its parent rather than by list order.
  * @returns `true` when the query should be invalidated after patching.
  */
-function changedFieldsNeedRefetch(changed: Set<string>, isActiveRow: boolean): boolean {
+function changedFieldsNeedRefetch(changed: Set<string>, orderFixed: boolean): boolean {
   if (changedFieldsAffectMembership(changed)) return true;
-  // updated_at only affects the server's sort order. The active chat row is
-  // pinned at its position by ActiveChatOverride regardless of that order, so
-  // an updated_at bump on it — the common case while the user sends messages —
-  // never changes what's visible. Skip the full-list refetch it would
-  // otherwise force every tick. Any other row's updated_at still needs the
-  // server resort to move it.
-  if (changed.has("updated_at") && !isActiveRow) return true;
+  // updated_at only affects the server's sort order. Skip the full-list
+  // refetch for rows whose position does not follow that order, such as the
+  // active chat while the user sends messages and running sub-agents that
+  // bump every tick. Any other row's updated_at still needs the server resort.
+  if (changed.has("updated_at") && !orderFixed) return true;
   return false;
 }
 
@@ -323,7 +329,7 @@ export function mergeItemsIntoPages(
         needsRefetch = true;
         continue;
       }
-      if (changedFieldsNeedRefetch(changed, conv.id === activeId)) {
+      if (changedFieldsNeedRefetch(changed, conv.id === activeId || isSubAgentRow(nextConv))) {
         needsRefetch = true;
       }
       rowChanged = true;

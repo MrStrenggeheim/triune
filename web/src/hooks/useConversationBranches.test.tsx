@@ -8,6 +8,7 @@ import { authenticatedFetch } from "@/lib/identity";
 import type * as IdentityModule from "@/lib/identity";
 import { conversation } from "@/test/sidebarMockHelpers";
 import type { BranchConversation } from "@/lib/conversationBranches";
+import { sessionUpdatesSocket } from "@/lib/sessionUpdatesSocket";
 import { useConversationBranches } from "./useConversationBranches";
 
 vi.mock("@/lib/identity", async (original) => ({
@@ -174,4 +175,34 @@ it("keeps an embedded native child out of sidebar roots", async () => {
     expect(result.current.ancestors.some((row) => row.id === "native-child")).toBe(true),
   );
   expect(result.current.rows.map((row) => row.id)).toEqual(["root"]);
+});
+
+it("polls the inventory only while the session-updates socket is disconnected", async () => {
+  let connected = true;
+  const listeners = new Set<() => void>();
+  vi.spyOn(sessionUpdatesSocket, "isConnected").mockImplementation(() => connected);
+  vi.spyOn(sessionUpdatesSocket, "subscribeStatus").mockImplementation((listener) => {
+    listeners.add(listener);
+    return () => listeners.delete(listener);
+  });
+  vi.mocked(authenticatedFetch).mockImplementation(
+    async () => new Response(JSON.stringify({ data: [], has_more: false, last_id: null })),
+  );
+  vi.useFakeTimers();
+  try {
+    renderBranches();
+    await act(() => vi.advanceTimersByTimeAsync(10));
+    expect(authenticatedFetch).toHaveBeenCalledTimes(1);
+    await act(() => vi.advanceTimersByTimeAsync(120_000));
+    expect(authenticatedFetch).toHaveBeenCalledTimes(1);
+    act(() => {
+      connected = false;
+      for (const listener of listeners) listener();
+    });
+    await act(() => vi.advanceTimersByTimeAsync(30_000));
+    expect(authenticatedFetch).toHaveBeenCalledTimes(2);
+  } finally {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  }
 });

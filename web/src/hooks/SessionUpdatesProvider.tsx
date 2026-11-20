@@ -42,6 +42,7 @@ import {
   collectConversationIds,
   filtersFromConversationQueryKey,
   insertNewRowsIntoPages,
+  isSubAgentRow,
   mergeItemsIntoPages,
   nullsToUndefined,
   PROJECT_LABEL_KEY,
@@ -184,16 +185,23 @@ function applyItemsToCache(
   if (refetchKeys.length > 0 && !needsMembershipRefetch) {
     for (const query of queryClient.getQueryCache().findAll({
       predicate: (candidate) =>
-        candidate.queryKey[0] === "conversation-branches" ||
-        (candidate.queryKey[0] === "conversations" && !!candidate.queryKey[1]),
+        candidate.queryKey[0] === "conversation-branches" || isContentSearchKey(candidate.queryKey),
     }))
       refetchKeys.push(query.queryKey);
   }
   return {
-    missingIds: [...itemsById.keys()].filter((id) => !foundAnywhere.has(id)),
+    // A delegated sub-agent belongs to its parent's child list, not to these lists.
+    missingIds: [...itemsById.values()]
+      .filter((item) => !foundAnywhere.has(item.id) && !isSubAgentRow(item))
+      .map((item) => item.id),
     refetchKeys,
     needsMembershipRefetch,
   };
+}
+
+/** A `["conversations", <search>, ...]` list whose matches include item content. */
+function isContentSearchKey(key: QueryKey): boolean {
+  return key[0] === "conversations" && !!key[1];
 }
 
 /**
@@ -478,8 +486,18 @@ export function SessionUpdatesProvider({ children }: { children: ReactNode }) {
           const sidebarMissingIds = activeIdRef.current
             ? missingIds.filter((id) => id !== activeIdRef.current)
             : missingIds;
+          // A changed sub-agent row is patched in its parent's child list; only
+          // an active content search can gain a match from its new content.
+          const searchKeys =
+            frame.type === "changed" && frame.items.some(isSubAgentRow)
+              ? queryClient
+                  .getQueryCache()
+                  .findAll({ predicate: (query) => isContentSearchKey(query.queryKey) })
+                  .map((query) => query.queryKey)
+              : [];
           if (sidebarMissingIds.length > 0 || needsMembershipRefetch) scheduleInvalidate();
-          else if (refetchKeys.length > 0) scheduleInvalidate(refetchKeys);
+          else if (refetchKeys.length + searchKeys.length > 0)
+            scheduleInvalidate([...refetchKeys, ...searchKeys]);
           return;
         }
       }
