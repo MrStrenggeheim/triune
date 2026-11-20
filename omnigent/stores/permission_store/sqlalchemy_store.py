@@ -25,6 +25,7 @@ from omnigent.db.utils import (
     run_write_transaction,
 )
 from omnigent.entities import Account, ResolvedAccess, SessionPermission
+from omnigent.runtime import session_change_signal
 from omnigent.server.auth import (
     LEVEL_OWNER,
     RESERVED_USER_LOCAL,
@@ -601,12 +602,15 @@ class SqlAlchemyPermissionStore(PermissionStore):
             stale = [key for key in self._resolve_cache if key[0] == conversation_id]
             for key in stale:
                 del self._resolve_cache[key]
+        # Open streams re-check before their next frame; list rows re-project the grant.
+        session_change_signal.notify_access_changed(conversation_id)
 
     def _invalidate_resolve_cache_all(self) -> None:
         """Drop the whole cache — for admin-flag or bulk-grant changes."""
         with self._resolve_cache_lock:
             self._resolve_cache_generation += 1
             self._resolve_cache.clear()
+        session_change_signal.notify_access_changed()
 
     def resolve_access(
         self,

@@ -36,12 +36,13 @@ from omnigent.codex_approval_modes import (
     CODEX_NEXT_TURN_PATH,
     codex_next_turn_permission_mode,
 )
-from omnigent.db.utils import generate_agent_id, generate_file_id
+from omnigent.db.utils import generate_agent_id, generate_file_id, shared_read_scope
 from omnigent.debug_logging import add_audit_attrs, debug_event, set_current_runner_id
 from omnigent.entities import (
     Agent,
     CommentsFingerprint,
     Conversation,
+    PagedList,
     StoredFile,
     synthesize_conversation_title,
 )
@@ -63,6 +64,7 @@ from omnigent.runner.routing import RunnerRouter, routing_host_id, routing_host_
 from omnigent.runner.session_init_protocol import build_runner_session_init_payload
 from omnigent.runtime import (
     pending_elicitations,
+    session_change_signal,
     user_session_stream,
 )
 from omnigent.runtime.agent_cache import AgentCache
@@ -88,7 +90,7 @@ from omnigent.server.background_session_titles import (
 )
 from omnigent.server.bundles import agent_needs_own_copy, copy_agent_bundle, validate_agent_bundle
 from omnigent.server.creation_logging import creation_metadata, creation_stage, session_created
-from omnigent.server.descendant_activity import activity_descendants
+from omnigent.server.descendant_activity import ActivityDescendants, activity_descendants_sync
 from omnigent.server.host_registry import HostRegistry, RunnerExitReports
 from omnigent.server.permissions import check_session_access
 from omnigent.server.routes._auth_helpers import (
@@ -1673,6 +1675,7 @@ def register_core_routes(
             user_id, session_id, LEVEL_READ, permission_store, conversation_store
         )
         _set_read_state(user_id, session_id, body.last_seen, body.unread)
+        session_change_signal.notify(session_id)
         return Response(status_code=204)
 
     # ── GET /sessions/{session_id} ───────────────────────────────
@@ -1963,79 +1966,58 @@ def register_core_routes(
         visibility_filters = _session_visibility_filters(
             user_id, visibility, include_archived, project
         )
-        page = await asyncio.to_thread(
-            conversation_store.list_conversations,
-            include_execution_state=False,
-            limit=limit,
-            after=after,
-            before=before,
-            agent_id=agent_id,
-            agent_name=agent_name,
-            has_agent_id=True,
-            # The store treats ``None`` as "no kind filter"; the API
-            # spells that ``kind=any`` to keep the param required-ish
-            # and pattern-validated.
-            kind=None if kind == "any" else kind,
-            order=order,
-            sort_by=sort_by,
-            search_query=normalized_query,
-            search_scope=search_scope,
-            project=project,
-            pinned=pinned,
-            **visibility_filters,
-            # Pins are per-user: filter to the caller's own pin key.
-            pinned_owner=user_id,
-        )
-        # Side chats surface only as Workspace-rail tabs, so drop any
-        # side-chat-labeled fork from the sidebar list (it is still a normal
-        # session, just not listed as a top-level one here).
-        if not include_side_chats:
-            page.data = [
-                conv for conv in page.data if SIDE_CHAT_LABEL_KEY not in (conv.labels or {})
-            ]
-        # list_conversations may return rows with agent_id=None for
-        # legacy conversations; skip them before building the batch IDs.
-        conv_ids = [conv.id for conv in page.data if conv.agent_id is not None]
-        if not conv_ids:
+
+        def load_page() -> tuple[PagedList[Conversation], _ListFacts | None]:
+            """List the page and read every stored fact its rows need in one worker hop."""
+            page = conversation_store.list_conversations(
+                include_execution_state=False,
+                limit=limit,
+                after=after,
+                before=before,
+                agent_id=agent_id,
+                agent_name=agent_name,
+                has_agent_id=True,
+                # The store treats ``None`` as "no kind filter"; the API
+                # spells that ``kind=any`` to keep the param required-ish
+                # and pattern-validated.
+                kind=None if kind == "any" else kind,
+                order=order,
+                sort_by=sort_by,
+                search_query=normalized_query,
+                search_scope=search_scope,
+                project=project,
+                pinned=pinned,
+                **visibility_filters,
+                # Pins are per-user: filter to the caller's own pin key.
+                pinned_owner=user_id,
+            )
+            # Side chats surface only as Workspace-rail tabs, so drop any
+            # side-chat-labeled fork from the sidebar list (it is still a normal
+            # session, just not listed as a top-level one here).
+            if not include_side_chats:
+                page.data = [
+                    conv for conv in page.data if SIDE_CHAT_LABEL_KEY not in (conv.labels or {})
+                ]
+            # list_conversations may return rows with agent_id=None for
+            # legacy conversations; they get no list row.
+            if not any(conv.agent_id is not None for conv in page.data):
+                return page, None
+            return page, _list_facts(page.data, user_id)
+
+        page, facts = await asyncio.to_thread(load_page)
+        if facts is None:
             return PaginatedList(
                 data=[],
                 first_id=page.first_id,
                 last_id=page.last_id,
                 has_more=page.has_more,
             )
-        # Batch-fetch permissions and agent metadata concurrently.
-        # The tasks table has been removed — status comes exclusively from
-        # the relay-fed ``_session_status_cache``.
-        perms_by_conv: dict[str, list[SessionPermission]]
-        if permission_store is not None:
-            perms_by_conv, agent_metadata, child_ids_by_parent = await asyncio.gather(
-                asyncio.to_thread(permission_store.list_for_sessions, conv_ids),
-                asyncio.to_thread(_session_agent_metadata, page.data),
-                asyncio.to_thread(
-                    conversation_store.list_child_conversation_ids_by_parent,
-                    conv_ids,
-                ),
-            )
-            user_is_admin = (
-                await asyncio.to_thread(permission_store.is_admin, user_id)
-                if user_id is not None
-                else False
-            )
-        else:
-            agent_metadata, child_ids_by_parent = await asyncio.gather(
-                asyncio.to_thread(_session_agent_metadata, page.data),
-                asyncio.to_thread(
-                    conversation_store.list_child_conversation_ids_by_parent,
-                    conv_ids,
-                ),
-            )
-            perms_by_conv = {}
-            user_is_admin = False
-        agent_names_by_id, harnesses_by_id = agent_metadata
+        conv_ids = [conv.id for conv in page.data if conv.agent_id is not None]
+        perms_by_conv = facts.perms_by_conv
+        user_is_admin = facts.user_is_admin
         # In-memory lookup — no I/O, so batching avoids re-acquiring
         # the index's lock per row but otherwise has no DB cost.
         pending_counts = pending_elicitations.counts_for(conv_ids)
-        comments_fingerprints = await _comments_fingerprints_for(conv_ids)
         # ── Lazy-on-read backstop for orphaned "running" sessions. ────────
         # A session whose persisted live_status is still running/waiting but
         # whose runner is confirmed gone — a replica that restarted and
@@ -2095,20 +2077,20 @@ def register_core_routes(
                         )
         # Build items after reconciliation so each settled row reads its new
         # status straight from the (now-updated) cache.
-        activity = await _activity_for(page.data, user_id, user_is_admin)
+        activity = facts.activity(page.data, user_id)
         items: list[SessionListItem] = [
             _build_session_list_item(
                 conv,
-                agent_names_by_id=agent_names_by_id,
-                harness=harnesses_by_id.get(conv.id),
+                agent_names_by_id=facts.agent_names_by_id,
+                harness=facts.harnesses_by_id.get(conv.id),
                 grants=perms_by_conv.get(conv.id, []),
                 user_id=user_id,
                 user_is_admin=user_is_admin,
                 permissions_enabled=permission_store is not None,
                 pending_count=pending_counts.get(conv.id, 0),
-                child_session_ids=child_ids_by_parent[conv.id],
+                child_session_ids=facts.child_ids_by_parent[conv.id],
                 activity=activity[conv.id],
-                comments_fingerprint=comments_fingerprints.get(conv.id),
+                comments_fingerprint=facts.comments_fingerprints.get(conv.id),
             )
             for conv in page.data
             if conv.agent_id is not None
@@ -2141,33 +2123,13 @@ def register_core_routes(
             has_more=page.has_more,
         )
 
-    async def _comments_fingerprints_for(
-        conv_ids: list[str],
-    ) -> dict[str, CommentsFingerprint]:
-        """
-        Batch-fetch comment change fingerprints for the given sessions.
-
-        Shared by the ``GET /v1/sessions`` page builder and
-        ``WS /v1/sessions/updates`` so both emit the same
-        ``comments_count`` / ``comments_updated_at`` values and the
-        stream's diff fires when a comment is added, edited, addressed,
-        or deleted.
-
-        :param conv_ids: Session ids to summarize,
-            e.g. ``["conv_abc123"]``.
-        :returns: Map from session id to its
-            :class:`CommentsFingerprint`; empty when no comment store
-            is wired. Sessions without comments are absent.
-        """
-        if comment_store is None or not conv_ids:
-            return {}
-        return await asyncio.to_thread(comment_store.get_comments_fingerprints, conv_ids)
-
     # ── WS /sessions/updates ────────────────────────────────────
 
-    async def _activity_for(
+    def _activity_rows(
         convs: list[Conversation], user_id: str | None, user_is_admin: bool
-    ) -> dict[str, SessionActivity]:
+    ) -> tuple[dict[str, ActivityDescendants], dict[str, list[SessionPermission]]]:
+        """Read authorized descendants and their grants; blocking."""
+
         def authorize(candidates: list[Conversation], authorized: set[str]) -> set[str]:
             if permission_store is None or user_is_admin:
                 return {row.id for row in candidates}
@@ -2185,14 +2147,25 @@ def register_core_routes(
                 )
             }
 
-        descendants = await activity_descendants(convs, conversation_store, authorize)
-        rows = {row.id: row for result in descendants.values() for row in result.rows}
-        pending_counts = pending_elicitations.counts_for(list(rows))
+        descendants = activity_descendants_sync(convs, conversation_store, authorize)
+        rows = [row.id for result in descendants.values() for row in result.rows]
         grants_by_id = (
-            await asyncio.to_thread(permission_store.list_for_sessions, list(rows))
+            permission_store.list_for_sessions(list(dict.fromkeys(rows)))
             if permission_store is not None and rows
             else {}
         )
+        return descendants, grants_by_id
+
+    def _activity_from_rows(
+        convs: list[Conversation],
+        descendants: dict[str, ActivityDescendants],
+        grants_by_id: dict[str, list[SessionPermission]],
+        user_id: str | None,
+        user_is_admin: bool,
+    ) -> dict[str, SessionActivity]:
+        """Project descendant status from the live cache; reads no storage."""
+        rows = {row.id: row for result in descendants.values() for row in result.rows}
+        pending_counts = pending_elicitations.counts_for(list(rows))
         authorized_ids = set(rows) | {conv.id for conv in convs}
         # Overlapping roots share the same status and viewer snapshot in this batch.
         facts: dict[str, SessionActivityDescendant] = {}
@@ -2239,6 +2212,74 @@ def register_core_routes(
             )
         return result
 
+    @dataclasses.dataclass
+    class _ListFacts:
+        """Stored facts for one batch of list rows, read in a single worker hop."""
+
+        perms_by_conv: dict[str, list[SessionPermission]]
+        user_is_admin: bool
+        agent_names_by_id: dict[str, str]
+        harnesses_by_id: dict[str, str | None]
+        child_ids_by_parent: dict[str, list[str]]
+        comments_fingerprints: dict[str, CommentsFingerprint]
+        descendants: dict[str, ActivityDescendants]
+        descendant_grants: dict[str, list[SessionPermission]]
+        child_counts: dict[str, int] | None
+
+        def activity(
+            self, convs: list[Conversation], user_id: str | None
+        ) -> dict[str, SessionActivity]:
+            return _activity_from_rows(
+                convs, self.descendants, self.descendant_grants, user_id, self.user_is_admin
+            )
+
+    def _list_facts(
+        convs: list[Conversation],
+        user_id: str | None,
+        *,
+        perms_by_conv: dict[str, list[SessionPermission]] | None = None,
+        user_is_admin: bool | None = None,
+        with_child_counts: bool = False,
+    ) -> _ListFacts:
+        """Read grants, children, comments and descendants for *convs*; blocking."""
+        conv_ids = [conv.id for conv in convs if conv.agent_id is not None]
+        with shared_read_scope():
+            if permission_store is None:
+                perms_by_conv, user_is_admin = {}, False
+            else:
+                if perms_by_conv is None:
+                    perms_by_conv = permission_store.list_for_sessions(conv_ids)
+                if user_is_admin is None:
+                    user_is_admin = (
+                        permission_store.is_admin(user_id) if user_id is not None else False
+                    )
+            child_ids_by_parent = conversation_store.list_child_conversation_ids_by_parent(
+                conv_ids
+            )
+            comments = (
+                comment_store.get_comments_fingerprints(conv_ids)
+                if comment_store is not None and conv_ids
+                else {}
+            )
+            descendants, descendant_grants = _activity_rows(convs, user_id, user_is_admin)
+            child_counts = None
+            if with_child_counts:
+                with contextlib.suppress(NotImplementedError):
+                    child_counts = conversation_store.count_child_conversations(conv_ids)
+        # Agent metadata may read bundles from artifact storage; keep it outside the read scope.
+        agent_names_by_id, harnesses_by_id = _session_agent_metadata(convs)
+        return _ListFacts(
+            perms_by_conv=perms_by_conv,
+            user_is_admin=user_is_admin,
+            agent_names_by_id=agent_names_by_id,
+            harnesses_by_id=harnesses_by_id,
+            child_ids_by_parent=child_ids_by_parent,
+            comments_fingerprints=comments,
+            descendants=descendants,
+            descendant_grants=descendant_grants,
+            child_counts=child_counts,
+        )
+
     async def _fetch_watched_items(
         watched: list[str],
         user_id: str | None,
@@ -2269,70 +2310,74 @@ def register_core_routes(
         """
         if not watched:
             return []
-        if permission_store is not None:
-            perms_by_conv = await asyncio.to_thread(permission_store.list_for_sessions, watched)
-            user_is_admin = (
-                await asyncio.to_thread(permission_store.is_admin, user_id)
-                if user_id is not None
-                else False
-            )
-            accessible = [
-                cid
-                for cid in watched
-                if _permission_level_from_grants(
-                    user_id, perms_by_conv.get(cid, []), user_is_admin
-                )
-                is not None
-            ]
-        else:
-            perms_by_conv = {}
+
+        def load(ids: list[str]) -> tuple[list[Conversation], _ListFacts | None]:
+            """Authorize, load and gather facts for the watched rows in one worker hop."""
+            perms_by_conv: dict[str, list[SessionPermission]] = {}
             user_is_admin = False
-            accessible = list(watched)
-        if not accessible:
-            return []
+            with shared_read_scope():
+                accessible = list(ids)
+                if permission_store is not None:
+                    perms_by_conv = permission_store.list_for_sessions(ids)
+                    user_is_admin = (
+                        permission_store.is_admin(user_id) if user_id is not None else False
+                    )
+                    accessible = [
+                        cid
+                        for cid in ids
+                        if _permission_level_from_grants(
+                            user_id, perms_by_conv.get(cid, []), user_is_admin
+                        )
+                        is not None
+                    ]
+                # Sessions only (non-null agent_id), in the caller's id order.
+                by_id = (
+                    conversation_store.get_conversations(accessible, include_execution_state=False)
+                    if accessible
+                    else {}
+                )
+                convs = [
+                    conv
+                    for cid in accessible
+                    if (conv := by_id.get(cid)) is not None and conv.agent_id is not None
+                ]
+            if not convs:
+                return [], None
+            facts = _list_facts(
+                convs,
+                user_id,
+                perms_by_conv=perms_by_conv,
+                user_is_admin=user_is_admin,
+                with_child_counts=True,
+            )
+            return convs, facts
 
-        def _load_sessions(ids: list[str]) -> list[Conversation]:
-            """Bulk-load the accessible conversations that are sessions
-            (non-null ``agent_id``) in one batched store call, preserving
-            the caller's id order for deterministic output."""
-            by_id = conversation_store.get_conversations(ids, include_execution_state=False)
-            return [
-                conv
-                for cid in ids
-                if (conv := by_id.get(cid)) is not None and conv.agent_id is not None
-            ]
-
-        convs = await asyncio.to_thread(_load_sessions, accessible)
-        if not convs:
+        convs, facts = await asyncio.to_thread(load, watched)
+        if facts is None:
             return []
         conv_ids = [c.id for c in convs]
-        agent_metadata, child_ids_by_parent, comments_fingerprints = await asyncio.gather(
-            asyncio.to_thread(_session_agent_metadata, convs),
-            asyncio.to_thread(
-                conversation_store.list_child_conversation_ids_by_parent,
-                conv_ids,
-            ),
-            _comments_fingerprints_for(conv_ids),
-        )
-        agent_names_by_id, harnesses_by_id = agent_metadata
         pending_counts = pending_elicitations.counts_for(conv_ids)
-        activity = await _activity_for(convs, user_id, user_is_admin)
+        activity = facts.activity(convs, user_id)
         items = [
             _build_session_list_item(
                 conv,
-                agent_names_by_id=agent_names_by_id,
-                harness=harnesses_by_id.get(conv.id),
-                grants=perms_by_conv.get(conv.id, []),
+                agent_names_by_id=facts.agent_names_by_id,
+                harness=facts.harnesses_by_id.get(conv.id),
+                grants=facts.perms_by_conv.get(conv.id, []),
                 user_id=user_id,
-                user_is_admin=user_is_admin,
+                user_is_admin=facts.user_is_admin,
                 permissions_enabled=permission_store is not None,
                 pending_count=pending_counts.get(conv.id, 0),
-                child_session_ids=child_ids_by_parent[conv.id],
+                child_session_ids=facts.child_ids_by_parent[conv.id],
                 activity=activity[conv.id],
-                comments_fingerprint=comments_fingerprints.get(conv.id),
+                comments_fingerprint=facts.comments_fingerprints.get(conv.id),
             )
             for conv in convs
         ]
+        for item in items:
+            item.child_count = (
+                facts.child_counts.get(item.id) if facts.child_counts is not None else None
+            )
         await _apply_liveness_to_items(items, liveness_lookup)
         # Full-row dumps (every field, nulls included) — NOT exclude_none. The
         # stream is a diff source: the client overlays these onto its cached
@@ -2542,12 +2587,17 @@ def register_core_routes(
         last_sent: dict[str, dict[str, Any]] = {}
         last_send_monotonic = time.monotonic()
         watch_changed = asyncio.Event()
+        list_revision = 0
 
         async def _send(frame: dict[str, Any]) -> None:
             """Only telemetry and physical writing belong at the emission boundary."""
-            nonlocal last_send_monotonic
+            nonlocal last_send_monotonic, list_revision
             from omnigent.runtime import telemetry
 
+            if frame.get("type") in {"snapshot", "changed", "removed"}:
+                # Numbered at the single physical writer, so the wire order is strictly increasing.
+                list_revision += 1
+                frame["revision"] = list_revision
             telemetry.record_message_payload(frame)
             telemetry.inject_trace_context(frame)
             await websocket.send_text(json.dumps(frame))
@@ -2626,29 +2676,71 @@ def register_core_routes(
                 generation += 1
                 watch_changed.set()
 
-        async def _ticker() -> None:
-            """One list-state owner; slow reads never own the socket writer."""
-            completed_generation = 0
-            while True:
-                from omnigent.server.routes import sessions as _sf
-
-                with contextlib.suppress(TimeoutError):
-                    await asyncio.wait_for(
-                        watch_changed.wait(), timeout=_sf._SESSION_UPDATES_RESCAN_INTERVAL_S
+        def _rows_affected_by(changed_ids: set[str], ids: list[str]) -> list[str]:
+            """Watched rows that are, or project, a changed session (child or descendant)."""
+            affected = []
+            for cid in ids:
+                row = last_sent.get(cid)
+                related = {cid}
+                if row is not None:
+                    related.update(row.get("child_session_ids") or ())
+                    related.update(
+                        descendant["id"]
+                        for descendant in (row.get("activity") or {}).get("descendants", [])
                     )
-                watch_changed.clear()
-                expected, ids = generation, list(watched)
-                try:
-                    if expected != completed_generation:
-                        await _emit_list("snapshot", ids, expected)
-                        if generation == expected:
-                            completed_generation = expected
-                    elif ids:
-                        await _emit_list("changed", ids, expected)
-                except (WebSocketDisconnect, ConnectionError):
-                    raise
-                except Exception as exc:
-                    _logger.warning("session-updates list read failed (%s)", type(exc).__name__)
+                if related & changed_ids:
+                    affected.append(cid)
+            return affected
+
+        async def _ticker() -> None:
+            """One list-state owner; slow reads never own the socket writer.
+
+            Signalled changes recompute only the watched rows they touch, at most
+            once per minimum interval; a slow full rescan catches unsignalled changes.
+            """
+            completed_generation = 0
+            last_full_rescan = time.monotonic()
+            last_recompute = 0.0
+            with session_change_signal.subscribe(watch_changed) as changes:
+                while True:
+                    from omnigent.server.routes import sessions as _sf
+
+                    rescan_at = last_full_rescan + _sf._SESSION_UPDATES_RESCAN_INTERVAL_S
+                    with contextlib.suppress(TimeoutError):
+                        await asyncio.wait_for(
+                            watch_changed.wait(), timeout=max(0.0, rescan_at - time.monotonic())
+                        )
+                    coalesce = (
+                        last_recompute
+                        + _sf._SESSION_UPDATES_MIN_RECOMPUTE_INTERVAL_S
+                        - time.monotonic()
+                    )
+                    if coalesce > 0:
+                        await asyncio.sleep(coalesce)
+                    watch_changed.clear()
+                    changed_ids = changes.take()
+                    expected, ids = generation, list(watched)
+                    try:
+                        if expected != completed_generation:
+                            last_full_rescan = time.monotonic()
+                            await _emit_list("snapshot", ids, expected)
+                            if generation == expected:
+                                completed_generation = expected
+                        elif time.monotonic() >= rescan_at:
+                            last_full_rescan = time.monotonic()
+                            if ids:
+                                await _emit_list("changed", ids, expected)
+                        elif affected := _rows_affected_by(changed_ids, ids):
+                            await _emit_list("changed", affected, expected)
+                        else:
+                            continue
+                        last_recompute = time.monotonic()
+                    except (WebSocketDisconnect, ConnectionError):
+                        raise
+                    except Exception as exc:
+                        _logger.warning(
+                            "session-updates list read failed (%s)", type(exc).__name__
+                        )
 
         async def _heartbeat() -> None:
             while True:
@@ -2954,13 +3046,22 @@ def register_core_routes(
         :raises OmnigentError: 400 if the runner is not
             registered; 404 if no session exists.
         """
-        # A live effort/model change must read the settings its predecessor confirmed
-        # or restored; otherwise a refusal can restore a value Codex never applied.
-        if not body.silent and {"reasoning_effort", "model_override"} & body.model_fields_set:
-            live_change = _live_settings_change(session_id)
-            async with live_change.lock:
-                return await _update_session(request, session_id, body, include_usage, live_change)
-        return await _update_session(request, session_id, body, include_usage)
+        try:
+            # A live effort/model change must read the settings its predecessor confirmed
+            # or restored; otherwise a refusal can restore a value Codex never applied.
+            if not body.silent and {"reasoning_effort", "model_override"} & body.model_fields_set:
+                live_change = _live_settings_change(session_id)
+                async with live_change.lock:
+                    return await _update_session(
+                        request, session_id, body, include_usage, live_change
+                    )
+            return await _update_session(request, session_id, body, include_usage)
+        finally:
+            # Even a partly applied PATCH may have moved the row or its stream scope.
+            if {"runner_id", "share_workspace_files"} & body.model_fields_set:
+                session_change_signal.notify_access_changed(session_id)
+            else:
+                session_change_signal.notify(session_id)
 
     async def _update_session(
         request: Request,

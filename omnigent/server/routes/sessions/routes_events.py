@@ -77,6 +77,7 @@ from omnigent.runtime import (
     inflight_text,
     pending_elicitations,
     pending_inputs,
+    session_change_signal,
     session_stream,
 )
 from omnigent.runtime.agent_cache import AgentCache
@@ -4116,7 +4117,7 @@ def register_events_routes(
             conversation=conv,
         )
 
-        async def authorize_stream() -> None:
+        async def check_stream_access() -> None:
             initial_access = await _require_access_and_level(
                 user_id, session_id, LEVEL_READ, permission_store, conversation_store
             )
@@ -4147,8 +4148,8 @@ def register_events_routes(
                     )
                 if current_client is not runner_client:
                     raise ConnectionError("Session runner route changed during stream")
-            # Routing can suspend; finish with a current access/scope read, never
-            # carry an earlier grant through runner preparation or a writer wait.
+            # Routing can suspend; finish with a current access/scope read rather
+            # than carry the first read through runner preparation.
             access = await _require_access_and_level(
                 user_id, session_id, LEVEL_READ, permission_store, conversation_store
             )
@@ -4165,6 +4166,9 @@ def register_events_routes(
             ):
                 raise ConnectionError("Session scope changed during stream")
 
+        # Frames reuse a passed check until a grant, admin or scope change is
+        # signalled, and re-check at least every STREAM_GRANT_MAX_AGE_S.
+        authorize_stream = session_change_signal.BoundedGrant(check_stream_access)
         request.state.stream_authorize = authorize_stream
 
         from omnigent.server.subagent_activity import recover_subagent_activity

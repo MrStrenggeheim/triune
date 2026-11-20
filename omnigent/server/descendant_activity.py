@@ -21,7 +21,7 @@ class ActivityDescendants:
     complete: bool
 
 
-async def activity_descendants(
+def activity_descendants_sync(
     roots: list[Conversation],
     store: ConversationStore,
     authorize: Callable[[list[Conversation], set[str]], set[str]],
@@ -29,7 +29,10 @@ async def activity_descendants(
     max_nodes: int = 2048,
     max_depth: int = 64,
 ) -> dict[str, ActivityDescendants]:
-    """Prune unreadable paths and report unknown when the shared work budget expires."""
+    """Prune unreadable paths and report unknown when the shared work budget expires.
+
+    Blocking; callers run it in one worker hop, ideally under ``shared_read_scope``.
+    """
     rows = {row.id: row for row in roots}
     authorized = set(rows)
     examined = set(rows)
@@ -43,9 +46,7 @@ async def activity_descendants(
         if remaining <= 0:
             complete = False
             break
-        edges, covered = await asyncio.to_thread(
-            store.list_activity_child_ids, frontier, limit=remaining
-        )
+        edges, covered = store.list_activity_child_ids(frontier, limit=remaining)
         complete &= covered
         candidates = list(
             dict.fromkeys(
@@ -53,17 +54,9 @@ async def activity_descendants(
             )
         )
         examined.update(candidates)
-        loaded = (
-            await asyncio.to_thread(store.get_activity_conversations, candidates)
-            if candidates
-            else {}
-        )
+        loaded = store.get_activity_conversations(candidates) if candidates else {}
         complete &= len(loaded) == len(candidates)
-        allowed = (
-            await asyncio.to_thread(authorize, list(loaded.values()), authorized)
-            if loaded
-            else set()
-        )
+        allowed = authorize(list(loaded.values()), authorized) if loaded else set()
         authorized.update(allowed)
         rows.update({key: row for key, row in loaded.items() if key in allowed})
         for parent, children in edges.items():
@@ -86,6 +79,25 @@ async def activity_descendants(
         descendants.sort(key=lambda row: row.id)
         result[root.id] = ActivityDescendants(descendants, complete)
     return result
+
+
+async def activity_descendants(
+    roots: list[Conversation],
+    store: ConversationStore,
+    authorize: Callable[[list[Conversation], set[str]], set[str]],
+    *,
+    max_nodes: int = 2048,
+    max_depth: int = 64,
+) -> dict[str, ActivityDescendants]:
+    """Run :func:`activity_descendants_sync` in one worker hop."""
+    return await asyncio.to_thread(
+        activity_descendants_sync,
+        roots,
+        store,
+        authorize,
+        max_nodes=max_nodes,
+        max_depth=max_depth,
+    )
 
 
 async def descendant_activity(

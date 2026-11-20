@@ -205,8 +205,10 @@ On servers advertising `transcript_stream:1`, one updates WebSocket per browser 
 Visible multiplex memberships survive window blur; hidden view leases detach, while legacy SSE retains origin-slot and focus arbitration.
 The server produces structured events once for WebSocket and SSE adapters, and the browser parses WebSocket events without converting them back into SSE bytes.
 Membership queues bound events, serialized bytes and residence time; physical writes have a deadline, and expensive authorization or list reads run outside the physical writer.
-Authorization is refreshed after any writer wait; revoked or rebound memberships cannot publish queued frames under an earlier check.
-Ready senders take FIFO turns; the final fresh authorization handoff is capped at one second and a physical socket write at five seconds.
+Each membership reuses a passed stream authorization until a grant, admin-flag or runner-binding change is signalled, and re-checks at least every 5 seconds.
+Revocations through the permission store cut a membership before its next frame; unsignalled changes, such as direct row deletion, apply within 5 seconds.
+Ready senders take FIFO turns; the authorization handoff after a writer wait is capped at one second and a physical socket write at five seconds.
+List watches recompute only rows named by the session change signal, at most four times per second, with a 30-second full rescan; list frames carry a per-socket `revision`.
 The 8 MiB serialized-event budget covers maximum tool output including JSON escaping.
 For larger saved items, the browser negotiates an ordered reference on WebSocket or SSE and retrieves the complete body by session, item ID, position and SHA-256 before advancing its checkpoint.
 The exact read repeats session and referenced-source authorization, streams 64 KiB chunks and rejects changed content.
