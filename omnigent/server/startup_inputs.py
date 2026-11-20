@@ -29,6 +29,7 @@ from omnigent.entities.conversation import (
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.release_admission import start_admitted_task
 from omnigent.runtime import pending_inputs
+from omnigent.server.executors import run_background
 from omnigent.server.host_registry import HostConnection, HostRegistry
 from omnigent.server.schemas import SessionEventInput, SessionStartupInput
 from omnigent.stores.conversation_store import (
@@ -40,6 +41,10 @@ from omnigent.stores.conversation_store import (
 from omnigent.stores.host_store import host_is_live
 
 _logger = logging.getLogger(__name__)
+
+# A host sweep repeats at the minimum while deliveries are in flight, then doubles to the maximum.
+_SWEEP_MIN_DELAY_S = 0.25
+_SWEEP_MAX_DELAY_S = 30.0
 
 
 def initial_input_id(session_id: str) -> str:
@@ -311,23 +316,18 @@ class ManagedStartupInputs:
         wake = asyncio.Event()
 
         async def serve() -> None:
-            after = None
-            delay = 0.25
+            delay = _SWEEP_MIN_DELAY_S
             while not self._closing and self.hosts.get(host_id) is connection:
                 busy = False
                 try:
-                    ids = await asyncio.to_thread(
-                        self.conversations.list_host_conversation_ids, host_id, after=after
-                    )
-                    for session_id in ids:
+                    for session_id in await run_background(self._host_work_ids, host_id):
                         if self.hosts.get(host_id) is not connection:
                             return
                         busy |= await self._recover_session(app, session_id, connection)
-                    after = ids[-1] if len(ids) == 32 else None
-                    delay = 0.25 if busy or after else min(delay * 2, 30.0)
                 except Exception:
                     _logger.exception("Unable to recover startup messages on host %s", host_id)
-                    after = None
+                # Enqueue, receipts and host connects set ``wake``; back-off adds no latency.
+                delay = _SWEEP_MIN_DELAY_S if busy else min(delay * 2, _SWEEP_MAX_DELAY_S)
                 with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(wake.wait(), timeout=delay)
                 wake.clear()
@@ -340,6 +340,16 @@ class ManagedStartupInputs:
                 self._workers.pop(key, None)
 
         task.add_done_callback(remove_worker)
+
+    def _host_work_ids(self, host_id: str) -> list[str]:
+        """Read the host's sessions that hold startup work; runs on the background pool."""
+        ids: list[str] = []
+        after: str | None = None
+        while True:
+            page, after = self.conversations.list_host_startup_work_ids(host_id, after=after)
+            ids.extend(page)
+            if after is None:
+                return ids
 
     async def _recover_session(
         self, app: Any, session_id: str, connection: HostConnection

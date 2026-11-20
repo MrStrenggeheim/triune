@@ -1738,10 +1738,13 @@ def create_app(
         :param app_inst: The FastAPI app, used to attach
             per-AP state via ``app_inst.state.*``.
         """
-        # Bump AnyIO default thread limiter from 40 → 200; every
-        # ``asyncio.to_thread`` and FastAPI sync route grabs one.
+        # ``asyncio.to_thread`` runs on the loop's default executor, sized here;
+        # AnyIO's limiter covers only FastAPI sync routes and ``anyio.to_thread``.
         from anyio import to_thread as _to_thread
 
+        from omnigent.server.executors import install_request_executor
+
+        install_request_executor(asyncio.get_running_loop())
         _to_thread.current_default_thread_limiter().total_tokens = 200
 
         from omnigent.server.approval_deliveries import ApprovalDeliveries

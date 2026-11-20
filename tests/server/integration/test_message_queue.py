@@ -347,6 +347,9 @@ async def test_offline_queue_recovers_on_competing_replicas_with_one_input_claim
     replica = QueuedStartupInputs(env.conv_store, startup.hosts)
     startup.dispatch = replica.dispatch = dispatch
     replica.message_queue.authorize = startup.message_queue.authorize
+    # Only the queued message makes this chat work for its host's sweep.
+    assert env.conv_store.list_host_startup_work_ids(host_id) == ([], None)
+    assert replica._host_work_ids(host_id) == [session_id]
     try:
         await asyncio.gather(
             startup.message_queue.recover(env.app, session_id),
@@ -358,6 +361,9 @@ async def test_offline_queue_recovers_on_competing_replicas_with_one_input_claim
         )
         assert forwarded == [(None, body["stableId"], body["event"]["data"]["content"])]
         assert env.conv_store.get_item(session_id, body["stableId"]).response_id != "pending_input"
+        await poll_until_async(
+            lambda: replica.message_queue.store.host_session_ids(host_id) == [], timeout_s=5
+        )
     finally:
         await replica.shutdown()
 

@@ -143,6 +143,54 @@ def test_host_pagination_and_workspace_isolation(db_uri):
     assert "ix_conversation_metadata_host_id" in str(plan)
 
 
+def test_host_startup_work_selects_only_unarchived_sessions_with_work(pending_store):
+    store = pending_store
+    host_id = uuid4().hex
+
+    def host_session(labels=None, inputs=(), archived=False):
+        session_id = store.create_conversation().id
+        store.set_host_id(session_id, host_id, "/tmp/workspace")
+        if labels:
+            store.set_labels(session_id, labels)
+        if inputs:
+            saved = store.append(session_id, [_input() for _ in inputs])
+            for item, status in zip(saved, inputs, strict=True):
+                if status != "in_progress":
+                    store.transition_pending_input(
+                        session_id, item.id, expected="in_progress", status=status
+                    )
+        if archived:
+            store.update_conversation(session_id, archived=True)
+        return session_id
+
+    idle = [host_session() for _ in range(3)]
+    working = sorted(
+        [
+            host_session({"omnigent.startup": "pending"}),
+            host_session({"omnigent.startup": "ready"}),
+            host_session({"omnigent.startup": "cancelled"}),
+            host_session(inputs=["in_progress"]),
+            host_session(inputs=["failed", "incomplete"]),
+        ]
+    )
+    host_session({"omnigent.startup": "failed"})
+    host_session(inputs=["failed"])
+    host_session({"omnigent.startup": "pending"}, inputs=["in_progress"], archived=True)
+    store.set_labels(store.create_conversation().id, {"omnigent.startup": "pending"})
+
+    assert store.list_host_startup_work_ids(host_id) == (working, None)
+    found, after = [], None
+    while True:
+        page, after = store.list_host_startup_work_ids(host_id, after=after, limit=3)
+        found.extend(page)
+        if after is None:
+            break
+    assert found == working
+    assert not set(idle) & set(found)
+    with workspace_scope(17):
+        assert store.list_host_startup_work_ids(host_id) == ([], None)
+
+
 @pytest.mark.asyncio
 async def test_deleting_conversation_deletes_pending_input(db_uri):
     store = SqlAlchemyConversationStore(db_uri)

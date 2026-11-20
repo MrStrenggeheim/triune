@@ -19,6 +19,7 @@ from omnigent.entities.conversation import Conversation
 from omnigent.errors import OmnigentError
 from omnigent.release_admission import defer_during_update
 from omnigent.runtime import pending_elicitations, session_stream
+from omnigent.server.executors import run_background
 from omnigent.server.message_queue_store import MessageQueueStore
 from omnigent.server.schemas import SessionEventInput
 from omnigent.server.startup_inputs import ManagedStartupInputs, StartupInputContext, input_content
@@ -397,7 +398,7 @@ class DurableMessageQueue:
 
     async def recover_all(self, app: Any) -> None:
         """One startup scan; host recovery continues through ManagedStartupInputs."""
-        for workspace_id, session_id in await asyncio.to_thread(self.store.session_ids):
+        for workspace_id, session_id in await run_background(self.store.session_ids):
             with workspace_scope(workspace_id):
                 await self.recover(app, session_id)
 
@@ -417,6 +418,10 @@ class QueuedStartupInputs(ManagedStartupInputs):
     def __init__(self, conversations: Any, hosts: Any) -> None:
         super().__init__(conversations, hosts)
         self.message_queue = DurableMessageQueue(self)
+
+    def _host_work_ids(self, host_id: str) -> list[str]:
+        queued = self.message_queue.store.host_session_ids(host_id)
+        return sorted({*super()._host_work_ids(host_id), *queued})
 
     @defer_during_update(False)
     async def _recover_session(self, app: Any, session_id: str, connection: Any) -> bool:

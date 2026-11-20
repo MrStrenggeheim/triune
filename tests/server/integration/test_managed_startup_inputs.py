@@ -24,6 +24,7 @@ from omnigent.harness_plugins import CLAUDE_NATIVE_CODING_AGENT, CODEX_NATIVE_CO
 from omnigent.host.frames import HostHelloFrame, HostLaunchRunnerFrame, decode_host_frame
 from omnigent.runtime import pending_inputs
 from omnigent.runtime.agent_cache import AgentCache
+from omnigent.server import startup_inputs as startup_inputs_module
 from omnigent.server.app import create_app
 from omnigent.server.managed_hosts import parse_sandbox_config
 from omnigent.server.routes._sessions.helpers import _HostLaunchAttempt
@@ -44,6 +45,7 @@ from omnigent.stores.orchestration_preference_store.sqlalchemy_store import (
     SqlAlchemyOrchestrationPreferenceStore,
 )
 from omnigent.stores.permission_store.sqlalchemy_store import SqlAlchemyPermissionStore
+from tests._helpers.polling import poll_until_async
 from tests.server.helpers import build_agent_bundle, create_test_agent
 from tests.server.integration.test_managed_launch_failure_teardown import (
     _Env,
@@ -1290,6 +1292,55 @@ async def test_waking_a_host_worker_sets_its_event(startup_env: _Env) -> None:
         wake.clear()
         wake_startup_worker(host_id)
         assert wake.is_set()
+    finally:
+        worker.cancel()
+        await asyncio.gather(worker, return_exceptions=True)
+
+
+async def test_idle_host_sweep_reads_once_and_wakes_for_a_new_input(
+    startup_env: _Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Idle chats cost one indexed read per sweep; a saved input is recovered without the timer."""
+    env = startup_env
+    host_id = uuid4().hex
+    for _ in range(40):
+        idle_id = env.conv_store.create_conversation().id
+        env.conv_store.set_host_id(idle_id, host_id, "/tmp/managed-workspace")
+    session_id = env.conv_store.create_conversation().id
+    env.conv_store.set_host_id(session_id, host_id, "/tmp/managed-workspace")
+    env.conv_store.set_runner_id(session_id, uuid4().hex)
+    _connect_host(env, host_id)
+    startup = env.app.state.startup_inputs
+    reads = Mock(wraps=env.conv_store.list_host_startup_work_ids)
+    monkeypatch.setattr(env.conv_store, "list_host_startup_work_ids", reads)
+    recovered: list[str] = []
+    recover = startup._recover_session
+
+    async def record(app: Any, recovered_id: str, connection: Any) -> bool:
+        recovered.append(recovered_id)
+        return await recover(app, recovered_id, connection)
+
+    monkeypatch.setattr(startup, "_recover_session", record)
+    monkeypatch.setattr(startup, "_deliver", AsyncMock(return_value=None))
+    # Only a wakeup can trigger a second sweep within this test.
+    monkeypatch.setattr(startup_inputs_module, "_SWEEP_MIN_DELAY_S", 30.0)
+
+    startup.host_changed(env.app, host_id)
+    [(_, worker, _)] = startup._workers.values()
+    try:
+        await poll_until_async(lambda: reads.call_count == 1, timeout_s=5)
+        await asyncio.sleep(0.5)
+        assert reads.call_count == 1 and recovered == []
+        await startup.enqueue(
+            session_id,
+            SessionEventInput.model_validate(_INPUT),
+            user_id=None,
+            headers=Headers(),
+            first=False,
+        )
+        startup.host_changed(env.app, host_id)
+        await poll_until_async(lambda: recovered == [session_id], timeout_s=5)
+        assert reads.call_count == 2
     finally:
         worker.cancel()
         await asyncio.gather(worker, return_exceptions=True)
