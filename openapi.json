@@ -756,6 +756,17 @@
             ],
             "title": "Terminal Id"
           },
+          "turn_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turn Id"
+          },
           "type": {
             "anyOf": [
               {
@@ -1247,6 +1258,19 @@
             "description": "`True` when the child's session loop is live. Mirrors the algorithm used by `GET /v1/sessions/{id}` to compute `status`: read the live in-memory cache first (`\"running\"`/`\"waiting\"` \u2192 busy), and fall back to the latest task's status on cache miss (`\"queued\"` / `\"in_progress\"` \u2192 busy). For NO_DBOS sessions the tasks table is not populated during active runs, so the cache consult is what keeps the rail's \"Working\" badge correct.",
             "title": "Busy",
             "type": "boolean"
+          },
+          "child_count": {
+            "anyOf": [
+              {
+                "format": "int64",
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Number of this child's own non-archived direct children, which its `child_sessions` listing would return. `None` when unknown.",
+            "title": "Child Count"
           },
           "created_at": {
             "description": "Unix epoch timestamp of child creation.",
@@ -9817,6 +9841,18 @@
                 "type": "null"
               }
             ]
+          },
+          "child_count": {
+            "anyOf": [
+              {
+                "format": "int64",
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Child Count"
           },
           "comments_count": {
             "default": 0,

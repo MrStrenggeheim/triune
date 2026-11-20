@@ -1977,6 +1977,50 @@ async def test_loaded_child_summary_uses_original_authorized_input_and_cached_ge
 
 
 @pytest.mark.asyncio
+async def test_child_summary_fill_runs_in_background_once_per_child(db_uri: str) -> None:
+    """A child list read starts the fill and returns; a concurrent read does not repeat it."""
+    from unittest.mock import AsyncMock
+
+    from omnigent.server.routes._sessions.orchestration import (
+        _CHILD_SUMMARY_TASKS,
+        _start_missing_child_task_summaries,
+    )
+
+    store = SqlAlchemyConversationStore(db_uri)
+    parent = store.create_conversation()
+    child = store.create_conversation(parent_conversation_id=parent.id)
+    store.append(
+        child.id,
+        [
+            NewConversationItem(
+                type="message",
+                response_id="first",
+                data=MessageData(
+                    role="user",
+                    content=[{"type": "input_text", "text": "Review the navigation code"}],
+                ),
+            )
+        ],
+    )
+    release = asyncio.Event()
+
+    async def wait_then_allow(child_id: str) -> bool:
+        await release.wait()
+        return True
+
+    can_read = AsyncMock(side_effect=wait_then_allow)
+    coordinator = Mock()
+    _start_missing_child_task_summaries([child], store, coordinator, can_read)
+    _start_missing_child_task_summaries([child], store, coordinator, can_read)
+    fills = list(_CHILD_SUMMARY_TASKS)
+    assert len(fills) == 1 and not fills[0].done()
+    release.set()
+    await asyncio.gather(*fills)
+    can_read.assert_awaited_once_with(child.id)
+    assert store.get_conversation(child.id).task_summary
+
+
+@pytest.mark.asyncio
 async def test_pending_summary_steering_cannot_mask_later_generated_card_name(db_uri) -> None:
     from omnigent.server.routes._sessions.orchestration import (
         _persist_external_codex_subagent_start,
@@ -2027,6 +2071,8 @@ async def test_child_list_backfills_legacy_raw_summary_once_with_title_preferenc
     import asyncio
     from unittest.mock import AsyncMock
 
+    from omnigent.server.routes._sessions.orchestration import _CHILD_SUMMARY_TASKS
+
     store = SqlAlchemyConversationStore(db_uri)
     parent = store.create_conversation()
     original = (
@@ -2064,6 +2110,8 @@ async def test_child_list_backfills_legacy_raw_summary_once_with_title_preferenc
     assert store.get_conversation(child.id).task_summary == original
     enabled = await client.get(path)
     assert enabled.status_code == 200
+    # The list read only starts the fill; wait for it, then for the generator it schedules.
+    await asyncio.gather(*tuple(_CHILD_SUMMARY_TASKS))
     await asyncio.gather(*tuple(coordinator._pending))
     generated.assert_awaited_once()
     assert generated.call_args.args[0].prompt == original

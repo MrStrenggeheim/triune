@@ -6,9 +6,9 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import hashlib
 import json
+import weakref
 from typing import TYPE_CHECKING
 
 from cachetools import LRUCache
@@ -24,6 +24,7 @@ from omnigent.native.shell_resources import (
     shell_resource_fields,
 )
 from omnigent.server.schemas import BackgroundTaskInfo
+from omnigent.server.session_activity import finish_in_thread
 from omnigent.terminals.history import ActivityEntry, bounded_output
 from omnigent.util.json_types import JsonObject
 
@@ -64,7 +65,8 @@ class SessionShellResources:
 
     def __init__(self, artifact_store: ArtifactStore | None = None) -> None:
         self.artifact_store = artifact_store
-        self._lock = asyncio.Lock()
+        # One lock per chat in use; unrelated chats never wait for each other.
+        self._locks: weakref.WeakValueDictionary[str, asyncio.Lock] = weakref.WeakValueDictionary()
         self._recent: WorkspaceScopedCache[str, list[JsonObject]] = WorkspaceScopedCache(
             lambda: LRUCache(maxsize=128)
         )
@@ -115,80 +117,68 @@ class SessionShellResources:
             validated.append(row)
         return validated
 
-    async def _validate(self, session_id: str, records: list[object]) -> list[JsonObject]:
-        """Keep the capture lock until cancelled validation finishes without merging it."""
-        if not records:
-            return []
-        worker = asyncio.create_task(asyncio.to_thread(self._validated, session_id, records))
-        try:
-            return await asyncio.shield(worker)
-        except asyncio.CancelledError:
-            while not worker.done():
-                with contextlib.suppress(Exception, asyncio.CancelledError):
-                    await asyncio.shield(worker)
-            # Cancellation wins over an unused validation result or validation error.
-            with contextlib.suppress(Exception, asyncio.CancelledError):
-                worker.result()
-            raise
+    def _merge(
+        self, session_id: str, records: list[object], previous: list[JsonObject] | None
+    ) -> list[JsonObject]:
+        """Validate, merge and persist in a worker thread; unchanged history is not rewritten."""
+        fresh = self._validated(session_id, records) if records else []
+        if previous is None:
+            previous = []
+            if self.artifact_store is not None:
+                try:
+                    payload = self.artifact_store.get(self._key(session_id))
+                except KeyError:
+                    pass
+                else:
+                    stored = json.loads(payload)
+                    if not isinstance(stored, list):
+                        raise ValueError("A retained shell snapshot must be a list")
+                    previous = self._validated(session_id, stored)
+        merged = {
+            (row["source"], row["resource_id"]): row
+            for row in previous
+            if not (
+                row.get("source") == "registered_terminal"
+                and is_agent_terminal_resource(
+                    row.get("terminal_id") if isinstance(row.get("terminal_id"), str) else None
+                )
+            )
+        }
+        for row in fresh:
+            key = (row["source"], row["resource_id"])
+            old = merged.get(key)
+            if old is not None:
+                if (
+                    old.get("status") in ENDED_SHELL_STATUSES
+                    and row.get("status") not in ENDED_SHELL_STATUSES
+                ):
+                    continue
+                if old.get("status") == "stopped" and row.get("status") in ENDED_SHELL_STATUSES:
+                    row["status"] = "stopped"
+                if row.get("turn_id") is None:
+                    row["turn_id"] = old.get("turn_id")
+                if row.get("output") is None:
+                    row["output"] = old.get("output")
+                    row["output_preview"] = old.get("output_preview")
+            merged.pop(key, None)
+            merged[key] = row
+        retained = list(merged.values())[-MAX_SHELL_RESOURCES:]
+        if self.artifact_store is not None and fresh and retained != previous:
+            self.artifact_store.put(self._key(session_id), json.dumps(retained).encode())
+        return retained
 
     async def capture(self, session_id: str, records: list[object]) -> list[JsonObject]:
         """Merge bounded evidence atomically; an empty live tally does not erase history."""
-        async with self._lock:
-            fresh = await self._validate(session_id, records)
+        lock = self._locks.get(session_id)
+        if lock is None:
+            lock = self._locks[session_id] = asyncio.Lock()
+        async with lock:
             previous = self._recent.get(session_id)
-            if previous is None:
-                previous = []
-                if self.artifact_store is not None:
-                    try:
-                        payload = await asyncio.to_thread(
-                            self.artifact_store.get, self._key(session_id)
-                        )
-                    except KeyError:
-                        pass
-                    else:
-                        stored = json.loads(payload)
-                        if not isinstance(stored, list):
-                            raise ValueError("A retained shell snapshot must be a list")
-                        previous = await self._validate(session_id, stored)
-            merged = {
-                (row["source"], row["resource_id"]): row
-                for row in previous
-                if not (
-                    row.get("source") == "registered_terminal"
-                    and is_agent_terminal_resource(
-                        row.get("terminal_id") if isinstance(row.get("terminal_id"), str) else None
-                    )
-                )
-            }
-            for row in fresh:
-                key = (row["source"], row["resource_id"])
-                old = merged.get(key)
-                if old is not None:
-                    if (
-                        old.get("status") in ENDED_SHELL_STATUSES
-                        and row.get("status") not in ENDED_SHELL_STATUSES
-                    ):
-                        continue
-                    if (
-                        old.get("status") == "stopped"
-                        and row.get("status") in ENDED_SHELL_STATUSES
-                    ):
-                        row["status"] = "stopped"
-                    if row.get("turn_id") is None:
-                        row["turn_id"] = old.get("turn_id")
-                    if row.get("output") is None:
-                        row["output"] = old.get("output")
-                        row["output_preview"] = old.get("output_preview")
-                merged.pop(key, None)
-                merged[key] = row
-            retained = list(merged.values())[-MAX_SHELL_RESOURCES:]
-            if self.artifact_store is not None and fresh:
-                await asyncio.to_thread(
-                    self.artifact_store.put,
-                    self._key(session_id),
-                    json.dumps(retained).encode(),
-                )
-            self._recent[session_id] = retained
+            if previous is not None and not records:
+                retained = previous
+            else:
+                retained = await finish_in_thread(self._merge, session_id, records, previous)
+                self._recent[session_id] = retained
             return [dict(row) for row in retained]
 
     async def get(self, session_id: str, source: str, resource_id: str) -> JsonObject | None:

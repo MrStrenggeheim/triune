@@ -912,6 +912,9 @@ class ChildSessionSummary(BaseModel):
         ``RoutingDecisionData.decision_id``. Read from the child's
         ``omnigent.routing.decision_id`` label, stamped when routing pins
         the model. ``None`` when the child was not routed.
+    :param child_count: Number of this child's own non-archived direct
+        children, which its ``child_sessions`` listing would return.
+        ``None`` when unknown.
     """
 
     id: str
@@ -935,6 +938,7 @@ class ChildSessionSummary(BaseModel):
     pending_elicitations_count: int = 0
     routed_model: str | None = None
     routing_decision_id: str | None = None
+    child_count: int | None = None
 
 
 # ── Responses ───────────────────────────────────────────────────
@@ -3159,6 +3163,9 @@ class SessionListItem(BaseModel):
     # unfiled. Lets the sidebar group sessions by project without a follow-up
     # GET. Distinct from the legacy ``omni_project`` label in ``labels``.
     project_id: str | None = None
+    # Non-archived direct children, as its child list returns them. Set on
+    # session-updates frames; ``None`` (omitted from GET lists) when unknown.
+    child_count: int | None = None
 
 
 class SessionList(BaseModel):

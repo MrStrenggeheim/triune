@@ -74,6 +74,16 @@ class _StubConversationStore:
     def get_conversation(self, conversation_id: str) -> Conversation | None:
         return self._conversations.get(conversation_id)
 
+    def get_conversations(
+        self, conversation_ids: list[str], *, include_execution_state: bool = True
+    ) -> dict[str, Conversation]:
+        del include_execution_state
+        return {
+            conversation_id: conversation
+            for conversation_id in conversation_ids
+            if (conversation := self.get_conversation(conversation_id)) is not None
+        }
+
     def add(
         self,
         conversation_id: str,

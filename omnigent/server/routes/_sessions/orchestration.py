@@ -32,8 +32,8 @@ from fastapi.responses import Response
 from pydantic import ValidationError
 
 from omnigent.cli_invocation import cli_invocation
-from omnigent.db.utils import generate_agent_id, generate_task_id
-from omnigent.db.workspace_cache import WorkspaceScopedCache
+from omnigent.db.utils import generate_agent_id, generate_task_id, shared_read_scope
+from omnigent.db.workspace_cache import WorkspaceScopedCache, WorkspaceScopedSet
 from omnigent.debug_logging import debug_event, runner_log_scope
 from omnigent.entities import (
     Agent,
@@ -12825,6 +12825,39 @@ def _create_session_from_bundle(
     )
 
 
+# Children whose card summary is being filled now, so one fill runs per child.
+_CHILD_SUMMARY_FILLS: WorkspaceScopedSet[str] = WorkspaceScopedSet()
+# custom-lint: disable-next=workspace-scoped-cache -- set of Task objects
+_CHILD_SUMMARY_TASKS: set[asyncio.Task[None]] = set()
+
+
+def _start_missing_child_task_summaries(
+    children: list[Conversation],
+    store: ConversationStore,
+    coordinator: BackgroundSessionTitleCoordinator | None,
+    can_read: Callable[[str], Awaitable[bool]],
+) -> None:
+    """Fill missing child summaries in the background so a child list read never waits on them."""
+    pending = [child for child in children if child.id not in _CHILD_SUMMARY_FILLS]
+    if coordinator is None or not pending:
+        return
+    for child in pending:
+        _CHILD_SUMMARY_FILLS.add(child.id)
+
+    async def fill() -> None:
+        try:
+            await _schedule_missing_child_task_summaries(pending, store, coordinator, can_read)
+        except Exception as exc:  # noqa: BLE001 -- a later list read retries
+            _logger.warning("Child summary fill failed (%s)", type(exc).__name__)
+        finally:
+            for child in pending:
+                _CHILD_SUMMARY_FILLS.discard(child.id)
+
+    task = asyncio.create_task(fill(), name="child-summary-fill")
+    _CHILD_SUMMARY_TASKS.add(task)
+    task.add_done_callback(_CHILD_SUMMARY_TASKS.discard)
+
+
 async def _schedule_missing_child_task_summaries(
     children: list[Conversation],
     store: ConversationStore,
@@ -12932,16 +12965,22 @@ async def _child_session_summaries_from_conversations(
     if not children:
         return []
     child_ids = [child.id for child in children]
-    message_items_by_child = await asyncio.to_thread(
-        conv_store.list_latest_message_items_for_conversations,
-        child_ids,
-        10,
-    )
+
+    def read_previews_and_counts() -> tuple[dict[str, list[ConversationItem]], dict[str, int]]:
+        with shared_read_scope():
+            previews = conv_store.list_latest_message_items_for_conversations(child_ids, 10)
+            try:
+                counts = conv_store.count_child_conversations(child_ids)
+            except NotImplementedError:
+                counts = {}
+        return previews, counts
+
+    message_items_by_child, child_counts = await asyncio.to_thread(read_previews_and_counts)
     previews = {
         child_id: _latest_message_preview(message_items, limit_chars=180, label_direction=True)
         for child_id, message_items in message_items_by_child.items()
     }
-    return [
+    summaries = [
         _child_session_summary_from_conversation(
             child,
             parent_session_id,
@@ -12949,6 +12988,9 @@ async def _child_session_summaries_from_conversations(
         )
         for child in children
     ]
+    for summary in summaries:
+        summary.child_count = child_counts.get(summary.id)
+    return summaries
 
 
 async def _handle_mcp_tools_call(

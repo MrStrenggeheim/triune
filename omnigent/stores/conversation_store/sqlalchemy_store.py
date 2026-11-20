@@ -1696,6 +1696,29 @@ class SqlAlchemyConversationStore(ConversationStore):
                 result[parent_id].append(child_id)
         return result
 
+    def count_child_conversations(self, parent_conversation_ids: list[str]) -> dict[str, int]:
+        """Count non-archived direct children with one grouped scan of the parent index."""
+        unique_ids = list(dict.fromkeys(parent_conversation_ids))
+        result = dict.fromkeys(unique_ids, 0)
+        if not unique_ids:
+            return result
+        with self._conv_session("count_child_conversations") as session:
+            for offset in range(0, len(unique_ids), 500):
+                rows = session.execute(
+                    select(SqlConversation.parent_conversation_id, func.count())
+                    .where(
+                        SqlConversation.workspace_id == current_workspace_id(),
+                        SqlConversation.parent_conversation_id.in_(
+                            unique_ids[offset : offset + 500]
+                        ),
+                        SqlConversation.archived.is_(False),
+                    )
+                    .group_by(SqlConversation.parent_conversation_id)
+                )
+                for parent_id, count in rows:
+                    result[parent_id] = count
+        return result
+
     def list_activity_child_ids(
         self, parent_ids: list[str], *, limit: int = 2048
     ) -> tuple[dict[str, list[str]], bool]:

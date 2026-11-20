@@ -158,9 +158,16 @@ def test_native_recorded_commands_keep_completion_separate_from_shells() -> None
 async def test_native_persisted_commands_available_without_runner(tmp_path: Path) -> None:
     from omnigent.entities import PagedList
 
+    items = [
+        item.model_copy(update={"position": position})
+        for position, item in zip(
+            (1, 0), _command_items("completed", "retained output"), strict=True
+        )
+    ]
+
     class Store:
-        def list_items(self, *args, **kwargs):
-            return PagedList(data=_command_items("completed", "retained output"), has_more=False)
+        def list_items(self, *args, type=None, **kwargs):
+            return PagedList(data=[item for item in items if item.type == type], has_more=False)
 
     service = SessionActivityService(LocalArtifactStore(str(tmp_path)))
     page = await service.page("child", conversation_store=Store(), parent_agent_id="child")
@@ -270,3 +277,91 @@ async def test_agent_primary_terminal_is_absent_from_legacy_activity_shell_ledge
     page = await service.page("chat")
     assert [row["id"] for row in page["data"]] == ["shell"]
     assert page["data"][0]["output"] == "shell output"
+
+
+@pytest.mark.asyncio
+async def test_persisted_commands_read_only_new_tool_rows(db_uri: str, tmp_path: Path) -> None:
+    """Later reads decode only tool rows written since the previous read."""
+    from omnigent.entities import NewConversationItem
+    from omnigent.entities.conversation import (
+        FunctionCallData,
+        FunctionCallOutputData,
+        MessageData,
+    )
+    from omnigent.stores.conversation_store.sqlalchemy_store import (
+        SqlAlchemyConversationStore,
+    )
+
+    store = SqlAlchemyConversationStore(db_uri)
+    chat = store.create_conversation(title="activity").id
+
+    def call(call_id: str, name: str, arguments: dict[str, str]) -> NewConversationItem:
+        return NewConversationItem(
+            type="function_call",
+            response_id="turn",
+            data=FunctionCallData(
+                agent="codex", name=name, arguments=json.dumps(arguments), call_id=call_id
+            ),
+        )
+
+    def output(call_id: str, text: str) -> NewConversationItem:
+        return NewConversationItem(
+            type="function_call_output",
+            response_id="turn",
+            data=FunctionCallOutputData(call_id=call_id, output=text),
+        )
+
+    message = NewConversationItem(
+        type="message",
+        response_id="turn",
+        data=MessageData(role="user", content=[{"type": "input_text", "text": "run it"}]),
+    )
+    store.append(
+        chat,
+        [
+            message,
+            call("read", "read_file", {"path": "a.py"}),
+            output("read", "source"),
+            call("test", "exec_command", {"cmd": "pytest"}),
+        ],
+    )
+    reads: list[tuple[str | None, int]] = []
+    list_items = store.list_items
+
+    def counted(*args, **kwargs):
+        page = list_items(*args, **kwargs)
+        reads.append((kwargs.get("type"), len(page.data)))
+        return page
+
+    store.list_items = counted  # type: ignore[method-assign]
+    artifacts = LocalArtifactStore(str(tmp_path))
+    writes: list[str] = []
+    put = artifacts.put
+
+    def counted_put(key: str, data: bytes) -> None:
+        writes.append(key)
+        put(key, data)
+
+    artifacts.put = counted_put  # type: ignore[method-assign]
+    service = SessionActivityService(artifacts)
+
+    first = await service.page(chat, conversation_store=store)
+    assert [(row["name"], row["state"]) for row in first["data"]] == [("pytest", "unknown")]
+    assert {kind for kind, _ in reads} == {"function_call", "function_call_output"}
+    assert len(writes) == 1
+
+    reads.clear()
+    store.append(chat, [message, output("test", '{"exit_code": 3}')])
+    second = await service.page(chat, conversation_store=store)
+    row = second["data"][0]
+    assert (row["state"], row["exit_status"]) == ("exited", 3)
+    # The second read decodes exactly the one new output; messages are never read.
+    assert sum(count for _, count in reads) == 1
+    assert len(writes) == 2
+
+    reads.clear()
+    third = await service.page(chat, conversation_store=store)
+    assert third["data"] == second["data"]
+    assert sum(count for _, count in reads) == 0
+    # Unchanged history is not rewritten.
+    assert len(writes) == 2

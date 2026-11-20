@@ -355,3 +355,30 @@ async def test_invalid_offloop_batch_preserves_previous_snapshot_and_record_limi
     assert (await service.get("chat", "codex_native", "one"))["output"] == "old"
     rows = [{**row, "resource_id": str(index)} for index in range(100)]
     assert len(await service.capture("chat", [*rows, "ignored beyond record bound"])) == 100
+
+
+async def test_unchanged_capture_is_not_rewritten_and_chats_lock_independently(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = LocalArtifactStore(str(tmp_path))
+    writes: list[str] = []
+    put = store.put
+
+    def counted_put(key: str, data: bytes) -> None:
+        writes.append(key)
+        put(key, data)
+
+    monkeypatch.setattr(store, "put", counted_put)
+    service = SessionShellResources(store)
+    row = {"source": "codex_native", "resource_id": "one", "status": "running", "output": "x"}
+    await service.capture("chat", [row])
+    await service.capture("chat", [dict(row)])
+    assert len(writes) == 1
+    await service.capture("chat", [{**row, "status": "completed"}])
+    assert len(writes) == 2
+    # A chat held by a slow capture does not delay another chat.
+    held = asyncio.Lock()
+    service._locks["slow"] = held
+    async with held:
+        captured = await asyncio.wait_for(service.capture("other", [row]), timeout=1)
+    assert captured[0]["resource_id"] == "one"
