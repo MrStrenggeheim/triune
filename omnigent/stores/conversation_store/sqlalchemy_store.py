@@ -2726,6 +2726,39 @@ class SqlAlchemyConversationStore(ConversationStore):
         with self._session("list_host_conversations") as session:
             return list(session.scalars(query.order_by(SqlConversationMetadata.id).limit(limit)))
 
+    def list_host_startup_work_ids(
+        self,
+        host_id: str,
+        *,
+        after: str | None = None,
+        limit: int = 100,
+    ) -> tuple[list[str], str | None]:
+        page = self.list_host_conversation_ids(host_id, after=after, limit=limit)
+        if not page:
+            return [], None
+        # Correlated probes use the label primary key and the pending-input index.
+        live_label = select(SqlConversationLabel.conversation_id).where(
+            SqlConversationLabel.workspace_id == SqlConversation.workspace_id,
+            SqlConversationLabel.conversation_id == SqlConversation.id,
+            SqlConversationLabel.key == STARTUP_LABEL,
+            SqlConversationLabel.value != "failed",
+        )
+        undelivered = select(SqlConversationItem.id).where(
+            SqlConversationItem.workspace_id == SqlConversation.workspace_id,
+            SqlConversationItem.conversation_id == SqlConversation.id,
+            SqlConversationItem.response_id == PENDING_INPUT_RESPONSE_ID,
+            SqlConversationItem.status != encode_item_status("failed"),
+        )
+        query = select(SqlConversation.id).where(
+            SqlConversation.workspace_id == current_workspace_id(),
+            SqlConversation.id.in_(page),
+            SqlConversation.archived.is_(False),
+            or_(live_label.exists(), undelivered.exists()),
+        )
+        with self._conv_session("list_host_startup_work") as session:
+            ids = sorted(session.scalars(query))
+        return ids, page[-1] if len(page) == limit else None
+
     def _startup_rows(self, conversation_id: str, response_id: str):
         return select(SqlConversationItem).where(
             SqlConversationItem.workspace_id == current_workspace_id(),

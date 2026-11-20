@@ -35,6 +35,7 @@ from omnigent.db.utils import (
     is_postgresql_family,
     make_managed_session_maker,
     normalize_database_url,
+    optimize_sqlite_statistics,
     run_migrations_with_retry,
     run_write_transaction,
     set_lakebase_token_provider,
@@ -445,6 +446,45 @@ def test_sqlite_engine_skips_server_pool_settings_and_enables_wal(
         # synchronous=NORMAL is the WAL-recommended mode — durable
         # at commit, much faster than FULL.
         assert conn.exec_driver_sql("PRAGMA synchronous").scalar() == 1
+        # Memory-mapped reads and a 64 MiB page cache per connection.
+        assert conn.exec_driver_sql("PRAGMA mmap_size").scalar() == 1 << 30
+        assert conn.exec_driver_sql("PRAGMA cache_size").scalar() == -65536
+
+
+def test_startup_statistics_refresh_moves_label_reads_to_the_primary_key(db_uri: str) -> None:
+    """Without statistics a chat's label read scans the key/value index; optimize fixes that."""
+    engine = get_or_create_engine(db_uri)
+    if engine.dialect.name != "sqlite":
+        pytest.skip("SQLite planner statistics")
+    rows = [
+        {"conversation": index.to_bytes(16, "big"), "key": f"omnigent.label_{key}"}
+        for index in range(400)
+        for key in range(8)
+    ]
+    label_read = (
+        "EXPLAIN QUERY PLAN SELECT key, value FROM conversation_labels "
+        "WHERE workspace_id = 0 AND conversation_id = ?"
+    )
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO conversation_labels (workspace_id, conversation_id, key, value, "
+                "updated_at) VALUES (0, :conversation, :key, 'v', 0)"
+            ),
+            rows,
+        )
+        before = str(conn.exec_driver_sql(label_read, (bytes(16),)).all())
+
+    optimize_sqlite_statistics([db_uri, None])
+
+    with engine.connect() as conn:
+        stats = conn.exec_driver_sql(
+            "SELECT idx FROM sqlite_stat1 WHERE tbl = 'conversation_labels'"
+        ).scalars()
+        assert "sqlite_autoindex_conversation_labels_1" in set(stats)
+        after = str(conn.exec_driver_sql(label_read, (bytes(16),)).all())
+    assert "ix_conversation_labels_key_value" in before
+    assert "USING INDEX sqlite_autoindex_conversation_labels_1" in after
 
 
 # ── Lakebase token-aware engine ─────────────────────────
@@ -1251,55 +1291,25 @@ def test_shared_read_scope_nesting_reuses_outer(db_uri: str) -> None:
                 assert inner is outer, "nested scope reuses the outer session"
 
 
-def test_shared_read_scope_closes_session_when_init_fails(
-    db_uri: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A failure while initializing the scope's session must not leak its
-    checked-out connection — the session is registered before the PRAGMAs run,
-    so the scope's cleanup closes it and the pool checkout is returned."""
-    from sqlalchemy.orm import Session as _Session
+def test_sqlite_sessions_reuse_connection_settings_after_migrations(tmp_path: Path) -> None:
+    """Checkouts run no PRAGMAs, yet keep foreign keys on after migrations switched them off."""
+    engine = get_or_create_engine(f"sqlite:///{tmp_path / 'fresh.db'}")
+    statements: list[str] = []
 
-    engine = get_or_create_engine(db_uri)
-    if engine.dialect.name != "sqlite":
-        # The init-time checkout this guards against is the SQLite PRAGMA path;
-        # other dialects run no execute between session creation and registration.
-        pytest.skip("exercises the SQLite-only PRAGMA-init checkout path")
-    maker = make_managed_session_maker(engine)
+    def record(_conn: Any, _cursor: Any, statement: str, *_args: Any) -> None:
+        statements.append(statement)
 
-    counts = {"out": 0, "in": 0}
-
-    def _out(*_a: Any) -> None:
-        counts["out"] += 1
-
-    def _in(*_a: Any) -> None:
-        counts["in"] += 1
-
-    event.listen(engine, "checkout", _out)
-    event.listen(engine, "checkin", _in)
-
-    real_execute = _Session.execute
-
-    def _boom(self: _Session, statement: Any, *args: Any, **kwargs: Any) -> Any:
-        # Fail the second PRAGMA — the first has already forced the checkout.
-        if "busy_timeout" in str(statement):
-            raise RuntimeError("simulated PRAGMA failure")
-        return real_execute(self, statement, *args, **kwargs)
-
-    monkeypatch.setattr(_Session, "execute", _boom)
-
+    event.listen(engine, "before_cursor_execute", record)
     try:
-        with pytest.raises(RuntimeError, match="simulated PRAGMA failure"):
-            with shared_read_scope():
-                with maker():
-                    pass
+        for immediate in (False, True):
+            with make_managed_session_maker(engine, immediate=immediate)() as session:
+                assert session.execute(text("PRAGMA foreign_keys")).scalar() == 1
+                assert session.execute(text("PRAGMA busy_timeout")).scalar() == 20000
     finally:
-        event.remove(engine, "checkout", _out)
-        event.remove(engine, "checkin", _in)
+        event.remove(engine, "before_cursor_execute", record)
 
-    assert counts["out"] >= 1, "the test must actually force a pool checkout"
-    assert counts["out"] == counts["in"], (
-        f"a session that failed mid-init leaked its checkout: {counts}"
-    )
+    checks = ["PRAGMA foreign_keys", "PRAGMA busy_timeout"]
+    assert statements == [*checks, "BEGIN IMMEDIATE", *checks]
 
 
 # ── run_migrations_with_retry (cold-start resilience) ──────────────

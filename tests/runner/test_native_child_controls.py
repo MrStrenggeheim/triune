@@ -220,3 +220,61 @@ async def test_mapped_http_controls_preserve_parent_and_report_acceptance(
         assert not writes
     if case != "offline":
         assert bridge.read_bridge_state(bridge_dir) == parent_state
+
+
+@pytest.mark.parametrize("mapped_parent", ["parent", "other", "malformed"])
+async def test_capability_probe_uses_the_servers_child_row_without_paging_siblings(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, mapped_parent: str
+):
+    from omnigent.entities import Conversation
+    from omnigent.native.child_controls import NATIVE_CHILD_HEADER, native_child_mapping
+
+    parent_id, child_id = "a" * 32, "b" * 32
+    monkeypatch.setattr(bridge, "_BRIDGE_ROOT", tmp_path / "bridges")
+    bridge.write_bridge_state(
+        bridge.bridge_dir_for_bridge_id(parent_id),
+        bridge.CodexNativeBridgeState(
+            session_id=parent_id,
+            socket_path="ws://127.0.0.1:9999",
+            thread_id="native-parent",
+            codex_home=str(tmp_path / "codex"),
+        ),
+    )
+    monkeypatch.setattr(child_controls, "client_for_transport", lambda *a, **kw: _native_client())
+    child = Conversation(
+        id=child_id,
+        created_at=1,
+        updated_at=1,
+        root_conversation_id=parent_id,
+        kind="sub_agent",
+        parent_conversation_id=parent_id if mapped_parent == "parent" else "c" * 32,
+        labels={
+            "omnigent.wrapper": "codex-native-ui-subagent",
+            "omnigent.codex_native.subagent_thread_id": "native-child",
+            "omnigent.codex_native.prompt": "Long prompt the runner never needs",
+        },
+    )
+    mapping = "{" if mapped_parent == "malformed" else native_child_mapping(child)
+    assert "prompt" not in mapping
+    sibling_pages: list[httpx.Request] = []
+
+    def server(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/child_sessions"):
+            sibling_pages.append(request)
+        return httpx.Response(200, json={"data": [], "labels": {}})
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(server), base_url="http://server"
+    ) as upstream:
+        app = create_runner_app(server_client=upstream, auth_token="runner-token")
+        async with _runner_client(app) as client:
+            response = await client.get(
+                f"/v1/sessions/{parent_id}/native-children/{child_id}/capabilities",
+                headers={"Authorization": "Bearer runner-token", NATIVE_CHILD_HEADER: mapping},
+            )
+    assert sibling_pages == []
+    if mapped_parent == "parent":
+        assert response.status_code == 200 and response.json()["can_reply"] is True
+    else:
+        assert response.status_code == 404
+        assert response.json()["detail"] == "native_child_mapping_missing"

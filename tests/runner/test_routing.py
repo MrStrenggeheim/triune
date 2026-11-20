@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 
 import pytest
 
@@ -285,6 +286,29 @@ async def test_runner_router_resources_reuses_preloaded_conversation() -> None:
         assert routed.runner_id == "runner_one"
     finally:
         await router.aclose()
+
+
+@pytest.mark.asyncio
+async def test_runner_client_lookup_reads_the_conversation_off_the_event_loop() -> None:
+    """Handlers without a loaded row route through a worker thread, not the loop."""
+    from omnigent.server.routes._sessions.helpers import _get_runner_client_impl
+
+    registry = TunnelRegistry()
+    registry.register("runner_one", _FakeWebSocket(), _hello(harnesses=["codex"]))
+    reads: list[threading.Thread] = []
+
+    class _RecordingStore(_ConversationStore):
+        def get_conversation(self, conversation_id: str) -> Conversation | None:
+            reads.append(threading.current_thread())
+            return super().get_conversation(conversation_id)
+
+    store = _RecordingStore({"conv_test": _conversation(runner_id="runner_one")})
+    router = RunnerRouter(registry=registry, conversation_store=store)  # type: ignore[arg-type]
+    try:
+        assert await _get_runner_client_impl("conv_test", router) is not None
+    finally:
+        await router.aclose()
+    assert reads and threading.main_thread() not in reads
 
 
 @pytest.mark.asyncio

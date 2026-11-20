@@ -99,6 +99,26 @@ class MessageQueueStore:
             )
             return json.loads(raw) if raw else {"messages": [], "inflight": None}
 
+    def host_session_ids(self, host_id: str) -> list[str]:
+        """Sessions on *host_id* whose queue holds messages."""
+        with self.session("list_host_queues") as session:
+            return list(
+                session.scalars(
+                    select(queue_table.c.conversation_id)
+                    .join(
+                        SqlConversationMetadata,
+                        (SqlConversationMetadata.workspace_id == queue_table.c.workspace_id)
+                        & (SqlConversationMetadata.id == queue_table.c.conversation_id),
+                    )
+                    .where(
+                        queue_table.c.workspace_id == current_workspace_id(),
+                        SqlConversationMetadata.host_id == host_id,
+                        # Every queued message carries this key; drained queues keep their row.
+                        queue_table.c.payload.contains('"stableId"'),
+                    )
+                )
+            )
+
     def session_ids(self) -> list[tuple[int, str]]:
         with self.session("recover_queues") as session:
             return [

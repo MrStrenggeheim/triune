@@ -1738,11 +1738,26 @@ def create_app(
         :param app_inst: The FastAPI app, used to attach
             per-AP state via ``app_inst.state.*``.
         """
-        # Bump AnyIO default thread limiter from 40 → 200; every
-        # ``asyncio.to_thread`` and FastAPI sync route grabs one.
+        # ``asyncio.to_thread`` runs on the loop's default executor, sized here;
+        # AnyIO's limiter covers only FastAPI sync routes and ``anyio.to_thread``.
         from anyio import to_thread as _to_thread
 
+        from omnigent.db.utils import optimize_sqlite_statistics
+        from omnigent.server.executors import install_request_executor, run_background
+
+        install_request_executor(asyncio.get_running_loop())
         _to_thread.current_default_thread_limiter().total_tokens = 200
+        # Readiness never waits for the statistics refresh; it logs its own outcome.
+        statistics_task = asyncio.create_task(
+            run_background(
+                optimize_sqlite_statistics,
+                [
+                    conversation_store.storage_location,
+                    conversation_store.conversation_storage_location,
+                ],
+            ),
+            name="sqlite-statistics",
+        )
 
         from omnigent.server.approval_deliveries import ApprovalDeliveries
 
@@ -1995,6 +2010,7 @@ def create_app(
                 yield
         finally:
             await update.close()
+            statistics_task.cancel()
             approval_release_task.cancel()
             with suppress(asyncio.CancelledError):
                 await approval_release_task

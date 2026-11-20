@@ -7,6 +7,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from omnigent.spec.codex_plugin_skills import INVENTORY_FAILURE_TTL_SECONDS
 from omnigent.spec.skill_sources import SkillSourceContext, resolve_harness_skills
 
 
@@ -53,6 +54,7 @@ def codex_cli(monkeypatch: pytest.MonkeyPatch) -> Mock:
     cli = Mock()
     _inventory(cli, _entry())
     monkeypatch.setattr("omnigent.spec.codex_plugin_skills.subprocess.run", cli)
+    monkeypatch.setattr("omnigent.spec.codex_plugin_skills._inventory_failures", {})
     return cli
 
 
@@ -252,6 +254,36 @@ def test_unavailable_plugin_inventory_keeps_standalone_and_enabled_plugin_skills
         loaded_skills.assert_not_called()
     else:
         loaded_skills.assert_called_once_with("/test/codex", codex_home, codex_home)
+
+
+def test_failed_inventory_is_retried_only_after_its_ttl(
+    tmp_path: Path, codex_cli: Mock, loaded_skills: Mock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A timed-out inventory costs one CLI wait per home and TTL; other homes still ask."""
+    codex_home = tmp_path / ".codex"
+    enabled = _skill(_plugin(codex_home) / "skills")
+    loaded_skills.return_value = [
+        {"name": "toolkit:review", "path": str(enabled / "SKILL.md"), "enabled": True}
+    ]
+    clock = Mock(return_value=1000.0)
+    monkeypatch.setattr("omnigent.spec.codex_plugin_skills.time.monotonic", clock)
+    codex_cli.side_effect = subprocess.TimeoutExpired("codex", 5)
+
+    assert _discover(tmp_path) == {"toolkit:review": enabled}
+    clock.return_value += INVENTORY_FAILURE_TTL_SECONDS - 1
+    assert _discover(tmp_path) == {"toolkit:review": enabled}
+    assert codex_cli.call_count == 1 and loaded_skills.call_count == 2
+
+    other_home = tmp_path / "other"
+    _skill(_plugin(other_home) / "skills")
+    _discover(tmp_path, codex_home=other_home)
+    assert codex_cli.call_count == 2
+
+    codex_cli.side_effect = None
+    _inventory(codex_cli, _entry())
+    clock.return_value += 1
+    assert _discover(tmp_path) == {"toolkit:review": enabled}
+    assert codex_cli.call_count == 3 and loaded_skills.call_count == 3
 
 
 @pytest.mark.parametrize("skills_filter", ["all", ["selected"], ["toolkit:selected"]])

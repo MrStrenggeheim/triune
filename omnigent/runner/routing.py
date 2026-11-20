@@ -253,6 +253,8 @@ class RunnerRouter:
             ``"conv_0123456789abcdef"``.
         :param conversation: An already-loaded conversation. Callers that
             just authorized the session can pass it to avoid another read.
+            Without it this method reads the store, so async callers run it
+            in a worker thread.
         :returns: Selected runner id and client.
         :raises OmnigentError: If the conversation is missing, the
             pinned runner is offline, or no online runner is available.

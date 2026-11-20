@@ -493,6 +493,24 @@ class ConversationStore(ABC):
         """Page the sessions assigned to a host, including not-yet-launched sessions."""
         return []
 
+    def list_host_startup_work_ids(
+        self,
+        host_id: str,  # noqa: ARG002
+        *,
+        after: str | None = None,  # noqa: ARG002
+        limit: int = 100,  # noqa: ARG002
+    ) -> tuple[list[str], str | None]:
+        """
+        Page a host's unarchived sessions that hold startup work.
+
+        Work is a startup label other than ``failed`` or an input that is not failed.
+
+        :param after: The cursor a previous page returned, or ``None`` to start.
+        :param limit: Host sessions examined per page; a page can match fewer.
+        :returns: Matching session IDs and the next cursor, ``None`` at the end.
+        """
+        return [], None
+
     def __init__(
         self, storage_location: str, conversation_storage_location: str | None = None
     ) -> None:
