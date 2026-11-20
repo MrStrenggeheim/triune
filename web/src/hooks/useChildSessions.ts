@@ -335,6 +335,8 @@ function needsRefresh(child: ChildSessionInfo) {
 export interface ChildFrameRow {
   id: string;
   parent_session_id?: string | null;
+  /** Fork metadata; branches never appear in a sub-agent child list. */
+  branch?: unknown;
   status?: string | null;
   updated_at?: number | null;
   pending_elicitations_count?: number | null;
@@ -394,14 +396,14 @@ function isChildRunning(child: ChildSessionInfo) {
  * Uncached parents are skipped; their list loads fresh when a view shows it.
  *
  * @param client - The app QueryClient holding child-session caches.
- * @param rows - Frame rows; rows without ``parent_session_id`` are ignored.
+ * @param rows - Frame rows; rows without ``parent_session_id`` and branches are ignored.
  * @returns Parent ids that need one coalesced refetch: the frame revealed an
  *   unknown child, or a running child settled without its final preview.
  */
 export function applyChildFrameRows(client: QueryClient, rows: readonly ChildFrameRow[]): string[] {
   const rowsByParent = new Map<string, Map<string, ChildFrameRow>>();
   for (const row of rows) {
-    if (!row.parent_session_id) continue;
+    if (!row.parent_session_id || row.branch) continue;
     const siblings = rowsByParent.get(row.parent_session_id) ?? new Map<string, ChildFrameRow>();
     siblings.set(row.id, row);
     rowsByParent.set(row.parent_session_id, siblings);

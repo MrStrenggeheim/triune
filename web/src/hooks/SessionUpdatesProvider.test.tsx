@@ -1038,6 +1038,19 @@ describe("SessionUpdatesProvider child lists", () => {
     }
   });
 
+  it("does not treat a branch with a parent as an unknown sub-agent", async () => {
+    const lists = observeChildren([childRow("known")]);
+    try {
+      lists.send("changed", [
+        { ...frameRow("fork", "running", 11), branch: { source_conversation_id: "root" } },
+      ]);
+      await act(() => vi.advanceTimersByTimeAsync(10_000));
+      expect(lists.fetches.count).toBe(0);
+    } finally {
+      lists.close();
+    }
+  });
+
   it("watches only children of child lists a view observes", () => {
     const client = new QueryClient();
     seedConversations(client, ["root"]);
