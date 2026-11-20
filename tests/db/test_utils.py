@@ -23,6 +23,7 @@ from omnigent.db.utils import (
     _run_migrations,
     _shared_read_sessions,
     _translate_missing_driver_error,
+    bound_tool_search_text,
     build_search_snippet,
     builtin_agent_id,
     clear_engine_cache,
@@ -42,6 +43,8 @@ from omnigent.db.utils import (
 )
 from omnigent.entities.conversation import (
     ErrorData,
+    FunctionCallOutputData,
+    MessageData,
     NewConversationItem,
     ResourceEventData,
     SlashCommandData,
@@ -955,6 +958,30 @@ def test_extract_search_text_for_slash_command_without_output() -> None:
         ),
     )
     assert extract_search_text(item) == "dev-productivity:simplify"
+
+
+def test_extract_search_text_bounds_tool_output_but_keeps_messages_whole() -> None:
+    """Long tool output keeps only its head and tail; message text stays complete."""
+    middle = "middleterm " * 2000
+    long_text = "headterm " + middle + "tailterm"
+    output = NewConversationItem(
+        type="function_call_output",
+        response_id="resp_1",
+        data=FunctionCallOutputData(call_id="call_1", output=long_text),
+    )
+    message = NewConversationItem(
+        type="message",
+        response_id="resp_1",
+        data=MessageData(role="user", content=[{"type": "input_text", "text": long_text}]),
+    )
+
+    bounded = extract_search_text(output)
+
+    assert bounded == bound_tool_search_text(long_text)
+    assert bounded.startswith("headterm ") and bounded.endswith(" tailterm")
+    assert len(bounded) <= 3072 + 1024 + 3
+    assert extract_search_text(message) == long_text
+    assert bound_tool_search_text("short output") == "short output"
 
 
 def test_extract_search_text_for_error_item() -> None:

@@ -1387,10 +1387,60 @@ def delete_fts_by_conversation_ids(session: Session, conv_ids: list[str]) -> Non
 
 # ── Search text extraction ─────────────────────────────
 
+# Tool-produced text (call arguments, tool output, slash-command and terminal
+# output) can reach megabytes per item while its full value already lives in
+# ``data``. Search keeps only its head and tail, where commands, paths and
+# error messages concentrate, so the item row and the FTS5 content table do not
+# each store another full copy.
+TOOL_SEARCH_TEXT_HEAD_CHARS = 3072
+TOOL_SEARCH_TEXT_TAIL_CHARS = 1024
+TOOL_SEARCH_TEXT_TYPES = frozenset(
+    {"function_call", "function_call_output", "slash_command", "terminal_command"}
+)
+_TOOL_SEARCH_TEXT_GAP = " … "
+# Cut at whitespace within this many characters so the edge terms stay whole.
+_TOOL_SEARCH_TEXT_WORD_SLACK = 64
+
+
+def bound_tool_search_text(value: str) -> str:
+    """
+    Keep the head and tail of long tool-produced search text.
+
+    :param value: Plain search text extracted from a tool-produced item.
+    :returns: *value* unchanged when it fits the head and tail budget;
+        otherwise its first and last characters joined by an ellipsis, cut at
+        whitespace when one lies near the boundary.
+    """
+    head_limit = TOOL_SEARCH_TEXT_HEAD_CHARS
+    tail_limit = TOOL_SEARCH_TEXT_TAIL_CHARS
+    if len(value) <= head_limit + tail_limit + len(_TOOL_SEARCH_TEXT_GAP):
+        return value
+    head = value[:head_limit]
+    head_cut = head.rfind(" ", head_limit - _TOOL_SEARCH_TEXT_WORD_SLACK)
+    if head_cut > 0:
+        head = head[:head_cut]
+    tail = value[-tail_limit:]
+    tail_cut = tail.find(" ", 0, _TOOL_SEARCH_TEXT_WORD_SLACK)
+    if tail_cut >= 0:
+        tail = tail[tail_cut + 1 :]
+    return f"{head}{_TOOL_SEARCH_TEXT_GAP}{tail}"
+
 
 def extract_search_text(item: NewConversationItem) -> str:
     """
     Extract plain text for FTS from an item's data, per DBSPEC.
+
+    Tool-produced text is bounded by :func:`bound_tool_search_text`.
+    """
+    text = _extract_full_search_text(item)
+    if item.type in TOOL_SEARCH_TEXT_TYPES:
+        return bound_tool_search_text(text)
+    return text
+
+
+def _extract_full_search_text(item: NewConversationItem) -> str:
+    """
+    Extract unbounded plain text for FTS from an item's data, per DBSPEC.
 
     The item has already been Pydantic-validated, so required fields
     (content, name, arguments, output, summary) are guaranteed
