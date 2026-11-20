@@ -65,7 +65,7 @@ def register_shell_resource_routes(
     """Reuse the resource router's authorization, runner proxy and captured activity."""
 
     async def capture_terminals(session_id: str, conversation: Any) -> None:
-        page = await activity_for_conversation(conversation)
+        page = await activity_for_conversation(conversation, include_commands=False)
         records: list[object] = []
         for raw in page["data"]:
             entry = ActivityEntry.model_validate(raw)

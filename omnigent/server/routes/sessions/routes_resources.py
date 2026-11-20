@@ -29,6 +29,7 @@ from fastapi import (
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from starlette.types import Receive, Scope, Send
 
+from omnigent.db.utils import shared_read_scope
 from omnigent.entities import (
     Conversation,
     StoredFile,
@@ -411,7 +412,13 @@ def register_resources_routes(
 
     activity_service = SessionActivityService(artifact_store)
 
-    async def _activity_for_conversation(conv: Conversation) -> ActivityPage:
+    async def _activity_for_conversation(
+        conv: Conversation,
+        *,
+        include_commands: bool = True,
+        unreachable_runners: set[int] | None = None,
+    ) -> ActivityPage:
+        """Read one chat's activity; *unreachable_runners* skips a runner that already failed."""
         runner_client = None
         local_registry = None
         try:
@@ -427,13 +434,60 @@ def register_resources_routes(
 
                 with contextlib.suppress(RuntimeError):
                     local_registry = get_terminal_registry()
-        return await activity_service.page(
+        if (
+            runner_client is not None
+            and unreachable_runners is not None
+            and id(runner_client) in unreachable_runners
+        ):
+            runner_client = None
+        page = await activity_service.page(
             conv.id,
             runner_client=runner_client,
             local_registry=local_registry,
             parent_agent_id=conv.id if conv.parent_conversation_id is not None else None,
             conversation_store=conversation_store,
+            include_commands=include_commands,
         )
+        if (
+            runner_client is not None
+            and unreachable_runners is not None
+            and page["coverage"]["terminals"] != "captured"
+        ):
+            unreachable_runners.add(id(runner_client))
+        return page
+
+    def _activity_children(
+        root: Conversation, max_sessions: int
+    ) -> tuple[list[Conversation], bool]:
+        """List descendants breadth-first in one worker hop: one id page and one row batch per parent.
+
+        Sub-agent access delegates to the parent chain, so children of the
+        authorized root need no separate grant check.
+        """
+        list_children = conversation_store.list_child_conversation_ids_page
+        conversations = [root]
+        seen = {root.id}
+        truncated = False
+        with shared_read_scope():
+            for parent in conversations:
+                remaining = max_sessions - len(conversations)
+                if remaining <= 0:
+                    break
+                children = list_children(parent.id, limit=remaining + 1)
+                truncated |= len(children) > remaining
+                child_ids = [child_id for child_id, _ in children if child_id not in seen]
+                seen.update(child_ids)
+                rows = conversation_store.get_conversations(
+                    child_ids[:remaining], include_execution_state=False
+                )
+                conversations.extend(
+                    row
+                    for child_id in child_ids[:remaining]
+                    if (row := rows.get(child_id)) is not None
+                    and row.parent_conversation_id == parent.id
+                )
+                truncated |= len(child_ids) > remaining
+        return conversations, truncated
 
     @router.get("/sessions/{session_id}/activity", response_model=None)
     async def get_session_activity(
@@ -443,38 +497,17 @@ def register_resources_routes(
     ) -> ActivityPage:
         root = await _validate_session(session_id, request, LEVEL_READ)
         conversations = [root]
-        seen = {root.id}
         truncated = False
-        max_sessions = 32
-        list_children = getattr(conversation_store, "list_child_conversation_ids_page", None)
-        if include_children and list_children is not None:
-            for parent in conversations:
-                remaining = max_sessions - len(conversations)
-                children = await asyncio.to_thread(list_children, parent.id, limit=remaining + 1)
-                if len(children) > remaining:
-                    truncated = True
-                for child_id, _ in children:
-                    if child_id in seen:
-                        continue
-                    if len(conversations) == max_sessions:
-                        truncated = True
-                        break
-                    seen.add(child_id)
-                    try:
-                        child = await _validate_session(child_id, request, LEVEL_READ)
-                    except OmnigentError as exc:
-                        if exc.code in (ErrorCode.NOT_FOUND, ErrorCode.FORBIDDEN):
-                            continue
-                        raise
-                    if child.parent_conversation_id == parent.id:
-                        conversations.append(child)
-                if truncated:
-                    break
+        if include_children and hasattr(conversation_store, "list_child_conversation_ids_page"):
+            conversations, truncated = await asyncio.to_thread(_activity_children, root, 32)
         semaphore = asyncio.Semaphore(4)
+        unreachable_runners: set[int] = set()
 
         async def read_activity(conv: Conversation) -> ActivityPage:
             async with semaphore:
-                return await _activity_for_conversation(conv)
+                return await _activity_for_conversation(
+                    conv, unreachable_runners=unreachable_runners
+                )
 
         pages = await asyncio.gather(*(read_activity(conv) for conv in conversations))
         return merge_activity_pages(pages, include_children=include_children, truncated=truncated)
