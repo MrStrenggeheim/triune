@@ -108,7 +108,7 @@ it("retains cached rows on refresh failure", async () => {
   await waitFor(() => expect(result.current.error?.message).toBe("offline"));
 });
 
-it("polls for newly recorded usage even when initially empty and stops on unmount", async () => {
+it("polls every fifteen seconds for newly recorded usage and stops on unmount", async () => {
   vi.useFakeTimers();
   fetch.mockResolvedValueOnce(Response.json({ data: [], coverage: "complete" }));
   const { result, unmount } = renderHook(() => useChatActivity("chat"), { wrapper });
@@ -118,6 +118,10 @@ it("polls for newly recorded usage even when initially empty and stops on unmoun
   expect(result.current.data?.data).toEqual([]);
   await act(async () => {
     await vi.advanceTimersByTimeAsync(5_000);
+  });
+  expect(fetch).toHaveBeenCalledTimes(1);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(10_000);
   });
   expect(result.current.data?.data[0].id).toBe("shell");
   expect(fetch).toHaveBeenCalledTimes(2);

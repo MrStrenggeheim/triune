@@ -1,6 +1,7 @@
 import { OperationFailure } from "@/components/ui/operation-failure";
 import { OperationStatus, ContentSkeleton } from "@/components/ui/loading";
 // Modified for Triune.
+import { usePollingInterval } from "@/hooks/usePollingInterval";
 
 import { lazy, Suspense, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -125,6 +126,7 @@ function TerminalResourceContent({
   const canWrite = manual
     ? !!target && (target.permission_level ?? 0) >= LEVEL_OWNER && target.available !== false
     : !!session && !sessionError && isOwnerLevel(session.permissionLevel ?? null);
+  const terminalPoll = usePollingInterval({ active: active && !!target, intervalMs: 5_000 });
   const detail = useQuery({
     queryKey: [...terminalHistoryKey(target?.id ?? ""), "detail", terminalId],
     queryFn: async ({ signal }) => {
@@ -136,7 +138,7 @@ function TerminalResourceContent({
       return manualTerminalRecord(await response.json());
     },
     enabled: !!target && active,
-    refetchInterval: active && target ? 5_000 : false,
+    refetchInterval: terminalPoll,
     staleTime: 2_000,
     retry: false,
     throwOnError: false,

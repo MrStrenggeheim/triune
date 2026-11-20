@@ -1,5 +1,6 @@
 import { ContentSkeleton } from "@/components/ui/loading";
 // Modified for Triune.
+import { usePollingInterval } from "@/hooks/usePollingInterval";
 import { useEffect, useRef, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { RefreshCwIcon } from "lucide-react";
@@ -179,12 +180,13 @@ function HostActivity({
     "activity-filter",
     "All",
   );
+  const workspacePoll = usePollingInterval({ active: active && !!viewerId, intervalMs: 5_000 });
   const workspaces = useQuery({
     queryKey: workspacesKey,
     queryFn: fetchWorkspaces,
     enabled: active && !!viewerId,
     staleTime: 2_000,
-    refetchInterval: active && viewerId ? 5_000 : false,
+    refetchInterval: workspacePoll,
     retry: false,
     throwOnError: false,
   });

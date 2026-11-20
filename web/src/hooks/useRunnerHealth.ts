@@ -1,3 +1,4 @@
+// Modified for Triune.
 // Single-session runner/host-health polling — the socket-down FALLBACK
 // for open-session liveness.
 //
@@ -13,6 +14,7 @@
 import { useEffect, useState } from "react";
 import { authenticatedFetch } from "@/lib/identity";
 import { onHostStatusChanged } from "@/lib/nativeBridge";
+import { usePageVisible } from "./usePollingInterval";
 
 // Minimal shape the poller needs from each session: just its id. Both
 // the sidebar `Conversation` list and a single-session snapshot satisfy
@@ -73,6 +75,8 @@ export function useRunnerHealth(
 ): Map<string, SessionLiveness> {
   const [statusMap, setStatusMap] = useState<Map<string, SessionLiveness>>(new Map());
   const [hostStatusRevision, setHostStatusRevision] = useState(0);
+  // A hidden tab keeps its last liveness and re-polls as soon as it is shown.
+  const pageVisible = usePageVisible();
 
   // Desktop reconnects should update the badge without waiting for the next poll.
   useEffect(() => onHostStatusChanged(() => setHostStatusRevision((revision) => revision + 1)), []);
@@ -84,6 +88,7 @@ export function useRunnerHealth(
       setStatusMap((prev) => (prev.size === 0 ? prev : new Map()));
       return;
     }
+    if (!pageVisible) return;
 
     const ids = sessions.map((c) => c.id);
 
@@ -135,7 +140,7 @@ export function useRunnerHealth(
       cancelled = true;
       if (timer !== null) clearTimeout(timer);
     };
-  }, [sessions, hostStatusRevision]);
+  }, [sessions, hostStatusRevision, pageVisible]);
 
   return statusMap;
 }

@@ -8,6 +8,7 @@ import { authenticatedFetch } from "@/lib/identity";
 import { apiErrorFromResponse } from "@/lib/sessionsApi";
 import { resourceViewStorageScope } from "@/lib/resourceViewStorage";
 import { isTempConvId } from "@/lib/tempConversationId";
+import { RESOURCE_POLL_MS, usePollingInterval } from "./usePollingInterval";
 
 export interface SessionShellResource extends BackgroundTaskInfo {
   /** Optional exact alias published by the activity producer. */
@@ -154,6 +155,7 @@ export function useSessionShellResources(
   const capturedId = sessionId && !isTempConvId(sessionId) ? sessionId : null;
   const observing = enabled && !!capturedId;
   const queryKey = sessionShellResourcesKey(capturedId);
+  const refetchInterval = usePollingInterval({ active: observing, intervalMs: RESOURCE_POLL_MS });
   const query = useQuery<SessionShellResources>({
     queryKey,
     queryFn: async ({ signal }) => {
@@ -171,8 +173,7 @@ export function useSessionShellResources(
     },
     enabled: observing,
     staleTime: 2_000,
-    refetchInterval: observing ? 5_000 : false,
-    refetchIntervalInBackground: false,
+    refetchInterval,
     retry: false,
     throwOnError: false,
   });

@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { authenticatedFetch } from "@/lib/identity";
 import { apiErrorFromResponse } from "@/lib/sessionsApi";
 import { isTempConvId } from "@/lib/tempConversationId";
+import { RESOURCE_POLL_MS, usePollingInterval } from "./usePollingInterval";
 import type { BackgroundTaskInfo } from "@/lib/types";
 
 export interface ChatActivityEntry {
@@ -47,6 +48,8 @@ export function useChatActivity(
   options: { enabled?: boolean } = {},
 ) {
   const sessionId = isTempConvId(conversationId) ? null : conversationId;
+  const enabled = options.enabled !== false && !!sessionId;
+  const refetchInterval = usePollingInterval({ active: enabled, intervalMs: RESOURCE_POLL_MS });
   return useQuery<ChatActivityResponse>({
     queryKey: ["chat-activity", sessionId],
     queryFn: async ({ signal }) => {
@@ -57,9 +60,9 @@ export function useChatActivity(
       if (!response.ok) throw await apiErrorFromResponse(response);
       return response.json();
     },
-    enabled: options.enabled !== false && !!sessionId,
+    enabled,
     staleTime: 5_000,
-    refetchInterval: 5_000,
+    refetchInterval,
     retry: false,
   });
 }

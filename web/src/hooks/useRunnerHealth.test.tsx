@@ -1,3 +1,4 @@
+// Modified for Triune.
 // `useRunnerHealth` is the socket-down FALLBACK poll for open-session
 // liveness. The server's /health is the single authority (host-aware):
 // every session passed in is sent to /health and reflects whatever
@@ -168,6 +169,37 @@ describe("useRunnerHealth", () => {
       finishOldPoll(mockHealth({ conv_a: { runner_online: false, host_online: false } }));
     });
     expect(result.current.get("conv_a")?.host_online).toBe(true);
+  });
+
+  it("pauses while the page is hidden and re-polls when it is shown", async () => {
+    fetchMock.mockResolvedValue(mockHealth({ conv_a: { runner_online: true } }));
+    const visibility = (state: DocumentVisibilityState) => {
+      Object.defineProperty(document, "visibilityState", { configurable: true, value: state });
+      document.dispatchEvent(new Event("visibilitychange"));
+    };
+    const sessions = [input("conv_a")];
+    vi.useFakeTimers();
+    try {
+      const { result } = renderHook(() => useRunnerHealth(sessions));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10);
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      act(() => visibility("hidden"));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000);
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(result.current.get("conv_a")?.runner_online).toBe(true);
+      act(() => visibility("visible"));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10);
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    } finally {
+      visibility("visible");
+      vi.useRealTimers();
+    }
   });
 
   it("polls nothing and stays empty when the session set is empty", async () => {

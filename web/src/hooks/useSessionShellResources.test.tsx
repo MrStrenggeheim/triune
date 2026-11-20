@@ -127,6 +127,8 @@ it("polls only while a consumer is visible and resumes its cached rows", async (
   await act(async () => vi.advanceTimersByTimeAsync(10));
   const cached = result.current.data;
   await act(async () => vi.advanceTimersByTimeAsync(5_000));
+  expect(fetch).toHaveBeenCalledTimes(1);
+  await act(async () => vi.advanceTimersByTimeAsync(10_000));
   expect(fetch).toHaveBeenCalledTimes(2);
   rerender({ active: false });
   await act(async () => vi.advanceTimersByTimeAsync(15_000));
