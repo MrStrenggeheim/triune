@@ -7583,7 +7583,10 @@ describe("chatStore — handleSessionEvent (session.* events)", () => {
         conversationId: "conv_child1",
         status: "idle",
       });
-      expect(spy).toHaveBeenCalledWith({ queryKey: childSessionsQueryKey("conv_parent") });
+      expect(spy).toHaveBeenCalledWith(
+        { queryKey: childSessionsQueryKey("conv_parent"), exact: true },
+        { cancelRefetch: false },
+      );
     });
 
     it("idle refetches a root session's own snapshot (feeds the main-row preview)", () => {
@@ -10905,7 +10908,10 @@ describe("chatStore — handleSessionEvent (resource events)", () => {
         childSessionId: "conv_child1",
         child: { id: "conv_child1", busy: false },
       });
-      expect(spy).toHaveBeenCalledWith({ queryKey: childSessionsQueryKey("conv_parent") });
+      expect(spy).toHaveBeenCalledWith(
+        { queryKey: childSessionsQueryKey("conv_parent"), exact: true },
+        { cancelRefetch: false },
+      );
     });
 
     it("does NOT refetch when the idle delta already carries a preview", () => {

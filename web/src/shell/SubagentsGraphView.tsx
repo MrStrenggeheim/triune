@@ -1,3 +1,4 @@
+// Modified for Triune.
 import { TooltipButton } from "@/components/ui/tooltip";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { NodeTypes, NodeProps, Node } from "@xyflow/react";
@@ -6,7 +7,12 @@ import { useLocation, useNavigate } from "@/lib/routing";
 import { RunningDot } from "@/components/RunningDot";
 import { Badge } from "@/components/ui/badge";
 import { ZoomInIcon, ZoomOutIcon, Maximize2Icon } from "lucide-react";
-import { MAX_TREE_DEPTH, useChildSessions, type ChildSessionInfo } from "@/hooks/useChildSessions";
+import {
+  MAX_TREE_DEPTH,
+  mayHaveChildren,
+  useChildSessions,
+  type ChildSessionInfo,
+} from "@/hooks/useChildSessions";
 import { useSession } from "@/hooks/useSession";
 import { cn } from "@/lib/utils";
 import { nativeCodingAgentForWrapper, WRAPPER_LABEL_KEY } from "@/lib/nativeCodingAgents";
@@ -145,7 +151,7 @@ function ChildCollector({
   if (depth >= MAX_TREE_DEPTH) return null;
   return (
     <>
-      {children.map((child) => (
+      {children.filter(mayHaveChildren).map((child) => (
         <ChildCollector
           key={child.id}
           parentId={child.id}
@@ -252,7 +258,8 @@ export function SubagentsGraphView({ conversationId, rootSessionId }: SubagentsG
           <ZoomControls />
         </ReactFlow>
       </div>
-      {rootChildren.map((child) => (
+      {/* Known leaves (child_count 0) fetch nothing; every other node is visible and loads. */}
+      {rootChildren.filter(mayHaveChildren).map((child) => (
         <ChildCollector
           key={child.id}
           parentId={child.id}

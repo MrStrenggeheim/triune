@@ -18,6 +18,7 @@ import {
   type Conversation,
   type ConversationsPage,
 } from "@/hooks/useConversations";
+import type { ChildSessionInfo } from "@/hooks/useChildSessions";
 import type { ConversationsInfiniteData } from "@/lib/sessionListCache";
 
 // Mock the socket transport so setWatched is observable and start/stop are
@@ -983,4 +984,132 @@ it("overlays nested activity onto branch pages and authorized branch rows withou
   expect(
     client.getQueryData<Conversation>(["conversation-branch-row", "scope", "branch"])!.activity,
   ).toEqual(activity);
+});
+
+describe("SessionUpdatesProvider child lists", () => {
+  const childKey = (parent: string) => ["conversation", parent, "child_sessions"];
+  const childRow = (id: string, overrides: Partial<ChildSessionInfo> = {}): ChildSessionInfo => ({
+    id,
+    title: null,
+    task_summary: null,
+    tool: null,
+    session_name: null,
+    current_task_status: "in_progress",
+    busy: true,
+    last_message_preview: "Working",
+    pending_elicitations_count: 0,
+    updated_at: 10,
+    ...overrides,
+  });
+  const frameRow = (id: string, status: string, updatedAt: number) => ({
+    ...conv(id),
+    parent_session_id: "root",
+    status,
+    updated_at: updatedAt,
+  });
+
+  function observeChildren(rows: ChildSessionInfo[]) {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(childKey("root"), rows);
+    const fetches = { count: 0 };
+    const observer = new QueryObserver(client, {
+      queryKey: childKey("root"),
+      staleTime: Infinity,
+      queryFn: async () => {
+        fetches.count++;
+        return client.getQueryData<ChildSessionInfo[]>(childKey("root"))!;
+      },
+    });
+    const unsubscribe = observer.subscribe(() => {});
+    const view = renderProvider(client, ["/c/root"]);
+    return {
+      client,
+      fetches,
+      send: (type: "snapshot" | "changed", items: unknown[]) =>
+        act(() => frameHandler()({ type, items })),
+      rows: () => client.getQueryData<ChildSessionInfo[]>(childKey("root"))!,
+      close: () => {
+        view.unmount();
+        unsubscribe();
+        client.clear();
+      },
+    };
+  }
+
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it("patches a known child's status, attention and count from frames without refetching", async () => {
+    const lists = observeChildren([
+      childRow("running"),
+      childRow("idle", { busy: false, current_task_status: "completed" }),
+    ]);
+    try {
+      lists.send("snapshot", [frameRow("running", "running", 10), frameRow("idle", "idle", 10)]);
+      lists.send("changed", [
+        { ...frameRow("running", "waiting", 11), pending_elicitations_count: 1, child_count: 2 },
+        frameRow("idle", "running", 12),
+      ]);
+      await act(() => vi.advanceTimersByTimeAsync(10_000));
+      expect(lists.fetches.count).toBe(0);
+      expect(lists.rows()).toEqual([
+        childRow("running", { updated_at: 11, pending_elicitations_count: 1, child_count: 2 }),
+        childRow("idle", { updated_at: 12 }),
+      ]);
+    } finally {
+      lists.close();
+    }
+  });
+
+  it("ignores a frame row older than the cached child", async () => {
+    const lists = observeChildren([
+      childRow("done", { busy: false, current_task_status: "completed", updated_at: 20 }),
+    ]);
+    try {
+      lists.send("changed", [frameRow("done", "running", 19)]);
+      await act(() => vi.advanceTimersByTimeAsync(10));
+      expect(lists.rows()[0]).toMatchObject({ busy: false, current_task_status: "completed" });
+      expect(lists.fetches.count).toBe(0);
+    } finally {
+      lists.close();
+    }
+  });
+
+  it("coalesces settle and discovery refetches per parent to one per five seconds", async () => {
+    const lists = observeChildren([childRow("first"), childRow("second")]);
+    try {
+      lists.send("changed", [frameRow("first", "idle", 11)]);
+      await act(() => vi.advanceTimersByTimeAsync(10));
+      // The settled row shows Done at once; its final preview needs one read.
+      expect(lists.rows()[0]).toMatchObject({ busy: false, current_task_status: "completed" });
+      expect(lists.fetches.count).toBe(1);
+      lists.send("changed", [frameRow("second", "failed", 12)]);
+      lists.send("changed", [frameRow("spawned", "running", 13)]);
+      await act(() => vi.advanceTimersByTimeAsync(4_000));
+      expect(lists.fetches.count).toBe(1);
+      await act(() => vi.advanceTimersByTimeAsync(1_000));
+      expect(lists.fetches.count).toBe(2);
+      await act(() => vi.advanceTimersByTimeAsync(10_000));
+      expect(lists.fetches.count).toBe(2);
+    } finally {
+      lists.close();
+    }
+  });
+
+  it("watches only children of child lists a view observes", () => {
+    const client = new QueryClient();
+    seedConversations(client, ["root"]);
+    client.setQueryData(childKey("root"), [childRow("shown")]);
+    client.setQueryData(childKey("retained"), [childRow("hidden")]);
+    const observer = new QueryObserver(client, {
+      queryKey: childKey("root"),
+      staleTime: Infinity,
+      queryFn: async () => [childRow("shown")],
+    });
+    const unsubscribe = observer.subscribe(() => {});
+    renderProvider(client, ["/"]);
+    expect(lastWatched()).toEqual(["root", "shown"]);
+    unsubscribe();
+    client.clear();
+  });
 });
