@@ -145,6 +145,8 @@ it("exports individual receipts using opaque identities before local journal coa
     diagnostics.configureConvergenceExport(Date.now() + 60000);
     const receipt = { conversationId: "conv", itemId: "synthetic-item", kind: "item" as const };
     diagnostics.recordConvergence("received", receipt);
+    // Heartbeats stay out of the upload; they carry no transcript state.
+    diagnostics.recordConvergence("received", { conversationId: "conv", kind: "heartbeat" });
     diagnostics.recordConvergence("received", receipt);
     await vi.advanceTimersByTimeAsync(2100);
     await vi.waitFor(() => expect(send).toHaveBeenCalledOnce());
