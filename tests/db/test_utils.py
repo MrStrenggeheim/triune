@@ -14,6 +14,7 @@ from sqlalchemy import create_engine, event, text
 from omnigent.db.utils import (
     _LAKEBASE_POOL_RECYCLE_SECONDS,
     _SERVER_POOL_RECYCLE_SECONDS,
+    SQLITE_CACHE_SIZE_PRAGMA,
     _build_alembic_config,
     _get_current_db_revision,
     _get_head_db_revision,
@@ -448,7 +449,7 @@ def test_sqlite_engine_skips_server_pool_settings_and_enables_wal(
         assert conn.exec_driver_sql("PRAGMA synchronous").scalar() == 1
         # Memory-mapped reads and a 64 MiB page cache per connection.
         assert conn.exec_driver_sql("PRAGMA mmap_size").scalar() == 1 << 30
-        assert conn.exec_driver_sql("PRAGMA cache_size").scalar() == -65536
+        assert conn.exec_driver_sql("PRAGMA cache_size").scalar() == SQLITE_CACHE_SIZE_PRAGMA
 
 
 def test_startup_statistics_refresh_moves_label_reads_to_the_primary_key(db_uri: str) -> None:

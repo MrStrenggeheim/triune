@@ -11,6 +11,7 @@ import pytest
 
 from omnigent.db.account_authority import account_authority_scope
 from omnigent.errors import ErrorCode, OmnigentError
+from omnigent.runtime import session_change_signal
 from omnigent.server import accounts_store as accounts_module
 from omnigent.server.accounts_store import SqlAlchemyAccountStore
 from omnigent.server.device_grant_store import DeviceGrantStore
@@ -25,7 +26,10 @@ def test_account_generation_survives_delete_and_rejects_old_writes(db_uri: str) 
     permissions = SqlAlchemyPermissionStore(db_uri)
     old = accounts.create_user_with_password("alice", "test-password-hash")
     assert old.account_generation is not None
+    epoch_before_delete = session_change_signal.access_epoch()
     assert accounts.delete_user("alice") is True
+    # Open streams must re-check their cached grants once the account is gone.
+    assert session_change_signal.access_epoch() > epoch_before_delete
     assert accounts.get_user("alice") is None
     with pytest.raises(OmnigentError, match="revoked"):
         permissions.ensure_user("alice")

@@ -50,6 +50,7 @@ from omnigent.db.utils import (
     run_write_transaction,
 )
 from omnigent.entities import Account, AccountToken
+from omnigent.runtime.session_change_signal import notify_access_changed
 from omnigent.server.auth import RESERVED_USER_LOCAL, RESERVED_USER_PUBLIC
 
 _HIDDEN_LIST_USERS = frozenset({RESERVED_USER_PUBLIC, RESERVED_USER_LOCAL})
@@ -521,7 +522,11 @@ class SqlAlchemyAccountStore:
             )
             return True
 
-        return run_write_transaction(self._session_immediate, "delete_user", write)
+        deleted = run_write_transaction(self._session_immediate, "delete_user", write)
+        if deleted:
+            # Open streams re-check their cached grants before the next frame.
+            notify_access_changed()
+        return deleted
 
     def login_snapshot(self, user_id: str) -> tuple[str | None, str | None]:
         """Read the password and generation together before password verification."""

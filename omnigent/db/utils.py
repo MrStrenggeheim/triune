@@ -260,8 +260,8 @@ _engine_cache: dict[str, Engine] = {}
 _engine_lock = threading.Lock()
 
 SQLITE_MMAP_SIZE_BYTES = 1 << 30
-# Negative cache_size is KiB: 64 MiB of page cache per connection.
-SQLITE_CACHE_SIZE_PRAGMA = -65536
+# Negative cache_size is KiB: 16 MiB per connection bounds a full 40-connection pool to 640 MiB.
+SQLITE_CACHE_SIZE_PRAGMA = -16384
 
 
 def _create_engine(db_uri: str) -> Engine:
