@@ -5819,7 +5819,10 @@ async def _get_runner_client_impl(
     if runner_router is not None:
         try:
             if conversation is None:
-                routed = runner_router.client_for_session_resources(session_id)
+                # Routing reads the conversation; keep that read off the event loop.
+                routed = await asyncio.to_thread(
+                    runner_router.client_for_session_resources, session_id
+                )
             else:
                 routed = runner_router.client_for_session_resources(
                     session_id,
@@ -6777,7 +6780,9 @@ async def _get_runner_client_for_resource_access_impl(
     runner_router = get_runner_router()
     if runner_router is not None:
         if conversation is None:
-            routed_runner = runner_router.client_for_session_resources(session_id)
+            routed_runner = await asyncio.to_thread(
+                runner_router.client_for_session_resources, session_id
+            )
         else:
             routed_runner = runner_router.client_for_session_resources(
                 session_id,
