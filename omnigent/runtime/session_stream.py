@@ -48,7 +48,12 @@ from omnigent.debug_logging import (
 )
 from omnigent.errors import ErrorImpact, ErrorPhase
 from omnigent.native.input_diagnostics import input_attributes
-from omnigent.runtime import disconnect_outcome, inflight_text, pending_elicitations
+from omnigent.runtime import (
+    disconnect_outcome,
+    inflight_text,
+    pending_elicitations,
+    session_change_signal,
+)
 from omnigent.runtime.stream_queue import (
     MAX_STREAM_BYTES,
     BoundedEventQueue,
@@ -86,6 +91,19 @@ _subscribers: WorkspaceScopedCache[
     set[tuple[asyncio.Queue[dict[str, Any] | object], asyncio.AbstractEventLoop]],
 ] = WorkspaceScopedCache()
 _lock = threading.Lock()
+# Events that change a session-list row without a persisted item append.
+_LIST_ROW_EVENTS = frozenset(
+    {
+        "session.status",
+        "session.title",
+        "session.child_session.updated",
+        "session.workspace",
+        "session.reasoning_effort",
+        "session.agent_changed",
+        "response.elicitation_request",
+        "response.elicitation_resolved",
+    }
+)
 # Process-local invalidation, never a second transcript or body cache.
 _item_revisions: WorkspaceScopedCache[str, tuple[int, int]] = WorkspaceScopedCache()
 _ITEM_MUTATION_HISTORY_LIMIT = 128
@@ -117,6 +135,8 @@ def mark_items_changed(
                 if len(mutations) > _ITEM_MUTATION_HISTORY_LIMIT:
                     floor = max(floor, mutations.pop(next(iter(mutations))))
             _item_mutations[conversation_id] = (floor, mutations)
+    # A committed append also moves the list row's updated_at.
+    session_change_signal.notify(conversation_id)
 
 
 def item_mutations_since(conversation_id: str, revision: int) -> tuple[str, ...] | None:
@@ -455,6 +475,8 @@ def publish(conversation_id: str, event: dict[str, Any]) -> int:
     # type is a single dict lookup and a return. A suppressed event is
     # always a text delta, never an elicitation, so this still runs.
     pending_elicitations.record_publish(conversation_id, event)
+    if kind in _LIST_ROW_EVENTS:
+        session_change_signal.notify(conversation_id)
     if live_event is None:
         return 0
     with _lock:

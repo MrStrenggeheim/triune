@@ -48,6 +48,7 @@ from omnigent.harness_plugins import (
     harness_capabilities,
 )
 from omnigent.runner.routing import RunnerRouter
+from omnigent.runtime import session_change_signal
 from omnigent.server.host_registry import HostRegistry
 from omnigent.server.schemas import (
     BackgroundTaskInfo,
@@ -605,11 +606,35 @@ _ALLOWED_EVENT_TYPES: frozenset[str] = frozenset(ITEM_TYPE_TO_DATA_CLS.keys()) |
 _SERVER_STREAM_EVENT_ADAPTER: TypeAdapter[ServerStreamEvent] = TypeAdapter(ServerStreamEvent)
 
 
+_MISSING_STATUS: Any = object()
+
+
 # custom-lint: disable-next=workspace-scoped-cache -- set of Task objects
 _WATCHER_TASKS: set[asyncio.Task[None]] = set()
 
 
-_session_status_cache: WorkspaceScopedCache[str, str] = WorkspaceScopedCache()
+class _SessionStatusCache(WorkspaceScopedCache[str, str]):
+    """Relay-fed session statuses that signal list watchers when a value changes."""
+
+    def __setitem__(self, key: str, value: str) -> None:
+        changed = self.get(key) != value
+        super().__setitem__(key, value)
+        if changed:
+            session_change_signal.notify(key)
+
+    def __delitem__(self, key: str) -> None:
+        super().__delitem__(key)
+        session_change_signal.notify(key)
+
+    def pop(self, key: str, default: Any = _MISSING_STATUS) -> Any:
+        present = key in self
+        value = super().pop(key) if default is _MISSING_STATUS else super().pop(key, default)
+        if present:
+            session_change_signal.notify(key)
+        return value
+
+
+_session_status_cache: WorkspaceScopedCache[str, str] = _SessionStatusCache()
 
 
 @dataclass
@@ -697,7 +722,12 @@ _FENCE_EXEMPT_EVENT_TYPES: frozenset[str] = frozenset(
 )
 
 
-_SESSION_UPDATES_RESCAN_INTERVAL_S: float = 4.0
+# Full rescan of every watched row; change signals refresh named rows sooner.
+_SESSION_UPDATES_RESCAN_INTERVAL_S: float = 30.0
+
+
+# Coalesces signalled recomputes to at most four per second per socket.
+_SESSION_UPDATES_MIN_RECOMPUTE_INTERVAL_S: float = 0.25
 
 
 _SESSION_UPDATES_HEARTBEAT_INTERVAL_S: float = 30.0
@@ -1225,6 +1255,7 @@ __all__ = [
     "_SESSION_STREAM_HEARTBEAT_INTERVAL_S",
     "_SESSION_UPDATES_HEARTBEAT_INTERVAL_S",
     "_SESSION_UPDATES_MAX_WATCHED",
+    "_SESSION_UPDATES_MIN_RECOMPUTE_INTERVAL_S",
     "_SESSION_UPDATES_RESCAN_INTERVAL_S",
     "_SHARED_DISCOVERY_KEY",
     "_SLASH_COMMAND_TYPE",

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from datetime import UTC, datetime
 
 import pytest
@@ -26,7 +27,7 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 
 import omnigent.server.routes.sessions as sessions_routes
 import omnigent.stores.conversation_store.sqlalchemy_store as conversation_module
-from omnigent.runtime import pending_elicitations
+from omnigent.runtime import pending_elicitations, session_change_signal
 from omnigent.server.auth import LEVEL_OWNER, UnifiedAuthProvider
 from omnigent.server.routes.sessions import SessionLiveness, create_sessions_router
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
@@ -436,6 +437,59 @@ def test_title_change_pushes_changed_frame(app: FastAPI, stores, fast_rescan: No
         # The changed frame carries the new title — proves the diff fired
         # on the real field change, not a spurious or stale value.
         assert items[s1]["title"] == "after"
+
+
+@pytest.mark.timeout(20)
+def test_rows_rebuild_only_after_a_signal_for_them(app: FastAPI, stores, monkeypatch) -> None:
+    """With nothing changing the socket rebuilds no row; a signal rebuilds only its row."""
+    from omnigent.runtime import session_stream
+
+    conversation_store = stores[0]
+    first = _seed_session(stores, owner=ALICE, title="first")
+    second = _seed_session(stores, owner=ALICE, title="before")
+    child = conversation_store.create_conversation(
+        kind="sub_agent",
+        title="child",
+        parent_conversation_id=first,
+        agent_id="087b7cb7ac30abf4debfaa578d052ec6",
+    ).id
+    stores[2].grant(ALICE, child, LEVEL_OWNER)
+    loads: list[list[str]] = []
+    load = conversation_store.get_conversations
+
+    def counted(ids, **kwargs):
+        loads.append(list(ids))
+        return load(ids, **kwargs)
+
+    monkeypatch.setattr(conversation_store, "get_conversations", counted)
+    with TestClient(app).websocket_connect(
+        "/v1/sessions/updates", headers={"X-Forwarded-Email": ALICE}
+    ) as ws:
+        ws.send_json({"type": "watch", "session_ids": [first, second, child]})
+        snapshot = _recv_until(ws, {"snapshot"})
+        assert loads == [[first, second, child]]
+        rows = {item["id"]: item for item in snapshot["items"]}
+        assert rows[first]["child_count"] == 1 and rows[child]["child_count"] == 0
+        # Idle socket and unrelated signals: no row rebuild.
+        session_change_signal.notify("unrelated-session")
+        time.sleep(0.6)
+        assert len(loads) == 1
+        conversation_store.update_conversation(second, title="after")
+        session_stream.publish(
+            second, {"type": "session.title", "conversation_id": second, "title": "after"}
+        )
+        changed = _recv_until(ws, {"changed"})
+        assert loads[-1] == [second]
+        assert [item["title"] for item in changed["items"]] == ["after"]
+        assert changed["revision"] > snapshot["revision"]
+        # A child's signal refreshes the watched parent that projects it.
+        conversation_store.update_conversation(child, archived=True)
+        session_change_signal.notify(child)
+        changed_again = _recv_until(ws, {"changed"})
+        assert set(loads[-1]) == {first, child}
+        rows = {item["id"]: item for item in changed_again["items"]}
+        assert rows[first]["child_count"] == 0 and rows[child]["archived"] is True
+        assert changed_again["revision"] > changed["revision"]
 
 
 def test_cleared_field_pushes_explicit_null(app: FastAPI, stores, fast_rescan: None) -> None:
@@ -2343,3 +2397,37 @@ def test_feed_mode_file_is_release_scoped_and_rechecked_on_authenticated_handsha
         assert "transcript_feed" not in capabilities()
         monkeypatch.delenv("TRIUNE_TRANSCRIPT_FEED_MODE_FILE")
         assert capabilities()["transcript_feed_default"] == 2
+
+
+async def test_session_list_reads_storage_in_one_worker_hop(app: FastAPI, stores) -> None:
+    """GET /v1/sessions gathers grants, children, comments and descendants in one hop."""
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+
+    import httpx
+
+    class CountingExecutor(ThreadPoolExecutor):
+        submitted = 0
+
+        def submit(self, *args, **kwargs):
+            CountingExecutor.submitted += 1
+            return super().submit(*args, **kwargs)
+
+    parent = _seed_session(stores, owner=ALICE, title="parent")
+    stores[0].create_conversation(
+        kind="sub_agent",
+        title="child",
+        parent_conversation_id=parent,
+        agent_id="087b7cb7ac30abf4debfaa578d052ec6",
+    )
+    _seed_session(stores, owner=ALICE, title="other")
+    executor = CountingExecutor(max_workers=2)
+    asyncio.get_running_loop().set_default_executor(executor)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://server"
+    ) as client:
+        response = await client.get("/v1/sessions", headers={"X-Forwarded-Email": ALICE})
+    assert response.status_code == 200
+    rows = {row["id"]: row for row in response.json()["data"]}
+    assert len(rows) == 2 and len(rows[parent]["activity"]["descendants"]) == 1
+    assert CountingExecutor.submitted == 1
