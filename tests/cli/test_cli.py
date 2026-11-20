@@ -12,6 +12,7 @@ import re
 import subprocess
 import sys
 import tarfile
+import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from types import SimpleNamespace
@@ -334,15 +335,15 @@ def test_server_uvicorn_log_config_uses_terminal_handler_when_requested(
     )
     assert log_config["handlers"]["server_terminal"]["formatter"] == "default"
     assert log_config["handlers"]["server_access_terminal"]["formatter"] == "access"
-    assert log_config["handlers"]["server_file"]["formatter"] == "default_file"
-    assert log_config["handlers"]["server_access_file"]["formatter"] == "access_file"
+    assert log_config["handlers"]["server_file"]["formatter"] == "server_file"
+    assert log_config["handlers"]["server_file"]["maxBytes"] == 50 * 1024 * 1024
     assert log_config["loggers"]["uvicorn"]["handlers"] == [
         "server_terminal",
         "server_file",
     ]
     assert log_config["loggers"]["uvicorn.access"]["handlers"] == [
         "server_access_terminal",
-        "server_access_file",
+        "server_file",
     ]
 
 
@@ -362,7 +363,7 @@ def test_server_uvicorn_log_config_mirrors_foreground_tty_by_default(
     ]
     assert log_config["loggers"]["uvicorn.access"]["handlers"] == [
         "server_access_terminal",
-        "server_access_file",
+        "server_file",
     ]
 
 
@@ -379,7 +380,67 @@ def test_server_uvicorn_log_config_keeps_noninteractive_default_file_only(
     assert "server_terminal" not in log_config["handlers"]
     assert "server_access_terminal" not in log_config["handlers"]
     assert log_config["loggers"]["uvicorn"]["handlers"] == ["server_file"]
-    assert log_config["loggers"]["uvicorn.access"]["handlers"] == ["server_access_file"]
+    assert log_config["loggers"]["uvicorn.access"]["handlers"] == ["server_file"]
+
+
+def test_server_log_rotates_by_size_and_new_process_logs_prune_old_starts(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Server lines share one rotating file; a new start prunes stale per-start logs."""
+    import logging.config
+
+    from omnigent import cli as cli_module
+    from omnigent.process_logging import PROCESS_LOG_MAX_AGE_S, create_process_log_path
+
+    monkeypatch.setattr(sys.stderr, "isatty", lambda: False)
+    monkeypatch.setattr(cli_module, "SERVER_LOG_MAX_BYTES", 400)
+    server_log = tmp_path / "server.log"
+    names = ("uvicorn", "uvicorn.error", "uvicorn.access")
+    saved = {name: logging.getLogger(name).handlers[:] for name in names}
+    logging.config.dictConfig(_server_uvicorn_log_config(server_log))
+    try:
+        access = logging.getLogger("uvicorn.access")
+        access.info('%s - "%s %s HTTP/%s" %d', "127.0.0.1:1", "GET", "/health", "1.1", 200)
+        for index in range(20):
+            logging.getLogger("uvicorn.error").info("server line %d", index)
+    finally:
+        for name in names:
+            logger = logging.getLogger(name)
+            for handler in logger.handlers:
+                handler.close()
+            logger.handlers = saved[name]
+    rotated = sorted(tmp_path.glob("server.log.*"))
+    assert [path.name for path in rotated] == [f"server.log.{n}" for n in range(1, 6)]
+    assert "server line 19" in server_log.read_text()
+    assert '"GET /health HTTP/1.1" 200' in (tmp_path / "server.log.5").read_text()
+
+    runner_dir = tmp_path / "logs" / "runner"
+    runner_dir.mkdir(parents=True)
+    old = time.time() - PROCESS_LOG_MAX_AGE_S - 3600
+    stale = []
+    for index in range(14):
+        suffix = (".log", ".log.1", ".log.gz", ".connected")[index % 4]
+        path = runner_dir / f"runner-session{index:02d}-20261101{suffix}"
+        path.write_text("x")
+        os.utime(path, (old + index, old + index))
+        stale.append(path)
+    recent = runner_dir / "runner-recent.log"
+    recent.write_text("x")
+    other = runner_dir / "notes.txt"
+    other.write_text("x")
+    os.utime(other, (old, old))
+
+    current = create_process_log_path("runner", root=tmp_path / "logs")
+
+    kept = {path.name for path in runner_dir.iterdir()}
+    # The ten newest survive (recent plus nine stale); older stale starts go.
+    assert kept == {
+        current.name,
+        recent.name,
+        other.name,
+        *(path.name for path in stale[-9:]),
+    }
 
 
 def test_server_uvicorn_log_config_standardizes_timestamp_and_color(
@@ -395,21 +456,18 @@ def test_server_uvicorn_log_config_standardizes_timestamp_and_color(
     )
 
     assert log_config["formatters"]["default"]["fmt"] == DEFAULT_LOG_FORMAT
-    assert log_config["formatters"]["default_file"]["fmt"] == DEFAULT_LOG_FORMAT
+    assert log_config["formatters"]["server_file"]["fmt"] == DEFAULT_LOG_FORMAT
     assert log_config["formatters"]["access"]["fmt"] == expected_access_format
-    assert log_config["formatters"]["access_file"]["fmt"] == expected_access_format
+    assert log_config["formatters"]["server_file"]["access_fmt"] == expected_access_format
     for formatter in (
         log_config["formatters"]["default"],
         log_config["formatters"]["access"],
-        log_config["formatters"]["default_file"],
-        log_config["formatters"]["access_file"],
+        log_config["formatters"]["server_file"],
     ):
         assert formatter["datefmt"] == DEFAULT_LOG_DATEFMT
 
     assert log_config["formatters"]["default"]["use_colors"] is True
     assert log_config["formatters"]["access"]["use_colors"] is True
-    assert log_config["formatters"]["default_file"]["use_colors"] is False
-    assert log_config["formatters"]["access_file"]["use_colors"] is False
 
 
 def test_debug_logs_runner_session_reads_new_and_legacy_dirs(

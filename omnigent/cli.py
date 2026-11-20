@@ -440,6 +440,26 @@ def _build_routing_backends(
     return RoutingBackends(external=external, local=_build_local_llm_routing_client(server_llm))
 
 
+SERVER_LOG_MAX_BYTES = 50 * 1024 * 1024
+SERVER_LOG_BACKUPS = 5
+
+
+class _ServerFileFormatter(logging.Formatter):
+    """Format Uvicorn access records and other server records for one log file."""
+
+    def __init__(self, fmt: str, access_fmt: str, datefmt: str) -> None:
+        from omnigent.process_logging import TerminalLogFormatter
+        from omnigent.server.performance_metrics import RequestDurationAccessFormatter
+
+        super().__init__(fmt, datefmt=datefmt)
+        self._default = TerminalLogFormatter(fmt, datefmt, use_colors=False)
+        self._access = RequestDurationAccessFormatter(access_fmt, datefmt, use_colors=False)
+
+    def format(self, record: logging.LogRecord) -> str:
+        formatter = self._access if record.name == "uvicorn.access" else self._default
+        return formatter.format(record)
+
+
 def _server_uvicorn_log_config(
     log_path: Path | None = None,
     *,
@@ -488,17 +508,11 @@ def _server_uvicorn_log_config(
         "datefmt": DEFAULT_LOG_DATEFMT,
         "use_colors": use_terminal_colors,
     }
-    formatters["default_file"] = {
-        "()": "omnigent.process_logging.TerminalLogFormatter",
+    formatters["server_file"] = {
+        "()": "omnigent.cli._ServerFileFormatter",
         "fmt": DEFAULT_LOG_FORMAT,
+        "access_fmt": access_log_format,
         "datefmt": DEFAULT_LOG_DATEFMT,
-        "use_colors": False,
-    }
-    formatters["access_file"] = {
-        "()": "omnigent.server.performance_metrics.RequestDurationAccessFormatter",
-        "fmt": access_log_format,
-        "datefmt": DEFAULT_LOG_DATEFMT,
-        "use_colors": False,
     }
     if log_path is not None:
         level_name = logging.getLevelName(effective_log_level())
@@ -508,16 +522,13 @@ def _server_uvicorn_log_config(
             mirror = should_log_to_stderr() or sys.stderr.isatty()
         else:
             mirror = log_to_stderr
+        # One handler owns the file so size-based rotation renames it once.
         handlers["server_file"] = {
-            "class": "logging.FileHandler",
-            "formatter": "default_file",
+            "class": "logging.handlers.RotatingFileHandler",
+            "formatter": "server_file",
             "filename": str(log_path),
-            "encoding": "utf-8",
-        }
-        handlers["server_access_file"] = {
-            "class": "logging.FileHandler",
-            "formatter": "access_file",
-            "filename": str(log_path),
+            "maxBytes": SERVER_LOG_MAX_BYTES,
+            "backupCount": SERVER_LOG_BACKUPS,
             "encoding": "utf-8",
         }
         default_handlers: list[str] = []
@@ -546,7 +557,7 @@ def _server_uvicorn_log_config(
             "propagate": False,
         }
         loggers["uvicorn.access"] = {
-            "handlers": [*access_handlers, "server_access_file"],
+            "handlers": [*access_handlers, "server_file"],
             "level": level_name,
             "propagate": False,
         }

@@ -336,15 +336,45 @@ def _timestamp() -> str:
     return datetime.now(UTC).astimezone().strftime("%Y%m%d-%H%M%S-%f")
 
 
+# Per-start process logs older than this are pruned, except the newest few.
+PROCESS_LOG_MAX_AGE_S = 14 * 24 * 3600
+PROCESS_LOG_KEEP_NEWEST = 10
+
+
+def prune_process_logs(log_dir: Path, prefix: str, *, now: float | None = None) -> None:
+    """
+    Delete old ``<prefix>*`` files, including rotated, gzipped and marker siblings.
+
+    A file is deleted only when it is outside the newest
+    :data:`PROCESS_LOG_KEEP_NEWEST` and unmodified for
+    :data:`PROCESS_LOG_MAX_AGE_S`, so a log still being written is never pruned.
+    """
+    cutoff = (time.time() if now is None else now) - PROCESS_LOG_MAX_AGE_S
+    entries: list[tuple[float, Path]] = []
+    for path in log_dir.glob(f"{prefix}*"):
+        with contextlib.suppress(OSError):
+            if path.is_file() and not path.is_symlink():
+                entries.append((path.stat().st_mtime, path))
+    entries.sort(reverse=True)
+    for mtime, path in entries[PROCESS_LOG_KEEP_NEWEST:]:
+        if mtime < cutoff:
+            with contextlib.suppress(FileNotFoundError):
+                path.unlink()
+
+
 def create_process_log_path(
     destination: str,
     *,
     root: str | Path | None = None,
     prefix: str | None = None,
 ) -> Path:
-    """Create and return a unique timestamped log path."""
+    """Create and return a unique timestamped log path, pruning the destination's old logs."""
     log_dir = process_log_dir(destination, root=root)
     log_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        prune_process_logs(log_dir, f"{destination}-")
+    except OSError:
+        logging.getLogger(__name__).warning("Could not prune %s logs", log_dir, exc_info=True)
     base = prefix or f"{destination}-"
     for counter in range(100):
         suffix = "" if counter == 0 else f"-{counter}"
