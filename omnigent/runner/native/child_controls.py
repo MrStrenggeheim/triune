@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections.abc import Awaitable, Callable
 from typing import Any, cast
@@ -33,7 +34,23 @@ class NativeChildControls:
         self.server_client = server_client
         self.bridge_state = bridge_state
 
-    async def _child(self, parent_id: str, child_id: str) -> dict[str, Any] | None:
+    async def _child(
+        self, parent_id: str, child_id: str, mapping: str | None = None
+    ) -> dict[str, Any] | None:
+        if mapping is not None:
+            # The server read this child row for the request it is forwarding.
+            try:
+                child = json.loads(mapping)
+            except ValueError:
+                return None
+            if (
+                isinstance(child, dict)
+                and child.get("id") == child_id
+                and child.get("parent_session_id") == parent_id
+            ):
+                return child
+            return None
+        # Older servers send no mapping; find the child among its siblings.
         cursor = None
         for _ in range(4):
             params: dict[str, Any] = {"limit": 250}
@@ -59,11 +76,14 @@ class NativeChildControls:
         body: dict[str, Any] | None = None,
         *,
         scheduling_permissions: bool = False,
+        mapping: str | None = None,
     ) -> JSONResponse:
         """Inspect availability, or execute a targeted action with bounded native I/O."""
         try:
             async with asyncio.timeout(5):
-                return await self._handle(parent_id, child_id, body, scheduling_permissions)
+                return await self._handle(
+                    parent_id, child_id, body, scheduling_permissions, mapping
+                )
         except CodexAppServerResponseError as exc:
             detail = exc.message or "Native child control was rejected."
             missing = "thread not found" in detail.casefold()
@@ -92,8 +112,9 @@ class NativeChildControls:
         child_id: str,
         body: dict[str, Any] | None,
         scheduling_permissions: bool = False,
+        mapping: str | None = None,
     ) -> JSONResponse:
-        child = await self._child(parent_id, child_id)
+        child = await self._child(parent_id, child_id, mapping)
         if child is None:
             return JSONResponse(
                 status_code=404, content={"detail": "native_child_mapping_missing"}

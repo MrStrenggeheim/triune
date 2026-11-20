@@ -74,7 +74,12 @@ from omnigent.host.frames import (
 from omnigent.llms.context_window import resolve_effective_context_window
 from omnigent.mcp_selection import mcp_selection_revision
 from omnigent.models.model_metadata import concrete_reported_model
-from omnigent.native.child_controls import native_child_provider, unavailable_child_capabilities
+from omnigent.native.child_controls import (
+    NATIVE_CHILD_HEADER,
+    native_child_mapping,
+    native_child_provider,
+    unavailable_child_capabilities,
+)
 from omnigent.native.failure_telemetry import (
     FailureContext,
     normalize_failure_context,
@@ -8222,6 +8227,7 @@ async def _forward_native_child_event(
                 f"/v1/sessions/{url_component(conv.parent_conversation_id)}/native-children/"
                 f"{url_component(conv.id)}/control",
                 json=payload,
+                headers={NATIVE_CHILD_HEADER: native_child_mapping(conv)},
                 timeout=8.0,
             )
             if response.status_code >= 400:
@@ -8273,6 +8279,7 @@ async def _native_child_capabilities_for_snapshot(
         response = await client.get(
             f"/v1/sessions/{url_component(parent.id)}/native-children/"
             f"{url_component(conv.id)}/capabilities",
+            headers={NATIVE_CHILD_HEADER: native_child_mapping(conv)},
             timeout=6.0,
         )
         if response.status_code == 200:

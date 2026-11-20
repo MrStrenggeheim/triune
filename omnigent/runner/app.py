@@ -6486,6 +6486,7 @@ def create_runner_app(
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
+    from omnigent.native.child_controls import NATIVE_CHILD_HEADER
     from omnigent.runner.native.child_controls import NativeChildControls
 
     native_child_controls = NativeChildControls(
@@ -6495,9 +6496,14 @@ def create_runner_app(
     @app.get(
         "/v1/sessions/{parent_id}/native-children/{child_id}/current-turn/scheduling-permissions"
     )
-    async def child_scheduling_permissions(parent_id: str, child_id: str) -> Response:
+    async def child_scheduling_permissions(
+        parent_id: str, child_id: str, request: Request
+    ) -> Response:
         observed = await native_child_controls.handle(
-            parent_id, child_id, scheduling_permissions=True
+            parent_id,
+            child_id,
+            scheduling_permissions=True,
+            mapping=request.headers.get(NATIVE_CHILD_HEADER),
         )
         return JSONResponse(
             content={
@@ -6558,8 +6564,12 @@ def create_runner_app(
         )
 
     @app.get("/v1/sessions/{parent_id}/native-children/{child_id}/capabilities")
-    async def get_native_child_capabilities(parent_id: str, child_id: str) -> Response:
-        return await native_child_controls.handle(parent_id, child_id)
+    async def get_native_child_capabilities(
+        parent_id: str, child_id: str, request: Request
+    ) -> Response:
+        return await native_child_controls.handle(
+            parent_id, child_id, mapping=request.headers.get(NATIVE_CHILD_HEADER)
+        )
 
     @app.post("/v1/sessions/{parent_id}/native-children/{child_id}/control")
     async def post_native_child_control(
@@ -6568,7 +6578,9 @@ def create_runner_app(
         body = await request.json()
         if not isinstance(body, dict):
             return JSONResponse(status_code=400, content={"detail": "invalid_child_control"})
-        return await native_child_controls.handle(parent_id, child_id, body)
+        return await native_child_controls.handle(
+            parent_id, child_id, body, mapping=request.headers.get(NATIVE_CHILD_HEADER)
+        )
 
     async def _approval_harness_request(
         method: str,

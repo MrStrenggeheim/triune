@@ -64,6 +64,14 @@ async def test_browser_child_event_uses_native_parent_with_truthful_receipts(
         v2=True if action == "v2" else None,
     )
     monkeypatch.setattr(child_controls, "client_for_transport", lambda *a, **kw: native)
+    lookups: list[str | None] = []
+    find_child = child_controls.NativeChildControls._child
+
+    async def record_lookup(self, parent_id, child_id, mapping=None):
+        lookups.append(mapping)
+        return await find_child(self, parent_id, child_id, mapping)
+
+    monkeypatch.setattr(child_controls.NativeChildControls, "_child", record_lookup)
     initialize = AsyncMock()
     stop_parent = AsyncMock()
     monkeypatch.setattr(routes_events, "_ensure_runner_session_initialized", initialize)
@@ -128,6 +136,8 @@ async def test_browser_child_event_uses_native_parent_with_truthful_receipts(
             assert capabilities["can_reply" if action == "reply" else "can_steer"]
         else:
             assert not pending_inputs.snapshot_for(child.id)
+    # The server hands the runner each child row, so no probe pages through siblings.
+    assert lookups and None not in lookups
     assert bridge.read_bridge_state(bridge_dir) == parent_state
 
 

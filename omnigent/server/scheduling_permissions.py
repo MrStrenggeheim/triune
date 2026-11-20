@@ -9,7 +9,11 @@ from urllib.parse import quote
 import httpx
 
 from omnigent.entities import Conversation
-from omnigent.native.child_controls import native_child_provider
+from omnigent.native.child_controls import (
+    NATIVE_CHILD_HEADER,
+    native_child_mapping,
+    native_child_provider,
+)
 from omnigent.policies.builtins.safety import SCHEDULED_TASK_APPROVAL_TOOLS
 from omnigent.runner.routing import RunnerRouter
 from omnigent.spec.types import Phase
@@ -33,10 +37,14 @@ async def scheduling_full_access(
     if client is None:
         return False
     path = f"/v1/sessions/{quote(owner_id, safe='')}"
+    headers = {}
     if child:
         path += f"/native-children/{quote(session_id, safe='')}"
+        headers[NATIVE_CHILD_HEADER] = native_child_mapping(conversation)
     try:
-        response = await client.get(f"{path}/current-turn/scheduling-permissions", timeout=3)
+        response = await client.get(
+            f"{path}/current-turn/scheduling-permissions", headers=headers, timeout=3
+        )
         if response.status_code != 200:
             return False
         result = response.json()

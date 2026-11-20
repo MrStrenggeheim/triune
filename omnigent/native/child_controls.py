@@ -2,8 +2,23 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+from omnigent.util.session_lifecycle import CLOSED_LABEL_KEY
+
+if TYPE_CHECKING:
+    from omnigent.entities import Conversation
+
+# Carries the server's child row on a capability probe so the parent runner
+# need not page through every sibling to find it.
+NATIVE_CHILD_HEADER = "X-Omnigent-Native-Child"
+_MAPPING_LABELS = (
+    "omnigent.wrapper",
+    CLOSED_LABEL_KEY,
+    "omnigent.codex_native.subagent_thread_id",
+)
 
 
 def native_child_provider(kind: str, labels: Mapping[str, str]) -> str | None:
@@ -27,3 +42,17 @@ def unavailable_child_capabilities(reason: str, *, state: str = "unavailable") -
         "reason": reason,
         "reasons": dict.fromkeys(("reply", "steer", "stop"), reason),
     }
+
+
+def native_child_mapping(child: Conversation) -> str:
+    """Encode the fields a parent runner checks before probing one native child."""
+    return json.dumps(
+        {
+            "id": child.id,
+            "parent_session_id": child.parent_conversation_id,
+            "kind": child.kind,
+            "title": child.title,
+            "tool": child.sub_agent_name,
+            "labels": {key: child.labels[key] for key in _MAPPING_LABELS if key in child.labels},
+        }
+    )
