@@ -97,7 +97,8 @@ export function configureConvergenceExport(until: number) {
 }
 
 export function enqueueConvergenceReceipt(receipt: ExportReceipt) {
-  if (!box) return;
+  // Heartbeats carry no transcript state; exporting them only adds upload traffic.
+  if (!box || receipt.kind === "heartbeat") return;
   if (box.until <= Date.now() || box.scope !== resourceViewStorageScope()) {
     configureConvergenceExport(0);
     return;

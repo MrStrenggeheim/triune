@@ -12,6 +12,7 @@ import {
 import { useResourceViewState } from "@/lib/panelFolder";
 import { resourceViewStorageScope } from "@/lib/resourceViewStorage";
 import type { Conversation, ConversationsPage } from "./useConversations";
+import { FALLBACK_POLL_MS, usePollingInterval } from "./usePollingInterval";
 
 export interface SidebarBranchState {
   rows: readonly Conversation[];
@@ -93,13 +94,19 @@ export function useConversationBranches({
       return chain.reverse();
     },
   });
+  // Frames patch rows and push new sessions; poll only while the socket is down.
+  const refetchInterval = usePollingInterval({
+    active: enabled,
+    intervalMs: FALLBACK_POLL_MS,
+    pushed: true,
+  });
   const query = useInfiniteQuery({
     queryKey: ["conversation-branches", scope, filter, searchQuery],
     initialPageParam: undefined as string | undefined,
     enabled,
     retry: false,
     staleTime: 15_000,
-    refetchInterval: enabled ? 30_000 : false,
+    refetchInterval,
     queryFn: async ({ pageParam, signal }) => {
       const params = new URLSearchParams({
         include_side_chats: "true",

@@ -73,6 +73,11 @@ export interface ChildSessionInfo {
    * not routed (routing off, or a server that predates the field).
    */
   routed_model?: string | null;
+  /**
+   * Number of direct children. ``0`` marks a leaf whose list is never
+   * fetched; ``null``/absent means unknown, so the list loads when shown.
+   */
+  child_count?: number | null;
 }
 
 /**
@@ -96,6 +101,7 @@ interface ChildSessionWire {
   last_message_preview?: string | null;
   pending_elicitations_count?: number;
   routed_model?: string | null;
+  child_count?: number | null;
 }
 
 interface ChildSessionsResponse {
@@ -213,6 +219,9 @@ interface UseChildSessionsResult {
   error: Error | null;
 }
 
+/** Children per request; covers typical fan-outs in one read and still follows ``after``. */
+const CHILD_PAGE_LIMIT = 200;
+
 /**
  * Fetch child sessions for a parent session.
  *
@@ -227,9 +236,11 @@ export async function fetchChildSessions(
   const cursors = new Set<string>();
   let after: string | undefined;
   do {
+    const params = new URLSearchParams({ limit: String(CHILD_PAGE_LIMIT) });
+    if (after) params.set("after", after);
     // eslint-disable-next-line no-await-in-loop -- Each cursor comes from the preceding page.
     const res = await authenticatedFetch(
-      `/v1/sessions/${encodeURIComponent(sessionId)}/child_sessions${after ? `?after=${encodeURIComponent(after)}` : ""}`,
+      `/v1/sessions/${encodeURIComponent(sessionId)}/child_sessions?${params}`,
       { signal },
     );
     if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
@@ -262,7 +273,13 @@ export async function fetchChildSessions(
     last_message_preview: row.last_message_preview ?? null,
     pending_elicitations_count: row.pending_elicitations_count ?? 0,
     routed_model: row.routed_model ?? null,
+    child_count: typeof row.child_count === "number" ? row.child_count : null,
   }));
+}
+
+/** False only for a known leaf; unknown counts still load their list. */
+export function mayHaveChildren(child: ChildSessionInfo): boolean {
+  return child.child_count !== 0;
 }
 
 function childListOptions(parentId: string | null, enabled: boolean) {
@@ -273,8 +290,6 @@ function childListOptions(parentId: string | null, enabled: boolean) {
     staleTime: 60_000,
     retry: false,
     refetchOnMount: false,
-    refetchOnWindowFocus: "always",
-    refetchOnReconnect: "always",
     queryFn: async ({ client, signal }) => {
       const baseline = client.getQueryData<ChildSessionInfo[]>(queryKey);
       const rows = await fetchChildSessions(
@@ -311,13 +326,156 @@ function needsRefresh(child: ChildSessionInfo) {
   );
 }
 
+/**
+ * Session-list fields an updates frame carries for a child row.
+ *
+ * The frame lacks the child-list preview, task summary and error, so a
+ * running child that settles still needs one list refetch.
+ */
+export interface ChildFrameRow {
+  id: string;
+  parent_session_id?: string | null;
+  /** Fork metadata; branches never appear in a sub-agent child list. */
+  branch?: unknown;
+  status?: string | null;
+  updated_at?: number | null;
+  pending_elicitations_count?: number | null;
+  child_count?: number | null;
+}
+
+/** Overlay one frame row; ``settled`` marks a running child the frame reports finished. */
+function patchChildFromFrame(
+  child: ChildSessionInfo,
+  row: ChildFrameRow,
+): { child: ChildSessionInfo; settled: boolean } {
+  const frameUpdatedAt = typeof row.updated_at === "number" ? row.updated_at : undefined;
+  // A row older than the cached one (for example a transcript delta) must not roll it back.
+  if (
+    frameUpdatedAt !== undefined &&
+    child.updated_at !== undefined &&
+    frameUpdatedAt < child.updated_at
+  )
+    return { child, settled: false };
+  const patch: Partial<ChildSessionInfo> = {};
+  if (frameUpdatedAt !== undefined && frameUpdatedAt !== child.updated_at)
+    patch.updated_at = frameUpdatedAt;
+  if (
+    typeof row.pending_elicitations_count === "number" &&
+    row.pending_elicitations_count !== child.pending_elicitations_count
+  )
+    patch.pending_elicitations_count = row.pending_elicitations_count;
+  if (row.child_count !== undefined) {
+    const count = typeof row.child_count === "number" ? row.child_count : null;
+    if (count !== (child.child_count ?? null)) patch.child_count = count;
+  }
+  // The server derives busy and task status from the same session status.
+  let settled = false;
+  if (row.status === "running" || row.status === "waiting") {
+    if (!child.busy) patch.busy = true;
+    if (child.current_task_status !== "in_progress") patch.current_task_status = "in_progress";
+  } else if ((row.status === "idle" || row.status === "failed") && isChildRunning(child)) {
+    patch.busy = false;
+    patch.current_task_status = row.status === "failed" ? "failed" : "completed";
+    settled = true;
+  }
+  return Object.keys(patch).length
+    ? { child: { ...child, ...patch }, settled }
+    : { child, settled };
+}
+
+function isChildRunning(child: ChildSessionInfo) {
+  return (
+    child.busy || ["running", "in_progress", "queued"].includes(child.current_task_status ?? "")
+  );
+}
+
+/**
+ * Patch cached child lists from session-updates frame rows.
+ *
+ * Status, attention counts and child counts come straight from the frame.
+ * Uncached parents are skipped; their list loads fresh when a view shows it.
+ *
+ * @param client - The app QueryClient holding child-session caches.
+ * @param rows - Frame rows; rows without ``parent_session_id`` and branches are ignored.
+ * @returns Parent ids that need one coalesced refetch: the frame revealed an
+ *   unknown child, or a running child settled without its final preview.
+ */
+export function applyChildFrameRows(client: QueryClient, rows: readonly ChildFrameRow[]): string[] {
+  const rowsByParent = new Map<string, Map<string, ChildFrameRow>>();
+  for (const row of rows) {
+    if (!row.parent_session_id || row.branch) continue;
+    const siblings = rowsByParent.get(row.parent_session_id) ?? new Map<string, ChildFrameRow>();
+    siblings.set(row.id, row);
+    rowsByParent.set(row.parent_session_id, siblings);
+  }
+  const refetchParents: string[] = [];
+  for (const [parentId, siblings] of rowsByParent) {
+    const key = childSessionsQueryKey(parentId);
+    const cached = client.getQueryData<ChildSessionInfo[]>(key);
+    if (!cached) continue;
+    let refetch = false;
+    let changed = false;
+    const next = cached.map((child) => {
+      const row = siblings.get(child.id);
+      if (!row) return child;
+      siblings.delete(child.id);
+      const patched = patchChildFromFrame(child, row);
+      refetch ||= patched.settled;
+      changed ||= patched.child !== child;
+      return patched.child;
+    });
+    if (changed) client.setQueryData(key, next);
+    if (refetch || siblings.size > 0) refetchParents.push(parentId);
+  }
+  return refetchParents;
+}
+
+/** Minimum spacing between pushed refetches of one parent's child list. */
+export const CHILD_LIST_REFETCH_MS = 5_000;
+
+const refetchSchedules = new WeakMap<
+  QueryClient,
+  Map<string, { lastAt: number; timer?: ReturnType<typeof setTimeout> }>
+>();
+
+/**
+ * Refetch a parent's child list at most once per {@link CHILD_LIST_REFETCH_MS}.
+ *
+ * The first request runs at once; requests inside the window fold into one
+ * trailing refetch. A refetch never aborts a read already in flight; it waits
+ * for that read to settle, because the read may predate the change.
+ *
+ * @param client - The app QueryClient holding child-session caches.
+ * @param parentId - Parent whose list changed, e.g. ``"conv_root"``.
+ */
+export function scheduleChildListRefetch(client: QueryClient, parentId: string): void {
+  let schedules = refetchSchedules.get(client);
+  if (!schedules) refetchSchedules.set(client, (schedules = new Map()));
+  const schedule = schedules.get(parentId) ?? { lastAt: Number.NEGATIVE_INFINITY };
+  schedules.set(parentId, schedule);
+  if (schedule.timer !== undefined) return;
+  const key = childSessionsQueryKey(parentId);
+  const run = () => {
+    schedule.timer = undefined;
+    if (client.getQueryState(key)?.fetchStatus === "fetching") {
+      schedule.timer = setTimeout(run, CHILD_LIST_REFETCH_MS);
+      return;
+    }
+    schedule.lastAt = Date.now();
+    void client.invalidateQueries({ queryKey: key, exact: true }, { cancelRefetch: false });
+  };
+  const wait = schedule.lastAt + CHILD_LIST_REFETCH_MS - Date.now();
+  if (wait <= 0) run();
+  else schedule.timer = setTimeout(run, wait);
+}
+
 function availableRows(rows: ChildSessionInfo[] = [], unavailable: boolean) {
   return unavailable
     ? rows.map((child) => (needsRefresh(child) ? { ...child, statusUnavailable: true } : child))
     : rows;
 }
 
-// Cards, shelf and Orchestration share one clock and one in-flight query per parent.
+// Cards, shelf and Orchestration share one clock and one in-flight query per visible root list.
 const refreshClocks = new WeakMap<QueryClient, Map<string, { leases: number; timer: number }>>();
 
 function watchParent(client: QueryClient, parentId: string) {
@@ -347,7 +505,7 @@ function watchParent(client: QueryClient, parentId: string) {
   };
 }
 
-/** Observe the parent's cache; active or unresolved resources share a five-second refresh. */
+/** Observe the parent's cache; a visible root list with active or unresolved children refreshes every five seconds. */
 export function useChildSessions(
   conversationId: string | null,
   options: {
@@ -393,21 +551,11 @@ export function useChildSessions(
   };
 }
 
+/** Nested lists load only for possible parents and refresh through pushes, not the root clock. */
 function useChildLevel(parents: ChildSessionInfo[], enabled: boolean) {
-  const client = useQueryClient();
-  const queries = useQueries({
-    queries: parents.map((parent) => childListOptions(parent.id, enabled)),
+  return useQueries({
+    queries: parents.filter(mayHaveChildren).map((parent) => childListOptions(parent.id, enabled)),
   });
-  const activeParents = JSON.stringify(
-    enabled
-      ? parents.filter((_, i) => queries[i]?.data?.some(needsRefresh)).map((parent) => parent.id)
-      : [],
-  );
-  useEffect(() => {
-    const stops = (JSON.parse(activeParents) as string[]).map((id) => watchParent(client, id));
-    return () => stops.forEach((stop) => stop());
-  }, [client, activeParents]);
-  return queries;
 }
 
 /** Flat projection of the existing three-level tree; hidden views retain cached rows. */

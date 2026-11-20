@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { authenticatedFetch } from "@/lib/identity";
 import { ApiError, apiErrorFromResponse } from "@/lib/sessionsApi";
 import { isTempConvId } from "@/lib/tempConversationId";
+import { RESOURCE_POLL_MS, usePollingInterval } from "./usePollingInterval";
 import {
   readResourceViewState,
   resourceViewStorageScope,
@@ -158,6 +159,10 @@ export function useRuntimeNotices(conversationId: string | null, active: boolean
   const scope = resourceViewStorageScope();
   const queryKey = ["runtime-notices", scope, sessionId];
   const storageKey = `runtime-notice-dismissals:${sessionId}`;
+  const refetchInterval = usePollingInterval({
+    active: active && !!sessionId,
+    intervalMs: RESOURCE_POLL_MS,
+  });
   const query = useQuery<RuntimeObservations>({
     queryKey,
     queryFn: async ({ signal }) => {
@@ -171,8 +176,7 @@ export function useRuntimeNotices(conversationId: string | null, active: boolean
     },
     enabled: active && !!sessionId,
     staleTime: 5000,
-    refetchInterval: active && sessionId ? 5000 : false,
-    refetchIntervalInBackground: false,
+    refetchInterval,
     retry: false,
   });
   const dismissed = readResourceViewState<Record<string, string>>(storageKey) ?? {};

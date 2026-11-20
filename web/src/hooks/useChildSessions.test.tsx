@@ -1,13 +1,15 @@
 // Modified for Triune.
-import { focusManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import type { PropsWithChildren } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { authenticatedFetch } from "@/lib/identity";
 import {
+  CHILD_LIST_REFETCH_MS,
   childSessionsQueryKey,
   fetchChildSessions,
+  scheduleChildListRefetch,
   useChildSessions,
   useChildSessionTree,
   useDescendantSession,
@@ -33,7 +35,7 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("useChildSessions", () => {
-  it("preserves recorded identity and activity times across all child pages", async () => {
+  it("reads up to two hundred children per request and follows every page", async () => {
     vi.mocked(authenticatedFetch)
       .mockResolvedValueOnce(
         Response.json({
@@ -44,16 +46,29 @@ describe("useChildSessions", () => {
       )
       .mockResolvedValueOnce(
         Response.json({
-          data: [{ id: "older", task_summary: "Still running", busy: true }],
+          data: [{ id: "older", task_summary: "Still running", busy: true, child_count: 0 }],
           has_more: false,
         }),
       );
     const children = await fetchChildSessions("root");
     expect(children.map((child) => child.id)).toEqual(["newer", "older"]);
-    expect(children[0]).toMatchObject({ agent_name: "James", created_at: 100, updated_at: 300 });
+    expect(children[0]).toMatchObject({
+      agent_name: "James",
+      created_at: 100,
+      updated_at: 300,
+      child_count: null,
+    });
+    expect(children[1]!.child_count).toBe(0);
+    expect(authenticatedFetch).toHaveBeenNthCalledWith(
+      1,
+      "/v1/sessions/root/child_sessions?limit=200",
+      {
+        signal: undefined,
+      },
+    );
     expect(authenticatedFetch).toHaveBeenNthCalledWith(
       2,
-      "/v1/sessions/root/child_sessions?after=newer",
+      "/v1/sessions/root/child_sessions?limit=200&after=newer",
       { signal: undefined },
     );
   });
@@ -132,9 +147,7 @@ describe("useChildSessions", () => {
       });
       expect(result.current[0]!.children[0]!.statusUnavailable).toBe(true);
       await act(async () => {
-        focusManager.setFocused(false);
-        focusManager.setFocused(true);
-        await vi.advanceTimersByTimeAsync(10);
+        await vi.advanceTimersByTimeAsync(5_000);
       });
       expect(authenticatedFetch).toHaveBeenCalledTimes(4);
       await act(async () => {
@@ -150,7 +163,6 @@ describe("useChildSessions", () => {
       expect(authenticatedFetch).toHaveBeenCalledTimes(4);
       unmount();
     } finally {
-      focusManager.setFocused(undefined);
       client.clear();
       vi.useRealTimers();
     }
@@ -207,6 +219,92 @@ describe("useChildSessionTree", () => {
   });
 });
 
+describe("useChildSessionTree lazy levels", () => {
+  it("loads nested lists only for possible parents and leaves them to pushes", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const treeWrapper = ({ children }: PropsWithChildren) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    const lists: Record<string, object[]> = {
+      root: [
+        { id: "leaf", child_count: 0 },
+        { id: "parent", child_count: 1 },
+        { id: "unknown", child_count: null },
+      ],
+      parent: [
+        { id: "busy-grandchild", busy: true, current_task_status: "in_progress", child_count: 0 },
+      ],
+    };
+    vi.mocked(authenticatedFetch).mockImplementation(async (path) => {
+      const id = String(path).split("/")[3]!;
+      return Response.json({ data: lists[id] ?? [], has_more: false });
+    });
+    vi.useFakeTimers();
+    try {
+      const { result, unmount } = renderHook(() => useChildSessionTree("root", true), {
+        wrapper: treeWrapper,
+      });
+      // One tick per tree level.
+      for (let level = 0; level < 3; level++) {
+        // oxlint-disable-next-line no-await-in-loop
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(10);
+        });
+      }
+      expect(result.current.children.map((child) => child.id)).toEqual([
+        "leaf",
+        "parent",
+        "unknown",
+        "busy-grandchild",
+      ]);
+      const fetched = vi
+        .mocked(authenticatedFetch)
+        .mock.calls.map(([path]) => String(path).split("/")[3]);
+      expect(fetched.sort()).toEqual(["parent", "root", "unknown"]);
+      // A busy grandchild does not start the five-second clock below the root.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(20_000);
+      });
+      expect(authenticatedFetch).toHaveBeenCalledTimes(3);
+      unmount();
+    } finally {
+      client.clear();
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("scheduleChildListRefetch", () => {
+  it("waits for an in-flight read to settle instead of folding into or aborting it", async () => {
+    const client = new QueryClient();
+    const key = childSessionsQueryKey("parent");
+    let finish!: (rows: object[]) => void;
+    const signals: AbortSignal[] = [];
+    vi.useFakeTimers();
+    try {
+      const first = client.fetchQuery({
+        queryKey: key,
+        queryFn: ({ signal }) => {
+          signals.push(signal);
+          return new Promise<object[]>((resolve) => {
+            finish = resolve;
+          });
+        },
+      });
+      scheduleChildListRefetch(client, "parent");
+      expect(client.getQueryState(key)?.isInvalidated).toBe(false);
+      finish([]);
+      await first;
+      await vi.advanceTimersByTimeAsync(CHILD_LIST_REFETCH_MS);
+      expect(signals[0]!.aborted).toBe(false);
+      expect(client.getQueryState(key)?.isInvalidated).toBe(true);
+    } finally {
+      client.clear();
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe("useDescendantSession", () => {
   it("fetches the direct-child list when it is not cached", async () => {
     // WHY: a mirrored card can mount before anything loaded the ancestor's
@@ -235,8 +333,11 @@ describe("useDescendantSession", () => {
 
     expect(result.current).toBeNull();
     await waitFor(() => expect(result.current?.task_summary).toBe("Investigate auth flow"));
-    expect(authenticatedFetch).toHaveBeenCalledWith("/v1/sessions/conv_parent/child_sessions", {
-      signal: expect.any(AbortSignal),
-    });
+    expect(authenticatedFetch).toHaveBeenCalledWith(
+      "/v1/sessions/conv_parent/child_sessions?limit=200",
+      {
+        signal: expect.any(AbortSignal),
+      },
+    );
   });
 });

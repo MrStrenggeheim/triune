@@ -143,6 +143,7 @@ const ConversationViewContent = memo(function ConversationViewContent({
     permissionLevel: session?.permissionLevel ?? null,
     shareWorkspaceFiles: session?.shareWorkspaceFiles,
     workspace: null,
+    visible,
   });
   const openRequestedFile = useCallback(
     (path: string) => fileContext?.openFile(path),

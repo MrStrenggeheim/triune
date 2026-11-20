@@ -1,5 +1,6 @@
 import { HeaderActionButton } from "@/components/HeaderActionButton";
 // Modified for Triune.
+import { usePollingInterval } from "@/hooks/usePollingInterval";
 import { OperationStatus, ContentSkeleton } from "@/components/ui/loading";
 import { TooltipButton } from "@/components/ui/tooltip";
 import { usePanelEscapeClose } from "@/hooks/usePanelEscapeClose";
@@ -228,7 +229,11 @@ export function ExecutionLogsPanel({
             {view === "items" ? (
               /* Remount the items list when the session changes so the
                  expand/collapse state resets between selections. */
-              <SessionItemsList key={activeEntry.sessionId} sessionId={activeEntry.sessionId} />
+              <SessionItemsList
+                key={activeEntry.sessionId}
+                sessionId={activeEntry.sessionId}
+                active={open && active}
+              />
             ) : (
               <SseEventsList key={activeEntry.sessionId} sessionId={activeEntry.sessionId} />
             )}
@@ -259,10 +264,11 @@ function buildLogEntries(conversationId: string, children: ChildSessionInfo[]): 
   return [main, ...childEntries];
 }
 
-function SessionItemsList({ sessionId }: { sessionId: string }) {
+function SessionItemsList({ sessionId, active }: { sessionId: string; active: boolean }) {
   const sessionActive = useFocusedSessionActive(sessionId);
+  const pollMs = usePollingInterval({ active: active && sessionActive, intervalMs: ITEMS_POLL_MS });
   const { items, isLoading, error, hasNextPage, isFetchingNextPage, fetchNextPage } =
-    useSessionItems(sessionId, sessionActive ? ITEMS_POLL_MS : null);
+    useSessionItems(sessionId, pollMs || null);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const scrollRootRef = useRef<HTMLDivElement | null>(null);
 

@@ -7583,7 +7583,10 @@ describe("chatStore — handleSessionEvent (session.* events)", () => {
         conversationId: "conv_child1",
         status: "idle",
       });
-      expect(spy).toHaveBeenCalledWith({ queryKey: childSessionsQueryKey("conv_parent") });
+      expect(spy).toHaveBeenCalledWith(
+        { queryKey: childSessionsQueryKey("conv_parent"), exact: true },
+        { cancelRefetch: false },
+      );
     });
 
     it("idle refetches a root session's own snapshot (feeds the main-row preview)", () => {
@@ -10905,7 +10908,10 @@ describe("chatStore — handleSessionEvent (resource events)", () => {
         childSessionId: "conv_child1",
         child: { id: "conv_child1", busy: false },
       });
-      expect(spy).toHaveBeenCalledWith({ queryKey: childSessionsQueryKey("conv_parent") });
+      expect(spy).toHaveBeenCalledWith(
+        { queryKey: childSessionsQueryKey("conv_parent"), exact: true },
+        { cancelRefetch: false },
+      );
     });
 
     it("does NOT refetch when the idle delta already carries a preview", () => {
@@ -10961,10 +10967,16 @@ describe("chatStore — handleSessionEvent (resource events)", () => {
       expect(spy).toHaveBeenCalledWith({
         queryKey: ["workspace-environment", "conv_abc"],
       });
-      // 5 = the four filesystem-view keys + workspace-environment, all from
-      // ONE debounced flush (the two events above coalesced). 10 would mean
-      // the debounce broke and each event flushed separately.
-      expect(spy).toHaveBeenCalledTimes(5);
+      // Git status and comparisons follow the same push, so their polls stay a slow fallback.
+      expect(spy).toHaveBeenCalledWith({
+        queryKey: ["workspace-git-changes", "conv_abc"],
+      });
+      expect(spy).toHaveBeenCalledWith({
+        queryKey: ["workspace-comparison-changes", "conv_abc"],
+      });
+      // 7 = the four filesystem-view keys, two git keys and workspace-environment,
+      // all from ONE debounced flush (the two events above coalesced).
+      expect(spy).toHaveBeenCalledTimes(7);
       spy.mockRestore();
     });
   });

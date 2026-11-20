@@ -26,7 +26,11 @@ import { type ReactNode, useCallback, useContext, useEffect, useRef } from "reac
 import { type QueryClient, type QueryKey, useQueryClient } from "@tanstack/react-query";
 import { getCurrentUserId } from "@/lib/identity";
 import { useActiveConversationId } from "@/hooks/useActiveConversationId";
-import { childSessionsQueryKey, type ChildSessionInfo } from "@/hooks/useChildSessions";
+import {
+  applyChildFrameRows,
+  scheduleChildListRefetch,
+  type ChildSessionInfo,
+} from "@/hooks/useChildSessions";
 import {
   isSessionArchiving,
   isSessionDeleting,
@@ -38,6 +42,7 @@ import {
   collectConversationIds,
   filtersFromConversationQueryKey,
   insertNewRowsIntoPages,
+  isSubAgentRow,
   mergeItemsIntoPages,
   nullsToUndefined,
   PROJECT_LABEL_KEY,
@@ -180,16 +185,23 @@ function applyItemsToCache(
   if (refetchKeys.length > 0 && !needsMembershipRefetch) {
     for (const query of queryClient.getQueryCache().findAll({
       predicate: (candidate) =>
-        candidate.queryKey[0] === "conversation-branches" ||
-        (candidate.queryKey[0] === "conversations" && !!candidate.queryKey[1]),
+        candidate.queryKey[0] === "conversation-branches" || isContentSearchKey(candidate.queryKey),
     }))
       refetchKeys.push(query.queryKey);
   }
   return {
-    missingIds: [...itemsById.keys()].filter((id) => !foundAnywhere.has(id)),
+    // A delegated sub-agent belongs to its parent's child list, not to these lists.
+    missingIds: [...itemsById.values()]
+      .filter((item) => !foundAnywhere.has(item.id) && !isSubAgentRow(item))
+      .map((item) => item.id),
     refetchKeys,
     needsMembershipRefetch,
   };
+}
+
+/** A `["conversations", <search>, ...]` list whose matches include item content. */
+function isContentSearchKey(key: QueryKey): boolean {
+  return key[0] === "conversations" && !!key[1];
 }
 
 /**
@@ -277,19 +289,17 @@ export function SessionUpdatesProvider({ children }: { children: ReactNode }) {
     // the open session even when it's off-sidebar.
     const active = activeIdRef.current;
     if (active && !ids.includes(active)) ids.push(active);
-    // Include all child session ids from the sub-agent tree caches so the
-    // server streams status changes for them. When a child's changed frame
-    // arrives below, we invalidate its parent's child_sessions query key,
-    // giving the tree views push-style freshness without polling.
-    const childEntries = queryClient.getQueriesData<ChildSessionInfo[]>({
+    // Watch the children of child lists a mounted, enabled view observes
+    // (open panes, visible tree levels) so frames patch their rows in place.
+    // A retained list rejoins with a fresh snapshot when a view shows it again.
+    const observedChildLists = queryClient.getQueryCache().findAll({
       queryKey: ["conversation"],
+      predicate: (query) => query.queryKey[2] === "child_sessions" && query.isActive(),
     });
-    for (const [key, childSessions] of childEntries) {
-      // Only ["conversation", <id>, "child_sessions"] entries carry child lists.
-      if (Array.isArray(key) && key[2] === "child_sessions" && Array.isArray(childSessions)) {
-        for (const child of childSessions) {
-          if (!ids.includes(child.id)) ids.push(child.id);
-        }
+    for (const query of observedChildLists) {
+      const childSessions = query.state.data as ChildSessionInfo[] | undefined;
+      for (const child of childSessions ?? []) {
+        if (!ids.includes(child.id)) ids.push(child.id);
       }
     }
     sessionUpdatesSocket.setWatched(ids.filter((id) => !isTempConvId(id)));
@@ -452,16 +462,11 @@ export function SessionUpdatesProvider({ children }: { children: ReactNode }) {
               if (!watchedIds.has(id)) commentsFingerprintsRef.current.delete(id);
             }
           }
-          // For child sessions the server includes parent_session_id in the
-          // wire item. Invalidate the parent's child_sessions cache so tree
-          // views (SubagentsPanel, SubagentsGraphView) pick up status changes
-          // without polling.
-          const parentIds = new Set<string>();
-          for (const item of frame.items) {
-            if (item.parent_session_id) parentIds.add(item.parent_session_id);
-          }
-          for (const parentId of parentIds) {
-            void queryClient.invalidateQueries({ queryKey: childSessionsQueryKey(parentId) });
+          // Child rows carry parent_session_id: patch the parent's cached
+          // child list in place, and refetch it (coalesced) only for what the
+          // frame cannot supply, such as an unknown child or a final preview.
+          for (const parentId of applyChildFrameRows(queryClient, frame.items)) {
+            scheduleChildListRefetch(queryClient, parentId);
           }
           const { missingIds, refetchKeys, needsMembershipRefetch } = applyItemsToCache(
             queryClient,
@@ -481,8 +486,18 @@ export function SessionUpdatesProvider({ children }: { children: ReactNode }) {
           const sidebarMissingIds = activeIdRef.current
             ? missingIds.filter((id) => id !== activeIdRef.current)
             : missingIds;
+          // A changed sub-agent row is patched in its parent's child list; only
+          // an active content search can gain a match from its new content.
+          const searchKeys =
+            frame.type === "changed" && frame.items.some(isSubAgentRow)
+              ? queryClient
+                  .getQueryCache()
+                  .findAll({ predicate: (query) => isContentSearchKey(query.queryKey) })
+                  .map((query) => query.queryKey)
+              : [];
           if (sidebarMissingIds.length > 0 || needsMembershipRefetch) scheduleInvalidate();
-          else if (refetchKeys.length > 0) scheduleInvalidate(refetchKeys);
+          else if (refetchKeys.length + searchKeys.length > 0)
+            scheduleInvalidate([...refetchKeys, ...searchKeys]);
           return;
         }
       }
@@ -514,8 +529,8 @@ export function SessionUpdatesProvider({ children }: { children: ReactNode }) {
       ) {
         scheduleWatch();
       }
-      // Also recompute when a child-sessions list loads so the tree nodes
-      // join the watch-set and the server starts streaming their status.
+      // Also recompute when a child-sessions list loads or a view starts or
+      // stops observing it, so only shown tree levels stay in the watch-set.
       if (Array.isArray(key) && key[0] === "conversation" && key[2] === "child_sessions") {
         scheduleWatch();
       }

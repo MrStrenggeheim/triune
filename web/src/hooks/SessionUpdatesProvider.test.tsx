@@ -18,6 +18,7 @@ import {
   type Conversation,
   type ConversationsPage,
 } from "@/hooks/useConversations";
+import type { ChildSessionInfo } from "@/hooks/useChildSessions";
 import type { ConversationsInfiniteData } from "@/lib/sessionListCache";
 
 // Mock the socket transport so setWatched is observable and start/stop are
@@ -554,22 +555,23 @@ describe("SessionUpdatesProvider scoped reconciliation", () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
-  it("coalesces rapid child sort updates without refetching unrelated workbench lists", async () => {
+  it("patches child sort updates in place without refetching any list", async () => {
     const { client, counts, change, close } = observeLists();
     try {
       for (let wave = 0; wave < 3; wave++) {
         for (let tick = 1; tick <= 10; tick++) {
           change({ id: "child", updated_at: wave * 10 + tick });
         }
-        // Each wave starts after the prior reconciliation settles.
         // oxlint-disable-next-line no-await-in-loop
         await act(() => vi.advanceTimersByTimeAsync(300));
       }
       console.info("LIST-REFETCH child-only 30-event script", JSON.stringify(counts));
-      expect(counts).toEqual({ mine: 0, shared: 0, ma: 0, omnigent: 0, branches: 3 });
+      expect(counts).toEqual({ mine: 0, shared: 0, ma: 0, omnigent: 0, branches: 0 });
       expect(
-        client.getQueryData<ConversationsInfiniteData>(keys.branches)!.pages[0].data[0],
-      ).toMatchObject({ id: "child", updated_at: 30 });
+        client
+          .getQueryData<ConversationsInfiniteData>(keys.branches)!
+          .pages[0].data.find((row) => row.id === "child"),
+      ).toMatchObject({ updated_at: 30 });
     } finally {
       close();
     }
@@ -630,65 +632,6 @@ describe("SessionUpdatesProvider scoped reconciliation", () => {
     }
   });
 
-  it("bounds slow-query restarts to the affected list while preserving the latest stream state", async () => {
-    const { client, counts, change, aborted, close } = observeLists(1000);
-    try {
-      for (let tick = 1; tick <= 20; tick++) {
-        change({ id: "child", updated_at: tick });
-        // Preserve the event script's arrival times while reads are in flight.
-        // oxlint-disable-next-line no-await-in-loop
-        await act(() => vi.advanceTimersByTimeAsync(100));
-      }
-      await act(() => vi.advanceTimersByTimeAsync(3000));
-      console.info("LIST-REFETCH slow-query 20-event script", JSON.stringify(counts));
-      expect(counts).toEqual({ mine: 0, shared: 0, ma: 0, omnigent: 0, branches: 7 });
-      expect(aborted.branches).toBe(6);
-      expect(
-        client.getQueryData<ConversationsInfiniteData>(keys.branches)!.pages[0].data[0],
-      ).toMatchObject({ id: "child", updated_at: 20 });
-    } finally {
-      close();
-    }
-  });
-
-  it("cancels an older sort read when access is revoked during reconciliation", async () => {
-    const { client, aborted, change, remove, close } = observeLists(1000);
-    try {
-      change({ id: "child", updated_at: 10 });
-      await act(() => vi.advanceTimersByTimeAsync(300));
-      remove(["child"]);
-      expect(
-        client
-          .getQueryData<ConversationsInfiniteData>(keys.branches)!
-          .pages[0].data.some((row) => row.id === "child"),
-      ).toBe(false);
-      await act(() => vi.advanceTimersByTimeAsync(1500));
-      expect(aborted.branches).toBe(1);
-      expect(
-        client
-          .getQueryData<ConversationsInfiniteData>(keys.branches)!
-          .pages[0].data.map((row) => row.id),
-      ).toEqual(["ma", "omni"]);
-    } finally {
-      close();
-    }
-  });
-
-  it("reconciles a sort change that arrives during an existing external read", async () => {
-    const { client, counts, change, close } = observeLists(1000);
-    try {
-      void client.refetchQueries({ queryKey: keys.branches, exact: true });
-      change({ id: "child", updated_at: 10 });
-      await act(() => vi.advanceTimersByTimeAsync(2500));
-      expect(counts).toEqual({ mine: 0, shared: 0, ma: 0, omnigent: 0, branches: 2 });
-      expect(
-        client.getQueryData<ConversationsInfiniteData>(keys.branches)!.pages[0].data[0],
-      ).toMatchObject({ id: "child", updated_at: 10 });
-    } finally {
-      close();
-    }
-  });
-
   it("does not overwrite a newer streamed row when an older sort read completes", async () => {
     const { client, change, close } = observeLists(1000);
     try {
@@ -743,7 +686,7 @@ describe("SessionUpdatesProvider scoped reconciliation", () => {
         ).toMatchObject(matched);
         expect(client.getQueryState(snapshotKey)?.isInvalidated).toBe(false);
         if (event !== "rename")
-          expect(counts).toEqual({ mine: 0, shared: 0, ma: 0, omnigent: 0, branches: 1 });
+          expect(counts).toEqual({ mine: 0, shared: 0, ma: 0, omnigent: 0, branches: 0 });
       } finally {
         stopSearch();
         close();
@@ -983,4 +926,145 @@ it("overlays nested activity onto branch pages and authorized branch rows withou
   expect(
     client.getQueryData<Conversation>(["conversation-branch-row", "scope", "branch"])!.activity,
   ).toEqual(activity);
+});
+
+describe("SessionUpdatesProvider child lists", () => {
+  const childKey = (parent: string) => ["conversation", parent, "child_sessions"];
+  const childRow = (id: string, overrides: Partial<ChildSessionInfo> = {}): ChildSessionInfo => ({
+    id,
+    title: null,
+    task_summary: null,
+    tool: null,
+    session_name: null,
+    current_task_status: "in_progress",
+    busy: true,
+    last_message_preview: "Working",
+    pending_elicitations_count: 0,
+    updated_at: 10,
+    ...overrides,
+  });
+  const frameRow = (id: string, status: string, updatedAt: number) => ({
+    ...conv(id),
+    parent_session_id: "root",
+    status,
+    updated_at: updatedAt,
+  });
+
+  function observeChildren(rows: ChildSessionInfo[]) {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(childKey("root"), rows);
+    const fetches = { count: 0 };
+    const observer = new QueryObserver(client, {
+      queryKey: childKey("root"),
+      staleTime: Infinity,
+      queryFn: async () => {
+        fetches.count++;
+        return client.getQueryData<ChildSessionInfo[]>(childKey("root"))!;
+      },
+    });
+    const unsubscribe = observer.subscribe(() => {});
+    const view = renderProvider(client, ["/c/root"]);
+    return {
+      client,
+      fetches,
+      send: (type: "snapshot" | "changed", items: unknown[]) =>
+        act(() => frameHandler()({ type, items })),
+      rows: () => client.getQueryData<ChildSessionInfo[]>(childKey("root"))!,
+      close: () => {
+        view.unmount();
+        unsubscribe();
+        client.clear();
+      },
+    };
+  }
+
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it("patches a known child's status, attention and count from frames without refetching", async () => {
+    const lists = observeChildren([
+      childRow("running"),
+      childRow("idle", { busy: false, current_task_status: "completed" }),
+    ]);
+    try {
+      lists.send("snapshot", [frameRow("running", "running", 10), frameRow("idle", "idle", 10)]);
+      lists.send("changed", [
+        { ...frameRow("running", "waiting", 11), pending_elicitations_count: 1, child_count: 2 },
+        frameRow("idle", "running", 12),
+      ]);
+      await act(() => vi.advanceTimersByTimeAsync(10_000));
+      expect(lists.fetches.count).toBe(0);
+      expect(lists.rows()).toEqual([
+        childRow("running", { updated_at: 11, pending_elicitations_count: 1, child_count: 2 }),
+        childRow("idle", { updated_at: 12 }),
+      ]);
+    } finally {
+      lists.close();
+    }
+  });
+
+  it("ignores a frame row older than the cached child", async () => {
+    const lists = observeChildren([
+      childRow("done", { busy: false, current_task_status: "completed", updated_at: 20 }),
+    ]);
+    try {
+      lists.send("changed", [frameRow("done", "running", 19)]);
+      await act(() => vi.advanceTimersByTimeAsync(10));
+      expect(lists.rows()[0]).toMatchObject({ busy: false, current_task_status: "completed" });
+      expect(lists.fetches.count).toBe(0);
+    } finally {
+      lists.close();
+    }
+  });
+
+  it("coalesces settle and discovery refetches per parent to one per five seconds", async () => {
+    const lists = observeChildren([childRow("first"), childRow("second")]);
+    try {
+      lists.send("changed", [frameRow("first", "idle", 11)]);
+      await act(() => vi.advanceTimersByTimeAsync(10));
+      // The settled row shows Done at once; its final preview needs one read.
+      expect(lists.rows()[0]).toMatchObject({ busy: false, current_task_status: "completed" });
+      expect(lists.fetches.count).toBe(1);
+      lists.send("changed", [frameRow("second", "failed", 12)]);
+      lists.send("changed", [frameRow("spawned", "running", 13)]);
+      await act(() => vi.advanceTimersByTimeAsync(4_000));
+      expect(lists.fetches.count).toBe(1);
+      await act(() => vi.advanceTimersByTimeAsync(1_000));
+      expect(lists.fetches.count).toBe(2);
+      await act(() => vi.advanceTimersByTimeAsync(10_000));
+      expect(lists.fetches.count).toBe(2);
+    } finally {
+      lists.close();
+    }
+  });
+
+  it("does not treat a branch with a parent as an unknown sub-agent", async () => {
+    const lists = observeChildren([childRow("known")]);
+    try {
+      lists.send("changed", [
+        { ...frameRow("fork", "running", 11), branch: { source_conversation_id: "root" } },
+      ]);
+      await act(() => vi.advanceTimersByTimeAsync(10_000));
+      expect(lists.fetches.count).toBe(0);
+    } finally {
+      lists.close();
+    }
+  });
+
+  it("watches only children of child lists a view observes", () => {
+    const client = new QueryClient();
+    seedConversations(client, ["root"]);
+    client.setQueryData(childKey("root"), [childRow("shown")]);
+    client.setQueryData(childKey("retained"), [childRow("hidden")]);
+    const observer = new QueryObserver(client, {
+      queryKey: childKey("root"),
+      staleTime: Infinity,
+      queryFn: async () => [childRow("shown")],
+    });
+    const unsubscribe = observer.subscribe(() => {});
+    renderProvider(client, ["/"]);
+    expect(lastWatched()).toEqual(["root", "shown"]);
+    unsubscribe();
+    client.clear();
+  });
 });

@@ -47,7 +47,12 @@ import { ComposerAgentIcon } from "@/components/ComposerAgentIcon";
 import { Button } from "@/components/ui/button";
 import { RunningDot } from "@/components/RunningDot";
 import { shortModelName } from "@/components/CostRoutingControl";
-import { MAX_TREE_DEPTH, useChildSessions, type ChildSessionInfo } from "@/hooks/useChildSessions";
+import {
+  MAX_TREE_DEPTH,
+  mayHaveChildren,
+  useChildSessions,
+  type ChildSessionInfo,
+} from "@/hooks/useChildSessions";
 import { useSession } from "@/hooks/useSession";
 import { sessionNavigationSearch } from "@/lib/sessionNavigation";
 import type { SessionItem } from "@/lib/types";
@@ -539,9 +544,11 @@ function SubagentRow({
   // — but never the row the user is currently viewing.
   const dim = !isActive && SETTLED_STATE[status.activity];
   // This child's own sub-agents, rendered as the next tree level.
-  // Disabled (null id) at the depth cap so the fan-out of fetches is
-  // bounded; ``useChildSessions`` skips the query entirely for null.
-  const { children: grandchildren } = useChildSessions(depth < MAX_TREE_DEPTH ? child.id : null);
+  // Disabled (null id) at the depth cap and for known leaves so the fan-out
+  // of fetches is bounded; ``useChildSessions`` skips the query for null.
+  const { children: grandchildren } = useChildSessions(
+    depth < MAX_TREE_DEPTH && mayHaveChildren(child) ? child.id : null,
+  );
   const hasGrandchildren = grandchildren.length > 0;
   const ToggleIcon = collapsed ? ChevronRightIcon : ChevronDownIcon;
   return (

@@ -1,5 +1,6 @@
 import { ContentSkeleton } from "@/components/ui/loading";
 // Modified for Triune.
+import { usePollingInterval } from "@/hooks/usePollingInterval";
 
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
@@ -119,6 +120,7 @@ export function TerminalInventoryView({
   const rowsRef = useRef<HTMLDivElement>(null);
   const consumedIntent = useRef<string | undefined>(undefined);
   // The legacy live-tab hook excludes exited/stopped rows; this cache retains them.
+  const terminalPoll = usePollingInterval({ active, intervalMs: 5_000 });
   const inventory = useQuery({
     queryKey: [...terminalHistoryKey(workspace.id), "list"],
     queryFn: async ({ signal }) => {
@@ -139,7 +141,7 @@ export function TerminalInventoryView({
       };
     },
     enabled: active,
-    refetchInterval: active ? 5_000 : false,
+    refetchInterval: terminalPoll,
     staleTime: 2_000,
     retry: false,
     throwOnError: false,

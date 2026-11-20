@@ -119,7 +119,11 @@ import {
   type SseStreamResult,
 } from "@/lib/sse";
 import { clearSseLog, pushSseEvent } from "@/lib/sseEventLog";
-import { childSessionsQueryKey, type ChildSessionInfo } from "@/hooks/useChildSessions";
+import {
+  childSessionsQueryKey,
+  scheduleChildListRefetch,
+  type ChildSessionInfo,
+} from "@/hooks/useChildSessions";
 import { sessionItemsQueryKey } from "@/hooks/useSessionItems";
 import type { Conversation, ConversationsPage } from "@/hooks/useConversations";
 import {
@@ -2328,6 +2332,13 @@ function scheduleWorkspaceFilesystemInvalidation(sessionId: string): void {
     });
     queryClient?.invalidateQueries({
       queryKey: ["workspace-dir-listing", sessionId],
+    });
+    // Git status and comparisons read the same files; their polls are only a fallback.
+    queryClient?.invalidateQueries({
+      queryKey: ["workspace-git-changes", sessionId],
+    });
+    queryClient?.invalidateQueries({
+      queryKey: ["workspace-comparison-changes", sessionId],
     });
     // Environment availability (root/home → the Files tab gate) can
     // change too: the post-switch runner reset publishes this same event
@@ -7880,10 +7891,7 @@ export async function startStreamPump(
         streamAttemptActivity.set(attempt, Date.now());
         if (reconnecting) {
           dropEphemeralInFlightBlocks(id, set);
-          void queryClient?.invalidateQueries(
-            { queryKey: childSessionsQueryKey(id), exact: true },
-            { cancelRefetch: false },
-          );
+          if (queryClient) scheduleChildListRefetch(queryClient, id);
         }
         // Guard the byte stream with a silence watchdog: the server
         // heartbeats every 15 s, so a longer gap means a half-open socket
@@ -10795,11 +10803,9 @@ export function handleSessionEvent(event: StreamEvent, streamConversationId?: st
       if (event.status === "idle" || event.status === "failed") {
         const snapshot = queryClient?.getQueryData<Session>(["session", event.conversationId]);
         if (snapshot?.parentSessionId) {
-          // A child finished: refetch its parent's child list for the row's
-          // fresh, server-computed preview.
-          queryClient?.invalidateQueries({
-            queryKey: childSessionsQueryKey(snapshot.parentSessionId),
-          });
+          // A child finished: refetch its parent's child list (coalesced) for
+          // the row's fresh, server-computed preview.
+          if (queryClient) scheduleChildListRefetch(queryClient, snapshot.parentSessionId);
         } else {
           // Root (or cold-cache) session: its own snapshot carries the
           // rail's "main" preview text.
@@ -11165,13 +11171,10 @@ export function handleSessionEvent(event: StreamEvent, streamConversationId?: st
           sideChatToOpen: { childId: event.childSessionId, parentId: event.conversationId },
         };
       });
-      // Sub-agent spawn signal. Invalidate the parent's child-sessions
-      // query so the execution-log panel re-fetches and renders the
-      // new child without waiting for the next poll or manual refresh.
-      if (event.conversationId) {
-        queryClient?.invalidateQueries({
-          queryKey: childSessionsQueryKey(event.conversationId),
-        });
+      // Sub-agent spawn signal: the event names the child but not its row,
+      // so refetch the parent's list (coalesced) to render the new child.
+      if (event.conversationId && queryClient) {
+        scheduleChildListRefetch(queryClient, event.conversationId);
       }
       return;
     case "session_superseded":
@@ -11217,10 +11220,12 @@ export function handleSessionEvent(event: StreamEvent, streamConversationId?: st
       // last_message_preview (its reply lives in the tmux pane, not the
       // runner's in-process history). Refetch the parent's child list so the
       // server-computed preview lands instead of staying stale.
-      if (event.child.busy === false && event.child.last_message_preview === undefined) {
-        queryClient?.invalidateQueries({
-          queryKey: childSessionsQueryKey(event.conversationId),
-        });
+      if (
+        queryClient &&
+        event.child.busy === false &&
+        event.child.last_message_preview === undefined
+      ) {
+        scheduleChildListRefetch(queryClient, event.conversationId);
       }
       return;
     case "session_changed_files_invalidated":

@@ -1,3 +1,4 @@
+// Modified for Triune.
 import type { WorkbenchWorkspace } from "@/lib/workbenchWorkspace";
 import { useCallback, useMemo, useSyncExternalStore } from "react";
 import {
@@ -18,6 +19,7 @@ export function useWorkspaceResources({
   terminalFirst = false,
   terminalPending = false,
   workspace,
+  visible = true,
 }: {
   sessionId: string | undefined;
   permissionLevel: number | null;
@@ -25,6 +27,8 @@ export function useWorkspaceResources({
   terminalFirst?: boolean;
   terminalPending?: boolean;
   workspace?: WorkbenchWorkspace | null;
+  /** Whether the owning pane is shown; hidden dock tabs keep cached changes without polling. */
+  visible?: boolean;
 }) {
   // View grants don't include files. Unknown levels stay permissive; the server enforces access.
   const canBrowseWorkspace =
@@ -43,7 +47,7 @@ export function useWorkspaceResources({
   );
   const changes = useWorkspaceComparisonChanges(sessionId, {
     ...scope,
-    enabled: canBrowseWorkspace,
+    enabled: canBrowseWorkspace && visible,
     ...(workspace ? { workspace } : {}),
   });
   const changedPaths = useMemo(

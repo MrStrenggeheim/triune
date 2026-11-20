@@ -266,15 +266,28 @@ describe("mergeItemsIntoPages", () => {
     expect(result.needsRefetch).toBe(true);
   });
 
-  it("limits a known child's sort update to lists that can contain children", () => {
+  it("patches a known sub-agent's sort update without any list refetch", () => {
     const result = mergeItemsIntoPages(
       data([conv("a", { parent_session_id: "parent" })]),
       new Map([["a", { id: "a", updated_at: 2 }]]),
       DEFAULT_FILTERS,
       NO_ACTIVE,
     );
-    expect(result.needsRefetch).toBe(true);
+    expect(result.data!.pages[0].data[0].updated_at).toBe(2);
+    expect(result.needsRefetch).toBe(false);
     expect(result.needsMembershipRefetch).toBe(false);
+  });
+
+  it("still resorts a branch with a parent when its sort key changes", () => {
+    const branch = { source_conversation_id: "parent", kind: "fork" };
+    const row = { ...conv("a", { parent_session_id: "parent" }), branch };
+    const result = mergeItemsIntoPages(
+      data([row]),
+      new Map([["a", { id: "a", updated_at: 2 }]]),
+      DEFAULT_FILTERS,
+      NO_ACTIVE,
+    );
+    expect(result.needsRefetch).toBe(true);
   });
 
   it("reconciles other pagination windows when a root's sort key changes", () => {

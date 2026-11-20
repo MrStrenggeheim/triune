@@ -5,12 +5,17 @@ import {
   type NativeChildCapabilities,
 } from "@/lib/nativeChildControls";
 import { resourceViewStorageScope } from "@/lib/resourceViewStorage";
+import { RESOURCE_POLL_MS, usePollingInterval } from "./usePollingInterval";
 
 export function useNativeChildCapabilities(
   id: string | null | undefined,
   active = true,
   initial?: NativeChildCapabilities | null,
 ) {
+  const refetchInterval = usePollingInterval({
+    active: Boolean(id) && active,
+    intervalMs: RESOURCE_POLL_MS,
+  });
   return useQuery({
     queryKey: ["native-child-capabilities", resourceViewStorageScope(), id],
     queryFn: ({ signal }) => getNativeChildCapabilities(id!, signal),
@@ -18,6 +23,6 @@ export function useNativeChildCapabilities(
     initialData: initial ?? undefined,
     retry: false,
     staleTime: 2_000,
-    refetchInterval: active ? 5_000 : false,
+    refetchInterval,
   });
 }

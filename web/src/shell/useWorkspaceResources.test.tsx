@@ -1,3 +1,4 @@
+// Modified for Triune.
 import type * as TerminalsModule from "@/hooks/useTerminals";
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -67,6 +68,25 @@ it.each([
   });
   expect(result.current.agentTerminal?.id).toBe("terminal_tui_main");
   expect(result.current.openTerminals).toEqual(["terminal:shell"]);
+});
+
+it("keeps a hidden pane's cached change count without observing comparisons", () => {
+  const { result, rerender } = renderHook(
+    ({ visible }) => useWorkspaceResources({ sessionId: "docked", permissionLevel: 2, visible }),
+    { initialProps: { visible: false } },
+  );
+  expect(useWorkspaceComparisonChanges).toHaveBeenLastCalledWith("docked", {
+    path: "",
+    directories: [],
+    enabled: false,
+  });
+  expect(result.current.changedCount).toBe(1);
+  rerender({ visible: true });
+  expect(useWorkspaceComparisonChanges).toHaveBeenLastCalledWith("docked", {
+    path: "",
+    directories: [],
+    enabled: true,
+  });
 });
 
 it("uses the published nested comparison scope for both the counter and file links", () => {
