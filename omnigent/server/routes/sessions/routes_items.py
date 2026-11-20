@@ -51,7 +51,7 @@ from omnigent.server.routes._sessions.common import (
 )
 from omnigent.server.routes._sessions.orchestration import (
     _child_session_summaries_from_conversations,
-    _schedule_missing_child_task_summaries,
+    _start_missing_child_task_summaries,
 )
 from omnigent.server.schemas import (
     ChildSessionList,
@@ -405,7 +405,7 @@ def register_items_routes(
                 raise
 
         if background_session_titles_enabled(request.headers):
-            await _schedule_missing_child_task_summaries(
+            _start_missing_child_task_summaries(
                 page.data, conversation_store, background_title_coordinator, can_read_child
             )
         data = await _child_session_summaries_from_conversations(

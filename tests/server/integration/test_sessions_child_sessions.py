@@ -225,6 +225,33 @@ async def test_child_sessions_returns_seeded_child_with_full_shape(
     assert row["pending_elicitations_count"] == 0
 
 
+async def test_child_sessions_child_count_matches_each_child_list(
+    client: httpx.AsyncClient,
+    db_uri: str,
+) -> None:
+    """``child_count`` equals the rows the child's own list returns; archived rows are excluded."""
+    session = await _create_parent_session(client)
+    conv_store = SqlAlchemyConversationStore(db_uri)
+    child = _seed_child(
+        conv_store=conv_store,
+        parent_id=session["id"],
+        title="researcher:auth",
+        agent_id=session["agent_id"],
+    )
+    for name in ("one", "two", "archived"):
+        grandchild = _seed_child(
+            conv_store=conv_store,
+            parent_id=child.id,
+            title=f"worker:{name}",
+            agent_id=session["agent_id"],
+        )
+    conv_store.update_conversation(grandchild.id, archived=True)
+    resp = await client.get(f"/v1/sessions/{session['id']}/child_sessions?limit=200")
+    assert resp.json()["data"][0]["child_count"] == 2
+    nested = await client.get(f"/v1/sessions/{child.id}/child_sessions?limit=200")
+    assert [row["child_count"] for row in nested.json()["data"]] == [0, 0]
+
+
 async def test_child_sessions_surfaces_durable_failure_error(
     client: httpx.AsyncClient,
     db_uri: str,

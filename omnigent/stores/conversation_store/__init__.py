@@ -742,6 +742,20 @@ class ConversationStore(ABC):
         """
         ...
 
+    def count_child_conversations(self, parent_conversation_ids: list[str]) -> dict[str, int]:
+        """
+        Count each parent's non-archived direct children in one grouped query.
+
+        Matches what ``list_conversations(kind="sub_agent",
+        parent_conversation_id=...)`` would list for each parent.
+
+        :param parent_conversation_ids: Parent conversation ids,
+            e.g. ``["conv_parent1"]``. Duplicates are tolerated.
+        :returns: Mapping from every unique input id to its child count;
+            parents without children map to ``0``.
+        """
+        raise NotImplementedError
+
     def list_activity_child_ids(
         self, parent_ids: list[str], *, limit: int = 2048
     ) -> tuple[dict[str, list[str]], bool]:
