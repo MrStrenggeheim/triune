@@ -380,14 +380,19 @@ def test_request_duration_access_formatter_appends_individual_duration() -> None
         exc_info=None,
     )
 
+    next_record = logging.makeLogRecord(record.__dict__ | {"omnigent_access_suffix": None})
+
     set_request_duration_for_access_log(0.12345)
     try:
-        assert formatter.format(record) == (
+        enriched = (
             'INFO:     10.125.55.247:0 - "GET '
             '/health?session_ids=conv_one%2Cconv_two HTTP/1.1" '
             "200 OK 123.5ms"
         )
-        assert formatter.format(record) == (
+        assert formatter.format(record) == enriched
+        # RotatingFileHandler formats each record twice: once to measure it.
+        assert formatter.format(record) == enriched
+        assert formatter.format(next_record) == (
             'INFO:     10.125.55.247:0 - "GET '
             '/health?session_ids=conv_one%2Cconv_two HTTP/1.1" '
             "200 OK"
@@ -601,7 +606,7 @@ def test_access_formatter_clears_context_after_format() -> None:
     assert 'ua="test-agent/1.0"' in first
     assert "sid=conv_123" in first
 
-    second = formatter.format(record)
+    second = formatter.format(_make_access_record())
     assert "rid=" not in second
     assert "ua=" not in second
     assert "sid=" not in second

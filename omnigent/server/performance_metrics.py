@@ -245,6 +245,12 @@ class RequestDurationAccessFormatter(AccessFormatter):
         :returns: Enriched access message.
         """
         message = super().formatMessage(record)
+        # Handlers may format one record twice; RotatingFileHandler measures it
+        # before writing. The request context is consumed on the first pass, so
+        # keep the enrichment on the record for later passes.
+        cached_suffix = getattr(record, "omnigent_access_suffix", None)
+        if cached_suffix is not None:
+            return f"{message} {cached_suffix}" if cached_suffix else message
         parts: list[str] = [message]
         try:
             duration_seconds = _REQUEST_DURATION_CONTEXT.get()
@@ -268,6 +274,7 @@ class RequestDurationAccessFormatter(AccessFormatter):
             _REQUEST_ID_CONTEXT.set(None)
             _REQUEST_USER_AGENT_CONTEXT.set(None)
             _REQUEST_SESSION_ID_CONTEXT.set(None)
+        record.omnigent_access_suffix = " ".join(parts[1:])
         return " ".join(parts)
 
 
