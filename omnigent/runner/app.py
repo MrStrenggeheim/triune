@@ -309,9 +309,8 @@ for _builder_name in (
     globals()[_builder_name] = _native_builder(_builder_name)
 
 
-# Servers before 0.3.0 cannot serialize the runner's "waiting" status.
-# Unknown versions also downgrade to "running" so old servers never return 500.
-_WAITING_STATUS_MIN_SERVER_VERSION = "0.3.0"
+# Every Triune server models the runner's "waiting" status; only an unknown
+# version downgrades to "running", so an unidentified server never returns 500.
 # Published statuses that mean a session's terminal is still working a turn.
 # ``waiting`` is parked on user input, so it keeps the runner alive too.
 _IN_FLIGHT_SESSION_STATUSES = ("running", "waiting")
@@ -348,17 +347,13 @@ def _version_supports_waiting_status(server_version: str) -> bool:
     """
     Whether *server_version* can serialize ``session.status: "waiting"``.
 
-    :param server_version: The server's reported version, e.g. ``"0.2.0"`` or
-        ``"0.3.0.dev0"``.
-    :returns: ``True`` iff the server's PEP 440 release tuple is ``>= 0.3.0``
-        (the release that added "waiting" to the session-status model).
+    :param server_version: The server's reported version, e.g. ``"0.1.0"``.
+    :returns: ``True`` for any PEP 440 version; ``False`` for an unparseable one.
     """
     from packaging.version import InvalidVersion, Version
 
     try:
-        return (
-            Version(server_version).release >= Version(_WAITING_STATUS_MIN_SERVER_VERSION).release
-        )
+        Version(server_version)
     except InvalidVersion:
         _logger.warning(
             "server version %r is not PEP 440; treating waiting status support as unknown",
@@ -366,6 +361,7 @@ def _version_supports_waiting_status(server_version: str) -> bool:
             extra={"session_id": runner_primary_session_id()},
         )
         return False
+    return True
 
 
 async def _get_server_version(server_client: httpx.AsyncClient) -> str | None:

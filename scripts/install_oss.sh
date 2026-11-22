@@ -7,7 +7,7 @@
 # The small install.sh entry point omits optional Databricks integration.
 #
 # Options:
-#   --version TAG install that published release, e.g. 0.20.0-7be0236a9dca
+#   --version X   install that published release, e.g. 0.1.0
 #   --source      build main from source (requires Node 22.13+ and pnpm)
 #   --repo URL    build that repository and ref from source, e.g. URL@branch
 #   --extra NAME  install an optional-dependency extra (repeatable, or
@@ -88,7 +88,7 @@ print_banner() {
 }
 
 usage() {
-  printf 'Usage: install_oss.sh [--non-interactive] [--verbose] [--version TAG | --source | --repo URL] [--extra NAME] [--no-databricks]\n'
+  printf 'Usage: install_oss.sh [--non-interactive] [--verbose] [--version X | --source | --repo URL] [--extra NAME] [--no-databricks]\n'
 }
 
 step() {
@@ -306,7 +306,8 @@ find_release() {
   if [ -n "$VERSION" ]; then
     case "$VERSION" in
       triune-*) RELEASE_TAG="$VERSION" ;;
-      *) RELEASE_TAG="triune-$VERSION" ;;
+      v*) RELEASE_TAG="triune-$VERSION" ;;
+      *) RELEASE_TAG="triune-v$VERSION" ;;
     esac
   else
     latest_url="$(curl -fsSLo /dev/null -w '%{url_effective}' "https://github.com/$RELEASE_REPO/releases/latest" 2>/dev/null)" || return 1

@@ -115,7 +115,7 @@ def downstream(tmp_path, monkeypatch):
         db.execute("CREATE TABLE conversation_items(response_id)")
         db.execute("CREATE TABLE omnigent_message_queues(payload)")
     public = tmp_path / "origin"
-    tag = "triune-" + RELEASE
+    tag = "triune-v" + VERSION
     for directory in ("releases/assets", "git/ref/tags", "git/tags", "compare"):
         (public / directory).mkdir(parents=True)
     (public / "git/ref/tags" / tag).write_text(

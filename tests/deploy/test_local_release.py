@@ -452,7 +452,7 @@ def test_publish_exact_tag_resumes_verified_draft_and_rejects_conflicts(publicat
     pub, path = publication
     pub.activated(path.name)
     commit = "a" * 40
-    tag = f"triune-{path.name}"
+    tag = pub.release_tag(path.name)
     ref = f"refs/tags/{tag}"
     assets = {}
     remote_releases = []
@@ -716,7 +716,7 @@ def test_downstream_activation_skips_publication_and_preserves_prior_receipts(
     output = capsys.readouterr().out
     assert "Publish activated" not in output
     assert f"{path.name}: activation successful; already published" in output
-    assert f"https://github.com/{pub.REPO}/releases/tag/triune-{path.name}" in output
+    assert f"https://github.com/{pub.REPO}/releases/tag/{pub.release_tag(path.name)}" in output
     for approve in (True, False):
         with pytest.raises(ValueError, match="existing GitHub Release"):
             pub.decide(path.name, approve=approve)

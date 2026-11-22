@@ -18,6 +18,7 @@ from packaging.version import Version
 REPO = "MrStrenggeheim/triune"
 API = f"https://api.github.com/repos/{REPO}"
 RELEASE = r"([0-9][0-9A-Za-z.]{0,63})-([0-9a-f]{12})"
+VERSION = r"([0-9][0-9A-Za-z.]{0,63})"
 SHA = r"[0-9a-f]{64}"
 
 
@@ -105,7 +106,7 @@ def latest() -> Published | None:
             return None
         raise
     tag = row["tag_name"]
-    match = re.fullmatch("triune-" + RELEASE, tag)
+    match = re.fullmatch("triune-v" + VERSION, tag)
     if (
         not match
         or row["draft"] is not False
@@ -113,15 +114,16 @@ def latest() -> Published | None:
         or not row["published_at"]
     ):
         raise ValueError("Expected a published stable Triune release")
-    version, short = match.groups()
-    release = f"{version}-{short}"
+    version = match[1]
+    # The tag names the version; the notes name the exact build and commit.
     body = re.fullmatch(
-        rf"Activated Triune build {re.escape(release)}\n"
+        rf"Activated Triune build ({re.escape(version)}-[0-9a-f]{{12}})\n"
         rf"Commit: ([0-9a-f]{{40}})\nManifest SHA-256: {SHA}",
         row["body"].replace("\r\n", "\n"),
     )
-    if not body or not body[1].startswith(short):
+    if not body or not body[2].startswith(body[1].rsplit("-", 1)[1]):
         raise ValueError("Release notes and tag identity disagree")
+    release = body[1]
     obj = json.loads(fetch(f"/git/ref/tags/{tag}"))["object"]
     for _ in range(8):
         if obj["type"] != "tag":
@@ -129,7 +131,7 @@ def latest() -> Published | None:
         if not re.fullmatch(r"[0-9a-f]{40}", obj["sha"]):
             raise ValueError("Invalid annotated tag")
         obj = json.loads(fetch("/git/tags/" + obj["sha"]))["object"]
-    if obj["type"] != "commit" or obj["sha"] != body[1]:
+    if obj["type"] != "commit" or obj["sha"] != body[2]:
         raise ValueError("Published tag does not resolve to the declared commit")
     assets = {}
     packages = set()
@@ -165,7 +167,7 @@ def latest() -> Published | None:
         )
     ):
         raise ValueError("Incomplete release asset inventory")
-    return Published(release, version, body[1], body[0], assets)
+    return Published(release, version, body[2], body[0], assets)
 
 
 def update_status(current: dict, published: Published) -> str:

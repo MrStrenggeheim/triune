@@ -14,6 +14,13 @@ from pathlib import Path
 import manage
 
 REPO = "MrStrenggeheim/triune"
+
+
+def release_tag(release: str) -> str:
+    """Return the public tag of a build: one ``triune-v<version>`` release per version."""
+    return f"triune-v{release.rsplit('-', 1)[0]}"
+
+
 REMOTE = f"git@github.com:{REPO}.git"
 LOCK = Path("/run/lock/stable-updates.lock")
 
@@ -106,7 +113,7 @@ def status() -> None:
             manifest
         ):
             print(
-                f"{release}: activation successful; already published at https://github.com/{REPO}/releases/tag/triune-{release}"
+                f"{release}: activation successful; already published at https://github.com/{REPO}/releases/tag/{release_tag(release)}"
             )
             print(path)
         else:
@@ -153,7 +160,7 @@ def remote_commit(tag: str) -> str | None:
 
 def publish(record: dict, directory: Path) -> None:
     release, commit = record["release"], record["commit"]
-    tag = f"triune-{release}"
+    tag = release_tag(release)
     repo_args = ("--repo", f"github.com/{REPO}")
     if len(release.rsplit("-", 1)[0]) > 64:
         raise ValueError("version exceeds the downstream release limit")
@@ -201,7 +208,7 @@ def publish(record: dict, directory: Path) -> None:
             "--target",
             commit,
             "--title",
-            f"Triune {release}",
+            f"Triune {release.rsplit('-', 1)[0]}",
             "--notes",
             notes,
         )

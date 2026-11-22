@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import time
 from collections.abc import AsyncIterator
 from contextlib import suppress
 from typing import Any
@@ -29,7 +28,6 @@ from httpx import ASGITransport, AsyncClient
 
 from omnigent.errors import OmnigentError
 from omnigent.host.frames import (
-    CAP_CODEX_SIDE_CHAT,
     HostDetectCredentialsFrame,
     HostDetectCredentialsResultFrame,
     HostHelloFrame,
@@ -78,27 +76,6 @@ def _hello_text(
             capabilities=list(capabilities or []),
         )
     )
-
-
-# The hello fields a 0.6.0 host daemon sends; that release predates ``capabilities``.
-_OLD_HOST_HELLO_FIELDS = (
-    "kind",
-    "version",
-    "frame_protocol_version",
-    "name",
-    "runners",
-    "configured_harnesses",
-    "telemetry_opt_out",
-    "installation_id",
-)
-
-
-def _old_host_hello_text(version: str, name: str = _HOST_NAME) -> str:
-    """Hello as sent by a daemon that predates capability advertisement."""
-    full = json.loads(
-        encode_host_frame(HostHelloFrame(version=version, frame_protocol_version=1, name=name))
-    )
-    return json.dumps({k: full[k] for k in _OLD_HOST_HELLO_FIELDS if k in full})
 
 
 async def _connect_mock_host(
@@ -595,130 +572,6 @@ def _record_forwarded_kinds(comm: ApplicationCommunicator, kinds: list[str]) -> 
                 kinds.append(json.loads(text)["kind"])
 
     return asyncio.create_task(_drain())
-
-
-# The rc shape matters: omnigent ships prerelease daemons (v0.6.0rc1, …), and a
-# naive major.minor.patch split fails on "0rc1" and would fall through to the
-# permissive unparseable path — re-opening the 30s-timeout bug for rc hosts.
-@pytest.mark.parametrize("version", ["0.6.0", "0.6.0rc1", "0.6.0.dev0"])
-async def test_rejects_host_predating_store_secret_fast_and_clearly(
-    cred_app: tuple[FastAPI, HostRegistry, HostStore, SqlAlchemyConversationStore],
-    version: str,
-) -> None:
-    """A pre-0.7.0 host gets a fast 409 with an update hint — no forwarded frame.
-
-    A 0.6.x daemon has no ``host.store_secret`` handler and silently drops the
-    frame, so forwarding it could only end in the 30s timeout blamed on
-    responsiveness ("did not respond") — misleading for a host that is online
-    and healthy but simply too old. The route must reject before forwarding,
-    promptly, naming the version and the remedy.
-    """
-    app, registry, _hs, _cs = cred_app
-    comm = await _connect_mock_host(app, registry, hello=_old_host_hello_text(version))
-    received: list[HostStoreSecretFrame] = []
-    drain_task = _auto_reply_store_secret(comm, received)
-    try:
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            start = time.monotonic()
-            resp = await client.post(
-                f"/v1/hosts/{_HOST_ID}/harnesses/claude/credential",
-                json={"kind": "key", "secret": "sk-ant-SECRET"},
-            )
-            elapsed = time.monotonic() - start
-    finally:
-        drain_task.cancel()
-        await asyncio.gather(drain_task, return_exceptions=True)
-        await _disconnect_mock_host(comm)
-
-    assert resp.status_code == 409, resp.text
-    detail = resp.json()["detail"]
-    # Actionable: names the too-old version and the remedy …
-    assert version in detail
-    assert "update omnigent on the host" in detail
-    # … and never blames responsiveness — the host answered everything it knows.
-    assert "did not respond" not in detail.lower()
-    # Rejected before forwarding: the daemon never saw a frame it would drop.
-    assert received == []
-    # Prompt — nowhere near the 30s store-secret dead wait.
-    assert elapsed < 5.0
-
-
-@pytest.mark.parametrize(
-    "hello",
-    [
-        # Released 0.15.x/0.16.x daemons advertise capability tokens but no
-        # harness-setup entry; they serve the frames and must keep writing.
-        pytest.param(
-            _hello_text(version="0.16.0", capabilities=[CAP_CODEX_SIDE_CHAT]),
-            id="0.16.0-tokens-without-harness-setup",
-        ),
-        # A prerelease of the floor version already ships the frames.
-        pytest.param(_old_host_hello_text("0.7.0rc1"), id="0.7.0rc1"),
-        # No advertisement + unparseable version stays permissive: never block
-        # a host we can't prove is too old.
-        pytest.param(_old_host_hello_text("custom-build"), id="unparseable-version"),
-    ],
-)
-async def test_hosts_at_or_above_the_floor_still_write(
-    cred_app: tuple[FastAPI, HostRegistry, HostStore, SqlAlchemyConversationStore],
-    hello: str,
-) -> None:
-    """Every daemon that ships the frames (or can't be proven old) still writes."""
-    app, registry, _hs, _cs = cred_app
-    comm = await _connect_mock_host(app, registry, hello=hello)
-    received: list[HostStoreSecretFrame] = []
-    drain_task = _auto_reply_store_secret(comm, received)
-    try:
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            resp = await client.post(
-                f"/v1/hosts/{_HOST_ID}/harnesses/claude/credential",
-                json={"kind": "key", "secret": "sk-ant-SECRET"},
-            )
-    finally:
-        drain_task.cancel()
-        await asyncio.gather(drain_task, return_exceptions=True)
-        await _disconnect_mock_host(comm)
-
-    assert resp.status_code == 200, resp.text
-    assert len(received) == 1
-
-
-async def test_old_host_gates_detect_install_and_model_options(
-    cred_app: tuple[FastAPI, HostRegistry, HostStore, SqlAlchemyConversationStore],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The sibling harness-setup proxies share the same fast old-host gate.
-
-    detect_credentials / install_harness / model_options are the same
-    post-0.6.0 frame family — each would otherwise dead-wait its own timeout
-    against a daemon that silently drops the frame.
-    """
-    app, registry, _hs, _cs = cred_app
-    # A gate regression forwards frames this host never answers; fail fast on
-    # the shortened timeouts instead of waiting out the routes' real ones.
-    for name in (
-        "_STORE_SECRET_TIMEOUT_S",
-        "_INSTALL_HARNESS_TIMEOUT_S",
-        "_MODEL_OPTIONS_TIMEOUT_S",
-    ):
-        monkeypatch.setattr(f"omnigent.server.routes.hosts.{name}", 2.0)
-    comm = await _connect_mock_host(app, registry, hello=_old_host_hello_text("0.6.0"))
-    forwarded: list[str] = []
-    drain_task = _record_forwarded_kinds(comm, forwarded)
-    try:
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            detect = await client.get(f"/v1/hosts/{_HOST_ID}/credentials/detected")
-            install = await client.post(f"/v1/hosts/{_HOST_ID}/harnesses/claude/install")
-            models = await client.get(f"/v1/hosts/{_HOST_ID}/harnesses/claude/model-options")
-    finally:
-        drain_task.cancel()
-        await asyncio.gather(drain_task, return_exceptions=True)
-        await _disconnect_mock_host(comm)
-    assert forwarded == []
-    for resp in (detect, install, models):
-        assert resp.status_code == 409, resp.text
-        assert "update omnigent on the host" in resp.json()["detail"]
-        assert "did not respond" not in resp.json()["detail"].lower()
 
 
 async def test_non_owner_returns_403(

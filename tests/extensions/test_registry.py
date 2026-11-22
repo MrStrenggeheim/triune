@@ -84,7 +84,7 @@ def _manifest(
         distribution=f"omnigent-{extension_id.replace('.', '-')}",
         version="1.2.0",
         extension_api=EXTENSION_API_VERSION,
-        requires_omnigent=">=0.11,<1",
+        requires_omnigent=">=0.1,<1",
         entrypoints=ExtensionEntrypoints(
             browser="dist/extension.js",
             browser_css="dist/extension.css",

@@ -21,7 +21,7 @@ def _manifest() -> ExtensionManifest:
         display_name="Review",
         distribution="acme-review",
         version="1.0.0",
-        requires_omnigent=">=0.11,<1",
+        requires_omnigent=">=0.1,<1",
         extension_api=EXTENSION_API_VERSION,
     )
 

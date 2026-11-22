@@ -20,7 +20,7 @@ def get_manifest() -> ExtensionManifest:
         display_name="Hello Extension",
         distribution="omnigent-hello-extension",
         version="0.1.0",
-        requires_omnigent=">=0.11,<1",
+        requires_omnigent=">=0.1,<1",
         extension_api=EXTENSION_API_VERSION,
         entrypoints=ExtensionEntrypoints(
             browser="dist/extension.js",

@@ -103,14 +103,15 @@ Use the ID from the question even if another activation occurs before the owner 
 
 Run the helper as the local operator with GitHub CLI maintain/admin access and SSH push access to the canonical repository.
 Publication takes the systemd updater's lock and checks the active pointer, activation receipt, full source commit, manifest, installed runtime inventory and three wheel hashes.
-It pushes only the `triune-<release-id>` tag and its reachable Git history, prepares a draft, and publishes after GitHub reports matching digests for all three wheels and `SHA256SUMS`.
+It pushes only the `triune-v<version>` tag and its reachable Git history, prepares a draft, and publishes after GitHub reports matching digests for all three wheels and `SHA256SUMS`.
 GitHub also supplies its standard source archives for the tagged commit.
 The local receipt stays on the deployment host.
 
 **Downstream install contract**
 
-- Read published releases from `github.com/MrStrenggeheim/triune` with tag `triune-<version>-<first 12 hex characters of commit>`.
-- The release body contains three lines: `Activated Triune build <release-id>`, `Commit: <40 lowercase hex characters>` and `Manifest SHA-256: <64 lowercase hex characters>`.
+- Read published releases from `github.com/MrStrenggeheim/triune` with tag `triune-v<version>`, for example `triune-v0.1.0`.
+- Each version is published once: bump the version before publishing another build.
+- The release body contains three lines: `Activated Triune build <version>-<first 12 hex characters of commit>`, `Commit: <40 lowercase hex characters>` and `Manifest SHA-256: <64 lowercase hex characters>`.
 - The tag's peeled commit must match the full commit. The manifest hash identifies the producer's private build record.
 - Exactly three nonempty wheel assets use `<distribution>-<version>-py3-none-any.whl`, each at most 128 MiB. The distributions are `triune` (historically `omnigent`), `omnigent_client` and `omnigent_ui_sdk`.
 - The fourth asset, `SHA256SUMS`, contains exactly three ASCII lines sorted by wheel basename. Each line contains a lowercase 64-character SHA-256, two spaces, the basename and a terminating LF.

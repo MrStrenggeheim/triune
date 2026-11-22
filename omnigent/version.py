@@ -16,7 +16,7 @@ the two in sync, so releases are cut by bumping pyproject alone (via
 
 import importlib.metadata
 
-VERSION = "0.20.0"
+VERSION = "0.1.0"
 
 
 def installed_distribution() -> importlib.metadata.Distribution | None:
