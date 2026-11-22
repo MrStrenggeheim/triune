@@ -125,6 +125,28 @@ The service journal and status command surface the question; a timer cannot answ
 The installed systemd service invokes the root-owned `/usr/local/sbin/omnigent-stable-update`.
 Roll out its tracked script together with the operator checkout before relying on this hook.
 
+### VPS storage maintenance
+
+The operator reviews disk use after successful activation and when closing a development task.
+The updater creates rollback snapshots, and the operator prunes them manually.
+
+- **Installed releases.** Keep the three newest verified builds under `~/apps/omnigent/releases/`, ordered by completion of `release.json`.
+  Also keep every target of `current`, `previous` and `pending`, and any build still used by a service, child process or session recovery.
+  Recheck links, process paths, open files and active builds under the deployment lock before removing an older release.
+  Revisit skipped releases after their last consumer exits.
+- **Activation snapshots.** Each successful backup under `~/apps/omnigent/backups/` includes a point-in-time copy of chat history.
+  For owner approval, a rotation option is the latest three complete snapshots plus one per week for four weeks.
+  Preserve snapshots needed for rollback, recovery or unique history outside that window.
+  Verify a restorable retained copy and obtain the owner's decision on historical coverage before deleting any snapshot.
+- **Worktrees.** At task close, inspect `git worktree list --porcelain`, local changes, untracked and ignored files, commit reachability and active users of the path.
+  Preserve unique commits, patches and task evidence in their owning project before retiring a checkout.
+  Remove clean, released worktrees with `git worktree remove` and leave dirty or referenced trees for their owner.
+- **Test scratch.** After the probe process exits, retain its results and logs in the task's artifact directory and remove its generated test home or preview database.
+  Recheck process references before clearing interrupted runs.
+
+Measure free space with `df -h /` before and after cleanup.
+Hard links shared by installations, worktrees and dependency caches can make separate `du` totals exceed the space recovered.
+
 ## Development
 
 Keep feature behavior, shared UI rules and setup instructions in this repository.
