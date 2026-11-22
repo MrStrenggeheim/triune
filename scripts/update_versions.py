@@ -89,14 +89,14 @@ def packages(root: Path) -> list[Package]:
     """
     return [
         Package(
-            "omnigent",
+            "triune",
             root / "pyproject.toml",
             ("omnigent-client", "omnigent-ui-sdk", "omnigent-slack"),
         ),
         Package(
             "omnigent-client",
             root / "sdks" / "python-client" / "pyproject.toml",
-            ("omnigent",),
+            ("triune",),
         ),
         Package(
             "omnigent-ui-sdk",
