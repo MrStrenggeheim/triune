@@ -98,7 +98,7 @@
     "shadcn": "0.0.0-rc-20261007105214",
     "shiki": "catalog:",
     "sonner": "^2.0.8",
-    "streamdown": "^2.5.0",
+    "streamdown": "^2.7.1",
     "tailwind-merge": "^3.7.0",
     "three": "0.185.1",
     "tokenlens": "^1.3.1",
