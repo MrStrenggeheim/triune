@@ -7,15 +7,15 @@ repository. See `CONTRIBUTING.md` for the full contributor workflow.
 
 These instructions and the linked repository documents are self-contained.
 Follow any personal instructions supplied by the operator; a private knowledge
-base or a particular home directory is not required to work on this fork.
+base or a particular home directory is not required to work on Triune.
 
-## Local customizations
+## Product guide
 
-This checkout maintains changes on top of official release tags. Read
-[the fork guide](docs/custom-fork.md) for startup commands, the upstream base
-and the map of custom features. Keep that guide and the relevant feature map
-current when changing a customization.
-Keep each customization in a focused commit. Never edit installed package files.
+Triune is a standalone product in its own repository, derived from Omnigent.
+Read [the product guide](docs/custom-fork.md) for startup commands, the
+inherited Omnigent baseline and the feature map. Keep that guide and the
+relevant feature map current when changing a feature.
+Keep each change in a focused commit. Never edit installed package files.
 
 ## Reuse and design
 
@@ -128,7 +128,7 @@ files as a workaround.
 
 ## Request backlog
 
-Use the task checklist supplied by the operator or the fork's GitHub issues.
+Use the task checklist supplied by the operator or Triune's GitHub issues.
 Private deployment notes are optional context, not project prerequisites.
 Record new requests received during work immediately, including deferred discussions.
 Before completing a turn, reconcile every unchecked request with implementation and verification; report outstanding items explicitly.

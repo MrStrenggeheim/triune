@@ -1,13 +1,13 @@
-# Triune custom workspace fork
+# Triune product guide
 
-Triune is maintained in [MrStrenggeheim/triune](https://github.com/MrStrenggeheim/triune/tree/main) on `main`.
+Triune is a standalone product maintained in [MrStrenggeheim/triune](https://github.com/MrStrenggeheim/triune/tree/main) on `main`.
 It derives from upstream [Omnigent](https://github.com/omnigent-ai/omnigent), with the inherited Apache baseline at `4646d0bbd9492eed3bff0e95d39f8ac85d1b1eb8`.
 Upstream authorship, copyright and license notices remain intact.
 The owner's new work uses PolyForm Noncommercial 1.0.0; see [LICENSE](../LICENSE) and [LICENSING.md](../LICENSING.md) for the exact scope and retained Apache material.
 
 ## Run it
 
-Follow the [root installation guide](../README.md#install) for a local browser installation or the existing Docker server stack.
+Follow the README for [local](../README.md#run-on-your-machine) or [remote SSH](../README.md#run-on-a-remote-server-ssh) setup, or use the existing Docker server stack.
 The current distribution is source from this repository's `main`, including its backend, SDKs and frontend.
 Use the quickstart's Triune installer or manual checkout recipe, which uses `uv.lock` and `pnpm-lock.yaml`.
 Use `triune` as the primary CLI, for example `triune server`, `triune host` or `triune run`.
@@ -42,7 +42,7 @@ Docker stores database and artifact data in its existing named volumes; see the 
 For an installer-based update, let running work finish, stop the local instance with `triune stop`, and rerun the Triune installer from the root quickstart.
 For checkout-based updates, stop it and run `git pull --ff-only` on `main` from `https://github.com/MrStrenggeheim/triune.git`.
 Repeat the quickstart's dependency-install and frontend-build commands, then start it again.
-Upstream PyPI, Homebrew and desktop downloads do not contain this fork's changes.
+Upstream Omnigent PyPI, Homebrew and desktop downloads do not contain Triune.
 Historical upstream design notes retain Omnigent names and commands as context; use this guide and maintained feature recipes for Triune.
 
 `deploy/local/` contains the original operator's VPS release-management tools.
@@ -128,7 +128,7 @@ Roll out its tracked script together with the operator checkout before relying o
 ## Development
 
 Keep feature behavior, shared UI rules and setup instructions in this repository.
-Record tasks in the fork's issues or the operator's supplied checklist; personal agent instructions and private KBs are optional.
+Record tasks in Triune's GitHub issues or the operator's supplied checklist; personal agent instructions and private KBs are optional.
 Before submitting a change, run the relevant existing checks and the required Git hooks.
 
 ## Durable inputs and interactive outputs
