@@ -23,15 +23,16 @@ Linux, macOS or WSL2. The installer checks each tool and offers to install missi
 
 | Tool | Used for | Installer |
 | --- | --- | --- |
-| Git, curl | Download | Required |
-| uv | Python install | Offers to install (no root) |
-| Node.js 22.13+ | Web UI, Claude/Codex CLIs | Offers Node 24 via nvm (no root) |
-| pnpm 11.15.1 | Web UI build | Uses corepack or offers npm (no root) |
+| curl, uv | Download and install | uv: offers to install (no root) |
+| Node.js 22.13+ | Claude/Codex CLIs; source builds | Offers Node 24 via nvm (no root) |
 | tmux | Agent terminals | Offers your package manager (sudo) |
 | bubblewrap (Linux) | Sandboxed agent terminals | Offers your package manager (sudo) and tests it |
 | Claude Code, Codex | Agents | Install and sign in yourself |
+| Git, pnpm 11.15.1 | Source builds only | pnpm: uses corepack or offers npm (no root) |
 
-The installer ends with a list of anything still missing.
+- The installer uses the latest [release](https://github.com/MrStrenggeheim/triune/releases) and verifies its checksums.
+- Build `main` from source instead: add `-s -- --source` after `sh`.
+- It ends with a list of anything still missing.
 
 ## Run on your machine
 

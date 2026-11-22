@@ -16,6 +16,7 @@ wheel alongside the rest of the package.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import time
 from pathlib import Path
@@ -372,8 +373,13 @@ def _git_sha() -> str:
     SHA as "no commit info available" and silently falls back to
     timestamp-only nag logic.
 
+    ``OMNIGENT_BUILD_COMMIT`` takes precedence, for builds from a source
+    archive that has no ``.git/`` directory.
+
     :returns: 40-character full hex SHA, or ``""`` on any failure.
     """
+    if commit := os.environ.get("OMNIGENT_BUILD_COMMIT", "").strip():
+        return commit
     try:
         result = subprocess.run(
             ["git", "rev-parse", "HEAD"],

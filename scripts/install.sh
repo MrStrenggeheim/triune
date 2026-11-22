@@ -9,9 +9,7 @@ main() {
   curl -fsSL \
     https://raw.githubusercontent.com/MrStrenggeheim/triune/main/scripts/install_oss.sh \
     -o "$installer"
-  sh "$installer" \
-    --repo https://github.com/MrStrenggeheim/triune.git@main \
-    --no-databricks "$@"
+  sh "$installer" --no-databricks "$@"
 }
 
 main "$@"

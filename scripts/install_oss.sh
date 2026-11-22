@@ -2,18 +2,20 @@
 
 # Modified for Triune: install this repository, never the upstream package.
 #
-# Installs Triune from this repository with matching SDKs and a built web UI.
+# Installs Triune with matching SDKs from the latest published GitHub release.
+# Without a release it builds this repository's main branch from source.
 # The small install.sh entry point omits optional Databricks integration.
 #
 # Options:
-#   --repo URL    install from a git checkout instead (builds from source;
-#                 requires Node 22.13+ and pnpm)
+#   --version TAG install that published release, e.g. 0.20.0-7be0236a9dca
+#   --source      build main from source (requires Node 22.13+ and pnpm)
+#   --repo URL    build that repository and ref from source, e.g. URL@branch
 #   --extra NAME  install an optional-dependency extra (repeatable, or
 #                 comma-separated), in addition to databricks
 #   --no-databricks  omit the default Databricks extra and CLI
 #   --non-interactive, --verbose
 #
-# uv and git (only with --repo) are required; the installer offers to install
+# uv and git (only for source builds) are required; the installer offers to install
 # them if missing. Node/npm are needed by the Claude/Codex/Pi harnesses, tmux
 # by their terminal launchers, and bubblewrap (Linux only) to OS-sandbox those
 # terminals — missing ones are warnings, not errors, unless building from
@@ -33,8 +35,14 @@ DATABRICKS_CLI_SHA256_LINUX_AMD64=5599f6a4c01535142cdb1aa16527ec68e6aa849bd7ce72
 DATABRICKS_CLI_SHA256_LINUX_ARM64=27440b096de110978ea8621ed936692bf88e6912ddadea810f7cac78850ceb02
 DATABRICKS_CLI_SHA256_DARWIN_AMD64=968946e53e0b197870931c34d103e2e4317002314db6e04a11495af2554415c3
 DATABRICKS_CLI_SHA256_DARWIN_ARM64=5c899a18bb280a33cb1814418fd1352a6a6e5487a2d9eb850c573114885c2f83
-# Always use this product source by default; --repo can select a revision.
-REPO_URL=https://github.com/MrStrenggeheim/triune.git@main
+# Published releases and the source fallback; --repo selects another source.
+RELEASE_REPO=MrStrenggeheim/triune
+DEFAULT_SOURCE=https://github.com/MrStrenggeheim/triune.git@main
+REPO_URL=
+FORCE_SOURCE=false
+RELEASE_TAG=
+RELEASE_DIR=
+BUILD_COMMIT=
 PYTHON_VERSION="3.12"
 # Web UI build toolchain; PNPM_VERSION matches package.json packageManager.
 NODE_MIN_VERSION=22.13
@@ -80,7 +88,7 @@ print_banner() {
 }
 
 usage() {
-  printf 'Usage: install_oss.sh [--non-interactive] [--verbose] [--version X] [--repo URL] [--extra NAME] [--no-databricks]\n'
+  printf 'Usage: install_oss.sh [--non-interactive] [--verbose] [--version TAG | --source | --repo URL] [--extra NAME] [--no-databricks]\n'
 }
 
 step() {
@@ -176,6 +184,9 @@ parse_args() {
       --no-databricks)
         INCLUDE_DATABRICKS=false
         ;;
+      --source)
+        FORCE_SOURCE=true
+        ;;
       --repo)
         if [ "$#" -lt 2 ]; then
           usage >&2
@@ -227,10 +238,8 @@ has_databricks_extra() {
 
 normalize_repo_url() {
   case "$REPO_URL" in
-    "")
-      # No --repo: install the published wheel from PyPI (the default).
-      INSTALL_URL=
-      return
+    https://github.com/*)
+      github_archive_url
       ;;
     git+ssh://* | git+https://* | git+http://*)
       INSTALL_URL="$REPO_URL"
@@ -251,15 +260,106 @@ normalize_repo_url() {
       ;;
   esac
 
-  if [ -n "$VERSION" ]; then
-    fail "--version pins a PyPI release and cannot be combined with --repo (a git source install)."
-  fi
   verbose "Repository install URL: $INSTALL_URL"
 }
 
-# True only for a from-source git install (--repo): that path builds the web
-# UI with npm, so Node/npm are hard requirements. A default PyPI install pulls
-# the prebuilt wheel and needs neither.
+# Build GitHub sources from the commit's archive: it skips the full Git history.
+github_archive_url() {
+  repo_and_ref="${REPO_URL#https://github.com/}"
+  ref=main
+  case "$repo_and_ref" in
+    *@*)
+      ref="${repo_and_ref##*@}"
+      repo_and_ref="${repo_and_ref%@*}"
+      ;;
+  esac
+  repo_path="${repo_and_ref%.git}"
+  if printf '%s' "$ref" | grep -Eq '^[0-9a-f]{40}$'; then
+    BUILD_COMMIT="$ref"
+  else
+    # Prefer the peeled commit of an annotated tag over the tag object.
+    BUILD_COMMIT="$(git ls-remote "https://github.com/$repo_path" "$ref" "$ref^{}" 2>/dev/null |
+      awk '$2 ~ /\^\{\}$/ { peeled = $1 } NR == 1 { first = $1 } END { print (peeled != "" ? peeled : first) }')"
+  fi
+  [ -n "$BUILD_COMMIT" ] || fail "Could not resolve $ref in https://github.com/$repo_path."
+  INSTALL_URL="https://github.com/$repo_path/archive/$BUILD_COMMIT.tar.gz"
+}
+
+# Pick a published release unless a source build was requested.
+resolve_install_source() {
+  if [ -z "$REPO_URL" ] && [ "$FORCE_SOURCE" = false ]; then
+    if find_release; then
+      step "Using Triune release $RELEASE_TAG"
+      return
+    fi
+    [ -z "$VERSION" ] || fail "Triune release $VERSION was not found in https://github.com/$RELEASE_REPO/releases."
+    warn "No published Triune release found; building from source instead."
+  fi
+  [ -z "$VERSION" ] || fail "--version selects a published release and cannot be combined with --source or --repo."
+  [ -n "$REPO_URL" ] || REPO_URL="$DEFAULT_SOURCE"
+  ensure_git
+  normalize_repo_url
+}
+
+# Set RELEASE_TAG and download that release's SHA256SUMS into RELEASE_DIR.
+find_release() {
+  if [ -n "$VERSION" ]; then
+    case "$VERSION" in
+      triune-*) RELEASE_TAG="$VERSION" ;;
+      *) RELEASE_TAG="triune-$VERSION" ;;
+    esac
+  else
+    latest_url="$(curl -fsSLo /dev/null -w '%{url_effective}' "https://github.com/$RELEASE_REPO/releases/latest" 2>/dev/null)" || return 1
+    case "$latest_url" in
+      */releases/tag/triune-*) RELEASE_TAG="${latest_url##*/releases/tag/}" ;;
+      *) return 1 ;;
+    esac
+  fi
+  RELEASE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/triune-release.XXXXXX")"
+  curl -fsSL "$(release_asset_url SHA256SUMS)" -o "$RELEASE_DIR/SHA256SUMS" 2>/dev/null
+}
+
+release_asset_url() {
+  printf 'https://github.com/%s/releases/download/%s/%s' "$RELEASE_REPO" "$RELEASE_TAG" "$1"
+}
+
+# Download the release wheels listed in SHA256SUMS and verify every checksum.
+download_release() {
+  wheel_count=0
+  while read -r _checksum wheel_name; do
+    case "$wheel_name" in
+      */* | "") fail "SHA256SUMS of $RELEASE_TAG lists an unexpected entry: $wheel_name" ;;
+      *.whl) ;;
+      *) fail "SHA256SUMS of $RELEASE_TAG lists a non-wheel file: $wheel_name" ;;
+    esac
+    curl -fsSL "$(release_asset_url "$wheel_name")" -o "$RELEASE_DIR/$wheel_name" ||
+      fail "Could not download $wheel_name from release $RELEASE_TAG."
+    wheel_count=$((wheel_count + 1))
+  done <"$RELEASE_DIR/SHA256SUMS"
+  [ "$wheel_count" -eq 3 ] || fail "Release $RELEASE_TAG should list three wheels in SHA256SUMS, found $wheel_count."
+  if command -v sha256sum >/dev/null 2>&1; then
+    (cd "$RELEASE_DIR" && sha256sum -c --quiet SHA256SUMS) || fail "Checksum mismatch in release $RELEASE_TAG."
+  elif command -v shasum >/dev/null 2>&1; then
+    (cd "$RELEASE_DIR" && shasum -a 256 -c --quiet SHA256SUMS) || fail "Checksum mismatch in release $RELEASE_TAG."
+  else
+    fail "sha256sum or shasum is required to verify the release download."
+  fi
+}
+
+release_wheel() {
+  for wheel_path in "$RELEASE_DIR"/"$1"-*.whl; do
+    [ -f "$wheel_path" ] || fail "Release $RELEASE_TAG has no $1 wheel."
+    printf '%s' "$wheel_path"
+    return
+  done
+}
+
+cleanup_release_dir() {
+  [ -z "$RELEASE_DIR" ] || rm -rf "$RELEASE_DIR"
+}
+
+# True only for a source build: that path builds the web UI with pnpm, so
+# Node and pnpm are hard requirements. A release install needs neither.
 building_from_source() {
   [ -n "$INSTALL_URL" ]
 }
@@ -305,9 +405,6 @@ check_platform() {
 # touches git — so we check it only in that mode. The installer OFFERS to
 # install each with a trusted one-line installer rather than just failing.
 check_prerequisites() {
-  if building_from_source; then
-    ensure_git
-  fi
   ensure_uv
 }
 
@@ -417,7 +514,7 @@ check_node() {
   if install_node_with_nvm && node_is_supported; then
     return
   fi
-  require_or_warn "$problem. Triune needs Node.js $NODE_MIN_VERSION+ for its web UI and the Claude/Codex CLIs. Install it from https://nodejs.org or with nvm, then rerun."
+  require_or_warn "$problem. Triune needs Node.js $NODE_MIN_VERSION+ for the Claude/Codex CLIs and source builds. Install it from https://nodejs.org or with nvm, then rerun."
 }
 
 # The source build needs pnpm, or corepack to fetch it; Node 25+ dropped corepack.
@@ -575,36 +672,36 @@ check_bubblewrap() {
 }
 
 install_omnigent() {
-  # PyPI wheels bundle the web UI; --repo builds it from source with npm.
-  # Extras apply to every install mode, including Databricks by default.
+  # Extras apply to every install mode.
   extras_suffix=
   if [ -n "$EXTRAS" ]; then
     extras_suffix="[$EXTRAS]"
   fi
+  # The SDK's prebuilt wheels embed a full Claude Code copy (about 380 MB); its
+  # source package does not, and the SDK then uses the user's own `claude`.
+  set -- --force -q --python "$PYTHON_VERSION" --no-binary-package claude-agent-sdk
   if building_from_source; then
-    # A PEP 508 direct reference attaches extras to a git source install:
-    # "omnigent[databricks] @ git+https://...". Without extras, keep the bare
-    # URL (the long-standing form uv accepts directly).
-    if [ -n "$extras_suffix" ]; then
-      target="${PACKAGE_NAME}${extras_suffix} @ ${INSTALL_URL}"
-    else
-      target="$INSTALL_URL"
-    fi
     step "Installing Triune from source${extras_suffix:+ $extras_suffix} (Python $PYTHON_VERSION)"
-  elif [ -n "$VERSION" ]; then
-    target="${PACKAGE_NAME}${extras_suffix}==${VERSION}"
-    step "Installing Triune $VERSION${extras_suffix:+ $extras_suffix} (Python $PYTHON_VERSION)"
-  else
-    target="${PACKAGE_NAME}${extras_suffix}"
-    step "Installing Triune${extras_suffix:+ $extras_suffix} (Python $PYTHON_VERSION)"
-  fi
-  # Source installs must pair the backend with the SDKs from the same ref;
-  # uv tool install does not apply the checkout's tool.uv.sources mapping.
-  set -- --force -q --python "$PYTHON_VERSION"
-  if building_from_source; then
+    # Pair the backend with the SDKs from the same source; uv tool install
+    # does not apply the checkout's tool.uv.sources mapping.
     set -- "$@" \
       --with "omnigent-client @ ${INSTALL_URL}#subdirectory=sdks/python-client" \
       --with "omnigent-ui-sdk @ ${INSTALL_URL}#subdirectory=sdks/ui"
+    target="${PACKAGE_NAME}${extras_suffix} @ ${INSTALL_URL}"
+    if [ -n "$BUILD_COMMIT" ]; then
+      OMNIGENT_BUILD_COMMIT="$BUILD_COMMIT"
+      export OMNIGENT_BUILD_COMMIT
+    fi
+  else
+    step "Installing Triune $RELEASE_TAG${extras_suffix:+ $extras_suffix} (Python $PYTHON_VERSION)"
+    run_with_spinner "download and verify release" download_release
+    triune_wheel="$(release_wheel triune)"
+    client_wheel="$(release_wheel omnigent_client)"
+    ui_wheel="$(release_wheel omnigent_ui_sdk)"
+    set -- "$@" \
+      --with "omnigent-client @ file://$client_wheel" \
+      --with "omnigent-ui-sdk @ file://$ui_wheel"
+    target="${PACKAGE_NAME}${extras_suffix} @ file://$triune_wheel"
   fi
   run_with_spinner "uv tool install" uv tool install "$@" "$target"
 }
@@ -842,11 +939,13 @@ print_next_steps() {
 }
 
 main() {
+  trap cleanup_release_dir EXIT
+  trap 'exit 1' HUP INT TERM
   init_style
   parse_args "$@"
   print_banner
-  normalize_repo_url
   check_platform
+  resolve_install_source
   check_prerequisites
   check_node
   check_npm
