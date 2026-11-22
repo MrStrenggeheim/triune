@@ -2,21 +2,21 @@ version = 1
 revision = 5
 requires-python = ">=3.12"
 resolution-markers = [
-    "python_full_version == '3.13.*' and extra != 'extra-6-triune-antigravity' and extra == 'extra-6-triune-cwsandbox'",
+    "python_full_version >= '3.15' and sys_platform == 'win32' and extra != 'extra-6-triune-antigravity' and extra != 'extra-6-triune-cwsandbox'",
+    "python_full_version >= '3.15' and sys_platform != 'win32' and extra != 'extra-6-triune-antigravity' and extra != 'extra-6-triune-cwsandbox'",
     "python_full_version >= '3.14' and sys_platform == 'win32' and extra != 'extra-6-triune-antigravity' and extra == 'extra-6-triune-cwsandbox'",
     "python_full_version >= '3.14' and sys_platform != 'win32' and extra != 'extra-6-triune-antigravity' and extra == 'extra-6-triune-cwsandbox'",
-    "python_full_version < '3.13' and sys_platform == 'win32' and extra != 'extra-6-triune-antigravity' and extra == 'extra-6-triune-cwsandbox'",
-    "python_full_version < '3.13' and sys_platform != 'win32' and extra != 'extra-6-triune-antigravity' and extra == 'extra-6-triune-cwsandbox'",
-    "python_full_version == '3.13.*' and extra == 'extra-6-triune-antigravity' and extra != 'extra-6-triune-cwsandbox' and extra != 'extra-6-triune-modal' and extra != 'group-6-triune-dev' and extra != 'group-6-triune-lint'",
     "python_full_version >= '3.14' and sys_platform == 'win32' and extra == 'extra-6-triune-antigravity' and extra != 'extra-6-triune-cwsandbox' and extra != 'extra-6-triune-modal' and extra != 'group-6-triune-dev' and extra != 'group-6-triune-lint'",
     "python_full_version >= '3.14' and sys_platform != 'win32' and extra == 'extra-6-triune-antigravity' and extra != 'extra-6-triune-cwsandbox' and extra != 'extra-6-triune-modal' and extra != 'group-6-triune-dev' and extra != 'group-6-triune-lint'",
+    "python_full_version == '3.14.*' and sys_platform == 'win32' and extra != 'extra-6-triune-antigravity' and extra != 'extra-6-triune-cwsandbox'",
+    "python_full_version == '3.14.*' and sys_platform != 'win32' and extra != 'extra-6-triune-antigravity' and extra != 'extra-6-triune-cwsandbox'",
+    "python_full_version == '3.13.*' and extra != 'extra-6-triune-antigravity' and extra == 'extra-6-triune-cwsandbox'",
+    "python_full_version == '3.13.*' and extra == 'extra-6-triune-antigravity' and extra != 'extra-6-triune-cwsandbox' and extra != 'extra-6-triune-modal' and extra != 'group-6-triune-dev' and extra != 'group-6-triune-lint'",
+    "python_full_version == '3.13.*' and extra != 'extra-6-triune-antigravity' and extra != 'extra-6-triune-cwsandbox'",
+    "python_full_version < '3.13' and sys_platform == 'win32' and extra != 'extra-6-triune-antigravity' and extra == 'extra-6-triune-cwsandbox'",
+    "python_full_version < '3.13' and sys_platform != 'win32' and extra != 'extra-6-triune-antigravity' and extra == 'extra-6-triune-cwsandbox'",
     "python_full_version < '3.13' and sys_platform == 'win32' and extra == 'extra-6-triune-antigravity' and extra != 'extra-6-triune-cwsandbox' and extra != 'extra-6-triune-modal' and extra != 'group-6-triune-dev' and extra != 'group-6-triune-lint'",
     "python_full_version < '3.13' and sys_platform != 'win32' and extra == 'extra-6-triune-antigravity' and extra != 'extra-6-triune-cwsandbox' and extra != 'extra-6-triune-modal' and extra != 'group-6-triune-dev' and extra != 'group-6-triune-lint'",
-    "python_full_version == '3.13.*' and extra != 'extra-6-triune-antigravity' and extra != 'extra-6-triune-cwsandbox'",
-    "python_full_version >= '3.15' and sys_platform == 'win32' and extra != 'extra-6-triune-antigravity' and extra != 'extra-6-triune-cwsandbox'",
-    "python_full_version == '3.14.*' and sys_platform == 'win32' and extra != 'extra-6-triune-antigravity' and extra != 'extra-6-triune-cwsandbox'",
-    "python_full_version >= '3.15' and sys_platform != 'win32' and extra != 'extra-6-triune-antigravity' and extra != 'extra-6-triune-cwsandbox'",
-    "python_full_version == '3.14.*' and sys_platform != 'win32' and extra != 'extra-6-triune-antigravity' and extra != 'extra-6-triune-cwsandbox'",
     "python_full_version < '3.13' and sys_platform == 'win32' and extra != 'extra-6-triune-antigravity' and extra != 'extra-6-triune-cwsandbox'",
     "python_full_version < '3.13' and sys_platform != 'win32' and extra != 'extra-6-triune-antigravity' and extra != 'extra-6-triune-cwsandbox'",
 ]
@@ -419,16 +419,16 @@ wheels = [
 
 [[package]]
 name = "botocore"
-version = "1.43.25"
+version = "1.43.124"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "jmespath" },
     { name = "python-dateutil" },
     { name = "urllib3" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ad/03/9dc102506c3ebc3758a9e8602e7dafb78789993bcac5daa82398b56ae884/botocore-1.43.25.tar.gz", hash = "sha256:faab543ca6ae6f8fdc5f6318240bebfb8c05cd25823715fe02aad7edf0c4b383", size = 15478403, upload-time = "2026-06-08T19:49:13.505Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d3/1e/c0abe23b9495414dc79e3faeb6e96e2336053fd8cae7d80cc6bbe4bd02f3/botocore-1.43.124.tar.gz", hash = "sha256:6df80235995e2926e0768e7ad270e774adcd6ff0307da7ab87ffb8c384edb578", size = 16509340, upload-time = "2026-11-04T21:22:30.041Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/41/a5/6ceef332b18c348be9ec26aeff0da5b3f7ea046bf3fc654feecf6974c4d9/botocore-1.43.25-py3-none-any.whl", hash = "sha256:ef1d210ac9085ea0e5fc6ad2e63f0c7e97103c74f52156bf944289aaf6278d1b", size = 15161721, upload-time = "2026-06-08T19:49:08.751Z" },
+    { url = "https://files.pythonhosted.org/packages/84/a4/77409b07ba0b5520dbc591c33b305c5fe4c186036d881ca894a597c0dfba/botocore-1.43.124-py3-none-any.whl", hash = "sha256:4651bac68d1aef78d42c8aefb514a6cd86fda07971b8348652a9d24f21b07965", size = 16209102, upload-time = "2026-11-04T21:22:22.159Z" },
 ]
 
 [[package]]
@@ -4065,16 +4065,16 @@ name = "protobuf"
 version = "6.33.6"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
-    "python_full_version == '3.13.*' and extra != 'extra-6-triune-antigravity' and extra == 'extra-6-triune-cwsandbox'",
+    "python_full_version >= '3.15' and sys_platform == 'win32' and extra != 'extra-6-triune-antigravity' and extra != 'extra-6-triune-cwsandbox'",
+    "python_full_version >= '3.15' and sys_platform != 'win32' and extra != 'extra-6-triune-antigravity' and extra != 'extra-6-triune-cwsandbox'",
     "python_full_version >= '3.14' and sys_platform == 'win32' and extra != 'extra-6-triune-antigravity' and extra == 'extra-6-triune-cwsandbox'",
     "python_full_version >= '3.14' and sys_platform != 'win32' and extra != 'extra-6-triune-antigravity' and extra == 'extra-6-triune-cwsandbox'",
+    "python_full_version == '3.14.*' and sys_platform == 'win32' and extra != 'extra-6-triune-antigravity' and extra != 'extra-6-triune-cwsandbox'",
+    "python_full_version == '3.14.*' and sys_platform != 'win32' and extra != 'extra-6-triune-antigravity' and extra != 'extra-6-triune-cwsandbox'",
+    "python_full_version == '3.13.*' and extra != 'extra-6-triune-antigravity' and extra == 'extra-6-triune-cwsandbox'",
+    "python_full_version == '3.13.*' and extra != 'extra-6-triune-antigravity' and extra != 'extra-6-triune-cwsandbox'",
     "python_full_version < '3.13' and sys_platform == 'win32' and extra != 'extra-6-triune-antigravity' and extra == 'extra-6-triune-cwsandbox'",
     "python_full_version < '3.13' and sys_platform != 'win32' and extra != 'extra-6-triune-antigravity' and extra == 'extra-6-triune-cwsandbox'",
-    "python_full_version == '3.13.*' and extra != 'extra-6-triune-antigravity' and extra != 'extra-6-triune-cwsandbox'",
-    "python_full_version >= '3.15' and sys_platform == 'win32' and extra != 'extra-6-triune-antigravity' and extra != 'extra-6-triune-cwsandbox'",
-    "python_full_version == '3.14.*' and sys_platform == 'win32' and extra != 'extra-6-triune-antigravity' and extra != 'extra-6-triune-cwsandbox'",
-    "python_full_version >= '3.15' and sys_platform != 'win32' and extra != 'extra-6-triune-antigravity' and extra != 'extra-6-triune-cwsandbox'",
-    "python_full_version == '3.14.*' and sys_platform != 'win32' and extra != 'extra-6-triune-antigravity' and extra != 'extra-6-triune-cwsandbox'",
     "python_full_version < '3.13' and sys_platform == 'win32' and extra != 'extra-6-triune-antigravity' and extra != 'extra-6-triune-cwsandbox'",
     "python_full_version < '3.13' and sys_platform != 'win32' and extra != 'extra-6-triune-antigravity' and extra != 'extra-6-triune-cwsandbox'",
 ]
@@ -4094,9 +4094,9 @@ name = "protobuf"
 version = "7.35.1"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
-    "python_full_version == '3.13.*'",
     "python_full_version >= '3.14' and sys_platform == 'win32'",
     "python_full_version >= '3.14' and sys_platform != 'win32'",
+    "python_full_version == '3.13.*'",
     "python_full_version < '3.13' and sys_platform == 'win32'",
     "python_full_version < '3.13' and sys_platform != 'win32'",
 ]
