@@ -35,7 +35,7 @@ catalog:
   katex: 0.18.10
   # Upgrade Shiki and its Monaco adapter together with their shared packages.
   shiki: 4.5.0
-  '@shikijs/monaco': 4.5.0
+  '@shikijs/monaco': 4.6.0
   '@shikijs/core': 4.5.0
   '@shikijs/primitive': 4.5.0
   '@shikijs/engine-javascript': 4.5.0
