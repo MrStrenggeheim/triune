@@ -36,6 +36,11 @@ DATABRICKS_CLI_SHA256_DARWIN_ARM64=5c899a18bb280a33cb1814418fd1352a6a6e5487a2d9e
 # Always use this product source by default; --repo can select a revision.
 REPO_URL=https://github.com/MrStrenggeheim/triune.git@main
 PYTHON_VERSION="3.12"
+# Web UI build toolchain; PNPM_VERSION matches package.json packageManager.
+NODE_MIN_VERSION=22.13
+PNPM_VERSION=11.15.1
+NVM_VERSION=v0.40.3
+LATER_NOTES=
 INSTALL_URL=
 NON_INTERACTIVE=false
 VERBOSE=false
@@ -375,20 +380,73 @@ require_or_warn() {
   warn "$1"
 }
 
-# Node >= 22.10: the Claude/Codex/Pi CLIs need worker_threads.markAsUncloneable
-# (added in 22.10). Probe the symbol rather than parse a version string.
+# Node 22.13+ matches setup.py's web UI build floor (pnpm 11 needs it).
+node_is_supported() {
+  command -v node >/dev/null 2>&1 &&
+    node -e 'const [major, minor] = process.versions.node.split(".").map(Number); process.exit(major > 22 || (major === 22 && minor >= 13) ? 0 : 1)' >/dev/null 2>&1
+}
+
+# Offer a user-local Node.js 24 LTS through nvm; it needs no root and ships corepack.
+install_node_with_nvm() {
+  command -v bash >/dev/null 2>&1 || return 1
+  prompt_yes_no "Install Node.js 24 LTS with nvm into ~/.nvm (no root needed)?" || return 1
+  nvm_dir="${NVM_DIR:-$HOME/.nvm}"
+  if [ ! -s "$nvm_dir/nvm.sh" ]; then
+    run_with_spinner "install nvm $NVM_VERSION" sh -c \
+      "curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/$NVM_VERSION/install.sh | bash" || return 1
+  fi
+  step "Installing Node.js 24 with nvm"
+  node_bin_dir="$(NVM_DIR="$nvm_dir" bash -c '. "$NVM_DIR/nvm.sh" >/dev/null && nvm install 24 >/dev/null 2>&1 && nvm alias default 24 >/dev/null && dirname "$(nvm which 24)"')" || return 1
+  PATH="$node_bin_dir:$PATH"
+  export PATH
+  step "Installed Node.js $(node --version); new shells load it through nvm"
+}
+
 check_node() {
-  if ! command -v node >/dev/null 2>&1; then
-    require_or_warn "node not found — Node.js 22+ is needed for the Claude/Codex/Pi harnesses (https://nodejs.org)."
+  if node_is_supported; then
+    OMNIGENT_LEDGER_DEP_NODE=preexisting
+    export OMNIGENT_LEDGER_DEP_NODE
+    step "Node.js $(node --version) is available"
     return
   fi
-  OMNIGENT_LEDGER_DEP_NODE=preexisting
-  export OMNIGENT_LEDGER_DEP_NODE
-  if node -e "process.exit(typeof require('node:worker_threads').markAsUncloneable === 'function' ? 0 : 1)" >/dev/null 2>&1; then
-    step "Node.js is new enough for the harness CLIs"
+  if command -v node >/dev/null 2>&1; then
+    problem="Node.js $(node --version) is older than $NODE_MIN_VERSION"
   else
-    require_or_warn "Node.js is older than 22.10 — the Claude/Codex/Pi harnesses need 22 LTS or newer (https://nodejs.org)."
+    problem="Node.js is not installed"
   fi
+  if install_node_with_nvm && node_is_supported; then
+    return
+  fi
+  require_or_warn "$problem. Triune needs Node.js $NODE_MIN_VERSION+ for its web UI and the Claude/Codex CLIs. Install it from https://nodejs.org or with nvm, then rerun."
+}
+
+# The source build needs pnpm, or corepack to fetch it; Node 25+ dropped corepack.
+check_pnpm() {
+  building_from_source || return 0
+  if command -v pnpm >/dev/null 2>&1; then
+    step "pnpm is available"
+    return
+  fi
+  if command -v corepack >/dev/null 2>&1; then
+    step "corepack is available (provides pnpm $PNPM_VERSION)"
+    return
+  fi
+  if command -v npm >/dev/null 2>&1 &&
+    prompt_yes_no "pnpm is missing (needed to build the web UI). Install pnpm $PNPM_VERSION with npm (no root needed)?"; then
+    npm_prefix="$(npm prefix -g 2>/dev/null || true)"
+    if [ -n "$npm_prefix" ] && [ -w "$npm_prefix" ] && { [ ! -e "$npm_prefix/lib/node_modules" ] || [ -w "$npm_prefix/lib/node_modules" ]; }; then
+      run_with_spinner "install pnpm" npm install -g "pnpm@$PNPM_VERSION" || true
+    else
+      run_with_spinner "install pnpm into ~/.local" npm install -g --prefix "$HOME/.local" "pnpm@$PNPM_VERSION" || true
+      path_contains "$HOME/.local/bin" || PATH="$HOME/.local/bin:$PATH"
+      export PATH
+    fi
+  fi
+  if command -v pnpm >/dev/null 2>&1; then
+    step "pnpm $(pnpm --version) is available"
+    return
+  fi
+  fail "pnpm is required to build the web UI. Install it with: npm install -g pnpm@$PNPM_VERSION (or npm install -g --prefix ~/.local pnpm@$PNPM_VERSION), then rerun."
 }
 
 check_npm() {
@@ -458,6 +516,27 @@ check_tmux() {
       fi
       ;;
   esac
+  command -v tmux >/dev/null 2>&1 || note_later "Install tmux; agent terminals do not start without it."
+}
+
+# Remember a missing optional piece and repeat it after the install summary.
+note_later() {
+  LATER_NOTES="${LATER_NOTES}  - $1
+"
+}
+
+# bwrap can be installed yet unusable, e.g. when AppArmor blocks user namespaces.
+bwrap_is_usable() {
+  bwrap --ro-bind / / --dev /dev --proc /proc true >/dev/null 2>&1
+}
+
+check_bwrap_usable() {
+  if bwrap_is_usable; then
+    step "bubblewrap can sandbox agent terminals"
+    return
+  fi
+  warn "bubblewrap is installed but cannot create a sandbox for this user (user namespaces are blocked, e.g. by Ubuntu's AppArmor policy)."
+  note_later "Ask an administrator to allow bubblewrap user namespaces; sandboxed agent terminals fail until then."
 }
 
 # The native `triune claude` / `triune codex` / `pi` harnesses wrap each
@@ -472,18 +551,22 @@ check_bubblewrap() {
     OMNIGENT_LEDGER_DEP_BWRAP=preexisting
     export OMNIGENT_LEDGER_DEP_BWRAP
     step "bubblewrap (bwrap) is available"
+    check_bwrap_usable
     return
   fi
 
   install_cmd="$(linux_pkg_install_cmd bubblewrap)"
   if [ -n "$install_cmd" ] && prompt_yes_no "bubblewrap is missing (needed to sandbox native \`triune claude\` / \`triune codex\` terminals). Install it now ($install_cmd)?"; then
-    run_with_spinner "install bubblewrap" sh -c "$install_cmd" || warn "bubblewrap install failed — run manually: $install_cmd"
+    # Run directly (not via run_with_spinner) so sudo can prompt for a password.
+    sh -c "$install_cmd" || warn "bubblewrap install failed — run manually: $install_cmd"
     if command -v bwrap >/dev/null 2>&1; then
       OMNIGENT_LEDGER_DEP_BWRAP=omnigent
       export OMNIGENT_LEDGER_DEP_BWRAP
+      check_bwrap_usable
+      return
     fi
-    return
   fi
+  note_later "Install bubblewrap; sandboxed agent terminals on Linux do not start without it."
   if [ -n "$install_cmd" ]; then
     warn "bubblewrap (bwrap) not found — native \`triune claude\` / \`triune codex\` terminals need it on Linux. Install with: $install_cmd"
   else
@@ -738,8 +821,8 @@ print_next_steps() {
   fi
 
   printf '\n%sTriune installed successfully.%s\n\n' "$BOLD" "$RESET"
-  printf 'Start chatting — first run sets up a model and a local web UI:\n'
-  printf '  %s%striune%s\n\n' "$command_prefix" "$MAGENTA" "$RESET"
+  printf 'Start Triune and open it in your browser:\n'
+  printf '  %s%striune start --server ""%s\n\n' "$command_prefix" "$MAGENTA" "$RESET"
   printf 'Or launch a specific coding harness:\n'
   printf '  %striune claude          # Claude Code\n' "$command_prefix"
   printf '  %striune codex           # Codex\n\n' "$command_prefix"
@@ -753,6 +836,9 @@ print_next_steps() {
     printf '%sDatabricks dependencies and CLI are installed. To use a workspace\n' "$DIM"
     printf 'as your model provider, select Databricks in triune setup.%s\n' "$RESET"
   fi
+  if [ -n "$LATER_NOTES" ]; then
+    printf '%sStill needed for agent terminals:%s\n%s\n' "$YELLOW" "$RESET" "$LATER_NOTES"
+  fi
 }
 
 main() {
@@ -764,6 +850,7 @@ main() {
   check_prerequisites
   check_node
   check_npm
+  check_pnpm
   check_tmux
   check_bubblewrap
   install_omnigent

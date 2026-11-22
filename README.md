@@ -17,25 +17,88 @@ Use Claude Code, Codex and other supported harnesses with your own accounts and 
 - Keep generated attachments, manual terminal history and notifications in the workspace.
 - Use the same interface on desktop and mobile, with the existing violet theme and three tilted strokes mark.
 
-## Install
+## Requirements
 
-For Linux, macOS or WSL2:
+Linux, macOS or WSL2. The installer checks each tool and offers to install missing ones.
+
+| Tool | Used for | Installer |
+| --- | --- | --- |
+| Git, curl | Download | Required |
+| uv | Python install | Offers to install (no root) |
+| Node.js 22.13+ | Web UI, Claude/Codex CLIs | Offers Node 24 via nvm (no root) |
+| pnpm 11.15.1 | Web UI build | Uses corepack or offers npm (no root) |
+| tmux | Agent terminals | Offers your package manager (sudo) |
+| bubblewrap (Linux) | Sandboxed agent terminals | Offers your package manager (sudo) and tests it |
+| Claude Code, Codex | Agents | Install and sign in yourself |
+
+The installer ends with a list of anything still missing.
+
+## Run on your machine
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/MrStrenggeheim/triune/main/scripts/install.sh | sh
-```
-
-The installer builds the web interface and installs Triune and matching SDKs from this repository's `main` branch.
-It checks prerequisites and offers supported missing tools; optional Databricks integration is omitted by default.
-A source build requires Node.js **22.13+** and pnpm **11.15.1**, with Git and uv available.
-For native agent terminals, install `tmux` and, on Linux, `bubblewrap`.
-Install and sign in to your preferred agent harness separately.
-
-Open a new terminal if the installer changes PATH, then start Triune:
-
-```sh
 triune start --server ""
 ```
+
+- Your browser opens `http://localhost:6767`.
+- Open a new terminal first if the installer changed PATH.
+- Stop with `triune stop`.
+
+## Run on a remote server (SSH)
+
+### 1. Install and start on the server
+
+Use your normal login shell, so Node and your agent CLIs are on PATH.
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/MrStrenggeheim/triune/main/scripts/install.sh | sh
+triune start --server "" --no-open
+```
+
+Note the printed port; it is `6767` unless that port is taken.
+
+### 2. Connect from your computer
+
+**SSH tunnel**
+
+```sh
+ssh -N -L 6767:localhost:6767 user@server
+```
+
+Open `http://localhost:6767`.
+
+**Tailscale** (when Tailscale runs on the server)
+
+```sh
+triune stop
+export OMNIGENT_WS_ALLOWED_ORIGINS=https://<machine>.<tailnet>.ts.net
+triune start --server "" --no-open
+tailscale serve --bg 6767
+```
+
+Open `https://<machine>.<tailnet>.ts.net` on any device in your tailnet.
+See [deploy/tailscale](deploy/tailscale/README.md) for details.
+
+> [!WARNING]
+> Other users on a shared server can reach its local ports.
+> On shared machines, enable [login](deploy/README.md#auth) before you start Triune.
+
+### 3. Optional: run as a service
+
+Start Triune at boot and restart it after crashes:
+
+```sh
+triune stop
+triune host enable --server ""
+loginctl enable-linger "$USER"
+```
+
+- Run these in the same shell and with the same `OMNIGENT_*` variables as step 1; the service keeps them.
+- `loginctl enable-linger` keeps the service running after you log out; some servers need an administrator for it.
+- Logs: `journalctl --user -u omnigent-host -f`
+- Remove: `triune host disable`
+
+On macOS, `triune host enable` installs a launchd agent instead.
 
 <details>
 <summary>Manual installation and development</summary>
@@ -53,19 +116,17 @@ pnpm --dir web run build
 triune start --server "" --no-open
 ```
 
-The environment variable lets the following explicit frontend commands handle the interface build once.
-Use the localhost address printed by the server.
-For development checks, run `OMNIGENT_SKIP_WEB_UI=true uv sync --locked --group dev` and `just hooks`.
-See [CONTRIBUTING.md](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md) for repository guidance.
+- `OMNIGENT_SKIP_WEB_UI=true` skips the Python build's own web UI step; the next two commands build it once.
+- For development checks, run `OMNIGENT_SKIP_WEB_UI=true uv sync --locked --group dev` and `just hooks`.
+- See [CONTRIBUTING.md](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md) for repository guidance.
 
 </details>
 
-## Your own server
+## Public deployment
 
-The local command runs the server and host on your machine.
-Remote access needs authentication, a suitable reverse proxy and TLS; use the existing [deployment guide](deploy/README.md).
-For a source-based container setup, use [deploy/docker](deploy/docker/README.md).
-Provider credentials and local `.env` files belong to your installation and must not be committed.
+For access from the internet, use authentication, a reverse proxy and TLS.
+Start with the [deployment guide](deploy/README.md) or the [Docker setup](deploy/docker/README.md).
+Provider credentials and local `.env` files belong to your installation; never commit them.
 
 ## Compatibility
 
