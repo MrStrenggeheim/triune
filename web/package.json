@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "build:embed": "vite build --config vite.embed.config.ts",
-    "type-check": "tsc -b",
+    "type-check": "node --max-old-space-size=4096 node_modules/typescript/bin/tsc -b",
     "preview": "vite preview",
     "storybook": "storybook dev -p 6006 --no-open",
     "build:storybook": "storybook build --output-dir storybook-static",

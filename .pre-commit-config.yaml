@@ -100,7 +100,8 @@ repos:
       - id: web-tsc
         name: web TypeScript type check
         language: system
-        entry: bash -c 'test -x web/node_modules/.bin/tsc && cd web && node_modules/.bin/tsc -b'
+        # The web project needs about 2.5 GiB of heap, above Node's default on 16 GB hosts.
+        entry: bash -c 'test -x web/node_modules/.bin/tsc && cd web && node --max-old-space-size=4096 node_modules/typescript/bin/tsc -b'
         files: ^(web/.*\.[cm]?[jt]sx?|web/tsconfig(?:\.[^.]+)?\.json|web/package\.json|pnpm-(?:lock|workspace)\.yaml)$
         pass_filenames: false
 
